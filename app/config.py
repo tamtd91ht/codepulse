@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     session_secret: SecretStr = SecretStr("")  # signs session tokens; required for the API
     session_ttl_hours: int = Field(default=12, gt=0)
     admin_emails: CommaList = []
+    # Optional allowlist for the webhook source (GitLab's IPs / CIDRs); empty = any address.
+    webhook_allowed_ips: CommaList = []
     smtp_url: SecretStr = SecretStr("")  # smtp[s]://user:password@host:port
     smtp_from: str = "codepulse@company.vn"
     slack_webhook_url: SecretStr = SecretStr("")  # default team channel when none is configured
@@ -58,7 +60,12 @@ class Settings(BaseSettings):
     retention_days: int = Field(default=365, gt=0)
 
     @field_validator(
-        "ignore_paths", "sensitive_paths", "allowed_email_domains", "admin_emails", mode="before"
+        "ignore_paths",
+        "sensitive_paths",
+        "allowed_email_domains",
+        "admin_emails",
+        "webhook_allowed_ips",
+        mode="before",
     )
     @classmethod
     def _split_commas(cls, value: object) -> object:

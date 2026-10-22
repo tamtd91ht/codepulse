@@ -87,6 +87,12 @@ def test_healthz_ok_with_database(migrated_engine: Any, workers: list[StubWorker
     assert response.json()["checks"] == {"database": True, "redis": True, "workers": 1}
 
 
+def test_security_headers(workers: list[StubWorker]) -> None:
+    response = _client(create_engine("sqlite://"), StubRedis(True)).get("/healthz")
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+
+
 def test_request_id_is_echoed_or_generated(workers: list[StubWorker]) -> None:
     client = _client(create_engine("sqlite://"), StubRedis(True))
     assert client.get("/healthz", headers={"X-Request-ID": "abc"}).headers["X-Request-ID"] == "abc"

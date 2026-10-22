@@ -18,6 +18,7 @@ def test_scheduler_enqueues_syncs_on_the_configured_interval() -> None:
         "aggregate-month",
         "report-week",
         "report-month",
+        "retention-purge",
     }
     assert jobs["enqueue-syncs"].trigger.interval.total_seconds() == 30 * 60
     assert str(jobs["aggregate-week"].trigger.timezone) == "Asia/Ho_Chi_Minh"

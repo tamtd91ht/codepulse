@@ -244,3 +244,29 @@ def test_undecryptable_secret_is_a_mismatch_not_a_crash(
     db_session.add(Project(connection_id=other.id, external_id=1001, path_with_namespace="o/p"))
     db_session.flush()
     assert post(client, "Push Hook", PUSH).json() == {"status": "queued"}
+
+
+@pytest.mark.parametrize(
+    ("host", "allowed", "ok"),
+    [
+        ("10.0.0.7", ["10.0.0.0/24"], True),
+        ("10.0.1.7", ["10.0.0.0/24"], False),
+        ("2001:db8::1", ["2001:db8::/32"], True),
+        (None, ["10.0.0.0/24"], False),
+        ("not-an-ip", ["10.0.0.0/24"], False),
+    ],
+)
+def test_source_allowlist(host: str | None, allowed: list[str], ok: bool) -> None:
+    from app.webhook.router import source_allowed
+
+    assert source_allowed(host, allowed) is ok
+
+
+def test_webhook_rejects_sources_outside_the_allowlist(
+    client: TestClient, queue: FakeQueue
+) -> None:
+    from app.config import Settings, get_settings
+
+    app.dependency_overrides[get_settings] = lambda: Settings(webhook_allowed_ips=["10.9.9.0/24"])
+    assert post(client, "Push Hook", PUSH).status_code == 403  # TestClient comes from "testclient"
+    assert queue.jobs == []

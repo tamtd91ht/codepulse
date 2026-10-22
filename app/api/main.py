@@ -33,6 +33,8 @@ configure_logging()
 logging.getLogger("uvicorn.access").disabled = True
 access_log = logging.getLogger("codepulse.access")
 
+_HTTPS = _settings_ok() and get_settings().app_base_url.startswith("https://")
+
 app = FastAPI(title="CodePulse", version="0.1.0")
 app.include_router(webhook_router, prefix="/api/v1")
 for api_router in (auth.router, admin.router, reviews.router, metrics.router, disputes.router):
@@ -74,6 +76,12 @@ async def request_id_middleware(
     finally:
         request_id_var.reset(token)
     response.headers["X-Request-ID"] = request_id
+    # docs/specs/11: HTTPS only (TLS ends at the reverse proxy) and basic browser hardening.
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if _HTTPS:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
 

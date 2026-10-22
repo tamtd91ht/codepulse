@@ -8,6 +8,7 @@ from app.collector.sync import enqueue_syncs_job
 from app.config import get_settings
 from app.logging import configure_logging
 from app.reporting.jobs import send_reports_job
+from app.retention import purge_job
 from app.scoring.aggregate import aggregate_job
 
 
@@ -70,6 +71,8 @@ def build_scheduler(sync_interval_min: int, report_tz: str = "UTC") -> BlockingS
         id="report-month",
         **common,
     )
+    # docs/specs/11: data retention, daily at night.
+    scheduler.add_job(purge_job, "cron", hour=3, minute=0, id="retention-purge", **common)
     return scheduler
 
 

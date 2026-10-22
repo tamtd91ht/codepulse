@@ -1,16 +1,18 @@
 """POST /api/v1/webhooks/gitlab: authenticate, de-duplicate, enqueue, answer 200 (docs/specs/04)."""
 
 import hmac
+import ipaddress
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
 from redis import Redis
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_queue, get_secret_box, get_session
 from app.collector.sync import Enqueuer
+from app.config import Settings, get_settings
 from app.crypto import SecretBox
 from app.db import get_redis
 from app.models import Connection, Project
@@ -26,6 +28,17 @@ DEDUPE_TTL_S = 7 * 24 * 3600
 def project_external_id(payload: dict[str, Any]) -> int | None:
     value = (payload.get("project") or {}).get("id") or payload.get("project_id")
     return int(value) if value is not None else None
+
+
+def source_allowed(host: str | None, allowed: list[str]) -> bool:
+    """docs/specs/11: optional allowlist of GitLab's addresses (IPs or CIDR ranges)."""
+    if host is None:
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+        return any(address in ipaddress.ip_network(net, strict=False) for net in allowed)
+    except ValueError:
+        return False
 
 
 def token_matches(session: Session, box: SecretBox, external_id: int, token: str) -> bool:
@@ -52,15 +65,21 @@ def token_matches(session: Session, box: SecretBox, external_id: int, token: str
 @router.post("/webhooks/gitlab")
 def gitlab_webhook(
     # Sync handler: DB and Redis calls are blocking, so FastAPI runs it in its threadpool.
+    request: Request,
     payload: Annotated[Any, Body()],
     session: Annotated[Session, Depends(get_session)],
     redis: Annotated[Redis, Depends(get_redis)],
     queue: Annotated[Enqueuer, Depends(get_queue)],
     box: Annotated[SecretBox, Depends(get_secret_box)],
+    settings: Annotated[Settings, Depends(get_settings)],
     x_gitlab_token: Annotated[str, Header()] = "",
     x_gitlab_event: Annotated[str, Header()] = "",
     x_gitlab_event_uuid: Annotated[str | None, Header()] = None,
 ) -> dict[str, str]:
+    if settings.webhook_allowed_ips and not source_allowed(
+        request.client.host if request.client else None, settings.webhook_allowed_ips
+    ):
+        raise HTTPException(403, "source address not allowed")
     external_id = project_external_id(payload) if isinstance(payload, dict) else None
     if external_id is None:
         raise HTTPException(400, "payload has no project id")

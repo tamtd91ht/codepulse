@@ -64,7 +64,7 @@
 - [ ] 6.5 Chỉ số DORA (deploy frequency, lead time, CFR, MTTR) như DevLake
 
 ## Phase 7 – Hardening & Go-live
-- [ ] 7.1 Checklist bảo mật & privacy hoàn tất (11)
+- [x] 7.1 Checklist bảo mật & privacy hoàn tất (11)
 - [ ] 7.2 Monitoring + cảnh báo + backup (13)
 - [ ] 7.3 Runbook + tài liệu người dùng
 - [ ] 7.4 Pilot 1 team 2 tuần → thu feedback, chỉnh rubric/trọng số
