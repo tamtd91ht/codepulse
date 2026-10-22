@@ -15,7 +15,7 @@
 - [x] 1.2 Config bằng pydantic-settings, `.env.example` (13)
 - [x] 1.3 Migration toàn bộ schema (03)
 - [x] 1.4 Mã hoá secret, logging JSON, healthcheck
-- [ ] 1.5 CI: lint + test
+- [x] 1.5 CI: lint + test
 - [ ] **Demo**: `make up` chạy, `/healthz` OK, DB có đủ bảng
 
 ## Phase 2 – Thu thập dữ liệu (≈ 1–2 tuần)

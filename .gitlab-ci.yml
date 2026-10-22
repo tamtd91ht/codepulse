@@ -1,0 +1,31 @@
+# docs/specs/12_TESTING_QA.md: lint -> test -> eval -> build image (eval and build come later).
+stages: [lint, test]
+
+default:
+  image: python:3.12
+  cache:
+    paths: [.cache/pip]
+  before_script:
+    - pip install -e ".[dev]"
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+lint:
+  stage: lint
+  script:
+    - make lint
+
+test:
+  stage: test
+  # Integration tests need Docker for testcontainers.
+  services:
+    - name: docker:27-dind
+      alias: docker
+      command: ["--tls=false"]
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    TESTCONTAINERS_HOST_OVERRIDE: docker
+  script:
+    - make test
