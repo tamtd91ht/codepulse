@@ -10,5 +10,7 @@ def test_api_app_serves_openapi() -> None:
     assert response.json()["info"]["title"] == "CodePulse"
 
 
-def test_scheduler_builds_without_jobs() -> None:
-    assert build_scheduler().get_jobs() == []
+def test_scheduler_enqueues_syncs_on_the_configured_interval() -> None:
+    (job,) = build_scheduler(sync_interval_min=30).get_jobs()
+    assert job.id == "enqueue-syncs"
+    assert job.trigger.interval.total_seconds() == 30 * 60
