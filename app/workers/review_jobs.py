@@ -30,6 +30,7 @@ def review_settings(settings: Settings) -> ReviewSettings:
         max_tokens_per_chunk=settings.max_tokens_per_chunk,
         min_confidence=settings.min_confidence,
         monthly_budget_usd=settings.monthly_llm_budget_usd,
+        scoring_weights=settings.scoring_weights,
     )
 
 

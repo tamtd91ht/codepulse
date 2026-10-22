@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     max_review_loc: int = Field(default=1500, gt=0)
     max_tokens_per_chunk: int = Field(default=12000, gt=0)
     min_confidence: float = Field(default=0.5, ge=0, le=1)
+    # JSON, e.g. {"critical": 25, "high": 10, "medium": 4, "low": 1, "info": 0}; empty = rubric's.
+    scoring_weights: dict[str, float] | None = None
+    min_sample: int = Field(default=3, ge=1)
 
     backfill_days: int = Field(default=90, ge=0)
     sync_interval_min: int = Field(default=30, gt=0)

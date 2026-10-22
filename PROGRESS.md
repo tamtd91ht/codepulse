@@ -39,3 +39,6 @@
 - 3.8: bộ eval 20 case (5 security, 5 bug, 3 perf, 3 maintainability, 4 sạch) trong `tests/eval/cases` + `make eval` (`python -m app.review.eval`): precision/recall critical+high theo khớp file + dòng (±2), báo cáo JSON vào `tests/eval/results/` (gitignore). Harness được test bằng reviewer 'oracle' (=1.0) và reviewer im lặng (fail). Prompt thêm giải thích marker `***REDACTED***` để vẫn bắt được secret hard-code sau khi che. Sửa test tích hợp hỏng trên CI (route file raw chưa mock).
 - Eval lần đầu (2026-10-22, Claude Code CLI 2.1.308, model mặc định của CLI): precision(critical+high) 0.92, recall 1.00 → PASS, chi phí $2.06 cho 20 case (~$0.10/diff nhỏ). Finding viết tiếng Việt. "False positive" duy nhất (bug-05 dòng 8) thực ra là hệ quả đúng của cùng lỗi mutable default.
 - **Demo Phase 3 chờ**: cần GitLab thật (MR có SQLi → comment critical ≤ 2 phút) + build image worker có Claude Code CLI và token (\`claude setup-token\` hoặc API key trong LLM_API_KEY).
+
+## Phase 4 – Chấm điểm & Tổng hợp
+- 4.1: công thức review_score (08) đã có từ 3.5; thêm trọng số theo `rubric_version` (`WEIGHTS_BY_RUBRIC`) và ghi đè bằng `SCORING_WEIGHTS` (JSON, kiểm tra đủ 5 mức, không âm), `MIN_SAMPLE`; bảng test: MR nhỏ 1 critical (50) vs MR lớn 20 low (98), clamp 0, false_positive không tính, trần critical.

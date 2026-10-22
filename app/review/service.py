@@ -5,7 +5,7 @@ findings keep a short excerpt.
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -25,7 +25,7 @@ from app.review.providers.base import LLMError, LLMProvider, ReviewResult
 from app.review.rubric import RUBRIC_VERSION
 from app.review.schema import LLMFinding
 from app.review.status import supersede_mr_reviews
-from app.scoring.formula import ScoredFinding, review_score
+from app.scoring.formula import ScoredFinding, review_score, weights_for
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ class ReviewSettings:
     max_tokens_per_chunk: int
     min_confidence: float
     monthly_budget_usd: float = 0.0  # 0 = unlimited
+    scoring_weights: Mapping[str, float] | None = None
 
 
 class ReviewService:
@@ -241,6 +242,7 @@ class ReviewService:
                 review_score(
                     [ScoredFinding(f.severity, f.confidence) for f in processed.findings],
                     prepared.loc,
+                    weights_for(RUBRIC_VERSION, settings.scoring_weights),
                 )
             )
         )
