@@ -3,12 +3,12 @@
 > Agent tick `[x]` khi xong + ghi `PROGRESS.md`. Mỗi phase kết thúc bằng **Demo checkpoint** – dừng chờ người dùng xác nhận.
 
 ## Phase 0 – Chốt quyết định `[DECISION]`
-- [ ] LLM provider & có được gửi code ra ngoài không (01, 11)
-- [ ] Review theo MR / cả commit trực tiếp (01)
-- [ ] Dashboard: Grafana hay web app (10)
-- [ ] Auth: JWT nội bộ hay SSO GitLab (09)
-- [ ] Ai xem được điểm cá nhân (11)
-- [ ] Trọng số severity & luật điểm sàn critical (08)
+- [x] LLM provider & có được gửi code ra ngoài không (01, 11) → Claude Code CLI (`claude -p`) chạy trên worker; code được gửi tới Anthropic
+- [x] Review theo MR / cả commit trực tiếp (01) → cả MR và commit push thẳng lên `main`
+- [x] Dashboard: Grafana hay web app (10) → web app Next.js
+- [x] Auth: JWT nội bộ hay SSO GitLab (09) → SSO GitLab (OIDC)
+- [x] Ai xem được điểm cá nhân (11) → chỉ bản thân + lead
+- [x] Trọng số severity & luật điểm sàn critical (08) → giữ trọng số mặc định; có critical → score ≤ 50
 
 ## Phase 1 – Nền tảng (≈ 1 tuần)
 - [ ] 1.1 Khởi tạo repo, cấu trúc thư mục, Makefile, Docker Compose (02)

@@ -1,6 +1,6 @@
 # 09 – REST API
 
-Base: `/api/v1`. Auth: JWT hoặc SSO (OIDC với GitLab) – `[DECISION]`. OpenAPI tự sinh tại `/docs`.
+Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. OpenAPI tự sinh tại `/docs`.
 
 ## Endpoints
 | Method | Path | Mô tả | Quyền |

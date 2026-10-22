@@ -4,6 +4,7 @@
 - **A. Grafana** (giống DevLake): nhanh, đọc thẳng PostgreSQL, phù hợp v1.
 - **B. Web app riêng** (Next.js + API): UX tốt hơn, có dispute flow, phân quyền chi tiết.
 - Khuyến nghị: v1 Grafana cho lead/manager + trang web tối thiểu cho dispute; v2 chuyển sang B.
+- **Đã chốt (Phase 0): B. Web app Next.js.**
 
 ## Các màn hình
 ### 1. Team Overview (tuần/tháng)

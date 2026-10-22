@@ -26,8 +26,8 @@ GitLab ─────┤                                           ▼
 | DB | PostgreSQL 16, SQLAlchemy 2 + Alembic |
 | Queue | Redis + RQ (hoặc Celery) |
 | Scheduler | APScheduler trong service `scheduler` |
-| LLM client | Lớp trừu tượng `LLMProvider` (Anthropic / OpenAI / Ollama) |
-| Dashboard | Grafana (nhanh) **hoặc** Next.js (tuỳ biến) – `[DECISION]` |
+| LLM client | Lớp trừu tượng `LLMProvider`; provider v1: Claude Code CLI (`claude -p`) – đã chốt ở Phase 0 |
+| Dashboard | Next.js (đã chốt ở Phase 0) |
 | Đóng gói | Docker Compose |
 
 ## Cấu trúc thư mục

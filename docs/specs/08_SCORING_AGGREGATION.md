@@ -9,7 +9,7 @@ review_score = clamp(100 − penalty / size_factor, 0, 100)
 ```
 - Trọng số lưu trong config (`SCORING_WEIGHTS`), version hoá cùng `rubric_version`.
 - Finding bị dispute được chấp nhận (`false_positive`) → tính lại điểm review.
-- `[DECISION]` Có giới hạn tối đa điểm sàn khi có critical (vd: có critical → score ≤ 50)?
+- `[DECISION]` Có giới hạn tối đa điểm sàn khi có critical (vd: có critical → score ≤ 50)? → **Đã chốt: có**, review có ≥ 1 critical → `review_score ≤ 50`.
 
 ## 2. Chỉ số theo người / kỳ (tuần ISO, tháng)
 | Metric | Công thức |

@@ -36,6 +36,6 @@ Team dùng GitLab (Cloud hoặc self-hosted). Cần biết: ai commit gì, chấ
 - [ ] Báo cáo tuần sinh tự động 08:00 thứ Hai.
 
 ## [DECISION] cần người dùng chốt
-- [ ] LLM provider: Claude API / OpenAI / model nội bộ (Ollama, vLLM)?
-- [ ] Review theo MR hay cả commit trực tiếp lên `main`?
-- [ ] Ai được xem điểm của người khác (chỉ lead hay cả team)?
+- [x] LLM provider: Claude API / OpenAI / model nội bộ (Ollama, vLLM)? → Claude Code CLI trên worker
+- [x] Review theo MR hay cả commit trực tiếp lên `main`? → cả hai
+- [x] Ai được xem điểm của người khác (chỉ lead hay cả team)? → chỉ lead
