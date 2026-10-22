@@ -218,3 +218,28 @@ def test_callback_rejects_bad_state_and_unknown_users(
     client.cookies.set(STATE_COOKIE, "st")
     assert client.get("/api/v1/auth/callback?code=c&state=other").status_code == 400
     assert client.get("/api/v1/auth/callback?code=c&state=st").status_code == 403
+
+
+def test_dashboard_aggregates(client: TestClient, world: World, as_user: Any) -> None:
+    lead = as_user(world.lead)
+    hot = client.get(
+        f"/api/v1/metrics/teams/{world.backend.id}/hotspots?period=week&start={WEEK}", headers=lead
+    ).json()
+    assert hot == {
+        "categories": [{"category": "security", "count": 1}],
+        "files": [{"file_path": "app/a.py", "count": 1}],
+    }
+    board = client.get(
+        f"/api/v1/leaderboard?team_id={world.backend.id}&period=week&start={WEEK}", headers=lead
+    ).json()
+    assert len(board["members"][0]["trend"]) == 8
+    assert board["members"][0]["trend"][-1] == "75.00"
+    names = [t["name"] for t in client.get("/api/v1/teams/visible", headers=lead).json()]
+    assert names == ["Backend"]
+    assert (
+        client.get(f"/api/v1/people/{world.an.id}", headers=as_user(world.binh)).status_code == 403
+    )
+    listed = client.get("/api/v1/reviews", headers=as_user(world.an)).json()["items"][0]
+    assert (listed["target"], listed["project"]) == ("MR !7", "demo/p")
+    heat = client.get(f"/api/v1/metrics/users/{world.an.id}/categories?weeks=52", headers=lead)
+    assert heat.status_code == 200

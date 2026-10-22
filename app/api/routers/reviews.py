@@ -14,6 +14,7 @@ from app.api.schemas import (
     FindingOut,
     Page,
     ReviewDetail,
+    ReviewListItem,
     ReviewOut,
     decode_cursor,
     encode_cursor,
@@ -71,7 +72,7 @@ def _target(session: Session, review: Review) -> tuple[Project | None, str | Non
     return project, url, label
 
 
-@router.get("/reviews", response_model=Page[ReviewOut])
+@router.get("/reviews", response_model=Page[ReviewListItem])
 def list_reviews(
     principal: CurrentPrincipal,
     session: SessionDep,
@@ -103,7 +104,18 @@ def list_reviews(
         audit(session, principal.user_id, "reviews.read", f"user:{user_id}")
         session.commit()
     more = len(rows) > limit
-    return Page(items=rows[:limit], next_cursor=encode_cursor(rows[limit - 1].id) if more else None)
+    items = []
+    for review in rows[:limit]:
+        project, url, label = _target(session, review)
+        items.append(
+            {
+                **ReviewOut.model_validate(review).model_dump(),
+                "target": label,
+                "project": project.path_with_namespace if project else None,
+                "web_url": url,
+            }
+        )
+    return Page(items=items, next_cursor=encode_cursor(rows[limit - 1].id) if more else None)
 
 
 def _visible_review(session: Session, principal: Principal, review_id: int) -> Review:

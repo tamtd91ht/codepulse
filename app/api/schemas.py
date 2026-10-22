@@ -165,6 +165,12 @@ class ReviewOut(ORM):
     finished_at: datetime | None
 
 
+class ReviewListItem(ReviewOut):
+    target: str  # "MR !12" or "commit abc12345"
+    project: str | None
+    web_url: str | None
+
+
 class ReviewDetail(ReviewOut):
     findings: list[FindingOut]
     project: str | None
@@ -204,6 +210,18 @@ class MetricsSeries(BaseModel):
 
 class LeaderboardRow(MetricsOut):
     user: UserOut
+    trend: list[Decimal | None]  # quality index of the last 8 weeks, oldest first (sparkline)
+
+
+class Hotspots(BaseModel):
+    categories: list[dict[str, str | int]]  # [{"category": "testing", "count": 12}]
+    files: list[dict[str, str | int]]  # [{"file_path": "app/x.py", "count": 5}]
+
+
+class CategoryWeek(BaseModel):
+    week: date
+    category: str
+    count: int
 
 
 class Leaderboard(BaseModel):

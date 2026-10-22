@@ -1,19 +1,44 @@
 """Metrics endpoints (docs/specs/09). Phase 0: individual scores for the person and their lead
 only; managers get team aggregates."""
 
-from datetime import UTC, date, datetime
+from collections import Counter
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any, Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.audit import audit
 from app.api.deps import get_session
-from app.api.schemas import Leaderboard, MetricsOut, MetricsSeries, TeamOut, UserOut
+from app.api.schemas import (
+    CategoryWeek,
+    Hotspots,
+    Leaderboard,
+    MetricsOut,
+    MetricsSeries,
+    TeamOut,
+    UserOut,
+)
 from app.api.security import CurrentPrincipal, LeadOrManagerPrincipal
-from app.models import MetricsTeamPeriod, MetricsUserPeriod, Team, TeamMember, User
-from app.scoring.aggregate import PeriodType, next_period, period_start_of, previous_period
+from app.config import Settings, get_settings
+from app.models import (
+    MetricsTeamPeriod,
+    MetricsUserPeriod,
+    Review,
+    ReviewFinding,
+    Team,
+    TeamMember,
+    User,
+)
+from app.scoring.aggregate import (
+    PeriodType,
+    next_period,
+    period_bounds,
+    period_start_of,
+    previous_period,
+)
 from app.scoring.compare import compare_team, compare_user
 
 router = APIRouter(prefix="", tags=["metrics"])
@@ -120,21 +145,40 @@ def leaderboard(
     members = None
     if leads_it:
         last_day = next_period(period_start, period)
-        rows = session.execute(
-            select(MetricsUserPeriod, User)
-            .join(User, User.id == MetricsUserPeriod.user_id)
-            .join(TeamMember, TeamMember.user_id == User.id)
-            .where(
-                TeamMember.team_id == team_id,
-                TeamMember.joined_at < last_day,
-                (TeamMember.left_at.is_(None)) | (TeamMember.left_at >= period_start),
-                MetricsUserPeriod.period_type == period,
-                MetricsUserPeriod.period_start == period_start,
+        rows = list(
+            session.execute(
+                select(MetricsUserPeriod, User)
+                .join(User, User.id == MetricsUserPeriod.user_id)
+                .join(TeamMember, TeamMember.user_id == User.id)
+                .where(
+                    TeamMember.team_id == team_id,
+                    TeamMember.joined_at < last_day,
+                    (TeamMember.left_at.is_(None)) | (TeamMember.left_at >= period_start),
+                    MetricsUserPeriod.period_type == period,
+                    MetricsUserPeriod.period_start == period_start,
+                )
+                .order_by(MetricsUserPeriod.quality_index.desc().nulls_last())
+            ).tuples()
+        )
+        # Week-aligned, ending with the period's last week (also when the period is a month).
+        trend_end = period_start_of(next_period(period_start, period) - timedelta(days=1), "week")
+        trend_start = trend_end - timedelta(weeks=7)
+        history: dict[int, dict[date, Any]] = {}
+        for row in session.scalars(
+            select(MetricsUserPeriod).where(
+                MetricsUserPeriod.user_id.in_([u.id for _, u in rows]),
+                MetricsUserPeriod.period_type == "week",
+                MetricsUserPeriod.period_start.between(trend_start, trend_end),
             )
-            .order_by(MetricsUserPeriod.quality_index.desc().nulls_last())
-        ).tuples()
+        ):
+            history.setdefault(row.user_id, {})[row.period_start] = row.quality_index
+        weeks = [trend_start + timedelta(weeks=i) for i in range(8)]
         members = [
-            {**MetricsOut.model_validate(m).model_dump(), "user": UserOut.model_validate(u)}
+            {
+                **MetricsOut.model_validate(m).model_dump(),
+                "user": UserOut.model_validate(u),
+                "trend": [history.get(u.id, {}).get(w) for w in weeks],
+            }
             for m, u in rows
         ]
         audit(session, principal.user_id, "leaderboard.read", f"team:{team_id}", period=period)
@@ -146,3 +190,114 @@ def leaderboard(
         "team_metrics": team_row,
         "members": members,
     }
+
+
+def _team_member_ids(session: Session, team_id: int, start: date, end: date) -> list[int]:
+    """People who were in the team at any time during [start, end)."""
+    return list(
+        session.scalars(
+            select(TeamMember.user_id).where(
+                TeamMember.team_id == team_id,
+                TeamMember.joined_at < end,
+                (TeamMember.left_at.is_(None)) | (TeamMember.left_at > start),
+            )
+        )
+    )
+
+
+@router.get("/metrics/teams/{team_id}/hotspots", response_model=Hotspots)
+def team_hotspots(
+    team_id: int,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+    period: Period = "month",
+    start: date | None = None,
+) -> dict[str, Any]:
+    """Top 5 error categories and "hot" files of a team (docs/specs/08 §4, 10 Team Overview)."""
+    if not principal.can_see_team(team_id):
+        raise HTTPException(403, "not allowed to see this team")
+    tz = ZoneInfo(settings.report_tz)
+    period_start = period_start_of(start or datetime.now(tz).date(), period)
+    lo, hi = period_bounds(period_start, period, tz)
+    members = _team_member_ids(session, team_id, period_start, next_period(period_start, period))
+    base = (
+        select(ReviewFinding)
+        .join(Review, Review.id == ReviewFinding.review_id)
+        .where(
+            Review.status == "done",
+            Review.author_user_id.in_(members),
+            Review.finished_at >= lo,
+            Review.finished_at < hi,
+            ReviewFinding.status != "false_positive",
+        )
+        .subquery()
+    )
+    count = func.count().label("count")
+    categories = session.execute(
+        select(base.c.category, count).group_by(base.c.category).order_by(count.desc()).limit(5)
+    ).all()
+    files = session.execute(
+        select(base.c.file_path, count)
+        .where(base.c.file_path.is_not(None))
+        .group_by(base.c.file_path)
+        .order_by(count.desc())
+        .limit(5)
+    ).all()
+    return {
+        "categories": [{"category": c, "count": n} for c, n in categories],
+        "files": [{"file_path": f, "count": n} for f, n in files],
+    }
+
+
+@router.get("/metrics/users/{user_id}/categories", response_model=list[CategoryWeek])
+def user_category_heatmap(
+    user_id: int,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+    weeks: Annotated[int, Query(ge=1, le=52)] = 12,
+) -> list[dict[str, Any]]:
+    """Findings per category per week (Member Detail heatmap, docs/specs/10)."""
+    if not principal.can_see_user(user_id):
+        raise HTTPException(403, "individual metrics are visible to the person and their lead only")
+    tz = ZoneInfo(settings.report_tz)
+    first = period_start_of(datetime.now(tz).date(), "week") - timedelta(weeks=weeks - 1)
+    rows = session.execute(
+        select(Review.finished_at, ReviewFinding.category)
+        .join(ReviewFinding, ReviewFinding.review_id == Review.id)
+        .where(
+            Review.status == "done",
+            Review.author_user_id == user_id,
+            Review.finished_at >= period_bounds(first, "week", tz)[0],
+            ReviewFinding.status != "false_positive",
+        )
+    ).tuples()
+    counts: Counter[tuple[date, str]] = Counter()
+    for finished_at, category in rows:
+        if finished_at is not None:
+            counts[(period_start_of(finished_at.astimezone(tz).date(), "week"), category)] += 1
+    return [
+        {"week": week, "category": category, "count": n}
+        for (week, category), n in sorted(counts.items())
+    ]
+
+
+@router.get("/teams/visible", response_model=list[TeamOut])
+def visible_teams(principal: CurrentPrincipal, session: SessionDep) -> list[Team]:
+    """Teams the signed-in person can open in the dashboard."""
+    query = select(Team).order_by(Team.name)
+    if not principal.is_admin:
+        ids = principal.own_teams | principal.lead_teams | principal.managed_teams
+        query = query.where(Team.id.in_(ids))
+    return list(session.scalars(query))
+
+
+@router.get("/people/{user_id}", response_model=UserOut)
+def person(user_id: int, principal: CurrentPrincipal, session: SessionDep) -> User:
+    if not principal.can_see_user(user_id):
+        raise HTTPException(403, "not allowed to see this person")
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(404, "person not found")
+    return user
