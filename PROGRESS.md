@@ -8,3 +8,4 @@
 ## Phase 1 – Nền tảng
 - 1.1: skeleton `app/` theo 02, pyproject (ruff/mypy strict/pytest), Dockerfile, compose (postgres, redis, api, worker, scheduler; bỏ grafana vì đã chọn Next.js), Makefile up/down/lint/test (migrate/seed thêm ở 1.3). Máy dev chưa có `make` → chạy lệnh trực tiếp.
 - 1.2: `app/config.py` (pydantic-settings, secret dạng SecretStr, list dạng CSV), `.env.example`; thêm `LLM_PROVIDER=claude_code` (mặc định) vào 13 theo quyết định Phase 0.
+- 1.3: models SQLAlchemy cho 17 bảng của 03 (mọi bảng có created_at/updated_at, đủ 4 index), migration Alembic đầu tiên; `reviews` UNIQUE dùng NULLS NOT DISTINCT (mr_id/commit_sha luôn có 1 cột NULL nên UNIQUE thường không có tác dụng). Test tích hợp bằng testcontainers (tắt Ryuk do lỗi port trên Docker Desktop). `make seed` làm ở 1.4 vì cần mã hoá token.

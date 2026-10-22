@@ -13,7 +13,7 @@
 ## Phase 1 – Nền tảng (≈ 1 tuần)
 - [x] 1.1 Khởi tạo repo, cấu trúc thư mục, Makefile, Docker Compose (02)
 - [x] 1.2 Config bằng pydantic-settings, `.env.example` (13)
-- [ ] 1.3 Migration toàn bộ schema (03)
+- [x] 1.3 Migration toàn bộ schema (03)
 - [ ] 1.4 Mã hoá secret, logging JSON, healthcheck
 - [ ] 1.5 CI: lint + test
 - [ ] **Demo**: `make up` chạy, `/healthz` OK, DB có đủ bảng
