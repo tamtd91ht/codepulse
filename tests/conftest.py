@@ -11,6 +11,16 @@ from sqlalchemy.orm import Session
 # stopped by their context manager instead.
 os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
+# Tests never read a developer's .env; settings come from these fixed values instead.
+os.environ["CODEPULSE_ENV_FILE"] = ""
+os.environ.update(
+    {
+        "DATABASE_URL": "postgresql+psycopg://codepulse:codepulse@localhost:5432/codepulse",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "APP_ENCRYPTION_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+    }
+)
+
 
 @pytest.fixture(scope="session")
 def postgres_url() -> Iterator[str]:

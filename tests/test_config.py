@@ -12,7 +12,6 @@ REQUIRED = {
 
 @pytest.fixture
 def env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
-    monkeypatch.chdir("/")  # keep a developer's .env out of the tests
     for key, value in REQUIRED.items():
         monkeypatch.setenv(key, value)
     return monkeypatch

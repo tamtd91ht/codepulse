@@ -1,5 +1,6 @@
 """Application settings, read from environment variables (see docs/specs/13_DEPLOYMENT_OPS.md)."""
 
+import os
 from functools import lru_cache
 from typing import Annotated, Literal
 
@@ -10,7 +11,10 @@ CommaList = Annotated[list[str], NoDecode]
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # CODEPULSE_ENV_FILE="" disables the file (tests); environment variables always win.
+    model_config = SettingsConfigDict(
+        env_file=os.environ.get("CODEPULSE_ENV_FILE", ".env") or None, extra="ignore"
+    )
 
     database_url: PostgresDsn
     redis_url: RedisDsn
