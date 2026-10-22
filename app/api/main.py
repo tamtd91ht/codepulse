@@ -12,6 +12,7 @@ from sqlalchemy import Engine
 from app import health
 from app.db import get_engine, get_redis
 from app.logging import configure_logging, request_id_var
+from app.webhook.router import router as webhook_router
 
 configure_logging()
 # Replaced by the access line below, which is written while request_id is still set.
@@ -19,6 +20,7 @@ logging.getLogger("uvicorn.access").disabled = True
 access_log = logging.getLogger("codepulse.access")
 
 app = FastAPI(title="CodePulse", version="0.1.0")
+app.include_router(webhook_router, prefix="/api/v1")
 
 
 @app.middleware("http")

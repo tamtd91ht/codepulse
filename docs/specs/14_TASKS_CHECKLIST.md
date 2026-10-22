@@ -23,7 +23,7 @@
 - [x] 2.2 Collect → raw: commits, MRs, MR diffs/commits/notes, pipelines
 - [x] 2.3 Extract/convert → domain; tính `first_review_at`, `review_rounds`
 - [x] 2.4 Backfill + incremental sync qua scheduler
-- [ ] 2.5 Webhook endpoint + dedupe + enqueue
+- [x] 2.5 Webhook endpoint + dedupe + enqueue
 - [ ] 2.6 Identity: auto-link, import CSV, trang unmapped (05)
 - [ ] 2.7 CLI: connections, projects, register-webhook, sync, identity import
 - [ ] **Demo**: sync 1 project thật, xem commit/MR gắn đúng người
