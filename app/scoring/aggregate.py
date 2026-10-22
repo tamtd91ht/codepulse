@@ -27,6 +27,7 @@ from app.models import (
     TeamMember,
     User,
 )
+from app.review.status import SEVERE
 from app.scoring.formula import SEVERITIES, weights_for
 from app.scoring.process import process_metrics
 
@@ -69,6 +70,10 @@ class ReviewFacts:
     loc: int
     rubric_version: str | None
     findings: list[tuple[str, float, str]] = field(default_factory=list)  # severity, conf, status
+    mr_id: int | None = None
+    # Critical/high fingerprints over every review of the MR, and those still in this one.
+    severe_all: set[str] = field(default_factory=set)
+    severe_latest: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -97,6 +102,7 @@ def load_period(session: Session, start: datetime, end: datetime) -> PeriodData:
             score=float(review.score) if review.score is not None else None,
             loc=review.loc_reviewed or 0,
             rubric_version=review.rubric_version,
+            mr_id=review.mr_id if review.target_type == "mr" else None,
         )
     if reviews:
         for finding in session.scalars(
@@ -107,6 +113,8 @@ def load_period(session: Session, start: datetime, end: datetime) -> PeriodData:
             reviews[finding.review_id].findings.append(
                 (finding.severity, float(finding.confidence or 1), finding.status or "open")
             )
+
+    _load_fixes(session, reviews)
 
     merged = [
         (user_id, mr)
@@ -132,6 +140,38 @@ def load_period(session: Session, start: datetime, end: datetime) -> PeriodData:
             if key in branches:
                 pipelines[key].append(pipeline)
     return PeriodData(list(reviews.values()), merged, pipelines)
+
+
+def _load_fixes(session: Session, reviews: dict[int, ReviewFacts]) -> None:
+    """fix_rate inputs (task 4.4): compare each MR's latest review with all its earlier ones."""
+    latest_by_mr = {r.mr_id: rid for rid, r in reviews.items() if r.mr_id is not None}
+    if not latest_by_mr:
+        return
+    mr_of_review: dict[int, int] = {
+        review_id: mr_id
+        for review_id, mr_id in session.execute(
+            select(Review.id, Review.mr_id).where(
+                Review.mr_id.in_(latest_by_mr), Review.status.in_(("done", "superseded"))
+            )
+        ).tuples()
+        if mr_id is not None
+    }
+    rows = session.execute(
+        select(ReviewFinding.review_id, ReviewFinding.fingerprint).where(
+            ReviewFinding.review_id.in_(mr_of_review),
+            ReviewFinding.severity.in_(SEVERE),
+            ReviewFinding.fingerprint.is_not(None),
+            ReviewFinding.status != "false_positive",
+        )
+    ).tuples()
+    for review_id, fingerprint in rows:
+        if review_id is None or fingerprint is None:
+            continue
+        mr_id = mr_of_review[review_id]
+        latest = reviews[latest_by_mr[mr_id]]
+        latest.severe_all.add(fingerprint)
+        if review_id == latest_by_mr[mr_id]:
+            latest.severe_latest.add(fingerprint)
 
 
 # -- metrics ------------------------------------------------------------------------------------
@@ -165,6 +205,8 @@ def compute(
             weight_total += w
     loc = sum(r.loc for r in reviews)
     process = process_metrics(merged, pipelines)
+    severe_total = sum(len(r.severe_all) for r in reviews)
+    severe_fixed = sum(len(r.severe_all - r.severe_latest) for r in reviews)
     return {
         "reviews_count": len(reviews),
         "avg_score": _dec(weighted_score / weight_total) if weight_total else None,
@@ -177,6 +219,7 @@ def compute(
         "avg_mr_size": process.avg_mr_size,
         "avg_review_rounds": _dec(process.avg_review_rounds),
         "build_success_rate": _dec(process.build_success_rate),
+        "fix_rate": _dec(severe_fixed / severe_total, 3) if severe_total else None,
         "quality_index": None,
     }
 

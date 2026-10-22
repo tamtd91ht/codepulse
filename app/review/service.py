@@ -24,7 +24,7 @@ from app.review.prompt import ReviewParseError, ReviewTarget, build_prompt, revi
 from app.review.providers.base import LLMError, LLMProvider, ReviewResult
 from app.review.rubric import RUBRIC_VERSION
 from app.review.schema import LLMFinding
-from app.review.status import supersede_mr_reviews
+from app.review.status import mark_fixed_findings, supersede_mr_reviews
 from app.scoring.formula import ScoredFinding, review_score, weights_for
 
 log = logging.getLogger(__name__)
@@ -81,6 +81,7 @@ class ReviewService:
         result = self._run(review, project, target, entries, head_sha)
         if result is not None and result.status == "done":
             supersede_mr_reviews(self._session, project, mr.iid, head_sha)
+            mark_fixed_findings(self._session, mr.id, result.id)
             if project.post_mr_comment:
                 findings = list(
                     self._session.scalars(

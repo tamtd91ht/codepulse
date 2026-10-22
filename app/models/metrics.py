@@ -31,6 +31,8 @@ class PeriodMetrics(TimestampMixin):
     avg_mr_size: Mapped[int | None]
     avg_review_rounds: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
     build_success_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    # Share 0..1 of critical/high findings fixed in a later review (08; not in 03, added later).
+    fix_rate: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
     quality_index: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
 
 
