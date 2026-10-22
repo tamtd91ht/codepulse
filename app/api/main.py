@@ -1,3 +1,4 @@
+import hmac
 import logging
 import time
 import uuid
@@ -7,6 +8,7 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 from redis import Redis
 from sqlalchemy import Engine
 
@@ -17,6 +19,7 @@ from app.collector.gitlab.client import GitLabError
 from app.config import get_settings
 from app.db import get_engine, get_redis
 from app.logging import configure_logging, request_id_var
+from app.monitoring import CodePulseCollector
 from app.webhook.router import router as webhook_router
 
 
@@ -100,3 +103,19 @@ def healthz(
     return JSONResponse(
         {"status": "ok" if ok else "degraded", "checks": checks}, status_code=200 if ok else 503
     )
+
+
+_registry = CollectorRegistry()
+_registry.register(
+    CodePulseCollector(get_engine, get_redis, lambda: get_settings().monthly_llm_budget_usd)
+)
+
+
+@app.get("/metrics", include_in_schema=False)
+def prometheus_metrics(request: Request) -> Response:
+    token = get_settings().metrics_token.get_secret_value()
+    if token and not hmac.compare_digest(
+        request.headers.get("Authorization", ""), f"Bearer {token}"
+    ):
+        return Response(status_code=401)
+    return Response(generate_latest(_registry), media_type=CONTENT_TYPE_LATEST)

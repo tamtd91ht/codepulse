@@ -21,6 +21,8 @@ services:
 
   api:
     build: .
+    # docs/specs/13: migrations run when the api starts (only this service migrates).
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --proxy-headers"]
     env_file:
       - path: .env
         required: false
@@ -69,6 +71,22 @@ services:
       - "3000:3000"
     depends_on:
       - api
+
+  # docs/specs/13: daily pg_dump, 14 days kept in ./backups (copy them off the host too).
+  backup:
+    image: postgres:16
+    entrypoint: ["sh", "/backup.sh"]
+    environment:
+      PGHOST: postgres
+      PGUSER: codepulse
+      PGPASSWORD: ${POSTGRES_PASSWORD:-codepulse}
+      PGDATABASE: codepulse
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - ./deploy/backup/backup.sh:/backup.sh:ro
+      - ./backups:/backups
+    depends_on:
+      postgres: {condition: service_healthy}
 
 volumes:
   pgdata:

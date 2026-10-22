@@ -31,10 +31,10 @@ RETENTION_DAYS=365
 ```
 
 ## Vận hành
-- [ ] Migration chạy tự động khi `api` khởi động (hoặc job riêng)
-- [ ] Backup Postgres hằng ngày
-- [ ] Metrics Prometheus: queue length, review latency, LLM error rate, chi phí/ngày
-- [ ] Cảnh báo: worker chết, queue > 100 job, LLM lỗi > 10%, vượt 80% ngân sách
+- [x] Migration chạy tự động khi `api` khởi động (hoặc job riêng) – lệnh của service api
+- [x] Backup Postgres hằng ngày – service `backup` (pg_dump, giữ 14 ngày)
+- [x] Metrics Prometheus: queue length, review latency, LLM error rate, chi phí/ngày – `/metrics` (`app/monitoring.py`)
+- [x] Cảnh báo: worker chết, queue > 100 job, LLM lỗi > 10%, vượt 80% ngân sách – `deploy/prometheus/alerts.yml`
 - [ ] Runbook `docs/RUNBOOK.md`: thêm project, xoay token, chạy lại review, recompute metric
 
 ## Cài đặt lần đầu

@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     admin_emails: CommaList = []
     # Optional allowlist for the webhook source (GitLab's IPs / CIDRs); empty = any address.
     webhook_allowed_ips: CommaList = []
+    # Bearer token Prometheus must send to /metrics; empty = open (keep it on the internal network).
+    metrics_token: SecretStr = SecretStr("")
     smtp_url: SecretStr = SecretStr("")  # smtp[s]://user:password@host:port
     smtp_from: str = "codepulse@company.vn"
     slack_webhook_url: SecretStr = SecretStr("")  # default team channel when none is configured

@@ -60,3 +60,4 @@
 
 ## Phase 7 – Hardening & Go-live
 - 7.1: checklist 11 tick đủ: thêm giới hạn IP webhook (WEBHOOK_ALLOWED_IPS, CIDR, tuỳ chọn), header bảo mật (HSTS khi https, nosniff, DENY frame, referrer), job retention hằng ngày (xoá code_excerpt + raw_gitlab quá RETENTION_DAYS, giữ review/finding/metric), pip-audit + npm audit trong CI. Nâng dashboard lên Next 16 để vá PostCSS (1 high, 1 moderate) – npm audit 0 lỗi.
+- 7.2: `/metrics` Prometheus (đọc Postgres/Redis lúc scrape nên đúng với nhiều replica; METRICS_TOKEN tuỳ chọn): queue, worker còn sống, độ trễ review p50/p95 (1 giờ), tỉ lệ lỗi LLM, chi phí hôm nay/tháng/ngân sách. Luật cảnh báo `deploy/prometheus/alerts.yml` (worker chết, queue > 100, LLM lỗi > 10%, vượt 80% ngân sách, API down) + cấu hình scrape mẫu. Service `backup` (pg_dump hằng ngày, giữ 14 ngày vào ./backups). API tự chạy migration khi khởi động. Tick checklist vận hành trong 13.

@@ -1,0 +1,33 @@
+# docs/specs/13 "Cảnh báo": worker down, queue > 100 jobs, LLM errors > 10%, budget > 80%.
+groups:
+  - name: codepulse
+    rules:
+      - alert: CodePulseWorkerDown
+        expr: codepulse_workers_alive == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: No CodePulse worker has a fresh heartbeat; reviews and syncs are not running.
+      - alert: CodePulseQueueBacklog
+        expr: max(codepulse_queue_jobs) > 100
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: More than 100 jobs are waiting in the CodePulse queue.
+      - alert: CodePulseLlmErrors
+        expr: codepulse_llm_error_ratio > 0.10
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: Over 10% of reviews failed in the LLM step in the last hour.
+      - alert: CodePulseBudget80
+        expr: codepulse_llm_cost_usd_month > 0.8 * codepulse_llm_budget_usd and codepulse_llm_budget_usd > 0
+        labels: {severity: warning}
+        annotations:
+          summary: LLM spend passed 80% of MONTHLY_LLM_BUDGET_USD; reviews pause at 100%.
+      - alert: CodePulseApiDown
+        expr: up{job="codepulse"} == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: Prometheus cannot scrape the CodePulse API.
