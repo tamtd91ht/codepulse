@@ -1,0 +1,6 @@
+{
+  "id": 1001,
+  "path_with_namespace": "demo/codepulse-sample",
+  "default_branch": "main",
+  "web_url": "https://gitlab.example.com/demo/codepulse-sample"
+}

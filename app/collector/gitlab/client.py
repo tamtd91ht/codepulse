@@ -203,6 +203,9 @@ class GitLabClient:
             params["updated_after"] = updated_after.isoformat()
         return self.paginate(f"/projects/{project_id}/pipelines", params)
 
+    def pipeline(self, project_id: int, pipeline_id: int) -> Any:
+        return self.get(f"/projects/{project_id}/pipelines/{pipeline_id}")
+
     def user(self, user_id: int) -> Any:
         return self.get(f"/users/{user_id}")
 

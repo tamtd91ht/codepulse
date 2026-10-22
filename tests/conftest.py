@@ -5,6 +5,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import Engine, create_engine
+from sqlalchemy.orm import Session
 
 # Ryuk (the reaper container) races Docker Desktop's port mapping; containers are
 # stopped by their context manager instead.
@@ -32,3 +33,16 @@ def migrated_engine(postgres_url: str) -> Iterator[Engine]:
     engine = create_engine(postgres_url)
     yield engine
     engine.dispose()
+
+
+@pytest.fixture
+def db_session(migrated_engine: Engine) -> Iterator[Session]:
+    """A session whose work is rolled back after the test, so tests never see each other's rows."""
+    with migrated_engine.connect() as connection:
+        transaction = connection.begin()
+        session = Session(bind=connection, join_transaction_mode="create_savepoint")
+        try:
+            yield session
+        finally:
+            session.close()
+            transaction.rollback()

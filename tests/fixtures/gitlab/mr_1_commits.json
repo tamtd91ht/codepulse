@@ -1,0 +1,14 @@
+[
+  {
+    "id": "dddddddddddddddddddddddddddddddddddddddd",
+    "short_id": "dddddddd",
+    "title": "fix: handle empty input",
+    "author_email": "12-binh.tran@users.noreply.gitlab.com"
+  },
+  {
+    "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "short_id": "bbbbbbbb",
+    "title": "feat: vendor chart lib and parser",
+    "author_email": "Binh.Personal@gmail.com"
+  }
+]

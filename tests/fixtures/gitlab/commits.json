@@ -1,0 +1,91 @@
+[
+  {
+    "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "short_id": "aaaaaaaa",
+    "parent_ids": [
+      "0000000000000000000000000000000000000000"
+    ],
+    "title": "feat: add scoring module",
+    "message": "feat: add scoring module\n",
+    "author_name": "Nguyen Van An",
+    "author_email": "an.nguyen@company.vn",
+    "authored_date": "2026-10-01T09:00:00.000+07:00",
+    "committer_name": "Nguyen Van An",
+    "committer_email": "an.nguyen@company.vn",
+    "committed_date": "2026-10-01T09:00:00.000+07:00",
+    "created_at": "2026-10-01T09:00:00.000+07:00",
+    "stats": {
+      "additions": 30,
+      "deletions": 5,
+      "total": 35
+    },
+    "web_url": "https://gitlab.example.com/demo/codepulse-sample/-/commit/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "short_id": "bbbbbbbb",
+    "parent_ids": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "title": "feat: vendor chart lib and parser",
+    "message": "feat: vendor chart lib and parser\n",
+    "author_name": "Tran Thi Binh",
+    "author_email": "Binh.Personal@gmail.com",
+    "authored_date": "2026-10-02T14:00:00.000+07:00",
+    "committer_name": "Tran Thi Binh",
+    "committer_email": "Binh.Personal@gmail.com",
+    "committed_date": "2026-10-02T14:00:00.000+07:00",
+    "created_at": "2026-10-02T14:00:00.000+07:00",
+    "stats": {
+      "additions": 120,
+      "deletions": 0,
+      "total": 120
+    },
+    "web_url": "https://gitlab.example.com/demo/codepulse-sample/-/commit/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  {
+    "id": "cccccccccccccccccccccccccccccccccccccccc",
+    "short_id": "cccccccc",
+    "parent_ids": [
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "title": "Merge branch 'feature' into 'main'",
+    "message": "Merge branch 'feature' into 'main'\n",
+    "author_name": "Nguyen Van An",
+    "author_email": "an.nguyen@company.vn",
+    "authored_date": "2026-10-03T10:00:00.000+07:00",
+    "committer_name": "Nguyen Van An",
+    "committer_email": "an.nguyen@company.vn",
+    "committed_date": "2026-10-03T10:00:00.000+07:00",
+    "created_at": "2026-10-03T10:00:00.000+07:00",
+    "stats": {
+      "additions": 0,
+      "deletions": 0,
+      "total": 0
+    },
+    "web_url": "https://gitlab.example.com/demo/codepulse-sample/-/commit/cccccccccccccccccccccccccccccccccccccccc"
+  },
+  {
+    "id": "dddddddddddddddddddddddddddddddddddddddd",
+    "short_id": "dddddddd",
+    "parent_ids": [
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ],
+    "title": "fix: handle empty input",
+    "message": "fix: handle empty input\n",
+    "author_name": "Tran Thi Binh",
+    "author_email": "12-binh.tran@users.noreply.gitlab.com",
+    "authored_date": "2026-10-02T17:00:00.000+07:00",
+    "committer_name": "Tran Thi Binh",
+    "committer_email": "12-binh.tran@users.noreply.gitlab.com",
+    "committed_date": "2026-10-02T17:00:00.000+07:00",
+    "created_at": "2026-10-02T17:00:00.000+07:00",
+    "stats": {
+      "additions": 8,
+      "deletions": 3,
+      "total": 11
+    },
+    "web_url": "https://gitlab.example.com/demo/codepulse-sample/-/commit/dddddddddddddddddddddddddddddddddddddddd"
+  }
+]

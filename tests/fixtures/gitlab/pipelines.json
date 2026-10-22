@@ -1,0 +1,24 @@
+[
+  {
+    "id": 7001,
+    "project_id": 1001,
+    "sha": "dddddddddddddddddddddddddddddddddddddddd",
+    "ref": "feature/parser",
+    "status": "success",
+    "source": "merge_request_event",
+    "created_at": "2026-10-02T10:01:00.000Z",
+    "updated_at": "2026-10-02T10:06:00.000Z",
+    "web_url": "https://gitlab.example.com/demo/codepulse-sample/-/pipelines/7001"
+  },
+  {
+    "id": 7002,
+    "project_id": 1001,
+    "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "ref": "feature/parser",
+    "status": "failed",
+    "source": "push",
+    "created_at": "2026-10-02T07:01:00.000Z",
+    "updated_at": "2026-10-02T07:03:00.000Z",
+    "web_url": "https://gitlab.example.com/demo/codepulse-sample/-/pipelines/7002"
+  }
+]

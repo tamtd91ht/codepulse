@@ -15,3 +15,4 @@
 
 ## Phase 2 – Thu thập dữ liệu
 - 2.1: `GitLabClient` (httpx): phân trang keyset (Link rel=next) + X-Next-Page, retry exponential + jitter cho 429/5xx/lỗi mạng (tôn trọng Retry-After), rate limit phía client (req/s) + chờ khi RateLimit-Remaining thấp, timeout 30s; fallback `/changes` khi `/diffs` 404. Test bằng respx.
+- 2.2: `GitLabCollector` ghi raw_gitlab cho project, commits (+ diff, bỏ qua merge commit), MRs (+ commits/notes/diffs), pipelines (+ detail để có duration). Diff chỉ lưu thống kê theo file, KHÔNG lưu nội dung (quy tắc AGENTS: không lưu source) → Phase 3 lấy diff trực tiếp từ GitLab. Không có bảng tool layer `gl_*` vì 03 không định nghĩa: extract parse raw trong bộ nhớ. Fixture GitLab hiện là dữ liệu giả lập theo đúng format v4, cần thay bằng dữ liệu thật đã ẩn danh ở Demo.

@@ -1,0 +1,46 @@
+[
+  {
+    "id": 501,
+    "iid": 1,
+    "project_id": 1001,
+    "title": "Parser for review output",
+    "state": "merged",
+    "author": {
+      "id": 12,
+      "username": "binh.tran",
+      "name": "Tran Thi Binh",
+      "state": "active",
+      "web_url": "https://gitlab.example.com/binh.tran"
+    },
+    "source_branch": "feature/parser",
+    "target_branch": "main",
+    "sha": "dddddddddddddddddddddddddddddddddddddddd",
+    "created_at": "2026-10-02T08:00:00.000Z",
+    "updated_at": "2026-10-03T03:00:00.000Z",
+    "merged_at": "2026-10-03T03:00:00.000Z",
+    "closed_at": null,
+    "web_url": "https://gitlab.example.com/demo/codepulse-sample/-/merge_requests/1"
+  },
+  {
+    "id": 502,
+    "iid": 2,
+    "project_id": 1001,
+    "title": "Scoring formula",
+    "state": "opened",
+    "author": {
+      "id": 11,
+      "username": "an.nguyen",
+      "name": "Nguyen Van An",
+      "state": "active",
+      "web_url": "https://gitlab.example.com/an.nguyen"
+    },
+    "source_branch": "feature/scoring",
+    "target_branch": "main",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "created_at": "2026-10-05T02:00:00.000Z",
+    "updated_at": "2026-10-05T02:00:00.000Z",
+    "merged_at": null,
+    "closed_at": null,
+    "web_url": "https://gitlab.example.com/demo/codepulse-sample/-/merge_requests/2"
+  }
+]
