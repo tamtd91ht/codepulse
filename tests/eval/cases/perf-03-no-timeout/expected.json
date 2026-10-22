@@ -1,0 +1,12 @@
+{
+  "description": "Outbound HTTP call without timeout inside the worker loop",
+  "findings": [
+    {
+      "file_path": "app/workers/webhooks.py",
+      "line_start": 9,
+      "line_end": 9,
+      "severity": "medium",
+      "category": "performance"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+diff --git a/app/validation/forms.py b/app/validation/forms.py
+new file mode 100644
+--- /dev/null
++++ b/app/validation/forms.py
+@@ -0,0 +1,20 @@
++def validate_signup(form: dict) -> list[str]:
++    errors = []
++    if not form.get("email") or "@" not in form["email"]:
++        errors.append("email is invalid")
++    if len(form.get("password", "")) < 8:
++        errors.append("password too short")
++    if form.get("password") != form.get("password_confirm"):
++        errors.append("passwords do not match")
++    return errors
++
++
++def validate_profile_update(form: dict) -> list[str]:
++    errors = []
++    if not form.get("email") or "@" not in form["email"]:
++        errors.append("email is invalid")
++    if len(form.get("password", "")) < 6:
++        errors.append("password too short")
++    if form.get("password") != form.get("password_confirm"):
++        errors.append("passwords do not match")
++    return errors

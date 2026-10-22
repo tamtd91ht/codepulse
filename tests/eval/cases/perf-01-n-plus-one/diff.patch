@@ -1,0 +1,17 @@
+diff --git a/app/reports/orders.py b/app/reports/orders.py
+new file mode 100644
+--- /dev/null
++++ b/app/reports/orders.py
+@@ -0,0 +1,12 @@
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++
++from app.models import Customer, Order
++
++
++def order_report(session: Session) -> list[dict]:
++    rows = []
++    for order in session.scalars(select(Order)).all():
++        customer = session.scalars(select(Customer).where(Customer.id == order.customer_id)).one()
++        rows.append({"order": order.id, "customer": customer.name, "total": order.total})
++    return rows

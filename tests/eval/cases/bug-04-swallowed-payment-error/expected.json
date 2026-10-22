@@ -1,0 +1,12 @@
+{
+  "description": "Payment failures are swallowed and reported as success",
+  "findings": [
+    {
+      "file_path": "app/billing/checkout.py",
+      "line_start": 11,
+      "line_end": 12,
+      "severity": "high",
+      "category": "bug"
+    }
+  ]
+}

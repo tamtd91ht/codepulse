@@ -1,0 +1,12 @@
+{
+  "description": "De-duplication with list membership is O(n^2) on large inputs",
+  "findings": [
+    {
+      "file_path": "app/imports/dedupe.py",
+      "line_start": 6,
+      "line_end": 6,
+      "severity": "medium",
+      "category": "performance"
+    }
+  ]
+}

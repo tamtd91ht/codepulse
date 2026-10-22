@@ -1,0 +1,15 @@
+diff --git a/app/workers/webhooks.py b/app/workers/webhooks.py
+new file mode 100644
+--- /dev/null
++++ b/app/workers/webhooks.py
+@@ -0,0 +1,10 @@
++import requests
++
++from app.queue import next_delivery, mark_done
++
++
++def run_forever() -> None:
++    while True:
++        delivery = next_delivery()
++        response = requests.post(delivery.url, json=delivery.payload)
++        mark_done(delivery.id, response.status_code)

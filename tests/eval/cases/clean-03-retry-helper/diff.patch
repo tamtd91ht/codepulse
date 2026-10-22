@@ -1,0 +1,24 @@
+diff --git a/app/http/retry.py b/app/http/retry.py
+new file mode 100644
+--- /dev/null
++++ b/app/http/retry.py
+@@ -0,0 +1,19 @@
++import time
++from collections.abc import Callable
++from typing import TypeVar
++
++T = TypeVar("T")
++
++
++def retry(call: Callable[[], T], attempts: int = 3, base_delay: float = 0.5) -> T:
++    """Run `call`, retrying with exponential backoff; re-raise the last error."""
++    if attempts < 1:
++        raise ValueError("attempts must be >= 1")
++    for attempt in range(attempts):
++        try:
++            return call()
++        except ConnectionError:
++            if attempt == attempts - 1:
++                raise
++            time.sleep(base_delay * 2**attempt)
++    raise AssertionError("unreachable")

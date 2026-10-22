@@ -1,0 +1,12 @@
+{
+  "description": "One query per order to load its customer",
+  "findings": [
+    {
+      "file_path": "app/reports/orders.py",
+      "line_start": 10,
+      "line_end": 10,
+      "severity": "medium",
+      "category": "performance"
+    }
+  ]
+}

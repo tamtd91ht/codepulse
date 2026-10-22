@@ -1,0 +1,16 @@
+diff --git a/app/users/lookup.py b/app/users/lookup.py
+new file mode 100644
+--- /dev/null
++++ b/app/users/lookup.py
+@@ -0,0 +1,11 @@
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++
++from app.models import User
++
++
++def find_active_user(session: Session, email: str) -> User | None:
++    """Return the active user with this email, or None."""
++    return session.scalars(
++        select(User).where(User.email == email.strip().lower(), User.active.is_(True))
++    ).first()

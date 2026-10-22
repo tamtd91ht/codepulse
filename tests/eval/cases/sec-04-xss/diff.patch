@@ -1,0 +1,23 @@
+diff --git a/web/components/Comment.tsx b/web/components/Comment.tsx
+new file mode 100644
+--- /dev/null
++++ b/web/components/Comment.tsx
+@@ -0,0 +1,18 @@
++import React from "react";
++
++type CommentProps = {
++  author: string;
++  body: string;
++  createdAt: string;
++};
++
++export function Comment({ author, body, createdAt }: CommentProps) {
++  return (
++    <article className="comment">
++      <header>
++        <strong>{author}</strong> <time>{createdAt}</time>
++      </header>
++      <div className="comment-body" dangerouslySetInnerHTML={{ __html: body }} />
++    </article>
++  );
++}

@@ -1,0 +1,16 @@
+diff --git a/app/settings.py b/app/settings.py
+new file mode 100644
+--- /dev/null
++++ b/app/settings.py
+@@ -0,0 +1,11 @@
++from pydantic import Field, SecretStr
++from pydantic_settings import BaseSettings, SettingsConfigDict
++
++
++class Settings(BaseSettings):
++    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
++
++    database_url: str
++    api_token: SecretStr
++    request_timeout_s: float = Field(default=10.0, gt=0, le=120)
++    page_size: int = Field(default=50, ge=1, le=500)

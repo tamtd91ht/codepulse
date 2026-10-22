@@ -1,0 +1,12 @@
+{
+  "description": "SQL built from user input with an f-string",
+  "findings": [
+    {
+      "file_path": "app/users/repository.py",
+      "line_start": 7,
+      "line_end": 7,
+      "severity": "critical",
+      "category": "security"
+    }
+  ]
+}

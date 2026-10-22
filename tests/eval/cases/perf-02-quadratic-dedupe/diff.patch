@@ -1,0 +1,13 @@
+diff --git a/app/imports/dedupe.py b/app/imports/dedupe.py
+new file mode 100644
+--- /dev/null
++++ b/app/imports/dedupe.py
+@@ -0,0 +1,8 @@
++def unique_emails(rows: list[dict]) -> list[str]:
++    """Called on CSV imports with up to 200k rows."""
++    seen: list[str] = []
++    for row in rows:
++        email = row["email"].strip().lower()
++        if email not in seen:
++            seen.append(email)
++    return seen

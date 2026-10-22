@@ -1,0 +1,20 @@
+diff --git a/app/files/download.py b/app/files/download.py
+new file mode 100644
+--- /dev/null
++++ b/app/files/download.py
+@@ -0,0 +1,15 @@
++import os
++
++from fastapi import APIRouter
++from fastapi.responses import FileResponse
++
++router = APIRouter()
++BASE_DIR = "/srv/reports"
++
++
++@router.get("/reports/download")
++def download_report(filename: str) -> FileResponse:
++    path = os.path.join(BASE_DIR, filename)
++    if not os.path.exists(path):
++        return FileResponse(os.path.join(BASE_DIR, "missing.pdf"))
++    return FileResponse(path)

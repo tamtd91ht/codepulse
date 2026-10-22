@@ -1,0 +1,21 @@
+diff --git a/tests/test_slug.py b/tests/test_slug.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_slug.py
+@@ -0,0 +1,16 @@
++import pytest
++
++from app.text import slugify
++
++
++@pytest.mark.parametrize(
++    ("title", "slug"),
++    [
++        ("Hello World", "hello-world"),
++        ("  Trim me  ", "trim-me"),
++        ("Tiếng Việt có dấu", "tieng-viet-co-dau"),
++        ("a--b", "a-b"),
++    ],
++)
++def test_slugify(title: str, slug: str) -> None:
++    assert slugify(title) == slug

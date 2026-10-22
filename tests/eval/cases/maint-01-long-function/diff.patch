@@ -1,0 +1,82 @@
+diff --git a/app/orders/process.py b/app/orders/process.py
+new file mode 100644
+--- /dev/null
++++ b/app/orders/process.py
+@@ -0,0 +1,77 @@
++def process_order(order, user, inventory, mailer, db, config):
++    total = 0
++    if order["items"][0]["qty"] > 0:
++        total += order["items"][0]["price"] * 1
++        if user["tier"] == "gold" and total > 100:
++            total -= 5
++    if order["items"][1]["qty"] > 1:
++        total += order["items"][1]["price"] * 2
++        if user["tier"] == "gold" and total > 200:
++            total -= 6
++    if order["items"][2]["qty"] > 2:
++        total += order["items"][2]["price"] * 3
++        if user["tier"] == "gold" and total > 300:
++            total -= 7
++    if order["items"][0]["qty"] > 3:
++        total += order["items"][0]["price"] * 4
++        if user["tier"] == "gold" and total > 400:
++            total -= 8
++    if order["items"][1]["qty"] > 4:
++        total += order["items"][1]["price"] * 1
++        if user["tier"] == "gold" and total > 500:
++            total -= 9
++    if order["items"][2]["qty"] > 5:
++        total += order["items"][2]["price"] * 2
++        if user["tier"] == "gold" and total > 600:
++            total -= 10
++    if order["items"][0]["qty"] > 6:
++        total += order["items"][0]["price"] * 3
++        if user["tier"] == "gold" and total > 700:
++            total -= 11
++    if order["items"][1]["qty"] > 7:
++        total += order["items"][1]["price"] * 4
++        if user["tier"] == "gold" and total > 800:
++            total -= 12
++    if order["items"][2]["qty"] > 8:
++        total += order["items"][2]["price"] * 1
++        if user["tier"] == "gold" and total > 900:
++            total -= 13
++    if order["items"][0]["qty"] > 9:
++        total += order["items"][0]["price"] * 2
++        if user["tier"] == "gold" and total > 1000:
++            total -= 14
++    if order["items"][1]["qty"] > 10:
++        total += order["items"][1]["price"] * 3
++        if user["tier"] == "gold" and total > 1100:
++            total -= 15
++    if order["items"][2]["qty"] > 11:
++        total += order["items"][2]["price"] * 4
++        if user["tier"] == "gold" and total > 1200:
++            total -= 16
++    if order["items"][0]["qty"] > 12:
++        total += order["items"][0]["price"] * 1
++        if user["tier"] == "gold" and total > 1300:
++            total -= 17
++    if order["items"][1]["qty"] > 13:
++        total += order["items"][1]["price"] * 2
++        if user["tier"] == "gold" and total > 1400:
++            total -= 18
++    if order["items"][2]["qty"] > 14:
++        total += order["items"][2]["price"] * 3
++        if user["tier"] == "gold" and total > 1500:
++            total -= 19
++    if order["items"][0]["qty"] > 15:
++        total += order["items"][0]["price"] * 4
++        if user["tier"] == "gold" and total > 1600:
++            total -= 20
++    if order["items"][1]["qty"] > 16:
++        total += order["items"][1]["price"] * 1
++        if user["tier"] == "gold" and total > 1700:
++            total -= 21
++    if order["items"][2]["qty"] > 17:
++        total += order["items"][2]["price"] * 2
++        if user["tier"] == "gold" and total > 1800:
++            total -= 22
++    db.save(order, total)
++    mailer.send(user["email"], total)
++    return total

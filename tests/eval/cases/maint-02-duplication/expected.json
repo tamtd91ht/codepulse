@@ -1,0 +1,12 @@
+{
+  "description": "Two copy-pasted validators that already differ",
+  "findings": [
+    {
+      "file_path": "app/validation/forms.py",
+      "line_start": 12,
+      "line_end": 20,
+      "severity": "low",
+      "category": "maintainability"
+    }
+  ]
+}

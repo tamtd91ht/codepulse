@@ -167,10 +167,11 @@ def test_commit_review(db_session: Session) -> None:
     db_session.flush()
     provider = FakeLLMProvider()
     with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
-        mount(router)
+        # Registered before mount(): respx uses the first matching route.
         router.get(url__regex=r".*/repository/files/.*").mock(
             return_value=httpx.Response(200, text="def parse():\n    pass\n")
         )
+        mount(router)
         service = ReviewService(db_session, client, provider, SETTINGS)
         review = service.review_commit(project, commit)
     assert review is not None

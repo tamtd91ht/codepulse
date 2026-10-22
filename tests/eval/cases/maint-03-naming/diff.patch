@@ -1,0 +1,11 @@
+diff --git a/app/pricing/calc.py b/app/pricing/calc.py
+new file mode 100644
+--- /dev/null
++++ b/app/pricing/calc.py
+@@ -0,0 +1,6 @@
++def f(a, b, c):
++    x = a * b
++    if c:
++        x = x - x * 0.1
++    y = x * 1.08
++    return round(y, 2)

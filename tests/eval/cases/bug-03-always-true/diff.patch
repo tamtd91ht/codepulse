@@ -1,0 +1,15 @@
+diff --git a/app/orders/shipping.py b/app/orders/shipping.py
+new file mode 100644
+--- /dev/null
++++ b/app/orders/shipping.py
+@@ -0,0 +1,10 @@
++from app.orders.models import Order
++from app.shipping import create_shipment
++
++
++def ship_if_ready(order: Order) -> bool:
++    if order.status == "paid" or "confirmed":
++        create_shipment(order)
++        order.status = "shipped"
++        return True
++    return False

@@ -1,0 +1,12 @@
+{
+  "description": "Comment HTML rendered without sanitising",
+  "findings": [
+    {
+      "file_path": "web/components/Comment.tsx",
+      "line_start": 15,
+      "line_end": 15,
+      "severity": "high",
+      "category": "security"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "description": "Live payment secret committed in code",
+  "findings": [
+    {
+      "file_path": "app/integrations/payments.py",
+      "line_start": 3,
+      "line_end": 3,
+      "severity": "critical",
+      "category": "security"
+    }
+  ]
+}

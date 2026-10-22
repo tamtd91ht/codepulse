@@ -1,0 +1,12 @@
+{
+  "description": "Mutable default argument shares tags between calls",
+  "findings": [
+    {
+      "file_path": "app/catalog/tags.py",
+      "line_start": 1,
+      "line_end": 1,
+      "severity": "medium",
+      "category": "bug"
+    }
+  ]
+}

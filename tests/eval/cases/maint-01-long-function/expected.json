@@ -1,0 +1,12 @@
+{
+  "description": "An 80-line function of nested magic-number branches",
+  "findings": [
+    {
+      "file_path": "app/orders/process.py",
+      "line_start": 1,
+      "line_end": 1,
+      "severity": "low",
+      "category": "maintainability"
+    }
+  ]
+}

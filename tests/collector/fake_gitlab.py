@@ -39,6 +39,10 @@ def mount(router: respx.MockRouter, project_id: int = 1001) -> respx.MockRouter:
     router.get(url__regex=rf"{p}/pipelines/(?P<pid>\d+)$").mock(
         side_effect=lambda r, pid: _serve(f"pipeline_{pid}.json")
     )
+    # File contents (review context): none by default, so context is simply skipped.
+    router.get(url__regex=rf"{p}/repository/files/.+/raw").mock(
+        return_value=httpx.Response(404, json={"message": "404 File Not Found"})
+    )
     router.get(url__regex=rf"{API}/users/(?P<uid>\d+)$").mock(
         side_effect=lambda r, uid: _serve(f"users_{uid}.json")
     )

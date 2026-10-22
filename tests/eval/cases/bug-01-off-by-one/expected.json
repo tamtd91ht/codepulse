@@ -1,0 +1,12 @@
+{
+  "description": "The last notification of every batch is never sent",
+  "findings": [
+    {
+      "file_path": "app/notifications/sender.py",
+      "line_start": 10,
+      "line_end": 10,
+      "severity": "high",
+      "category": "bug"
+    }
+  ]
+}

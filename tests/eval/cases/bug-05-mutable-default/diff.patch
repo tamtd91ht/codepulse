@@ -1,0 +1,16 @@
+diff --git a/app/catalog/tags.py b/app/catalog/tags.py
+new file mode 100644
+--- /dev/null
++++ b/app/catalog/tags.py
+@@ -0,0 +1,11 @@
++def add_tag(tag: str, tags: list[str] = []) -> list[str]:
++    if tag not in tags:
++        tags.append(tag)
++    return tags
++
++
++def product_tags(product: dict) -> list[str]:
++    result = add_tag(product["category"])
++    for extra in product.get("labels", []):
++        result = add_tag(extra, result)
++    return result

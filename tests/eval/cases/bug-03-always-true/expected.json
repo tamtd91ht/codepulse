@@ -1,0 +1,12 @@
+{
+  "description": "Condition is always true, so unpaid orders get shipped",
+  "findings": [
+    {
+      "file_path": "app/orders/shipping.py",
+      "line_start": 6,
+      "line_end": 6,
+      "severity": "high",
+      "category": "bug"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+diff --git a/app/users/repository.py b/app/users/repository.py
+new file mode 100644
+--- /dev/null
++++ b/app/users/repository.py
+@@ -0,0 +1,11 @@
++from app.db import get_connection
++
++
++def find_user_by_email(email: str) -> dict | None:
++    conn = get_connection()
++    cursor = conn.cursor()
++    cursor.execute(f"SELECT id, email, name FROM users WHERE email = '{email}'")
++    row = cursor.fetchone()
++    if row is None:
++        return None
++    return {"id": row[0], "email": row[1], "name": row[2]}

@@ -1,0 +1,12 @@
+{
+  "description": "Login dereferences a user that may not exist",
+  "findings": [
+    {
+      "file_path": "app/auth/login.py",
+      "line_start": 11,
+      "line_end": 11,
+      "severity": "high",
+      "category": "bug"
+    }
+  ]
+}

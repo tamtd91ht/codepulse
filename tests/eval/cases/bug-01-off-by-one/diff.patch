@@ -1,0 +1,19 @@
+diff --git a/app/notifications/sender.py b/app/notifications/sender.py
+new file mode 100644
+--- /dev/null
++++ b/app/notifications/sender.py
+@@ -0,0 +1,14 @@
++import logging
++
++from app.notifications.channel import send
++
++log = logging.getLogger(__name__)
++
++
++def send_batch(notifications: list[dict]) -> int:
++    sent = 0
++    for i in range(len(notifications) - 1):
++        send(notifications[i])
++        sent += 1
++    log.info("sent %d notifications", sent)
++    return sent

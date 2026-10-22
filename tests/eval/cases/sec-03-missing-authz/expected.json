@@ -1,0 +1,12 @@
+{
+  "description": "Any logged-in user can delete any invoice",
+  "findings": [
+    {
+      "file_path": "app/api/invoices.py",
+      "line_start": 19,
+      "line_end": 19,
+      "severity": "high",
+      "category": "security"
+    }
+  ]
+}

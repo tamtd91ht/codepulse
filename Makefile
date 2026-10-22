@@ -1,6 +1,6 @@
 PY ?= python
 
-.PHONY: up down migrate seed lint test test-unit
+.PHONY: up down migrate seed lint test test-unit eval
 
 up:
 	docker compose up -d --build
@@ -25,3 +25,7 @@ test:
 
 test-unit:
 	$(PY) -m pytest -m "not integration"
+
+# Calls the real LLM (costs money): run when the prompt, rubric, model or CLI version changes.
+eval:
+	$(PY) -m app.review.eval

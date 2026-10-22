@@ -36,7 +36,7 @@
 - [x] 3.5 Worker review MR/commit, trạng thái, superseded khi MR update
 - [x] 3.6 Theo dõi token/chi phí + ngân sách tháng
 - [x] 3.7 Đăng comment tổng lên MR (bật theo project)
-- [ ] 3.8 Bộ eval + `make eval` đạt ngưỡng (12)
+- [x] 3.8 Bộ eval + `make eval` đạt ngưỡng (12)
 - [ ] **Demo**: mở MR test có lỗi SQLi → nhận comment critical trong ≤ 2 phút
 
 ## Phase 4 – Chấm điểm & Tổng hợp (≈ 1 tuần)

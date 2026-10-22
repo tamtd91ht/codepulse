@@ -1,0 +1,18 @@
+diff --git a/app/auth/login.py b/app/auth/login.py
+new file mode 100644
+--- /dev/null
++++ b/app/auth/login.py
+@@ -0,0 +1,13 @@
++from app.auth.passwords import verify_password
++from app.users.repository import find_user_by_email
++
++
++class LoginError(Exception):
++    pass
++
++
++def login(email: str, password: str) -> str:
++    user = find_user_by_email(email)
++    if not verify_password(password, user["password_hash"]):
++        raise LoginError("invalid credentials")
++    return user["id"]

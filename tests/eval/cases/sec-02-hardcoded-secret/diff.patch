@@ -1,0 +1,20 @@
+diff --git a/app/integrations/payments.py b/app/integrations/payments.py
+new file mode 100644
+--- /dev/null
++++ b/app/integrations/payments.py
+@@ -0,0 +1,15 @@
++import httpx
++
++STRIPE_SECRET_KEY = "prod-pay-9f8e7d6c5b4a3210fedcba9876543210"
++API_BASE = "https://api.stripe.com/v1"
++
++
++def create_charge(amount_cents: int, customer_id: str) -> dict:
++    response = httpx.post(
++        f"{API_BASE}/charges",
++        data={"amount": amount_cents, "currency": "usd", "customer": customer_id},
++        auth=(STRIPE_SECRET_KEY, ""),
++        timeout=10,
++    )
++    response.raise_for_status()
++    return response.json()

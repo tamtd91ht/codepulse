@@ -1,0 +1,12 @@
+{
+  "description": "File download joins a user-controlled name onto the base dir",
+  "findings": [
+    {
+      "file_path": "app/files/download.py",
+      "line_start": 12,
+      "line_end": 12,
+      "severity": "critical",
+      "category": "security"
+    }
+  ]
+}
