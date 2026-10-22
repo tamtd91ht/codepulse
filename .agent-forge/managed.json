@@ -1,0 +1,29 @@
+{
+  "version": "1",
+  "generated_by": "agent-forge 0.4.0",
+  "note": "Managed by Agent Forge. Edit installed files freely; drift is detected, never overwritten.",
+  "capabilities": [
+    {
+      "capability_id": "forge.agent.backend-reviewer",
+      "version": "1.0.0",
+      "transaction_id": "tx-20261022-043235-f885be",
+      "installed_at": "2026-10-22T04:32:35+00:00",
+      "files": {
+        ".claude/agents/backend-reviewer.md": "f40537e36f4b8021ec560907eb5b02d368b7838aaa76b3713828b52b9e0caa92"
+      },
+      "sections": {},
+      "json_merges": {}
+    },
+    {
+      "capability_id": "forge.skill.agent-forge-upgrade",
+      "version": "2.2.0",
+      "transaction_id": "tx-20261022-042230-fa0ff1",
+      "installed_at": "2026-10-22T04:22:30+00:00",
+      "files": {
+        ".claude/skills/agent-forge-upgrade/SKILL.md": "2de8a5527ecf3e2389c389460ce035804b3a8eac92518bc9fa32b10b20a6229d"
+      },
+      "sections": {},
+      "json_merges": {}
+    }
+  ]
+}

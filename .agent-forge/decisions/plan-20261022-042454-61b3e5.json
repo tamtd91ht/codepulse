@@ -1,0 +1,365 @@
+{
+  "schema_version": "1",
+  "plan_id": "plan-20261022-042454-61b3e5",
+  "assessed_by": "claude-opus-5-5",
+  "assessed_at": "2026-10-22T04:26:55+00:00",
+  "platform": "claude_code",
+  "decisions": [
+    {
+      "capability_id": "ecc.rules.common",
+      "verdict": "SKIP",
+      "grounds": [
+        "conflicts"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [
+        {
+          "path": "docs/specs/AGENTS.md",
+          "quote": "viết test trước (nếu hợp lý)"
+        },
+        {
+          "path": "docs/specs/12_TESTING_QA.md",
+          "quote": "Coverage tổng ≥ 75%, `scoring/` & `review/` ≥ 80%"
+        }
+      ],
+      "gap": null,
+      "context_chars": 11108,
+      "always_on": true,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Always-on testing.md mandates 'MANDATORY workflow: 1. Write test first' and a flat 80% coverage for every module; the project makes test-first conditional and sets 75% overall / 80% only for scoring/ and review/. ~11.1k chars loaded in every session."
+    },
+    {
+      "capability_id": "ecc.tdd-workflow",
+      "verdict": "SKIP",
+      "grounds": [
+        "conflicts"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [
+        {
+          "path": "docs/specs/AGENTS.md",
+          "quote": "viết test trước (nếu hợp lý)"
+        },
+        {
+          "path": "docs/specs/12_TESTING_QA.md",
+          "quote": "| E2E | Playwright (nếu có web app) |"
+        }
+      ],
+      "gap": null,
+      "context_chars": 304,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "SKILL.md says 'ALWAYS write tests first' and 'Minimum 80% coverage (unit + integration + E2E)'; the project makes test-first conditional and E2E only if a web app is chosen. Examples are jest/npm while the stack is pytest."
+    },
+    {
+      "capability_id": "ecc.verification-loop",
+      "verdict": "SKIP",
+      "grounds": [
+        "covered"
+      ],
+      "scope": "install",
+      "confidence": "medium",
+      "covered_by": [
+        {
+          "path": "docs/specs/AGENTS.md",
+          "quote": "3. Chạy `make lint test`."
+        }
+      ],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 323,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "AGENTS.md per-task procedure already requires running make lint test before ticking the task; the skill's commands are npm/console.log oriented."
+    },
+    {
+      "capability_id": "ecc.agent.planner",
+      "verdict": "SKIP",
+      "grounds": [
+        "covered"
+      ],
+      "scope": "install",
+      "confidence": "medium",
+      "covered_by": [
+        {
+          "path": "docs/specs/AGENTS.md",
+          "quote": "theo `14_TASKS_CHECKLIST.md`; không nhảy phase"
+        },
+        {
+          "path": "docs/specs/14_TASKS_CHECKLIST.md",
+          "quote": "Agent tick `[x]` khi xong"
+        }
+      ],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 221,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Planning is already done: 14 spec files plus a phased task checklist the agent must follow one task at a time."
+    },
+    {
+      "capability_id": "ecc.coding-standards",
+      "verdict": "SKIP",
+      "grounds": [
+        "covered"
+      ],
+      "scope": "install",
+      "confidence": "medium",
+      "covered_by": [
+        {
+          "path": "docs/specs/AGENTS.md",
+          "quote": "Python 3.12, type hints đầy đủ, `ruff` + `mypy --strict` pass."
+        }
+      ],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 283,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Only rejected because it conflicts with ecc.rules.common. The project states its own standard (Python 3.12, full type hints, ruff + mypy --strict)."
+    },
+    {
+      "capability_id": "mattpocock.diagnosing-bugs",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "low",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 171,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "No ground to skip and no concrete gap either: there is no code yet, so nothing to debug. Reasonable to defer until Phase 1 code exists."
+    },
+    {
+      "capability_id": "forge.agent.backend-reviewer",
+      "verdict": "ADD",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "medium",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": "No reviewer subagent and no code-review step in the AGENTS.md task procedure (spec -> test -> implement -> make lint test -> tick -> PROGRESS -> commit); the spec defines a FastAPI/Postgres/Redis backend with strict security/privacy rules (11_SECURITY_PRIVACY.md).",
+      "context_chars": 439,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Scan rejects it (project type unknown: no code yet), but 02_ARCHITECTURE.md declares a FastAPI backend service. Its dimensions (security, data integrity, traffic readiness, API contract, clarity) match; money/transactions is irrelevant. On-demand, low risk, no permissions. Needs --request."
+    },
+    {
+      "capability_id": "ecc.agent.code-reviewer",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "medium",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 196,
+      "always_on": false,
+      "risk": [
+        "permissions: runs_shell"
+      ],
+      "evidence": "not_measured",
+      "reason": "Generic alternative to forge.agent.backend-reviewer with shell access (risk medium). Installing both would duplicate review; choose one."
+    },
+    {
+      "capability_id": "karpathy.principles",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "medium",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 1854,
+      "always_on": true,
+      "risk": [
+        "shared_file: creates/edits CLAUDE.md"
+      ],
+      "evidence": "not_measured",
+      "reason": "No CLAUDE.md exists, and AGENTS.md sits under code-quality-specs/, so Claude Code auto-loads no project instructions. This would create a CLAUDE.md section (~45 lines always-on). Overlap: AGENTS.md already says 'Không tự thêm tính năng ngoài spec'."
+    },
+    {
+      "capability_id": "mcp.context7",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "medium",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [
+        "mcp: process + network"
+      ],
+      "evidence": "not_measured",
+      "reason": "Gap: version-specific APIs (Pydantic v2, SQLAlchemy 2, FastAPI). Cost: an MCP server with network access; the project forbids sending source code to external LLMs in some modes (doc lookups send library names, not code)."
+    },
+    {
+      "capability_id": "forge.managed-notice",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "low",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 427,
+      "always_on": true,
+      "risk": [
+        "shared_file: CLAUDE.md section"
+      ],
+      "evidence": "not_measured",
+      "reason": "Only discoverability of managed files; with one managed skill it adds little. Shared-file edit, so it is the user's call."
+    },
+    {
+      "capability_id": "ecc.python-patterns",
+      "verdict": "SKIP",
+      "grounds": [
+        "stack_mismatch"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 249,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Applicability needs python/fastapi; scan --json reports languages [] and frameworks [] (no code yet). It fits the planned stack: re-assess after Phase 1.1 creates the repo skeleton."
+    },
+    {
+      "capability_id": "ecc.python-testing",
+      "verdict": "SKIP",
+      "grounds": [
+        "stack_mismatch"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 212,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Applicability needs python/fastapi; scan --json reports languages [] and frameworks [] (no code yet). It fits the planned stack: re-assess after Phase 1.1 creates the repo skeleton."
+    },
+    {
+      "capability_id": "ecc.fastapi-patterns",
+      "verdict": "SKIP",
+      "grounds": [
+        "stack_mismatch"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 331,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Applicability needs python/fastapi; scan --json reports languages [] and frameworks [] (no code yet). It fits the planned stack: re-assess after Phase 1.1 creates the repo skeleton."
+    },
+    {
+      "capability_id": "ecc.postgres-patterns",
+      "verdict": "SKIP",
+      "grounds": [
+        "stack_mismatch"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 236,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Applicability needs python/fastapi; scan --json reports languages [] and frameworks [] (no code yet). It fits the planned stack: re-assess after Phase 1.1 creates the repo skeleton."
+    },
+    {
+      "capability_id": "ecc.redis-patterns",
+      "verdict": "SKIP",
+      "grounds": [
+        "stack_mismatch"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 278,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Applicability needs python/fastapi; scan --json reports languages [] and frameworks [] (no code yet). It fits the planned stack: re-assess after Phase 1.1 creates the repo skeleton."
+    },
+    {
+      "capability_id": "ecc.database-migrations",
+      "verdict": "SKIP",
+      "grounds": [
+        "stack_mismatch"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 413,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Applicability needs python/fastapi; scan --json reports languages [] and frameworks [] (no code yet). It fits the planned stack: re-assess after Phase 1.1 creates the repo skeleton."
+    },
+    {
+      "capability_id": "forge.hook.python-ruff-format",
+      "verdict": "SKIP",
+      "grounds": [
+        "stack_mismatch"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Applicability needs python/fastapi; scan --json reports languages [] and frameworks [] (no code yet). It fits the planned stack: re-assess after Phase 1.1 creates the repo skeleton."
+    },
+    {
+      "capability_id": "forge.hook.guard-secrets-python",
+      "verdict": "SKIP",
+      "grounds": [
+        "stack_mismatch"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Applicability needs python/fastapi; scan --json reports languages [] and frameworks [] (no code yet). It fits the planned stack: re-assess after Phase 1.1 creates the repo skeleton."
+    }
+  ]
+}
