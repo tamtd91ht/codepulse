@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterator
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -172,8 +173,27 @@ class GitLabClient:
     def user(self, user_id: int) -> Any:
         return self.get(f"/users/{user_id}")
 
+    def merge_request(self, project_id: int, iid: int) -> Any:
+        return self.get(f"/projects/{project_id}/merge_requests/{iid}")
+
+    def commit_merge_requests(self, project_id: int, sha: str) -> list[Any]:
+        return list(
+            self.paginate(f"/projects/{project_id}/repository/commits/{sha}/merge_requests")
+        )
+
+    def file_raw(self, project_id: int, path: str, ref: str) -> str:
+        encoded = quote(path, safe="")
+        response = self.request(
+            "GET", f"/projects/{project_id}/repository/files/{encoded}/raw", params={"ref": ref}
+        )
+        return response.text
+
     def create_mr_note(self, project_id: int, iid: int, body: str) -> Any:
         return self.post(f"/projects/{project_id}/merge_requests/{iid}/notes", {"body": body})
+
+    def update_mr_note(self, project_id: int, iid: int, note_id: int, body: str) -> Any:
+        path = f"/projects/{project_id}/merge_requests/{iid}/notes/{note_id}"
+        return self.request("PUT", path, json={"body": body}).json()
 
     def project_hooks(self, project_id: int) -> list[Any]:
         return list(self.paginate(f"/projects/{project_id}/hooks"))

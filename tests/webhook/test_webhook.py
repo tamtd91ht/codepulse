@@ -158,6 +158,76 @@ def test_mr_update_supersedes_old_reviews_and_syncs(
     assert (old.status, current.status, failed.status) == ("superseded", "queued", "failed")
     assert queue.jobs[0][0] == "app.collector.sync.sync_project_job"
     assert queue.jobs[0][1] == (project.id,)
+    func, args, kwargs = queue.jobs[1]
+    assert (func, args) == ("app.workers.review_jobs.review_mr_job", (project.id, 1, "b" * 40))
+    assert kwargs["job_id"] == f"review-mr-{project.id}-1-{'b' * 12}"
+    assert kwargs["retry"].max == 3
+
+
+def queued_functions(queue: FakeQueue) -> list[str]:
+    return [func.rsplit(".", 1)[1] for func, _, _ in queue.jobs]
+
+
+@pytest.mark.parametrize(
+    ("attrs", "reviewed"),
+    [
+        ({"action": "open"}, True),
+        ({"action": "reopen"}, True),
+        ({"action": "update"}, False),  # title or label edit: no new commits
+        ({"action": "merge"}, False),
+    ],
+)
+def test_mr_events_that_trigger_a_review(
+    db_session: Session, project: Project, queue: FakeQueue, attrs: dict[str, Any], reviewed: bool
+) -> None:
+    payload = {
+        "project": {"id": 1001},
+        "object_attributes": {"iid": 2, "last_commit": {"id": "e" * 40}, **attrs},
+    }
+    handle_event(db_session, queue, "Merge Request Hook", payload)
+    assert ("review_mr_job" in queued_functions(queue)) is reviewed
+
+
+def test_disabled_project_is_never_reviewed(
+    db_session: Session, project: Project, queue: FakeQueue
+) -> None:
+    project.review_enabled = False
+    payload = {
+        "project": {"id": 1001},
+        "object_attributes": {"iid": 2, "action": "open", "last_commit": {"id": "e" * 40}},
+    }
+    handle_event(db_session, queue, "Merge Request Hook", payload)
+    assert queued_functions(queue) == ["sync_project_job"]
+
+
+def push(ref: str, *shas: str, after: str = "f" * 40) -> dict[str, Any]:
+    return {
+        "project": {"id": 1001, "default_branch": "main"},
+        "ref": ref,
+        "after": after,
+        "commits": [{"id": sha} for sha in shas],
+    }
+
+
+def test_direct_pushes_to_the_default_branch_are_reviewed_unless_in_an_mr(
+    db_session: Session, project: Project, queue: FakeQueue
+) -> None:
+    in_mr = {"1" * 40}
+    payload = push("refs/heads/main", "1" * 40, "2" * 40)
+    handle_event(db_session, queue, "Push Hook", payload, commit_in_mr=lambda p, sha: sha in in_mr)
+    reviews = [args for func, args, _ in queue.jobs if func.endswith("review_commit_job")]
+    assert reviews == [(project.id, "2" * 40)]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [push("refs/heads/feature", "2" * 40), push("refs/heads/main", after="0" * 40)],
+)
+def test_other_pushes_only_sync(
+    db_session: Session, project: Project, queue: FakeQueue, payload: dict[str, Any]
+) -> None:
+    handle_event(db_session, queue, "Push Hook", payload, commit_in_mr=lambda p, sha: False)
+    assert queued_functions(queue) == ["sync_project_job"]
 
 
 def test_undecryptable_secret_is_a_mismatch_not_a_crash(
