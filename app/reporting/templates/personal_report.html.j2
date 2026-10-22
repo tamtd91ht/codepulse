@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="vi">
+<head><meta charset="utf-8"><title>{{ r.title }}</title></head>
+<body style="font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1c1c1a; max-width: 640px; margin: 0 auto; padding: 16px;">
+<h1 style="font-size: 20px;">{{ r.title }}</h1>
+<p>Chào {{ r.name }}, đây là dữ liệu của riêng bạn. Chỉ bạn và lead của bạn xem được điểm cá nhân.</p>
+<table style="border-collapse: collapse; width: 100%;">
+  <tr>{% for h in ["Chỉ số", "Kỳ này", "Kỳ trước", "Δ"] %}<th style="text-align: left; border-bottom: 1px solid #ccc; padding: 6px;">{{ h }}</th>{% endfor %}</tr>
+  {% for row in r.rows %}
+  <tr>
+    <td style="padding: 6px; border-bottom: 1px solid #eee;">{{ row.label }}</td>
+    <td style="padding: 6px; border-bottom: 1px solid #eee;">{{ row.now | fmt(row.digits) }}</td>
+    <td style="padding: 6px; border-bottom: 1px solid #eee;">{{ row.before | fmt(row.digits) }}</td>
+    <td style="padding: 6px; border-bottom: 1px solid #eee;">{{ row.delta | signed(row.digits) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p>Quality Index trung bình của team: {{ r.team_quality_index | fmt }}</p>
+<h2 style="font-size: 16px;">Finding đang mở</h2>
+<ul>
+  {% for i in r.open_issues %}<li><strong>[{{ i.severity }}]</strong> {{ i.title }} – <code>{{ i.where }}</code> – {{ i.days }} ngày</li>{% else %}<li>Không có finding critical/high/medium nào đang mở.</li>{% endfor %}
+</ul>
+{% if r.categories %}
+<h2 style="font-size: 16px;">Loại lỗi gặp nhiều nhất</h2>
+<ul>{% for name, count in r.categories %}<li>{{ name }}: {{ count }}</li>{% endfor %}</ul>
+{% endif %}
+<p><a href="{{ r.dashboard_url }}">Xem chi tiết và khiếu nại finding sai</a></p>
+<p style="color: #6b6b66; font-size: 12px;">Điểm là tín hiệu coaching, không phải căn cứ duy nhất để đánh giá hiệu suất.</p>
+</body>
+</html>

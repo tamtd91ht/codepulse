@@ -11,9 +11,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
-from app.models import MetricsTeamPeriod, Team, TeamMember, User
+from app.models import MetricsTeamPeriod, MetricsUserPeriod, Team, TeamMember, User
 from app.reporting.notify import Delivery, DeliveryError, Sender
-from app.reporting.report import Audience, build_team_report, render
+from app.reporting.report import (
+    Audience,
+    build_personal_report,
+    build_team_report,
+    render,
+    render_personal,
+)
 from app.scoring.aggregate import PeriodType, period_start_of, previous_period
 
 log = logging.getLogger(__name__)
@@ -139,6 +145,43 @@ def send_team_reports(
     return result
 
 
+def send_personal_reports(
+    session: Session, period_type: PeriodType, start: date, settings: Settings, sender: Sender
+) -> SendResult:
+    """Each active person gets their own numbers, nobody else's (docs/specs/10, task 5.5)."""
+    tz = ZoneInfo(settings.report_tz)
+    result = SendResult()
+    users = session.scalars(
+        select(User)
+        .join(MetricsUserPeriod, MetricsUserPeriod.user_id == User.id)
+        .where(
+            MetricsUserPeriod.period_type == period_type,
+            MetricsUserPeriod.period_start == start,
+            User.active.is_not(False),
+            User.primary_email.is_not(None),
+        )
+        .order_by(User.id)
+    )
+    for user in users:
+        report = build_personal_report(
+            session, user, period_type, start, tz, settings.dashboard_url
+        )
+        if report is None or not report.email:
+            continue
+        _attempt(
+            result,
+            f"email:personal:{user.id}",
+            partial(
+                sender.email,
+                [report.email],
+                report.title,
+                render_personal(report, "html"),
+                render_personal(report, "md"),
+            ),
+        )
+    return result
+
+
 def send_reports_job(period_type: PeriodType) -> dict[str, int]:
     """Scheduler entry point: report on the last complete period."""
     from app.db import get_sessionmaker
@@ -148,5 +191,9 @@ def send_reports_job(period_type: PeriodType) -> dict[str, int]:
     start = previous_period(period_start_of(datetime.now(tz).date(), period_type), period_type)
     delivery = Delivery(settings.smtp_url.get_secret_value(), settings.smtp_from)
     with get_sessionmaker()() as session:
-        result = send_team_reports(session, period_type, start, settings, delivery)
-    return {"sent": len(result.sent), "failed": len(result.failed)}
+        teams = send_team_reports(session, period_type, start, settings, delivery)
+        people = send_personal_reports(session, period_type, start, settings, delivery)
+    return {
+        "sent": len(teams.sent) + len(people.sent),
+        "failed": len(teams.failed) + len(people.failed),
+    }

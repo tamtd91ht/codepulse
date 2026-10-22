@@ -116,3 +116,21 @@ def test_retry_gives_up_with_a_delivery_error() -> None:
 
     with pytest.raises(DeliveryError, match="email: OSError"):
         _retry(boom, "email", sleep=lambda s: None)
+
+
+def test_personal_reports_contain_only_your_own_data(flagged: World, db_session: Session) -> None:
+    from app.reporting.jobs import send_personal_reports
+
+    sender = RecordingSender()
+    settings = Settings(dashboard_url="https://dash.example.com")
+    result = send_personal_reports(db_session, "week", WEEK, settings, sender)
+    assert sorted(result.sent) == sorted(
+        [f"email:personal:{flagged.an.id}", f"email:personal:{flagged.binh.id}"]
+    )
+    texts = {to[0]: text for _, to, text in sender.calls}
+    an_text = texts["an@x.vn"]
+    assert "Báo cáo cá nhân – Tuần 41/2026" in an_text
+    assert "[critical] SQL injection" in an_text
+    assert f"https://dash.example.com/members/{flagged.an.id}" in an_text
+    assert "SQL injection" not in texts["binh@x.vn"]  # An's finding never reaches Binh
+    assert "Binh" not in an_text

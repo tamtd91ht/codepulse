@@ -29,7 +29,7 @@ from app.models import (
     User,
 )
 from app.scoring.aggregate import PeriodType, next_period, period_bounds, previous_period
-from app.scoring.compare import compare_team
+from app.scoring.compare import compare_team, compare_user
 
 Audience = Literal["lead", "manager", "channel"]
 Format = Literal["md", "html"]
@@ -280,3 +280,114 @@ def build_team_report(
 
 def render(report: TeamReport, fmt: Format = "md") -> str:
     return _env.get_template(f"team_report.{fmt}.j2").render(r=report)
+
+
+@dataclass
+class PersonalReport:
+    name: str
+    email: str
+    period_type: PeriodType
+    start: date
+    title: str
+    rows: list[dict[str, Any]]
+    team_quality_index: float | None
+    open_issues: list[dict[str, Any]]
+    categories: list[tuple[str, int]]
+    dashboard_url: str
+
+
+def build_personal_report(
+    session: Session,
+    user: User,
+    period_type: PeriodType,
+    start: date,
+    tz: ZoneInfo,
+    dashboard_url: str,
+    now: datetime | None = None,
+) -> PersonalReport | None:
+    """docs/specs/10 (task 5.5): one person's own data only. None when they had no activity."""
+    comparison = compare_user(session, user.id, period_type, start)
+    cur, prev = comparison.current, comparison.previous
+    if cur is None or not cur.reviews_count:
+        return None
+
+    def change(attr: str) -> float | None:
+        now_, before = getattr(cur, attr, None), getattr(prev, attr, None)
+        return None if now_ is None or before is None else float(now_) - float(before)
+
+    rows = [
+        {
+            "label": label,
+            "now": getattr(cur, attr),
+            "before": getattr(prev, attr, None),
+            "delta": change(attr),
+            "digits": digits,
+        }
+        for label, attr, digits in (
+            ("Quality Index", "quality_index", 1),
+            ("Điểm TB", "avg_score", 1),
+            ("Critical", "critical", 0),
+            ("High", "high", 0),
+            ("Mật độ lỗi / 100 LOC", "defect_density", 2),
+            ("Reviews", "reviews_count", 0),
+        )
+    ]
+    moment = now or datetime.now(UTC)
+    open_rows = session.execute(
+        select(ReviewFinding, Review)
+        .join(Review, Review.id == ReviewFinding.review_id)
+        .where(
+            Review.status == "done",
+            Review.author_user_id == user.id,
+            ReviewFinding.status == "open",
+            ReviewFinding.severity.in_(("critical", "high", "medium")),
+        )
+        # Alphabetical happens to be most severe first for these three.
+        .order_by(ReviewFinding.severity, Review.finished_at)
+        .limit(10)
+    ).tuples()
+    open_issues = [
+        {
+            "severity": f.severity,
+            "title": f.title,
+            "where": f"{f.file_path}:{f.line_start}",
+            "days": max(0, (moment - (r.finished_at or moment)).days),
+            "review_id": r.id,
+        }
+        for f, r in open_rows
+    ]
+    lo, hi = period_bounds(start, period_type, tz)
+    categories = Counter(
+        session.scalars(
+            select(ReviewFinding.category)
+            .join(Review, Review.id == ReviewFinding.review_id)
+            .where(
+                Review.status == "done",
+                Review.author_user_id == user.id,
+                Review.finished_at >= lo,
+                Review.finished_at < hi,
+                ReviewFinding.status != "false_positive",
+            )
+        )
+    ).most_common(3)
+    if period_type == "week":
+        iso = start.isocalendar()
+        title = f"Báo cáo cá nhân – Tuần {iso.week}/{iso.year}"
+    else:
+        title = f"Báo cáo cá nhân – Tháng {start:%m/%Y}"
+    return PersonalReport(
+        name=user.full_name or user.primary_email or "",
+        email=user.primary_email or "",
+        period_type=period_type,
+        start=start,
+        title=title,
+        rows=rows,
+        team_quality_index=comparison.team_quality_index,
+        open_issues=open_issues,
+        categories=[(CATEGORY_VI.get(c, c), n) for c, n in categories],
+        dashboard_url=f"{dashboard_url.rstrip('/')}/members/{user.id}",
+    )
+
+
+def render_personal(report: PersonalReport, fmt: Format = "md") -> str:
+    return _env.get_template(f"personal_report.{fmt}.j2").render(r=report)

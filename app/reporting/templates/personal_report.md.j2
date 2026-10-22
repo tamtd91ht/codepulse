@@ -1,0 +1,29 @@
+# {{ r.title }}
+
+Chào {{ r.name }}, đây là dữ liệu của riêng bạn{{ " trong tuần" if r.period_type == "week" else " trong tháng" }}. Chỉ bạn và lead của bạn xem được điểm cá nhân.
+
+| Chỉ số | Kỳ này | Kỳ trước | Δ |
+|---|---|---|---|
+{% for row in r.rows %}
+| {{ row.label }} | {{ row.now | fmt(row.digits) }} | {{ row.before | fmt(row.digits) }} | {{ row.delta | signed(row.digits) }} |
+{% endfor %}
+
+Quality Index trung bình của team: {{ r.team_quality_index | fmt }}
+
+## Finding đang mở
+{% for i in r.open_issues %}
+- [{{ i.severity }}] {{ i.title }} – {{ i.where }} – {{ i.days }} ngày
+{% else %}
+- Không có finding critical/high/medium nào đang mở.
+{% endfor %}
+{% if r.categories %}
+
+## Loại lỗi gặp nhiều nhất
+{% for name, count in r.categories %}
+- {{ name }}: {{ count }}
+{% endfor %}
+{% endif %}
+
+Xem chi tiết và khiếu nại finding sai: {{ r.dashboard_url }}
+
+_Điểm là tín hiệu coaching, không phải căn cứ duy nhất để đánh giá hiệu suất._
