@@ -1,0 +1,270 @@
+"""Weekly / monthly metrics per user and team (docs/specs/08 §2-5, task 4.3).
+
+aggregate() is idempotent: it rewrites every row of the period, so re-running after a dispute or
+a weight change gives the same result as a first run.
+"""
+
+import logging
+from collections import defaultdict
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
+from typing import Any, Literal
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
+
+from app.models import (
+    Account,
+    MergeRequest,
+    MetricsTeamPeriod,
+    MetricsUserPeriod,
+    Pipeline,
+    Review,
+    ReviewFinding,
+    TeamMember,
+    User,
+)
+from app.scoring.formula import SEVERITIES, weights_for
+from app.scoring.process import process_metrics
+
+log = logging.getLogger(__name__)
+
+PeriodType = Literal["week", "month"]
+
+
+# -- periods ------------------------------------------------------------------------------------
+
+
+def period_start_of(day: date, period_type: PeriodType) -> date:
+    return day - timedelta(days=day.weekday()) if period_type == "week" else day.replace(day=1)
+
+
+def next_period(start: date, period_type: PeriodType) -> date:
+    if period_type == "week":
+        return start + timedelta(days=7)
+    return (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+
+
+def previous_period(start: date, period_type: PeriodType) -> date:
+    return period_start_of(start - timedelta(days=1), period_type)
+
+
+def period_bounds(start: date, period_type: PeriodType, tz: ZoneInfo) -> tuple[datetime, datetime]:
+    """[start, end) as aware datetimes in the report timezone (docs/specs/08: REPORT_TZ)."""
+    end = next_period(start, period_type)
+    return datetime.combine(start, time.min, tz), datetime.combine(end, time.min, tz)
+
+
+# -- inputs -------------------------------------------------------------------------------------
+
+
+@dataclass
+class ReviewFacts:
+    user_id: int
+    finished_at: datetime
+    score: float | None
+    loc: int
+    rubric_version: str | None
+    findings: list[tuple[str, float, str]] = field(default_factory=list)  # severity, conf, status
+
+
+@dataclass
+class PeriodData:
+    reviews: list[ReviewFacts]
+    merged: list[tuple[int, MergeRequest]]  # (user_id, MR merged in the period)
+    pipelines: dict[tuple[int | None, str | None], list[Pipeline]]  # (project, branch) -> runs
+
+
+def load_period(session: Session, start: datetime, end: datetime) -> PeriodData:
+    active = select(User.id).where(User.active.is_not(False))
+    reviews: dict[int, ReviewFacts] = {}
+    for review in session.scalars(
+        select(Review).where(
+            Review.status == "done",
+            Review.finished_at >= start,
+            Review.finished_at < end,
+            Review.author_user_id.in_(active),
+        )
+    ):
+        if review.author_user_id is None or review.finished_at is None:
+            continue  # excluded by the query; keeps the types honest
+        reviews[review.id] = ReviewFacts(
+            user_id=review.author_user_id,
+            finished_at=review.finished_at,
+            score=float(review.score) if review.score is not None else None,
+            loc=review.loc_reviewed or 0,
+            rubric_version=review.rubric_version,
+        )
+    if reviews:
+        for finding in session.scalars(
+            select(ReviewFinding).where(ReviewFinding.review_id.in_(reviews))
+        ):
+            if finding.review_id is None:
+                continue
+            reviews[finding.review_id].findings.append(
+                (finding.severity, float(finding.confidence or 1), finding.status or "open")
+            )
+
+    merged = [
+        (user_id, mr)
+        for mr, user_id in session.execute(
+            select(MergeRequest, Account.user_id)
+            .join(Account, Account.id == MergeRequest.author_account_id)
+            .where(
+                MergeRequest.merged_at >= start,
+                MergeRequest.merged_at < end,
+                Account.user_id.in_(active),
+            )
+        ).tuples()
+        if user_id is not None
+    ]
+    pipelines: dict[tuple[int | None, str | None], list[Pipeline]] = defaultdict(list)
+    branches = {(mr.project_id, mr.source_branch) for _, mr in merged}
+    if branches:
+        projects = {p for p, _ in branches}
+        for pipeline in session.scalars(
+            select(Pipeline).where(Pipeline.project_id.in_(projects), Pipeline.created_at_src < end)
+        ):
+            key = (pipeline.project_id, pipeline.ref)
+            if key in branches:
+                pipelines[key].append(pipeline)
+    return PeriodData(list(reviews.values()), merged, pipelines)
+
+
+# -- metrics ------------------------------------------------------------------------------------
+
+
+def _dec(value: float | None, places: int = 2) -> Decimal | None:
+    return None if value is None else Decimal(str(round(value, places)))
+
+
+def compute(
+    reviews: list[ReviewFacts],
+    merged: list[MergeRequest],
+    pipelines: list[Pipeline],
+    weights_override: Mapping[str, float] | None = None,
+) -> dict[str, Any]:
+    """One metrics row (any owner) from the reviews and MRs attributed to that owner."""
+    counts = dict.fromkeys(SEVERITIES, 0)
+    penalty = 0.0
+    weighted_score = weight_total = 0.0
+    for review in reviews:
+        weights = weights_for(review.rubric_version, weights_override)
+        for severity, confidence, status in review.findings:
+            if status == "false_positive":
+                continue
+            counts[severity] += 1
+            penalty += weights.get(severity, 0) * confidence
+        if review.score is not None:
+            # LOC-weighted (docs/specs/08): a 5-line MR must not weigh as much as a 500-line one.
+            w = max(review.loc, 1)
+            weighted_score += review.score * w
+            weight_total += w
+    loc = sum(r.loc for r in reviews)
+    process = process_metrics(merged, pipelines)
+    return {
+        "reviews_count": len(reviews),
+        "avg_score": _dec(weighted_score / weight_total) if weight_total else None,
+        "loc_changed": loc,
+        **counts,
+        "weighted_penalty": _dec(penalty),
+        "defect_density": _dec(penalty / (loc / 100), 3) if loc else None,
+        "mr_count": process.mr_count,
+        "avg_review_time_h": _dec(process.avg_review_time_h),
+        "avg_mr_size": process.avg_mr_size,
+        "avg_review_rounds": _dec(process.avg_review_rounds),
+        "build_success_rate": _dec(process.build_success_rate),
+        "quality_index": None,
+    }
+
+
+def _teams_at(memberships: list[TeamMember], user_id: int, day: date) -> set[int]:
+    """Teams the user belonged to on that day (team history: docs/specs/05, 08 §4)."""
+    return {
+        m.team_id
+        for m in memberships
+        if m.user_id == user_id and m.joined_at <= day and (m.left_at is None or m.left_at > day)
+    }
+
+
+@dataclass
+class AggregateResult:
+    users: int
+    teams: int
+
+
+def aggregate_job(period_type: PeriodType, period_start: str | None = None) -> dict[str, int]:
+    """Scheduler/RQ entry point: the given period, or the last complete one."""
+    from app.config import get_settings
+    from app.db import get_sessionmaker
+
+    settings = get_settings()
+    tz = ZoneInfo(settings.report_tz)
+    if period_start:
+        start = date.fromisoformat(period_start)
+    else:
+        start = previous_period(period_start_of(datetime.now(tz).date(), period_type), period_type)
+    with get_sessionmaker()() as session, session.begin():
+        result = aggregate(session, period_type, start, tz, settings.scoring_weights)
+    return {"users": result.users, "teams": result.teams}
+
+
+def aggregate(
+    session: Session,
+    period_type: PeriodType,
+    period_start: date,
+    tz: ZoneInfo,
+    weights_override: Mapping[str, float] | None = None,
+) -> AggregateResult:
+    period_start = period_start_of(period_start, period_type)
+    start, end = period_bounds(period_start, period_type, tz)
+    data = load_period(session, start, end)
+
+    def pipelines_for(mrs: Iterable[MergeRequest]) -> list[Pipeline]:
+        return [p for mr in mrs for p in data.pipelines.get((mr.project_id, mr.source_branch), [])]
+
+    by_user_reviews: dict[int, list[ReviewFacts]] = defaultdict(list)
+    by_user_mrs: dict[int, list[MergeRequest]] = defaultdict(list)
+    by_team_reviews: dict[int, list[ReviewFacts]] = defaultdict(list)
+    by_team_mrs: dict[int, list[MergeRequest]] = defaultdict(list)
+    memberships = list(session.scalars(select(TeamMember)))
+    for review in data.reviews:
+        by_user_reviews[review.user_id].append(review)
+        for team in _teams_at(
+            memberships, review.user_id, review.finished_at.astimezone(tz).date()
+        ):
+            by_team_reviews[team].append(review)
+    for user_id, mr in data.merged:
+        by_user_mrs[user_id].append(mr)
+        if mr.merged_at is None:
+            continue
+        for team in _teams_at(memberships, user_id, mr.merged_at.astimezone(tz).date()):
+            by_team_mrs[team].append(mr)
+
+    key = {"period_type": period_type, "period_start": period_start}
+    session.execute(delete(MetricsUserPeriod).filter_by(**key))
+    session.execute(delete(MetricsTeamPeriod).filter_by(**key))
+    users = set(by_user_reviews) | set(by_user_mrs)
+    for user_id in users:
+        mrs = by_user_mrs[user_id]
+        row = compute(by_user_reviews[user_id], mrs, pipelines_for(mrs), weights_override)
+        session.add(MetricsUserPeriod(user_id=user_id, **key, **row))
+    teams = set(by_team_reviews) | set(by_team_mrs)
+    for team_id in teams:
+        mrs = by_team_mrs[team_id]
+        row = compute(by_team_reviews[team_id], mrs, pipelines_for(mrs), weights_override)
+        session.add(MetricsTeamPeriod(team_id=team_id, **key, **row))
+    session.flush()
+    log.info(
+        "metrics aggregated",
+        extra={
+            "period": period_type,
+            "start": str(period_start),
+            "users": len(users),
+            "teams": len(teams),
+        },
+    )
+    return AggregateResult(users=len(users), teams=len(teams))

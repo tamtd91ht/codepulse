@@ -11,6 +11,8 @@ def test_api_app_serves_openapi() -> None:
 
 
 def test_scheduler_enqueues_syncs_on_the_configured_interval() -> None:
-    (job,) = build_scheduler(sync_interval_min=30).get_jobs()
-    assert job.id == "enqueue-syncs"
-    assert job.trigger.interval.total_seconds() == 30 * 60
+    jobs = {job.id: job for job in build_scheduler(30, "Asia/Ho_Chi_Minh").get_jobs()}
+    assert set(jobs) == {"enqueue-syncs", "aggregate-week", "aggregate-month"}
+    assert jobs["enqueue-syncs"].trigger.interval.total_seconds() == 30 * 60
+    assert str(jobs["aggregate-week"].trigger.timezone) == "Asia/Ho_Chi_Minh"
+    assert jobs["aggregate-month"].args == ("month",)
