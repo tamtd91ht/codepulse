@@ -9,7 +9,7 @@
 
 ## Dữ liệu gửi cho LLM
 - [x] `[DECISION]` Được phép gửi code ra LLM bên ngoài không? Nếu có: dùng gói API cam kết không train trên dữ liệu → Có: Claude Code CLI, code được gửi tới Anthropic
-- [ ] Cờ `projects.allow_external_llm=false` → bắt buộc dùng provider local
+- [ ] Cờ `projects.allow_external_llm=false` → bắt buộc dùng provider local – v1 chưa có provider local: project này **không được review** (status `skipped`), quyết định người dùng 2026-10-22
 - [ ] Trước khi gửi: chạy Gitleaks/regex để **che secret** trong diff (thay bằng `***REDACTED***`)
 - [ ] Không gửi file trong `SENSITIVE_PATHS` (vd: `**/secrets/**`, `.env*`, `*.pem`)
 

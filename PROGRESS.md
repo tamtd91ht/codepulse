@@ -22,3 +22,9 @@
 - 2.6: autolink chạy cuối mỗi sync: gitlab_user ← public email GitLab hoặc username@ALLOWED_EMAIL_DOMAINS; git_email ← primary_email, email noreply GitLab (parse id), username@domain cho phép, public email GitLab; không ghi đè link có sẵn; bot (renovate, dependabot, *_bot, ci-bot…) → user active=false. Import CSV teams/users/accounts idempotent, lỗi báo theo file:dòng, import tay thắng autolink. `unmapped_accounts()` cho danh sách unmapped; API + trang admin làm ở 5.1/5.3 (cần RBAC), CLI ở 2.7.
 - 2.7: CLI `codepulse` (argparse, entry point trong pyproject): connections add/list (mã hoá token, sinh webhook secret nếu không truyền, list không in secret), projects add/list/register-webhook (idempotent, URL = APP_BASE_URL + /api/v1/webhooks/gitlab)/sync (chạy ngay hoặc --enqueue), identity import (có lỗi → rollback toàn bộ) / unmapped. Lưu ý: `register-webhook` và `sync` nhận id CodePulse (xem `projects list`), `projects add` nhận id GitLab.
 - Phase 2 xong code (2.1–2.7), CI xanh. Sửa thêm: test không đọc \`.env\` của máy dev (CODEPULSE_ENV_FILE). **Demo Phase 2 chờ người dùng**: cần GitLab URL + token bot (read_api) + id 1 project thật (+ CSV team/user nếu có).
+
+## Quyết định thêm (2026-10-22)
+- Bỏ qua Demo Phase 2 (chưa sync project thật).
+- Project \`allow_external_llm=false\` không được review ở v1 (chưa có provider local).
+
+## Phase 3 – AI Review

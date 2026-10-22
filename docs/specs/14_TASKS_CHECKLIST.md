@@ -26,7 +26,7 @@
 - [x] 2.5 Webhook endpoint + dedupe + enqueue
 - [x] 2.6 Identity: auto-link, import CSV, trang unmapped (05)
 - [x] 2.7 CLI: connections, projects, register-webhook, sync, identity import
-- [ ] **Demo**: sync 1 project thật, xem commit/MR gắn đúng người
+- [ ] **Demo**: sync 1 project thật, xem commit/MR gắn đúng người – bỏ qua theo quyết định người dùng (2026-10-22)
 
 ## Phase 3 – AI Review (≈ 2 tuần)
 - [ ] 3.1 `LLMProvider` + 1 provider đã chọn + `FakeLLMProvider` (06)
