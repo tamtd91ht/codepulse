@@ -119,3 +119,24 @@ def test_identity_import_reports_errors_and_signals_rollback(
     assert "users.csv:2: invalid primary_email" in out
     _, unmapped = cli(db_session, "identity", "unmapped")
     assert unmapped == ""
+
+
+def test_rotate_replaces_token_and_secret(db_session: Session) -> None:
+    cli(db_session, "connections", "add", "--url", BASE, "--token", "glpat-old")
+    connection = db_session.scalars(select(Connection)).one()
+    old_secret = BOX.decrypt(connection.webhook_secret_encrypted or "")
+    ok, out = cli(
+        db_session,
+        "connections",
+        "rotate",
+        str(connection.id),
+        "--token",
+        "glpat-new",
+        "--webhook-secret",
+    )
+    assert ok and "token replaced" in out and "register-webhook" in out
+    assert BOX.decrypt(connection.token_encrypted) == "glpat-new"
+    new_secret = BOX.decrypt(connection.webhook_secret_encrypted or "")
+    assert new_secret != old_secret and len(new_secret) >= 32
+    with pytest.raises(CliError, match="--token and/or"):
+        cli(db_session, "connections", "rotate", str(connection.id))

@@ -72,6 +72,30 @@ def connections_add(
     return connection
 
 
+def connections_rotate(
+    session: Session,
+    box: SecretBox,
+    out: TextIO,
+    connection_id: int,
+    token: str | None,
+    webhook_secret: str | None,
+) -> None:
+    """docs/RUNBOOK.md "Xoay token": new values are encrypted with APP_ENCRYPTION_KEY."""
+    connection = _connection(session, connection_id)
+    if token is None and webhook_secret is None:
+        raise CliError("pass --token and/or --webhook-secret")
+    if token is not None:
+        connection.token_encrypted = box.encrypt(token)
+        out.write(f"connection {connection.id}: token replaced; revoke the old one in GitLab\n")
+    if webhook_secret is not None:
+        new_secret = webhook_secret or secrets.token_urlsafe(32)
+        connection.webhook_secret_encrypted = box.encrypt(new_secret)
+        out.write(
+            f"connection {connection.id}: webhook secret replaced; delete the old hooks and run "
+            "`codepulse projects register-webhook <id>` for each project\n"
+        )
+
+
 def connections_list(session: Session, out: TextIO) -> None:
     for c in session.scalars(select(Connection).order_by(Connection.id)):
         out.write(f"{c.id}\t{c.name}\t{c.base_url}\n")  # never print tokens or secrets
@@ -176,6 +200,15 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--token", required=True, help="bot token: read_api (+ api to comment)")
     add.add_argument("--webhook-secret", help="default: a random secret")
     conn.add_parser("list")
+    rotate = conn.add_parser("rotate", help="replace a connection's token and/or webhook secret")
+    rotate.add_argument("connection_id", type=int)
+    rotate.add_argument("--token", help="new GitLab token")
+    rotate.add_argument(
+        "--webhook-secret",
+        nargs="?",
+        const="",
+        help="new webhook secret (no value: generate one); re-run register-webhook afterwards",
+    )
 
     proj = sub.add_parser("projects").add_subparsers(dest="command", required=True)
     padd = proj.add_parser("add", help="register a GitLab project by its numeric id")
@@ -219,6 +252,10 @@ def run(
             connections_add(session, box, out, args.name, args.url, args.token, args.webhook_secret)
         case ("connections", "list"):
             connections_list(session, out)
+        case ("connections", "rotate"):
+            connections_rotate(
+                session, box, out, args.connection_id, args.token, args.webhook_secret
+            )
         case ("projects", "add"):
             projects_add(session, make_client, out, args.gitlab_project_id, args.connection)
         case ("projects", "list"):

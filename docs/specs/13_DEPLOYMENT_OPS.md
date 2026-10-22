@@ -35,7 +35,7 @@ RETENTION_DAYS=365
 - [x] Backup Postgres hằng ngày – service `backup` (pg_dump, giữ 14 ngày)
 - [x] Metrics Prometheus: queue length, review latency, LLM error rate, chi phí/ngày – `/metrics` (`app/monitoring.py`)
 - [x] Cảnh báo: worker chết, queue > 100 job, LLM lỗi > 10%, vượt 80% ngân sách – `deploy/prometheus/alerts.yml`
-- [ ] Runbook `docs/RUNBOOK.md`: thêm project, xoay token, chạy lại review, recompute metric
+- [x] Runbook `docs/RUNBOOK.md`: thêm project, xoay token, chạy lại review, recompute metric
 
 ## Cài đặt lần đầu
 1. `cp .env.example .env` và điền giá trị
