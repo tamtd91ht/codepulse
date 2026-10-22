@@ -25,7 +25,7 @@
 - [x] 2.4 Backfill + incremental sync qua scheduler
 - [x] 2.5 Webhook endpoint + dedupe + enqueue
 - [x] 2.6 Identity: auto-link, import CSV, trang unmapped (05)
-- [ ] 2.7 CLI: connections, projects, register-webhook, sync, identity import
+- [x] 2.7 CLI: connections, projects, register-webhook, sync, identity import
 - [ ] **Demo**: sync 1 project thật, xem commit/MR gắn đúng người
 
 ## Phase 3 – AI Review (≈ 2 tuần)

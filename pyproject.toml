@@ -32,6 +32,9 @@ dev = [
     "respx>=0.22",
 ]
 
+[project.scripts]
+codepulse = "app.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["app*"]
 
