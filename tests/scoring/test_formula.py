@@ -45,3 +45,19 @@ def test_weights_follow_the_rubric_unless_overridden() -> None:
         weights_for("v9")
     with pytest.raises(ValueError, match="non-negative weights"):
         weights_for("v1", {"critical": 25})
+
+
+def test_quality_index_matches_the_spec_formula() -> None:
+    from app.scoring.formula import quality_index
+
+    # 0.5*80 + 0.2*(100 - 30) + 0.15*90 + 0.15*50 = 40 + 14 + 13.5 + 7.5
+    assert quality_index(80, 3.0, 90, 0.5) == 75.0
+    assert quality_index(80, 50.0, 90, 0.5) == 61.0  # density term floors at 0
+
+
+def test_quality_index_rescales_missing_components() -> None:
+    from app.scoring.formula import quality_index
+
+    # No pipelines and nothing severe to fix: (0.5*80 + 0.2*70) / 0.7
+    assert quality_index(80, 3.0, None, None) == 77.14
+    assert quality_index(None, 3.0, 90, 0.5) is None

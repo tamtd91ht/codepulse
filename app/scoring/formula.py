@@ -58,3 +58,27 @@ def review_score(
     if any(f.severity == "critical" for f in counted):
         score = min(score, CRITICAL_SCORE_CAP)
     return round(score, 2)
+
+
+QI_WEIGHTS = {"score": 0.50, "density": 0.20, "build": 0.15, "fix": 0.15}
+
+
+def quality_index(
+    avg_score: float | None,
+    defect_density: float | None,
+    build_success_rate: float | None,
+    fix_rate: float | None,
+) -> float | None:
+    """docs/specs/08 §3. A missing component (no pipelines, nothing severe to fix) is left out
+    and the remaining weights are rescaled, instead of counting it as 0."""
+    if avg_score is None:
+        return None
+    parts = {
+        "score": avg_score,
+        "density": 100 - min(100.0, (defect_density or 0) * 10),
+        "build": build_success_rate,
+        "fix": fix_rate * 100 if fix_rate is not None else None,
+    }
+    present = {k: v for k, v in parts.items() if v is not None}
+    total = sum(QI_WEIGHTS[k] for k in present)
+    return round(sum(QI_WEIGHTS[k] * v for k, v in present.items()) / total, 2)

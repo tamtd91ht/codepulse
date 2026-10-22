@@ -28,7 +28,7 @@ from app.models import (
     User,
 )
 from app.review.status import SEVERE
-from app.scoring.formula import SEVERITIES, weights_for
+from app.scoring.formula import SEVERITIES, quality_index, weights_for
 from app.scoring.process import process_metrics
 
 log = logging.getLogger(__name__)
@@ -186,6 +186,7 @@ def compute(
     merged: list[MergeRequest],
     pipelines: list[Pipeline],
     weights_override: Mapping[str, float] | None = None,
+    min_sample: int = 3,
 ) -> dict[str, Any]:
     """One metrics row (any owner) from the reviews and MRs attributed to that owner."""
     counts = dict.fromkeys(SEVERITIES, 0)
@@ -207,20 +208,29 @@ def compute(
     process = process_metrics(merged, pipelines)
     severe_total = sum(len(r.severe_all) for r in reviews)
     severe_fixed = sum(len(r.severe_all - r.severe_latest) for r in reviews)
+    avg_score = weighted_score / weight_total if weight_total else None
+    density = penalty / (loc / 100) if loc else None
+    fix_rate = severe_fixed / severe_total if severe_total else None
+    # docs/specs/08: no index from too little data (MIN_SAMPLE reviews).
+    index = (
+        quality_index(avg_score, density, process.build_success_rate, fix_rate)
+        if len(reviews) >= min_sample
+        else None
+    )
     return {
         "reviews_count": len(reviews),
-        "avg_score": _dec(weighted_score / weight_total) if weight_total else None,
+        "avg_score": _dec(avg_score),
         "loc_changed": loc,
         **counts,
         "weighted_penalty": _dec(penalty),
-        "defect_density": _dec(penalty / (loc / 100), 3) if loc else None,
+        "defect_density": _dec(density, 3),
         "mr_count": process.mr_count,
         "avg_review_time_h": _dec(process.avg_review_time_h),
         "avg_mr_size": process.avg_mr_size,
         "avg_review_rounds": _dec(process.avg_review_rounds),
         "build_success_rate": _dec(process.build_success_rate),
-        "fix_rate": _dec(severe_fixed / severe_total, 3) if severe_total else None,
-        "quality_index": None,
+        "fix_rate": _dec(fix_rate, 3),
+        "quality_index": _dec(index),
     }
 
 
@@ -251,7 +261,9 @@ def aggregate_job(period_type: PeriodType, period_start: str | None = None) -> d
     else:
         start = previous_period(period_start_of(datetime.now(tz).date(), period_type), period_type)
     with get_sessionmaker()() as session, session.begin():
-        result = aggregate(session, period_type, start, tz, settings.scoring_weights)
+        result = aggregate(
+            session, period_type, start, tz, settings.scoring_weights, settings.min_sample
+        )
     return {"users": result.users, "teams": result.teams}
 
 
@@ -261,6 +273,7 @@ def aggregate(
     period_start: date,
     tz: ZoneInfo,
     weights_override: Mapping[str, float] | None = None,
+    min_sample: int = 3,
 ) -> AggregateResult:
     period_start = period_start_of(period_start, period_type)
     start, end = period_bounds(period_start, period_type, tz)
@@ -293,12 +306,16 @@ def aggregate(
     users = set(by_user_reviews) | set(by_user_mrs)
     for user_id in users:
         mrs = by_user_mrs[user_id]
-        row = compute(by_user_reviews[user_id], mrs, pipelines_for(mrs), weights_override)
+        row = compute(
+            by_user_reviews[user_id], mrs, pipelines_for(mrs), weights_override, min_sample
+        )
         session.add(MetricsUserPeriod(user_id=user_id, **key, **row))
     teams = set(by_team_reviews) | set(by_team_mrs)
     for team_id in teams:
         mrs = by_team_mrs[team_id]
-        row = compute(by_team_reviews[team_id], mrs, pipelines_for(mrs), weights_override)
+        row = compute(
+            by_team_reviews[team_id], mrs, pipelines_for(mrs), weights_override, min_sample
+        )
         session.add(MetricsTeamPeriod(team_id=team_id, **key, **row))
     session.flush()
     log.info(
