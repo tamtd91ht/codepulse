@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -32,6 +32,7 @@ from app.models import (
     TeamMember,
     User,
 )
+from app.reporting.report import Audience, build_team_report, render
 from app.scoring.aggregate import (
     PeriodType,
     next_period,
@@ -301,3 +302,33 @@ def person(user_id: int, principal: CurrentPrincipal, session: SessionDep) -> Us
     if user is None:
         raise HTTPException(404, "person not found")
     return user
+
+
+@router.get("/reports/{period}/{start}")
+def report(
+    period: Literal["week", "month"],
+    start: date,
+    team_id: int,
+    principal: LeadOrManagerPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+    format: Literal["md", "html"] = "md",
+) -> Response:
+    """docs/specs/09 /reports: the lead version for the team's lead, aggregates for managers."""
+    if not (principal.is_admin or team_id in principal.lead_teams | principal.managed_teams):
+        raise HTTPException(403, "not allowed to see this team's report")
+    if session.get(Team, team_id) is None:
+        raise HTTPException(404, "team not found")
+    audience: Audience = (
+        "lead" if principal.is_admin or team_id in principal.lead_teams else "manager"
+    )
+    built = build_team_report(
+        session,
+        team_id,
+        period,
+        period_start_of(start, period),
+        ZoneInfo(settings.report_tz),
+        audience,
+    )
+    media = "text/markdown" if format == "md" else "text/html"
+    return Response(render(built, format), media_type=f"{media}; charset=utf-8")

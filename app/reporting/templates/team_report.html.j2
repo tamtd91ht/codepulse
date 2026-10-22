@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>{{ r.title }}</title>
+</head>
+<body style="font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1c1c1a; max-width: 720px; margin: 0 auto; padding: 16px;">
+<h1 style="font-size: 20px;">{{ r.title }}</h1>
+<table style="border-collapse: collapse; width: 100%;">
+  <thead>
+    <tr>
+      {% for h in ["Chỉ số", "Kỳ này", "Kỳ trước", "Δ"] %}
+      <th style="text-align: left; border-bottom: 1px solid #ccc; padding: 6px;">{{ h }}</th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in r.rows %}
+    <tr>
+      <td style="padding: 6px; border-bottom: 1px solid #eee;">{{ row.label }}</td>
+      <td style="padding: 6px; border-bottom: 1px solid #eee;">{{ row.now | fmt(row.digits) }}</td>
+      <td style="padding: 6px; border-bottom: 1px solid #eee;">{{ row.before | fmt(row.digits) }}</td>
+      <td style="padding: 6px; border-bottom: 1px solid #eee;">{{ row.delta | signed(row.digits) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% if r.trend %}
+<h2 style="font-size: 16px;">Xu hướng 4 tuần</h2>
+<ul>
+  {% for w in r.trend %}
+  <li>Tuần {{ w.week.strftime("%d/%m") }}: Quality Index {{ w.qi | fmt }}, {{ w.critical }} critical</li>
+  {% endfor %}
+</ul>
+{% endif %}
+<h2 style="font-size: 16px;">Critical/High chưa xử lý</h2>
+<ul>
+  {% for i in r.open_issues %}
+  <li><strong>[{{ i.severity }}]</strong> {{ i.title }} – <code>{{ i.where }}</code> – {{ i.who }} – {{ i.days }} ngày</li>
+  {% else %}
+  <li>Không có.</li>
+  {% endfor %}
+</ul>
+{% if r.audience == "lead" %}
+<h2 style="font-size: 16px;">Ghi nhận</h2>
+<ul>
+  {% for line in r.praise %}<li>{{ line }}</li>{% else %}<li>(chưa có)</li>{% endfor %}
+</ul>
+<h2 style="font-size: 16px;">Cần hỗ trợ</h2>
+<ul>
+  {% for line in r.support %}<li>{{ line }}</li>{% else %}<li>(không có)</li>{% endfor %}
+</ul>
+{% endif %}
+<h2 style="font-size: 16px;">Gợi ý coaching</h2>
+<ul>
+  {% for line in r.coaching %}<li>{{ line }}</li>{% else %}<li>Không có loại lỗi nào nổi bật kỳ này.</li>{% endfor %}
+</ul>
+<p style="color: #6b6b66; font-size: 12px;">Điểm là tín hiệu coaching, không phải căn cứ duy nhất để đánh giá hiệu suất.</p>
+</body>
+</html>

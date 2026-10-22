@@ -21,6 +21,7 @@ dependencies = [
     "httpx>=0.28",
     "cryptography>=44",
     "pyjwt>=2.9",
+    "jinja2>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -39,6 +40,9 @@ codepulse = "app.cli:main"
 [tool.setuptools.packages.find]
 include = ["app*"]
 
+[tool.setuptools.package-data]
+"app.reporting" = ["templates/*.j2"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
@@ -47,6 +51,9 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
+# Report titles use the en dash of docs/specs/10 on purpose.
+"app/reporting/report.py" = ["RUF001"]
+"tests/api/test_reports.py" = ["RUF001", "S101"]
 "tests/**" = ["S101", "S105", "S106"]
 
 [tool.mypy]

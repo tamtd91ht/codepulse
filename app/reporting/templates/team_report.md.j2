@@ -1,0 +1,46 @@
+# {{ r.title }}
+
+| Chỉ số | {{ "Tuần này" if r.period_type == "week" else "Tháng này" }} | {{ "Tuần trước" if r.period_type == "week" else "Tháng trước" }} | Δ |
+|---|---|---|---|
+{% for row in r.rows %}
+| {{ row.label }} | {{ row.now | fmt(row.digits) }} | {{ row.before | fmt(row.digits) }} | {{ row.delta | signed(row.digits) }} |
+{% endfor %}
+{% if r.trend %}
+
+## Xu hướng 4 tuần
+{% for w in r.trend %}
+- Tuần {{ w.week.strftime("%d/%m") }}: Quality Index {{ w.qi | fmt }}, {{ w.critical }} critical
+{% endfor %}
+{% endif %}
+
+## Critical/High chưa xử lý
+{% for i in r.open_issues %}
+- [{{ i.severity }}] {{ i.title }} – {{ i.where }} – @{{ i.who }} – {{ i.days }} ngày
+{% else %}
+- Không có. 🎉
+{% endfor %}
+{% if r.audience == "lead" %}
+
+## Ghi nhận
+{% for line in r.praise %}
+- {{ line }}
+{% else %}
+- (chưa có)
+{% endfor %}
+
+## Cần hỗ trợ
+{% for line in r.support %}
+- {{ line }}
+{% else %}
+- (không có)
+{% endfor %}
+{% endif %}
+
+## Gợi ý coaching
+{% for line in r.coaching %}
+- {{ line }}
+{% else %}
+- Không có loại lỗi nào nổi bật kỳ này.
+{% endfor %}
+
+_Điểm là tín hiệu coaching, không phải căn cứ duy nhất để đánh giá hiệu suất._

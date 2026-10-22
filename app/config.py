@@ -2,7 +2,7 @@
 
 import os
 from functools import lru_cache
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, PostgresDsn, RedisDsn, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -49,8 +49,12 @@ class Settings(BaseSettings):
     session_secret: SecretStr = SecretStr("")  # signs session tokens; required for the API
     session_ttl_hours: int = Field(default=12, gt=0)
     admin_emails: CommaList = []
-    smtp_url: str = ""
-    slack_webhook_url: SecretStr = SecretStr("")
+    smtp_url: SecretStr = SecretStr("")  # smtp[s]://user:password@host:port
+    smtp_from: str = "codepulse@company.vn"
+    slack_webhook_url: SecretStr = SecretStr("")  # default team channel when none is configured
+    # Per team (by name): {"Backend": {"slack": "https://hooks...", "teams": "https://...",
+    # "emails": ["x@company.vn"]}}. Leads and managers are emailed automatically.
+    report_channels: dict[str, dict[str, Any]] = {}
     retention_days: int = Field(default=365, gt=0)
 
     @field_validator(

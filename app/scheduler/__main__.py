@@ -7,6 +7,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from app.collector.sync import enqueue_syncs_job
 from app.config import get_settings
 from app.logging import configure_logging
+from app.reporting.jobs import send_reports_job
 from app.scoring.aggregate import aggregate_job
 
 
@@ -46,6 +47,27 @@ def build_scheduler(sync_interval_min: int, report_tz: str = "UTC") -> BlockingS
         hour=0,
         minute=30,
         id="aggregate-month",
+        **common,
+    )
+    # docs/specs/10: weekly report Monday 08:00, monthly report on the 1st (after aggregation).
+    scheduler.add_job(
+        send_reports_job,
+        "cron",
+        args=["week"],
+        day_of_week="mon",
+        hour=8,
+        minute=0,
+        id="report-week",
+        **common,
+    )
+    scheduler.add_job(
+        send_reports_job,
+        "cron",
+        args=["month"],
+        day=1,
+        hour=8,
+        minute=0,
+        id="report-month",
         **common,
     )
     return scheduler
