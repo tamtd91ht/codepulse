@@ -2,7 +2,8 @@ import httpx
 import pytest
 import respx
 
-from app.collector.gitlab.client import GitLabClient, GitLabError, RateLimiter
+from app.collector.gitlab.client import GitLabClient, GitLabError
+from app.ratelimit import RateLimiter
 
 BASE = "https://gitlab.example.com"
 API = f"{BASE}/api/v4"

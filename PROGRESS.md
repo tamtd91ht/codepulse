@@ -28,3 +28,5 @@
 - Project \`allow_external_llm=false\` không được review ở v1 (chưa có provider local).
 
 ## Phase 3 – AI Review
+- 3.1: \`LLMProvider\` + \`ClaudeCodeProvider\` (gọi \`claude -p --output-format json --json-schema …\`, tắt mọi tool, không đọc settings/session, cwd thư mục tạm rỗng, diff qua stdin; timeout 120s, retry 3 lần, rate limit; token OAuth/API key qua biến môi trường, không lộ trong lỗi) + \`FakeLLMProvider\`. CLI không hỗ trợ \`temperature=0\` như spec 06 yêu cầu → chấp nhận, đo độ ổn định bằng eval (3.8). Dockerfile cài CLI bản cố định: chờ Docker Desktop (đang treo) để build thử.
+- 3.2: lọc SENSITIVE_PATHS (không gửi LLM), IGNORE_PATHS, file xoá/quá lớn/binary; che secret bằng regex (token GitLab/GitHub/Anthropic/AWS/Slack, JWT, Bearer, private key, mật khẩu trong URL, \`password = "…"\`); diff kèm số dòng mới để LLM trích đúng dòng; chunk theo MAX_TOKENS_PER_CHUNK (file lớn tách theo hunk); context ±30 dòng gộp vùng chồng nhau, chỉ thêm khi còn chỗ.

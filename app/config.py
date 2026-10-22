@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     llm_provider: Literal["claude_code", "anthropic", "openai", "ollama"] = "claude_code"
     llm_model: str = ""
     llm_api_key: SecretStr = SecretStr("")
+    claude_code_bin: str = "claude"
     monthly_llm_budget_usd: float = Field(default=200, ge=0)
     max_review_loc: int = Field(default=1500, gt=0)
     max_tokens_per_chunk: int = Field(default=12000, gt=0)
