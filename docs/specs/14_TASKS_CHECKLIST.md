@@ -11,7 +11,7 @@
 - [x] Trọng số severity & luật điểm sàn critical (08) → giữ trọng số mặc định; có critical → score ≤ 50
 
 ## Phase 1 – Nền tảng (≈ 1 tuần)
-- [ ] 1.1 Khởi tạo repo, cấu trúc thư mục, Makefile, Docker Compose (02)
+- [x] 1.1 Khởi tạo repo, cấu trúc thư mục, Makefile, Docker Compose (02)
 - [ ] 1.2 Config bằng pydantic-settings, `.env.example` (13)
 - [ ] 1.3 Migration toàn bộ schema (03)
 - [ ] 1.4 Mã hoá secret, logging JSON, healthcheck

@@ -1,0 +1,10 @@
+.venv
+.git
+.idea
+**/__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.env
+codepulse-specs.zip
+dashboards
