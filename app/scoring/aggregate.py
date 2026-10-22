@@ -28,7 +28,13 @@ from app.models import (
     User,
 )
 from app.review.status import SEVERE
-from app.scoring.formula import SEVERITIES, quality_index, weights_for
+from app.scoring.formula import (
+    SEVERITIES,
+    ScoredFinding,
+    quality_index,
+    review_score,
+    weights_for,
+)
 from app.scoring.process import process_metrics
 
 log = logging.getLogger(__name__)
@@ -328,3 +334,63 @@ def aggregate(
         },
     )
     return AggregateResult(users=len(users), teams=len(teams))
+
+
+def recompute_scores(
+    session: Session,
+    start: datetime,
+    end: datetime,
+    weights_override: Mapping[str, float] | None = None,
+) -> int:
+    """Re-score finished reviews from their findings (after a dispute or a weight change)."""
+    changed = 0
+    for review in session.scalars(
+        select(Review).where(
+            Review.status.in_(("done", "superseded")),
+            Review.finished_at >= start,
+            Review.finished_at < end,
+        )
+    ):
+        findings = [
+            ScoredFinding(f.severity, float(f.confidence or 1), f.status or "open")
+            for f in session.scalars(
+                select(ReviewFinding).where(ReviewFinding.review_id == review.id)
+            )
+        ]
+        weights = weights_for(review.rubric_version, weights_override)
+        score = Decimal(str(review_score(findings, review.loc_reviewed or 0, weights)))
+        if review.score != score:
+            review.score = score
+            changed += 1
+    session.flush()
+    return changed
+
+
+@dataclass
+class RecomputeResult:
+    reviews_rescored: int
+    periods: list[tuple[str, date]]
+
+
+def recompute(
+    session: Session,
+    first_day: date,
+    last_day: date,
+    tz: ZoneInfo,
+    weights_override: Mapping[str, float] | None = None,
+    min_sample: int = 3,
+) -> RecomputeResult:
+    """docs/specs/08 §5 `codepulse metrics recompute --from --to`: scores, then every week and
+    month that overlaps [first_day, last_day]."""
+    start = datetime.combine(first_day, time.min, tz)
+    end = datetime.combine(last_day + timedelta(days=1), time.min, tz)
+    rescored = recompute_scores(session, start, end, weights_override)
+    periods: list[tuple[str, date]] = []
+    period_type: PeriodType
+    for period_type in ("week", "month"):
+        current = period_start_of(first_day, period_type)
+        while current <= last_day:
+            aggregate(session, period_type, current, tz, weights_override, min_sample)
+            periods.append((period_type, current))
+            current = next_period(current, period_type)
+    return RecomputeResult(rescored, periods)

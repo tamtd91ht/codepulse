@@ -4,8 +4,10 @@ import argparse
 import secrets
 import sys
 from collections.abc import Callable, Sequence
+from datetime import date
 from pathlib import Path
 from typing import TextIO
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,6 +19,7 @@ from app.crypto import SecretBox, secret_box
 from app.identity.autolink import unmapped_accounts
 from app.identity.csv_import import CsvImportError, import_identity
 from app.models import Connection, Project
+from app.scoring.aggregate import recompute
 
 WEBHOOK_PATH = "/api/v1/webhooks/gitlab"
 
@@ -191,6 +194,13 @@ def build_parser() -> argparse.ArgumentParser:
     imp.add_argument("--users", type=Path)
     imp.add_argument("--accounts", type=Path)
     ident.add_parser("unmapped")
+
+    metrics = sub.add_parser("metrics").add_subparsers(dest="command", required=True)
+    recompute = metrics.add_parser(
+        "recompute", help="re-score reviews and re-aggregate every week/month in the range"
+    )
+    recompute.add_argument("--from", dest="date_from", type=date.fromisoformat, required=True)
+    recompute.add_argument("--to", dest="date_to", type=date.fromisoformat, required=True)
     return parser
 
 
@@ -241,6 +251,21 @@ def run(
             return identity_import(session, out, args.teams, args.users, args.accounts)
         case ("identity", "unmapped"):
             identity_unmapped(session, out)
+        case ("metrics", "recompute"):
+            if args.date_to < args.date_from:
+                raise CliError("--to must not be before --from")
+            recomputed = recompute(
+                session,
+                args.date_from,
+                args.date_to,
+                ZoneInfo(settings.report_tz),
+                settings.scoring_weights,
+                settings.min_sample,
+            )
+            out.write(
+                f"rescored {recomputed.reviews_rescored} reviews; "
+                f"aggregated {len(recomputed.periods)} periods\n"
+            )
     return True
 
 

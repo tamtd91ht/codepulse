@@ -45,7 +45,7 @@
 - [x] 4.3 Aggregator tuần/tháng cho user & team (upsert, timezone)
 - [x] 4.4 Fix rate qua fingerprint
 - [x] 4.5 Quality index + MIN_SAMPLE + delta kỳ trước
-- [ ] 4.6 CLI recompute
+- [x] 4.6 CLI recompute
 - [ ] **Demo**: bảng metric 4 tuần gần nhất có số liệu hợp lý
 
 ## Phase 5 – API, Dashboard, Báo cáo (≈ 2 tuần)
