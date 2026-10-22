@@ -5,14 +5,28 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from redis import Redis
 from sqlalchemy import Engine
 
 from app import health
+from app.api import auth
+from app.api.routers import admin, metrics, reviews
+from app.collector.gitlab.client import GitLabError
+from app.config import get_settings
 from app.db import get_engine, get_redis
 from app.logging import configure_logging, request_id_var
 from app.webhook.router import router as webhook_router
+
+
+def _settings_ok() -> bool:
+    try:
+        get_settings()
+    except Exception:  # missing env at import time (tooling); requests will fail loudly later
+        return False
+    return True
+
 
 configure_logging()
 # Replaced by the access line below, which is written while request_id is still set.
@@ -21,6 +35,21 @@ access_log = logging.getLogger("codepulse.access")
 
 app = FastAPI(title="CodePulse", version="0.1.0")
 app.include_router(webhook_router, prefix="/api/v1")
+for api_router in (auth.router, admin.router, reviews.router, metrics.router):
+    app.include_router(api_router, prefix="/api/v1")
+# docs/specs/11: CORS for the dashboard origin only; cookies need credentials.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[get_settings().dashboard_url] if _settings_ok() else [],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
+)
+
+
+@app.exception_handler(GitLabError)
+def gitlab_error(request: Request, exc: GitLabError) -> JSONResponse:
+    return JSONResponse({"detail": f"GitLab: {exc}"}, status_code=502)
 
 
 @app.middleware("http")

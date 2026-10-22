@@ -40,11 +40,22 @@ class Settings(BaseSettings):
     allowed_email_domains: CommaList = []
 
     report_tz: str = "Asia/Ho_Chi_Minh"
+
+    # Dashboard sign-in: GitLab as OAuth/OIDC provider (Phase 0 decision).
+    dashboard_url: str = "http://localhost:3000"
+    gitlab_oauth_url: str = ""  # e.g. https://gitlab.company.vn
+    gitlab_oauth_client_id: str = ""
+    gitlab_oauth_client_secret: SecretStr = SecretStr("")
+    session_secret: SecretStr = SecretStr("")  # signs session tokens; required for the API
+    session_ttl_hours: int = Field(default=12, gt=0)
+    admin_emails: CommaList = []
     smtp_url: str = ""
     slack_webhook_url: SecretStr = SecretStr("")
     retention_days: int = Field(default=365, gt=0)
 
-    @field_validator("ignore_paths", "sensitive_paths", "allowed_email_domains", mode="before")
+    @field_validator(
+        "ignore_paths", "sensitive_paths", "allowed_email_domains", "admin_emails", mode="before"
+    )
     @classmethod
     def _split_commas(cls, value: object) -> object:
         if isinstance(value, str):

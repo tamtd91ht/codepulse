@@ -1,3 +1,4 @@
+from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.domain import Commit, MergeRequest, MrCommit, MrNote, Pipeline
 from app.models.identity import Account, Team, TeamMember, User
@@ -7,6 +8,7 @@ from app.models.source import Connection, Project, RawGitlab
 
 __all__ = [
     "Account",
+    "AuditLog",
     "Base",
     "Commit",
     "Connection",

@@ -20,6 +20,7 @@ dependencies = [
     "apscheduler>=3.10,<4",
     "httpx>=0.28",
     "cryptography>=44",
+    "pyjwt>=2.9",
 ]
 
 [project.optional-dependencies]

@@ -49,7 +49,7 @@
 - [ ] **Demo**: bảng metric 4 tuần gần nhất có số liệu hợp lý
 
 ## Phase 5 – API, Dashboard, Báo cáo (≈ 2 tuần)
-- [ ] 5.1 REST API + RBAC + audit log (09)
+- [x] 5.1 REST API + RBAC + audit log (09)
 - [ ] 5.2 Dispute flow (API + UI tối thiểu) → recompute
 - [ ] 5.3 Dashboard: Team Overview, Member Detail, Critical Board, Admin (10)
 - [ ] 5.4 Báo cáo weekly/monthly (Markdown/HTML) + gửi Email/Slack
