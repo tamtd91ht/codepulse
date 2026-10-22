@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -90,3 +91,22 @@ def test_request_id_is_echoed_or_generated(workers: list[StubWorker]) -> None:
     client = _client(create_engine("sqlite://"), StubRedis(True))
     assert client.get("/healthz", headers={"X-Request-ID": "abc"}).headers["X-Request-ID"] == "abc"
     assert len(client.get("/healthz").headers["X-Request-ID"]) == 32
+
+
+def test_access_log_carries_request_id(
+    workers: list[StubWorker], caplog: pytest.LogCaptureFixture
+) -> None:
+    from app.logging import request_id_var
+
+    caplog.set_level(logging.INFO, logger="codepulse.access")
+    seen: list[str | None] = []
+    handler = logging.Handler()
+    handler.emit = lambda record: seen.append(request_id_var.get())  # type: ignore[method-assign]
+    logging.getLogger("codepulse.access").addHandler(handler)
+    try:
+        _client(create_engine("sqlite://"), StubRedis(True)).get(
+            "/healthz", headers={"X-Request-ID": "trace-1"}
+        )
+    finally:
+        logging.getLogger("codepulse.access").removeHandler(handler)
+    assert seen == ["trace-1"]

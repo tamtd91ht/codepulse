@@ -1,3 +1,5 @@
+import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
@@ -12,6 +14,9 @@ from app.db import get_engine, get_redis
 from app.logging import configure_logging, request_id_var
 
 configure_logging()
+# Replaced by the access line below, which is written while request_id is still set.
+logging.getLogger("uvicorn.access").disabled = True
+access_log = logging.getLogger("codepulse.access")
 
 app = FastAPI(title="CodePulse", version="0.1.0")
 
@@ -22,8 +27,19 @@ async def request_id_middleware(
 ) -> Response:
     request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
     token = request_id_var.set(request_id)
+    started = time.perf_counter()
     try:
         response = await call_next(request)
+        access_log.info(
+            "%s %s %s",
+            request.method,
+            request.url.path,
+            response.status_code,
+            extra={
+                "status": response.status_code,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+            },
+        )
     finally:
         request_id_var.reset(token)
     response.headers["X-Request-ID"] = request_id

@@ -16,7 +16,7 @@
 - [x] 1.3 Migration toàn bộ schema (03)
 - [x] 1.4 Mã hoá secret, logging JSON, healthcheck
 - [x] 1.5 CI: lint + test
-- [ ] **Demo**: `make up` chạy, `/healthz` OK, DB có đủ bảng
+- [x] **Demo**: `make up` chạy, `/healthz` OK, DB có đủ bảng
 
 ## Phase 2 – Thu thập dữ liệu (≈ 1–2 tuần)
 - [ ] 2.1 GitLab client: phân trang, retry, rate-limit (04)

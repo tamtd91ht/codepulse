@@ -8,7 +8,7 @@ from app.models import Base
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # A URL passed by the caller (tests, CLI -x) wins over the environment.
 if not config.get_main_option("sqlalchemy.url"):
