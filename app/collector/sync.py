@@ -1,7 +1,7 @@
 """Sync a project: collect -> extract -> convert in one transaction (backfill, then incremental)."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -9,13 +9,14 @@ from typing import Any, Protocol
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.collector.gitlab.client import GitLabClient
+from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.gitlab.collect import GitLabCollector, window_start
 from app.collector.gitlab.convert import Converter, raw_rows_query
 from app.collector.gitlab.extract import extract
 from app.config import get_settings
 from app.crypto import SecretBox, secret_box
 from app.db import get_redis, get_sessionmaker
+from app.identity.autolink import PublicEmailLookup, autolink
 from app.models import Connection, Project
 
 log = logging.getLogger(__name__)
@@ -45,6 +46,16 @@ def client_factory(box: SecretBox) -> ClientFactory:
     return make
 
 
+def public_email_lookup(client: GitLabClient) -> PublicEmailLookup:
+    def lookup(gitlab_user_id: int) -> str | None:
+        try:
+            return str(client.user(gitlab_user_id).get("public_email") or "")
+        except GitLabError:
+            return None  # a deleted or hidden user must not fail the sync
+
+    return lookup
+
+
 def sync_project(
     session: Session,
     project: Project,
@@ -52,6 +63,7 @@ def sync_project(
     *,
     backfill_days: int,
     ignore_paths: list[str],
+    allowed_email_domains: Sequence[str] = (),
     now: datetime | None = None,
 ) -> SyncResult:
     """Run inside the caller's transaction; last_synced_at only advances if everything succeeds."""
@@ -70,12 +82,14 @@ def sync_project(
 
     with make_client(connection) as client:
         collected = GitLabCollector(client, clock=lambda: started).collect(session, project, since)
-    rows = session.scalars(raw_rows_query(project, fetched_since=collected.started_at)).all()
-    converted = Converter(session, project, ignore_paths).run(extract(rows))
+        rows = session.scalars(raw_rows_query(project, fetched_since=collected.started_at)).all()
+        converted = Converter(session, project, ignore_paths).run(extract(rows))
+        linked = autolink(session, allowed_email_domains, public_email=public_email_lookup(client))
 
     project.last_synced_at = started
     session.flush()
     counts = {**collected.counts, **{f"domain.{k}": v for k, v in converted.counts.items()}}
+    counts["identity.linked"] = sum(linked.linked.values())
     log.info("project synced", extra={"project_id": project.id, "counts": counts})
     return SyncResult(project.id, skipped=False, window_start=since, counts=counts)
 
@@ -93,6 +107,7 @@ def sync_project_job(project_id: int) -> dict[str, object]:
             client_factory(secret_box()),
             backfill_days=settings.backfill_days,
             ignore_paths=settings.ignore_paths,
+            allowed_email_domains=settings.allowed_email_domains,
         )
     return {"project_id": result.project_id, "skipped": result.skipped, "counts": result.counts}
 
