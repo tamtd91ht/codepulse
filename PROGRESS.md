@@ -7,3 +7,4 @@
 
 ## Phase 1 – Nền tảng
 - 1.1: skeleton `app/` theo 02, pyproject (ruff/mypy strict/pytest), Dockerfile, compose (postgres, redis, api, worker, scheduler; bỏ grafana vì đã chọn Next.js), Makefile up/down/lint/test (migrate/seed thêm ở 1.3). Máy dev chưa có `make` → chạy lệnh trực tiếp.
+- 1.2: `app/config.py` (pydantic-settings, secret dạng SecretStr, list dạng CSV), `.env.example`; thêm `LLM_PROVIDER=claude_code` (mặc định) vào 13 theo quyết định Phase 0.

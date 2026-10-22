@@ -10,7 +10,7 @@ REDIS_URL=redis://redis:6379/0
 APP_ENCRYPTION_KEY=           # Fernet key
 APP_BASE_URL=https://codepulse.company.vn
 
-LLM_PROVIDER=anthropic        # anthropic|openai|ollama
+LLM_PROVIDER=claude_code      # claude_code|anthropic|openai|ollama
 LLM_MODEL=
 LLM_API_KEY=
 MONTHLY_LLM_BUDGET_USD=200
