@@ -75,3 +75,16 @@ def test_dispute_permissions(client: TestClient, world: World, as_user: Any) -> 
     assert client.post(url, headers=as_user(world.manager), json=body).status_code == 403
     assert client.post(url, headers=as_user(world.lead), json=body).status_code == 200
     assert client.post(url, headers=as_user(world.lead), json=body).status_code == 409
+
+
+def test_dispute_list_names_the_finding_and_person(
+    client: TestClient, world: World, as_user: Any
+) -> None:
+    dispute(client, world, as_user(world.an))
+    (item,) = client.get("/api/v1/disputes", headers=as_user(world.lead)).json()
+    assert (item["finding_title"], item["finding_severity"], item["raised_by_name"]) == (
+        "SQL injection",
+        "critical",
+        "An",
+    )
+    assert item["review_id"] == world.an_review.id

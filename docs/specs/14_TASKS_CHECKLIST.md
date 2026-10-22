@@ -50,8 +50,8 @@
 
 ## Phase 5 – API, Dashboard, Báo cáo (≈ 2 tuần)
 - [x] 5.1 REST API + RBAC + audit log (09)
-- [ ] 5.2 Dispute flow (API + UI tối thiểu) → recompute
-- [ ] 5.3 Dashboard: Team Overview, Member Detail, Critical Board, Admin (10)
+- [x] 5.2 Dispute flow (API + UI tối thiểu) → recompute
+- [x] 5.3 Dashboard: Team Overview, Member Detail, Critical Board, Admin (10)
 - [ ] 5.4 Báo cáo weekly/monthly (Markdown/HTML) + gửi Email/Slack
 - [ ] 5.5 Báo cáo cá nhân riêng cho từng dev
 - [ ] **Demo**: nhận báo cáo tuần thật qua Slack/email

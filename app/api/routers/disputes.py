@@ -1,7 +1,7 @@
 """Dispute flow (docs/specs/01 F11, 09; task 5.2): dispute -> lead decides -> recompute."""
 
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,7 +14,7 @@ from app.api.deps import get_session
 from app.api.schemas import ORM
 from app.api.security import CurrentPrincipal
 from app.config import Settings, get_settings
-from app.models import FindingDispute, Review, ReviewFinding
+from app.models import FindingDispute, Review, ReviewFinding, User
 from app.scoring.aggregate import aggregate, recompute_scores
 
 router = APIRouter(tags=["disputes"])
@@ -37,6 +37,13 @@ class DisputeOut(ORM):
     decision: str | None
     decided_by: int | None
     decided_at: datetime | None
+
+
+class DisputeListItem(DisputeOut):
+    finding_title: str | None
+    finding_severity: str | None
+    review_id: int | None
+    raised_by_name: str | None
 
 
 def _review_of(session: Session, finding: ReviewFinding) -> Review:
@@ -66,10 +73,10 @@ def raise_dispute(
     return dispute
 
 
-@router.get("/disputes", response_model=list[DisputeOut])
+@router.get("/disputes", response_model=list[DisputeListItem])
 def list_disputes(
     principal: CurrentPrincipal, session: SessionDep, pending: bool = True
-) -> list[FindingDispute]:
+) -> list[dict[str, Any]]:
     """Your own disputes, plus those of the people you lead (all for admins)."""
     query = select(FindingDispute).order_by(FindingDispute.id.desc())
     if pending:
@@ -77,7 +84,20 @@ def list_disputes(
     visible = principal.visible_users()
     if visible is not None:
         query = query.where(FindingDispute.raised_by.in_(visible))
-    return list(session.scalars(query.limit(200)))
+    items = []
+    for dispute in session.scalars(query.limit(200)):
+        finding = session.get(ReviewFinding, dispute.finding_id) if dispute.finding_id else None
+        raiser = session.get(User, dispute.raised_by) if dispute.raised_by else None
+        items.append(
+            {
+                **DisputeOut.model_validate(dispute).model_dump(),
+                "finding_title": finding.title if finding else None,
+                "finding_severity": finding.severity if finding else None,
+                "review_id": finding.review_id if finding else None,
+                "raised_by_name": raiser.full_name if raiser else None,
+            }
+        )
+    return items
 
 
 def _recompute_for(session: Session, review: Review, settings: Settings) -> None:

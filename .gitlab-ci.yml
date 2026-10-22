@@ -11,6 +11,16 @@ default:
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
 
+dashboard:
+  stage: lint
+  image: node:22
+  before_script: []
+  script:
+    - cd dashboards/web
+    - npm ci --no-audit --no-fund
+    - npm run typecheck
+    - npm run build
+
 lint:
   stage: lint
   script:

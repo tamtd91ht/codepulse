@@ -59,5 +59,16 @@ services:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
 
+  # Next.js dashboard; it proxies /api to the api service, so set APP_BASE_URL to its URL.
+  web:
+    build:
+      context: ./dashboards/web
+      args:
+        API_URL: http://api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
 volumes:
   pgdata:

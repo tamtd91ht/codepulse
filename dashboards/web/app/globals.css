@@ -1,0 +1,258 @@
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --border: #e4e4e0;
+  --text: #1c1c1a;
+  --muted: #6b6b66;
+  --accent: #2f5bd3;
+  --good: #1f8a4c;
+  --bad: #c2362f;
+  --sev-critical: #b4232a;
+  --sev-high: #d9622b;
+  --sev-medium: #c99a12;
+  --sev-low: #4f7fc9;
+  --sev-info: #8a8a85;
+  --radius: 8px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141413;
+    --surface: #1d1d1b;
+    --border: #33332f;
+    --text: #ececea;
+    --muted: #9a9a94;
+    --accent: #7c9cf0;
+    --good: #4cc27f;
+    --bad: #ef6b63;
+    --sev-critical: #ef5a60;
+    --sev-high: #f08a52;
+    --sev-medium: #e0b93c;
+    --sev-low: #7ba3e6;
+    --sev-info: #8e8e88;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+header.nav {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+header.nav .brand {
+  font-weight: 700;
+  color: var(--text);
+}
+header.nav .spacer {
+  flex: 1;
+}
+header.nav .active {
+  font-weight: 600;
+  color: var(--text);
+}
+
+main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+h1 {
+  font-size: 22px;
+  margin: 0 0 4px;
+}
+h2 {
+  font-size: 16px;
+  margin: 0 0 12px;
+}
+.muted {
+  color: var(--muted);
+}
+
+.toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 12px 0 20px;
+}
+
+select,
+input,
+textarea,
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+button {
+  cursor: pointer;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+}
+.grid.kpis {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.grid.two {
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  min-width: 0;
+}
+.card + .card,
+.grid + .card,
+.card + .grid,
+.grid + .grid {
+  margin-top: 16px;
+}
+
+.kpi .label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.kpi .value {
+  font-size: 28px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.kpi .delta.up {
+  color: var(--good);
+}
+.kpi .delta.down {
+  color: var(--bad);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+th,
+td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 12px;
+}
+td.num,
+th.num {
+  text-align: right;
+}
+
+.sev {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+}
+.sev.critical {
+  background: var(--sev-critical);
+}
+.sev.high {
+  background: var(--sev-high);
+}
+.sev.medium {
+  background: var(--sev-medium);
+}
+.sev.low {
+  background: var(--sev-low);
+}
+.sev.info {
+  background: var(--sev-info);
+}
+
+pre.excerpt {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  overflow-x: auto;
+  font-size: 12px;
+}
+
+.finding {
+  border-top: 1px solid var(--border);
+  padding: 14px 0;
+}
+.finding:first-child {
+  border-top: 0;
+}
+
+.notice {
+  margin-top: 32px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.error {
+  color: var(--bad);
+}
+
+.heatmap {
+  display: grid;
+  gap: 2px;
+  font-size: 11px;
+}
+.heatmap .cell {
+  height: 22px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
