@@ -31,7 +31,7 @@
 ## Phase 3 – AI Review (≈ 2 tuần)
 - [x] 3.1 `LLMProvider` + 1 provider đã chọn + `FakeLLMProvider` (06)
 - [x] 3.2 Lọc file, che secret, chunking diff + lấy context
-- [ ] 3.3 Prompt + rubric v1 + JSON schema + parser/repair
+- [x] 3.3 Prompt + rubric v1 + JSON schema + parser/repair
 - [ ] 3.4 Hậu xử lý: kiểm tra dòng, confidence, fingerprint dedupe
 - [ ] 3.5 Worker review MR/commit, trạng thái, superseded khi MR update
 - [ ] 3.6 Theo dõi token/chi phí + ngân sách tháng
