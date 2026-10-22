@@ -42,3 +42,4 @@
 
 ## Phase 4 – Chấm điểm & Tổng hợp
 - 4.1: công thức review_score (08) đã có từ 3.5; thêm trọng số theo `rubric_version` (`WEIGHTS_BY_RUBRIC`) và ghi đè bằng `SCORING_WEIGHTS` (JSON, kiểm tra đủ 5 mức, không âm), `MIN_SAMPLE`; bảng test: MR nhỏ 1 critical (50) vs MR lớn 20 low (98), clamp 0, false_positive không tính, trần critical.
+- 4.2: `process_metrics`: số MR merge, thời gian review TB (giờ, bỏ MR chưa ai review), kích thước MR TB, số vòng review TB, build success rate (%, chỉ tính pipeline success/failed; canceled/skipped không tính).

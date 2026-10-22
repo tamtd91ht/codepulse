@@ -41,7 +41,7 @@
 
 ## Phase 4 – Chấm điểm & Tổng hợp (≈ 1 tuần)
 - [x] 4.1 Công thức review_score + test bảng (08)
-- [ ] 4.2 Metric quy trình: review time, MR size, rounds, build success
+- [x] 4.2 Metric quy trình: review time, MR size, rounds, build success
 - [ ] 4.3 Aggregator tuần/tháng cho user & team (upsert, timezone)
 - [ ] 4.4 Fix rate qua fingerprint
 - [ ] 4.5 Quality index + MIN_SAMPLE + delta kỳ trước
