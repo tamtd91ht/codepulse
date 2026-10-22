@@ -29,6 +29,7 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "testcontainers[postgres]>=4.8",
+    "respx>=0.22",
 ]
 
 [tool.setuptools.packages.find]

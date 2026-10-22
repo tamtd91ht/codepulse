@@ -19,7 +19,7 @@
 - [x] **Demo**: `make up` chạy, `/healthz` OK, DB có đủ bảng
 
 ## Phase 2 – Thu thập dữ liệu (≈ 1–2 tuần)
-- [ ] 2.1 GitLab client: phân trang, retry, rate-limit (04)
+- [x] 2.1 GitLab client: phân trang, retry, rate-limit (04)
 - [ ] 2.2 Collect → raw: commits, MRs, MR diffs/commits/notes, pipelines
 - [ ] 2.3 Extract/convert → domain; tính `first_review_at`, `review_rounds`
 - [ ] 2.4 Backfill + incremental sync qua scheduler

@@ -12,3 +12,6 @@
 - 1.4: `SecretBox` (Fernet, lỗi không lộ token), log JSON có request_id (middleware, header X-Request-ID) / job_id (worker RQ), `/healthz` (DB + Redis bắt buộc, số worker còn heartbeat chỉ báo cáo), healthcheck container cho api và worker, `app.seed` idempotent (`make seed`).
 - 1.5: CI lint + test: GitHub Actions (repo đang ở GitHub) và `.gitlab-ci.yml` theo 12 (docker-in-docker cho testcontainers) – stage eval/build thêm ở 3.8/sau.
 - Demo Phase 1 (2026-10-22): compose up → migrate → seed; 17 bảng, \`/healthz\` = ok (1 worker), api/worker healthy; CI GitHub xanh. Sửa thêm: access log ghi request_id (tắt uvicorn.access), Alembic không tắt logger có sẵn. Demo chạy lệnh docker compose trực tiếp vì máy chưa có \`make\`; người dùng cho đi tiếp Phase 2 không dừng ở checkpoint.
+
+## Phase 2 – Thu thập dữ liệu
+- 2.1: `GitLabClient` (httpx): phân trang keyset (Link rel=next) + X-Next-Page, retry exponential + jitter cho 429/5xx/lỗi mạng (tôn trọng Retry-After), rate limit phía client (req/s) + chờ khi RateLimit-Remaining thấp, timeout 30s; fallback `/changes` khi `/diffs` 404. Test bằng respx.
