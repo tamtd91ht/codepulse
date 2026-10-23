@@ -9,13 +9,13 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, redirectOn401 = true): Promise<T> {
   const response = await fetch(`/api/v1${path}`, {
     ...init,
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
-  if (response.status === 401 && typeof window !== "undefined") {
+  if (response.status === 401 && redirectOn401 && typeof window !== "undefined") {
     window.location.href = "/login";
   }
   if (!response.ok) {
@@ -40,9 +40,12 @@ export const api = {
     request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
 };
 
-/** GET with caching; pass null to skip (e.g. while a dependency is loading). */
-export function useApi<T>(path: string | null): SWRResponse<T, ApiError> {
-  return useSWR<T, ApiError>(path, (p: string) => api.get<T>(p));
+/**
+ * GET with caching; pass null to skip (e.g. while a dependency is loading).
+ * `redirect: false` keeps a signed-out visitor on public pages instead of sending them to /login.
+ */
+export function useApi<T>(path: string | null, { redirect = true } = {}): SWRResponse<T, ApiError> {
+  return useSWR<T, ApiError>(path, (p: string) => request<T>(p, undefined, redirect));
 }
 
 export function qs(params: Record<string, string | number | null | undefined>): string {

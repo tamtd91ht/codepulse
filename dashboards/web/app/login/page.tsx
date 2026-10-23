@@ -7,6 +7,9 @@ export default function LoginPage() {
       <a href="/api/v1/auth/login">
         <button className="primary">Đăng nhập với GitLab</button>
       </a>
+      <p className="muted">
+        <a href="/guide">Hướng dẫn sử dụng</a>
+      </p>
     </div>
   );
 }

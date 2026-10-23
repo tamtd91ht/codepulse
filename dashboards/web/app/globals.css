@@ -256,3 +256,32 @@ pre.excerpt {
   align-items: center;
   justify-content: center;
 }
+
+/* Guide page: long prose, so table cells wrap and sections sit below the sticky-free nav. */
+.guide {
+  max-width: 860px;
+}
+.guide h3 {
+  font-size: 14px;
+  margin: 16px 0 6px;
+}
+.guide ul,
+.guide ol {
+  margin: 0;
+  padding-left: 20px;
+}
+.guide li + li {
+  margin-top: 6px;
+}
+.guide td {
+  white-space: normal;
+}
+.guide section {
+  scroll-margin-top: 16px;
+}
+.toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin-top: 16px;
+}

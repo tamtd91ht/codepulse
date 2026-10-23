@@ -8,7 +8,9 @@ import type { Me } from "@/lib/types";
 
 export function Nav() {
   const pathname = usePathname();
-  const { data: me } = useApi<Me>(pathname === "/login" ? null : "/auth/me");
+  const { data: me } = useApi<Me>(pathname === "/login" ? null : "/auth/me", {
+    redirect: !pathname.startsWith("/guide"),
+  });
   const isLead = !!me && (me.is_admin || me.lead_teams.length > 0);
 
   const link = (href: string, label: string) => (
@@ -31,6 +33,7 @@ export function Nav() {
           {me.is_admin && link("/admin", "Admin")}
         </>
       )}
+      {link("/guide", "Hướng dẫn")}
       <span className="spacer" />
       {me && (
         <>
