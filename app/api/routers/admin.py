@@ -24,6 +24,7 @@ from app.api.schemas import (
     GroupImportIn,
     GroupImportOut,
     MemberIn,
+    MemberOut,
     ProjectIn,
     ProjectOut,
     ProjectPatch,
@@ -406,6 +407,29 @@ def create_team(body: TeamIn, principal: AdminPrincipal, session: SessionDep) ->
     audit(session, principal.user_id, "team.create", f"team:{team.id}")
     session.commit()
     return team
+
+
+@router.get("/teams/{team_id}/members", response_model=list[MemberOut])
+def list_members(team_id: int, principal: AdminPrincipal, session: SessionDep) -> list[MemberOut]:
+    """Every membership of the team, past ones included (left_at set), current ones first."""
+    _get(session, Team, team_id, "team")
+    rows = session.execute(
+        select(TeamMember, User)
+        .join(User, User.id == TeamMember.user_id)
+        .where(TeamMember.team_id == team_id)
+        .order_by(TeamMember.left_at.is_not(None), User.full_name, TeamMember.joined_at)
+    ).all()
+    return [
+        MemberOut(
+            user_id=user.id,
+            full_name=user.full_name,
+            primary_email=user.primary_email,
+            role=member.role,
+            joined_at=member.joined_at,
+            left_at=member.left_at,
+        )
+        for member, user in rows
+    ]
 
 
 @router.put("/teams/{team_id}/members", status_code=204)

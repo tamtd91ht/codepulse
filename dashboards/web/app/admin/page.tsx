@@ -3,6 +3,7 @@
 import { type FormEvent, useState } from "react";
 
 import { LlmCheck } from "@/components/LlmCheck";
+import { TeamAdmin } from "@/components/TeamAdmin";
 import { Loading } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
@@ -327,6 +328,8 @@ export default function AdminPage() {
           </p>
         </div>
       </div>
+
+      <TeamAdmin />
 
       <LlmCheck />
     </>

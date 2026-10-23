@@ -121,6 +121,15 @@ class TeamIn(BaseModel):
     parent_id: int | None = None
 
 
+class MemberOut(BaseModel):
+    user_id: int
+    full_name: str | None
+    primary_email: str | None
+    role: str | None
+    joined_at: date
+    left_at: date | None
+
+
 class MemberIn(BaseModel):
     user_id: int
     role: Literal["member", "lead", "manager"] = "member"

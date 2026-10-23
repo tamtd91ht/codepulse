@@ -199,12 +199,26 @@ export default function GuidePage() {
             <strong>Cho gửi code ra LLM</strong>. Thiếu tuỳ chọn cuối thì project không được review.
           </li>
         </ol>
-        <h3>Gắn tài khoản với người</h3>
-        <p>
-          Commit và MR được gắn với người theo email. Tài khoản chưa nhận ra được hiện ở{" "}
-          <strong>Tài khoản chưa gắn người</strong>; chọn người tương ứng để gắn. Danh sách team và thành viên được
-          nhập bằng CSV qua lệnh <code>codepulse identity import</code> (xem docs/RUNBOOK.md).
-        </p>
+        <h3>Team và người dùng</h3>
+        <ol>
+          <li>
+            Ở thẻ <strong>Team &amp; thành viên</strong>, tạo team (có thể chọn team cha, ví dụ Backend thuộc
+            Engineering).
+          </li>
+          <li>
+            Thêm người dùng bằng họ tên và email công ty. Email phải trùng email trên GitLab để commit/MR tự gắn đúng
+            người.
+          </li>
+          <li>
+            Bấm <strong>Thành viên</strong> ở dòng của team, chọn người, vai trò (Thành viên, Lead, Manager) và ngày vào
+            team rồi bấm <strong>Thêm vào team</strong>. Đổi vai trò ngay trong bảng; <strong>Rời team</strong> ghi ngày
+            rời thay vì xoá, để chỉ số các kỳ trước vẫn đúng.
+          </li>
+          <li>
+            Tài khoản Git/GitLab chưa nhận ra được hiện ở <strong>Tài khoản chưa gắn người</strong>; chọn người tương ứng
+            để gắn. Có nhiều người cùng lúc thì vẫn có thể nhập CSV bằng lệnh <code>codepulse identity import</code>.
+          </li>
+        </ol>
         <h3>Chi phí LLM</h3>
         <p>
           Bảng <strong>Chi phí LLM theo tháng</strong> cho thấy số review, chi phí ước tính và phần trăm ngân sách

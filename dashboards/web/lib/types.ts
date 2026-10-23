@@ -18,6 +18,15 @@ export interface Team {
   parent_id: number | null;
 }
 
+export interface Member {
+  user_id: number;
+  full_name: string | null;
+  primary_email: string | null;
+  role: string | null;
+  joined_at: string;
+  left_at: string | null;
+}
+
 export interface Person {
   id: number;
   full_name: string | null;

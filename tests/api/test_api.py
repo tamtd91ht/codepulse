@@ -146,6 +146,7 @@ def test_rerun_only_failed_or_skipped(
         ("get", "/api/v1/projects"),
         ("patch", "/api/v1/projects/1"),
         ("get", "/api/v1/users"),
+        ("get", "/api/v1/teams/1/members"),
         ("get", "/api/v1/identity/unmapped"),
         ("get", "/api/v1/admin/llm-costs"),
     ],
@@ -364,6 +365,31 @@ def test_first_sign_in_of_an_admin_email_creates_the_user(
     oauth({"sub": "8", "email": "dev@x.vn", "email_verified": True})
     client.cookies.set(STATE_COOKIE, "st")
     assert client.get("/api/v1/auth/callback?code=c&state=st").status_code == 403
+
+
+def test_admin_lists_team_members_and_marks_who_left(
+    client: TestClient, world: World, as_user: Any
+) -> None:
+    admin = as_user(world.admin)
+    path = f"/api/v1/teams/{world.backend.id}/members"
+    left = client.put(
+        path,
+        headers=admin,
+        json={
+            "user_id": world.binh.id,
+            "role": "member",
+            "joined_at": "2025-01-01",
+            "left_at": "2026-10-01",
+        },
+    )
+    assert left.status_code == 204
+    members = client.get(path, headers=admin).json()
+    assert [(m["primary_email"], m["role"], m["left_at"]) for m in members] == [
+        ("an@x.vn", "member", None),
+        ("lead@x.vn", "lead", None),
+        ("binh@x.vn", "member", "2026-10-01"),
+    ]
+    assert client.get("/api/v1/teams/999999/members", headers=admin).status_code == 404
 
 
 def test_dashboard_aggregates(client: TestClient, world: World, as_user: Any) -> None:
