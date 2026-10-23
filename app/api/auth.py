@@ -75,6 +75,23 @@ def find_user(session: Session, info: dict[str, Any]) -> User | None:
     return None
 
 
+def bootstrap_admin(session: Session, info: dict[str, Any], settings: Settings) -> User | None:
+    """First sign-in of an ADMIN_EMAILS address on a fresh install: create its user.
+
+    Everyone else is imported (docs/specs/05); only a GitLab-verified admin email is trusted here.
+    """
+    email = (info.get("email") or "").lower()
+    if not email or info.get("email_verified") is not True:
+        return None
+    if email not in {e.lower() for e in settings.admin_emails}:
+        return None
+    user = User(primary_email=email, full_name=info.get("name") or None)
+    session.add(user)
+    session.flush()
+    audit(session, user.id, "user.bootstrap_admin", f"user:{user.id}")
+    return user
+
+
 @router.get("/callback")
 def callback(
     request: Request,
@@ -108,7 +125,8 @@ def callback(
     except (httpx.HTTPError, KeyError) as exc:
         raise HTTPException(502, "GitLab sign-in failed") from exc
 
-    user = find_user(session, userinfo.json())
+    info = userinfo.json()
+    user = find_user(session, info) or bootstrap_admin(session, info, settings)
     if user is None or user.active is False:
         raise HTTPException(403, "this GitLab account is not registered in CodePulse")
     audit(session, user.id, "auth.login", f"user:{user.id}")

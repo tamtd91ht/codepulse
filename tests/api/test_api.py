@@ -12,7 +12,7 @@ from app.api.auth import STATE_COOKIE, get_oauth_http
 from app.api.main import app
 from app.api.security import SESSION_COOKIE
 from app.config import Settings
-from app.models import Account, AuditLog, Connection
+from app.models import Account, AuditLog, Connection, User
 from tests.api.conftest import BOX, WEEK, FakeQueue, World
 
 pytestmark = pytest.mark.integration
@@ -291,6 +291,32 @@ def test_callback_rejects_bad_state_and_unknown_users(
     oauth({"sub": "999", "email": "stranger@x.vn"})
     client.cookies.set(STATE_COOKIE, "st")
     assert client.get("/api/v1/auth/callback?code=c&state=other").status_code == 400
+    assert client.get("/api/v1/auth/callback?code=c&state=st").status_code == 403
+
+
+def test_first_sign_in_of_an_admin_email_creates_the_user(
+    client: TestClient, settings: Settings, db_session: Session, oauth: Any
+) -> None:
+    settings.admin_emails = ["boss@x.vn"]
+    client.cookies.set(STATE_COOKIE, "st")
+    oauth({"sub": "7", "email": "Boss@x.vn", "name": "Boss"})
+    unverified = client.get("/api/v1/auth/callback?code=c&state=st", follow_redirects=False)
+    assert unverified.status_code == 403  # GitLab must vouch for the email
+
+    oauth({"sub": "7", "email": "Boss@x.vn", "email_verified": True, "name": "Boss"})
+    client.cookies.set(STATE_COOKIE, "st")
+    response = client.get("/api/v1/auth/callback?code=c&state=st", follow_redirects=False)
+    assert response.status_code == 302
+    user = db_session.scalars(select(User).where(User.primary_email == "boss@x.vn")).one()
+    assert user.full_name == "Boss"
+    me = client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {response.cookies.get(SESSION_COOKIE)}"},
+    ).json()
+    assert me["id"] == user.id and me["is_admin"] is True
+
+    oauth({"sub": "8", "email": "dev@x.vn", "email_verified": True})
+    client.cookies.set(STATE_COOKIE, "st")
     assert client.get("/api/v1/auth/callback?code=c&state=st").status_code == 403
 
 

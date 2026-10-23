@@ -14,7 +14,8 @@ Dành cho người vận hành (admin/DevOps). Mọi lệnh `codepulse …` ch�
 3. **Cấu hình**: `cp .env.example .env`, điền ít nhất:
    - `POSTGRES_PASSWORD`, `DATABASE_URL`
    - `APP_ENCRYPTION_KEY` (Fernet key – **giữ bản sao an toàn**, mất key = mất mọi token đã lưu)
-   - `SESSION_SECRET` (≥ 32 ký tự), `ADMIN_EMAILS`
+   - `SESSION_SECRET` (≥ 32 ký tự), `ADMIN_EMAILS` (lần đăng nhập đầu tiên của các email này tự tạo user,
+     nếu GitLab xác nhận email; những người khác phải được import – bước 6)
    - `APP_BASE_URL` = `DASHBOARD_URL` = URL https của dashboard (dashboard phục vụ cả `/api`)
    - `GITLAB_OAUTH_URL`, `GITLAB_OAUTH_CLIENT_ID`, `GITLAB_OAUTH_CLIENT_SECRET`
    - `LLM_PROVIDER=claude_code`, `CLAUDE_CODE_OAUTH_TOKEN` = token từ `claude setup-token` (gói Claude),
