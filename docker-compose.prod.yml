@@ -12,6 +12,7 @@ x-logging: &logging
 x-app: &app
   build: .
   image: codepulse-app:latest
+  pull_policy: build  # local image: never try Docker Hub
   restart: unless-stopped
   logging: *logging
   env_file: [.env.local]
@@ -52,6 +53,7 @@ services:
       args:
         API_URL: http://api:8000
     image: codepulse-web:latest
+    pull_policy: build
     restart: unless-stopped
     logging: *logging
     ports:
