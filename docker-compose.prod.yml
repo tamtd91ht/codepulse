@@ -3,7 +3,12 @@
 #   cd /opt/codepulse/app && docker compose --env-file .env.local -f docker-compose.prod.yml up -d --build
 # Config comes from .env.local (gitignored). PostgreSQL and Redis are standalone servers on the
 # network, reached through DATABASE_URL and REDIS_URL.
-# Only the dashboard (web) is published; it proxies /api, so GitLab webhooks and OAuth go through it too.
+#
+# Every service uses the host's network stack: host firewalls (firewalld, ufw) commonly reject
+# traffic from Docker bridges to the host's own IP ("No route to host"), which is where the
+# standalone PostgreSQL/Redis listen. Ports are therefore bound by the processes themselves:
+# the api on 127.0.0.1:8000 only, the dashboard on WEB_HOST:WEB_PORT. The dashboard proxies /api,
+# so GitLab webhooks and OAuth go through it too.
 
 x-logging: &logging
   driver: json-file
@@ -15,23 +20,23 @@ x-app: &app
   pull_policy: build  # local image: never try Docker Hub
   restart: unless-stopped
   logging: *logging
+  network_mode: host
   env_file: [.env.local]
 
 services:
   api:
     <<: *app
     # Logs whether PostgreSQL/Redis are reachable, then migrates (only this service migrates).
-    command: ["sh", "-c", "python -m app.startup_check; alembic upgrade head && uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --proxy-headers"]
+    # Bound to localhost: only the dashboard (same host) and a local Prometheus call it.
+    command: ["sh", "-c", "python -m app.startup_check; alembic upgrade head && uvicorn app.api.main:app --host 127.0.0.1 --port 8000 --proxy-headers"]
     environment:
-      # The api is only reachable from the compose network and localhost, so trust X-Forwarded-For
-      # from the web proxy; WEBHOOK_ALLOWED_IPS then sees GitLab's address, not the web container's.
+      # Only local processes reach the api, so trust X-Forwarded-For from the dashboard proxy;
+      # WEBHOOK_ALLOWED_IPS then sees GitLab's address, not the proxy's.
       FORWARDED_ALLOW_IPS: "*"
-    ports:
-      # Localhost only: for a Prometheus scrape on this host. Never publish it publicly.
-      - "127.0.0.1:8000:8000"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
       interval: 15s
+      start_period: 60s  # first start runs every migration
       retries: 5
 
   worker:
@@ -51,15 +56,16 @@ services:
     build:
       context: ./dashboards/web
       args:
-        API_URL: http://api:8000
+        API_URL: http://127.0.0.1:8000
     image: codepulse-web:latest
     pull_policy: build
     restart: unless-stopped
     logging: *logging
-    ports:
-      # Plain HTTP on the LAN. If the host also has a public interface, set WEB_BIND=<lan-ip>:3000
-      # so the dashboard listens on the internal address only.
-      - "${WEB_BIND:-3000}:3000"
+    network_mode: host
+    environment:
+      # Address to listen on: the host's LAN IP, or 0.0.0.0 for every interface.
+      HOSTNAME: ${WEB_HOST:-0.0.0.0}
+      PORT: ${WEB_PORT:-3000}
     depends_on:
       api: {condition: service_healthy}
 
@@ -69,6 +75,7 @@ services:
     image: postgres:${BACKUP_PG_VERSION:-17}
     restart: unless-stopped
     logging: *logging
+    network_mode: host
     entrypoint: ["sh", "/backup.sh"]
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env.local and pass --env-file .env.local}
