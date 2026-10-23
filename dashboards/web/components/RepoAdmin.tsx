@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, Fragment, useMemo, useState } from "react";
+import { type FormEvent, Fragment, useEffect, useMemo, useState } from "react";
 
 import { Loading } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
@@ -21,6 +21,26 @@ const STATUS_TABS: { key: Status; label: string }[] = [
   { key: "all", label: "Tất cả" },
 ];
 const UNASSIGNED = "none";
+const NO_PROJECT_SECTION = "Chưa gán dự án";
+
+type GroupBy = "group" | "project";
+const GROUP_BY_TABS: { key: GroupBy; label: string }[] = [
+  { key: "group", label: "Theo group" },
+  { key: "project", label: "Theo dự án" },
+];
+const VIEW_KEY = "codepulse.admin.repos.view";
+
+/** Per-viewer convenience only: unreadable storage (private mode, blocked) just means defaults. */
+function loadView(): { groupBy: GroupBy; open: string[] } {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(VIEW_KEY) ?? "null");
+    if (saved && (saved.groupBy === "group" || saved.groupBy === "project") && Array.isArray(saved.open))
+      return { groupBy: saved.groupBy, open: saved.open.filter((k: unknown) => typeof k === "string") };
+  } catch {
+    /* ignore */
+  }
+  return { groupBy: "group", open: [] };
+}
 
 /** "vihat/omicrm/api" → group "vihat/omicrm", repo "api". */
 const groupOf = (p: Project) => p.path_with_namespace.split("/").slice(0, -1).join("/") || "(không có group)";
@@ -41,6 +61,25 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
   const [search, setSearch] = useState("");
   const [reviewing, setReviewing] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
+  const [groupBy, setGroupBy] = useState<GroupBy>("group");
+  // Sections start collapsed so the list fits on one screen; the open ones are remembered.
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [viewLoaded, setViewLoaded] = useState(false);
+
+  useEffect(() => {
+    const view = loadView();
+    setGroupBy(view.groupBy);
+    setOpen(new Set(view.open));
+    setViewLoaded(true);
+  }, []);
+  useEffect(() => {
+    if (!viewLoaded) return;
+    try {
+      window.localStorage.setItem(VIEW_KEY, JSON.stringify({ groupBy, open: [...open] }));
+    } catch {
+      /* ignore */
+    }
+  }, [groupBy, open, viewLoaded]);
 
   async function run(action: () => Promise<unknown>, done?: string) {
     try {
@@ -91,10 +130,34 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
       (!groupFilter || groupOf(p) === groupFilter || groupOf(p).startsWith(`${groupFilter}/`)) &&
       (!search || p.path_with_namespace.toLowerCase().includes(search.toLowerCase())),
   );
-  const byGroup = new Map<string, Project[]>();
+  const sectionOf = (p: Project) =>
+    groupBy === "group"
+      ? groupOf(p)
+      : (projects.data?.find((b) => b.id === p.business_project_id)?.name ?? NO_PROJECT_SECTION);
+  const sections = new Map<string, Project[]>();
   for (const p of [...visible].sort((a, b) => a.path_with_namespace.localeCompare(b.path_with_namespace))) {
-    byGroup.set(groupOf(p), [...(byGroup.get(groupOf(p)) ?? []), p]);
+    sections.set(sectionOf(p), [...(sections.get(sectionOf(p)) ?? []), p]);
   }
+  const sectionKeys = [...sections.keys()].sort((a, b) =>
+    a === NO_PROJECT_SECTION ? 1 : b === NO_PROJECT_SECTION ? -1 : a.localeCompare(b),
+  );
+  const keyOf = (section: string) => `${groupBy}:${section}`;
+  // A search or filter shows its matches without extra clicks.
+  const filtering = !!(search || projectFilter || groupFilter);
+  const isOpen = (section: string) => filtering || open.has(keyOf(section));
+  const toggle = (section: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(keyOf(section))) next.delete(keyOf(section));
+      else next.add(keyOf(section));
+      return next;
+    });
+  const setAll = (expanded: boolean) =>
+    setOpen((prev) => {
+      const next = new Set([...prev].filter((k) => !k.startsWith(`${groupBy}:`)));
+      if (expanded) for (const section of sectionKeys) next.add(keyOf(section));
+      return next;
+    });
 
   const projectOptions = (
     <>
@@ -229,6 +292,25 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
             placeholder="Tìm repo…"
             aria-label="Tìm repo"
           />
+          <div className="tabs compact" role="tablist" aria-label="Nhóm repo">
+            {GROUP_BY_TABS.map((t) => (
+              <button
+                key={t.key}
+                role="tab"
+                aria-selected={groupBy === t.key}
+                className={groupBy === t.key ? "active" : undefined}
+                onClick={() => setGroupBy(t.key)}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <button onClick={() => setAll(true)} disabled={filtering}>
+            Mở rộng tất cả
+          </button>
+          <button onClick={() => setAll(false)} disabled={filtering}>
+            Thu gọn tất cả
+          </button>
           {(projectFilter || groupFilter || search) && (
             <button
               onClick={() => {
@@ -261,35 +343,52 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
                 </tr>
               </thead>
               <tbody>
-                {[...byGroup.entries()].map(([group, items]) => (
-                  <Fragment key={group}>
+                {sectionKeys.map((section) => {
+                  const items = sections.get(section) ?? [];
+                  const expanded = isOpen(section);
+                  const untracked = items.filter((p) => !p.tracked).length;
+                  return (
+                  <Fragment key={section}>
                     <tr className="group-row">
                       <td colSpan={2}>
-                        <strong>{group}</strong> <span className="muted">· {items.length} repo</span>
+                        <button
+                          className="section-toggle"
+                          aria-expanded={expanded}
+                          onClick={() => toggle(section)}
+                          disabled={filtering}
+                          title={filtering ? "Đang lọc: mọi nhóm khớp đều mở" : expanded ? "Thu gọn" : "Mở rộng"}
+                        >
+                          <span aria-hidden="true">{expanded ? "▾" : "▸"}</span> <strong>{section}</strong>
+                        </button>{" "}
+                        <span className="muted">
+                          · {items.length} repo{untracked ? ` (${untracked} đã bỏ theo dõi)` : ""}
+                        </span>
                       </td>
                       <td colSpan={FLAGS.length + 2}>
+                        {groupBy === "group" && (
                         <select
                           value=""
-                          aria-label={`Gán dự án cho cả group ${group}`}
+                          aria-label={`Gán dự án cho cả group ${section}`}
                           onChange={(e) =>
                             e.target.value &&
                             void assign(
                               items.map((p) => p.id),
                               e.target.value,
-                              `Đã gán ${items.length} repo của ${group}.`,
+                              `Đã gán ${items.length} repo của ${section}.`,
                             )
                           }
                         >
                           <option value="">Gán dự án cho cả group…</option>
                           {projectOptions}
                         </select>
+                        )}
                       </td>
                     </tr>
-                    {items.map((p) => (
+                    {expanded && items.map((p) => (
                       <Fragment key={p.id}>
                         <tr className={p.tracked ? undefined : "muted"}>
                           <td title={p.path_with_namespace}>
-                            {repoName(p)}
+                            {groupBy === "group" ? repoName(p) : p.path_with_namespace}
                             {!p.tracked && <span className="muted"> (đã bỏ {date(p.untracked_at)})</span>}
                           </td>
                           <td>
@@ -420,7 +519,8 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
                       </Fragment>
                     ))}
                   </Fragment>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

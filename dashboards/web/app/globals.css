@@ -323,3 +323,16 @@ button.link {
   padding: 0;
   color: var(--accent);
 }
+.tabs.compact {
+  border-bottom: 0;
+  margin: 0;
+}
+button.section-toggle {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--text);
+}
+button.section-toggle:disabled {
+  opacity: 1;
+}
