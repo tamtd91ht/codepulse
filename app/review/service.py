@@ -63,7 +63,7 @@ class ReviewService:
     # -- entry points --------------------------------------------------------------------------
 
     def review_mr(self, project: Project, mr: MergeRequest, head_sha: str) -> Review | None:
-        if not project.review_enabled:
+        if not (project.review_enabled and project.tracked):
             return None
         review = self._claim(
             "mr", head_sha, mr_id=mr.id, author=self._user_of(mr.author_account_id)
@@ -93,7 +93,7 @@ class ReviewService:
         return result
 
     def review_commit(self, project: Project, commit: Commit) -> Review | None:
-        if not project.review_enabled:
+        if not (project.review_enabled and project.tracked):
             return None
         review = self._claim(
             "commit",

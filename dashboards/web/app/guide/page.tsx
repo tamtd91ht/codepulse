@@ -54,7 +54,7 @@ export default function GuidePage() {
           <li>
             Diff của thay đổi được gửi tới Anthropic (Claude) để review. Secret trong code được che trước khi gửi;
             file nhạy cảm (<code>.env*</code>, <code>*.pem</code>, <code>**/secrets/**</code>…) không bao giờ được
-            gửi. Project không cho phép gửi code ra ngoài sẽ không được review.
+            gửi. Repo không cho phép gửi code ra ngoài sẽ không được review.
           </li>
           <li>CodePulse chỉ lưu tối đa 40 dòng trích đoạn quanh mỗi finding, và xoá trích đoạn sau 365 ngày.</li>
         </ul>
@@ -125,7 +125,7 @@ export default function GuidePage() {
           </li>
         </ol>
         <p className="muted">
-          Nếu project bật tính năng này, CodePulse đăng một comment tổng hợp lên MR và cập nhật mỗi lần bạn push. Mỗi
+          Nếu repo bật tính năng này, CodePulse đăng một comment tổng hợp lên MR và cập nhật mỗi lần bạn push. Mỗi
           thứ Hai bạn nhận email báo cáo cá nhân, chỉ có dữ liệu của bạn.
         </p>
       </section>
@@ -139,7 +139,7 @@ export default function GuidePage() {
             review trong kỳ.
           </li>
           <li>
-            <strong>Critical Board</strong>: mọi finding critical/high còn mở, lọc theo project hoặc người, cũ nhất
+            <strong>Critical Board</strong>: mọi finding critical/high còn mở, lọc theo repo hoặc người, cũ nhất
             trước.
           </li>
           <li>
@@ -162,7 +162,7 @@ export default function GuidePage() {
         <h3>Kết nối GitLab</h3>
         <ol>
           <li>
-            Trên GitLab, tạo một tài khoản bot (ví dụ <code>codepulse-bot</code>) và thêm vào các project cần đo với
+            Trên GitLab, tạo một tài khoản bot (ví dụ <code>codepulse-bot</code>) và thêm vào các group/repo cần đo với
             quyền <em>Reporter</em>.
           </li>
           <li>
@@ -178,27 +178,54 @@ export default function GuidePage() {
             GitLab trước khi lưu; sau đó hãy thu hồi token cũ trên GitLab.
           </li>
         </ol>
-        <h3>Thêm project</h3>
+        <h3>Dự án, group và repo</h3>
+        <ul>
+          <li>
+            <strong>Repo</strong> là một git repo (trên GitLab gọi là project). <strong>Group</strong> là group trên
+            GitLab chứa repo. <strong>Dự án</strong> do admin đặt trong CodePulse (ví dụ OmiCRM) và gom nhiều repo, có
+            thể từ nhiều group.
+          </li>
+          <li>
+            Tạo dự án ở thẻ <strong>Dự án</strong>. Xoá dự án chỉ bỏ cách nhóm; repo và lịch sử review vẫn giữ.
+          </li>
+        </ul>
+        <h3>Thêm repo</h3>
         <ol>
-          <li>Lấy Project ID trên GitLab: trang project, ngay dưới tên project, hoặc Settings → General.</li>
+          <li>Lấy Project ID của repo trên GitLab: ngay dưới tên repo, hoặc Settings → General.</li>
           <li>
-            Ở <strong>Admin → Projects</strong>, chọn kết nối, nhập Project ID, giữ tick{" "}
-            <strong>Đăng ký webhook</strong> rồi bấm <strong>Thêm project</strong>.
+            Ở thẻ <strong>Repo</strong>, chọn kết nối, nhập Project ID, chọn dự án (tuỳ chọn), giữ tick{" "}
+            <strong>Đăng ký webhook</strong> rồi bấm <strong>Thêm repo</strong>.
           </li>
           <li>
-            CodePulse tự lấy dữ liệu 90 ngày gần nhất (<code>BACKFILL_DAYS</code>). Nếu bước webhook lỗi, project vẫn được thêm; bấm{" "}
-            <strong>Webhook</strong> ở dòng của project để thử lại.
-          </li>
-          <li>
-            Thêm nhiều project một lần: nhập Group ID hoặc đường dẫn group (ví dụ <code>vihat/backend</code>) rồi bấm{" "}
-            <strong>Thêm cả group</strong>. Mọi project đang hoạt động trong group và subgroup được thêm; project tạo
+            Thêm nhiều repo một lần: nhập Group ID hoặc đường dẫn group (ví dụ <code>vihat/omicrm</code>), chọn dự án
+            rồi bấm <strong>Thêm cả group</strong>. Mọi repo đang hoạt động trong group và subgroup được thêm; repo tạo
             sau này cần thêm lại. Bot phải có quyền Reporter trên group.
           </li>
           <li>
-            Bật các tuỳ chọn cho từng project: <strong>AI review</strong>, <strong>Comment lên MR</strong>,{" "}
-            <strong>Cho gửi code ra LLM</strong>. Thiếu tuỳ chọn cuối thì project không được review.
+            CodePulse tự lấy dữ liệu 90 ngày gần nhất (<code>BACKFILL_DAYS</code>). Bật tuỳ chọn cho từng repo:{" "}
+            <strong>AI review</strong>, <strong>Comment MR</strong>, <strong>Gửi code ra LLM</strong> (thiếu tuỳ chọn
+            cuối thì repo không được review).
           </li>
         </ol>
+        <h3>Quản lý repo</h3>
+        <ul>
+          <li>
+            Tab <strong>Đang theo dõi / Đã bỏ theo dõi / Tất cả</strong> và bộ lọc theo dự án, group, tên. Repo được
+            nhóm theo group; chọn ở dòng group để gán cả group vào một dự án.
+          </li>
+          <li>
+            <strong>Sync</strong>: lấy commit/MR mới ngay (bình thường tự chạy mỗi 30 phút).{" "}
+            <strong>Webhook</strong>: đăng ký hoặc làm mới webhook để GitLab báo push/MR mới ngay lập tức.
+          </li>
+          <li>
+            <strong>Review…</strong>: chọn khoảng ngày để review các MR chưa được review (đã merge, và MR đang mở nếu
+            tick). MR mới hoặc có commit mới được review tự động qua webhook, không cần bấm.
+          </li>
+          <li>
+            <strong>Bỏ theo dõi</strong>: ngừng sync và review repo không cần quan tâm; lịch sử review vẫn giữ.{" "}
+            <strong>Theo dõi lại</strong> ở tab Đã bỏ theo dõi.
+          </li>
+        </ul>
         <h3>Team và người dùng</h3>
         <ol>
           <li>

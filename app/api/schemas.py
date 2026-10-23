@@ -66,6 +66,26 @@ class ProjectOut(ORM):
     post_mr_comment: bool | None
     allow_external_llm: bool | None
     last_synced_at: datetime | None
+    business_project_id: int | None
+    tracked: bool
+    untracked_at: datetime | None
+
+
+class BusinessProjectIn(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    description: str | None = Field(default=None, max_length=500)
+
+
+class BusinessProjectOut(ORM):
+    id: int
+    name: str
+    description: str | None
+    repos: int = 0  # tracked repos assigned to it
+
+
+class RepoAssignment(BaseModel):
+    project_ids: list[int] = Field(min_length=1, max_length=1000)
+    business_project_id: int | None  # null removes the repos from their dự án
 
 
 class ProjectIn(BaseModel):
@@ -78,6 +98,7 @@ class GroupImportIn(BaseModel):
     # Numeric id or full path, e.g. "vihat/backend".
     group: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
     register_webhooks: bool = True
+    business_project_id: int | None = None  # assign the newly added repos to this dự án
 
 
 class GroupImportOut(BaseModel):

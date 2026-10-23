@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -12,7 +13,7 @@ from app.api.auth import STATE_COOKIE, get_oauth_http
 from app.api.main import app
 from app.api.security import SESSION_COOKIE
 from app.config import Settings
-from app.models import Account, AuditLog, Connection, Project, User
+from app.models import Account, AuditLog, Connection, MergeRequest, Project, User
 from tests.api.conftest import BOX, WEEK, FakeQueue, World
 
 pytestmark = pytest.mark.integration
@@ -146,6 +147,9 @@ def test_rerun_only_failed_or_skipped(
         ("get", "/api/v1/projects"),
         ("patch", "/api/v1/projects/1"),
         ("get", "/api/v1/users"),
+        ("get", "/api/v1/business-projects"),
+        ("put", "/api/v1/projects/business-project"),
+        ("post", "/api/v1/projects/1/untrack"),
         ("get", "/api/v1/teams/1/members"),
         ("get", "/api/v1/identity/unmapped"),
         ("get", "/api/v1/admin/llm-costs"),
@@ -279,6 +283,83 @@ def test_import_group_adds_new_projects_and_queues_their_jobs(
     ).one()
     assert audit.details is not None
     assert audit.details["group"] == "demo/sub" and len(audit.details["added"]) == 2
+
+
+def test_business_projects_group_repos_and_survive_deletion(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    admin = as_user(world.admin)
+    created = client.post("/api/v1/business-projects", headers=admin, json={"name": " OmiCRM "})
+    assert created.status_code == 201 and created.json()["name"] == "OmiCRM"
+    bp_id = created.json()["id"]
+    duplicate = client.post("/api/v1/business-projects", headers=admin, json={"name": "OmiCRM"})
+    assert duplicate.status_code == 409
+    assigned = client.put(
+        "/api/v1/projects/business-project",
+        headers=admin,
+        json={"project_ids": [world.project.id], "business_project_id": bp_id},
+    )
+    assert assigned.status_code == 204
+    (listed,) = client.get("/api/v1/business-projects", headers=admin).json()
+    assert (listed["name"], listed["repos"]) == ("OmiCRM", 1)
+    repo = client.get("/api/v1/projects", headers=admin).json()[0]
+    assert repo["business_project_id"] == bp_id
+
+    assert client.delete(f"/api/v1/business-projects/{bp_id}", headers=admin).status_code == 204
+    db_session.expire_all()
+    assert db_session.get(Project, world.project.id) is not None
+    repo = client.get("/api/v1/projects", headers=admin).json()[0]
+    assert repo["business_project_id"] is None
+
+
+def test_untracked_repo_keeps_history_and_refuses_sync_until_tracked_again(
+    client: TestClient, world: World, as_user: Any, queue: FakeQueue
+) -> None:
+    admin = as_user(world.admin)
+    path = f"/api/v1/projects/{world.project.id}"
+    untracked = client.post(f"{path}/untrack", headers=admin).json()
+    assert untracked["tracked"] is False and untracked["untracked_at"]
+    assert client.post(f"{path}/sync", headers=admin).status_code == 409
+    reviews = client.post(f"{path}/backfill-reviews?from=2026-10-01&to=2026-10-31", headers=admin)
+    assert reviews.status_code == 409
+    # History stays readable.
+    assert client.get("/api/v1/reviews", headers=as_user(world.an)).json()["items"]
+
+    rerun = client.post(f"/api/v1/reviews/{world.binh_review.id}/rerun", headers=admin)
+    assert rerun.status_code == 409
+    assert client.post(f"{path}/webhook", headers=admin).status_code == 409
+    unknown = client.put(
+        "/api/v1/projects/business-project",
+        headers=admin,
+        json={"project_ids": [world.project.id], "business_project_id": 999999},
+    )
+    assert unknown.status_code == 404
+
+    tracked = client.post(f"{path}/track", headers=admin).json()
+    assert tracked["tracked"] is True and tracked["untracked_at"] is None
+    assert [f for f, _, _ in queue.jobs] == ["app.collector.sync.sync_project_job"]
+
+
+def test_backfill_reviews_open_mrs_created_in_the_range(
+    client: TestClient, world: World, as_user: Any, db_session: Session, queue: FakeQueue
+) -> None:
+    db_session.add(
+        MergeRequest(
+            project_id=world.project.id,
+            iid=8,
+            state="opened",
+            head_sha="c" * 40,
+            created_at_src=datetime(2026, 10, 10, tzinfo=UTC),
+        )
+    )
+    db_session.flush()
+    path = f"/api/v1/projects/{world.project.id}/backfill-reviews?from=2026-10-01&to=2026-10-31"
+    closed_only = client.post(path, headers=as_user(world.admin))
+    assert closed_only.json() == {"queued": 0}
+    with_open = client.post(f"{path}&include_open=true", headers=as_user(world.admin))
+    assert with_open.json() == {"queued": 1}
+    ((func, args, _),) = queue.jobs
+    assert func.endswith("review_mr_job") and args == (world.project.id, 8, "c" * 40)
 
 
 def test_register_webhook_refuses_a_localhost_base_url(

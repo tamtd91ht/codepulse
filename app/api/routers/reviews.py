@@ -167,6 +167,8 @@ def rerun_review(
     project, _, _ = _target(session, review)
     if project is None:
         raise HTTPException(409, "review target is no longer known")
+    if not project.tracked:
+        raise HTTPException(409, "repo is not tracked; resume tracking first")
     review.status, review.error = "queued", None
     if review.mr_id is not None:
         mr = session.get(MergeRequest, review.mr_id)

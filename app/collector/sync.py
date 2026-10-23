@@ -97,6 +97,9 @@ def sync_project(
     now: datetime | None = None,
 ) -> SyncResult:
     """Run inside the caller's transaction; last_synced_at only advances if everything succeeds."""
+    if not project.tracked:
+        log.info("sync skipped: repo not tracked", extra={"project_id": project.id})
+        return SyncResult(project.id, skipped=True)
     locked = session.scalar(
         select(func.pg_try_advisory_xact_lock(ADVISORY_LOCK_NAMESPACE, project.id))
     )
@@ -159,7 +162,9 @@ def register_webhook_job(project_id: int, base_url: str) -> dict[str, object]:
 
 def enqueue_syncs(session: Session, queue: Enqueuer) -> list[int]:
     """Queue one sync job per project; a fixed job id keeps a slow sync from piling up."""
-    project_ids = list(session.scalars(select(Project.id).order_by(Project.id)))
+    project_ids = list(
+        session.scalars(select(Project.id).where(Project.tracked).order_by(Project.id))
+    )
     for project_id in project_ids:
         queue.enqueue(
             "app.collector.sync.sync_project_job",

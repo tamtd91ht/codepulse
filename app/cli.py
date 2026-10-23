@@ -134,7 +134,8 @@ def projects_list(session: Session, out: TextIO) -> None:
         synced = p.last_synced_at.isoformat() if p.last_synced_at else "never"
         out.write(
             f"{p.id}\tgitlab:{p.external_id}\t{p.path_with_namespace}\t"
-            f"review={'on' if p.review_enabled else 'off'}\tsynced={synced}\n"
+            f"review={'on' if p.review_enabled else 'off'}\t"
+            f"tracked={'on' if p.tracked else 'off'}\tsynced={synced}\n"
         )
 
 

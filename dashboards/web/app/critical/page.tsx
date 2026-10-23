@@ -34,7 +34,7 @@ export default function CriticalBoard() {
           {teams?.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
         <select value={project} onChange={(e) => setProject(e.target.value)}>
-          <option value="">Mọi project</option>
+          <option value="">Mọi repo</option>
           {projects.map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
         <select value={person} onChange={(e) => setPerson(e.target.value)}>

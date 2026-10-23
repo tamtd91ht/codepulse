@@ -223,6 +223,15 @@ def test_direct_pushes_to_the_default_branch_are_reviewed_unless_in_an_mr(
     "payload",
     [push("refs/heads/feature", "2" * 40), push("refs/heads/main", after="0" * 40)],
 )
+def test_events_for_an_untracked_repo_are_ignored(
+    db_session: Session, project: Project, queue: FakeQueue
+) -> None:
+    project.tracked = False
+    db_session.flush()
+    handle_event(db_session, queue, "Push Hook", push("refs/heads/main", "2" * 40))
+    assert queue.jobs == []
+
+
 def test_other_pushes_only_sync(
     db_session: Session, project: Project, queue: FakeQueue, payload: dict[str, Any]
 ) -> None:

@@ -289,3 +289,37 @@ pre.excerpt {
   gap: 8px 20px;
   margin-top: 16px;
 }
+
+/* Admin repo list: status tabs, group header rows, compact action buttons. */
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin: 4px 0 12px;
+  flex-wrap: wrap;
+}
+.tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+}
+.tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+tr.group-row td {
+  background: var(--bg);
+}
+td.actions {
+  display: flex;
+  gap: 6px;
+}
+button.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+}

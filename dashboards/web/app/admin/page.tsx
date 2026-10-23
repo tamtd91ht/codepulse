@@ -3,28 +3,19 @@
 import { type FormEvent, useState } from "react";
 
 import { LlmCheck } from "@/components/LlmCheck";
+import { RepoAdmin } from "@/components/RepoAdmin";
 import { TeamAdmin } from "@/components/TeamAdmin";
 import { Loading } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
-import { date } from "@/lib/format";
-import type { Account, Connection, GroupImport, LlmCosts, Person, Project } from "@/lib/types";
+import type { Account, Connection, LlmCosts, Person } from "@/lib/types";
 
-type Flag = "review_enabled" | "post_mr_comment" | "allow_external_llm";
-const FLAGS: { key: Flag; label: string }[] = [
-  { key: "review_enabled", label: "AI review" },
-  { key: "post_mr_comment", label: "Comment lên MR" },
-  { key: "allow_external_llm", label: "Cho gửi code ra LLM" },
-];
-
-/** docs/specs/10 "Admin": projects, connections, unmapped accounts, rubric/weights, LLM cost per month. */
+/** docs/specs/10 "Admin": connections, dự án/repos, unmapped accounts, teams, LLM cost and check. */
 export default function AdminPage() {
   const connections = useApi<Connection[]>("/connections");
-  const projects = useApi<Project[]>("/projects");
   const unmapped = useApi<Account[]>("/identity/unmapped");
   const users = useApi<Person[]>("/users");
   const costs = useApi<LlmCosts>("/admin/llm-costs");
   const [message, setMessage] = useState<string | null>(null);
-  const [importing, setImporting] = useState(false);
 
   /** Runs an action and shows `done`, or the action's own message when it returns one. */
   async function run(action: () => Promise<unknown>, done?: string) {
@@ -46,11 +37,6 @@ export default function AdminPage() {
       form.reset();
       return result;
     }, done);
-  }
-
-  async function registerWebhook(p: Project): Promise<string> {
-    const hook = await api.post<{ url: string; created: boolean }>(`/projects/${p.id}/webhook`);
-    return hook.created ? `Đã đăng ký webhook ${hook.url}.` : `Webhook đã có sẵn: ${hook.url}.`;
   }
 
   return (
@@ -123,136 +109,7 @@ export default function AdminPage() {
         <p className="muted">Token được mã hoá trong DB và không bao giờ hiển thị lại.</p>
       </div>
 
-      <div className="card">
-        <h2>Projects</h2>
-        {!projects.data ? (
-          <Loading error={projects.error} />
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Project</th>
-                  {FLAGS.map((f) => <th key={f.key}>{f.label}</th>)}
-                  <th>Sync gần nhất</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {projects.data.map((p) => (
-                  <tr key={p.id}>
-                    <td>{p.path_with_namespace}</td>
-                    {FLAGS.map((f) => (
-                      <td key={f.key}>
-                        <input
-                          type="checkbox"
-                          checked={!!p[f.key]}
-                          onChange={(e) =>
-                            run(async () => {
-                              await api.patch(`/projects/${p.id}`, { [f.key]: e.target.checked });
-                              await projects.mutate();
-                            }, `Đã cập nhật ${p.path_with_namespace}.`)
-                          }
-                        />
-                      </td>
-                    ))}
-                    <td className="muted">{date(p.last_synced_at)}</td>
-                    <td>
-                      <button onClick={() => run(() => api.post(`/projects/${p.id}/sync`), "Đã đưa vào hàng đợi sync.")}>
-                        Sync ngay
-                      </button>{" "}
-                      <button onClick={() => run(() => registerWebhook(p))}>Webhook</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <form
-          className="toolbar"
-          onSubmit={(e) =>
-            submit(
-              e,
-              async (f) => {
-                const project = await api.post<Project>("/projects", {
-                  connection_id: Number(f.get("connection_id")),
-                  external_id: Number(f.get("external_id")),
-                });
-                await projects.mutate();
-                await api.post(`/projects/${project.id}/sync`);
-                let hook = "";
-                if (f.get("webhook")) {
-                  try {
-                    hook = ` ${await registerWebhook(project)}`;
-                  } catch (e) {
-                    hook = ` Webhook lỗi: ${e instanceof ApiError ? e.message : String(e)}; bấm nút Webhook để thử lại.`;
-                  }
-                }
-                return `Đã thêm ${project.path_with_namespace} và đưa vào hàng đợi sync.${hook}`;
-              },
-            )
-          }
-        >
-          <select name="connection_id" required defaultValue="">
-            <option value="" disabled>Kết nối…</option>
-            {(connections.data ?? []).map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-          <input name="external_id" type="number" min={1} placeholder="GitLab project ID" required />
-          <label>
-            <input name="webhook" type="checkbox" defaultChecked /> Đăng ký webhook
-          </label>
-          <button className="primary" type="submit">Thêm project</button>
-        </form>
-        <p className="muted">Project ID nằm ở trang project trên GitLab (Settings → General, hoặc dưới tên project).</p>
-        <form
-          className="toolbar"
-          onSubmit={(e) =>
-            submit(e, async (f) => {
-              setMessage("Đang lấy danh sách project của group…");
-              setImporting(true);
-              const result = await api
-                .post<GroupImport>("/projects/import-group", {
-                  connection_id: Number(f.get("connection_id")),
-                  group: f.get("group"),
-                  register_webhooks: !!f.get("webhook"),
-                })
-                .finally(() => {
-                  setImporting(false);
-                  void projects.mutate(); // show rows added before an error or timeout
-                });
-              if (result.added.length === 0) return `Không có project mới (${result.skipped} project đã có).`;
-              const notQueued = result.not_queued.length
-                ? ` Chưa đưa vào hàng đợi: ${result.not_queued.join(", ")} – sẽ được sync ở lần định kỳ; bấm Webhook ở dòng đó nếu cần.`
-                : "";
-              return (
-                `Đã thêm ${result.added.length} project (bỏ qua ${result.skipped} project đã có). ` +
-                `Webhook và sync chạy nền trong worker.${notQueued}`
-              );
-            })
-          }
-        >
-          <select name="connection_id" required defaultValue="">
-            <option value="" disabled>Kết nối…</option>
-            {(connections.data ?? []).map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-          <input name="group" placeholder="Group ID hoặc đường dẫn, ví dụ vihat/backend" required />
-          <label>
-            <input name="webhook" type="checkbox" defaultChecked /> Đăng ký webhook
-          </label>
-          <button className="primary" type="submit" disabled={importing}>
-            {importing ? "Đang thêm…" : "Thêm cả group"}
-          </button>
-        </form>
-        <p className="muted">
-          Thêm một lần mọi project đang hoạt động trong group, kể cả subgroup; project đã có được bỏ qua. Project tạo
-          sau này trong group cần thêm lại bằng nút này.
-        </p>
-      </div>
+      <RepoAdmin connections={connections.data ?? []} />
 
       <div className="grid two">
         <div className="card">

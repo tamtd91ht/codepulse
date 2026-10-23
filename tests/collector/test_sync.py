@@ -77,3 +77,18 @@ def test_enqueue_syncs_one_job_per_project(db_session: Session) -> None:
     assert func_name == "app.collector.sync.sync_project_job"
     assert args == (project.id,)
     assert kwargs["job_id"] == f"sync-project-{project.id}"
+
+
+def test_untracked_repos_are_neither_queued_nor_synced(db_session: Session) -> None:
+    project = make_project(db_session)
+    project.tracked = False
+    db_session.flush()
+    queue = FakeQueue()
+    assert enqueue_syncs(db_session, queue) == []
+    assert queue.jobs == []
+
+    def no_gitlab(connection: Connection) -> GitLabClient:
+        raise AssertionError("an untracked repo must not reach GitLab")
+
+    result = sync_project(db_session, project, no_gitlab, backfill_days=90, ignore_paths=[])
+    assert result.skipped is True

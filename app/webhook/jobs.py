@@ -44,7 +44,9 @@ def handle_event(
     commit_in_mr: CommitInMr | None = None,
 ) -> None:
     external_id = (payload.get("project") or {}).get("id") or payload.get("project_id")
-    projects = session.scalars(select(Project).where(Project.external_id == external_id)).all()
+    projects = session.scalars(
+        select(Project).where(Project.external_id == external_id, Project.tracked)
+    ).all()
     attrs = payload.get("object_attributes") or {}
     for project in projects:
         # Pull the change into the domain layer; same job id as the scheduler, so no pile-up.

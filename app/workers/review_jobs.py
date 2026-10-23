@@ -61,6 +61,8 @@ def run_mr_review(
     project = session.get(Project, project_id)
     if project is None:
         return "project not found"
+    if not project.tracked:
+        return "repo not tracked"
 
     def load() -> MergeRequest | None:
         return session.scalars(
@@ -95,6 +97,8 @@ def run_commit_review(
     project = session.get(Project, project_id)
     if project is None:
         return "project not found"
+    if not project.tracked:
+        return "repo not tracked"
     commit = session.get(Commit, sha)
     if commit is None:
         _ensure_synced(session, project, make_client, settings)

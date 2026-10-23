@@ -172,6 +172,14 @@ export interface GroupImport {
   not_queued: string[];
 }
 
+export interface BusinessProject {
+  id: number;
+  name: string;
+  description: string | null;
+  repos: number;
+}
+
+/** A GitLab project, i.e. one git repo. */
 export interface Project {
   id: number;
   connection_id: number | null;
@@ -181,6 +189,9 @@ export interface Project {
   post_mr_comment: boolean | null;
   allow_external_llm: boolean | null;
   last_synced_at: string | null;
+  business_project_id: number | null;
+  tracked: boolean;
+  untracked_at: string | null;
 }
 
 export interface Account {
