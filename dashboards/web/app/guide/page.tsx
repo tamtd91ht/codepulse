@@ -210,6 +210,13 @@ export default function GuidePage() {
           Bảng <strong>Chi phí LLM theo tháng</strong> cho thấy số review, chi phí ước tính và phần trăm ngân sách
           tháng.
         </p>
+        <h3>Kết nối LLM</h3>
+        <p>
+          Ở thẻ <strong>Kết nối LLM</strong>, bấm <strong>Kiểm tra kết nối</strong> để xem provider, model, phiên bản
+          Claude Code CLI, cách xác thực (chỉ hiện vài ký tự của token) và tài khoản nếu CLI cho biết, rồi gửi thử một
+          prompt rất nhỏ (không có code) để đo trạng thái, độ trễ và chi phí. Mỗi lần kiểm tra tốn một ít quota và được
+          ghi audit log.
+        </p>
       </section>
 
       <section id="metrics" className="card">

@@ -186,3 +186,30 @@ export interface LlmCosts {
   budget_usd: number;
   months: { month: string; cost_usd: number; reviews: number }[];
 }
+
+/** POST /admin/llm-check: configuration, account and one live call; never contains the token. */
+export interface LlmCheck {
+  provider: string;
+  model: string;
+  cli_binary: string | null;
+  cli_version: string | null;
+  auth: { method: string; token_hint: string | null; cli_method: string | null; logged_in: boolean | null };
+  account: {
+    email: string | null;
+    organization: string | null;
+    subscription_type: string | null;
+    api_provider: string | null;
+  } | null;
+  account_note: string | null;
+  status: {
+    ok: boolean;
+    latency_ms: number | null;
+    model: string | null;
+    cost_usd: number | null;
+    prompt_tokens: number | null;
+    completion_tokens: number | null;
+    error: string | null;
+  };
+  usage: { reviews: number; cost_usd: number; budget_usd: number; budget_pct: number | null };
+  checked_at: string;
+}

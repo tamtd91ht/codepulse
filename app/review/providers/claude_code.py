@@ -7,6 +7,7 @@ files, and an empty working directory: the model can only answer with JSON.
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -20,6 +21,16 @@ log = logging.getLogger(__name__)
 
 # What the CLI subprocess call looks like; injected in tests.
 Runner = Callable[..., subprocess.CompletedProcess[str]]
+
+
+_KEY_RE = re.compile(r"sk-ant-[A-Za-z0-9_\-]+")
+
+
+def scrub_secrets(text: str, secret: str = "") -> str:
+    """Drop the configured token and anything shaped like an Anthropic key from CLI output."""
+    if secret:
+        text = text.replace(secret, "***")
+    return _KEY_RE.sub("sk-ant-***", text)
 
 
 class ClaudeCodeProvider:
@@ -86,21 +97,43 @@ class ClaudeCodeProvider:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
+                errors="replace",
                 timeout=self._timeout_s,
                 cwd=cwd,
                 env=self._env(),
                 check=False,
             )
         if completed.returncode != 0 and not completed.stdout.strip():
-            # stderr may echo the prompt; keep only its tail and never the environment.
-            raise LLMError(f"claude exited {completed.returncode}: {completed.stderr[-300:]}")
+            # stderr may echo the prompt; keep only its tail, scrubbed before it is cut.
+            tail = scrub_secrets(completed.stderr, self._auth_token)[-300:]
+            raise LLMError(f"claude exited {completed.returncode}: {tail}")
         try:
             data = json.loads(completed.stdout)
         except json.JSONDecodeError as exc:
             raise LLMError("claude returned non-JSON output") from exc
+        if not isinstance(data, dict):
+            raise LLMError("claude returned JSON that is not an object")
         if data.get("is_error") or data.get("subtype") != "success":
-            raise LLMError(f"claude reported an error: {data.get('subtype')}")
+            raise LLMError(scrub_secrets(_error_message(data), self._auth_token))
         return dict(data)
+
+    def run_command(
+        self, args: Sequence[str], *, timeout_s: float
+    ) -> subprocess.CompletedProcess[str]:
+        """Run another CLI command (`--version`, `auth status`) with the same auth and sandbox."""
+        with tempfile.TemporaryDirectory(prefix="codepulse-review-") as cwd:
+            return self._runner(
+                [self._binary, *args],
+                input="",
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout_s,
+                cwd=cwd,
+                env=self._env(),
+                check=False,
+            )
 
     def review(self, prompt: ReviewPrompt) -> ReviewResult:
         cmd = self.command(prompt)
@@ -136,3 +169,18 @@ class ClaudeCodeProvider:
             cost_usd=float(data.get("total_cost_usd") or 0.0),
             raw={k: data.get(k) for k in ("session_id", "num_turns", "duration_ms")},
         )
+
+
+def _error_message(data: Mapping[str, Any]) -> str:
+    """Why the CLI gave up, e.g. `(HTTP 401): Failed to authenticate...`, kept short.
+
+    The caller scrubs it; the cut keeps the start of `result`, so a key there still matches.
+
+    `result` is only read for `is_error` results, where it holds the API error and not model text.
+    """
+    message = f"claude reported an error: {data.get('subtype')}"
+    if status := data.get("api_error_status"):
+        message += f" (HTTP {status})"
+    if data.get("is_error") and (detail := str(data.get("result") or "").strip()):
+        message += f": {detail[:200]}"
+    return message
