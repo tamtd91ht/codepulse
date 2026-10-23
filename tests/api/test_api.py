@@ -13,7 +13,18 @@ from app.api.auth import STATE_COOKIE, get_oauth_http
 from app.api.main import app
 from app.api.security import SESSION_COOKIE
 from app.config import Settings
-from app.models import Account, AuditLog, Connection, MergeRequest, Project, User
+from app.models import (
+    Account,
+    AuditLog,
+    Commit,
+    Connection,
+    MergeRequest,
+    MrCommit,
+    Project,
+    Review,
+    ReviewFinding,
+    User,
+)
 from tests.api.conftest import BOX, WEEK, FakeQueue, World
 
 pytestmark = pytest.mark.integration
@@ -360,6 +371,89 @@ def test_backfill_reviews_open_mrs_created_in_the_range(
     assert with_open.json() == {"queued": 1}
     ((func, args, _),) = queue.jobs
     assert func.endswith("review_mr_job") and args == (world.project.id, 8, "c" * 40)
+
+
+def test_removing_a_repo_deletes_its_data_after_a_typed_confirmation(
+    client: TestClient, world: World, as_user: Any, db_session: Session, queue: FakeQueue
+) -> None:
+    admin = as_user(world.admin)
+    body = {"project_ids": [world.project.id], "confirm": "yes"}
+    wrong = client.post("/api/v1/projects/remove", headers=admin, json=body)
+    assert wrong.status_code == 422 and "demo/p" in wrong.text
+    assert (
+        client.post("/api/v1/projects/remove", headers=as_user(world.lead), json=body).status_code
+        == 403
+    )
+
+    body["confirm"] = " DEMO/P "
+    removed = client.post("/api/v1/projects/remove", headers=admin, json=body)
+    assert removed.status_code == 200, removed.text
+    assert removed.json() == {
+        "removed": ["demo/p"],
+        "reviews_deleted": 2,
+        "cleanup_queued": True,
+        "not_queued": [],
+    }
+    db_session.expire_all()
+    assert db_session.get(Project, world.project.id) is None
+    for model in (MergeRequest, Review, ReviewFinding):
+        assert db_session.scalars(select(model)).first() is None
+    jobs = sorted(func.rsplit(".", 1)[1] for func, _, _ in queue.jobs)
+    assert jobs == ["recompute_job", "remove_webhook_job"]
+    audit = db_session.scalars(select(AuditLog).where(AuditLog.action == "project.remove")).one()
+    assert audit.details is not None
+    assert audit.details["paths"] == ["demo/p"] and audit.details["rows"]["reviews"] == 2
+
+
+def test_removing_a_repo_keeps_commits_another_repo_still_uses(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    fork = Project(
+        connection_id=world.project.connection_id, external_id=2001, path_with_namespace="fork/p"
+    )
+    db_session.add(fork)
+    db_session.flush()
+    fork_mr = MergeRequest(project_id=fork.id, iid=1, head_sha="b" * 40)
+    db_session.add(fork_mr)
+    db_session.flush()
+    # The fork's MR contains the commit that demo/p synced first (commits are keyed by sha).
+    db_session.add(MrCommit(mr_id=fork_mr.id, sha="b" * 40))
+    db_session.flush()
+    removed = client.post(
+        "/api/v1/projects/remove",
+        headers=as_user(world.admin),
+        json={"project_ids": [world.project.id], "confirm": "demo/p"},
+    )
+    assert removed.status_code == 200, removed.text
+    db_session.expire_all()
+    assert db_session.get(Commit, "b" * 40) is not None
+    assert db_session.get(MrCommit, (fork_mr.id, "b" * 40)) is not None
+    assert db_session.get(Review, world.binh_review.id) is not None  # the shared commit's review
+    assert db_session.get(Review, world.an_review.id) is None
+
+
+def test_removing_several_repos_asks_for_the_count_phrase(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    other = Project(
+        connection_id=world.project.connection_id, external_id=1002, path_with_namespace="demo/q"
+    )
+    db_session.add(other)
+    db_session.flush()
+    ids = [world.project.id, other.id]
+    admin = as_user(world.admin)
+    wrong = client.post(
+        "/api/v1/projects/remove", headers=admin, json={"project_ids": ids, "confirm": "demo/p"}
+    )
+    assert wrong.status_code == 422 and "xoa 2 repo" in wrong.text
+    ok = client.post(
+        "/api/v1/projects/remove", headers=admin, json={"project_ids": ids, "confirm": "xoa 2 repo"}
+    )
+    assert sorted(ok.json()["removed"]) == ["demo/p", "demo/q"]
+    missing = client.post(
+        "/api/v1/projects/remove", headers=admin, json={"project_ids": ids, "confirm": "x"}
+    )
+    assert missing.status_code == 404
 
 
 def test_register_webhook_refuses_a_localhost_base_url(

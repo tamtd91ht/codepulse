@@ -255,6 +255,26 @@ class AggregateResult:
     teams: int
 
 
+def recompute_job(first_day: str, last_day: str) -> dict[str, int]:
+    """RQ entry point: re-aggregate every period in a day range after repos were removed (the
+    remaining reviews keep their scores, so they are not re-scored)."""
+    from app.config import get_settings
+    from app.db import get_sessionmaker
+
+    settings = get_settings()
+    with get_sessionmaker()() as session, session.begin():
+        result = recompute(
+            session,
+            date.fromisoformat(first_day),
+            date.fromisoformat(last_day),
+            ZoneInfo(settings.report_tz),
+            settings.scoring_weights,
+            settings.min_sample,
+            rescore=False,
+        )
+    return {"periods": len(result.periods)}
+
+
 def aggregate_job(period_type: PeriodType, period_start: str | None = None) -> dict[str, int]:
     """Scheduler/RQ entry point: the given period, or the last complete one."""
     from app.config import get_settings
@@ -379,12 +399,13 @@ def recompute(
     tz: ZoneInfo,
     weights_override: Mapping[str, float] | None = None,
     min_sample: int = 3,
+    rescore: bool = True,
 ) -> RecomputeResult:
     """docs/specs/08 §5 `codepulse metrics recompute --from --to`: scores, then every week and
-    month that overlaps [first_day, last_day]."""
+    month that overlaps [first_day, last_day]. rescore=False only re-aggregates."""
     start = datetime.combine(first_day, time.min, tz)
     end = datetime.combine(last_day + timedelta(days=1), time.min, tz)
-    rescored = recompute_scores(session, start, end, weights_override)
+    rescored = recompute_scores(session, start, end, weights_override) if rescore else 0
     periods: list[tuple[str, date]] = []
     period_type: PeriodType
     for period_type in ("week", "month"):

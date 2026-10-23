@@ -50,7 +50,7 @@ export default function AdminPage() {
           <Loading error={connections.error} />
         ) : (
           <div className="table-wrap">
-            <table>
+            <table className="stack-sm">
               <thead>
                 <tr>
                   <th>Tên</th>

@@ -88,6 +88,20 @@ class RepoAssignment(BaseModel):
     business_project_id: int | None  # null removes the repos from their dự án
 
 
+class RepoRemoval(BaseModel):
+    project_ids: list[int] = Field(min_length=1, max_length=1000)
+    # Typed by the admin: the repo path for one repo, "xoa <n> repo" for several.
+    confirm: str = Field(min_length=1, max_length=300)
+
+
+class RepoRemovalOut(BaseModel):
+    removed: list[str]
+    reviews_deleted: int
+    # False when the clean-up jobs could not be queued (Redis down); see not_queued.
+    cleanup_queued: bool
+    not_queued: list[str]
+
+
 class ProjectIn(BaseModel):
     connection_id: int
     external_id: int = Field(gt=0)

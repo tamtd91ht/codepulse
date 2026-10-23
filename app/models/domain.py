@@ -50,14 +50,14 @@ class MrCommit(TimestampMixin, Base):
     __tablename__ = "mr_commits"
 
     mr_id: Mapped[int] = mapped_column(ForeignKey("merge_requests.id"), primary_key=True)
-    sha: Mapped[str] = mapped_column(ForeignKey("commits.sha"), primary_key=True)
+    sha: Mapped[str] = mapped_column(ForeignKey("commits.sha"), primary_key=True, index=True)
 
 
 class MrNote(TimestampMixin, Base):
     __tablename__ = "mr_notes"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
-    mr_id: Mapped[int | None] = mapped_column(ForeignKey("merge_requests.id"))
+    mr_id: Mapped[int | None] = mapped_column(ForeignKey("merge_requests.id"), index=True)
     author_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"))
     body: Mapped[str | None]
     is_system: Mapped[bool | None]
@@ -68,7 +68,7 @@ class Pipeline(TimestampMixin, Base):
     __tablename__ = "pipelines"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
-    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"))
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), index=True)
     sha: Mapped[str | None]
     ref: Mapped[str | None]
     status: Mapped[str | None]

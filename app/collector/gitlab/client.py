@@ -220,6 +220,14 @@ class GitLabClient:
     def add_project_hook(self, project_id: int, url: str, token: str) -> Any:
         return self.post(f"/projects/{project_id}/hooks", _hook_body(url, token))
 
+    def delete_project_hook(self, project_id: int, hook_id: int) -> None:
+        """Idempotent: a hook that is already gone (e.g. a retried DELETE) counts as deleted."""
+        try:
+            self.request("DELETE", f"/projects/{project_id}/hooks/{hook_id}")
+        except GitLabError as exc:
+            if exc.status_code != 404:
+                raise
+
     def update_project_hook(self, project_id: int, hook_id: int, url: str, token: str) -> Any:
         path = f"/projects/{project_id}/hooks/{hook_id}"
         return self.request("PUT", path, json=_hook_body(url, token)).json()

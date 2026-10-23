@@ -56,7 +56,7 @@ class RawGitlab(TimestampMixin, Base):
     __tablename__ = "raw_gitlab"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"))
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), index=True)
     endpoint: Mapped[str]
     params: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     payload: Mapped[Any] = mapped_column(JSONB)

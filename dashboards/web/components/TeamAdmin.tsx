@@ -2,6 +2,7 @@
 
 import { type FormEvent, useState } from "react";
 
+import { IconButton } from "@/components/icons";
 import { Loading } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import type { Member, Person, Team } from "@/lib/types";
@@ -77,9 +78,12 @@ export function TeamAdmin() {
                       <td>{t.id === teamId ? <strong>{t.name}</strong> : t.name}</td>
                       <td className="muted">{teamName(t.parent_id)}</td>
                       <td>
-                        <button onClick={() => setTeamId(t.id)} disabled={t.id === teamId}>
-                          Thành viên
-                        </button>
+                        <IconButton
+                          icon="members"
+                          label="Xem thành viên"
+                          onClick={() => setTeamId(t.id)}
+                          disabled={t.id === teamId}
+                        />
                       </td>
                     </tr>
                   ))}
@@ -195,7 +199,9 @@ export function TeamAdmin() {
                       <td>{m.left_at ?? "—"}</td>
                       <td>
                         {!m.left_at && (
-                          <button
+                          <IconButton
+                            icon="leave"
+                            label="Rời team (giữ lịch sử)"
                             onClick={() =>
                               run(async () => {
                                 await api.put(`/teams/${teamId}/members`, {
@@ -207,9 +213,7 @@ export function TeamAdmin() {
                                 await members.mutate();
                               }, `${m.full_name ?? m.primary_email} đã rời team (dữ liệu cũ vẫn giữ).`)
                             }
-                          >
-                            Rời team
-                          </button>
+                          />
                         )}
                       </td>
                     </tr>

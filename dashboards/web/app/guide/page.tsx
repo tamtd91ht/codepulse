@@ -225,6 +225,14 @@ export default function GuidePage() {
             <strong>Bỏ theo dõi</strong>: ngừng sync và review repo không cần quan tâm; lịch sử review vẫn giữ.{" "}
             <strong>Theo dõi lại</strong> ở tab Đã bỏ theo dõi.
           </li>
+          <li>
+            <strong>Gỡ hẳn</strong> (biểu tượng thùng rác): xoá repo cùng toàn bộ commit, MR, review, finding, khiếu nại và
+            gỡ webhook; điểm các kỳ trước được tính lại. Không hoàn tác được, phải dán lại chuỗi xác nhận.
+          </li>
+          <li>
+            Tick ô đầu dòng (hoặc ô ở dòng group để chọn cả group) để gán dự án, bỏ theo dõi, theo dõi lại hoặc gỡ nhiều
+            repo cùng lúc. Các nút trong bảng là biểu tượng; rê chuột vào để xem tên.
+          </li>
         </ul>
         <h3>Team và người dùng</h3>
         <ol>

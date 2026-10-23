@@ -2,16 +2,18 @@
 
 import { type FormEvent, Fragment, useEffect, useMemo, useState } from "react";
 
+import { ConfirmRemove } from "@/components/ConfirmRemove";
+import { IconButton } from "@/components/icons";
 import { Loading } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
 import type { BusinessProject, Connection, GroupImport, Project } from "@/lib/types";
 
 type Flag = "review_enabled" | "post_mr_comment" | "allow_external_llm";
-const FLAGS: { key: Flag; label: string }[] = [
-  { key: "review_enabled", label: "AI review" },
-  { key: "post_mr_comment", label: "Comment MR" },
-  { key: "allow_external_llm", label: "Gửi code ra LLM" },
+const FLAGS: { key: Flag; label: string; hint: string }[] = [
+  { key: "review_enabled", label: "Review", hint: "AI review MR/commit mới" },
+  { key: "post_mr_comment", label: "Comment", hint: "Đăng comment tổng hợp lên MR" },
+  { key: "allow_external_llm", label: "LLM", hint: "Cho gửi code ra LLM bên ngoài (thiếu thì không review)" },
 ];
 
 type Status = "tracked" | "untracked" | "all";
@@ -29,6 +31,7 @@ const GROUP_BY_TABS: { key: GroupBy; label: string }[] = [
   { key: "project", label: "Theo dự án" },
 ];
 const VIEW_KEY = "codepulse.admin.repos.view";
+const COLUMNS = FLAGS.length + 5; // select, repo, dự án, flags, last sync, actions
 
 /** Per-viewer convenience only: unreadable storage (private mode, blocked) just means defaults. */
 function loadView(): { groupBy: GroupBy; open: string[] } {
@@ -46,9 +49,11 @@ function loadView(): { groupBy: GroupBy; open: string[] } {
 const groupOf = (p: Project) => p.path_with_namespace.split("/").slice(0, -1).join("/") || "(không có group)";
 const repoName = (p: Project) => p.path_with_namespace.split("/").pop() ?? p.path_with_namespace;
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+/** Must match app/collector/removal.py confirmation_phrase. */
+const removalPhrase = (paths: string[]) => (paths.length === 1 ? paths[0] : `xoa ${paths.length} repo`);
 
 /**
- * Admin card for "Dự án / Group / Repo": a dự án is defined here and groups repos; a group is the
+ * Admin cards for "Dự án / Group / Repo": a dự án is defined here and groups repos; a group is the
  * GitLab group a repo lives in; a repo is one GitLab project (a git repository).
  */
 export function RepoAdmin({ connections }: { connections: Connection[] }) {
@@ -61,6 +66,9 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
   const [search, setSearch] = useState("");
   const [reviewing, setReviewing] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [removing, setRemoving] = useState<Project[] | null>(null);
+  const [busy, setBusy] = useState(false);
   const [groupBy, setGroupBy] = useState<GroupBy>("group");
   // Sections start collapsed so the list fits on one screen; the open ones are remembered.
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -120,6 +128,45 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
     }, label);
   }
 
+  async function setTracking(items: Project[], track: boolean) {
+    const targets = items.filter((p) => p.tracked !== track);
+    if (!targets.length) return;
+    if (!track && !window.confirm(`Bỏ theo dõi ${targets.length} repo? Lịch sử review vẫn giữ.`)) return;
+    await run(async () => {
+      await Promise.all(targets.map((p) => api.post(`/projects/${p.id}/${track ? "track" : "untrack"}`)));
+      setSelected(new Set());
+      await refresh();
+    }, `${track ? "Đã theo dõi lại" : "Đã bỏ theo dõi"} ${targets.length} repo.`);
+  }
+
+  async function remove(items: Project[], typed: string) {
+    setBusy(true);
+    try {
+      const result = await api.post<{
+        removed: string[];
+        reviews_deleted: number;
+        cleanup_queued: boolean;
+      }>("/projects/remove", {
+        project_ids: items.map((p) => p.id),
+        confirm: typed,
+      });
+      setMessage(
+        `Đã gỡ ${result.removed.length} repo và ${result.reviews_deleted} review. ` +
+          (result.cleanup_queued
+            ? "Webhook được gỡ và chỉ số được tính lại trong nền."
+            : "Chưa đưa được việc gỡ webhook/tính lại chỉ số vào hàng đợi (Redis?): xoá webhook tay trên GitLab và chạy codepulse metrics recompute."),
+      );
+      setRemoving(null);
+      setSelected(new Set());
+      await refresh();
+    } catch (e) {
+      setMessage(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const byId = useMemo(() => new Map((repos.data ?? []).map((p) => [p.id, p])), [repos.data]);
   const allGroups = useMemo(() => [...new Set((repos.data ?? []).map(groupOf))].sort(), [repos.data]);
 
   const visible = (repos.data ?? []).filter(
@@ -159,6 +206,18 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
       return next;
     });
 
+  // Selection survives filtering and collapsing; repos that disappear are simply ignored.
+  const chosen = [...selected].map((id) => byId.get(id)).filter((p): p is Project => !!p);
+  const toggleSelect = (ids: number[], on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+
   const projectOptions = (
     <>
       <option value={UNASSIGNED}>Chưa gán dự án</option>
@@ -175,7 +234,7 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
       <div className="card">
         <h2>Dự án</h2>
         <p className="muted">
-          Dự án do bạn đặt (ví dụ OmiCRM), gồm nhiều repo, có thể từ nhiều group GitLab. Xoá dự án chỉ bỏ cách nhóm,
+          Dự án do bạn đặt (ví dụ OmiCRM), gồm nhiều repo, có thể từ nhiều group GitLab. Xoá dự án chỉ bỏ cách nhóm;
           repo và lịch sử review vẫn giữ.
         </p>
         {!projects.data ? (
@@ -183,55 +242,40 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
         ) : projects.data.length === 0 ? (
           <p className="muted">Chưa có dự án nào.</p>
         ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Dự án</th>
-                  <th className="num">Repo đang theo dõi</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {projects.data.map((b) => (
-                  <tr key={b.id}>
-                    <td>
-                      <button className="link" onClick={() => setProjectFilter(String(b.id))}>
-                        {b.name}
-                      </button>
-                      {b.description && <span className="muted"> – {b.description}</span>}
-                    </td>
-                    <td className="num">{b.repos}</td>
-                    <td>
-                      <button
-                        onClick={() => {
-                          const name = window.prompt("Tên mới của dự án:", b.name);
-                          if (name && name !== b.name)
-                            void run(async () => {
-                              await api.patch(`/business-projects/${b.id}`, { name, description: b.description });
-                              await refresh();
-                            }, "Đã đổi tên dự án.");
-                        }}
-                      >
-                        Đổi tên
-                      </button>{" "}
-                      <button
-                        onClick={() =>
-                          window.confirm(`Xoá dự án "${b.name}"? Repo và lịch sử review vẫn giữ.`) &&
-                          void run(async () => {
-                            await api.delete(`/business-projects/${b.id}`);
-                            if (projectFilter === String(b.id)) setProjectFilter("");
-                            await refresh();
-                          }, `Đã xoá dự án ${b.name}.`)
-                        }
-                      >
-                        Xoá
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="chips">
+            {projects.data.map((b) => (
+              <div key={b.id} className="chip" title={b.description ?? undefined}>
+                <button className="link" onClick={() => setProjectFilter(String(b.id))}>
+                  {b.name}
+                </button>
+                <span className="muted">{b.repos} repo</span>
+                <IconButton
+                  icon="edit"
+                  label="Đổi tên"
+                  onClick={() => {
+                    const name = window.prompt("Tên mới của dự án:", b.name);
+                    if (name && name !== b.name)
+                      void run(async () => {
+                        await api.patch(`/business-projects/${b.id}`, { name, description: b.description });
+                        await refresh();
+                      }, "Đã đổi tên dự án.");
+                  }}
+                />
+                <IconButton
+                  icon="remove"
+                  label="Xoá dự án"
+                  tone="danger"
+                  onClick={() =>
+                    window.confirm(`Xoá dự án "${b.name}"? Repo và lịch sử review vẫn giữ.`) &&
+                    void run(async () => {
+                      await api.delete(`/business-projects/${b.id}`);
+                      if (projectFilter === String(b.id)) setProjectFilter("");
+                      await refresh();
+                    }, `Đã xoá dự án ${b.name}.`)
+                  }
+                />
+              </div>
+            ))}
           </div>
         )}
         <form
@@ -292,6 +336,18 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
             placeholder="Tìm repo…"
             aria-label="Tìm repo"
           />
+          {filtering && (
+            <button
+              onClick={() => {
+                setProjectFilter("");
+                setGroupFilter("");
+                setSearch("");
+              }}
+            >
+              Bỏ lọc
+            </button>
+          )}
+          <span className="spacer" />
           <div className="tabs compact" role="tablist" aria-label="Nhóm repo">
             {GROUP_BY_TABS.map((t) => (
               <button
@@ -311,18 +367,33 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
           <button onClick={() => setAll(false)} disabled={filtering}>
             Thu gọn tất cả
           </button>
-          {(projectFilter || groupFilter || search) && (
-            <button
-              onClick={() => {
-                setProjectFilter("");
-                setGroupFilter("");
-                setSearch("");
-              }}
-            >
-              Bỏ lọc
-            </button>
-          )}
         </div>
+
+        {chosen.length > 0 && (
+          <div className="bulk-bar" role="region" aria-label="Thao tác với repo đã chọn">
+            <strong>Đã chọn {chosen.length} repo</strong>
+            <select
+              value=""
+              aria-label="Gán dự án cho repo đã chọn"
+              onChange={(e) =>
+                e.target.value &&
+                void assign(
+                  chosen.map((p) => p.id),
+                  e.target.value,
+                  `Đã gán ${chosen.length} repo.`,
+                ).then(() => setSelected(new Set()))
+              }
+            >
+              <option value="">Gán dự án…</option>
+              {projectOptions}
+            </select>
+            <IconButton icon="untrack" label="Bỏ theo dõi các repo đã chọn" onClick={() => void setTracking(chosen, false)} />
+            <IconButton icon="track" label="Theo dõi lại các repo đã chọn" onClick={() => void setTracking(chosen, true)} />
+            <IconButton icon="remove" label="Gỡ hẳn các repo đã chọn" tone="danger" onClick={() => setRemoving(chosen)} />
+            <span className="spacer" />
+            <IconButton icon="close" label="Bỏ chọn" onClick={() => setSelected(new Set())} />
+          </div>
+        )}
 
         {!repos.data ? (
           <Loading error={repos.error} />
@@ -330,16 +401,31 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
           <p className="muted">Không có repo nào khớp bộ lọc.</p>
         ) : (
           <div className="table-wrap">
-            <table>
+            <table className="repo-table">
               <thead>
                 <tr>
+                  <th className="select-col">
+                    <input
+                      type="checkbox"
+                      aria-label="Chọn mọi repo đang hiện"
+                      checked={visible.every((p) => selected.has(p.id))}
+                      onChange={(e) =>
+                        toggleSelect(
+                          visible.map((p) => p.id),
+                          e.target.checked,
+                        )
+                      }
+                    />
+                  </th>
                   <th>Repo</th>
                   <th>Dự án</th>
                   {FLAGS.map((f) => (
-                    <th key={f.key}>{f.label}</th>
+                    <th key={f.key} className="flag-col" title={f.hint}>
+                      {f.label}
+                    </th>
                   ))}
-                  <th>Sync gần nhất</th>
-                  <th />
+                  <th className="hide-sm">Sync</th>
+                  <th className="actions-col" />
                 </tr>
               </thead>
               <tbody>
@@ -347,178 +433,188 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
                   const items = sections.get(section) ?? [];
                   const expanded = isOpen(section);
                   const untracked = items.filter((p) => !p.tracked).length;
+                  const allChosen = items.every((p) => selected.has(p.id));
                   return (
-                  <Fragment key={section}>
-                    <tr className="group-row">
-                      <td colSpan={2}>
-                        <button
-                          className="section-toggle"
-                          aria-expanded={expanded}
-                          onClick={() => toggle(section)}
-                          disabled={filtering}
-                          title={filtering ? "Đang lọc: mọi nhóm khớp đều mở" : expanded ? "Thu gọn" : "Mở rộng"}
-                        >
-                          <span aria-hidden="true">{expanded ? "▾" : "▸"}</span> <strong>{section}</strong>
-                        </button>{" "}
-                        <span className="muted">
-                          · {items.length} repo{untracked ? ` (${untracked} đã bỏ theo dõi)` : ""}
-                        </span>
-                      </td>
-                      <td colSpan={FLAGS.length + 2}>
-                        {groupBy === "group" && (
-                        <select
-                          value=""
-                          aria-label={`Gán dự án cho cả group ${section}`}
-                          onChange={(e) =>
-                            e.target.value &&
-                            void assign(
-                              items.map((p) => p.id),
-                              e.target.value,
-                              `Đã gán ${items.length} repo của ${section}.`,
-                            )
-                          }
-                        >
-                          <option value="">Gán dự án cho cả group…</option>
-                          {projectOptions}
-                        </select>
-                        )}
-                      </td>
-                    </tr>
-                    {expanded && items.map((p) => (
-                      <Fragment key={p.id}>
-                        <tr className={p.tracked ? undefined : "muted"}>
-                          <td title={p.path_with_namespace}>
-                            {groupBy === "group" ? repoName(p) : p.path_with_namespace}
-                            {!p.tracked && <span className="muted"> (đã bỏ {date(p.untracked_at)})</span>}
-                          </td>
-                          <td>
-                            <select
-                              value={p.business_project_id ?? UNASSIGNED}
-                              aria-label={`Dự án của ${p.path_with_namespace}`}
-                              onChange={(e) =>
-                                void assign([p.id], e.target.value, `Đã cập nhật dự án của ${repoName(p)}.`)
-                              }
+                    <Fragment key={section}>
+                      <tr className="group-row">
+                        <td className="select-col">
+                          <input
+                            type="checkbox"
+                            aria-label={`Chọn cả ${section}`}
+                            checked={allChosen}
+                            onChange={(e) =>
+                              toggleSelect(
+                                items.map((p) => p.id),
+                                e.target.checked,
+                              )
+                            }
+                          />
+                        </td>
+                        <td colSpan={COLUMNS - 1}>
+                          <div className="group-head">
+                            <button
+                              className="section-toggle"
+                              aria-expanded={expanded}
+                              onClick={() => toggle(section)}
+                              disabled={filtering}
+                              title={filtering ? "Đang lọc: mọi nhóm khớp đều mở" : expanded ? "Thu gọn" : "Mở rộng"}
                             >
-                              {projectOptions}
-                            </select>
-                          </td>
-                          {FLAGS.map((f) => (
-                            <td key={f.key}>
-                              <input
-                                type="checkbox"
-                                checked={!!p[f.key]}
-                                disabled={!p.tracked}
-                                aria-label={f.label}
+                              <span aria-hidden="true">{expanded ? "▾" : "▸"}</span> <strong>{section}</strong>
+                            </button>
+                            <span className="muted">
+                              {items.length} repo{untracked ? ` · ${untracked} đã bỏ theo dõi` : ""}
+                            </span>
+                            {groupBy === "group" && (
+                              <select
+                                value=""
+                                aria-label={`Gán dự án cho cả group ${section}`}
                                 onChange={(e) =>
-                                  run(async () => {
-                                    await api.patch(`/projects/${p.id}`, { [f.key]: e.target.checked });
-                                    await repos.mutate();
-                                  }, `Đã cập nhật ${repoName(p)}.`)
+                                  e.target.value &&
+                                  void assign(
+                                    items.map((p) => p.id),
+                                    e.target.value,
+                                    `Đã gán ${items.length} repo của ${section}.`,
+                                  )
                                 }
-                              />
-                            </td>
-                          ))}
-                          <td className="muted">{date(p.last_synced_at)}</td>
-                          <td className="actions">
-                            {p.tracked ? (
-                              <>
-                                <button
-                                  title="Lấy commit/MR mới từ GitLab ngay"
-                                  onClick={() => run(() => api.post(`/projects/${p.id}/sync`), "Đã đưa vào hàng đợi sync.")}
-                                >
-                                  Sync
-                                </button>
-                                <button
-                                  title="Đăng ký (hoặc làm mới) webhook để GitLab báo push/MR mới ngay lập tức"
-                                  onClick={() => run(() => registerWebhook(p))}
-                                >
-                                  Webhook
-                                </button>
-                                <button
-                                  title="Review các MR chưa được review trong một khoảng ngày"
-                                  onClick={() => setReviewing(reviewing === p.id ? null : p.id)}
-                                >
-                                  Review…
-                                </button>
-                                <button
-                                  title="Ngừng sync và review repo này; lịch sử vẫn giữ"
-                                  onClick={() =>
-                                    window.confirm(`Bỏ theo dõi ${p.path_with_namespace}? Lịch sử review vẫn giữ.`) &&
-                                    void run(async () => {
-                                      await api.post(`/projects/${p.id}/untrack`);
-                                      await refresh();
-                                    }, `Đã bỏ theo dõi ${repoName(p)}.`)
+                              >
+                                <option value="">Gán dự án cho cả group…</option>
+                                {projectOptions}
+                              </select>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {expanded &&
+                        items.map((p) => (
+                          <Fragment key={p.id}>
+                            <tr className={p.tracked ? undefined : "muted"}>
+                              <td className="select-col">
+                                <input
+                                  type="checkbox"
+                                  aria-label={`Chọn ${p.path_with_namespace}`}
+                                  checked={selected.has(p.id)}
+                                  onChange={(e) => toggleSelect([p.id], e.target.checked)}
+                                />
+                              </td>
+                              <td className="repo-col" title={p.path_with_namespace}>
+                                {groupBy === "group" ? repoName(p) : p.path_with_namespace}
+                                {!p.tracked && <span className="muted"> · đã bỏ {date(p.untracked_at)}</span>}
+                              </td>
+                              <td>
+                                <select
+                                  className="compact"
+                                  value={p.business_project_id ?? UNASSIGNED}
+                                  aria-label={`Dự án của ${p.path_with_namespace}`}
+                                  onChange={(e) =>
+                                    void assign([p.id], e.target.value, `Đã cập nhật dự án của ${repoName(p)}.`)
                                   }
                                 >
-                                  Bỏ theo dõi
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                onClick={() =>
-                                  run(async () => {
-                                    await api.post(`/projects/${p.id}/track`);
-                                    await refresh();
-                                  }, `Đã theo dõi lại ${repoName(p)} và đưa vào hàng đợi sync.`)
-                                }
-                              >
-                                Theo dõi lại
-                              </button>
+                                  {projectOptions}
+                                </select>
+                              </td>
+                              {FLAGS.map((f) => (
+                                <td key={f.key} className="flag-col" data-label={f.label}>
+                                  <input
+                                    type="checkbox"
+                                    checked={!!p[f.key]}
+                                    disabled={!p.tracked}
+                                    aria-label={f.hint}
+                                    title={f.hint}
+                                    onChange={(e) =>
+                                      run(async () => {
+                                        await api.patch(`/projects/${p.id}`, { [f.key]: e.target.checked });
+                                        await repos.mutate();
+                                      }, `Đã cập nhật ${repoName(p)}.`)
+                                    }
+                                  />
+                                </td>
+                              ))}
+                              <td className="muted hide-sm">{date(p.last_synced_at)}</td>
+                              <td className="actions-col">
+                                <div className="actions">
+                                  {p.tracked ? (
+                                    <>
+                                      <IconButton
+                                        icon="sync"
+                                        label="Sync ngay"
+                                        onClick={() =>
+                                          run(() => api.post(`/projects/${p.id}/sync`), "Đã đưa vào hàng đợi sync.")
+                                        }
+                                      />
+                                      <IconButton
+                                        icon="webhook"
+                                        label="Đăng ký / làm mới webhook"
+                                        onClick={() => run(() => registerWebhook(p))}
+                                      />
+                                      <IconButton
+                                        icon="review"
+                                        label="Review MR trong khoảng ngày"
+                                        aria-expanded={reviewing === p.id}
+                                        onClick={() => setReviewing(reviewing === p.id ? null : p.id)}
+                                      />
+                                      <IconButton
+                                        icon="untrack"
+                                        label="Bỏ theo dõi"
+                                        onClick={() => void setTracking([p], false)}
+                                      />
+                                    </>
+                                  ) : (
+                                    <IconButton icon="track" label="Theo dõi lại" onClick={() => void setTracking([p], true)} />
+                                  )}
+                                  <IconButton icon="remove" label="Gỡ hẳn" tone="danger" onClick={() => setRemoving([p])} />
+                                </div>
+                              </td>
+                            </tr>
+                            {reviewing === p.id && (
+                              <tr>
+                                <td colSpan={COLUMNS}>
+                                  <form
+                                    className="toolbar"
+                                    onSubmit={(e) =>
+                                      submit(e, async (f) => {
+                                        const params = new URLSearchParams({
+                                          from: String(f.get("from")),
+                                          to: String(f.get("to")),
+                                          include_open: f.get("include_open") ? "true" : "false",
+                                        });
+                                        const result = await api.post<{ queued: number }>(
+                                          `/projects/${p.id}/backfill-reviews?${params}`,
+                                        );
+                                        setReviewing(null);
+                                        return result.queued
+                                          ? `Đã đưa ${result.queued} MR của ${repoName(p)} vào hàng đợi review; kết quả hiện ở trang review sau vài phút.`
+                                          : "Không có MR nào chưa được review trong khoảng này (cần Sync trước nếu repo mới thêm).";
+                                      })
+                                    }
+                                  >
+                                    <span className="muted">Review MR chưa được review của {repoName(p)} từ</span>
+                                    <input
+                                      name="from"
+                                      type="date"
+                                      required
+                                      defaultValue={isoDay(new Date(Date.now() - 30 * 86400000))}
+                                      aria-label="Từ ngày"
+                                    />
+                                    <span className="muted">đến</span>
+                                    <input name="to" type="date" required defaultValue={isoDay(new Date())} aria-label="Đến ngày" />
+                                    <label>
+                                      <input name="include_open" type="checkbox" defaultChecked /> Gồm MR đang mở
+                                    </label>
+                                    <button className="primary" type="submit">
+                                      Review
+                                    </button>
+                                    <IconButton icon="close" label="Huỷ" onClick={() => setReviewing(null)} />
+                                  </form>
+                                  <p className="muted">
+                                    Tốn ngân sách LLM theo số MR. MR mới tạo hoặc có commit mới được review tự động qua
+                                    webhook, không cần bấm.
+                                  </p>
+                                </td>
+                              </tr>
                             )}
-                          </td>
-                        </tr>
-                        {reviewing === p.id && (
-                          <tr>
-                            <td colSpan={FLAGS.length + 4}>
-                              <form
-                                className="toolbar"
-                                onSubmit={(e) =>
-                                  submit(e, async (f) => {
-                                    const params = new URLSearchParams({
-                                      from: String(f.get("from")),
-                                      to: String(f.get("to")),
-                                      include_open: f.get("include_open") ? "true" : "false",
-                                    });
-                                    const result = await api.post<{ queued: number }>(
-                                      `/projects/${p.id}/backfill-reviews?${params}`,
-                                    );
-                                    setReviewing(null);
-                                    return result.queued
-                                      ? `Đã đưa ${result.queued} MR của ${repoName(p)} vào hàng đợi review; kết quả hiện ở trang review sau vài phút.`
-                                      : `Không có MR nào chưa được review trong khoảng này (cần Sync trước nếu repo mới thêm).`;
-                                  })
-                                }
-                              >
-                                <span className="muted">Review MR chưa được review của {repoName(p)} từ</span>
-                                <input
-                                  name="from"
-                                  type="date"
-                                  required
-                                  defaultValue={isoDay(new Date(Date.now() - 30 * 86400000))}
-                                  aria-label="Từ ngày"
-                                />
-                                <span className="muted">đến</span>
-                                <input name="to" type="date" required defaultValue={isoDay(new Date())} aria-label="Đến ngày" />
-                                <label>
-                                  <input name="include_open" type="checkbox" defaultChecked /> Gồm MR đang mở
-                                </label>
-                                <button className="primary" type="submit">
-                                  Review
-                                </button>
-                                <button type="button" onClick={() => setReviewing(null)}>
-                                  Huỷ
-                                </button>
-                              </form>
-                              <p className="muted">
-                                Tốn ngân sách LLM theo số MR. MR mới tạo hoặc có commit mới được review tự động qua
-                                webhook, không cần bấm.
-                              </p>
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    ))}
-                  </Fragment>
+                          </Fragment>
+                        ))}
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -526,111 +622,126 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
           </div>
         )}
 
-        <h3>Thêm repo</h3>
-        <form
-          className="toolbar"
-          onSubmit={(e) =>
-            submit(e, async (f) => {
-              const project = await api.post<Project>("/projects", {
-                connection_id: Number(f.get("connection_id")),
-                external_id: Number(f.get("external_id")),
-              });
-              const bp = String(f.get("business_project_id") ?? UNASSIGNED);
-              if (bp !== UNASSIGNED)
-                await api.put("/projects/business-project", { project_ids: [project.id], business_project_id: Number(bp) });
-              await api.post(`/projects/${project.id}/sync`);
-              await refresh();
-              let hook = "";
-              if (f.get("webhook")) {
-                try {
-                  hook = ` ${await registerWebhook(project)}`;
-                } catch (err) {
-                  hook = ` Webhook lỗi: ${err instanceof ApiError ? err.message : String(err)}; bấm nút Webhook để thử lại.`;
-                }
-              }
-              return `Đã thêm ${project.path_with_namespace} và đưa vào hàng đợi sync.${hook}`;
-            })
-          }
-        >
-          <select name="connection_id" required defaultValue="">
-            <option value="" disabled>
-              Kết nối…
-            </option>
-            {connections.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <input name="external_id" type="number" min={1} placeholder="GitLab project ID của repo" required />
-          <select name="business_project_id" defaultValue={UNASSIGNED} aria-label="Dự án">
-            {projectOptions}
-          </select>
-          <label>
-            <input name="webhook" type="checkbox" defaultChecked /> Đăng ký webhook
-          </label>
-          <button className="primary" type="submit">
-            Thêm repo
-          </button>
-        </form>
-        <p className="muted">Project ID nằm ở trang repo trên GitLab (Settings → General, hoặc dưới tên repo).</p>
-
-        <h3>Thêm cả group</h3>
-        <form
-          className="toolbar"
-          onSubmit={(e) =>
-            submit(e, async (f) => {
-              setMessage("Đang lấy danh sách repo của group…");
-              setImporting(true);
-              const bp = String(f.get("business_project_id") ?? UNASSIGNED);
-              const result = await api
-                .post<GroupImport>("/projects/import-group", {
-                  connection_id: Number(f.get("connection_id")),
-                  group: f.get("group"),
-                  register_webhooks: !!f.get("webhook"),
-                  business_project_id: bp === UNASSIGNED ? null : Number(bp),
+        <div className="grid two add-forms">
+          <div>
+            <h3>Thêm repo</h3>
+            <form
+              className="toolbar"
+              onSubmit={(e) =>
+                submit(e, async (f) => {
+                  const project = await api.post<Project>("/projects", {
+                    connection_id: Number(f.get("connection_id")),
+                    external_id: Number(f.get("external_id")),
+                  });
+                  const bp = String(f.get("business_project_id") ?? UNASSIGNED);
+                  if (bp !== UNASSIGNED)
+                    await api.put("/projects/business-project", { project_ids: [project.id], business_project_id: Number(bp) });
+                  await api.post(`/projects/${project.id}/sync`);
+                  await refresh();
+                  let hook = "";
+                  if (f.get("webhook")) {
+                    try {
+                      hook = ` ${await registerWebhook(project)}`;
+                    } catch (err) {
+                      hook = ` Webhook lỗi: ${err instanceof ApiError ? err.message : String(err)}; bấm nút Webhook để thử lại.`;
+                    }
+                  }
+                  return `Đã thêm ${project.path_with_namespace} và đưa vào hàng đợi sync.${hook}`;
                 })
-                .finally(() => {
-                  setImporting(false);
-                  void refresh(); // show rows added before an error or timeout
-                });
-              if (result.added.length === 0) return `Không có repo mới (${result.skipped} repo đã có).`;
-              const notQueued = result.not_queued.length
-                ? ` Chưa đưa vào hàng đợi: ${result.not_queued.join(", ")} – sẽ được sync ở lần định kỳ; bấm Webhook ở dòng đó nếu cần.`
-                : "";
-              return (
-                `Đã thêm ${result.added.length} repo (bỏ qua ${result.skipped} repo đã có). ` +
-                `Webhook và sync chạy nền trong worker.${notQueued}`
-              );
-            })
-          }
-        >
-          <select name="connection_id" required defaultValue="">
-            <option value="" disabled>
-              Kết nối…
-            </option>
-            {connections.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <input name="group" placeholder="Group ID hoặc đường dẫn, ví dụ vihat/omicrm" required />
-          <select name="business_project_id" defaultValue={UNASSIGNED} aria-label="Gán vào dự án">
-            {projectOptions}
-          </select>
-          <label>
-            <input name="webhook" type="checkbox" defaultChecked /> Đăng ký webhook
-          </label>
-          <button className="primary" type="submit" disabled={importing}>
-            {importing ? "Đang thêm…" : "Thêm cả group"}
-          </button>
-        </form>
-        <p className="muted">
-          Thêm một lần mọi repo đang hoạt động trong group, kể cả subgroup. Repo đã có (kể cả repo đã bỏ theo dõi) được
-          bỏ qua; repo tạo sau này cần thêm lại bằng nút này.
-        </p>
+              }
+            >
+              <select name="connection_id" required defaultValue="">
+                <option value="" disabled>
+                  Kết nối…
+                </option>
+                {connections.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <input name="external_id" type="number" min={1} placeholder="GitLab project ID" required />
+              <select name="business_project_id" defaultValue={UNASSIGNED} aria-label="Dự án">
+                {projectOptions}
+              </select>
+              <label>
+                <input name="webhook" type="checkbox" defaultChecked /> Webhook
+              </label>
+              <button className="primary" type="submit">
+                Thêm repo
+              </button>
+            </form>
+            <p className="muted">Project ID nằm dưới tên repo trên GitLab, hoặc Settings → General.</p>
+          </div>
+          <div>
+            <h3>Thêm cả group</h3>
+            <form
+              className="toolbar"
+              onSubmit={(e) =>
+                submit(e, async (f) => {
+                  setMessage("Đang lấy danh sách repo của group…");
+                  setImporting(true);
+                  const bp = String(f.get("business_project_id") ?? UNASSIGNED);
+                  const result = await api
+                    .post<GroupImport>("/projects/import-group", {
+                      connection_id: Number(f.get("connection_id")),
+                      group: f.get("group"),
+                      register_webhooks: !!f.get("webhook"),
+                      business_project_id: bp === UNASSIGNED ? null : Number(bp),
+                    })
+                    .finally(() => {
+                      setImporting(false);
+                      void refresh(); // show rows added before an error or timeout
+                    });
+                  if (result.added.length === 0) return `Không có repo mới (${result.skipped} repo đã có).`;
+                  const notQueued = result.not_queued.length
+                    ? ` Chưa đưa vào hàng đợi: ${result.not_queued.join(", ")} – sẽ được sync ở lần định kỳ; bấm Webhook ở dòng đó nếu cần.`
+                    : "";
+                  return (
+                    `Đã thêm ${result.added.length} repo (bỏ qua ${result.skipped} repo đã có). ` +
+                    `Webhook và sync chạy nền trong worker.${notQueued}`
+                  );
+                })
+              }
+            >
+              <select name="connection_id" required defaultValue="">
+                <option value="" disabled>
+                  Kết nối…
+                </option>
+                {connections.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <input name="group" placeholder="Group ID hoặc đường dẫn, ví dụ vihat/omicrm" required />
+              <select name="business_project_id" defaultValue={UNASSIGNED} aria-label="Gán vào dự án">
+                {projectOptions}
+              </select>
+              <label>
+                <input name="webhook" type="checkbox" defaultChecked /> Webhook
+              </label>
+              <button className="primary" type="submit" disabled={importing}>
+                {importing ? "Đang thêm…" : "Thêm cả group"}
+              </button>
+            </form>
+            <p className="muted">
+              Mọi repo đang hoạt động trong group, kể cả subgroup. Repo đã có (kể cả đã bỏ theo dõi) được bỏ qua; repo
+              tạo sau cần thêm lại.
+            </p>
+          </div>
+        </div>
       </div>
+
+      {removing && (
+        <ConfirmRemove
+          paths={removing.map((p) => p.path_with_namespace)}
+          phrase={removalPhrase(removing.map((p) => p.path_with_namespace))}
+          busy={busy}
+          onConfirm={(typed) => void remove(removing, typed)}
+          onCancel={() => setRemoving(null)}
+        />
+      )}
     </>
   );
 }

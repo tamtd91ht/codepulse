@@ -37,8 +37,8 @@ class Review(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     target_type: Mapped[str]
-    mr_id: Mapped[int | None] = mapped_column(ForeignKey("merge_requests.id"))
-    commit_sha: Mapped[str | None] = mapped_column(ForeignKey("commits.sha"))
+    mr_id: Mapped[int | None] = mapped_column(ForeignKey("merge_requests.id"), index=True)
+    commit_sha: Mapped[str | None] = mapped_column(ForeignKey("commits.sha"), index=True)
     reviewed_sha: Mapped[str]
     author_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     status: Mapped[str]  # queued|running|done|failed|skipped|superseded
@@ -85,7 +85,7 @@ class FindingDispute(TimestampMixin, Base):
     __tablename__ = "finding_disputes"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    finding_id: Mapped[int | None] = mapped_column(ForeignKey("review_findings.id"))
+    finding_id: Mapped[int | None] = mapped_column(ForeignKey("review_findings.id"), index=True)
     raised_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     reason: Mapped[str | None]
     decision: Mapped[str | None]

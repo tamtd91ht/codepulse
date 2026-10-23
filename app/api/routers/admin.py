@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from rq import Retry
 from sqlalchemy import ColumnElement, and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -31,6 +32,8 @@ from app.api.schemas import (
     ProjectOut,
     ProjectPatch,
     RepoAssignment,
+    RepoRemoval,
+    RepoRemovalOut,
     TeamIn,
     TeamOut,
     UserIn,
@@ -39,6 +42,7 @@ from app.api.schemas import (
 )
 from app.api.security import AdminPrincipal, LeadPrincipal
 from app.collector.gitlab.client import GitLabClient, GitLabError
+from app.collector.removal import REMOVAL_JOB_TIMEOUT, confirmation_phrase, remove_projects
 from app.collector.sync import (
     SYNC_JOB_TIMEOUT,
     WEBHOOK_JOB_TIMEOUT,
@@ -410,6 +414,83 @@ def track_project(
             # The periodic sync catches up.
             log.exception("could not queue the catch-up sync", extra={"project_id": project.id})
     return project
+
+
+@router.post("/projects/remove", response_model=RepoRemovalOut)
+def remove_repos(
+    body: RepoRemoval,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+    queue: Annotated[Enqueuer, Depends(get_queue)],
+) -> RepoRemovalOut:
+    """Delete repos with their commits, MRs, reviews, findings and disputes (cannot be undone).
+
+    The explicit exception to "review history is never deleted" (see app/collector/removal.py);
+    the typed confirmation guards against a slip. Webhooks and metrics are fixed up by jobs.
+    """
+    paths = list(
+        session.scalars(
+            select(Project.path_with_namespace)
+            .where(Project.id.in_(body.project_ids))
+            .order_by(Project.id)
+        )
+    )
+    if len(paths) != len(set(body.project_ids)):
+        raise HTTPException(404, "some repos were not found")
+    expected = confirmation_phrase(paths)
+    if body.confirm.strip().casefold() != expected.casefold():
+        raise HTTPException(422, f'type "{expected}" to confirm')
+    try:
+        result = remove_projects(session, body.project_ids, ZoneInfo(settings.report_tz))
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(409, "a repo is being synced right now; try again shortly") from None
+    if not result.paths:  # a concurrent removal got there first
+        session.rollback()
+        raise HTTPException(404, "repos already removed")
+    audit(
+        session,
+        principal.user_id,
+        "project.remove",
+        "project:" + ",".join(str(i) for i in result.project_ids),
+        paths=result.paths,
+        project_ids=result.project_ids,
+        gitlab=[list(hook) for hook in result.hooks],
+        rows=result.rows,
+    )
+    session.commit()
+
+    # Each clean-up job is queued on its own: one failure must not skip the others.
+    not_queued: list[str] = []
+    jobs: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = [
+        (
+            "app.collector.removal.remove_webhook_job",
+            (connection_id, external_id, settings.app_base_url),
+            {"job_timeout": REMOVAL_JOB_TIMEOUT, "retry": Retry(max=3, interval=[30, 120, 600])},
+        )
+        for connection_id, external_id in result.hooks
+    ]
+    if result.first_day and result.last_day:
+        jobs.append(
+            (
+                "app.scoring.aggregate.recompute_job",
+                (result.first_day.isoformat(), result.last_day.isoformat()),
+                {"job_timeout": REMOVAL_JOB_TIMEOUT * 6},
+            )
+        )
+    for func_name, args, kwargs in jobs:
+        try:
+            queue.enqueue(func_name, *args, **kwargs)
+        except Exception:
+            log.exception("could not queue clean-up after removing repos", extra={"job": func_name})
+            not_queued.append(func_name.rsplit(".", 1)[1])
+    return RepoRemovalOut(
+        removed=result.paths,
+        reviews_deleted=result.reviews,
+        cleanup_queued=not not_queued,
+        not_queued=not_queued,
+    )
 
 
 def _tracked(session: Session, project_id: int) -> Project:
