@@ -190,6 +190,11 @@ export default function GuidePage() {
             <strong>Webhook</strong> ở dòng của project để thử lại.
           </li>
           <li>
+            Thêm nhiều project một lần: nhập Group ID hoặc đường dẫn group (ví dụ <code>vihat/backend</code>) rồi bấm{" "}
+            <strong>Thêm cả group</strong>. Mọi project đang hoạt động trong group và subgroup được thêm; project tạo
+            sau này cần thêm lại. Bot phải có quyền Reporter trên group.
+          </li>
+          <li>
             Bật các tuỳ chọn cho từng project: <strong>AI review</strong>, <strong>Comment lên MR</strong>,{" "}
             <strong>Cho gửi code ra LLM</strong>. Thiếu tuỳ chọn cuối thì project không được review.
           </li>

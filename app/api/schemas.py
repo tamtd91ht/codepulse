@@ -3,9 +3,9 @@
 import base64
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, StringConstraints
 
 
 class Page[T](BaseModel):
@@ -71,6 +71,19 @@ class ProjectOut(ORM):
 class ProjectIn(BaseModel):
     connection_id: int
     external_id: int = Field(gt=0)
+
+
+class GroupImportIn(BaseModel):
+    connection_id: int
+    # Numeric id or full path, e.g. "vihat/backend".
+    group: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+    register_webhooks: bool = True
+
+
+class GroupImportOut(BaseModel):
+    added: list[str]  # path_with_namespace of each new project
+    skipped: int  # already registered
+    not_queued: list[str]  # webhook/sync jobs could not be queued (synced later by the scheduler)
 
 
 class ProjectPatch(BaseModel):

@@ -157,6 +157,12 @@ export interface Connection {
   base_url: string;
 }
 
+export interface GroupImport {
+  added: string[];
+  skipped: number;
+  not_queued: string[];
+}
+
 export interface Project {
   id: number;
   connection_id: number | null;

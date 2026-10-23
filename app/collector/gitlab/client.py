@@ -209,6 +209,11 @@ class GitLabClient:
         path = f"/projects/{project_id}/merge_requests/{iid}/notes/{note_id}"
         return self.request("PUT", path, json={"body": body}).json()
 
+    def group_projects(self, group: str) -> Iterator[Any]:
+        """Active projects of a group (numeric id or full path), subgroups included."""
+        params = {"include_subgroups": "true", "archived": "false", "with_shared": "false"}
+        return self.paginate(f"/groups/{quote(group, safe='')}/projects", params)
+
     def project_hooks(self, project_id: int) -> list[Any]:
         return list(self.paginate(f"/projects/{project_id}/hooks"))
 

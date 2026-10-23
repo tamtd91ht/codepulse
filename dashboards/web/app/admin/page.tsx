@@ -5,7 +5,7 @@ import { type FormEvent, useState } from "react";
 import { Loading } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
-import type { Account, Connection, LlmCosts, Person, Project } from "@/lib/types";
+import type { Account, Connection, GroupImport, LlmCosts, Person, Project } from "@/lib/types";
 
 type Flag = "review_enabled" | "post_mr_comment" | "allow_external_llm";
 const FLAGS: { key: Flag; label: string }[] = [
@@ -22,6 +22,7 @@ export default function AdminPage() {
   const users = useApi<Person[]>("/users");
   const costs = useApi<LlmCosts>("/admin/llm-costs");
   const [message, setMessage] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
 
   /** Runs an action and shows `done`, or the action's own message when it returns one. */
   async function run(action: () => Promise<unknown>, done?: string) {
@@ -204,6 +205,51 @@ export default function AdminPage() {
           <button className="primary" type="submit">Thêm project</button>
         </form>
         <p className="muted">Project ID nằm ở trang project trên GitLab (Settings → General, hoặc dưới tên project).</p>
+        <form
+          className="toolbar"
+          onSubmit={(e) =>
+            submit(e, async (f) => {
+              setMessage("Đang lấy danh sách project của group…");
+              setImporting(true);
+              const result = await api
+                .post<GroupImport>("/projects/import-group", {
+                  connection_id: Number(f.get("connection_id")),
+                  group: f.get("group"),
+                  register_webhooks: !!f.get("webhook"),
+                })
+                .finally(() => {
+                  setImporting(false);
+                  void projects.mutate(); // show rows added before an error or timeout
+                });
+              if (result.added.length === 0) return `Không có project mới (${result.skipped} project đã có).`;
+              const notQueued = result.not_queued.length
+                ? ` Chưa đưa vào hàng đợi: ${result.not_queued.join(", ")} – sẽ được sync ở lần định kỳ; bấm Webhook ở dòng đó nếu cần.`
+                : "";
+              return (
+                `Đã thêm ${result.added.length} project (bỏ qua ${result.skipped} project đã có). ` +
+                `Webhook và sync chạy nền trong worker.${notQueued}`
+              );
+            })
+          }
+        >
+          <select name="connection_id" required defaultValue="">
+            <option value="" disabled>Kết nối…</option>
+            {(connections.data ?? []).map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <input name="group" placeholder="Group ID hoặc đường dẫn, ví dụ vihat/backend" required />
+          <label>
+            <input name="webhook" type="checkbox" defaultChecked /> Đăng ký webhook
+          </label>
+          <button className="primary" type="submit" disabled={importing}>
+            {importing ? "Đang thêm…" : "Thêm cả group"}
+          </button>
+        </form>
+        <p className="muted">
+          Thêm một lần mọi project đang hoạt động trong group, kể cả subgroup; project đã có được bỏ qua. Project tạo
+          sau này trong group cần thêm lại bằng nút này.
+        </p>
       </div>
 
       <div className="grid two">

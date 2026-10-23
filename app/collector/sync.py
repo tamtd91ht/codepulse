@@ -23,6 +23,7 @@ from app.models import Connection, Project
 log = logging.getLogger(__name__)
 
 SYNC_JOB_TIMEOUT = 2 * 60 * 60  # a 90-day backfill of a busy project can take a while
+WEBHOOK_JOB_TIMEOUT = 5 * 60
 ADVISORY_LOCK_NAMESPACE = 0x5C  # first key of pg_try_advisory_xact_lock(ns, project_id)
 
 WEBHOOK_PATH = "/api/v1/webhooks/gitlab"
@@ -139,6 +140,21 @@ def sync_project_job(project_id: int) -> dict[str, object]:
             allowed_email_domains=settings.allowed_email_domains,
         )
     return {"project_id": result.project_id, "skipped": result.skipped, "counts": result.counts}
+
+
+def register_webhook_job(project_id: int, base_url: str) -> dict[str, object]:
+    """RQ entry point (group import): add the CodePulse hook to one project."""
+    box = secret_box()
+    with get_sessionmaker()() as session, session.begin():
+        project = session.get(Project, project_id)
+        if project is None or project.connection_id is None:
+            raise ValueError(f"project {project_id} not found or has no connection")
+        connection = session.get(Connection, project.connection_id)
+        if connection is None:
+            raise ValueError(f"connection {project.connection_id} not found")
+        url, created = register_webhook(client_factory(box), box, connection, project, base_url)
+    log.info("webhook registered", extra={"project_id": project_id, "created": created})
+    return {"project_id": project_id, "url": url, "created": created}
 
 
 def enqueue_syncs(session: Session, queue: Enqueuer) -> list[int]:

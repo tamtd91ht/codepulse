@@ -1,5 +1,6 @@
 """Admin endpoints (docs/specs/09; Admin screen in docs/specs/10). Every change is audited."""
 
+import logging
 import secrets
 from datetime import date, datetime, time
 from typing import Annotated, Any
@@ -8,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -19,6 +21,8 @@ from app.api.schemas import (
     ConnectionIn,
     ConnectionOut,
     ConnectionPatch,
+    GroupImportIn,
+    GroupImportOut,
     MemberIn,
     ProjectIn,
     ProjectOut,
@@ -31,13 +35,20 @@ from app.api.schemas import (
 )
 from app.api.security import AdminPrincipal, LeadPrincipal
 from app.collector.gitlab.client import GitLabClient, GitLabError
-from app.collector.sync import SYNC_JOB_TIMEOUT, Enqueuer, client_factory, register_webhook
+from app.collector.sync import (
+    SYNC_JOB_TIMEOUT,
+    WEBHOOK_JOB_TIMEOUT,
+    Enqueuer,
+    client_factory,
+    register_webhook,
+)
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
 from app.identity.autolink import unmapped_accounts
 from app.models import Account, Connection, MergeRequest, Project, Review, Team, TeamMember, User
 from app.webhook.jobs import REVIEW_JOB_TIMEOUT, REVIEW_RETRY
 
+log = logging.getLogger(__name__)
 router = APIRouter(tags=["admin"])
 SessionDep = Annotated[Session, Depends(get_session)]
 
@@ -47,6 +58,11 @@ def _get[M](session: Session, model: type[M], ident: int, name: str) -> M:
     if row is None:
         raise HTTPException(404, f"{name} not found")
     return row
+
+
+def _require_reachable_base_url(settings: Settings) -> None:
+    if urlsplit(settings.app_base_url).hostname in {"localhost", "127.0.0.1", "::1"}:
+        raise HTTPException(409, "APP_BASE_URL points at localhost; GitLab could not reach it")
 
 
 # -- connections ----------------------------------------------------------------------------------
@@ -145,6 +161,93 @@ def create_project(
     return project
 
 
+@router.post("/projects/import-group", response_model=GroupImportOut, status_code=201)
+def import_group(
+    body: GroupImportIn,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    box: Annotated[SecretBox, Depends(get_secret_box)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    queue: Annotated[Enqueuer, Depends(get_queue)],
+) -> GroupImportOut:
+    """One-off: register every active project of a GitLab group (subgroups included).
+
+    Projects are inserted here; each project's webhook and first sync run as worker jobs, so a
+    large group cannot outlast the request. Projects created in the group later are not picked
+    up; run the import again (already registered projects are skipped).
+    """
+    if body.register_webhooks:
+        _require_reachable_base_url(settings)
+    connection = _get(session, Connection, body.connection_id, "connection")
+    session.commit()  # no transaction stays open while GitLab is paginated
+    try:
+        with client_factory(box)(connection) as client:
+            listed = {int(p["id"]): p for p in client.group_projects(body.group)}
+    except GitLabError as exc:
+        if exc.status_code in (403, 404):
+            raise HTTPException(404, "group not found, or the bot token cannot see it") from None
+        raise
+    rows = [
+        {
+            "connection_id": connection.id,
+            "external_id": external_id,
+            "path_with_namespace": info["path_with_namespace"],
+            "default_branch": info.get("default_branch"),
+        }
+        for external_id, info in listed.items()
+    ]
+    # ON CONFLICT: a concurrent import or POST /projects may have registered some already.
+    added = (
+        session.execute(
+            pg_insert(Project)
+            .values(rows)
+            .on_conflict_do_nothing(index_elements=["connection_id", "external_id"])
+            .returning(Project.id, Project.path_with_namespace)
+        ).all()
+        if rows
+        else []
+    )
+    audit(
+        session,
+        principal.user_id,
+        "project.import_group",
+        f"connection:{connection.id}",
+        group=body.group,
+        added=[project_id for project_id, _ in added],
+    )
+    session.commit()
+
+    not_queued: list[str] = []
+    for project_id, path in added:
+        try:
+            if body.register_webhooks:
+                queue.enqueue(
+                    "app.collector.sync.register_webhook_job",
+                    project_id,
+                    settings.app_base_url,
+                    job_id=f"webhook-project-{project_id}",
+                    job_timeout=WEBHOOK_JOB_TIMEOUT,
+                )
+            queue.enqueue(
+                "app.collector.sync.sync_project_job",
+                project_id,
+                job_id=f"sync-project-{project_id}",
+                job_timeout=SYNC_JOB_TIMEOUT,
+            )
+        except Exception:
+            # The project stays registered; the periodic sync picks it up, the Webhook button
+            # registers its hook.
+            log.exception(
+                "could not queue jobs for imported project", extra={"project_id": project_id}
+            )
+            not_queued.append(path)
+    return GroupImportOut(
+        added=[path for _, path in added],
+        skipped=len(listed) - len(added),
+        not_queued=not_queued,
+    )
+
+
 @router.patch("/projects/{project_id}", response_model=ProjectOut)
 def update_project(
     project_id: int, body: ProjectPatch, principal: AdminPrincipal, session: SessionDep
@@ -171,8 +274,7 @@ def register_project_webhook(
     if project.connection_id is None:
         raise HTTPException(409, "project has no GitLab connection")
     connection = _get(session, Connection, project.connection_id, "connection")
-    if urlsplit(settings.app_base_url).hostname in {"localhost", "127.0.0.1", "::1"}:
-        raise HTTPException(409, "APP_BASE_URL points at localhost; GitLab could not reach it")
+    _require_reachable_base_url(settings)
     url, created = register_webhook(
         client_factory(box), box, connection, project, settings.app_base_url
     )

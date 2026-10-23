@@ -66,3 +66,4 @@
 
 ## Triển khai VPS
 - Admin dashboard: thêm/đổi token kết nối GitLab, thêm project (tự đăng ký webhook + sync), nút đăng ký webhook; API mới `PATCH /connections/{id}`, `POST /projects/{id}/webhook` (logic webhook dùng chung với CLI). Token/project nằm trong DB, không qua .env; OAuth đăng nhập vẫn ở .env (quyết định người dùng).
+- Thêm project theo GitLab group (nhập một lần, gồm subgroup, bỏ project archived/đã có): `POST /projects/import-group`, form trên Admin; insert ON CONFLICT DO NOTHING (an toàn khi chạy song song), webhook + sync của từng project chạy nền trong worker (`register_webhook_job`) để group lớn không làm quá hạn request; group sai/không có quyền → 404. Ngoài spec, theo yêu cầu người dùng.

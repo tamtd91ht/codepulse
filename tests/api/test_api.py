@@ -12,7 +12,7 @@ from app.api.auth import STATE_COOKIE, get_oauth_http
 from app.api.main import app
 from app.api.security import SESSION_COOKIE
 from app.config import Settings
-from app.models import Account, AuditLog, Connection, User
+from app.models import Account, AuditLog, Connection, Project, User
 from tests.api.conftest import BOX, WEEK, FakeQueue, World
 
 pytestmark = pytest.mark.integration
@@ -142,6 +142,7 @@ def test_rerun_only_failed_or_skipped(
         ("get", "/api/v1/connections"),
         ("patch", "/api/v1/connections/1"),
         ("post", "/api/v1/projects/1/webhook"),
+        ("post", "/api/v1/projects/import-group"),
         ("get", "/api/v1/projects"),
         ("patch", "/api/v1/projects/1"),
         ("get", "/api/v1/users"),
@@ -232,6 +233,50 @@ def test_register_webhook_from_the_dashboard_is_idempotent(
     assert connection is not None and connection.webhook_secret_encrypted
     assert hook["token"] == BOX.decrypt(connection.webhook_secret_encrypted)
     assert update.call_count == 1
+
+
+def test_import_group_adds_new_projects_and_queues_their_jobs(
+    client: TestClient, world: World, as_user: Any, db_session: Session, queue: FakeQueue
+) -> None:
+    api = "https://gitlab.example.com/api/v4"
+    listed = [
+        {"id": 1001, "path_with_namespace": "demo/p", "default_branch": "main"},
+        {"id": 2002, "path_with_namespace": "demo/sub/api", "default_branch": "main"},
+        {"id": 2003, "path_with_namespace": "demo/sub/web", "default_branch": "develop"},
+        {"id": 2003, "path_with_namespace": "demo/sub/web", "default_branch": "develop"},
+    ]
+    with respx.mock(assert_all_called=False) as router:
+        router.route(host="testserver").pass_through()
+        groups = router.get(f"{api}/groups/demo%2Fsub/projects").respond(json=listed)
+        router.get(f"{api}/groups/nope/projects").respond(404)
+        response = client.post(
+            "/api/v1/projects/import-group",
+            headers=as_user(world.admin),
+            json={"connection_id": world.project.connection_id, "group": " demo/sub "},
+        )
+        missing = client.post(
+            "/api/v1/projects/import-group",
+            headers=as_user(world.admin),
+            json={"connection_id": world.project.connection_id, "group": "nope"},
+        )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    # demo/p is already registered; the duplicate listing row (offset paging) is inserted once.
+    assert (sorted(body["added"]), body["skipped"], body["not_queued"]) == (
+        ["demo/sub/api", "demo/sub/web"],
+        1,
+        [],
+    )
+    assert groups.calls[0].request.url.params["include_subgroups"] == "true"
+    assert missing.status_code == 404
+    web = db_session.scalars(select(Project).where(Project.external_id == 2003)).one()
+    assert web.default_branch == "develop"
+    funcs = sorted(func.rsplit(".", 1)[1] for func, _, _ in queue.jobs)
+    assert funcs == ["register_webhook_job"] * 2 + ["sync_project_job"] * 2
+    audit = db_session.scalars(
+        select(AuditLog).where(AuditLog.action == "project.import_group")
+    ).one()
+    assert audit.details["group"] == "demo/sub" and len(audit.details["added"]) == 2
 
 
 def test_register_webhook_refuses_a_localhost_base_url(
