@@ -8,6 +8,7 @@ __pycache__/
 htmlcov/
 *.egg-info/
 .env
+.env.local
 .idea/
 tests/eval/results/
 backups/

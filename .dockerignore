@@ -8,3 +8,4 @@
 .env
 codepulse-specs.zip
 dashboards
+.env.local

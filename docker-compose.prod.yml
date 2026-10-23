@@ -1,6 +1,7 @@
 # Production stack for a single VPS (docs/specs/13, docs/RUNBOOK.md).
 # Layout: repo cloned to /opt/codepulse/app, data in /opt/codepulse/data, dumps in /opt/codepulse/backups.
-#   cd /opt/codepulse/app && docker compose -f docker-compose.prod.yml up -d --build
+#   cd /opt/codepulse/app && docker compose --env-file .env.local -f docker-compose.prod.yml up -d --build
+# Config comes from .env.local (template in the repo root, gitignored).
 # Only the dashboard (web) is published; it proxies /api, so GitLab webhooks and OAuth go through it too.
 
 x-logging: &logging
@@ -12,7 +13,7 @@ x-app: &app
   image: codepulse-app:latest
   restart: unless-stopped
   logging: *logging
-  env_file: [.env]
+  env_file: [.env.local]
   depends_on:
     postgres: {condition: service_healthy}
     redis: {condition: service_healthy}
@@ -24,7 +25,7 @@ services:
     logging: *logging
     environment:
       POSTGRES_USER: codepulse
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.local and pass --env-file .env.local}
       POSTGRES_DB: codepulse
     volumes:
       - ${CODEPULSE_DATA:-/opt/codepulse/data}/postgres:/var/lib/postgresql/data
@@ -99,7 +100,7 @@ services:
     environment:
       PGHOST: postgres
       PGUSER: codepulse
-      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.local and pass --env-file .env.local}
       PGDATABASE: codepulse
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
     volumes:
