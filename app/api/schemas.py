@@ -184,6 +184,75 @@ class AccountLink(BaseModel):
     user_id: int | None  # None unlinks
 
 
+# -- telegram -------------------------------------------------------------------------------------
+
+
+class TelegramBotOut(ORM):
+    id: int
+    name: str
+    bot_username: str | None
+    business_project_id: int
+    project_id: int | None
+    enabled: bool
+    allowed_chat_ids: list[int] | None
+    last_update_id: int | None
+    last_polled_at: datetime | None
+    last_error: str | None  # the token is never returned
+    created_at: datetime
+
+
+class TelegramBotIn(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    token: Annotated[
+        str, StringConstraints(strip_whitespace=True, pattern=r"^\d+:[A-Za-z0-9_-]{20,}$")
+    ]
+    business_project_id: int
+    project_id: int | None = None  # pin the bot to one repo of the dự án
+    enabled: bool = True
+    allowed_chat_ids: list[int] | None = Field(default=None, max_length=50)
+
+
+class TelegramBotPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: (
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+        | None
+    ) = None
+    token: (
+        Annotated[
+            str, StringConstraints(strip_whitespace=True, pattern=r"^\d+:[A-Za-z0-9_-]{20,}$")
+        ]
+        | None
+    ) = None
+    project_id: int | None = None
+    enabled: bool | None = None
+    allowed_chat_ids: list[int] | None = Field(default=None, max_length=50)
+
+
+class TelegramRequestOut(BaseModel):
+    id: int
+    chat_id: int
+    user_id: int | None
+    user_name: str | None
+    command: str
+    targets: list[dict[str, object]]
+    status: str
+    created_at: datetime
+    notified_at: datetime | None
+
+
+class TelegramAccountOut(ORM):
+    id: int
+    external_key: str  # telegram user id
+    display_name: str | None
+
+
+class TelegramLinkCodeOut(BaseModel):
+    code: str
+    expires_in_s: int
+
+
 # -- reviews --------------------------------------------------------------------------------------
 
 

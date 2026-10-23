@@ -9,6 +9,7 @@ const SECTIONS = [
   { id: "developer", label: "Developer" },
   { id: "lead", label: "Lead" },
   { id: "admin", label: "Admin" },
+  { id: "telegram", label: "Bot Telegram" },
   { id: "metrics", label: "Đọc các chỉ số" },
 ];
 
@@ -143,6 +144,10 @@ export default function GuidePage() {
         <h2>4. Lead</h2>
         <ul>
           <li>
+            <strong>Tổng quan</strong>: mọi dự án trong một màn hình: số review, điểm trung bình, critical/high mới và
+            đang mở, so với kỳ trước; bấm vào một dự án để xem theo repo, theo thời gian và loại lỗi.
+          </li>
+          <li>
             <strong>Team</strong>: chỉ số tuần/tháng so với kỳ trước, finding theo mức độ, loại lỗi và file
             &ldquo;nóng&rdquo;, bảng thành viên với xu hướng 8 tuần. Quality Index chỉ hiện khi một người có từ 3
             review trong kỳ.
@@ -259,14 +264,20 @@ export default function GuidePage() {
             rời thay vì xoá, để chỉ số các kỳ trước vẫn đúng.
           </li>
           <li>
-            Tài khoản Git/GitLab chưa nhận ra được hiện ở <strong>Tài khoản chưa gắn người</strong>; chọn người tương ứng
-            để gắn. Có nhiều người cùng lúc thì vẫn có thể nhập CSV bằng lệnh <code>codepulse identity import</code>.
+            Tài khoản Git, GitLab hoặc Telegram chưa nhận ra được hiện ở <strong>Tài khoản chưa gắn người</strong>; chọn
+            người tương ứng để gắn. Có nhiều người cùng lúc thì vẫn có thể nhập CSV bằng lệnh <code>codepulse identity import</code>.
           </li>
         </ol>
+        <h3>Telegram</h3>
+        <p>
+          Tab <strong>Telegram</strong>: thêm bot (token từ @BotFather) cho một dự án, hoặc chỉ một repo của dự án; có thể
+          giới hạn chat id. Bot được kiểm tra (getMe) khi lưu, token mã hoá trong DB. Hệ thống tự poll vài giây một lần;
+          cột trạng thái cho biết lần poll gần nhất và lỗi nếu có.
+        </p>
         <h3>Chi phí LLM</h3>
         <p>
-          Bảng <strong>Chi phí LLM theo tháng</strong> cho thấy số review, chi phí ước tính và phần trăm ngân sách
-          tháng.
+          Tab <strong>LLM &amp; Chi phí</strong> cho thấy số review, chi phí ước tính và phần trăm ngân sách tháng, và nút
+          kiểm tra kết nối LLM.
         </p>
         <h3>Kết nối LLM</h3>
         <p>
@@ -277,8 +288,75 @@ export default function GuidePage() {
         </p>
       </section>
 
+      <section id="telegram" className="card">
+        <h2>6. Bot Telegram</h2>
+        <p>
+          Mỗi dự án có thể có một bot Telegram (admin cấu hình ở <strong>Admin → Telegram</strong>). Bạn gửi lệnh cho bot
+          trong chat riêng hoặc nhóm của team; review chạy như bình thường và kết quả (điểm, số finding, link) được trả
+          về cùng chat.
+        </p>
+        <h3>Liên kết tài khoản</h3>
+        <ol>
+          <li>
+            Mở <strong>Của tôi → Telegram → Tạo mã liên kết</strong>.
+          </li>
+          <li>
+            Gửi cho bot: <code>/link MÃ</code> (mã dùng một lần, sống 15 phút). Gõ <code>/whoami</code> để kiểm tra.
+          </li>
+        </ol>
+        <h3>Lệnh</h3>
+        <div className="table-wrap">
+          <table>
+            <tbody>
+              <tr>
+                <td>
+                  <code>/review mr 123 api</code>
+                </td>
+                <td>Review merge request !123 của repo api (hoặc dán link MR)</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>/review commit a1b2c3d</code>
+                </td>
+                <td>Review một commit (sha hoặc link)</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>/review last</code> · <code>/review lastmr</code>
+                </td>
+                <td>
+                  Commit / MR gần nhất của bạn (lead thêm tên người: <code>/review last @an</code>)
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>/review today an@company.vn binh@company.vn</code>
+                </td>
+                <td>Mọi commit hôm nay của những người đó (lead)</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>/review open</code>
+                </td>
+                <td>Các MR đang mở chưa được review (lead)</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>/status</code> · <code>/critical</code> · <code>/score</code>
+                </td>
+                <td>Review gần đây, lỗi nghiêm trọng đang mở, điểm kỳ gần nhất</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="muted">
+          Quyền giống dashboard: thành viên review việc của mình, lead review người trong team mình, admin mọi người. Lệnh
+          review tốn ngân sách LLM và được ghi audit log.
+        </p>
+      </section>
+
       <section id="metrics" className="card">
-        <h2>6. Đọc các chỉ số</h2>
+        <h2>7. Đọc các chỉ số</h2>
         <div className="table-wrap">
           <table>
             <thead>

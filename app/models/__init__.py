@@ -5,6 +5,7 @@ from app.models.identity import Account, Team, TeamMember, User
 from app.models.metrics import MetricsTeamPeriod, MetricsUserPeriod
 from app.models.review import FindingDispute, Review, ReviewFinding
 from app.models.source import BusinessProject, Connection, Project, RawGitlab
+from app.models.telegram import TelegramBot, TelegramRequest
 
 __all__ = [
     "Account",
@@ -26,5 +27,7 @@ __all__ = [
     "ReviewFinding",
     "Team",
     "TeamMember",
+    "TelegramBot",
+    "TelegramRequest",
     "User",
 ]

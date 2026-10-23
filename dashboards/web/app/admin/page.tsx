@@ -1,56 +1,139 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useState } from "react";
 
+import { Icon, type IconName } from "@/components/icons";
 import { LlmCheck } from "@/components/LlmCheck";
 import { RepoAdmin } from "@/components/RepoAdmin";
 import { TeamAdmin } from "@/components/TeamAdmin";
-import { Card, Loading, Message, PageHeader } from "@/components/ui";
+import { TelegramAdmin } from "@/components/TelegramAdmin";
+import { Card, EmptyState, Loading, Message, PageHeader } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import type { Account, Connection, LlmCosts, Person } from "@/lib/types";
 
-/** docs/specs/10 "Admin": connections, dự án/repos, unmapped accounts, teams, LLM cost and check. */
-export default function AdminPage() {
-  const connections = useApi<Connection[]>("/connections");
-  const unmapped = useApi<Account[]>("/identity/unmapped");
-  const users = useApi<Person[]>("/users");
-  const costs = useApi<LlmCosts>("/admin/llm-costs");
-  const [message, setMessage] = useState<string | null>(null);
+type Tab = "gitlab" | "repos" | "people" | "telegram" | "llm";
+const TABS: { key: Tab; label: string; icon: IconName; hint: string }[] = [
+  { key: "gitlab", label: "Kết nối GitLab", icon: "gitlab", hint: "Token bot và máy chủ GitLab" },
+  { key: "repos", label: "Dự án & Repo", icon: "folder", hint: "Dự án, group, repo, review theo repo" },
+  { key: "people", label: "Người & Team", icon: "members", hint: "Tài khoản, người dùng, team, vai trò" },
+  { key: "telegram", label: "Telegram", icon: "pulse", hint: "Bot nhận lệnh review theo dự án" },
+  { key: "llm", label: "LLM & Chi phí", icon: "activity", hint: "Kết nối LLM, chi phí theo tháng" },
+];
+const isTab = (v: string): v is Tab => TABS.some((t) => t.key === v);
+const KIND: Record<string, string> = { git_email: "Email git", gitlab_user: "GitLab", telegram: "Telegram" };
 
-  /** Runs an action and shows `done`, or the action's own message when it returns one. */
+/** docs/specs/10 "Admin", one tab per configuration area; the tab lives in the URL hash. */
+export default function AdminPage() {
+  // null until the hash is read, so a deep link never paints (or fetches) the wrong tab first.
+  const [tab, setTab] = useState<Tab | null>(null);
+
+  useEffect(() => {
+    const fromHash = () => {
+      const key = window.location.hash.replace("#", "");
+      setTab(isTab(key) ? key : "gitlab");
+    };
+    fromHash();
+    window.addEventListener("hashchange", fromHash);
+    return () => window.removeEventListener("hashchange", fromHash);
+  }, []);
+
+  // The hash is the source of truth: setting it fires hashchange and keeps Back/Forward working.
+  const go = (key: Tab) => {
+    if (window.location.hash === `#${key}`) return;
+    window.location.hash = key;
+  };
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const index = TABS.findIndex((t) => t.key === tab);
+    const next =
+      e.key === "ArrowRight" ? (index + 1) % TABS.length
+      : e.key === "ArrowLeft" ? (index - 1 + TABS.length) % TABS.length
+      : e.key === "Home" ? 0
+      : e.key === "End" ? TABS.length - 1
+      : -1;
+    if (next < 0) return;
+    e.preventDefault();
+    go(TABS[next].key);
+    document.getElementById(`tab-${TABS[next].key}`)?.focus();
+  };
+  const current = TABS.find((t) => t.key === tab) ?? TABS[0];
+
+  return (
+    <>
+      <PageHeader eyebrow="Admin" title="Quản trị" subtitle="Mọi thay đổi ở đây được ghi audit log." />
+      <div className="tabs admin-tabs" role="tablist" aria-label="Khu vực cấu hình" onKeyDown={onKey}>
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            id={`tab-${t.key}`}
+            aria-selected={current.key === t.key}
+            aria-controls={`panel-${t.key}`}
+            tabIndex={current.key === t.key ? 0 : -1}
+            className={current.key === t.key ? "active" : undefined}
+            onClick={() => go(t.key)}
+            title={t.hint}
+          >
+            <Icon name={t.icon} size={15} />
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" id={`panel-${current.key}`} aria-labelledby={`tab-${current.key}`}>
+        {tab === null && <Loading rows={3} />}
+        {tab === "gitlab" && <ConnectionsTab />}
+        {tab === "repos" && <ReposTab />}
+        {tab === "people" && <PeopleTab />}
+        {tab === "telegram" && <TelegramAdmin />}
+        {tab === "llm" && <LlmTab />}
+      </div>
+    </>
+  );
+}
+
+/** Shared "run an action, show its outcome" helpers for the small tabs below. */
+function useActions() {
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   async function run(action: () => Promise<unknown>, done?: string) {
+    setBusy(true);
     try {
       const result = await action();
       setMessage(done ?? String(result));
     } catch (e) {
       setMessage(`Lỗi: ${e instanceof ApiError ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
     }
   }
-
-  /** Reads the form's named fields, then clears it once the action succeeds. */
   function submit(e: FormEvent<HTMLFormElement>, action: (f: FormData) => Promise<unknown>, done?: string) {
     e.preventDefault();
     const form = e.currentTarget;
     const fields = new FormData(form);
-    run(async () => {
+    void run(async () => {
       const result = await action(fields);
       form.reset();
       return result;
     }, done);
   }
+  return { message, setMessage, run, submit, busy };
+}
 
+function ConnectionsTab() {
+  const connections = useApi<Connection[]>("/connections");
+  const { message, setMessage, submit, busy } = useActions();
   return (
     <>
-      <PageHeader
-        eyebrow="Admin"
-        title="Quản trị"
-        subtitle="Kết nối GitLab, dự án và repo, tài khoản chưa gắn người, team, chi phí và kết nối LLM. Mọi thay đổi được ghi audit log."
-      />
       <Message text={message} onClose={() => setMessage(null)} />
-
-      <Card title="Kết nối GitLab" subtitle="Token được mã hoá trong DB và không bao giờ hiển thị lại.">
+      <Card title="Kết nối GitLab" subtitle="Token được mã hoá trong DB và không bao giờ hiển thị lại." flush>
         {!connections.data ? (
-          <Loading error={connections.error} />
+          <div style={{ padding: "0 18px 16px" }}>
+            <Loading error={connections.error} />
+          </div>
+        ) : connections.data.length === 0 ? (
+          <EmptyState icon="gitlab" title="Chưa có kết nối GitLab nào">
+            Thêm máy chủ GitLab và token bot bên dưới, rồi thêm repo ở tab Dự án &amp; Repo.
+          </EmptyState>
         ) : (
           <div className="table-wrap">
             <table className="stack-sm">
@@ -69,6 +152,7 @@ export default function AdminPage() {
                     <td>
                       <form
                         className="toolbar"
+                        style={{ margin: 0, justifyContent: "flex-end" }}
                         onSubmit={(e) =>
                           submit(
                             e,
@@ -77,8 +161,10 @@ export default function AdminPage() {
                           )
                         }
                       >
-                        <input name="token" type="password" placeholder="Token mới" required autoComplete="off" />
-                        <button type="submit">Đổi token</button>
+                        <input name="token" type="password" placeholder="Token mới" required autoComplete="new-password" />
+                        <button type="submit" disabled={busy}>
+                          Đổi token
+                        </button>
                       </form>
                     </td>
                   </tr>
@@ -87,8 +173,11 @@ export default function AdminPage() {
             </table>
           </div>
         )}
+      </Card>
+      <Card title="Thêm kết nối" subtitle="Tài khoản bot GitLab với scope read_api (thêm api nếu muốn comment lên MR).">
         <form
           className="toolbar"
+          style={{ margin: 0 }}
           onSubmit={(e) =>
             submit(
               e,
@@ -106,56 +195,128 @@ export default function AdminPage() {
         >
           <input name="name" placeholder="Tên, ví dụ gitlab" required />
           <input name="base_url" type="url" placeholder="https://gitlab.company.vn" required />
-          <input name="token" type="password" placeholder="Token bot (read_api, + api để comment)" required autoComplete="off" />
-          <button className="primary" type="submit">Thêm kết nối</button>
+          <input name="token" type="password" placeholder="Token bot (read_api, + api để comment)" required autoComplete="new-password" />
+          <button className="primary" type="submit" disabled={busy}>
+            Thêm kết nối
+          </button>
         </form>
       </Card>
+    </>
+  );
+}
 
-      <RepoAdmin connections={connections.data ?? []} />
+function ReposTab() {
+  const connections = useApi<Connection[]>("/connections");
+  return <RepoAdmin connections={connections.data ?? []} />;
+}
 
-      <div className="grid two">
-        <Card title="Tài khoản chưa gắn người" subtitle="Tài khoản Git/GitLab chưa nhận ra; chọn người để gắn.">
-          {!unmapped.data || !users.data ? (
+function PeopleTab() {
+  const unmapped = useApi<Account[]>("/identity/unmapped");
+  const users = useApi<Person[]>("/users");
+  const { message, setMessage, run, busy } = useActions();
+  return (
+    <>
+      <Message text={message} onClose={() => setMessage(null)} />
+      <Card title="Tài khoản chưa gắn người" subtitle="Tài khoản Git, GitLab hoặc Telegram chưa nhận ra; chọn người để gắn." flush>
+        {!unmapped.data || !users.data ? (
+          <div style={{ padding: "0 18px 16px" }}>
             <Loading error={unmapped.error ?? users.error} />
-          ) : unmapped.data.length === 0 ? (
-            <p className="muted">Mọi tài khoản đã được gắn.</p>
-          ) : (
-            <div className="table-wrap">
-              <table>
-                <tbody>
-                  {unmapped.data.map((a) => (
-                    <tr key={a.id}>
-                      <td className="muted">{a.kind}</td>
-                      <td>{a.external_key}{a.display_name ? ` (${a.display_name})` : ""}</td>
-                      <td>
-                        <select
-                          defaultValue=""
-                          onChange={(e) =>
-                            e.target.value &&
-                            run(async () => {
-                              await api.put(`/accounts/${a.id}/user`, { user_id: Number(e.target.value) });
-                              await unmapped.mutate();
-                            }, `Đã gắn ${a.external_key}.`)
-                          }
-                        >
-                          <option value="">Gắn với…</option>
-                          {(users.data ?? []).filter((u) => u.active !== false).map((u) => (
-                            <option key={u.id} value={u.id}>{u.full_name ?? u.primary_email}</option>
+          </div>
+        ) : unmapped.data.length === 0 ? (
+          <EmptyState icon="checkCircle" tone="good" title="Mọi tài khoản đã được gắn" />
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Loại</th>
+                  <th>Tài khoản</th>
+                  <th>Gắn với</th>
+                </tr>
+              </thead>
+              <tbody>
+                {unmapped.data.map((a) => (
+                  <tr key={a.id}>
+                    <td className="muted">{KIND[a.kind] ?? a.kind}</td>
+                    <td>
+                      {a.external_key}
+                      {a.display_name ? <span className="muted"> ({a.display_name})</span> : ""}
+                    </td>
+                    <td>
+                      <select
+                        className="compact"
+                        defaultValue=""
+                        disabled={busy}
+                        aria-label={`Gắn ${a.external_key} với người`}
+                        onChange={(e) =>
+                          e.target.value &&
+                          run(async () => {
+                            await api.put(`/accounts/${a.id}/user`, { user_id: Number(e.target.value) });
+                            await unmapped.mutate();
+                          }, `Đã gắn ${a.external_key}.`)
+                        }
+                      >
+                        <option value="">Gắn với…</option>
+                        {(users.data ?? [])
+                          .filter((u) => u.active !== false)
+                          .map((u) => (
+                            <option key={u.id} value={u.id}>
+                              {u.full_name ?? u.primary_email}
+                            </option>
                           ))}
-                        </select>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+      <TeamAdmin />
+    </>
+  );
+}
 
-        <Card title="Chi phí LLM theo tháng">
-          {!costs.data ? (
+function LlmTab() {
+  const costs = useApi<LlmCosts>("/admin/llm-costs");
+  const data = costs.data;
+  const latest = data?.months[0];
+  const pct = data && latest && data.budget_usd ? Math.round((100 * latest.cost_usd) / data.budget_usd) : null;
+  return (
+    <>
+      <div className="grid kpis">
+        <div className="card kpi">
+          <div className="label">Chi phí tháng này</div>
+          <div className="value">
+            {latest ? `$${latest.cost_usd.toFixed(2)}` : "—"}
+          </div>
+          <div className="delta">
+            <span className="muted">{data ? `Ngân sách $${data.budget_usd}` : ""}</span>
+          </div>
+        </div>
+        <div className="card kpi">
+          <div className="label">% ngân sách</div>
+          <div className={`value${pct !== null && pct >= 80 ? " bad" : ""}`}>{pct === null ? "—" : `${pct}%`}</div>
+          <div className="delta">
+            <span className="muted">Cảnh báo từ 80%, dừng review khi hết</span>
+          </div>
+        </div>
+        <div className="card kpi">
+          <div className="label">Reviews tháng này</div>
+          <div className="value">{latest ? latest.reviews : "—"}</div>
+          <div className="delta">
+            <span className="muted">Có gọi LLM</span>
+          </div>
+        </div>
+      </div>
+      <Card title="Chi phí LLM theo tháng" flush>
+        {!data ? (
+          <div style={{ padding: "0 18px 16px" }}>
             <Loading error={costs.error} />
-          ) : (
+          </div>
+        ) : (
+          <div className="table-wrap">
             <table>
               <thead>
                 <tr>
@@ -166,28 +327,23 @@ export default function AdminPage() {
                 </tr>
               </thead>
               <tbody>
-                {costs.data.months.map((m) => (
+                {data.months.map((m) => (
                   <tr key={m.month}>
                     <td>{m.month}</td>
                     <td className="num">{m.reviews}</td>
                     <td className="num">${m.cost_usd.toFixed(2)}</td>
-                    <td className="num">
-                      {costs.data!.budget_usd ? `${((100 * m.cost_usd) / costs.data!.budget_usd).toFixed(0)}%` : "—"}
-                    </td>
+                    <td className="num">{data.budget_usd ? `${((100 * m.cost_usd) / data.budget_usd).toFixed(0)}%` : "—"}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-          <p className="muted">
-            Ngân sách tháng: ${costs.data?.budget_usd ?? "—"} (MONTHLY_LLM_BUDGET_USD). Rubric v1; trọng số severity đổi qua
-            SCORING_WEIGHTS rồi chạy <code>codepulse metrics recompute</code>.
-          </p>
-        </Card>
-      </div>
-
-      <TeamAdmin />
-
+          </div>
+        )}
+        <p className="muted small" style={{ padding: "10px 18px 14px" }}>
+          Ngân sách tháng đặt bằng MONTHLY_LLM_BUDGET_USD. Rubric v1; trọng số severity đổi qua SCORING_WEIGHTS rồi chạy{" "}
+          <code>codepulse metrics recompute</code>.
+        </p>
+      </Card>
       <LlmCheck />
     </>
   );

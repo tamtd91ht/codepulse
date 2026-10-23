@@ -64,6 +64,14 @@ class Settings(BaseSettings):
     report_channels: dict[str, dict[str, Any]] = {}
     retention_days: int = Field(default=365, gt=0)
 
+    # Telegram bots (configured per dự án in Admin; tokens live in the DB, encrypted).
+    telegram_api_base: str = "https://api.telegram.org"
+    telegram_poll_interval_s: int = Field(default=5, ge=2, le=120)
+    # Review/sync commands one person may send per 10 minutes (a guard, not a quota).
+    telegram_commands_per_10min: int = Field(default=20, ge=1)
+    # Commits one "today" / "open" command may queue (LLM budget guard).
+    telegram_max_targets: int = Field(default=20, ge=1, le=200)
+
     @field_validator(
         "ignore_paths",
         "sensitive_paths",

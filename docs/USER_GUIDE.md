@@ -46,6 +46,8 @@ tính vào điểm và mọi chỉ số liên quan được tính lại ngay.
 
 ## 3. Lead
 
+- **Tổng quan**: mọi dự án trong một màn hình: số review, điểm trung bình, critical/high mới và đang mở, so với kỳ trước; bấm vào một dự án để xem theo repo, theo thời gian và loại lỗi.
+
 - **Team**: chỉ số tuần/tháng so với kỳ trước, finding theo mức độ, loại lỗi và file "nóng",
   bảng thành viên với xu hướng 8 tuần. Quality Index chỉ hiện khi một người có từ 3 review trong kỳ.
 - **Critical Board**: mọi finding critical/high còn mở, lọc theo project/người, cũ nhất trước.
@@ -53,7 +55,19 @@ tính vào điểm và mọi chỉ số liên quan được tính lại ngay.
 - Chạy lại review bị lỗi/bị bỏ qua từ trang review.
 - Báo cáo tuần (thứ Hai 08:00) và tháng (ngày 1) qua email; kênh chat của team nhận bản không có điểm từng người.
 
-## 4. Đọc các chỉ số
+## 4. Bot Telegram (nếu dự án của bạn có)
+
+- Liên kết một lần: **Của tôi → Telegram → Tạo mã liên kết**, gửi `/link MÃ` cho bot. Gõ `/whoami` để kiểm tra.
+- Ra lệnh trong chat riêng hoặc nhóm team:
+  - `/review mr 123 api` – review MR !123 của repo api (dán link MR cũng được).
+  - `/review commit a1b2c3d` – review một commit.
+  - `/review last` / `/review lastmr` – commit / MR gần nhất của bạn.
+  - Lead: `/review today an@company.vn binh@company.vn` (commit hôm nay của các bạn đó), `/review open` (MR đang mở chưa review), `/review last @username`.
+  - `/status`, `/critical`, `/score` – xem nhanh review gần đây, lỗi nghiêm trọng đang mở, điểm kỳ gần nhất.
+- Khi review xong, bot trả về cùng chat: điểm, số finding theo mức độ và link xem chi tiết trên dashboard.
+- Quyền giống dashboard: bạn chỉ review được việc của mình; lead review được người trong team mình.
+
+## 5. Đọc các chỉ số
 
 | Chỉ số | Ý nghĩa |
 |---|---|

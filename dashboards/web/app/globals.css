@@ -49,6 +49,10 @@
 
   --chart-1: #2563eb;
   --chart-2: #15803d;
+  --chart-3: #d97706;
+  --chart-4: #7c3aed;
+  --chart-5: #0891b2;
+  --chart-6: #db2777;
   --chart-grid: #e2e6ec;
 
   --ring: #2563eb;
@@ -112,6 +116,10 @@
 
     --chart-1: #60a5fa;
     --chart-2: #4ade80;
+    --chart-3: #fbbf24;
+    --chart-4: #a78bfa;
+    --chart-5: #22d3ee;
+    --chart-6: #f472b6;
     --chart-grid: #22304a;
 
     --ring: #93c5fd;
@@ -166,6 +174,10 @@
 
   --chart-1: #60a5fa;
   --chart-2: #4ade80;
+  --chart-3: #fbbf24;
+  --chart-4: #a78bfa;
+  --chart-5: #22d3ee;
+  --chart-6: #f472b6;
   --chart-grid: #22304a;
 
   --ring: #93c5fd;
@@ -925,6 +937,46 @@ form.toolbar {
   font-weight: 600;
   font-size: 13px;
   white-space: nowrap;
+}
+
+/* Admin tabs (page level) and the Telegram link code */
+.admin-tabs {
+  margin-bottom: 18px;
+}
+.admin-tabs button {
+  gap: 8px;
+  padding: 0 12px;
+  height: 40px;
+}
+.cmd-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+.cmd-list li {
+  display: grid;
+  gap: 2px;
+}
+.cmd-list code {
+  justify-self: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.link-code {
+  padding: 14px 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.link-code .code {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  margin-bottom: 4px;
+  user-select: all;
 }
 
 /* Tabs */
@@ -1967,3 +2019,50 @@ code.phrase {
     width: 100%;
   }
 }
+
+/* Project cards (overview) */
+.project-card {
+  display: grid;
+  gap: 10px;
+  color: inherit;
+}
+.project-card:hover {
+  text-decoration: none;
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+}
+.project-card .head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.project-card .name {
+  font-weight: 650;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.project-card .big {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.project-card .big .unit {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.project-card .stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.project-card .spark {
+  height: 36px;
+}
+

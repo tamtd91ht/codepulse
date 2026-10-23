@@ -11,7 +11,10 @@ def test_api_app_serves_openapi() -> None:
 
 
 def test_scheduler_enqueues_syncs_on_the_configured_interval() -> None:
-    jobs = {job.id: job for job in build_scheduler(30, "Asia/Ho_Chi_Minh").get_jobs()}
+    jobs = {
+        job.id: job
+        for job in build_scheduler(30, "Asia/Ho_Chi_Minh", telegram_poll_interval_s=7).get_jobs()
+    }
     assert set(jobs) == {
         "enqueue-syncs",
         "aggregate-week",
@@ -19,7 +22,9 @@ def test_scheduler_enqueues_syncs_on_the_configured_interval() -> None:
         "report-week",
         "report-month",
         "retention-purge",
+        "telegram-tick",
     }
     assert jobs["enqueue-syncs"].trigger.interval.total_seconds() == 30 * 60
+    assert jobs["telegram-tick"].trigger.interval.total_seconds() == 7
     assert str(jobs["aggregate-week"].trigger.timezone) == "Asia/Ho_Chi_Minh"
     assert jobs["aggregate-month"].args == ("month",)

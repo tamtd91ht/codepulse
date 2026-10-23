@@ -110,3 +110,14 @@ make eval      # ~ $2 cho 20 case; ngưỡng precision ≥ 0.8, recall ≥ 0.7 c
 
 Job 03:00 hằng ngày xoá `code_excerpt` của finding và dữ liệu thô GitLab cũ hơn `RETENTION_DAYS`
 (mặc định 365). Review, finding (không có trích đoạn code) và metric tổng hợp được giữ lại.
+
+## 10. Bot Telegram
+
+1. Trên Telegram, chat với **@BotFather**: `/newbot`, đặt tên, lấy token. Nếu dùng trong nhóm: `/setprivacy` → chọn bot → **Disable** (bot mới đọc được lệnh trong nhóm), rồi thêm bot vào nhóm.
+2. Dashboard **Admin → Telegram → Thêm bot**: tên, token, dự án (và một repo nếu chỉ muốn bot phục vụ repo đó), tuỳ chọn danh sách chat id được phép. Token được kiểm tra bằng `getMe` rồi mã hoá trong DB.
+3. Scheduler poll Telegram mỗi `TELEGRAM_POLL_INTERVAL_S` giây (mặc định 5). Cột **Poll gần nhất** và **Trạng thái** cho biết bot sống hay lỗi (`last_error`). Nút kiểm tra gọi `getMe` lại.
+4. Mỗi thành viên: **Của tôi → Telegram → Tạo mã liên kết**, gửi `/link MÃ` cho bot (mã sống 15 phút). Người chưa liên kết chỉ nhận hướng dẫn; không có gì được ghi vào DB cho tới khi `/link` thành công. Tài khoản Telegram đã liên kết có thể gỡ ở trang Của tôi hoặc bằng `/unlink`.
+5. Đổi token: Admin → Telegram → biểu tượng bút → dán token mới; thu hồi token cũ với @BotFather. Xoá bot chỉ xoá cấu hình và lịch sử yêu cầu; review đã chạy vẫn giữ.
+6. Sự cố thường gặp: `HTTP 401 Unauthorized` = token sai/đã thu hồi; `HTTP 409 Conflict` = một tiến trình khác đang `getUpdates` cùng token (ví dụ chạy hai môi trường với cùng bot); không trả lời trong nhóm = Group Privacy còn bật hoặc chat id không nằm trong danh sách cho phép.
+7. Lệnh và quyền: xem `docs/specs/15_TELEGRAM_BOT.md`. Mọi lệnh review được ghi audit log (`telegram.review`) và tốn ngân sách LLM như review thường.
+

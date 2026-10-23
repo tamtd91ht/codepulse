@@ -44,6 +44,22 @@ export function date(value: string | null): string {
   return value ? new Date(value).toLocaleDateString("vi-VN") : "—";
 }
 
+export function dateTime(value: string | null): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("vi-VN", { hour12: false });
+}
+
+/** "3 phút trước" style, for last-seen columns. */
+export function relative(value: string, now = new Date()): string {
+  const seconds = Math.round((now.getTime() - new Date(value).getTime()) / 1000);
+  if (!Number.isFinite(seconds)) return "—";
+  if (seconds < 60) return "vừa xong";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} phút trước`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} giờ trước`;
+  return `${Math.floor(seconds / 86400)} ngày trước`;
+}
+
 /** Up to two initials for an avatar: "Trần Minh Tâm" → "TT", falls back to the email's first letter. */
 export function initials(name: string | null, email: string | null): string {
   const words = (name ?? "").trim().split(/\s+/).filter(Boolean);

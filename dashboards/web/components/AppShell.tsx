@@ -70,6 +70,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const primary: Item[] = me
     ? [
+        { href: "/overview", label: "Tổng quan", icon: "activity" },
         { href: "/teams", label: "Team", icon: "members" },
         { href: `/members/${me.id}`, label: "Của tôi", icon: "user" },
         { href: "/critical", label: "Critical Board", icon: "alert" },

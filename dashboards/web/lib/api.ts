@@ -47,10 +47,11 @@ export const api = {
  */
 export function useApi<T>(
   path: string | null,
-  { redirect = true, keepPreviousData = false } = {},
+  { redirect = true, keepPreviousData = false, refreshInterval = 0 } = {},
 ): SWRResponse<T, ApiError> {
   return useSWR<T, ApiError>(path, (p: string) => request<T>(p, undefined, redirect), {
     keepPreviousData,
+    refreshInterval,
     // A 4xx is an answer (not allowed, not found), not a transient failure: do not retry it.
     shouldRetryOnError: (err: ApiError) => !err.status || err.status >= 500,
   });

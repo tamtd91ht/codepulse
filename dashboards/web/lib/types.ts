@@ -202,6 +202,94 @@ export interface Account {
   user_id: number | null;
 }
 
+/** GET /metrics/projects: anonymous aggregates per dự án for one period. */
+export interface ProjectAgg {
+  reviews: number;
+  avg_score: number | null;
+  loc: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  info: number;
+  severe: number; // critical + high found in the period
+  open_severe: number; // open critical/high right now
+  delta: { reviews: number; avg_score: number | null; severe: number };
+}
+
+export interface ProjectEntry extends ProjectAgg {
+  id: number | null; // null = repos without a dự án
+  name: string;
+  description: string | null;
+  repos: number;
+  trend: (number | null)[]; // avg score of the last 8 periods, oldest first
+}
+
+export interface ProjectsOverview {
+  period_type: "week" | "month";
+  period_start: string;
+  trend_starts: string[];
+  totals: ProjectAgg & { projects: number; repos: number };
+  projects: ProjectEntry[];
+}
+
+export interface ProjectRepoRow extends Omit<ProjectAgg, "delta"> {
+  id: number;
+  path_with_namespace: string;
+  tracked: boolean;
+  last_review_at: string | null;
+}
+
+export interface ProjectDetail {
+  project: { id: number; name: string; description: string | null };
+  period_type: "week" | "month";
+  period_start: string;
+  totals: ProjectAgg & { repos: number };
+  repos: ProjectRepoRow[];
+  series: (Omit<ProjectAgg, "delta" | "open_severe"> & { period_start: string })[];
+  categories: { category: string; count: number }[];
+  recent: ReviewListItem[];
+  next_period_start: string;
+}
+
+/** A Telegram review bot of one dự án (optionally pinned to one repo). The token is never returned. */
+export interface TelegramBot {
+  id: number;
+  name: string;
+  bot_username: string | null;
+  business_project_id: number;
+  project_id: number | null;
+  enabled: boolean;
+  allowed_chat_ids: number[] | null;
+  last_update_id: number | null;
+  last_polled_at: string | null;
+  last_error: string | null;
+  created_at: string;
+}
+
+export interface TelegramRequest {
+  id: number;
+  chat_id: number;
+  user_id: number | null;
+  user_name: string | null;
+  command: string;
+  targets: { kind: string; project_id: number; ref: string; sha: string; label: string }[];
+  status: string;
+  created_at: string;
+  notified_at: string | null;
+}
+
+export interface TelegramAccount {
+  id: number;
+  external_key: string;
+  display_name: string | null;
+}
+
+export interface TelegramLinkCode {
+  code: string;
+  expires_in_s: number;
+}
+
 export interface LlmCosts {
   budget_usd: number;
   months: { month: string; cost_usd: number; reviews: number }[];

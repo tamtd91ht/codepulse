@@ -1,13 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { use } from "react";
+import { use, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { Avatar, Card, ChartTip, EmptyState, ExternalLink, Kpi, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
-import { qs, useApi } from "@/lib/api";
+import { IconButton } from "@/components/icons";
+import { Alert, Avatar, Card, ChartTip, EmptyState, ExternalLink, Kpi, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
+import { ApiError, api, qs, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, date, num, ratio, weekLabel } from "@/lib/format";
-import type { BoardFinding, CategoryWeek, MetricsSeries, Page, Person, ReviewListItem } from "@/lib/types";
+import type {
+  BoardFinding,
+  CategoryWeek,
+  Me,
+  MetricsSeries,
+  Page,
+  Person,
+  ReviewListItem,
+  TelegramAccount,
+  TelegramLinkCode,
+} from "@/lib/types";
 
 function Heatmap({ cells }: { cells: CategoryWeek[] }) {
   const weeks = [...new Set(cells.map((c) => c.week))].sort();
@@ -65,6 +76,109 @@ function Heatmap({ cells }: { cells: CategoryWeek[] }) {
   );
 }
 
+/** Link this person's Telegram to CodePulse: a one-time code sent to the dự án's bot as /link CODE. */
+function TelegramCard() {
+  const [code, setCode] = useState<TelegramLinkCode | null>(null);
+  // While a code is shown, poll so the list updates as soon as the person sends /link.
+  const accounts = useApi<TelegramAccount[]>("/me/telegram", { refreshInterval: code ? 5000 : 0 });
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [unlinking, setUnlinking] = useState<number | null>(null);
+  const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
+
+  async function copy(text: string) {
+    try {
+      if (!navigator.clipboard) throw new Error("no clipboard");
+      await navigator.clipboard.writeText(text);
+      setCopied("ok");
+    } catch {
+      setCopied("fail");
+    }
+    window.setTimeout(() => setCopied(null), 2500);
+  }
+
+  async function issue() {
+    setBusy(true);
+    setError(null);
+    try {
+      setCode(await api.post<TelegramLinkCode>("/me/telegram/link-code"));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card title="Telegram" subtitle="Liên kết để gửi lệnh review cho bot của dự án (ví dụ /review mr 123, /review today).">
+      {error && <Alert tone="error">Lỗi: {error}</Alert>}
+      {accounts.error && <Alert tone="error">Không tải được liên kết: {accounts.error.message}</Alert>}
+      {!accounts.data && !accounts.error && <Loading rows={1} />}
+      {accounts.data && accounts.data.length > 0 && (
+        <ul className="finding-list" style={{ marginBottom: 12 }}>
+          {accounts.data.map((a) => (
+            <li key={a.id}>
+              <Pill tone="good" icon="check">
+                Đã liên kết
+              </Pill>
+              <div className="body">
+                {a.display_name ?? `Telegram ${a.external_key}`}
+                <div className="meta">id {a.external_key}</div>
+              </div>
+              <IconButton
+                icon="close"
+                label="Gỡ liên kết"
+                disabled={unlinking === a.id}
+                onClick={async () => {
+                  setUnlinking(a.id);
+                  try {
+                    await api.delete(`/me/telegram/${a.id}`);
+                  } catch (e) {
+                    // Already gone (double click, or unlinked from Telegram) is not an error here.
+                    if (!(e instanceof ApiError && e.status === 404)) setError(e instanceof ApiError ? e.message : String(e));
+                  } finally {
+                    setUnlinking(null);
+                    await accounts.mutate();
+                  }
+                }}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+      {code ? (
+        <div className="link-code">
+          <div className="code">{code.code}</div>
+          <div className="small muted">
+            Gửi cho bot: <code>/link {code.code}</code> · mã dùng một lần, hết hạn sau {Math.round(code.expires_in_s / 60)} phút.
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <button className="sm" onClick={() => void copy(`/link ${code.code}`)}>
+              Chép lệnh
+            </button>
+            <button
+              className="sm ghost"
+              onClick={() => {
+                setCode(null);
+                void accounts.mutate();
+              }}
+            >
+              Xong
+            </button>
+            <span className="small muted" aria-live="polite">
+              {copied === "ok" ? "Đã chép." : copied === "fail" ? "Không chép được, hãy chọn mã và sao chép thủ công." : ""}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <button className="primary sm" onClick={issue} disabled={busy}>
+          {busy ? "Đang tạo…" : accounts.data?.length ? "Liên kết thêm thiết bị" : "Tạo mã liên kết"}
+        </button>
+      )}
+    </Card>
+  );
+}
+
 const REVIEW_STATUS: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "info" }> = {
   done: { label: "Xong", tone: "good" },
   failed: { label: "Lỗi", tone: "bad" },
@@ -76,6 +190,7 @@ const REVIEW_STATUS: Record<string, { label: string; tone?: "good" | "bad" | "wa
 export default function MemberDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: person, error } = useApi<Person>(`/people/${id}`);
+  const { data: me } = useApi<Me>("/auth/me");
   const { data: series, error: seriesError } = useApi<MetricsSeries>(`/metrics/users/${id}${qs({ period: "week" })}`);
   const { data: heat, error: heatError } = useApi<CategoryWeek[]>(`/metrics/users/${id}/categories?weeks=12`);
   const { data: reviews, error: reviewsError } = useApi<Page<ReviewListItem>>(`/reviews${qs({ user_id: id, limit: 15 })}`);
@@ -221,6 +336,7 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
           )}
         </Card>
       </div>
+      {me?.id === person.id && <TelegramCard />}
       <p className="muted small" style={{ marginTop: 12 }}>
         Fix rate {ratio(latest?.fix_rate ?? null)} = tỉ lệ lỗi critical/high đã sửa ở lần review sau.
       </p>
