@@ -1,0 +1,787 @@
+{
+  "schema_version": "1",
+  "plan_id": "plan-20261023-144823-543eef",
+  "assessed_by": "claude-fable-5-1",
+  "assessed_at": "2026-10-23T15:00:45+00:00",
+  "platform": "claude_code",
+  "decisions": [
+    {
+      "capability_id": "forge.skill.agent-forge-upgrade",
+      "verdict": "UPGRADE",
+      "grounds": [],
+      "scope": "upgrade",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Managed 2.2.0, registry 2.5.0, drift ok (no user edits). User-invoked skill, 0 always-on."
+    },
+    {
+      "capability_id": "forge.agent.frontend-reviewer",
+      "verdict": "ADD",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": "No reviewer for the Next.js dashboard (dashboards/web): .claude/agents/ holds only backend-reviewer, CLAUDE.md's review step names only backend-reviewer, and the dashboard has no test runner (package.json has no test script), so review is its only check beyond tsc.",
+      "context_chars": 483,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Rejected as equivalent_exists only because backend-reviewer's text matches the content pattern 'contract'; that agent reviews services and APIs, not screens. Its dimensions (backend contract, data loading, state, client security, performance, resilience, clarity) are all absent today. Read-only, no permissions."
+    },
+    {
+      "capability_id": "forge.skill.view-data-loading",
+      "verdict": "ADD",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "medium",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": "No convention for how dashboard views load data; pages fetch client-side through the useApi/SWR wrapper in dashboards/web/lib/api.ts and nothing in docs/specs/10_DASHBOARD_REPORTS.md says what may block first paint.",
+      "context_chars": 442,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "On-demand, one markdown file, stack-neutral (names SWR, which the project already uses). The gap is the absence of a rule, not a measured waterfall, hence medium."
+    },
+    {
+      "capability_id": "mattpocock.diagnosing-bugs",
+      "verdict": "ADD",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "medium",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": "No debugging procedure anywhere in CLAUDE.md or docs/specs/; the previous record deferred this until code existed, and the code now exists (Phase 5 done, Phase 7 hardening in PROGRESS.md).",
+      "context_chars": 171,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "On-demand, reads GLOSSARY.md/ADRs only if present (none here). Value unmeasured; the pytest + testcontainers harness makes a red loop feasible."
+    },
+    {
+      "capability_id": "ecc.database-migrations",
+      "verdict": "ADD",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "medium",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": "Schema changes are frequent (5 Alembic revisions in migrations/versions over 2 days, the last adding FK lookup indexes) and the API runs migrations at startup (PROGRESS.md 7.2); no written guidance on concurrent indexes or expand/contract exists. backend-reviewer checks migrations after the fact but does not guide writing them.",
+      "context_chars": 415,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "On-demand Postgres patterns. Alembic itself is not covered by name (Prisma/Django/golang-migrate are), so medium."
+    },
+    {
+      "capability_id": "ecc.postgres-patterns",
+      "verdict": "ADD",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "medium",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": "No SQL/indexing guidance in the specs; 03_DATA_MODEL.md gives DDL only, and recent work added indexes and metric aggregation queries.",
+      "context_chars": 236,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Short (3.9k on demand) quick reference, low risk."
+    },
+    {
+      "capability_id": "ecc.rules.common",
+      "verdict": "SKIP",
+      "grounds": [
+        "conflicts"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [
+        {
+          "path": "docs/specs/AGENTS.md",
+          "quote": "viết test trước (nếu hợp lý)"
+        },
+        {
+          "path": "docs/specs/12_TESTING_QA.md",
+          "quote": "Coverage tổng ≥ 75%, `scoring/` & `review/` ≥ 80%"
+        }
+      ],
+      "gap": null,
+      "context_chars": 11108,
+      "always_on": true,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Proposed testing.md says 'Minimum Test Coverage: 80%' and 'MANDATORY workflow: 1. Write test first (RED)'; code-review.md 'Test coverage meets 80% minimum'. The project makes test-first conditional and sets 75% overall, 80% only for scoring/ and review/. 11.1k chars in every session."
+    },
+    {
+      "capability_id": "ecc.tdd-workflow",
+      "verdict": "SKIP",
+      "grounds": [
+        "conflicts"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [
+        {
+          "path": "docs/specs/AGENTS.md",
+          "quote": "viết test trước (nếu hợp lý)"
+        },
+        {
+          "path": "docs/specs/12_TESTING_QA.md",
+          "quote": "Coverage tổng ≥ 75%, `scoring/` & `review/` ≥ 80%"
+        }
+      ],
+      "gap": null,
+      "context_chars": 306,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "SKILL.md: 'ALWAYS write tests first' and 'Minimum 80% coverage (unit + integration + E2E)'; examples are npm/jest, the stack is pytest."
+    },
+    {
+      "capability_id": "ecc.python-testing",
+      "verdict": "SKIP",
+      "grounds": [
+        "conflicts"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [
+        {
+          "path": "docs/specs/12_TESTING_QA.md",
+          "quote": "Coverage tổng ≥ 75%, `scoring/` & `review/` ≥ 80%"
+        },
+        {
+          "path": "docs/specs/AGENTS.md",
+          "quote": "viết test trước (nếu hợp lý)"
+        }
+      ],
+      "gap": null,
+      "context_chars": 212,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "SKILL.md: 'Target: 80%+ code coverage', 'Critical paths: 100% coverage required', 'Follow TDD: Write tests before code'. Project thresholds are 75%/80% and test-first is conditional; tests/conftest.py already fixes the fixture style (testcontainers, respx)."
+    },
+    {
+      "capability_id": "ecc.rules.python",
+      "verdict": "SKIP",
+      "grounds": [
+        "conflicts"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [
+        {
+          "path": "Makefile",
+          "quote": "$(PY) -m ruff format --check ."
+        },
+        {
+          "path": "app/db.py",
+          "quote": "return sessionmaker(get_engine(), expire_on_commit=False)"
+        }
+      ],
+      "gap": null,
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "coding-style.md prescribes 'black for code formatting, isort for import sorting' while make lint runs ruff format --check and ruff's I rule; fastapi.md says 'Use async def for endpoints that perform I/O' and forbids sync SQLAlchemy sessions in routes, while app/db.py uses a sync sessionmaker and all 58 router handlers are sync def; security.md prescribes bandit + python-dotenv, the project uses ruff S rules + pydantic-settings. Attached to every .py edit (4.4k)."
+    },
+    {
+      "capability_id": "ecc.fastapi-patterns",
+      "verdict": "SKIP",
+      "grounds": [
+        "conflicts"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [
+        {
+          "path": "app/db.py",
+          "quote": "return sessionmaker(get_engine(), expire_on_commit=False)"
+        }
+      ],
+      "gap": null,
+      "context_chars": 331,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "The skill's DI, lifespan, service and testing sections are built on AsyncSession/async def; the project is deliberately sync (app/db.py sessionmaker, 58 sync handlers, 0 async). Following it would split the codebase into two styles."
+    },
+    {
+      "capability_id": "ecc.verification-loop",
+      "verdict": "SKIP",
+      "grounds": [
+        "covered"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [
+        {
+          "path": "docs/specs/AGENTS.md",
+          "quote": "Chạy `make lint test`."
+        }
+      ],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 323,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "AGENTS.md step 3 already requires make lint test (ruff, ruff format, mypy, pytest with coverage) before ticking a task; the skill's phases are npm run build/test and pyright."
+    },
+    {
+      "capability_id": "ecc.agent.planner",
+      "verdict": "SKIP",
+      "grounds": [
+        "covered"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [
+        {
+          "path": "CLAUDE.md",
+          "quote": "`docs/specs/14_TASKS_CHECKLIST.md` – the task list; work one task at a time, in phase order."
+        }
+      ],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 221,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Planning is the spec: 14 spec files plus a phased checklist the agent follows one task at a time. The planner's description says 'Use PROACTIVELY ... Automatically activated', which would fire on every feature request against that process."
+    },
+    {
+      "capability_id": "ecc.agent.code-reviewer",
+      "verdict": "SKIP",
+      "grounds": [
+        "covered"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [
+        {
+          "path": "CLAUDE.md",
+          "quote": "delegate a review of the diff to the `backend-reviewer` subagent"
+        }
+      ],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 196,
+      "always_on": false,
+      "risk": [
+        "runs_shell"
+      ],
+      "evidence": "not_measured",
+      "reason": "CLAUDE.md mandates backend-reviewer (installed, read-only); a second generic reviewer with Bash would duplicate the step."
+    },
+    {
+      "capability_id": "ecc.security-review",
+      "verdict": "SKIP",
+      "grounds": [
+        "covered"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [
+        {
+          "path": ".claude/agents/backend-reviewer.md",
+          "quote": "Input validation at the boundary: types, ranges, sizes, encodings; injection (SQL, NoSQL,"
+        }
+      ],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 224,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "backend-reviewer dimension 1 (authn/authz per endpoint, injection, SSRF, secrets, abuse limits, audit) is the same checklist, and 11_SECURITY_PRIVACY.md is fully ticked with ruff S rules, pip-audit and npm audit in CI. Skill examples are TypeScript."
+    },
+    {
+      "capability_id": "ecc.coding-standards",
+      "verdict": "SKIP",
+      "grounds": [
+        "covered"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [
+        {
+          "path": "docs/specs/AGENTS.md",
+          "quote": "Python 3.12, type hints đầy đủ, `ruff` + `mypy --strict` pass."
+        }
+      ],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 283,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Rejected by the planner only as a conflict of ecc.rules.common. The project states its standard (type hints, ruff, mypy --strict) and enforces it in make lint."
+    },
+    {
+      "capability_id": "ecc.deployment-patterns",
+      "verdict": "SKIP",
+      "grounds": [
+        "covered"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [
+        {
+          "path": "docs/RUNBOOK.md",
+          "quote": "## 7. Backup và khôi phục"
+        },
+        {
+          "path": "docs/specs/13_DEPLOYMENT_OPS.md",
+          "quote": "Backup Postgres hằng ngày – service `backup` (pg_dump, giữ 14 ngày)"
+        }
+      ],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 285,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Dockerfile, docker-compose.prod.yml, GitHub + GitLab CI, Prometheus alerts, daily backup service and a 9-section RUNBOOK already exist; the skill's examples are Node/Go/Django Dockerfiles and Kubernetes probes."
+    },
+    {
+      "capability_id": "ecc.error-handling",
+      "verdict": "SKIP",
+      "grounds": [
+        "covered"
+      ],
+      "scope": "install",
+      "confidence": "medium",
+      "covered_by": [
+        {
+          "path": "docs/specs/AGENTS.md",
+          "quote": "Hàm gọi API ngoài (GitLab, LLM) phải có retry + timeout + rate limit."
+        },
+        {
+          "path": "app/collector/gitlab/client.py",
+          "quote": "class GitLabError(Exception):"
+        }
+      ],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 302,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "AGENTS.md fixes the retry/timeout/rate-limit rule and each module already has its exception type (GitLabError, LLMError, DeliveryError, ReviewParseError, CsvImportError, CliError) with JSON logging carrying request_id. Medium: circuit breakers are not written down anywhere."
+    },
+    {
+      "capability_id": "ecc.python-patterns",
+      "verdict": "SKIP",
+      "grounds": [
+        "covered"
+      ],
+      "scope": "install",
+      "confidence": "medium",
+      "covered_by": [
+        {
+          "path": "docs/specs/AGENTS.md",
+          "quote": "Python 3.12, type hints đầy đủ, `ruff` + `mypy --strict` pass."
+        }
+      ],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 249,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "16.7k of generic idioms; the project's standard is stated in AGENTS.md and enforced by ruff (E,F,W,I,B,UP,S,SIM,RUF) and mypy --strict across 131 files. Medium: the linters enforce a subset of what the skill teaches."
+    },
+    {
+      "capability_id": "ecc.api-design",
+      "verdict": "SKIP",
+      "grounds": [
+        "covered"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [
+        {
+          "path": "docs/specs/09_API.md",
+          "quote": "Base: `/api/v1`. Auth: SSO (OIDC với GitLab)"
+        }
+      ],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Opt-in by tag; the REST contract is specified in 09_API.md and served by OpenAPI."
+    },
+    {
+      "capability_id": "forge.skill.webhook-signature-verification",
+      "verdict": "SKIP",
+      "grounds": [
+        "covered",
+        "stack_mismatch"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [
+        {
+          "path": "docs/specs/11_SECURITY_PRIVACY.md",
+          "quote": "Webhook: xác thực `X-Gitlab-Token`"
+        }
+      ],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Trait-gated (scan traits: none) and already implemented: constant-time X-Gitlab-Token check, IP allowlist, replay protection."
+    },
+    {
+      "capability_id": "ecc.e2e-testing",
+      "verdict": "SKIP",
+      "grounds": [
+        "stack_mismatch"
+      ],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Applicability needs framework test:playwright; the scan lists none. 12_TESTING_QA.md plans Playwright E2E for the web app but it is not set up (no @playwright/test in dashboards/web)."
+    },
+    {
+      "capability_id": "ecc.react-patterns",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 274,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "No ground to skip and no written React convention, but the skill leans on Server Components, Suspense and React 19 form actions while the dashboard is a client-rendered SWR app behind a Next rewrite proxy. Install if you want that direction stated; skip to keep the current style implicit."
+    },
+    {
+      "capability_id": "ecc.react-performance",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 403,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "18k on demand; its waterfall section overlaps view-data-loading and its server-side sections assume RSC/Server Actions the dashboard does not use. Choose between this and view-data-loading, or both."
+    },
+    {
+      "capability_id": "ecc.frontend-patterns",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 223,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Generic React/Next patterns (composition, hooks, context+reducer, memoization, forms) that duplicate react-patterns + react-performance. Pick one set; installing all three triples the guidance for the same questions."
+    },
+    {
+      "capability_id": "ecc.frontend-a11y",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 345,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "No accessibility requirement in 10_DASHBOARD_REPORTS.md or anywhere in docs/specs/, and no a11y guidance in the project either. Install if the internal dashboard should follow form/keyboard/ARIA patterns; otherwise skip."
+    },
+    {
+      "capability_id": "uiux.guidelines",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 442,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Design-quality checklist (2.8k) plus 35k of reference tables. The spec already defines the five screens; no visual-quality rule exists. Overlaps ecc.rules.web/design-quality.md."
+    },
+    {
+      "capability_id": "ecc.react-testing",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 299,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "dashboards/web has no test runner at all (no test script, no vitest/jest/RTL in package-lock.json) and 12_TESTING_QA.md plans only Playwright E2E for the web app. Install only if component tests are planned."
+    },
+    {
+      "capability_id": "ecc.nextjs-turbopack",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 375,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "59 lines of Next 16 bundler facts; next.config.ts sets no bundler option and dev uses the default. No gap found; skip unless you want it."
+    },
+    {
+      "capability_id": "ecc.rules.react",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "25,128 chars attached to every .tsx/.jsx, components/ and app/ file edit (near always-on in dashboard sessions); testing.md assumes Vitest/Jest/RTL which the project lacks. No budget is set so context_cost cannot be claimed; your call."
+    },
+    {
+      "capability_id": "ecc.rules.web",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "12,456 chars attached to every .tsx/.css edit, including an 'Anti-Template Policy' with banned design patterns for an internal lead-only dashboard. Overlaps uiux.guidelines."
+    },
+    {
+      "capability_id": "ecc.rules.typescript",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "6,230 chars attached to every .ts/.tsx edit; testing.md and security.md point to an 'e2e-runner' agent and a 'security-reviewer' skill that do not exist here. Playwright-for-E2E matches 12_TESTING_QA.md."
+    },
+    {
+      "capability_id": "ecc.redis-patterns",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 278,
+      "always_on": false,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Redis use is settled: RQ queue, webhook replay set (SET NX), rate limit in app/ratelimit.py, all implemented and specified. No gap found; install only if Redis usage is about to grow (locks, streams)."
+    },
+    {
+      "capability_id": "forge.hook.python-ruff-format",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": "make lint runs ruff format --check and both CIs run make lint, but nothing formats agent edits; there is no .pre-commit-config.yaml.",
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [
+        "hook: runs ruff format on each edited .py file"
+      ],
+      "evidence": "not_measured",
+      "reason": "Hook class needs --hooks. Stdlib script, no network, no-op without ruff (ruff is a dev dependency)."
+    },
+    {
+      "capability_id": "forge.hook.guard-secrets-python",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": ".env is gitignored and AGENTS.md forbids hard-coded secrets, but nothing stops the agent editing .env or a key file by mistake.",
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [
+        "hook: runs on every Edit/Write"
+      ],
+      "evidence": "not_measured",
+      "reason": "Conflicts with guard-secrets-node: pick one. python is the safer runtime here (Makefile uses python; node exists only for the dashboard). Bypassable through Bash writes."
+    },
+    {
+      "capability_id": "forge.hook.guard-secrets-node",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [
+        "hook: runs on every Edit/Write"
+      ],
+      "evidence": "not_measured",
+      "reason": "Same guard as guard-secrets-python with a Node runtime; install at most one of the two."
+    },
+    {
+      "capability_id": "forge.hook.node-prettier-format",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [
+        "hook: runs on each edited .ts/.tsx file"
+      ],
+      "evidence": "not_measured",
+      "reason": "Prettier is not a devDependency of dashboards/web (not in package-lock.json), so the hook would do nothing. Skip unless Prettier is added."
+    },
+    {
+      "capability_id": "forge.hook.usage-log",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [
+        "hook: writes .agent-forge/usage.jsonl after each Skill/Agent call"
+      ],
+      "evidence": "not_measured",
+      "reason": "Opt-in by tag; it is the only way the 'unused' ground can ever apply to the skills installed today. Local file only, no network."
+    },
+    {
+      "capability_id": "mcp.context7",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": "Version-specific APIs in play (Next 16, React 19, SQLAlchemy 2, Pydantic v2, Alembic) and no docs source configured.",
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [
+        "mcp: npx -y @upstash/context7-mcp@latest, network to the Context7 API"
+      ],
+      "evidence": "not_measured",
+      "reason": "MCP class needs --mcp plus Claude Code's trust prompt. AGENTS.md forbids sending source code to external LLMs in some modes; doc lookups send library names and questions, not code, but that boundary is yours to judge."
+    },
+    {
+      "capability_id": "mcp.playwright",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": "No way to verify dashboard behaviour in a browser; the dashboard has no tests and 12_TESTING_QA.md lists Playwright E2E as the intended layer.",
+      "context_chars": 0,
+      "always_on": false,
+      "risk": [
+        "mcp: npx -y @playwright/mcp@latest, downloads browsers, drives one"
+      ],
+      "evidence": "not_measured",
+      "reason": "Optional (drives_browser). Heavier runtime than context7."
+    },
+    {
+      "capability_id": "karpathy.principles",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 1854,
+      "always_on": true,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "Appends ~1.85k always-on chars to CLAUDE.md. AGENTS.md already states 'do not add features outside the spec' and 'stop and ask on [DECISION]'; the rest (verify before done, no drive-by edits) is new. karpathy.guidelines is the same text on demand (install on request)."
+    },
+    {
+      "capability_id": "forge.managed-notice",
+      "verdict": "ASK",
+      "grounds": [],
+      "scope": "install",
+      "confidence": "high",
+      "covered_by": [],
+      "contradicts": [],
+      "gap": null,
+      "context_chars": 427,
+      "always_on": true,
+      "risk": [],
+      "evidence": "not_measured",
+      "reason": "6-line CLAUDE.md section listing managed files. With 2 managed capabilities today (more after this run) it adds discoverability for ~0.4k always-on; shared-file edit, so your call."
+    }
+  ]
+}
