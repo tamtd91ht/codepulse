@@ -276,6 +276,7 @@ def test_import_group_adds_new_projects_and_queues_their_jobs(
     audit = db_session.scalars(
         select(AuditLog).where(AuditLog.action == "project.import_group")
     ).one()
+    assert audit.details is not None
     assert audit.details["group"] == "demo/sub" and len(audit.details["added"]) == 2
 
 
