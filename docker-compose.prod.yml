@@ -1,7 +1,8 @@
 # Production stack for a single VPS (docs/specs/13, docs/RUNBOOK.md).
-# Layout: repo cloned to /opt/codepulse/app, data in /opt/codepulse/data, dumps in /opt/codepulse/backups.
+# Layout: repo cloned to /opt/codepulse/app, dumps in /opt/codepulse/backups.
 #   cd /opt/codepulse/app && docker compose --env-file .env.local -f docker-compose.prod.yml up -d --build
-# Config comes from .env.local (template in the repo root, gitignored).
+# Config comes from .env.local (gitignored). PostgreSQL and Redis are standalone servers on the
+# network, reached through DATABASE_URL and REDIS_URL.
 # Only the dashboard (web) is published; it proxies /api, so GitLab webhooks and OAuth go through it too.
 
 x-logging: &logging
@@ -14,39 +15,8 @@ x-app: &app
   restart: unless-stopped
   logging: *logging
   env_file: [.env.local]
-  depends_on:
-    postgres: {condition: service_healthy}
-    redis: {condition: service_healthy}
 
 services:
-  postgres:
-    image: postgres:16
-    restart: unless-stopped
-    logging: *logging
-    environment:
-      POSTGRES_USER: codepulse
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.local and pass --env-file .env.local}
-      POSTGRES_DB: codepulse
-    volumes:
-      - ${CODEPULSE_DATA:-/opt/codepulse/data}/postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U codepulse -d codepulse"]
-      interval: 5s
-      retries: 10
-
-  redis:
-    image: redis:7
-    restart: unless-stopped
-    logging: *logging
-    # AOF keeps queued review jobs across restarts.
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - ${CODEPULSE_DATA:-/opt/codepulse/data}/redis:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      retries: 10
-
   api:
     <<: *app
     # Migrations run when the api starts (only this service migrates).
@@ -91,20 +61,16 @@ services:
     depends_on:
       api: {condition: service_healthy}
 
-  # Daily pg_dump, BACKUP_KEEP_DAYS kept; copy /opt/codepulse/backups off the host too.
+  # Daily pg_dump of DATABASE_URL, BACKUP_KEEP_DAYS kept; copy /opt/codepulse/backups off the host too.
+  # pg_dump must be at least the server's major version (the standalone server runs 17).
   backup:
-    image: postgres:16
+    image: postgres:${BACKUP_PG_VERSION:-17}
     restart: unless-stopped
     logging: *logging
     entrypoint: ["sh", "/backup.sh"]
     environment:
-      PGHOST: postgres
-      PGUSER: codepulse
-      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.local and pass --env-file .env.local}
-      PGDATABASE: codepulse
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env.local and pass --env-file .env.local}
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
     volumes:
       - ./deploy/backup/backup.sh:/backup.sh:ro
       - ${CODEPULSE_BACKUPS:-/opt/codepulse/backups}:/backups
-    depends_on:
-      postgres: {condition: service_healthy}

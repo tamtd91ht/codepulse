@@ -11,8 +11,9 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # A URL passed by the caller (tests, CLI -x) wins over the environment.
+# '%' is doubled because the config is a ConfigParser (URL-encoded passwords contain it).
 if not config.get_main_option("sqlalchemy.url"):
-    config.set_main_option("sqlalchemy.url", str(get_settings().database_url))
+    config.set_main_option("sqlalchemy.url", str(get_settings().database_url).replace("%", "%%"))
 
 target_metadata = Base.metadata
 
