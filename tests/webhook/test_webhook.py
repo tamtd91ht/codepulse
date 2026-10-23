@@ -219,10 +219,6 @@ def test_direct_pushes_to_the_default_branch_are_reviewed_unless_in_an_mr(
     assert reviews == [(project.id, "2" * 40)]
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [push("refs/heads/feature", "2" * 40), push("refs/heads/main", after="0" * 40)],
-)
 def test_events_for_an_untracked_repo_are_ignored(
     db_session: Session, project: Project, queue: FakeQueue
 ) -> None:
@@ -232,6 +228,10 @@ def test_events_for_an_untracked_repo_are_ignored(
     assert queue.jobs == []
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [push("refs/heads/feature", "2" * 40), push("refs/heads/main", after="0" * 40)],
+)
 def test_other_pushes_only_sync(
     db_session: Session, project: Project, queue: FakeQueue, payload: dict[str, Any]
 ) -> None:
