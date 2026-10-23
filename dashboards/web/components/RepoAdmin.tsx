@@ -4,9 +4,9 @@ import { type FormEvent, Fragment, useEffect, useMemo, useState } from "react";
 
 import { ConfirmRemove } from "@/components/ConfirmRemove";
 import { IconButton } from "@/components/icons";
-import { Loading } from "@/components/ui";
+import { Loading, Message } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
-import { date } from "@/lib/format";
+import { date, localDay } from "@/lib/format";
 import type { BusinessProject, Connection, GroupImport, Project } from "@/lib/types";
 
 type Flag = "review_enabled" | "post_mr_comment" | "allow_external_llm";
@@ -48,7 +48,7 @@ function loadView(): { groupBy: GroupBy; open: string[] } {
 /** "vihat/omicrm/api" → group "vihat/omicrm", repo "api". */
 const groupOf = (p: Project) => p.path_with_namespace.split("/").slice(0, -1).join("/") || "(không có group)";
 const repoName = (p: Project) => p.path_with_namespace.split("/").pop() ?? p.path_with_namespace;
-const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+const isoDay = (d: Date) => localDay(d);
 /** Must match app/collector/removal.py confirmation_phrase. */
 const removalPhrase = (paths: string[]) => (paths.length === 1 ? paths[0] : `xoa ${paths.length} repo`);
 
@@ -89,12 +89,15 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
     }
   }, [groupBy, open, viewLoaded]);
 
-  async function run(action: () => Promise<unknown>, done?: string) {
+  /** Runs an action and reports it; resolves true on success so callers can skip follow-ups on failure. */
+  async function run(action: () => Promise<unknown>, done?: string): Promise<boolean> {
     try {
       const result = await action();
       setMessage(done ?? String(result));
+      return true;
     } catch (e) {
-      setMessage(e instanceof ApiError ? e.message : String(e));
+      setMessage(`Lỗi: ${e instanceof ApiError ? e.message : String(e)}`);
+      return false;
     }
   }
 
@@ -118,8 +121,8 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
     return hook.created ? `Đã đăng ký webhook ${hook.url}.` : `Webhook đã có sẵn: ${hook.url}.`;
   }
 
-  async function assign(ids: number[], value: string, label: string) {
-    await run(async () => {
+  async function assign(ids: number[], value: string, label: string): Promise<boolean> {
+    return run(async () => {
       await api.put("/projects/business-project", {
         project_ids: ids,
         business_project_id: value === UNASSIGNED ? null : Number(value),
@@ -160,7 +163,7 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
       setSelected(new Set());
       await refresh();
     } catch (e) {
-      setMessage(e instanceof ApiError ? e.message : String(e));
+      setMessage(`Lỗi: ${e instanceof ApiError ? e.message : String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -231,12 +234,16 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
 
   return (
     <>
-      <div className="card">
-        <h2>Dự án</h2>
-        <p className="muted">
-          Dự án do bạn đặt (ví dụ OmiCRM), gồm nhiều repo, có thể từ nhiều group GitLab. Xoá dự án chỉ bỏ cách nhóm;
-          repo và lịch sử review vẫn giữ.
-        </p>
+      <section className="card">
+        <div className="card-head">
+          <div>
+            <h2>Dự án</h2>
+            <div className="sub">
+              Dự án do bạn đặt (ví dụ OmiCRM), gồm nhiều repo, có thể từ nhiều group GitLab. Xoá dự án chỉ bỏ cách
+              nhóm; repo và lịch sử review vẫn giữ.
+            </div>
+          </div>
+        </div>
         {!projects.data ? (
           <Loading error={projects.error} />
         ) : projects.data.length === 0 ? (
@@ -297,11 +304,16 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
             Tạo dự án
           </button>
         </form>
-      </div>
+      </section>
 
-      <div className="card">
-        <h2>Repo</h2>
-        {message && <p className="muted">{message}</p>}
+      <section className="card">
+        <div className="card-head">
+          <div>
+            <h2>Repo</h2>
+            <div className="sub">Mỗi repo là một GitLab project; nhóm theo group GitLab hoặc theo dự án.</div>
+          </div>
+        </div>
+        <Message text={message} onClose={() => setMessage(null)} />
 
         <div className="tabs" role="tablist">
           {STATUS_TABS.map((t) => (
@@ -381,7 +393,7 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
                   chosen.map((p) => p.id),
                   e.target.value,
                   `Đã gán ${chosen.length} repo.`,
-                ).then(() => setSelected(new Set()))
+                ).then((ok) => ok && setSelected(new Set()))
               }
             >
               <option value="">Gán dự án…</option>
@@ -398,7 +410,7 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
         {!repos.data ? (
           <Loading error={repos.error} />
         ) : visible.length === 0 ? (
-          <p className="muted">Không có repo nào khớp bộ lọc.</p>
+          <p className="muted" style={{ padding: "12px 0" }}>Không có repo nào khớp bộ lọc.</p>
         ) : (
           <div className="table-wrap">
             <table className="repo-table">
@@ -731,7 +743,7 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
             </p>
           </div>
         </div>
-      </div>
+      </section>
 
       {removing && (
         <ConfirmRemove

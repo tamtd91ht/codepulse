@@ -3,8 +3,9 @@
 import { type FormEvent, useState } from "react";
 
 import { IconButton } from "@/components/icons";
-import { Loading } from "@/components/ui";
+import { Loading, Message } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
+import { localDay } from "@/lib/format";
 import type { Member, Person, Team } from "@/lib/types";
 
 const ROLES: { value: string; label: string }[] = [
@@ -13,7 +14,7 @@ const ROLES: { value: string; label: string }[] = [
   { value: "manager", label: "Manager" },
 ];
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => localDay();
 
 /** Admin card: teams, people and who belongs where (docs/specs/05), instead of the CSV import. */
 export function TeamAdmin() {
@@ -28,7 +29,7 @@ export function TeamAdmin() {
       await action();
       setMessage(done);
     } catch (e) {
-      setMessage(e instanceof ApiError ? e.message : String(e));
+      setMessage(`Lỗi: ${e instanceof ApiError ? e.message : String(e)}`);
     }
   }
 
@@ -47,13 +48,17 @@ export function TeamAdmin() {
   const inTeam = new Set(current.map((m) => m.user_id));
 
   return (
-    <div className="card">
-      <h2>Team &amp; thành viên</h2>
-      <p className="muted">
-        Người dùng được gắn với commit/MR qua email. Lead xem được dữ liệu từng thành viên trong team mình; manager xem
-        số liệu tổng hợp của team và các team con.
-      </p>
-      {message && <p className="muted">{message}</p>}
+    <section className="card">
+      <div className="card-head">
+        <div>
+          <h2>Team &amp; thành viên</h2>
+          <div className="sub">
+            Người dùng được gắn với commit/MR qua email. Lead xem được dữ liệu từng thành viên trong team mình; manager
+            xem số liệu tổng hợp của team và các team con.
+          </div>
+        </div>
+      </div>
+      <Message text={message} onClose={() => setMessage(null)} />
 
       <div className="grid two">
         <div>
@@ -268,6 +273,6 @@ export function TeamAdmin() {
           </p>
         </>
       )}
-    </div>
+    </section>
   );
 }

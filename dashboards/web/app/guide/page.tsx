@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-export const metadata: Metadata = { title: "Hướng dẫn – CodePulse" };
+export const metadata: Metadata = { title: "Hướng dẫn" };
 
 const SECTIONS = [
   { id: "intro", label: "CodePulse đo gì" },
@@ -15,17 +15,26 @@ const SECTIONS = [
 /** The dashboard copy of docs/USER_GUIDE.md, plus the Admin screen; readable without signing in. */
 export default function GuidePage() {
   return (
-    <div className="guide">
-      <h1>Hướng dẫn sử dụng</h1>
-      <p className="muted">CodePulse review code bằng AI và tổng hợp chất lượng code theo team và từng thành viên.</p>
-
-      <nav className="card toc" aria-label="Mục lục">
-        {SECTIONS.map((s, i) => (
-          <a key={s.id} href={`#${s.id}`}>
-            {i + 1}. {s.label}
-          </a>
-        ))}
-      </nav>
+    <>
+      <div className="page-head">
+        <div className="titles">
+          <div>
+            <div className="eyebrow">Guide</div>
+            <h1>Hướng dẫn sử dụng</h1>
+            <div className="sub">CodePulse review code bằng AI và tổng hợp chất lượng code theo team và từng thành viên.</div>
+          </div>
+        </div>
+      </div>
+      <div className="guide">
+        <nav className="card toc" aria-label="Mục lục">
+          <span className="toc-title">Mục lục</span>
+          {SECTIONS.map((s, i) => (
+            <a key={s.id} href={`#${s.id}`}>
+              {i + 1}. {s.label}
+            </a>
+          ))}
+        </nav>
+        <div className="guide-body">
 
       <section id="intro" className="card">
         <h2>1. CodePulse đo gì và dùng vào việc gì</h2>
@@ -308,9 +317,11 @@ export default function GuidePage() {
         <p className="muted">Câu hỏi về cách tính hoặc dữ liệu của bạn: liên hệ admin CodePulse của công ty.</p>
       </section>
 
-      <p>
+      <p style={{ marginTop: 16 }}>
         <Link href="/">← Về trang chính</Link>
       </p>
-    </div>
+        </div>
+      </div>
+    </>
   );
 }

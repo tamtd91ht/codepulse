@@ -5,7 +5,7 @@ import { type FormEvent, useState } from "react";
 import { LlmCheck } from "@/components/LlmCheck";
 import { RepoAdmin } from "@/components/RepoAdmin";
 import { TeamAdmin } from "@/components/TeamAdmin";
-import { Loading } from "@/components/ui";
+import { Card, Loading, Message, PageHeader } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import type { Account, Connection, LlmCosts, Person } from "@/lib/types";
 
@@ -23,7 +23,7 @@ export default function AdminPage() {
       const result = await action();
       setMessage(done ?? String(result));
     } catch (e) {
-      setMessage(e instanceof ApiError ? e.message : String(e));
+      setMessage(`Lỗi: ${e instanceof ApiError ? e.message : String(e)}`);
     }
   }
 
@@ -41,11 +41,14 @@ export default function AdminPage() {
 
   return (
     <>
-      <h1>Admin</h1>
-      {message && <p className="muted">{message}</p>}
+      <PageHeader
+        eyebrow="Admin"
+        title="Quản trị"
+        subtitle="Kết nối GitLab, dự án và repo, tài khoản chưa gắn người, team, chi phí và kết nối LLM. Mọi thay đổi được ghi audit log."
+      />
+      <Message text={message} onClose={() => setMessage(null)} />
 
-      <div className="card">
-        <h2>Kết nối GitLab</h2>
+      <Card title="Kết nối GitLab" subtitle="Token được mã hoá trong DB và không bao giờ hiển thị lại.">
         {!connections.data ? (
           <Loading error={connections.error} />
         ) : (
@@ -106,14 +109,12 @@ export default function AdminPage() {
           <input name="token" type="password" placeholder="Token bot (read_api, + api để comment)" required autoComplete="off" />
           <button className="primary" type="submit">Thêm kết nối</button>
         </form>
-        <p className="muted">Token được mã hoá trong DB và không bao giờ hiển thị lại.</p>
-      </div>
+      </Card>
 
       <RepoAdmin connections={connections.data ?? []} />
 
       <div className="grid two">
-        <div className="card">
-          <h2>Tài khoản chưa gắn người</h2>
+        <Card title="Tài khoản chưa gắn người" subtitle="Tài khoản Git/GitLab chưa nhận ra; chọn người để gắn.">
           {!unmapped.data || !users.data ? (
             <Loading error={unmapped.error ?? users.error} />
           ) : unmapped.data.length === 0 ? (
@@ -149,10 +150,9 @@ export default function AdminPage() {
               </table>
             </div>
           )}
-        </div>
+        </Card>
 
-        <div className="card">
-          <h2>Chi phí LLM theo tháng</h2>
+        <Card title="Chi phí LLM theo tháng">
           {!costs.data ? (
             <Loading error={costs.error} />
           ) : (
@@ -183,7 +183,7 @@ export default function AdminPage() {
             Ngân sách tháng: ${costs.data?.budget_usd ?? "—"} (MONTHLY_LLM_BUDGET_USD). Rubric v1; trọng số severity đổi qua
             SCORING_WEIGHTS rồi chạy <code>codepulse metrics recompute</code>.
           </p>
-        </div>
+        </Card>
       </div>
 
       <TeamAdmin />

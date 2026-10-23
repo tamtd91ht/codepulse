@@ -6,6 +6,8 @@ const apiUrl = process.env.API_URL ?? "http://localhost:8000";
 
 const config: NextConfig = {
   output: "standalone",
+  // Next 16 writes an AGENTS.md into this folder on `next dev`; the project keeps its agent rules in docs/specs/.
+  agentRules: false,
   reactStrictMode: true,
   poweredByHeader: false,
   async rewrites() {

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { Alert } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import type { LlmCheck as Report } from "@/lib/types";
 
@@ -55,22 +56,27 @@ export function LlmCheck() {
     : [];
 
   return (
-    <div className="card">
-      <h2>Kết nối LLM</h2>
+    <section className="card">
+      <div className="card-head">
+        <div>
+          <h2>Kết nối LLM</h2>
+          <div className="sub">Provider, model, phiên bản CLI, cách xác thực và một lần gọi thử.</div>
+        </div>
+      </div>
       <div className="toolbar">
         <button className="primary" onClick={check} disabled={busy}>
           {busy ? "Đang kiểm tra…" : "Kiểm tra kết nối"}
         </button>
         <span className="muted">Gửi một prompt rất nhỏ (không có code) qua đúng đường review; tốn một ít quota.</span>
       </div>
-      {error && <p className="error">Lỗi: {error}</p>}
+      {error && <Alert tone="error">Lỗi: {error}</Alert>}
       {report && status && (
         <>
-          <p style={{ color: status.ok ? "var(--good)" : "var(--bad)", fontWeight: 600 }}>
+          <Alert tone={status.ok ? "success" : "error"}>
             {status.ok
               ? `Hoạt động · ${status.latency_ms} ms · model ${status.model} · $${(status.cost_usd ?? 0).toFixed(4)}`
               : `Lỗi: ${status.error ?? "không rõ"}`}
-          </p>
+          </Alert>
           <div className="table-wrap">
             <table>
               <tbody>
@@ -98,6 +104,6 @@ export function LlmCheck() {
           <p className="muted">Kiểm tra lúc {new Date(report.checked_at).toLocaleString("vi-VN")}.</p>
         </>
       )}
-    </div>
+    </section>
   );
 }

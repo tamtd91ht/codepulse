@@ -45,8 +45,15 @@ export const api = {
  * GET with caching; pass null to skip (e.g. while a dependency is loading).
  * `redirect: false` keeps a signed-out visitor on public pages instead of sending them to /login.
  */
-export function useApi<T>(path: string | null, { redirect = true } = {}): SWRResponse<T, ApiError> {
-  return useSWR<T, ApiError>(path, (p: string) => request<T>(p, undefined, redirect));
+export function useApi<T>(
+  path: string | null,
+  { redirect = true, keepPreviousData = false } = {},
+): SWRResponse<T, ApiError> {
+  return useSWR<T, ApiError>(path, (p: string) => request<T>(p, undefined, redirect), {
+    keepPreviousData,
+    // A 4xx is an answer (not allowed, not found), not a transient failure: do not retry it.
+    shouldRetryOnError: (err: ApiError) => !err.status || err.status >= 500,
+  });
 }
 
 export function qs(params: Record<string, string | number | null | undefined>): string {
