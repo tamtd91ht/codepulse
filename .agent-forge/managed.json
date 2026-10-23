@@ -83,6 +83,20 @@
       },
       "sections": {},
       "json_merges": {}
+    },
+    {
+      "capability_id": "uiux.guidelines",
+      "version": "1.0.0",
+      "transaction_id": "tx-20261023-151707-0e3f58",
+      "installed_at": "2026-10-23T15:17:07+00:00",
+      "files": {
+        ".claude/skills/ui-ux-guidelines/LICENSE-UI-UX-PRO-MAX.txt": "757b78374e82355aa75767187bbc826b0041ffbc233e0d4cb606edad073546fa",
+        ".claude/skills/ui-ux-guidelines/references/pro-rules.md": "d28442d61c310b49c054a4ea736f89fb3008beebdbbc38c4b3a540b8f7fadf23",
+        ".claude/skills/ui-ux-guidelines/references/quick-reference.md": "0609bc7c89dacb40472465d8fc14257b56b2c43439660fc8d6fa3b8c022e1876",
+        ".claude/skills/ui-ux-guidelines/SKILL.md": "7180a9a542c8e6298c7f3c8ae9030a76d46fe8408ddd04f2f4fcee6d41907fb5"
+      },
+      "sections": {},
+      "json_merges": {}
     }
   ]
 }
