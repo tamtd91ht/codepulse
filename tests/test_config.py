@@ -35,7 +35,9 @@ def test_comma_lists_are_split(env: pytest.MonkeyPatch) -> None:
 
 def test_secrets_are_masked(env: pytest.MonkeyPatch) -> None:
     env.setenv("LLM_API_KEY", "sk-secret")
+    env.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-secret")
     assert "sk-secret" not in repr(Settings())
+    assert "sk-ant-oat01-secret" not in repr(Settings())
 
 
 def test_missing_database_url_fails(env: pytest.MonkeyPatch) -> None:

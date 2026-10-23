@@ -3,8 +3,16 @@ import subprocess
 from typing import Any
 
 import pytest
+from pydantic import SecretStr
 
-from app.review.providers import ClaudeCodeProvider, FakeLLMProvider, LLMError, ReviewPrompt
+from app.config import Settings
+from app.review.providers import (
+    ClaudeCodeProvider,
+    FakeLLMProvider,
+    LLMError,
+    ReviewPrompt,
+    build_provider,
+)
 
 PROMPT = ReviewPrompt(system="sys", user="diff --git a/x", json_schema={"type": "object"})
 
@@ -98,6 +106,17 @@ def test_auth_token_goes_to_the_right_variable_and_never_into_errors(
     assert runner.calls[0]["env"][variable] == token
     assert token not in str(excinfo.value)
     assert token not in " ".join(runner.calls[0]["cmd"])
+
+
+def test_session_token_wins_over_the_api_key() -> None:
+    settings = Settings(
+        claude_code_oauth_token=SecretStr("sk-ant-oat01-session"),
+        llm_api_key=SecretStr("sk-ant-api03-key"),
+    )
+    provider = build_provider(settings)
+    assert isinstance(provider, ClaudeCodeProvider)
+    assert provider._env()["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-session"
+    assert "sk-ant-api03-key" not in provider._env().values()
 
 
 def test_fake_provider_records_prompts() -> None:

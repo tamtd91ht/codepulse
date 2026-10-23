@@ -20,6 +20,9 @@ def build_provider(settings: Settings) -> LLMProvider:
         return ClaudeCodeProvider(
             binary=settings.claude_code_bin,
             model=settings.llm_model,
-            auth_token=settings.llm_api_key.get_secret_value(),
+            auth_token=(
+                settings.claude_code_oauth_token.get_secret_value()
+                or settings.llm_api_key.get_secret_value()
+            ),
         )
     raise NotImplementedError(f"LLM_PROVIDER={settings.llm_provider} is not implemented yet")

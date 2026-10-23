@@ -17,7 +17,8 @@ Dành cho người vận hành (admin/DevOps). Mọi lệnh `codepulse …` ch�
    - `SESSION_SECRET` (≥ 32 ký tự), `ADMIN_EMAILS`
    - `APP_BASE_URL` = `DASHBOARD_URL` = URL https của dashboard (dashboard phục vụ cả `/api`)
    - `GITLAB_OAUTH_URL`, `GITLAB_OAUTH_CLIENT_ID`, `GITLAB_OAUTH_CLIENT_SECRET`
-   - `LLM_PROVIDER=claude_code`, `LLM_API_KEY` = API key Anthropic hoặc token từ `claude setup-token`
+   - `LLM_PROVIDER=claude_code`, `CLAUDE_CODE_OAUTH_TOKEN` = token từ `claude setup-token` (gói Claude),
+     hoặc `LLM_API_KEY` = API key Anthropic
    - `MONTHLY_LLM_BUDGET_USD`, `SMTP_URL`, `SMTP_FROM`, `REPORT_CHANNELS` / `SLACK_WEBHOOK_URL`
 4. **HTTPS**: đặt reverse proxy (nginx, Traefik…) phía trước service `web` (cổng 3000), terminate TLS,
    chuyển tiếp `X-Forwarded-For`. Không mở cổng 8000 (api) ra Internet; chỉ Prometheus nội bộ cần nó.
@@ -52,7 +53,7 @@ Project có `allow_external_llm = false` **không được review** ở v1 (chư
 | Webhook secret | `codepulse connections rotate <connection_id> --webhook-secret` (không truyền giá trị = sinh ngẫu nhiên) → xoá hook cũ trên GitLab → `codepulse projects register-webhook <id>` cho từng project. |
 | `SESSION_SECRET` | Đổi trong `.env`, `docker compose up -d api` – mọi người phải đăng nhập lại. |
 | `APP_ENCRYPTION_KEY` | **Không đổi trực tiếp.** Giải mã mọi token bằng key cũ, mã hoá lại bằng key mới trong cùng một transaction, rồi mới đổi `.env`. |
-| `LLM_API_KEY` | Đổi trong `.env`, `docker compose up -d worker`. |
+| `CLAUDE_CODE_OAUTH_TOKEN` / `LLM_API_KEY` | Chạy lại `claude setup-token` (token hết hạn sau ~1 năm), đổi trong `.env`, `docker compose up -d worker`. |
 
 ## 4. Chạy lại review
 
@@ -81,7 +82,7 @@ Lệnh này chấm lại điểm review từ finding hiện tại rồi tổng h
 |---|---|---|
 | `CodePulseWorkerDown` | `docker compose ps worker`, `docker compose logs worker` | `docker compose restart worker`; nếu crash lặp lại, xem traceback (log JSON có `job_id`). |
 | `CodePulseQueueBacklog` | `docker compose exec worker rq info --url $REDIS_URL` | Tăng worker: `docker compose up -d --scale worker=3`. |
-| `CodePulseLlmErrors` | log `claude call failed` / review `failed` với lỗi `llm: …` | Kiểm tra `LLM_API_KEY`, hạn mức tài khoản Anthropic, phiên bản CLI. Chạy lại review lỗi sau khi sửa. |
+| `CodePulseLlmErrors` | log `claude call failed` / review `failed` với lỗi `llm: …` | Kiểm tra `CLAUDE_CODE_OAUTH_TOKEN` / `LLM_API_KEY`, hạn mức gói Claude / tài khoản Anthropic, phiên bản CLI. Chạy lại review lỗi sau khi sửa. |
 | `CodePulseBudget80` | Admin → Chi phí LLM | Báo người phụ trách; đến 100% review tạm dừng (`failed: monthly LLM budget reached`) và có thể chạy lại khi tăng ngân sách. |
 
 ## 7. Backup và khôi phục

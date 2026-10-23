@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     llm_provider: Literal["claude_code", "anthropic", "openai", "ollama"] = "claude_code"
     llm_model: str = ""
     llm_api_key: SecretStr = SecretStr("")
+    # Claude subscription session for LLM_PROVIDER=claude_code (`claude setup-token`); wins over
+    # LLM_API_KEY, which stays for an Anthropic API key.
+    claude_code_oauth_token: SecretStr = SecretStr("")
     claude_code_bin: str = "claude"
     monthly_llm_budget_usd: float = Field(default=200, ge=0)
     max_review_loc: int = Field(default=1500, gt=0)
