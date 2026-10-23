@@ -25,6 +25,17 @@ class GitLabError(Exception):
         self.status_code = status_code
 
 
+def _hook_body(url: str, token: str) -> dict[str, Any]:
+    return {
+        "url": url,
+        "token": token,
+        "push_events": True,
+        "merge_requests_events": True,
+        "pipeline_events": True,
+        "enable_ssl_verification": True,
+    }
+
+
 class GitLabClient:
     def __init__(
         self,
@@ -121,6 +132,9 @@ class GitLabClient:
 
     # -- endpoints (docs/specs/04) -----------------------------------------------------------
 
+    def current_user(self) -> Any:
+        return self.get("/user")
+
     def project(self, project_id: int) -> Any:
         return self.get(f"/projects/{project_id}")
 
@@ -199,14 +213,8 @@ class GitLabClient:
         return list(self.paginate(f"/projects/{project_id}/hooks"))
 
     def add_project_hook(self, project_id: int, url: str, token: str) -> Any:
-        return self.post(
-            f"/projects/{project_id}/hooks",
-            {
-                "url": url,
-                "token": token,
-                "push_events": True,
-                "merge_requests_events": True,
-                "pipeline_events": True,
-                "enable_ssl_verification": True,
-            },
-        )
+        return self.post(f"/projects/{project_id}/hooks", _hook_body(url, token))
+
+    def update_project_hook(self, project_id: int, hook_id: int, url: str, token: str) -> Any:
+        path = f"/projects/{project_id}/hooks/{hook_id}"
+        return self.request("PUT", path, json=_hook_body(url, token)).json()

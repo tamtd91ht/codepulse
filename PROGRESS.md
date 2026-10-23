@@ -63,3 +63,6 @@
 - 7.2: `/metrics` Prometheus (đọc Postgres/Redis lúc scrape nên đúng với nhiều replica; METRICS_TOKEN tuỳ chọn): queue, worker còn sống, độ trễ review p50/p95 (1 giờ), tỉ lệ lỗi LLM, chi phí hôm nay/tháng/ngân sách. Luật cảnh báo `deploy/prometheus/alerts.yml` (worker chết, queue > 100, LLM lỗi > 10%, vượt 80% ngân sách, API down) + cấu hình scrape mẫu. Service `backup` (pg_dump hằng ngày, giữ 14 ngày vào ./backups). API tự chạy migration khi khởi động. Tick checklist vận hành trong 13.
 - 7.3: `docs/RUNBOOK.md` (cài đặt lần đầu + bot token scope tối thiểu + OAuth app + HTTPS qua reverse proxy, thêm project, xoay token/secret, chạy lại review, recompute, xử lý từng cảnh báo, backup/khôi phục, eval, retention) + lệnh mới `codepulse connections rotate`. `docs/USER_GUIDE.md` (tiếng Việt): thông báo minh bạch cho team (đo gì, gửi gì ra ngoài, ai xem được gì, khiếu nại), hướng dẫn developer/lead, cách đọc chỉ số.
 - 7.4 (pilot 1 team 2 tuần) và 7.5 (rollout) cần người dùng thật + môi trường thật → chưa làm.
+
+## Triển khai VPS
+- Admin dashboard: thêm/đổi token kết nối GitLab, thêm project (tự đăng ký webhook + sync), nút đăng ký webhook; API mới `PATCH /connections/{id}`, `POST /projects/{id}/webhook` (logic webhook dùng chung với CLI). Token/project nằm trong DB, không qua .env; OAuth đăng nhập vẫn ở .env (quyết định người dùng).

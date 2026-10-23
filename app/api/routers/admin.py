@@ -3,6 +3,7 @@
 import secrets
 from datetime import date, datetime, time
 from typing import Annotated, Any
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -17,6 +18,7 @@ from app.api.schemas import (
     AccountOut,
     ConnectionIn,
     ConnectionOut,
+    ConnectionPatch,
     MemberIn,
     ProjectIn,
     ProjectOut,
@@ -28,7 +30,8 @@ from app.api.schemas import (
     UserPatch,
 )
 from app.api.security import AdminPrincipal, LeadPrincipal
-from app.collector.sync import SYNC_JOB_TIMEOUT, Enqueuer, client_factory
+from app.collector.gitlab.client import GitLabClient, GitLabError
+from app.collector.sync import SYNC_JOB_TIMEOUT, Enqueuer, client_factory, register_webhook
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
 from app.identity.autolink import unmapped_accounts
@@ -70,6 +73,39 @@ def create_connection(
     session.add(connection)
     session.flush()
     audit(session, principal.user_id, "connection.create", f"connection:{connection.id}")
+    session.commit()
+    return connection
+
+
+@router.patch("/connections/{connection_id}", response_model=ConnectionOut)
+def update_connection(
+    connection_id: int,
+    body: ConnectionPatch,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    box: Annotated[SecretBox, Depends(get_secret_box)],
+) -> Connection:
+    connection = _get(session, Connection, connection_id, "connection")
+    changed = sorted(body.model_dump(exclude_none=True))  # field names only, never the token
+    if not changed:
+        raise HTTPException(422, "nothing to update: pass name and/or token")
+    if body.name is not None:
+        connection.name = body.name
+    if body.token is not None:
+        # Check the new token before replacing the old one: the operator revokes the old token next.
+        try:
+            with GitLabClient(connection.base_url, body.token, max_retries=1) as client:
+                client.current_user()
+        except GitLabError as exc:
+            raise HTTPException(422, f"GitLab rejected the token ({exc})") from None
+        connection.token_encrypted = box.encrypt(body.token)
+    audit(
+        session,
+        principal.user_id,
+        "connection.update",
+        f"connection:{connection.id}",
+        fields=changed,
+    )
     session.commit()
     return connection
 
@@ -120,6 +156,29 @@ def update_project(
     audit(session, principal.user_id, "project.update", f"project:{project.id}", **changes)
     session.commit()
     return project
+
+
+@router.post("/projects/{project_id}/webhook")
+def register_project_webhook(
+    project_id: int,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    box: Annotated[SecretBox, Depends(get_secret_box)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict[str, Any]:
+    """Add the CodePulse hook (APP_BASE_URL + webhook path) to the GitLab project."""
+    project = _get(session, Project, project_id, "project")
+    if project.connection_id is None:
+        raise HTTPException(409, "project has no GitLab connection")
+    connection = _get(session, Connection, project.connection_id, "connection")
+    if urlsplit(settings.app_base_url).hostname in {"localhost", "127.0.0.1", "::1"}:
+        raise HTTPException(409, "APP_BASE_URL points at localhost; GitLab could not reach it")
+    url, created = register_webhook(
+        client_factory(box), box, connection, project, settings.app_base_url
+    )
+    audit(session, principal.user_id, "project.webhook", f"project:{project.id}", created=created)
+    session.commit()
+    return {"url": url, "created": created}
 
 
 @router.post("/projects/{project_id}/sync", status_code=202)

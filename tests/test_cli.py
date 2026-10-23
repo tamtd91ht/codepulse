@@ -77,15 +77,19 @@ def test_register_webhook_posts_secret_once(
         )
 
         def add(request: httpx.Request) -> httpx.Response:
-            hooks.append(json.loads(request.content))
+            hooks.append({**json.loads(request.content), "id": 7})
             return httpx.Response(201, json=hooks[-1])
 
         router.post(f"{API}/projects/1001/hooks").mock(side_effect=add)
+        update = router.put(f"{API}/projects/1001/hooks/7").respond(json={})
         for _ in range(2):
             cli(db_session, "projects", "register-webhook", str(project.id))
     get_settings.cache_clear()
 
     (hook,) = hooks
+    # The second run refreshes the existing hook's secret instead of adding another hook.
+    assert update.call_count == 1
+    assert json.loads(update.calls[0].request.content)["token"] == hook["token"]
     assert hook["url"] == "https://codepulse.example.com/api/v1/webhooks/gitlab"
     connection = db_session.get(Connection, project.connection_id)
     assert connection is not None and connection.webhook_secret_encrypted

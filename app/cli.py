@@ -13,15 +13,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.collector.gitlab.client import GitLabError
-from app.collector.sync import ClientFactory, client_factory, sync_project
+from app.collector.sync import ClientFactory, client_factory, register_webhook, sync_project
 from app.config import get_settings
 from app.crypto import SecretBox, secret_box
 from app.identity.autolink import unmapped_accounts
 from app.identity.csv_import import CsvImportError, import_identity
 from app.models import Connection, Project
 from app.scoring.aggregate import recompute
-
-WEBHOOK_PATH = "/api/v1/webhooks/gitlab"
 
 
 class CliError(Exception):
@@ -150,17 +148,11 @@ def projects_register_webhook(
 ) -> None:
     project = _project(session, project_id)
     connection = _connection(session, project.connection_id)
-    if not connection.webhook_secret_encrypted:
-        connection.webhook_secret_encrypted = box.encrypt(secrets.token_urlsafe(32))
-    url = base_url.rstrip("/") + WEBHOOK_PATH
-    with make_client(connection) as client:
-        if any(h.get("url") == url for h in client.project_hooks(project.external_id)):
-            out.write(f"webhook already registered for project {project.id}: {url}\n")
-            return
-        client.add_project_hook(
-            project.external_id, url, box.decrypt(connection.webhook_secret_encrypted)
-        )
-    out.write(f"webhook registered for project {project.id}: {url}\n")
+    url, created = register_webhook(make_client, box, connection, project, base_url)
+    if created:
+        out.write(f"webhook registered for project {project.id}: {url}\n")
+    else:
+        out.write(f"webhook already registered for project {project.id}: {url}\n")
 
 
 def identity_import(

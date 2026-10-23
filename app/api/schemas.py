@@ -47,6 +47,15 @@ class ConnectionIn(BaseModel):
     webhook_secret: str | None = Field(default=None, min_length=16)
 
 
+class ConnectionPatch(BaseModel):
+    # base_url is fixed: projects, MRs and accounts belong to that GitLab instance, and the
+    # stored token must never be sent to another host. Register a new connection instead.
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    token: str | None = Field(default=None, min_length=8)  # rotation: revoke the old one in GitLab
+
+
 class ProjectOut(ORM):
     id: int
     connection_id: int | None

@@ -150,8 +150,16 @@ export interface Dispute {
   raised_by_name: string | null;
 }
 
+export interface Connection {
+  id: number;
+  name: string;
+  kind: string;
+  base_url: string;
+}
+
 export interface Project {
   id: number;
+  connection_id: number | null;
   external_id: number;
   path_with_namespace: string;
   review_enabled: boolean | null;

@@ -1,6 +1,7 @@
 """Sync a project: collect -> extract -> convert in one transaction (backfill, then incremental)."""
 
 import logging
+import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -24,6 +25,8 @@ log = logging.getLogger(__name__)
 SYNC_JOB_TIMEOUT = 2 * 60 * 60  # a 90-day backfill of a busy project can take a while
 ADVISORY_LOCK_NAMESPACE = 0x5C  # first key of pg_try_advisory_xact_lock(ns, project_id)
 
+WEBHOOK_PATH = "/api/v1/webhooks/gitlab"
+
 ClientFactory = Callable[[Connection], GitLabClient]
 
 
@@ -44,6 +47,32 @@ def client_factory(box: SecretBox) -> ClientFactory:
         return GitLabClient(connection.base_url, box.decrypt(connection.token_encrypted))
 
     return make
+
+
+def register_webhook(
+    make_client: ClientFactory,
+    box: SecretBox,
+    connection: Connection,
+    project: Project,
+    base_url: str,
+) -> tuple[str, bool]:
+    """Add the CodePulse hook to a GitLab project; returns (url, created). Idempotent.
+
+    GitLab never returns a hook's secret, so an existing hook is re-sent the current one: that
+    repairs hooks left behind by a secret rotation or by an earlier run that failed to commit.
+    """
+    if not connection.webhook_secret_encrypted:
+        connection.webhook_secret_encrypted = box.encrypt(secrets.token_urlsafe(32))
+    url = base_url.rstrip("/") + WEBHOOK_PATH
+    secret = box.decrypt(connection.webhook_secret_encrypted)
+    with make_client(connection) as client:
+        hooks = client.project_hooks(project.external_id)
+        existing = next((h for h in hooks if h.get("url") == url), None)
+        if existing is not None:
+            client.update_project_hook(project.external_id, int(existing["id"]), url, secret)
+            return url, False
+        client.add_project_hook(project.external_id, url, secret)
+    return url, True
 
 
 def public_email_lookup(client: GitLabClient) -> PublicEmailLookup:

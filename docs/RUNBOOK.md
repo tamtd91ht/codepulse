@@ -22,7 +22,8 @@ Dành cho người vận hành (admin/DevOps). Mọi lệnh `codepulse …` ch�
 4. **HTTPS**: đặt reverse proxy (nginx, Traefik…) phía trước service `web` (cổng 3000), terminate TLS,
    chuyển tiếp `X-Forwarded-For`. Không mở cổng 8000 (api) ra Internet; chỉ Prometheus nội bộ cần nó.
 5. Khởi động: `docker compose up -d --build` (api tự chạy migration).
-6. Đăng ký nguồn:
+6. Đăng ký nguồn: trên dashboard **Admin → Kết nối GitLab** (URL + token bot) và **Projects**
+   (GitLab project ID, tự đăng ký webhook và sync), hoặc bằng CLI:
    ```sh
    codepulse connections add --name gitlab --url https://gitlab.company.vn --token <PAT>
    codepulse projects add <gitlab_project_id>        # in ra id CodePulse của project

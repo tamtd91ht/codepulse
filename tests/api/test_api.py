@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 import httpx
@@ -10,8 +11,9 @@ from sqlalchemy.orm import Session
 from app.api.auth import STATE_COOKIE, get_oauth_http
 from app.api.main import app
 from app.api.security import SESSION_COOKIE
-from app.models import Account, AuditLog
-from tests.api.conftest import WEEK, FakeQueue, World
+from app.config import Settings
+from app.models import Account, AuditLog, Connection
+from tests.api.conftest import BOX, WEEK, FakeQueue, World
 
 pytestmark = pytest.mark.integration
 
@@ -138,6 +140,8 @@ def test_rerun_only_failed_or_skipped(
     ("method", "path"),
     [
         ("get", "/api/v1/connections"),
+        ("patch", "/api/v1/connections/1"),
+        ("post", "/api/v1/projects/1/webhook"),
         ("get", "/api/v1/projects"),
         ("patch", "/api/v1/projects/1"),
         ("get", "/api/v1/users"),
@@ -168,6 +172,76 @@ def test_admin_changes_are_audited_and_secrets_never_returned(
     assert "token" not in str(created) and "secret" not in str(created)
     audit = db_session.scalars(select(AuditLog).where(AuditLog.action == "project.update")).one()
     assert (audit.actor_user_id, audit.details) == (world.admin.id, {"post_mr_comment": True})
+
+
+def test_rotating_a_connection_token_checks_it_and_audits_without_it(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    connection_id = world.project.connection_id
+    path = f"/api/v1/connections/{connection_id}"
+    admin = as_user(world.admin)
+    with respx.mock(assert_all_called=False) as router:
+        router.route(host="testserver").pass_through()
+        user = router.get("https://gitlab.example.com/api/v4/user")
+        user.respond(401)
+        rejected = client.patch(path, headers=admin, json={"token": "glpat-wrong-123"})
+        user.respond(json={"id": 1})
+        accepted = client.patch(path, headers=admin, json={"token": "glpat-rotated-123"})
+    assert rejected.status_code == 422 and "glpat" not in rejected.text
+    assert accepted.status_code == 200
+    connection = db_session.get(Connection, connection_id)
+    assert connection is not None and BOX.decrypt(connection.token_encrypted) == "glpat-rotated-123"
+    audit = db_session.scalars(select(AuditLog).where(AuditLog.action == "connection.update")).one()
+    assert audit.details == {"fields": ["token"]}
+
+
+def test_connection_patch_rejects_empty_body_and_keeps_the_host(
+    client: TestClient, world: World, as_user: Any
+) -> None:
+    path = f"/api/v1/connections/{world.project.connection_id}"
+    assert client.patch(path, headers=as_user(world.admin), json={}).status_code == 422
+    moved = client.patch(
+        path, headers=as_user(world.admin), json={"base_url": "https://evil.example.com"}
+    )
+    assert moved.status_code == 422  # the host never changes: the token stays with its GitLab
+
+
+def test_register_webhook_from_the_dashboard_is_idempotent(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    hooks: list[dict[str, Any]] = []
+    gitlab = "https://gitlab.example.com/api/v4/projects/1001/hooks"
+
+    def add(request: httpx.Request) -> httpx.Response:
+        hooks.append({**json.loads(request.content), "id": 7})
+        return httpx.Response(201, json=hooks[-1])
+
+    with respx.mock(assert_all_called=False) as router:
+        router.route(host="testserver").pass_through()
+        router.get(gitlab).mock(side_effect=lambda r: httpx.Response(200, json=hooks))
+        router.post(gitlab).mock(side_effect=add)
+        update = router.put(f"{gitlab}/7").respond(json={})
+        path = f"/api/v1/projects/{world.project.id}/webhook"
+        first = client.post(path, headers=as_user(world.admin)).json()
+        second = client.post(path, headers=as_user(world.admin)).json()
+
+    url = "https://codepulse.example.com/api/v1/webhooks/gitlab"
+    assert first == {"url": url, "created": True} and second == {"url": url, "created": False}
+    (hook,) = hooks
+    connection = db_session.get(Connection, world.project.connection_id)
+    assert connection is not None and connection.webhook_secret_encrypted
+    assert hook["token"] == BOX.decrypt(connection.webhook_secret_encrypted)
+    assert update.call_count == 1
+
+
+def test_register_webhook_refuses_a_localhost_base_url(
+    client: TestClient, world: World, as_user: Any, settings: Settings
+) -> None:
+    settings.app_base_url = "http://localhost:8000"
+    response = client.post(
+        f"/api/v1/projects/{world.project.id}/webhook", headers=as_user(world.admin)
+    )
+    assert response.status_code == 409
 
 
 @pytest.fixture
