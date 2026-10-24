@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 
 import { Icon, IconButton } from "@/components/icons";
-import { type RepoActions, RepoTable, UNASSIGNED, repoName } from "@/components/RepoTable";
+import { BulkBranch, type RepoActions, repoName, RepoTable, UNASSIGNED } from "@/components/RepoTable";
 import { Drawer, EmptyState, Pill, Segmented } from "@/components/ui";
 import { useApi } from "@/lib/api";
 import { date } from "@/lib/format";
@@ -129,6 +129,7 @@ export function ProjectDrawer({
   onClose,
   busy,
   notice,
+  startEditing = false,
 }: {
   tile: TileKey;
   projects: BusinessProject[];
@@ -142,6 +143,8 @@ export function ProjectDrawer({
   busy: boolean;
   /** The page's action banner, rendered inside the drawer so it is not hidden behind it. */
   notice?: ReactNode;
+  /** Open with the rename form showing (the list view's edit button). */
+  startEditing?: boolean;
 }) {
   const project = tile === UNASSIGNED ? null : (projects.find((b) => b.id === tile) ?? null);
   const items = repos
@@ -149,7 +152,15 @@ export function ProjectDrawer({
     .sort((a, b) => a.path_with_namespace.localeCompare(b.path_with_namespace));
   const stats = statsOf(items);
   const [status, setStatus] = useState<Status>("tracked");
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(startEditing);
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const nameInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!editing) return;
+    // After the Drawer's own mount focus (close button), which runs after this child effect.
+    const t = setTimeout(() => nameInput.current?.focus(), 0);
+    return () => clearTimeout(t);
+  }, [editing]);
   const bots = useApi<TelegramBot[]>(project ? "/telegram/bots" : null);
   const hooks = useApi<NotificationWebhook[]>(project ? "/webhooks" : null);
   const bot = (bots.data ?? []).find((b) => b.business_project_id === project?.id && b.project_id === null);
@@ -161,15 +172,43 @@ export function ProjectDrawer({
     .filter((p) => project && p.business_project_id !== project.id)
     .sort((a, b) => a.path_with_namespace.localeCompare(b.path_with_namespace));
   const title = project ? project.name : "Chưa gán dự án";
+  const chosen = shown.filter((p) => picked.has(p.id));
+  const pick = (ids: number[], on: boolean) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+
+  const headActions = project ? (
+    <>
+      <Link className="button" href={`/projects/${project.id}`}>
+        <Icon name="activity" size={14} /> Dashboard
+      </Link>
+      <IconButton icon="edit" label="Đổi tên / mô tả dự án" aria-pressed={editing} onClick={() => setEditing(!editing)} />
+      <IconButton
+        icon="remove"
+        label="Xoá dự án (repo và lịch sử vẫn giữ)"
+        tone="danger"
+        disabled={busy}
+        onClick={() => {
+          if (window.confirm(`Xoá dự án "${project.name}"? Repo và lịch sử review vẫn giữ.`))
+            void onDelete(project).then((ok) => ok && onClose());
+        }}
+      />
+    </>
+  ) : null;
 
   return (
-    <Drawer title={title} onClose={onClose} width={860}>
+    <Drawer title={title} onClose={onClose} width="wide" actions={headActions}>
       {notice}
       <div className="drawer-section">
         {project && editing ? (
           <form
-            className="toolbar"
-            style={{ margin: 0 }}
+            className="rename-form"
             onSubmit={(e) => {
               e.preventDefault();
               const f = new FormData(e.currentTarget);
@@ -178,14 +217,27 @@ export function ProjectDrawer({
               );
             }}
           >
-            <input name="name" defaultValue={project.name} required aria-label="Tên dự án" />
-            <input name="description" defaultValue={project.description ?? ""} placeholder="Mô tả" aria-label="Mô tả" />
-            <button className="primary" type="submit" disabled={busy}>
-              Lưu
-            </button>
-            <button type="button" onClick={() => setEditing(false)}>
-              Huỷ
-            </button>
+            <label>
+              <span className="muted small">Tên dự án</span>
+              <input ref={nameInput} name="name" defaultValue={project.name} required maxLength={100} />
+            </label>
+            <label className="grow">
+              <span className="muted small">Mô tả</span>
+              <input
+                name="description"
+                defaultValue={project.description ?? ""}
+                placeholder="Mô tả ngắn (tuỳ chọn)"
+                maxLength={500}
+              />
+            </label>
+            <div className="rename-actions">
+              <button className="primary" type="submit" disabled={busy}>
+                Lưu
+              </button>
+              <button type="button" onClick={() => setEditing(false)}>
+                Huỷ
+              </button>
+            </div>
           </form>
         ) : (
           <div className="drawer-title-row">
@@ -197,24 +249,6 @@ export function ProjectDrawer({
                 </p>
               )}
             </div>
-            {project && (
-              <div className="actions">
-                <Link className="button" href={`/projects/${project.id}`}>
-                  <Icon name="activity" size={14} /> Dashboard
-                </Link>
-                <IconButton icon="edit" label="Đổi tên / mô tả" onClick={() => setEditing(true)} />
-                <IconButton
-                  icon="remove"
-                  label="Xoá dự án (repo và lịch sử vẫn giữ)"
-                  tone="danger"
-                  disabled={busy}
-                  onClick={() => {
-                    if (window.confirm(`Xoá dự án "${project.name}"? Repo và lịch sử review vẫn giữ.`))
-                      void onDelete(project).then((ok) => ok && onClose());
-                  }}
-                />
-              </div>
-            )}
           </div>
         )}
         <div className="grid kpis drawer-kpis">
@@ -269,6 +303,32 @@ export function ProjectDrawer({
             </select>
           )}
         </div>
+        {chosen.length > 0 && (
+          <div className="bulk-bar" role="region" aria-label="Thao tác với repo đã chọn">
+            <strong>Đã chọn {chosen.length} repo</strong>
+            <BulkBranch
+              items={chosen}
+              onApply={(branch) =>
+                actions.setBranchMany(chosen, branch).then((ok) => {
+                  if (ok) setPicked(new Set());
+                  return ok;
+                })
+              }
+            />
+            <IconButton
+              icon="untrack"
+              label="Bỏ theo dõi các repo đã chọn"
+              onClick={() => void actions.setTracking(chosen, false).then(() => setPicked(new Set()))}
+            />
+            <IconButton
+              icon="track"
+              label="Theo dõi lại các repo đã chọn"
+              onClick={() => void actions.setTracking(chosen, true).then(() => setPicked(new Set()))}
+            />
+            <span className="spacer" />
+            <IconButton icon="close" label="Bỏ chọn" onClick={() => setPicked(new Set())} />
+          </div>
+        )}
         {shown.length === 0 ? (
           <p className="muted" style={{ padding: "8px 0" }}>
             {items.length === 0 ? "Dự án chưa có repo: thêm repo có sẵn ở trên, hoặc thêm repo / cả group GitLab ở cuối trang." : "Không có repo ở trạng thái này."}
@@ -280,6 +340,9 @@ export function ProjectDrawer({
             projectOptions={projectOptions}
             fullPath
             showProject={!project}
+            selectable
+            selected={picked}
+            onSelect={pick}
           />
         )}
         {items.length > 0 && (

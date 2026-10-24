@@ -420,11 +420,15 @@ export function Drawer({
   title,
   onClose,
   width = 720,
+  actions,
   children,
 }: {
   title: ReactNode;
   onClose: () => void;
-  width?: number;
+  /** px, or "wide": most of the screen (tables with many columns), a strip of page left visible. */
+  width?: number | "wide";
+  /** Buttons shown next to the title, always in view (not scrolled away with the body). */
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -480,12 +484,15 @@ export function Drawer({
         role="dialog"
         aria-modal="true"
         aria-labelledby="side-drawer-title"
-        style={{ width: `min(${width}px, 100%)` }}
+        style={{ width: width === "wide" ? "min(1360px, max(calc(100vw - 64px), min(100vw, 480px)))" : `min(${width}px, 100%)` }}
         onKeyDown={onKeyDown}
       >
         <div className="side-drawer-head">
           <h2 id="side-drawer-title">{title}</h2>
-          <IconButton ref={closeButton} icon="close" label="Đóng" onClick={onClose} />
+          <div className="side-drawer-actions">
+            {actions}
+            <IconButton ref={closeButton} icon="close" label="Đóng" onClick={onClose} />
+          </div>
         </div>
         <div className="side-drawer-body">{children}</div>
       </aside>

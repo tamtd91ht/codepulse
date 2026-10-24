@@ -40,6 +40,24 @@ def decode_cursor(cursor: str | None) -> int | None:
         return None
 
 
+def clean_branch(value: str) -> str:
+    """A git branch name as GitLab accepts it, "" (default branch) or "*" (every branch)."""
+    value = value.strip()
+    if value in ("", ALL_BRANCHES):
+        return value
+    parts = value.split("/")
+    if (
+        not BRANCH_RE.fullmatch(value)
+        or ".." in value
+        or "@{" in value
+        or value == "@"
+        or any(not p or p.startswith(".") or p.endswith(".lock") for p in parts)
+        or value.endswith(".")
+    ):
+        raise ValueError("not a valid branch name")
+    return value
+
+
 class ORM(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -163,22 +181,28 @@ class ProjectPatch(BaseModel):
     @field_validator("review_branch")
     @classmethod
     def _branch_name(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        value = value.strip()
-        if value in ("", ALL_BRANCHES):
-            return value
-        parts = value.split("/")
-        if (
-            not BRANCH_RE.fullmatch(value)
-            or ".." in value
-            or "@{" in value
-            or value == "@"
-            or any(not p or p.startswith(".") or p.endswith(".lock") for p in parts)
-            or value.endswith(".")
-        ):
-            raise ValueError("not a valid branch name")
-        return value
+        return None if value is None else clean_branch(value)
+
+
+class BranchBulkIn(BaseModel):
+    """One review branch for many repos (docs/specs/17 §Nhánh review)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    project_ids: list[int] = Field(min_length=1, max_length=500)
+    review_branch: str = Field(max_length=255)  # "" = default branch, "*" = every branch
+
+    @field_validator("review_branch")
+    @classmethod
+    def _branch_name(cls, value: str) -> str:
+        return clean_branch(value)
+
+
+class BranchBulkOut(BaseModel):
+    updated: int
+    # Repos where GitLab has no branch of that name (checked for small batches only).
+    missing: list[str] = []
+    checked: bool = False
 
 
 class UserOut(ORM):

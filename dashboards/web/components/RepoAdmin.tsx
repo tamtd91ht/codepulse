@@ -5,7 +5,7 @@ import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react
 import { ConfirmRemove } from "@/components/ConfirmRemove";
 import { IconButton } from "@/components/icons";
 import { ProjectDrawer, ProjectTiles, type TileKey } from "@/components/ProjectTiles";
-import { type Flag, type RepoActions, type RepoSection, RepoTable, UNASSIGNED, groupOf, repoName } from "@/components/RepoTable";
+import { BulkBranch, type Flag, groupOf, type RepoActions, repoName, type RepoSection, RepoTable, UNASSIGNED } from "@/components/RepoTable";
 import { Loading, Message, Segmented } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import type { BusinessProject, Connection, GroupImport, Project } from "@/lib/types";
@@ -56,6 +56,7 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
   const [message, setMessage] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("tiles");
   const [openTile, setOpenTile] = useState<TileKey | null>(null);
+  const [editTile, setEditTile] = useState(false); // open the drawer straight in rename mode
   const [status, setStatus] = useState<Status>("tracked");
   const [projectFilter, setProjectFilter] = useState("");
   const [groupFilter, setGroupFilter] = useState("");
@@ -101,6 +102,10 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
     }
   }
   const closeDrawer = useCallback(() => setOpenTile(null), []);
+  // However the drawer goes away (closed, project deleted elsewhere), the next one opens normally.
+  useEffect(() => {
+    if (openTile === null) setEditTile(false);
+  }, [openTile]);
 
   function submit(e: FormEvent<HTMLFormElement>, action: (f: FormData) => Promise<unknown>, done?: string) {
     e.preventDefault();
@@ -207,6 +212,19 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
         await api.patch(`/projects/${p.id}`, { review_rules: rules, review_rules_paths: paths });
         await repos.mutate();
       }, `Đã lưu quy tắc review của ${repoName(p)}.`),
+    setBranchMany: (items, branch) =>
+      run(async () => {
+        const result = await api.put<{ updated: number; missing: string[]; checked: boolean }>(
+          "/projects/review-branch",
+          { project_ids: items.map((p) => p.id), review_branch: branch },
+        );
+        await repos.mutate();
+        const what = branch === "" ? "nhánh mặc định" : branch === "*" ? "mọi nhánh" : `nhánh ${branch}`;
+        const missing = result.missing.length
+          ? ` Không thấy nhánh này trên GitLab ở: ${result.missing.join(", ")} (vẫn lưu; tạo nhánh hoặc chọn lại cho các repo đó).`
+          : "";
+        return `Đã đặt ${what} cho ${result.updated} repo.${missing}`;
+      }),
     setBranch: (p, branch) =>
       run(async () => {
         await api.patch(`/projects/${p.id}`, { review_branch: branch });
@@ -277,6 +295,8 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
 
   // Selection survives filtering and collapsing; repos that disappear are simply ignored.
   const chosen = [...selected].map((id) => byId.get(id)).filter((p): p is Project => !!p);
+  const visibleIds = new Set(visible.map((p) => p.id));
+  const hiddenChosen = chosen.filter((p) => !visibleIds.has(p.id)).length;
   const toggleSelect = (ids: number[], on: boolean) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -371,6 +391,14 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
                   <span className="muted">{b.repos} repo</span>
                   <IconButton icon="panelLeft" label="Mở dự án" onClick={() => setOpenTile(b.id)} />
                   <IconButton
+                    icon="edit"
+                    label={`Đổi tên / mô tả ${b.name}`}
+                    onClick={() => {
+                      setEditTile(true);
+                      setOpenTile(b.id);
+                    }}
+                  />
+                  <IconButton
                     icon="remove"
                     label="Xoá dự án"
                     tone="danger"
@@ -451,7 +479,15 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
 
             {chosen.length > 0 && (
               <div className="bulk-bar" role="region" aria-label="Thao tác với repo đã chọn">
-                <strong>Đã chọn {chosen.length} repo</strong>
+                <strong>
+                  Đã chọn {chosen.length} repo
+                  {hiddenChosen > 0 && (
+                    <span className="muted small" title="Đã chọn trước khi lọc; thao tác vẫn áp dụng cho các repo này">
+                      {" "}
+                      ({hiddenChosen} đang ẩn bởi bộ lọc)
+                    </span>
+                  )}
+                </strong>
                 <select
                   value=""
                   aria-label="Gán dự án cho repo đã chọn"
@@ -467,6 +503,15 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
                   <option value="">Gán dự án…</option>
                   {projectOptions}
                 </select>
+                <BulkBranch
+                  items={chosen}
+                  onApply={(branch) =>
+                    actions.setBranchMany(chosen, branch).then((ok) => {
+                      if (ok) setSelected(new Set());
+                      return ok;
+                    })
+                  }
+                />
                 <IconButton icon="untrack" label="Bỏ theo dõi các repo đã chọn" onClick={() => void setTracking(chosen, false)} />
                 <IconButton icon="track" label="Theo dõi lại các repo đã chọn" onClick={() => void setTracking(chosen, true)} />
                 <IconButton icon="remove" label="Gỡ hẳn các repo đã chọn" tone="danger" onClick={() => setRemoving(chosen)} />
@@ -638,6 +683,7 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
           onDelete={deleteProject}
           onSaveRules={saveProjectRules}
           onClose={closeDrawer}
+          startEditing={editTile}
           busy={busy || pending > 0}
           notice={notice}
         />

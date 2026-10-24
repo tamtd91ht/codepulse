@@ -33,6 +33,7 @@
 ## 4c. Nhánh review của repo (2026-10-27)
 - Vấn đề: danh sách "commit gần đây" (Telegram /review, trang Yêu cầu review) chỉ lấy nhánh mặc định của GitLab; team làm trên `develop` hay nhánh tính năng thì báo "không có commit nào trong 7 ngày" dù repo có commit.
 - `projects.review_branch` (migration d4a7c1e9f2b6): NULL = nhánh mặc định của GitLab, tên nhánh = nhánh đó, `*` = mọi nhánh (GitLab `all=true`). Admin chọn ở Admin › Repo, cột **Nhánh** (danh sách nhánh lấy từ GitLab, gõ để tìm). Tên nhánh được kiểm tra (không khoảng trắng, không `..`, không bắt đầu bằng `-`); audit ghi tên nhánh.
+- Đổi hàng loạt: chọn nhiều repo (danh sách hoặc drawer dự án) → ô **Nhánh** → áp dụng; `PUT /projects/review-branch {project_ids, review_branch}` (admin, tối đa 500 repo, audit). Với nhánh cụ thể và ≤ 30 repo, API hỏi GitLab đúng tên nhánh (`GET …/repository/branches/:name`, không retry, tổng ≤ 10 giây, chạy sau khi đã lưu) và trả danh sách repo không có nhánh đó; vẫn lưu cho các repo ấy. Để trống (về mặc định) phải xác nhận.
 - Thứ tự chọn nhánh: `branch=` gõ trong lệnh → nhánh review của repo → nhánh mặc định → `HEAD`. Telegram nhận `branch=all` (hoặc `*`) = mọi nhánh. Khi GitLab trả lời danh sách rỗng, không lấy commit nhánh khác từ DB nữa; chỉ dùng DB khi GitLab không trả lời. Tin nhắn rỗng nói rõ nhánh và cách đổi.
 - Webhook push không đổi: chỉ push thẳng lên nhánh mặc định được review tự động (quyết định Phase 0). Review tự động push lên nhánh review là `[DECISION]` để người dùng chọn (ngân sách LLM, rebase làm review lại cả loạt commit).
 

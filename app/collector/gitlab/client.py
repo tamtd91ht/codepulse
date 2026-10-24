@@ -175,6 +175,16 @@ class GitLabClient:
             params["search"] = search
         return list(self.get(f"/projects/{project_id}/repository/branches", params) or [])[:limit]
 
+    def branch_exists(self, project_id: int, name: str) -> bool:
+        """Exact lookup (the list endpoint's `search` is a substring match capped at a page)."""
+        try:
+            self.get(f"/projects/{project_id}/repository/branches/{quote(name, safe='')}")
+        except GitLabError as exc:
+            if exc.status_code == 404:
+                return False
+            raise
+        return True
+
     def commits_on_ref(
         self,
         project_id: int,

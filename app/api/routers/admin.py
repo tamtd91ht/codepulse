@@ -3,6 +3,7 @@
 import logging
 import secrets
 from datetime import UTC, date, datetime, time, timedelta
+from time import monotonic
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
@@ -19,6 +20,8 @@ from app.api.deps import get_queue, get_secret_box, get_session
 from app.api.schemas import (
     AccountLink,
     AccountOut,
+    BranchBulkIn,
+    BranchBulkOut,
     BusinessProjectIn,
     BusinessProjectOut,
     ConnectionIn,
@@ -64,6 +67,7 @@ from app.models import (
     TeamMember,
     User,
 )
+from app.models.source import ALL_BRANCHES
 from app.webhook.jobs import REVIEW_JOB_TIMEOUT, REVIEW_RETRY
 
 log = logging.getLogger(__name__)
@@ -283,6 +287,93 @@ def assign_repos(body: RepoAssignment, principal: AdminPrincipal, session: Sessi
         business_project_id=body.business_project_id,
     )
     session.commit()
+
+
+# Above this many repos the GitLab check of a bulk branch change is skipped (one call per repo).
+BRANCH_CHECK_MAX = 30
+BRANCH_CHECK_BUDGET_S = 10.0
+
+
+@router.put("/projects/review-branch", response_model=BranchBulkOut)
+def set_review_branch(
+    body: BranchBulkIn,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    box: Annotated[SecretBox, Depends(get_secret_box)],
+) -> BranchBulkOut:
+    """Set the review branch of many repos at once ("" = default, "*" = every branch). For a
+    named branch and a small batch, GitLab is asked which repos do not have it; they are still
+    updated (the branch may be created later) and listed so the admin can fix them."""
+    projects = list(
+        session.scalars(
+            select(Project).where(Project.id.in_(body.project_ids)).order_by(Project.id)
+        )
+    )
+    if len(projects) != len(set(body.project_ids)):
+        raise HTTPException(404, "some repos were not found")
+    value = body.review_branch or None
+    for project in projects:
+        project.review_branch = value
+    checked = bool(value) and value != ALL_BRANCHES and len(projects) <= BRANCH_CHECK_MAX
+    # What the GitLab check needs, read now: it runs after the commit, with no DB connection
+    # or row lock held while GitLab answers.
+    targets: list[tuple[str, str, int, str]] = []
+    if checked:
+        connections = {
+            c.id: c
+            for c in session.scalars(
+                select(Connection).where(Connection.id.in_({p.connection_id for p in projects}))
+            )
+        }
+        targets = [
+            (c.base_url, c.token_encrypted, p.external_id, p.path_with_namespace)
+            for p in projects
+            if (c := connections.get(p.connection_id or 0)) is not None
+        ]
+    audit(
+        session,
+        principal.user_id,
+        "project.review_branch",
+        f"projects:{len(projects)}",
+        project_ids=[p.id for p in projects],
+        review_branch=value or "default",
+    )
+    session.commit()
+    missing: list[str] = []
+    if checked and value:
+        try:
+            missing = _without_branch(box, targets, value)
+        except Exception:  # the change is saved; the check is only a hint
+            log.warning("review branch check failed", exc_info=True)
+            checked = False
+    return BranchBulkOut(updated=len(projects), missing=missing, checked=checked)
+
+
+def _without_branch(
+    box: SecretBox, targets: list[tuple[str, str, int, str]], branch: str
+) -> list[str]:
+    """Paths of the repos where GitLab has no branch with exactly this name. A repo GitLab does
+    not answer for is not reported; the whole check stops at BRANCH_CHECK_BUDGET_S."""
+    missing: list[str] = []
+    deadline = monotonic() + BRANCH_CHECK_BUDGET_S
+    by_connection: dict[tuple[str, str], list[tuple[int, str]]] = {}
+    for base_url, token, external_id, path in targets:
+        by_connection.setdefault((base_url, token), []).append((external_id, path))
+    for (base_url, token), items in by_connection.items():
+        for external_id, path in items:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                return missing
+            # Short and without retries: this runs inside an admin's request.
+            with GitLabClient(
+                base_url, box.decrypt(token), timeout=min(5.0, remaining), max_retries=0
+            ) as client:
+                try:
+                    if not client.branch_exists(external_id, branch):
+                        missing.append(path)
+                except GitLabError:
+                    continue
+    return missing
 
 
 # -- projects -------------------------------------------------------------------------------------

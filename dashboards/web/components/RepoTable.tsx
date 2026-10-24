@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, Fragment, type ReactNode, useState } from "react";
+import { type FormEvent, Fragment, type ReactNode, useId, useState } from "react";
 
 import { BranchEditor, branchText } from "@/components/BranchEditor";
 import { IconButton } from "@/components/icons";
@@ -33,8 +33,10 @@ export interface RepoActions {
   setRules(p: Project, rules: string, paths: string): Promise<boolean>;
   /** Rebuild the project profile in the worker (docs/specs/18). */
   refreshProfile(p: Project): Promise<boolean>;
-  /** Branch for "recent commits" and push reviews; "" = default, "*" = every branch. */
+  /** Branch for "recent commits"; "" = default, "*" = every branch. */
   setBranch(p: Project, branch: string): Promise<boolean>;
+  /** The same branch for many repos at once. */
+  setBranchMany(items: Project[], branch: string): Promise<boolean>;
 }
 
 export interface RepoSection {
@@ -290,3 +292,58 @@ export function RepoTable({
     </div>
   );
 }
+
+const COMMON_BRANCHES = ["develop", "dev", "main", "master", "staging"];
+
+/** One review branch for the selected repos: a name, "" (GitLab default) or "*" (every branch). */
+export function BulkBranch({ items, onApply }: { items: Project[]; onApply: (branch: string) => Promise<boolean> }) {
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const listId = useId();
+  const suggestions = [
+    ...new Set(
+      [...items.flatMap((p) => [p.review_branch, p.default_branch]), ...COMMON_BRANCHES].filter(
+        (b): b is string => !!b && b !== "*",
+      ),
+    ),
+  ];
+  const branch = value.trim();
+  const label = branch === "" ? "Về nhánh mặc định" : branch === "*" ? "Dùng mọi nhánh" : `Đổi sang ${branch}`;
+  return (
+    <form
+      className="bulk-branch"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        // An empty field resets every selected repo: never by a stray Enter.
+        if (branch === "" && !window.confirm(`Đưa ${items.length} repo về nhánh mặc định của GitLab?`)) return;
+        setBusy(true);
+        try {
+          if (await onApply(branch)) setValue("");
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <input
+        list={listId}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="Nhánh: develop, main… · trống = mặc định · * = mọi nhánh"
+        title="Để trống: nhánh mặc định của GitLab. *: mọi nhánh."
+        aria-label={`Nhánh review cho ${items.length} repo đã chọn`}
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <datalist id={listId}>
+        <option value="*">mọi nhánh</option>
+        {suggestions.map((b) => (
+          <option key={b} value={b} />
+        ))}
+      </datalist>
+      <button type="submit" disabled={busy}>
+        {busy ? "Đang lưu…" : label}
+      </button>
+    </form>
+  );
+}
+

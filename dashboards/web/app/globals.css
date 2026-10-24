@@ -1838,6 +1838,7 @@ tr.group-row td {
   white-space: normal;
   word-break: break-word;
   min-width: 160px;
+  max-width: 360px;
 }
 .repo-table .select-col {
   width: 32px;
@@ -1858,6 +1859,20 @@ tr.group-row td {
 }
 .repo-table .actions-col {
   width: 1%;
+  /* Long repo paths may make the table scroll sideways: the row's actions stay in view. */
+  position: sticky;
+  right: 0;
+  background: var(--surface);
+  box-shadow: -8px 0 8px -8px color-mix(in srgb, var(--text) 25%, transparent);
+}
+.repo-table tbody tr:hover > td.actions-col {
+  background: var(--surface-2);
+}
+.repo-table thead .actions-col {
+  background: var(--surface);
+}
+.repo-table tr.group-row td {
+  position: static;
 }
 .actions {
   display: flex;
@@ -2571,3 +2586,64 @@ textarea.rules {
     padding-bottom: 72px;
   }
 }
+
+/* Drawer head: title on the left, its actions (dashboard, rename, delete, close) on the right. */
+.side-drawer-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+.rename-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 12px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.rename-form label {
+  display: grid;
+  gap: 4px;
+  flex: 0 1 260px;
+}
+.rename-form label.grow {
+  flex: 1 1 320px;
+}
+.rename-form .rename-actions {
+  display: flex;
+  gap: 8px;
+}
+.bulk-branch {
+  display: flex;
+  flex: 1 1 420px;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  max-width: 560px;
+}
+.bulk-branch input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 160px;
+}
+.bulk-branch button {
+  flex: none;
+}
+@media (max-width: 700px) {
+  .repo-table .actions-col {
+    position: static;
+    box-shadow: none;
+  }
+  .bulk-branch {
+    flex-wrap: wrap;
+    max-width: none;
+  }
+  .side-drawer-actions .button {
+    display: none; /* Dashboard link: also on the project tile; keeps the head on one line */
+  }
+}
+
