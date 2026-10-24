@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.collector.gitlab.client import GitLabError
-from app.collector.sync import ClientFactory, client_factory, sync_project
+from app.collector.sync import ClientFactory, client_factory, fetch_commit, sync_project
 from app.config import Settings, get_settings
 from app.crypto import secret_box
 from app.db import get_redis, get_sessionmaker
@@ -150,10 +150,13 @@ def run_commit_review(
         return "repo not tracked"
     commit = session.get(Commit, sha)
     if commit is None:
-        _ensure_synced(session, project, make_client, settings)
+        # Only this commit, not a whole-project sync: one broken MR elsewhere in the repo must
+        # not block the review of a commit picked on another branch. (The RQ job prefetches it
+        # in a separate transaction; this covers direct callers.)
+        _prefetch_commit(session, project.id, sha, make_client, settings)
         commit = session.get(Commit, sha)
     if commit is None:
-        return "commit not found after sync"
+        return "commit not found on GitLab"
     connection = session.get(Connection, project.connection_id)
     if connection is None:
         raise ValueError(f"project {project.id} has no connection")
@@ -172,6 +175,24 @@ def run_commit_review(
     if review is not None:
         after(review)
     return review.status if review else "not reviewed"
+
+
+def _prefetch_commit(
+    session: Session, project_id: int, sha: str, make_client: ClientFactory, settings: Settings
+) -> None:
+    project = session.get(Project, project_id)
+    if project is None or not project.tracked or session.get(Commit, sha) is not None:
+        return
+    fetched = fetch_commit(
+        session,
+        project,
+        make_client,
+        sha,
+        ignore_paths=settings.ignore_paths,
+        allowed_email_domains=settings.allowed_email_domains,
+    )
+    if fetched is None:
+        raise NotSyncedYet(f"project {project.id} is being synced")
 
 
 def _notify(finished: list[Review]) -> None:
@@ -230,6 +251,10 @@ def review_commit_job(
     expected_round: int | None = None,
 ) -> str:
     settings = get_settings()
+    # A commit the last sync has not seen is fetched in its own short transaction, so the
+    # project's sync lock is not held through the (minutes long) review below.
+    with get_sessionmaker()() as session, session.begin():
+        _prefetch_commit(session, project_id, sha, client_factory(secret_box()), settings)
     finished: list[Review] = []
     with get_sessionmaker()() as session, session.begin():
         status = run_commit_review(

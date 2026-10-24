@@ -6,11 +6,12 @@ import respx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.collector.gitlab.client import GitLabClient
+from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.gitlab.collect import GitLabCollector, window_start
 from app.collector.gitlab.diffstat import count_lines, file_stat, is_ignored
-from app.models import Connection, Project, RawGitlab
-from tests.collector.fake_gitlab import BASE, mount
+from app.collector.sync import fetch_commit
+from app.models import Commit, Connection, Project, RawGitlab
+from tests.collector.fake_gitlab import API, BASE, FIXTURES, mount
 
 NOW = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
 
@@ -86,3 +87,55 @@ def test_collect_stores_raw_without_diff_text(db_session: Session) -> None:
     pipeline = next(r for r in rows if r.endpoint == "pipeline" and r.params == {"id": 7001})
     assert pipeline.payload["duration"] == 300
     assert pipeline.payload["status"] == "success"
+
+
+@pytest.mark.integration
+def test_one_item_gitlab_cannot_serve_does_not_fail_the_sync(db_session: Session) -> None:
+    project = make_project(db_session)
+    with (
+        respx.mock(assert_all_called=False) as router,
+        GitLabClient(BASE, "t", max_per_second=1000, max_retries=0) as client,
+    ):
+        # Registered first, so it wins over the generic routes: GitLab 500s on one MR's diffs.
+        router.get(f"{API}/projects/1001/merge_requests/1/diffs").respond(500)
+        router.get(f"{API}/projects/1001/pipelines/7002").respond(404)
+        mount(router)
+        result = GitLabCollector(client, clock=lambda: NOW).collect(db_session, project, None)
+    assert result.counts["merge_request"] == 2 and result.counts["mr_diffs"] == 1
+    assert result.counts["skipped.mr_diffs"] == 1 and result.counts["skipped.pipeline"] == 1
+    assert result.counts["pipeline"] == 2  # the list row is kept without its detail
+
+
+@pytest.mark.integration
+def test_auth_errors_still_fail_the_sync(db_session: Session) -> None:
+    project = make_project(db_session)
+    with (
+        respx.mock(assert_all_called=False) as router,
+        GitLabClient(BASE, "t", max_per_second=1000, max_retries=0) as client,
+    ):
+        router.get(f"{API}/projects/1001/merge_requests/1/diffs").respond(401)
+        mount(router)
+        with pytest.raises(GitLabError):
+            GitLabCollector(client, clock=lambda: NOW).collect(db_session, project, None)
+
+
+@pytest.mark.integration
+def test_fetch_commit_brings_one_commit_in_without_a_sync(db_session: Session) -> None:
+    project = make_project(db_session)
+    commits = json.loads((FIXTURES / "commits.json").read_text(encoding="utf-8"))
+    sha = commits[0]["id"]
+    with respx.mock(assert_all_called=False) as router:
+        router.get(f"{API}/projects/1001/repository/commits/{sha}").respond(json=commits[0])
+        router.get(url__regex=rf"{API}/projects/1001/repository/commits/f+(\?.*)?$").respond(404)
+        mount(router)
+
+        def make_client(connection: Connection) -> GitLabClient:
+            return GitLabClient(BASE, "t", max_per_second=1000, max_retries=0)
+
+        assert fetch_commit(db_session, project, make_client, sha, ignore_paths=[]) is True
+        assert fetch_commit(db_session, project, make_client, "f" * 40, ignore_paths=[]) is False
+        listed = [str(c.request.url.path) for c in router.calls]
+    commit = db_session.get(Commit, sha)
+    assert commit is not None and commit.project_id == project.id
+    assert project.last_synced_at is None  # not a sync
+    assert not any(path.endswith("/merge_requests") for path in listed)

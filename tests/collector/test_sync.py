@@ -92,3 +92,37 @@ def test_untracked_repos_are_neither_queued_nor_synced(db_session: Session) -> N
 
     result = sync_project(db_session, project, no_gitlab, backfill_days=90, ignore_paths=[])
     assert result.skipped is True
+
+
+def test_a_part_gitlab_cannot_serve_keeps_the_stored_merge_request(db_session: Session) -> None:
+    project = make_project(db_session)
+    with respx.mock(assert_all_called=False) as router:
+        mount(router)
+        sync_project(
+            db_session, project, make_client, backfill_days=90, ignore_paths=IGNORE, now=NOW
+        )
+    mr = db_session.scalars(
+        select(MergeRequest).where(MergeRequest.project_id == project.id, MergeRequest.iid == 1)
+    ).one()
+    before = (mr.additions, mr.deletions, mr.first_review_at, mr.review_rounds)
+    assert before[0] is not None
+
+    def no_retry(connection: Connection) -> GitLabClient:
+        return GitLabClient(connection.base_url, "t", max_per_second=1000, max_retries=0)
+
+    with respx.mock(assert_all_called=False) as router:
+        router.get(f"{BASE}/api/v4/projects/1001/merge_requests/1/notes").respond(502)
+        router.get(f"{BASE}/api/v4/projects/1001/merge_requests/1/diffs").respond(500)
+        mount(router)
+        result = sync_project(
+            db_session,
+            project,
+            no_retry,
+            backfill_days=90,
+            ignore_paths=IGNORE,
+            now=NOW + timedelta(minutes=30),
+        )
+    db_session.refresh(mr)
+    assert (mr.additions, mr.deletions, mr.first_review_at, mr.review_rounds) == before
+    assert result.counts is not None and result.counts["skipped.merge_request"] == 1
+    assert project.last_synced_at == NOW + timedelta(minutes=30)  # the rest synced fine

@@ -127,6 +127,39 @@ def sync_project(
     return SyncResult(project.id, skipped=False, window_start=since, counts=counts)
 
 
+def fetch_commit(
+    session: Session,
+    project: Project,
+    make_client: ClientFactory,
+    sha: str,
+    *,
+    ignore_paths: list[str],
+    allowed_email_domains: Sequence[str] = (),
+) -> bool | None:
+    """Bring one commit into the domain layer without a full sync (a review asked for a commit
+    the last sync has not seen). True: stored; False: GitLab does not know it; None: a sync of
+    this project is running (try again later). last_synced_at is not touched."""
+    locked = session.scalar(
+        select(func.pg_try_advisory_xact_lock(ADVISORY_LOCK_NAMESPACE, project.id))
+    )
+    if not locked:
+        return None
+    connection = session.get(Connection, project.connection_id)
+    if connection is None:
+        raise ValueError(f"project {project.id} has no connection")
+    with make_client(connection) as client:
+        try:
+            rows = GitLabCollector(client).collect_commit(session, project, sha)
+        except GitLabError as exc:
+            if exc.status_code == 404:
+                return False
+            raise
+        Converter(session, project, ignore_paths).run(extract(rows))
+        autolink(session, allowed_email_domains, public_email=public_email_lookup(client))
+    log.info("commit fetched for review", extra={"project_id": project.id, "sha": sha[:12]})
+    return True
+
+
 def sync_project_job(project_id: int) -> dict[str, object]:
     """RQ entry point."""
     settings = get_settings()
