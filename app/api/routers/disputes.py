@@ -16,6 +16,7 @@ from app.api.security import CurrentPrincipal
 from app.config import Settings, get_settings
 from app.models import FindingDispute, Review, ReviewFinding, User
 from app.scoring.aggregate import aggregate, recompute_scores
+from app.scoring.verdict import assess
 
 router = APIRouter(tags=["disputes"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -140,6 +141,15 @@ def decide(
     dispute.decided_by = principal.user_id
     dispute.decided_at = datetime.now(UTC)
     finding.status = "false_positive" if body.decision == "accepted" else "open"
+    # The verdict follows the findings that still count (docs/specs/17).
+    review = session.get(Review, finding.review_id) if finding.review_id else None
+    if review is not None:
+        siblings = session.execute(
+            select(ReviewFinding.severity, ReviewFinding.status).where(
+                ReviewFinding.review_id == review.id
+            )
+        ).all()
+        review.verdict, review.risk_score = assess((str(s), st) for s, st in siblings)
     session.flush()
     _recompute_for(session, _review_of(session, finding), settings)
     audit(

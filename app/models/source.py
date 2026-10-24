@@ -27,6 +27,8 @@ class BusinessProject(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(unique=True)
     description: Mapped[str | None]
+    # Team rules (markdown) put into every review prompt of this dự án (docs/specs/17).
+    review_rules: Mapped[str | None]
 
 
 class Project(TimestampMixin, Base):
@@ -50,6 +52,9 @@ class Project(TimestampMixin, Base):
     # Untracked repos keep their history but are no longer synced, reviewed or fed by webhooks.
     tracked: Mapped[bool] = mapped_column(server_default="true")
     untracked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Repo-specific rules, and files inside the repo (comma list, read at the reviewed sha).
+    review_rules: Mapped[str | None]
+    review_rules_paths: Mapped[str | None]
 
 
 class RawGitlab(TimestampMixin, Base):

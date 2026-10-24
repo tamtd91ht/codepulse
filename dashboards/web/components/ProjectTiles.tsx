@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useState } from "react";
 
 import { Icon, IconButton } from "@/components/icons";
 import { type RepoActions, RepoTable, UNASSIGNED, repoName } from "@/components/RepoTable";
@@ -125,6 +125,7 @@ export function ProjectDrawer({
   projectOptions,
   onRename,
   onDelete,
+  onSaveRules,
   onClose,
   busy,
   notice,
@@ -136,6 +137,7 @@ export function ProjectDrawer({
   projectOptions: ReactNode;
   onRename: (b: BusinessProject, name: string, description: string | null) => Promise<boolean>;
   onDelete: (b: BusinessProject) => Promise<boolean>;
+  onSaveRules: (b: BusinessProject, rules: string) => Promise<boolean>;
   onClose: () => void;
   busy: boolean;
   /** The page's action banner, rendered inside the drawer so it is not hidden behind it. */
@@ -287,7 +289,152 @@ export function ProjectDrawer({
           </p>
         )}
       </div>
+
+      {project && (
+        <div className="drawer-section">
+          <RulesEditor key={project.id} project={project} repos={items} actions={actions} onSaveRules={onSaveRules} busy={busy} />
+        </div>
+      )}
     </Drawer>
+  );
+}
+
+/**
+ * Team rules that go into every review prompt of the dự án (docs/specs/17): one markdown block
+ * for the dự án, and per repo an optional block plus files inside the repo read at review time.
+ */
+function RulesEditor({
+  project,
+  repos,
+  actions,
+  onSaveRules,
+  busy,
+}: {
+  project: BusinessProject;
+  repos: Project[];
+  actions: RepoActions;
+  onSaveRules: (b: BusinessProject, rules: string) => Promise<boolean>;
+  busy: boolean;
+}) {
+  const [rules, setRules] = useState(project.review_rules ?? "");
+  const [repoOpen, setRepoOpen] = useState<number | null>(null);
+  const dirty = rules.trim() !== (project.review_rules ?? "");
+  const withRules = repos.filter((p) => p.review_rules || p.review_rules_paths).length;
+  return (
+    <>
+      <div className="drawer-title-row" style={{ marginBottom: 8 }}>
+        <div>
+          <h3 style={{ margin: 0 }}>Quy tắc review</h3>
+          <p className="muted small" style={{ margin: "4px 0 0" }}>
+            Reviewer đọc các quy tắc này cùng diff (tenant isolation, money safety, PII, convention…). Finding vi
+            phạm sẽ ghi tên quy tắc. Tối đa 12.000 ký tự; viết ngắn, mỗi quy tắc một gạch đầu dòng dưới một tiêu đề.
+          </p>
+        </div>
+      </div>
+      <textarea
+        className="rules"
+        value={rules}
+        onChange={(e) => setRules(e.target.value)}
+        maxLength={12000}
+        placeholder={"## Tenant isolation\n- Mọi truy vấn Mongo/ES/Redis phải có tenantId lấy từ JWT\n\n## Money safety\n- Thao tác tiền phải idempotent và cập nhật atomic"}
+        aria-label={`Quy tắc review của dự án ${project.name}`}
+      />
+      <div className="toolbar" style={{ margin: "8px 0 0" }}>
+        <span className="muted small">{rules.length.toLocaleString("vi-VN")} / 12.000 ký tự</span>
+        <span className="spacer" />
+        {dirty && (
+          <button type="button" onClick={() => setRules(project.review_rules ?? "")} disabled={busy}>
+            Hoàn tác
+          </button>
+        )}
+        <button
+          className="primary"
+          type="button"
+          disabled={!dirty || busy}
+          onClick={() => void onSaveRules(project, rules.trim()).then((ok) => ok && setRules(rules.trim()))}
+        >
+          Lưu quy tắc dự án
+        </button>
+      </div>
+
+      {repos.length > 0 && (
+        <>
+          <h4 style={{ margin: "18px 0 6px" }}>
+            Theo repo <span className="muted small">({withRules}/{repos.length} repo có quy tắc riêng)</span>
+          </h4>
+          <p className="muted small" style={{ margin: "0 0 8px" }}>
+            Ngoài quy tắc dự án, mỗi repo có thể thêm quy tắc riêng và chỉ tới file quy tắc nằm trong repo (ví dụ{" "}
+            <code>.claude/rules/critical/tenant-isolation.md</code>), đọc ở default branch; tối đa 10 file, mỗi file 6.000
+            ký tự.
+          </p>
+          <div className="table-wrap">
+            <table>
+              <tbody>
+                {repos.map((p) => (
+                  <Fragment key={p.id}>
+                    <tr>
+                      <td style={{ width: "40%" }}>
+                        <code>{p.path_with_namespace}</code>
+                      </td>
+                      <td className="muted small">
+                        {p.review_rules_paths ? `${p.review_rules_paths.split(/[,\n]/).filter(Boolean).length} file` : "không có file"}
+                        {p.review_rules ? ` · ${p.review_rules.length} ký tự riêng` : ""}
+                      </td>
+                      <td style={{ textAlign: "right" }}>
+                        <button type="button" className="sm" aria-expanded={repoOpen === p.id} onClick={() => setRepoOpen(repoOpen === p.id ? null : p.id)}>
+                          {repoOpen === p.id ? "Đóng" : "Sửa"}
+                        </button>
+                      </td>
+                    </tr>
+                    {repoOpen === p.id && (
+                      <tr>
+                        <td colSpan={3}>
+                          <form
+                            style={{ display: "grid", gap: 8 }}
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              const f = new FormData(e.currentTarget);
+                              void actions
+                                .setRules(p, String(f.get("rules") ?? ""), String(f.get("paths") ?? ""))
+                                .then((ok) => ok && setRepoOpen(null));
+                            }}
+                          >
+                            <input
+                              name="paths"
+                              defaultValue={p.review_rules_paths ?? ""}
+                              placeholder="File quy tắc trong repo, cách nhau dấu phẩy: .claude/rules/critical/tenant-isolation.md, docs/RULES.md"
+                              aria-label={`File quy tắc của ${p.path_with_namespace}`}
+                              maxLength={2000}
+                            />
+                            <textarea
+                              name="rules"
+                              className="rules"
+                              style={{ minHeight: 80 }}
+                              defaultValue={p.review_rules ?? ""}
+                              maxLength={12000}
+                              placeholder="Quy tắc riêng của repo (tuỳ chọn)"
+                              aria-label={`Quy tắc riêng của ${p.path_with_namespace}`}
+                            />
+                            <div className="toolbar" style={{ margin: 0 }}>
+                              <button className="primary sm" type="submit" disabled={busy}>
+                                Lưu
+                              </button>
+                              <button type="button" className="sm" onClick={() => setRepoOpen(null)}>
+                                Huỷ
+                              </button>
+                            </div>
+                          </form>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 

@@ -2232,3 +2232,105 @@ code.phrase {
   gap: 6px;
   align-items: center;
 }
+
+/* Merge verdict (docs/specs/17) */
+.verdict {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+}
+.verdict.lg {
+  font-size: 15px;
+  padding: 4px 10px;
+}
+.verdict.approve {
+  color: var(--good);
+  background: var(--good-soft);
+  border-color: color-mix(in srgb, var(--good) 40%, transparent);
+}
+.verdict.fix_required {
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+}
+.verdict.block {
+  color: var(--bad-text);
+  background: var(--bad-soft);
+  border-color: color-mix(in srgb, var(--bad) 45%, transparent);
+}
+.rule-tag {
+  display: inline-flex;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px dashed var(--border-strong);
+  font-size: 11.5px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+}
+.commit-table td code {
+  font-size: 12px;
+}
+.commit-table .select-col {
+  width: 32px;
+}
+.chip.choice {
+  cursor: pointer;
+  padding: 3px 12px;
+  user-select: none;
+}
+.chip.choice input {
+  margin: 0 2px 0 0;
+}
+.chip.choice.on {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary-text);
+}
+textarea.rules {
+  width: 100%;
+  min-height: 120px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+/* Yêu cầu review: the scope form must fit a phone */
+.request-form select,
+.request-form input {
+  max-width: 100%;
+  min-width: 0;
+}
+.request-form .toolbar > * {
+  min-width: 0;
+}
+@media (max-width: 700px) {
+  .request-form .segmented {
+    flex-wrap: wrap;
+  }
+  .request-form .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .request-form .toolbar > * {
+    flex: 0 0 auto !important; /* inline flex-basis would become height in a column */
+  }
+  .request-form .toolbar > .spacer {
+    display: none;
+  }
+}

@@ -79,6 +79,13 @@ class Principal:
         """None means everyone (admin)."""
         return None if self.is_admin else {self.user_id} | self.lead_members
 
+    def may_review_author(self, author_user_id: int | None) -> bool:
+        """Asking for a review of someone's work: yourself, people you lead, admin anyone;
+        work whose author is not mapped to a person needs a lead or admin."""
+        if author_user_id is None:
+            return self.is_admin or self.is_lead
+        return self.can_see_user(author_user_id)
+
 
 def _descendants(teams: Iterable[Team], roots: set[int]) -> set[int]:
     children: dict[int | None, list[int]] = {}

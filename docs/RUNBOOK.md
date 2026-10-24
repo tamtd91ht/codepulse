@@ -129,3 +129,10 @@ Khác với webhook GitLab (GitLab gọi CodePulse khi có MR/commit mới), web
 2. Bấm **Gửi thử**: CodePulse gửi sự kiện `ping` với payload mẫu và báo mã HTTP endpoint trả về.
 3. Gửi thật chạy trong worker (job `notify-review-<id>`) ngay sau khi review được lưu; endpoint cần trả 2xx trong 10 giây. 5xx/429/lỗi mạng được thử lại 3 lần; sau 20 lần lỗi liên tiếp webhook tự tắt, cột **Gửi gần nhất** cho biết lý do; bấm **Bật lại** sau khi sửa endpoint.
 4. Xoá kết nối GitLab: chỉ xoá được khi không còn repo nào dùng nó (gỡ hẳn repo ở Dự án & Repo trước); đổi tên kết nối bằng biểu tượng bút ở tab Kết nối GitLab.
+
+## 12. Quy tắc review theo dự án và review theo yêu cầu
+
+- **Quy tắc review**: Admin → Dự án & Repo → bấm ô dự án → mục *Quy tắc review*: markdown ngắn gọn, mỗi quy tắc một gạch đầu dòng dưới một tiêu đề (tiêu đề là thứ finding sẽ trích dẫn). Với repo đã có sẵn file quy tắc (ví dụ `.claude/rules/critical/*.md`), nhập đường dẫn vào *File quy tắc trong repo* của repo đó: CodePulse đọc file ở default branch (không đọc tại commit đang review, để tác giả không sửa được quy tắc trong cùng MR). Giới hạn: 12.000 ký tự mỗi khối, 10 file, 6.000 ký tự mỗi file, tổng 20.000 ký tự vào prompt (tăng chi phí token tương ứng).
+- **Rubric v2**: review cũ (v1) giữ nguyên điểm và verdict đã backfill; review lại một sha cũ tạo review v2 mới. Chạy `make eval` sau khi đổi prompt/model (bộ case trong `tests/eval/cases`).
+- **Verdict**: BLOCK khi có critical, FIX REQUIRED khi có high, APPROVE còn lại; risk = critical×10 + high×3 + medium×1. Duyệt khiếu nại "không phải lỗi" làm verdict tính lại ngay; `codepulse metrics recompute` tính lại hàng loạt.
+- **Review theo yêu cầu** (menu *Yêu cầu review*): tối đa `REVIEW_BATCH_MAX` (50) commit mỗi lần, danh sách tối đa `REVIEW_COMMITS_LIST_MAX` (200). Commit trên branch chưa sync vẫn review được (CodePulse tạo dòng commit từ GitLab). Tốn ngân sách LLM như review tự động; hết ngân sách → review `failed`, bấm chạy lại khi sang tháng.

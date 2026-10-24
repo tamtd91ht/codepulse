@@ -20,6 +20,24 @@ export const CATEGORY_LABEL: Record<string, string> = {
   docs: "Tài liệu",
 };
 
+export const VERDICT_LABEL: Record<string, string> = {
+  approve: "APPROVE",
+  fix_required: "FIX REQUIRED",
+  block: "BLOCK",
+};
+
+export function verdictTone(verdict: string | null | undefined): "good" | "warn" | "bad" | undefined {
+  return verdict === "approve" ? "good" : verdict === "fix_required" ? "warn" : verdict === "block" ? "bad" : undefined;
+}
+
+export const TRIGGER_LABEL: Record<string, string> = {
+  webhook: "tự động (GitLab)",
+  dashboard: "yêu cầu trên dashboard",
+  telegram: "Telegram",
+  backfill: "review lại theo khoảng ngày",
+  rerun: "chạy lại",
+};
+
 export function num(value: Num | number | undefined, digits = 1): string {
   if (value === null || value === undefined) return "—";
   const n = typeof value === "number" ? value : Number(value);

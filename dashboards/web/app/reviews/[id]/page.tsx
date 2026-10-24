@@ -4,7 +4,7 @@ import { use, useRef, useState } from "react";
 
 import { Alert, Card, EmptyState, ExternalLink, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
-import { CATEGORY_LABEL, date, num } from "@/lib/format";
+import { CATEGORY_LABEL, TRIGGER_LABEL, VERDICT_LABEL, date, num } from "@/lib/format";
 import type { Finding, Me, ReviewDetail } from "@/lib/types";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -122,12 +122,26 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
             <span>{date(review.finished_at)}</span>
             <span>· rubric {review.rubric_version}</span>
             <span>· {review.model ?? "—"}</span>
+            <span>· {TRIGGER_LABEL[review.trigger] ?? review.trigger}</span>
             {review.web_url && <ExternalLink href={review.web_url}>Mở trên GitLab</ExternalLink>}
           </span>
         }
       />
 
       <div className="grid kpis">
+        {review.status === "done" && (
+          <div className="card kpi">
+            <div className="label">Kết luận merge</div>
+            <div className="value">
+              <span className={`verdict lg ${review.verdict ?? ""}`}>{review.verdict ? VERDICT_LABEL[review.verdict] : "—"}</span>
+            </div>
+            <div className="delta">
+              <span className="muted">
+                Risk {review.risk_score ?? 0} · critical ×10, high ×3, medium ×1
+              </span>
+            </div>
+          </div>
+        )}
         <div className="card kpi">
           <div className="label">Điểm</div>
           <div className="value">
@@ -160,6 +174,34 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
 
       {review.error && <Alert tone="error">Lý do: {review.error}</Alert>}
 
+      {review.intent && (review.intent.summary || review.intent.concerns.length > 0) && (
+        <Card
+          title="Thay đổi làm gì và có đúng hướng không"
+          subtitle="Nhận xét thiết kế của reviewer, không tính vào điểm hay kết luận merge"
+        >
+          {review.intent.summary && <p style={{ marginTop: 0, color: "var(--text-2)" }}>{review.intent.summary}</p>}
+          <div className="chips" style={{ marginBottom: review.intent.concerns.length ? 10 : 0 }}>
+            {review.intent.matches_intent !== null && (
+              <Pill tone={review.intent.matches_intent ? "good" : "warn"} icon={review.intent.matches_intent ? "checkCircle" : "alert"}>
+                {review.intent.matches_intent ? "Đúng với mô tả" : "Lệch so với mô tả"}
+              </Pill>
+            )}
+            {review.intent.altitude && (
+              <Pill tone={review.intent.altitude === "right" ? "good" : "warn"}>
+                {review.intent.altitude === "right" ? "Độ phức tạp vừa" : review.intent.altitude === "over" ? "Over-engineering" : "Under-engineering"}
+              </Pill>
+            )}
+          </div>
+          {review.intent.concerns.length > 0 && (
+            <ul style={{ margin: 0, paddingLeft: 20, color: "var(--text-2)" }}>
+              {review.intent.concerns.map((c) => (
+                <li key={c}>{c}</li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
+
       {review.summary && (
         <Card title="Tóm tắt">
           <p style={{ whiteSpace: "pre-wrap", color: "var(--text-2)" }}>{review.summary}</p>
@@ -181,6 +223,11 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
               </div>
               <div className="finding-meta">
                 <span>{CATEGORY_LABEL[f.category] ?? f.category}</span>
+                {f.rule_id && (
+                  <span className="rule-tag" title="Quy tắc của dự án/repo mà finding này vi phạm">
+                    {f.rule_id}
+                  </span>
+                )}
                 <code>
                   {f.file_path}:{f.line_start}
                 </code>

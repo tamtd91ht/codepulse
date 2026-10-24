@@ -28,6 +28,7 @@ from app.models import (
     TeamMember,
     User,
 )
+from app.review.rubric import RUBRIC_VERSION
 
 BOX = SecretBox(Fernet.generate_key().decode())
 WEEK = date(2026, 10, 5)
@@ -123,7 +124,7 @@ def world(db_session: Session) -> World:
         author_user_id=users["an"].id,
         score=Decimal(50),
         finished_at=finished,
-        rubric_version="v1",
+        rubric_version=RUBRIC_VERSION,
     )
     binh_review = Review(
         target_type="commit",
@@ -132,7 +133,7 @@ def world(db_session: Session) -> World:
         status="failed",
         author_user_id=users["binh"].id,
         finished_at=finished,
-        rubric_version="v1",
+        rubric_version=RUBRIC_VERSION,
     )
     s.add_all([an_review, binh_review])
     s.flush()

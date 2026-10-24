@@ -16,6 +16,7 @@ from app import health
 from app.api import auth
 from app.api.routers import (
     admin,
+    commits,
     disputes,
     llm,
     metrics,
@@ -59,6 +60,7 @@ for api_router in (
     telegram.router,
     overview.router,
     notifications.router,
+    commits.router,
 ):
     app.include_router(api_router, prefix="/api/v1")
 # docs/specs/11: CORS for the dashboard origin only; cookies need credentials.

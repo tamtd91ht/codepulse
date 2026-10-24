@@ -35,6 +35,7 @@ from app.scoring.aggregate import (
     period_start_of,
     previous_period,
 )
+from app.scoring.verdict import VERDICTS
 
 router = APIRouter(tags=["overview"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -53,10 +54,16 @@ class Bucket:
     scored: int = 0
     loc: int = 0
     severity: dict[str, int] = field(default_factory=lambda: dict.fromkeys(SEVERITIES, 0))
+    verdicts: dict[str, int] = field(default_factory=lambda: dict.fromkeys(VERDICTS, 0))
 
     @property
     def avg_score(self) -> float | None:
         return round(self.score_sum / self.scored, 1) if self.scored else None
+
+    @property
+    def pass_rate(self) -> float | None:
+        judged = sum(self.verdicts.values())
+        return round(100.0 * self.verdicts["approve"] / judged, 1) if judged else None
 
     @property
     def severe(self) -> int:
@@ -68,6 +75,8 @@ class Bucket:
             "avg_score": self.avg_score,
             "loc": self.loc,
             **self.severity,
+            **self.verdicts,
+            "pass_rate": self.pass_rate,
         }
 
 
@@ -82,10 +91,13 @@ def _review_project() -> Any:
     return union_all(mr, commit).subquery("review_project")
 
 
+Row = tuple[int, int | None, int, float | None, int | None, datetime | None, str | None]
+
+
 def _done_reviews(
     session: Session, lo: datetime, hi: datetime, project_ids: list[int] | None = None
-) -> list[tuple[int, int | None, int, float | None, int | None, datetime | None]]:
-    """(project_id, business_project_id, review_id, score, loc, finished_at) in [lo, hi)."""
+) -> list[Row]:
+    """(project_id, business_project_id, review_id, score, loc, finished_at, verdict), [lo, hi)."""
     rp = _review_project()
     query = (
         select(
@@ -95,6 +107,7 @@ def _done_reviews(
             Review.score,
             Review.loc_reviewed,
             Review.finished_at,
+            Review.verdict,
         )
         .join(rp, rp.c.review_id == Review.id)
         .join(Project, Project.id == rp.c.project_id)
@@ -103,8 +116,8 @@ def _done_reviews(
     if project_ids is not None:
         query = query.where(Project.id.in_(project_ids))
     return [
-        (int(p), bp, int(r), float(s) if s is not None else None, loc, fin)
-        for p, bp, r, s, loc, fin in session.execute(query).all()
+        (int(p), bp, int(r), float(s) if s is not None else None, loc, fin, v)
+        for p, bp, r, s, loc, fin, v in session.execute(query).all()
     ]
 
 
@@ -142,15 +155,13 @@ def _open_severe(session: Session) -> dict[int, int]:
     return {int(p): int(n) for p, n in rows}
 
 
-def _bucket(
-    rows: list[tuple[int, int | None, int, float | None, int | None, datetime | None]],
-    sev: dict[int, dict[str, int]],
-    key: Any,
-) -> dict[Any, Bucket]:
+def _bucket(rows: list[Row], sev: dict[int, dict[str, int]], key: Any) -> dict[Any, Bucket]:
     buckets: dict[Any, Bucket] = defaultdict(Bucket)
-    for project_id, bp_id, review_id, score, loc, finished_at in rows:
+    for project_id, bp_id, review_id, score, loc, finished_at, verdict in rows:
         b = buckets[key(project_id, bp_id, finished_at)]
         b.reviews += 1
+        if verdict in b.verdicts:
+            b.verdicts[verdict] += 1
         if score is not None:
             b.score_sum += score
             b.scored += 1
@@ -334,7 +345,7 @@ def project_detail(
     )
     open_by_project = _open_severe(session)
     last_review: dict[int, datetime] = {}
-    for project_id, _bp, _rid, _score, _loc, fin in rows:
+    for project_id, _bp, _rid, _score, _loc, fin, _verdict in rows:
         if fin is not None and (project_id not in last_review or fin > last_review[project_id]):
             last_review[project_id] = fin
 

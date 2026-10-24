@@ -73,6 +73,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         { href: "/overview", label: "Tổng quan", icon: "activity" },
         { href: "/teams", label: "Team", icon: "members" },
         { href: `/members/${me.id}`, label: "Của tôi", icon: "user" },
+        { href: "/reviews/request", label: "Yêu cầu review", icon: "review" },
         { href: "/critical", label: "Critical Board", icon: "alert" },
         { href: "/disputes", label: isLead ? "Duyệt khiếu nại" : "Khiếu nại", icon: "scale" },
       ]

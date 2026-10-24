@@ -231,6 +231,9 @@ def update_business_project(
     bp = _get(session, BusinessProject, bp_id, "dự án")
     old_name = bp.name
     bp.name, bp.description = body.name, body.description
+    rules_changed = "review_rules" in body.model_fields_set
+    if rules_changed:
+        bp.review_rules = (body.review_rules or "").strip() or None
     try:
         session.flush()
     except IntegrityError:
@@ -243,6 +246,7 @@ def update_business_project(
         f"business_project:{bp.id}",
         old_name=old_name,
         name=bp.name,
+        **({"review_rules": len(bp.review_rules or "")} if rules_changed else {}),
     )
     session.commit()
     return bp
@@ -411,10 +415,19 @@ def update_project(
     project_id: int, body: ProjectPatch, principal: AdminPrincipal, session: SessionDep
 ) -> Project:
     project = _get(session, Project, project_id, "project")
-    changes = body.model_dump(exclude_none=True)
+    changes = body.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(422, "nothing to update")
     for key, value in changes.items():
+        if key in ("review_rules", "review_rules_paths"):
+            value = (value or "").strip() or None  # "" clears
+        elif value is None:
+            raise HTTPException(422, f"{key} cannot be null")
         setattr(project, key, value)
-    audit(session, principal.user_id, "project.update", f"project:{project.id}", **changes)
+    audited = {
+        k: (len(v) if isinstance(v, str) else v) for k, v in changes.items()
+    }  # sizes, not text
+    audit(session, principal.user_id, "project.update", f"project:{project.id}", **audited)
     session.commit()
     return project
 
@@ -630,6 +643,8 @@ def backfill_reviews(
             project.id,
             mr.iid,
             mr.head_sha,
+            trigger="backfill",
+            requested_by=principal.user_id,
             job_id=f"review-mr-{project.id}-{mr.iid}-{mr.head_sha[:12]}",
             job_timeout=REVIEW_JOB_TIMEOUT,
             retry=REVIEW_RETRY,

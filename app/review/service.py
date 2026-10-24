@@ -16,16 +16,27 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.collector.gitlab.client import GitLabClient, GitLabError
-from app.models import Account, Commit, MergeRequest, Project, Review, ReviewFinding
+from app.models import (
+    Account,
+    BusinessProject,
+    Commit,
+    MergeRequest,
+    Project,
+    Review,
+    ReviewFinding,
+    User,
+)
 from app.review import comment
 from app.review.postprocess import postprocess
 from app.review.prepare import chunk, prepare
 from app.review.prompt import ReviewParseError, ReviewTarget, build_prompt, review_chunk
 from app.review.providers.base import LLMError, LLMProvider, ReviewResult
 from app.review.rubric import RUBRIC_VERSION
-from app.review.schema import LLMFinding
+from app.review.rules import build_rules
+from app.review.schema import Intent, LLMFinding
 from app.review.status import mark_fixed_findings, supersede_mr_reviews
 from app.scoring.formula import ScoredFinding, review_score, weights_for
+from app.scoring.verdict import assess
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +56,33 @@ class ReviewSettings:
     scoring_weights: Mapping[str, float] | None = None
 
 
+def _paths(entries: list[dict[str, Any]]) -> set[str]:
+    return {str(e.get("new_path") or e.get("old_path") or "") for e in entries} - {""}
+
+
+def merge_intents(intents: list[Intent]) -> dict[str, Any] | None:
+    """One intent block per review: the first chunk's summary, the union of concerns; the
+    verdicts (matches_intent, altitude) are the worst any chunk reported."""
+    if not intents:
+        return None
+    concerns: list[str] = []
+    for intent in intents:
+        for concern in intent.concerns:
+            if concern not in concerns:
+                concerns.append(concern)
+    matches = [i.matches_intent for i in intents if i.matches_intent is not None]
+    altitudes = [i.altitude for i in intents if i.altitude is not None]
+    altitude = next(
+        (a for a in ("under", "over") if a in altitudes), altitudes[0] if altitudes else None
+    )
+    return {
+        "summary": next((i.summary for i in intents if i.summary), "")[:1500],
+        "matches_intent": (all(matches) if matches else None),
+        "altitude": altitude,
+        "concerns": concerns[:5],
+    }
+
+
 class ReviewService:
     def __init__(
         self,
@@ -62,11 +100,24 @@ class ReviewService:
 
     # -- entry points --------------------------------------------------------------------------
 
-    def review_mr(self, project: Project, mr: MergeRequest, head_sha: str) -> Review | None:
+    def review_mr(
+        self,
+        project: Project,
+        mr: MergeRequest,
+        head_sha: str,
+        *,
+        trigger: str = "webhook",
+        requested_by: int | None = None,
+    ) -> Review | None:
         if not (project.review_enabled and project.tracked):
             return None
         review = self._claim(
-            "mr", head_sha, mr_id=mr.id, author=self._user_of(mr.author_account_id)
+            "mr",
+            head_sha,
+            mr_id=mr.id,
+            author=self._user_of(mr.author_account_id),
+            trigger=trigger,
+            requested_by=requested_by,
         )
         if review is None:
             return None
@@ -77,7 +128,12 @@ class ReviewService:
             entries = self._client.mr_diffs(project.external_id, mr.iid)
         except GitLabError as exc:
             return self._fail(review, f"gitlab: {exc}")
-        target = ReviewTarget(project.path_with_namespace, mr.title or "", description)
+        target = ReviewTarget(
+            project.path_with_namespace,
+            mr.title or "",
+            description,
+            conventions=self._rules(project, _paths(entries)),
+        )
         result = self._run(review, project, target, entries, head_sha)
         if result is not None and result.status == "done":
             supersede_mr_reviews(self._session, project, mr.iid, head_sha)
@@ -92,7 +148,14 @@ class ReviewService:
                 comment.post_or_update(self._client, project.external_id, mr.iid, body)
         return result
 
-    def review_commit(self, project: Project, commit: Commit) -> Review | None:
+    def review_commit(
+        self,
+        project: Project,
+        commit: Commit,
+        *,
+        trigger: str = "webhook",
+        requested_by: int | None = None,
+    ) -> Review | None:
         if not (project.review_enabled and project.tracked):
             return None
         review = self._claim(
@@ -100,6 +163,8 @@ class ReviewService:
             commit.sha,
             commit_sha=commit.sha,
             author=self._user_of(commit.author_account_id),
+            trigger=trigger,
+            requested_by=requested_by,
         )
         if review is None:
             return None
@@ -108,10 +173,34 @@ class ReviewService:
         except GitLabError as exc:
             return self._fail(review, f"gitlab: {exc}")
         title = (commit.message or "").strip().splitlines()[0] if commit.message else commit.sha
-        target = ReviewTarget(project.path_with_namespace, title, kind="Commit")
+        target = ReviewTarget(
+            project.path_with_namespace,
+            title,
+            kind="Commit",
+            conventions=self._rules(project, _paths(entries)),
+        )
         return self._run(review, project, target, entries, commit.sha)
 
     # -- steps ---------------------------------------------------------------------------------
+
+    def _rules(self, project: Project, changed: set[str]) -> str:
+        """Team rules for the prompt (docs/specs/17): dự án + repo text, plus files read from the
+        repo's default branch, never from the change under review (its author could rewrite
+        them in the same commit); a rules file touched by the diff is left out."""
+        business = (
+            self._session.get(BusinessProject, project.business_project_id)
+            if project.business_project_id is not None
+            else None
+        )
+        ref = project.default_branch or "HEAD"
+
+        def fetch(path: str) -> str | None:
+            try:
+                return self._client.file_raw(project.external_id, path, ref)
+            except GitLabError:
+                return None
+
+        return build_rules(business, project, fetch, skip=changed)
 
     def _user_of(self, account_id: int | None) -> int | None:
         if account_id is None:
@@ -120,9 +209,17 @@ class ReviewService:
         return account.user_id if account else None
 
     def _claim(
-        self, target_type: str, sha: str, author: int | None, **target: Any
+        self,
+        target_type: str,
+        sha: str,
+        author: int | None,
+        trigger: str = "webhook",
+        requested_by: int | None = None,
+        **target: Any,
     ) -> Review | None:
         """Get-or-create the review row; a finished or running review of the same sha is final."""
+        if requested_by is not None and self._session.get(User, requested_by) is None:
+            requested_by = None  # the requester left between enqueue and run
         values = {
             "target_type": target_type,
             "mr_id": target.get("mr_id"),
@@ -131,6 +228,8 @@ class ReviewService:
             "rubric_version": RUBRIC_VERSION,
             "author_user_id": author,
             "status": "queued",
+            "trigger": trigger,
+            "requested_by_user_id": requested_by,
         }
         self._session.execute(
             insert(Review).values(**values).on_conflict_do_nothing(constraint="uq_reviews_target")
@@ -158,6 +257,8 @@ class ReviewService:
             return None
         review.status, review.error = "running", None
         review.started_at = self._clock()
+        # A failed/skipped/stale row taken over records what asked for this run.
+        review.trigger, review.requested_by_user_id = trigger, requested_by
         self._session.flush()
         return review
 
@@ -206,12 +307,15 @@ class ReviewService:
         calls: list[ReviewResult] = []
         raw_findings: list[LLMFinding] = []
         summaries: list[str] = []
+        intents: list[Intent] = []
         try:
             for piece in chunks:
                 result = review_chunk(self._provider, build_prompt(target, piece))
                 calls += result.calls
                 raw_findings += result.review.findings
                 summaries.append(result.review.summary.strip())
+                if result.review.intent is not None:
+                    intents.append(result.review.intent)
         except (LLMError, ReviewParseError) as exc:
             self._record_usage(review, calls)
             return self._fail(review, f"llm: {exc}")
@@ -236,8 +340,11 @@ class ReviewService:
                     code_excerpt=f.code_excerpt,
                     confidence=Decimal(str(f.confidence)),
                     fingerprint=f.fingerprint,
+                    rule_id=f.rule_id,
                 )
             )
+        review.verdict, review.risk_score = assess((f.severity, "open") for f in processed.findings)
+        review.intent = merge_intents(intents)
         review.score = Decimal(
             str(
                 review_score(

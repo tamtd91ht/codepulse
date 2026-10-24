@@ -61,6 +61,8 @@ def run_mr_review(
     provider: LLMProvider,
     settings: Settings,
     after: Callable[[Review], None] = lambda review: None,
+    trigger: str = "webhook",
+    requested_by: int | None = None,
 ) -> str:
     """Review one MR; `after` sees the finished review (notifications run once it is committed)."""
     project = session.get(Project, project_id)
@@ -87,7 +89,9 @@ def run_mr_review(
         raise ValueError(f"project {project.id} has no connection")
     with make_client(connection) as client:
         service = ReviewService(session, client, provider, review_settings(settings))
-        review = service.review_mr(project, mr, head_sha)
+        review = service.review_mr(
+            project, mr, head_sha, trigger=trigger, requested_by=requested_by
+        )
     if review is not None:
         after(review)
     return review.status if review else "not reviewed"
@@ -101,6 +105,8 @@ def run_commit_review(
     provider: LLMProvider,
     settings: Settings,
     after: Callable[[Review], None] = lambda review: None,
+    trigger: str = "webhook",
+    requested_by: int | None = None,
 ) -> str:
     project = session.get(Project, project_id)
     if project is None:
@@ -118,7 +124,7 @@ def run_commit_review(
         raise ValueError(f"project {project.id} has no connection")
     with make_client(connection) as client:
         service = ReviewService(session, client, provider, review_settings(settings))
-        review = service.review_commit(project, commit)
+        review = service.review_commit(project, commit, trigger=trigger, requested_by=requested_by)
     if review is not None:
         after(review)
     return review.status if review else "not reviewed"
@@ -134,7 +140,16 @@ def _notify(finished: list[Review]) -> None:
             enqueue_review_notifications(session, queue, review)
 
 
-def review_mr_job(project_id: int, iid: int, head_sha: str) -> str:
+def review_mr_job(
+    project_id: int,
+    iid: int,
+    head_sha: str,
+    *,
+    trigger: str = "webhook",
+    requested_by: int | None = None,
+) -> str:
+    """`trigger` / `requested_by` (docs/specs/17) say what asked for the review: webhook,
+    dashboard, telegram, backfill or rerun, and which person, when one did."""
     settings = get_settings()
     finished: list[Review] = []
     with get_sessionmaker()() as session, session.begin():
@@ -147,12 +162,16 @@ def review_mr_job(project_id: int, iid: int, head_sha: str) -> str:
             build_provider(settings),
             settings,
             after=finished.append,
+            trigger=trigger,
+            requested_by=requested_by,
         )
     _notify(finished)
     return status
 
 
-def review_commit_job(project_id: int, sha: str) -> str:
+def review_commit_job(
+    project_id: int, sha: str, *, trigger: str = "webhook", requested_by: int | None = None
+) -> str:
     settings = get_settings()
     finished: list[Review] = []
     with get_sessionmaker()() as session, session.begin():
@@ -164,6 +183,8 @@ def review_commit_job(project_id: int, sha: str) -> str:
             build_provider(settings),
             settings,
             after=finished.append,
+            trigger=trigger,
+            requested_by=requested_by,
         )
     _notify(finished)
     return status

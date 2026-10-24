@@ -55,6 +55,13 @@ tính vào điểm và mọi chỉ số liên quan được tính lại ngay.
 - Chạy lại review bị lỗi/bị bỏ qua từ trang review.
 - Báo cáo tuần (thứ Hai 08:00) và tháng (ngày 1) qua email; kênh chat của team nhận bản không có điểm từng người.
 
+## 3b. Yêu cầu review và kết luận merge
+
+- Menu **Yêu cầu review**: chọn repo, branch, người (bỏ trống = mọi người bạn được review) và khoảng thời gian, bấm *Xem commit* rồi *Review N commit*. Kết quả hiện ngay trên bảng khi xong và lưu như review tự động. Bạn review được việc của mình; lead thêm người mình lead; admin mọi người.
+- Mỗi review có **kết luận merge**: ✅ APPROVE (không có critical/high), ⚠️ FIX REQUIRED (có high), ❌ BLOCK (có critical), kèm risk = critical×10 + high×3 + medium×1. Điểm 0–100 vẫn là chỉ số theo dõi theo thời gian; kết luận là câu trả lời cho một thay đổi cụ thể. Khiếu nại được chấp nhận sẽ cập nhật cả điểm lẫn kết luận.
+- Mục *Thay đổi làm gì và có đúng hướng không* là nhận xét thiết kế của reviewer (đúng với mô tả MR chưa, over/under-engineering, quan ngại kiến trúc), không tính vào điểm.
+- Finding có nhãn quy tắc (ví dụ *Tenant isolation*) nghĩa là vi phạm quy tắc do admin/lead của dự án đặt.
+
 ## 4. Bot Telegram (nếu dự án của bạn có)
 
 - Liên kết một lần: **Của tôi → Telegram → Tạo mã liên kết**, gửi `/link MÃ` cho bot. Gõ `/whoami` để kiểm tra.

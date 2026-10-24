@@ -36,6 +36,7 @@ from app.scoring.formula import (
     weights_for,
 )
 from app.scoring.process import process_metrics
+from app.scoring.verdict import assess
 
 log = logging.getLogger(__name__)
 
@@ -379,8 +380,9 @@ def recompute_scores(
         ]
         weights = weights_for(review.rubric_version, weights_override)
         score = Decimal(str(review_score(findings, review.loc_reviewed or 0, weights)))
-        if review.score != score:
-            review.score = score
+        verdict, risk = assess((f.severity, f.status) for f in findings)
+        if review.score != score or review.verdict != verdict or review.risk_score != risk:
+            review.score, review.verdict, review.risk_score = score, verdict, risk
             changed += 1
     session.flush()
     return changed

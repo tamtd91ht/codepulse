@@ -1,7 +1,7 @@
 """Reviews and findings (docs/specs/09), scoped by role (developer: own; lead: team; admin: all)."""
 
 from datetime import UTC, date, datetime, time
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import Select, select
@@ -79,6 +79,8 @@ def list_reviews(
     user_id: int | None = None,
     project_id: int | None = None,
     severity: str | None = None,
+    verdict: Literal["approve", "fix_required", "block"] | None = None,
+    trigger: str | None = None,
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
     cursor: str | None = None,
@@ -89,6 +91,10 @@ def list_reviews(
     query = scoped(select(Review), principal)
     if user_id is not None:
         query = query.where(Review.author_user_id == user_id)
+    if verdict is not None:
+        query = query.where(Review.verdict == verdict)
+    if trigger is not None:
+        query = query.where(Review.trigger == trigger)
     if project_id is not None:
         mr_ids = select(MergeRequest.id).where(MergeRequest.project_id == project_id)
         shas = select(Commit.sha).where(Commit.project_id == project_id)
@@ -185,6 +191,8 @@ def rerun_review(
     queue.enqueue(
         f"app.workers.review_jobs.{func}",
         *args,
+        trigger="rerun",
+        requested_by=principal.user_id,
         job_id=f"{job_id}-rerun-{review.id}",
         job_timeout=REVIEW_JOB_TIMEOUT,
         retry=REVIEW_RETRY,

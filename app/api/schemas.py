@@ -3,7 +3,7 @@
 import base64
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, HttpUrl, StringConstraints
 
@@ -70,17 +70,25 @@ class ProjectOut(ORM):
     business_project_id: int | None
     tracked: bool
     untracked_at: datetime | None
+    review_rules: str | None = None
+    review_rules_paths: str | None = None
+
+
+RULES_MAX = 12_000  # markdown that goes into every review prompt of the scope (docs/specs/17)
 
 
 class BusinessProjectIn(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
     description: str | None = Field(default=None, max_length=500)
+    # Omitted = keep the current rules; "" or null when present = clear them.
+    review_rules: str | None = Field(default=None, max_length=RULES_MAX)
 
 
 class BusinessProjectOut(ORM):
     id: int
     name: str
     description: str | None
+    review_rules: str | None = None
     repos: int = 0  # tracked repos assigned to it
 
 
@@ -123,9 +131,14 @@ class GroupImportOut(BaseModel):
 
 
 class ProjectPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     review_enabled: bool | None = None
     post_mr_comment: bool | None = None
     allow_external_llm: bool | None = None
+    review_rules: str | None = Field(default=None, max_length=RULES_MAX)
+    # Comma/newline separated paths inside the repo, read at the reviewed sha (max 10).
+    review_rules_paths: str | None = Field(default=None, max_length=2000)
 
 
 class UserOut(ORM):
@@ -324,6 +337,7 @@ class FindingOut(ORM):
     review_id: int | None
     severity: str
     category: str
+    rule_id: str | None = None
     file_path: str | None
     line_start: int | None
     line_end: int | None
@@ -361,6 +375,12 @@ class ReviewOut(ORM):
     error: str | None
     started_at: datetime | None
     finished_at: datetime | None
+    # docs/specs/17
+    verdict: str | None = None
+    risk_score: int | None = None
+    intent: dict[str, Any] | None = None
+    trigger: str = "webhook"
+    requested_by_user_id: int | None = None
 
 
 class ReviewListItem(ReviewOut):
@@ -373,6 +393,63 @@ class ReviewDetail(ReviewOut):
     findings: list[FindingOut]
     project: str | None
     web_url: str | None
+
+
+# -- review on request (docs/specs/17) ------------------------------------------------------------
+
+
+class RepoOut(BaseModel):
+    id: int
+    path_with_namespace: str
+    default_branch: str | None
+    business_project_id: int | None
+    business_project: str | None
+    review_enabled: bool
+
+
+class BranchOut(BaseModel):
+    name: str
+    default: bool
+    last_commit_at: str | None
+
+
+class CommitRowOut(BaseModel):
+    sha: str
+    short_sha: str
+    title: str
+    authored_at: str | None
+    author_name: str | None
+    user_id: int | None
+    user_name: str | None
+    is_merge: bool
+    additions: int | None
+    deletions: int | None
+    review_id: int | None
+    review_status: str | None
+    score: float | None
+    verdict: str | None
+    reviewable: bool
+    reason: str | None  # why not reviewable
+
+
+class CommitListOut(BaseModel):
+    ref: str
+    commits: list[CommitRowOut]
+    hidden: int  # commits by people outside the caller's scope
+    truncated: bool  # more commits exist in the window than `limit`
+    batch_max: int  # REVIEW_BATCH_MAX: how many may be queued in one request
+
+
+class ReviewCommitsIn(BaseModel):
+    ref: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+    shas: list[Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{7,40}$")]] = Field(
+        min_length=1, max_length=200
+    )
+
+
+class ReviewCommitsOut(BaseModel):
+    queued: list[str]
+    skipped: list[dict[str, str]]  # {sha, reason}
 
 
 # -- metrics --------------------------------------------------------------------------------------

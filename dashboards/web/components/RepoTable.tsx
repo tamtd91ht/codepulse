@@ -27,6 +27,8 @@ export interface RepoActions {
   backfill(p: Project, fields: FormData): Promise<string>;
   setTracking(items: Project[], track: boolean): Promise<void>;
   remove(items: Project[]): void;
+  /** Repo-level review rules: free text and files inside the repo (docs/specs/17). */
+  setRules(p: Project, rules: string, paths: string): Promise<boolean>;
 }
 
 export interface RepoSection {

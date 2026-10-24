@@ -208,6 +208,14 @@ export default function GuidePage() {
           </li>
           <li>Xoá dự án chỉ bỏ cách nhóm; repo và lịch sử review vẫn giữ.</li>
         </ul>
+        <h3>Quy tắc review theo dự án</h3>
+        <p>
+          Trong ngăn chi tiết của một dự án (Admin → Dự án &amp; Repo → bấm ô dự án) có mục <strong>Quy tắc review</strong>:
+          markdown mô tả các quy tắc của team (tenant isolation, money safety, PII, convention…). Mỗi repo có thể thêm
+          quy tắc riêng và chỉ tới file quy tắc nằm trong repo. Reviewer đọc các quy tắc này cùng diff; finding vi phạm
+          ghi rõ tên quy tắc. Từ rubric v2, mỗi review còn có <strong>kết luận merge</strong> (APPROVE / FIX REQUIRED /
+          BLOCK, risk = critical×10 + high×3 + medium×1) và nhận xét <em>thay đổi làm gì, có đúng hướng không</em>.
+        </p>
         <h3>Webhook thông báo</h3>
         <p>
           Ở tab <strong>Webhook thông báo</strong>, admin đặt endpoint nhận kết quả review (Slack, Teams hoặc service nội

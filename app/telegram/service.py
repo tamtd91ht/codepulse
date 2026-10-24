@@ -40,11 +40,13 @@ from app.models import (
     User,
 )
 from app.review.rubric import RUBRIC_VERSION
+from app.scoring.verdict import VERDICT_LABEL
 from app.telegram.commands import Command, ReviewArgs, match_repo, parse, parse_review
 from app.webhook.jobs import REVIEW_JOB_TIMEOUT, REVIEW_RETRY
 
 log = logging.getLogger(__name__)
 
+VERDICT_ICON = {"approve": "✅", "fix_required": "⚠️", "block": "❌"}
 TELEGRAM_KIND = "telegram"
 LINK_CODE_TTL_S = 15 * 60
 LINK_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/I
@@ -849,6 +851,8 @@ class BotService:
                     t.project_id,
                     int(t.ref),
                     t.sha,
+                    trigger="telegram",
+                    requested_by=me.user_id,
                     job_id=f"review-mr-{t.project_id}-{t.ref}-{t.sha[:12]}",
                     job_timeout=REVIEW_JOB_TIMEOUT,
                     retry=REVIEW_RETRY,
@@ -858,6 +862,8 @@ class BotService:
                     "app.workers.review_jobs.review_commit_job",
                     t.project_id,
                     t.sha,
+                    trigger="telegram",
+                    requested_by=me.user_id,
                     job_id=f"review-commit-{t.sha[:12]}",
                     job_timeout=REVIEW_JOB_TIMEOUT,
                     retry=REVIEW_RETRY,
@@ -1100,7 +1106,11 @@ def _result(session: Session, review: Review, dashboard_url: str) -> str:
     counts = {str(s): int(n) for s, n in rows}
     parts = [f"{counts[s]} {s}" for s in ("critical", "high", "medium", "low") if counts.get(s)]
     score = f"{review.score:.0f}" if review.score is not None else "—"
+    verdict = ""
+    if review.verdict:
+        icon = VERDICT_ICON.get(review.verdict, "")
+        verdict = f"{icon} <b>{VERDICT_LABEL.get(review.verdict, review.verdict)}</b> · "
     return (
-        f"Điểm <b>{score}</b>/100 · {', '.join(parts) if parts else 'không có finding'}"
+        f"{verdict}Điểm <b>{score}</b>/100 · {', '.join(parts) if parts else 'không có finding'}"
         f"\n  {esc(dashboard_url.rstrip('/'))}/reviews/{review.id}"
     )

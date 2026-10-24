@@ -88,11 +88,22 @@ export interface CategoryWeek {
 
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
+export type Verdict = "approve" | "fix_required" | "block";
+
+/** Design & intent notes from the reviewer (docs/specs/17): advisory, never scored. */
+export interface Intent {
+  summary: string;
+  matches_intent: boolean | null;
+  altitude: "over" | "right" | "under" | null;
+  concerns: string[];
+}
+
 export interface Finding {
   id: number;
   review_id: number | null;
   severity: Severity;
   category: string;
+  rule_id: string | null;
   file_path: string | null;
   line_start: number | null;
   line_end: number | null;
@@ -127,6 +138,11 @@ export interface Review {
   cost_usd: Num;
   error: string | null;
   finished_at: string | null;
+  verdict: Verdict | null;
+  risk_score: number | null;
+  intent: Intent | null;
+  trigger: string;
+  requested_by_user_id: number | null;
 }
 
 export interface ReviewListItem extends Review {
@@ -208,6 +224,7 @@ export interface BusinessProject {
   name: string;
   description: string | null;
   repos: number;
+  review_rules: string | null;
 }
 
 /** A GitLab project, i.e. one git repo. */
@@ -223,6 +240,57 @@ export interface Project {
   business_project_id: number | null;
   tracked: boolean;
   untracked_at: string | null;
+  review_rules: string | null;
+  review_rules_paths: string | null;
+}
+
+/* ---- review on request (docs/specs/17) ---- */
+
+export interface Repo {
+  id: number;
+  path_with_namespace: string;
+  default_branch: string | null;
+  business_project_id: number | null;
+  business_project: string | null;
+  review_enabled: boolean;
+}
+
+export interface Branch {
+  name: string;
+  default: boolean;
+  last_commit_at: string | null;
+}
+
+export interface CommitRow {
+  sha: string;
+  short_sha: string;
+  title: string;
+  authored_at: string | null;
+  author_name: string | null;
+  user_id: number | null;
+  user_name: string | null;
+  is_merge: boolean;
+  additions: number | null;
+  deletions: number | null;
+  review_id: number | null;
+  review_status: string | null;
+  score: number | null;
+  verdict: Verdict | null;
+  reviewable: boolean;
+  reason: string | null;
+}
+
+export interface CommitList {
+  ref: string;
+  commits: CommitRow[];
+  hidden: number;
+  truncated: boolean;
+  batch_max: number; // how many commits one request may queue
+}
+
+export interface ReviewCommitsResult {
+  queued: string[];
+  skipped: { sha: string; reason: string }[];
 }
 
 export interface Account {
@@ -245,6 +313,10 @@ export interface ProjectAgg {
   info: number;
   severe: number; // critical + high found in the period
   open_severe: number; // open critical/high right now
+  approve: number;
+  fix_required: number;
+  block: number;
+  pass_rate: number | null; // % of judged reviews that were APPROVE
   delta: { reviews: number; avg_score: number | null; severe: number };
 }
 

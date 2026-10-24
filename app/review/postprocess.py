@@ -26,6 +26,7 @@ class Finding:
     confidence: float
     code_excerpt: str
     fingerprint: str
+    rule_id: str | None = None
 
 
 @dataclass
@@ -92,6 +93,7 @@ def postprocess(
             confidence=round(f.confidence, 2),
             code_excerpt=_excerpt(file, f.line_start, f.line_end),
             fingerprint=fingerprint(file.path, f.category, code, f.title),
+            rule_id=(f.rule_id or "").strip()[:120] or None,
         )
         kept = best.get(finding.fingerprint)
         if kept is None or (SEVERITY_RANK[finding.severity], finding.confidence) > (

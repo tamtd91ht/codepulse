@@ -186,10 +186,22 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
     }, `Đã xoá dự án ${b.name}.`);
   }
 
+  async function saveProjectRules(b: BusinessProject, rules: string): Promise<boolean> {
+    return run(async () => {
+      await api.patch(`/business-projects/${b.id}`, { name: b.name, description: b.description, review_rules: rules });
+      await projects.mutate();
+    }, "Đã lưu quy tắc review của dự án; áp dụng cho review tiếp theo.");
+  }
+
   const actions: RepoActions = {
     assign,
     setTracking,
     remove: (items) => setRemoving(items),
+    setRules: (p, rules, paths) =>
+      run(async () => {
+        await api.patch(`/projects/${p.id}`, { review_rules: rules, review_rules_paths: paths });
+        await repos.mutate();
+      }, `Đã lưu quy tắc review của ${repoName(p)}.`),
     setFlag: (p: Project, flag: Flag, value: boolean) =>
       run(async () => {
         await api.patch(`/projects/${p.id}`, { [flag]: value });
@@ -614,6 +626,7 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
           projectOptions={projectOptions}
           onRename={renameProject}
           onDelete={deleteProject}
+          onSaveRules={saveProjectRules}
           onClose={closeDrawer}
           busy={busy || pending > 0}
           notice={notice}

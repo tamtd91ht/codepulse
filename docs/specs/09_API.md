@@ -35,3 +35,14 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 - [ ] Pagination cursor-based, filter theo ngày dùng ISO-8601
 - [ ] Mọi endpoint có test quyền (403 khi sai role)
 - [ ] Audit log cho thao tác admin & quyết định dispute
+
+## Bổ sung (docs/specs/17 – review theo góc nhìn techlead)
+| Method | Path | Mô tả | Quyền |
+|---|---|---|---|
+| GET | `/repos` | Repo đang theo dõi kèm dự án | đăng nhập |
+| GET | `/people` | Người trong phạm vi của người gọi | đăng nhập |
+| GET | `/repos/{id}/branches?search=` | Branch từ GitLab | đăng nhập |
+| GET | `/repos/{id}/commits?ref&since&until&user_id&limit` | Commit gần đây kèm trạng thái review (ẩn người ngoài phạm vi) | đăng nhập |
+| POST | `/repos/{id}/review-commits` | Xếp hàng review các commit đã chọn (≤ REVIEW_BATCH_MAX) | theo tác giả: mình / người mình lead / admin |
+| GET | `/reviews?verdict=&trigger=` | Lọc thêm theo kết luận merge và nguồn yêu cầu | như cũ |
+| PATCH | `/business-projects/{id}` `review_rules`, `/projects/{id}` `review_rules`, `review_rules_paths` | Quy tắc review | admin |

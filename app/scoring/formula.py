@@ -12,7 +12,10 @@ DEFAULT_WEIGHTS: Mapping[str, float] = {
 }
 # Weights are versioned with the rubric (docs/specs/08): a score is only comparable with scores
 # computed under the same rubric_version.
-WEIGHTS_BY_RUBRIC: Mapping[str, Mapping[str, float]] = {"v1": DEFAULT_WEIGHTS}
+WEIGHTS_BY_RUBRIC: Mapping[str, Mapping[str, float]] = {
+    "v1": DEFAULT_WEIGHTS,
+    "v2": DEFAULT_WEIGHTS,
+}
 SEVERITIES = frozenset(DEFAULT_WEIGHTS)
 
 # Phase 0 decision: any critical finding caps the review at 50, however large the MR is.

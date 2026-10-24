@@ -17,6 +17,7 @@ from app.models import (
     ReviewFinding,
     User,
 )
+from app.scoring.verdict import VERDICT_LABEL
 
 EVENTS = ("review.done", "review.failed", "review.severe")
 EVENT_LABEL = {
@@ -121,6 +122,10 @@ def build(
             "label": f"{project.path_with_namespace} {label}" if project else label,
             "reviewed_sha": review.reviewed_sha,
             "score": float(review.score) if review.score is not None else None,
+            "verdict": review.verdict,
+            "risk_score": review.risk_score,
+            "intent": review.intent,
+            "trigger": review.trigger,
             "loc_reviewed": review.loc_reviewed,
             "summary": review.summary,
             "model": review.model,
@@ -162,6 +167,10 @@ def sample(dashboard_url: str, now: datetime | None = None) -> dict[str, Any]:
             "label": "demo/app !1",
             "reviewed_sha": "0" * 40,
             "score": 88.0,
+            "verdict": "fix_required",
+            "risk_score": 3,
+            "intent": None,
+            "trigger": "dashboard",
             "loc_reviewed": 42,
             "summary": "Đây là thông báo thử từ CodePulse.",
             "model": None,
@@ -193,8 +202,11 @@ def text(event: str, payload: dict[str, Any]) -> str:
     business = payload.get("business_project")
     prefix = f"[{esc(business['name'])}] " if business else ""
     score = f"{review['score']:.0f}/100" if review.get("score") is not None else "—"
+    verdict = VERDICT_LABEL.get(review.get("verdict") or "", "")
     headline = f"*{prefix}{esc(review['label'])} — {EVENT_LABEL.get(event, event)}"
-    headline += f": {score}*" if review["status"] == "done" else "*"
+    headline += (
+        f": {verdict + ' · ' if verdict else ''}{score}*" if review["status"] == "done" else "*"
+    )
     counts = review.get("findings") or {}
     parts = [f"{counts[s]} {s}" for s in SEVERITIES if counts.get(s)]
     facts = [", ".join(parts) if parts else "không có finding"]

@@ -29,7 +29,7 @@ import {
   useSort,
 } from "@/components/ui";
 import { qs, useApi } from "@/lib/api";
-import { CATEGORY_LABEL, date, num, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
+import { CATEGORY_LABEL, VERDICT_LABEL, date, num, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
 import type { ProjectDetail, ProjectRepoRow } from "@/lib/types";
 
 type Period = "week" | "month";
@@ -177,6 +177,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         <Kpi label="Điểm trung bình" value={t.avg_score} change={t.delta.avg_score} />
         <Kpi label="Critical + High mới" value={t.severe} digits={0} change={t.delta.severe} higherIsBetter={false} />
         <Kpi label="Critical/High đang mở" value={t.open_severe} digits={0} hint="Chưa xử lý, mọi thời kỳ" />
+        <Kpi label="Tỉ lệ APPROVE" value={t.pass_rate} unit="%" hint={`${t.approve} approve · ${t.fix_required} fix required · ${t.block} block`} />
         <Kpi label="Repo" value={t.repos} digits={0} unit={`· ${t.loc.toLocaleString("vi-VN")} LOC`} />
       </div>
 
@@ -231,6 +232,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 <tr>
                   <th>Thay đổi</th>
                   <th>Repo</th>
+                  <th>Kết luận</th>
                   <th className="num">Điểm</th>
                   <th>Ngày</th>
                   <th />
@@ -243,6 +245,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                       <Link href={`/reviews/${r.id}`}>{r.target}</Link>
                     </td>
                     <td className="muted">{r.project}</td>
+                    <td>{r.verdict ? <span className={`verdict ${r.verdict}`}>{VERDICT_LABEL[r.verdict]}</span> : <span className="muted">—</span>}</td>
                     <td className="num">{r.status === "done" ? <strong>{num(r.score, 0)}</strong> : <Pill tone={r.status === "failed" ? "bad" : "warn"}>{r.status}</Pill>}</td>
                     <td className="muted">{date(r.finished_at)}</td>
                     <td>{r.web_url && <ExternalLink href={r.web_url}>GitLab</ExternalLink>}</td>

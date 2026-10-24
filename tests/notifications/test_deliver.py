@@ -24,7 +24,10 @@ def test_bodies_per_format_and_the_text_rendering() -> None:
     plain = body_for("json", "review.done", PAYLOAD)
     assert plain["event"] == "review.done" and plain["review"]["label"] == "demo/app !1"
     slack = body_for("slack", "review.severe", PAYLOAD)
-    assert slack["mrkdwn"] is True and "Review có critical/high: 88/100" in slack["text"]
+    assert (
+        slack["mrkdwn"] is True
+        and "Review có critical/high: FIX REQUIRED · 88/100" in slack["text"]
+    )
     teams = body_for("teams", "review.done", PAYLOAD)
     assert teams["@type"] == "MessageCard" and "demo/app !1" in teams["title"]
     rendered = text("review.done", PAYLOAD)

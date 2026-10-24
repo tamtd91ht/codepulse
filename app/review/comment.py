@@ -10,26 +10,43 @@ from collections import Counter
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.models import Review, ReviewFinding
 from app.review.postprocess import SEVERITY_RANK
+from app.scoring.verdict import VERDICT_LABEL
 
 log = logging.getLogger(__name__)
 
 MARKER = "<!-- codepulse-review -->"
 TOP_FINDINGS = 5
 SEVERITY_ICONS = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}
+VERDICT_ICONS = {"approve": "✅", "fix_required": "⚠️", "block": "❌"}
 
 
 def render(review: Review, findings: list[ReviewFinding]) -> str:
     counts = Counter(f.severity for f in findings)
     score = f"{float(review.score):.0f}/100" if review.score is not None else "—"
+    verdict = ""
+    if review.verdict:
+        label = VERDICT_LABEL.get(review.verdict, review.verdict)
+        icon = VERDICT_ICONS.get(review.verdict, "")
+        verdict = f" · {icon} **{label}** (risk {review.risk_score or 0})"
     lines = [
         MARKER,
-        f"### CodePulse review: {score}",
+        f"### CodePulse review: {score}{verdict}",
         "",
         " · ".join(f"{SEVERITY_ICONS[s]} {s}: {counts.get(s, 0)}" for s in SEVERITY_RANK),
         "",
     ]
     if review.summary:
         lines += [review.summary, ""]
+    intent = review.intent or {}
+    if intent.get("summary"):
+        drift = (
+            "" if intent.get("matches_intent") in (None, True) else " · **lệch so với mô tả MR**"
+        )
+        lines += [f"**Thay đổi làm gì:** {intent['summary']}{drift}", ""]
+        for concern in intent.get("concerns") or []:
+            lines.append(f"- 🧭 {concern}")
+        if intent.get("concerns"):
+            lines.append("")
     top = sorted(findings, key=lambda f: (-SEVERITY_RANK[f.severity], -(f.confidence or 0)))
     if top:
         lines.append("| Mức | Vị trí | Vấn đề |")

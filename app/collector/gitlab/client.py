@@ -147,6 +147,37 @@ class GitLabClient:
     def commit_diff(self, project_id: int, sha: str) -> list[Any]:
         return list(self.paginate(f"/projects/{project_id}/repository/commits/{sha}/diff"))
 
+    def commit(self, project_id: int, sha: str) -> Any:
+        return self.get(f"/projects/{project_id}/repository/commits/{sha}", {"stats": "true"})
+
+    def branches(self, project_id: int, search: str | None = None, limit: int = 100) -> list[Any]:
+        """Branches by name match (GitLab sorts by name); newest activity is not sortable here."""
+        params: dict[str, Any] = {"per_page": min(limit, 100)}
+        if search:
+            params["search"] = search
+        return list(self.get(f"/projects/{project_id}/repository/branches", params) or [])[:limit]
+
+    def commits_on_ref(
+        self,
+        project_id: int,
+        ref: str,
+        since: datetime | None,
+        until: datetime | None,
+        limit: int,
+    ) -> list[Any]:
+        """Newest first, at most `limit`, with stats; stops paginating once it has enough."""
+        params: dict[str, Any] = {"ref_name": ref, "with_stats": "true"}
+        if since:
+            params["since"] = since.isoformat()
+        if until:
+            params["until"] = until.isoformat()
+        out: list[Any] = []
+        for item in self.paginate(f"/projects/{project_id}/repository/commits", params):
+            out.append(item)
+            if len(out) >= limit:
+                break
+        return out
+
     def merge_requests(self, project_id: int, updated_after: datetime | None) -> Iterator[Any]:
         params: dict[str, Any] = {"state": "all", "order_by": "updated_at", "sort": "asc"}
         if updated_after:

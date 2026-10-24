@@ -64,6 +64,7 @@ function ProjectCard({ p }: { p: ProjectEntry }) {
         <Sparkline values={p.trend.map((v) => (v === null ? null : String(v)))} />
       </div>
       <div className="stats">
+        {p.pass_rate !== null && <Pill tone={p.pass_rate >= 80 ? "good" : p.pass_rate >= 50 ? "warn" : "bad"}>{num(p.pass_rate, 0)}% approve</Pill>}
         <Pill tone={p.severe ? "bad" : "good"}>{p.severe} critical/high mới</Pill>
         <Pill tone={p.open_severe ? "warn" : undefined}>{p.open_severe} đang mở</Pill>
         {p.delta.reviews !== 0 && (
@@ -151,6 +152,7 @@ export default function OverviewPage() {
         <Kpi label="Điểm trung bình" value={t.avg_score} change={t.delta.avg_score} hint="Trung bình điểm review (0–100) của mọi dự án" />
         <Kpi label="Critical + High mới" value={t.severe} digits={0} change={t.delta.severe} higherIsBetter={false} />
         <Kpi label="Critical/High đang mở" value={t.open_severe} digits={0} hint="Finding nghiêm trọng chưa xử lý, mọi thời kỳ" />
+        <Kpi label="Tỉ lệ APPROVE" value={t.pass_rate} unit="%" hint={`${t.approve} approve · ${t.fix_required} fix · ${t.block} block`} />
         <Kpi label="Dự án · Repo" value={t.projects} digits={0} unit={`· ${t.repos} repo`} />
       </div>
 

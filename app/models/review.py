@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import (
     BigInteger,
@@ -10,6 +11,7 @@ from sqlalchemy import (
     Numeric,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -53,6 +55,17 @@ class Review(TimestampMixin, Base):
     error: Mapped[str | None]
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # docs/specs/17: merge verdict (approve|fix_required|block) and risk score from the
+    # findings; the model's design & intent notes; what asked for the review and who.
+    verdict: Mapped[str | None]
+    risk_score: Mapped[int | None]
+    intent: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    trigger: Mapped[str] = mapped_column(
+        server_default="webhook"
+    )  # webhook|dashboard|telegram|backfill|rerun
+    requested_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
 
 
 class ReviewFinding(TimestampMixin, Base):

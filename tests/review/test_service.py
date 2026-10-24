@@ -8,9 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.collector.gitlab.client import GitLabClient
-from app.models import Commit, MergeRequest, Project, Review, ReviewFinding
+from app.models import Commit, MergeRequest, Project, Review, ReviewFinding, User
 from app.review.providers import FakeLLMProvider, LLMError, ReviewPrompt
-from app.review.service import ReviewService, ReviewSettings
+from app.review.rubric import RUBRIC_VERSION
+from app.review.service import ReviewService, ReviewSettings, merge_intents
 from tests.collector.fake_gitlab import API, BASE, fixture, mount
 from tests.collector.test_collect import make_project
 
@@ -151,7 +152,7 @@ def test_stale_running_review_is_taken_over(
         target_type="mr",
         mr_id=merge_request.id,
         reviewed_sha=HEAD,
-        rubric_version="v1",
+        rubric_version=RUBRIC_VERSION,
         status="running",
         started_at=datetime.now(UTC) - timedelta(hours=2),
     )
@@ -201,3 +202,128 @@ def test_monthly_budget_pauses_reviews(
     if status == "failed":
         assert review.error == "monthly LLM budget reached"
         assert provider.prompts == []
+
+
+def techlead(prompt: ReviewPrompt) -> dict[str, Any]:
+    """A v2-shaped answer: a finding that cites a team rule, plus design & intent notes."""
+    return {
+        "summary": "Parser added.",
+        "score": 70,
+        "intent": {
+            "summary": "Thêm parser cho review.",
+            "matches_intent": True,
+            "altitude": "right",
+            "concerns": ["Parser nằm trong app/review thay vì app/collector"],
+        },
+        "findings": [
+            {
+                "severity": "high",
+                "category": "style",
+                "file_path": "app/review/parser.py",
+                "line_start": 5,
+                "line_end": 5,
+                "title": "Query without tenantId",
+                "message": "m",
+                "confidence": 0.8,
+                "rule_id": "Quy tắc dự án OmiCRM",
+            }
+        ],
+    }
+
+
+def test_rules_reach_the_prompt_and_verdict_intent_rule_id_are_stored(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    from app.models import BusinessProject
+
+    project, merge_request = mr
+    bp = BusinessProject(name="OmiCRM", review_rules="- tenantId on every query")
+    db_session.add(bp)
+    db_session.flush()
+    project.business_project_id = bp.id
+    project.review_rules_paths = ".claude/rules/money.md"
+    lead = User(full_name="Lead", primary_email="lead@x.vn")
+    db_session.add(lead)
+    db_session.flush()
+    provider = FakeLLMProvider(techlead)
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        router.get(url__regex=r".*/repository/files/\.claude%2Frules%2Fmoney\.md/raw").mock(
+            return_value=httpx.Response(200, text="# Money safety\nidempotency")
+        )
+        mount(router)
+        router.get(f"{API}/projects/1001/merge_requests/1").respond(
+            json={**fixture("merge_requests.json")[0], "description": "Adds the parser"}
+        )
+        service = ReviewService(db_session, client, provider, SETTINGS)
+        review = service.review_mr(
+            project, merge_request, HEAD, trigger="dashboard", requested_by=lead.id
+        )
+
+    assert review is not None and review.status == "done"
+    user_prompt = provider.prompts[0].user
+    assert "## Quy tắc dự án OmiCRM\n- tenantId on every query" in user_prompt
+    assert "## .claude/rules/money.md\n# Money safety" in user_prompt
+    assert "Team rules" in user_prompt and "rule_id" in user_prompt
+    assert (review.verdict, review.risk_score) == ("fix_required", 3)
+    assert review.intent == {
+        "summary": "Thêm parser cho review.",
+        "matches_intent": True,
+        "altitude": "right",
+        "concerns": ["Parser nằm trong app/review thay vì app/collector"],
+    }
+    assert (review.trigger, review.requested_by_user_id) == ("dashboard", lead.id)
+    finding = db_session.scalars(
+        select(ReviewFinding).where(ReviewFinding.review_id == review.id)
+    ).one()
+    assert finding.rule_id == "Quy tắc dự án OmiCRM"
+    assert review.rubric_version == RUBRIC_VERSION
+
+
+def test_merge_intents_takes_the_worst_verdict_and_unions_concerns() -> None:
+    from app.review.schema import Intent
+
+    assert merge_intents([]) is None
+    merged = merge_intents(
+        [
+            Intent(summary="A", matches_intent=True, altitude="right", concerns=["x"]),
+            Intent(summary="B", matches_intent=False, altitude="under", concerns=["x", "y"]),
+        ]
+    )
+    assert merged == {
+        "summary": "A",
+        "matches_intent": False,
+        "altitude": "under",
+        "concerns": ["x", "y"],
+    }
+
+
+def test_a_rerun_of_a_failed_review_records_the_new_trigger(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+
+    def boom(prompt: ReviewPrompt) -> Any:
+        raise LLMError("claude failed")
+
+    failed = run(db_session, FakeLLMProvider(boom), project, merge_request)
+    assert (failed.status, failed.trigger) == ("failed", "webhook")
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount(router)
+        router.get(f"{API}/projects/1001/merge_requests/1").respond(
+            json=fixture("merge_requests.json")[0]
+        )
+        service = ReviewService(db_session, client, FakeLLMProvider(), SETTINGS)
+        again = service.review_mr(project, merge_request, HEAD, trigger="rerun", requested_by=999)
+    assert again is not None and again.id == failed.id and again.status == "done"
+    assert (again.trigger, again.requested_by_user_id) == ("rerun", None)  # 999 is nobody
+
+
+def test_rules_files_touched_by_the_diff_are_not_used(db_session: Session) -> None:
+    from app.review.rules import build_rules
+
+    project = Project(
+        external_id=1, path_with_namespace="demo/p", review_rules_paths="rules.md, other.md"
+    )
+    text = build_rules(None, project, lambda p: f"content of {p}", skip={"rules.md"})
+    assert "content of rules.md" not in text and "không dùng" in text
+    assert "content of other.md" in text
