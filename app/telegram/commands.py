@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import urlsplit
 
+from app.models.source import ALL_BRANCHES
 from app.telegram.resolve import rank
 
 Action = Literal["mr", "commit", "last", "lastmr", "today", "open"]
@@ -94,7 +95,7 @@ class ReviewArgs:
     repo_hint: str | None = None  # repo path hint (argument or taken from a URL)
     people: tuple[str, ...] = ()  # user hints ("me", "@name", email, name part)
     days: int = 1  # window of the "today" action (range=7d -> 7)
-    branch: str | None = None  # branch= (default: the repo's default branch)
+    branch: str | None = None  # branch= (default: repo's review branch, else default; * = all)
     # Keyed form without a single explicit target: show the picker (buttons) instead of queuing
     # everything; all=1 queues everything at once like the legacy actions.
     pick: bool = False
@@ -154,6 +155,8 @@ def parse_keyed(args: Sequence[str]) -> ReviewArgs | str | None:
     user = pairs.get("user") or pairs.get("author") or None
     window = pairs.get("range") or pairs.get("since") or None
     branch = pairs.get("branch") or pairs.get("ref") or None
+    if branch and branch.casefold() in ("*", "all"):
+        branch = ALL_BRANCHES  # every branch
     auto = (pairs.get("all") or pairs.get("auto") or "").casefold() in TRUE_WORDS
     if ref and (from_url := parse_gitlab_url(ref)):
         url_kind, path, value = from_url

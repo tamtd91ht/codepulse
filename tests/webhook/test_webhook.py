@@ -279,3 +279,29 @@ def test_webhook_rejects_sources_outside_the_allowlist(
     app.dependency_overrides[get_settings] = lambda: Settings(webhook_allowed_ips=["10.9.9.0/24"])
     assert post(client, "Push Hook", PUSH).status_code == 403  # TestClient comes from "testclient"
     assert queue.jobs == []
+
+
+def test_the_repo_review_branch_is_for_listing_pushes_to_it_only_sync(
+    db_session: Session, project: Project, queue: FakeQueue
+) -> None:
+    # Reviewing direct pushes to another branch than the default is a decision left open.
+    project.review_branch = "develop"
+    db_session.flush()
+    handle_event(
+        db_session,
+        queue,
+        "Push Hook",
+        push("refs/heads/develop", "2" * 40),
+        commit_in_mr=lambda p, sha: False,
+    )
+    assert queued_functions(queue) == ["sync_project_job"]
+
+
+def test_every_branch_is_for_listing_only_not_for_reviewing_each_push(
+    db_session: Session, project: Project, queue: FakeQueue
+) -> None:
+    project.review_branch = "*"
+    db_session.flush()
+    payload = push("refs/heads/feature", "2" * 40)
+    handle_event(db_session, queue, "Push Hook", payload, commit_in_mr=lambda p, sha: False)
+    assert queued_functions(queue) == ["sync_project_job"]

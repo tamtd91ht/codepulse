@@ -521,3 +521,60 @@ def test_deep_review_respects_the_repo_switch(
         review = service.review_mr(project, merge_request, HEAD)
     assert review is not None and review.mode == "fast" and review.deep is None
     assert agent.repo_calls == []
+
+
+def test_a_finished_head_is_not_reviewed_twice_unless_forced(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    first = run(db_session, FakeLLMProvider(sqli), project, merge_request)
+    assert (first.status, first.round) == ("done", 1)
+
+    def review(**kw: Any) -> Any:
+        with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+            mount(router)
+            router.get(f"{API}/projects/1001/merge_requests/1").respond(
+                json=fixture("merge_requests.json")[0]
+            )
+            service = ReviewService(db_session, client, FakeLLMProvider(), SETTINGS)
+            return service.review_mr(project, merge_request, HEAD, **kw)
+
+    assert review() is None or review().id == first.id  # no automatic second review
+    assert db_session.scalars(select(Review)).all() == [first]
+    # A forced review needs the MR open at this head, checked when the job runs.
+    assert review(force=True) is None
+    merge_request.state = "opened"
+    assert review(force=True, expected_round=2) is None  # a stale/duplicate request: no-op
+
+    again = review(force=True, trigger="rerun", expected_round=1)
+    assert again is not None and again.id != first.id
+    assert (again.round, again.status, again.trigger) == (2, "done", "rerun")
+    db_session.refresh(first)
+    assert (first.status, first.superseded_by) == ("superseded", again.id)
+    # The first round keeps its findings: history is never deleted.
+    kept = db_session.scalars(select(ReviewFinding).where(ReviewFinding.review_id == first.id))
+    assert [f.title for f in kept] == ["SQL injection"]
+    # The same request again (a duplicate job) finds round 2 and does nothing.
+    assert review(force=True, expected_round=1) is None
+
+
+def test_a_failed_new_round_leaves_the_old_round_counted(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    merge_request.state = "opened"
+    first = run(db_session, FakeLLMProvider(sqli), project, merge_request)
+
+    def boom(prompt: ReviewPrompt) -> Any:
+        raise LLMError("claude failed")
+
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount(router)
+        router.get(f"{API}/projects/1001/merge_requests/1").respond(
+            json=fixture("merge_requests.json")[0]
+        )
+        service = ReviewService(db_session, client, FakeLLMProvider(boom), SETTINGS)
+        failed = service.review_mr(project, merge_request, HEAD, force=True)
+    assert failed is not None and (failed.status, failed.round) == ("failed", 2)
+    db_session.refresh(first)
+    assert (first.status, first.superseded_by) == ("done", failed.id)

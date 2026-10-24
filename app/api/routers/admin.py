@@ -419,14 +419,15 @@ def update_project(
     if not changes:
         raise HTTPException(422, "nothing to update")
     for key, value in changes.items():
-        if key in ("review_rules", "review_rules_paths"):
-            value = (value or "").strip() or None  # "" clears
+        if key in ("review_rules", "review_rules_paths", "review_branch"):
+            value = (value or "").strip() or None  # "" clears (review_branch: default branch)
         elif value is None:
             raise HTTPException(422, f"{key} cannot be null")
         setattr(project, key, value)
     audited = {
-        k: (len(v) if isinstance(v, str) else v) for k, v in changes.items()
-    }  # sizes, not text
+        k: (len(v) if isinstance(v, str) and k != "review_branch" else v)
+        for k, v in changes.items()
+    }  # sizes, not text (a branch name is not content)
     audit(session, principal.user_id, "project.update", f"project:{project.id}", **audited)
     session.commit()
     return project

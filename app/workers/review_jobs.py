@@ -82,6 +82,8 @@ def run_mr_review(
     trigger: str = "webhook",
     requested_by: int | None = None,
     agent: AgenticProvider | None = None,
+    force: bool = False,
+    expected_round: int | None = None,
 ) -> str:
     """Review one MR; `after` sees the finished review (notifications run once it is committed)."""
     project = session.get(Project, project_id)
@@ -109,7 +111,13 @@ def run_mr_review(
     with make_client(connection) as client:
         service = ReviewService(session, client, provider, review_settings(settings), agent=agent)
         review = service.review_mr(
-            project, mr, head_sha, trigger=trigger, requested_by=requested_by
+            project,
+            mr,
+            head_sha,
+            trigger=trigger,
+            requested_by=requested_by,
+            force=force,
+            expected_round=expected_round,
         )
     if review is not None:
         after(review)
@@ -127,6 +135,8 @@ def run_commit_review(
     trigger: str = "webhook",
     requested_by: int | None = None,
     agent: AgenticProvider | None = None,
+    force: bool = False,
+    expected_round: int | None = None,
 ) -> str:
     project = session.get(Project, project_id)
     if project is None:
@@ -144,7 +154,14 @@ def run_commit_review(
         raise ValueError(f"project {project.id} has no connection")
     with make_client(connection) as client:
         service = ReviewService(session, client, provider, review_settings(settings), agent=agent)
-        review = service.review_commit(project, commit, trigger=trigger, requested_by=requested_by)
+        review = service.review_commit(
+            project,
+            commit,
+            trigger=trigger,
+            requested_by=requested_by,
+            force=force,
+            expected_round=expected_round,
+        )
     if review is not None:
         after(review)
     return review.status if review else "not reviewed"
@@ -167,9 +184,12 @@ def review_mr_job(
     *,
     trigger: str = "webhook",
     requested_by: int | None = None,
+    force: bool = False,
+    expected_round: int | None = None,
 ) -> str:
     """`trigger` / `requested_by` (docs/specs/17) say what asked for the review: webhook,
-    dashboard, telegram, backfill or rerun, and which person, when one did."""
+    dashboard, telegram, backfill or rerun, and which person, when one did. `force` reviews a
+    finished head again as a new round."""
     settings = get_settings()
     finished: list[Review] = []
     with get_sessionmaker()() as session, session.begin():
@@ -185,13 +205,21 @@ def review_mr_job(
             trigger=trigger,
             requested_by=requested_by,
             agent=build_agentic_provider(settings),
+            force=force,
+            expected_round=expected_round,
         )
     _notify(finished)
     return status
 
 
 def review_commit_job(
-    project_id: int, sha: str, *, trigger: str = "webhook", requested_by: int | None = None
+    project_id: int,
+    sha: str,
+    *,
+    trigger: str = "webhook",
+    requested_by: int | None = None,
+    force: bool = False,
+    expected_round: int | None = None,
 ) -> str:
     settings = get_settings()
     finished: list[Review] = []
@@ -207,6 +235,8 @@ def review_commit_job(
             trigger=trigger,
             requested_by=requested_by,
             agent=build_agentic_provider(settings),
+            force=force,
+            expected_round=expected_round,
         )
     _notify(finished)
     return status

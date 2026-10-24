@@ -1,7 +1,7 @@
 """Choosing commits / MRs with buttons (docs/specs/15 §Chọn bằng nút)."""
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -12,7 +12,7 @@ from app.telegram.picker import MemoryPickerStore
 from app.telegram.poller import poll_bot
 from app.telegram.service import AllowAll, MemoryLinkCodes
 from tests.api.conftest import FakeQueue, World
-from tests.api.test_telegram import FakeTelegram, link, no_gitlab
+from tests.api.test_telegram import FakeGitLab, FakeTelegram, link, no_gitlab
 
 NOW = datetime(2026, 10, 24, 9, tzinfo=UTC)
 
@@ -147,7 +147,7 @@ def test_commit_picker_lists_everyone_and_queues_the_ticked_ones(
     (listing,) = tg.sent
     text = listing["text"]
     assert (
-        "<b>Commit gần đây</b> · demo/p · main · 7 ngày · 3 mục" in text
+        "<b>Commit gần đây</b> · demo/p · nhánh main · 7 ngày · 3 mục" in text
     )  # merge + 20-day-old left out
     assert "feat: one · An" in text and "fix: two · Binh" in text
     assert "✅ <b>3.</b> chore: three" in text and "đã review: APPROVE 82" in text
@@ -279,3 +279,104 @@ def test_bare_review_opens_the_menu_and_mr_picker_lists_open_mrs(
     tg.updates = [tap(23, "mn||x")]
     run(db_session, bot, settings, queue, tg, store)
     assert tg.edited[-1]["text"] == "Đã huỷ."
+
+
+def test_again_lets_the_owner_tick_a_reviewed_commit_as_a_new_round(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    seed_commits(db_session, world)
+    world.project.default_branch = "main"
+    link(db_session, world.lead, 777)
+    db_session.commit()
+    tg = FakeTelegram()
+    store = MemoryPickerStore()
+    tg.updates = [message_update(1, "/review type=commit repo=demo/p")]
+    run(db_session, bot, settings, queue, tg, store)
+    kb = buttons(tg.sent[0]["markup"])
+    token = kb["☐ 1"].split("|")[1]
+    tg.updates = [tap(2, kb["↻ Cho chọn mục đã review"])]
+    run(db_session, bot, settings, queue, tg, store)
+    kb = buttons(tg.edited[-1]["markup"])
+    assert "☐ 3" in kb and "↩ Chỉ mục mới" in kb
+    assert "review lại thành lần mới" in tg.edited[-1]["text"]
+    tg.updates = [tap(3, kb["☐ 3"]), tap(4, f"pk|{token}|go")]
+    run(db_session, bot, settings, queue, tg, store)
+    ((_, args, kwargs),) = queue.jobs
+    assert args == (world.project.id, "3" * 40)
+    assert kwargs["force"] is True and kwargs["job_id"].endswith("-again-1")
+    assert kwargs["expected_round"] == 1
+
+
+def test_a_member_cannot_review_their_own_work_again(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    seed_commits(db_session, world)
+    link(db_session, world.an, 777)
+    db_session.commit()
+    tg = FakeTelegram()
+    store = MemoryPickerStore()
+    tg.updates = [message_update(1, "/review type=commit repo=demo/p")]
+    run(db_session, bot, settings, queue, tg, store)
+    kb = buttons(tg.sent[0]["markup"])
+    assert "↻ Cho chọn mục đã review" not in kb  # re-rolling one's own score is a lead's call
+    token = kb["☐ 1"].split("|")[1]
+    tg.updates = [tap(2, f"pk|{token}|again")]
+    run(db_session, bot, settings, queue, tg, store)
+    assert "lead/admin" in tg.answered[-1]["text"]
+
+
+class BranchGitLab(FakeGitLab):
+    """GitLab that answers: an empty list of commits for whatever branch is asked."""
+
+    asked: ClassVar[list[str]] = []
+
+    def commits_on_ref(
+        self, project_id: int, ref: str, since: Any, until: Any, limit: int
+    ) -> list[Any]:
+        BranchGitLab.asked.append(ref)
+        return []
+
+
+def test_the_repo_review_branch_is_listed_and_an_empty_branch_says_how_to_change_it(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    seed_commits(db_session, world)  # in the DB: synced commits of other branches
+    world.project.default_branch = "main"
+    world.project.review_branch = "develop"
+    link(db_session, world.lead, 777)
+    db_session.commit()
+    tg = FakeTelegram()
+    BranchGitLab.asked = []
+    tg.updates = [message_update(1, "/review type=commit repo=demo/p")]
+    poll_bot(
+        db_session,
+        bot,
+        tg,
+        settings,
+        queue,
+        lambda connection: BranchGitLab(),
+        MemoryLinkCodes(),
+        AllowAll(),
+        lambda: NOW,
+        picker=MemoryPickerStore(),
+    )
+    assert BranchGitLab.asked == ["develop"]
+    # GitLab answered "nothing on develop": no fallback to commits of other branches.
+    (reply,) = tg.sent
+    assert "không có commit nào trong 7 ngày qua trên nhánh develop" in reply["text"]
+    assert "branch=all" in reply["text"]
+    # branch=all asks GitLab for every branch.
+    tg.updates = [message_update(2, "/review type=commit repo=demo/p branch=all")]
+    poll_bot(
+        db_session,
+        bot,
+        tg,
+        settings,
+        queue,
+        lambda connection: BranchGitLab(),
+        MemoryLinkCodes(),
+        AllowAll(),
+        lambda: NOW,
+        picker=MemoryPickerStore(),
+    )
+    assert BranchGitLab.asked[-1] == "*" and "mọi nhánh" in tg.sent[-1]["text"]

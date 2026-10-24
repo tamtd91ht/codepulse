@@ -2,6 +2,7 @@
 
 import { type FormEvent, Fragment, type ReactNode, useState } from "react";
 
+import { BranchEditor, branchText } from "@/components/BranchEditor";
 import { IconButton } from "@/components/icons";
 import { date, localDay } from "@/lib/format";
 import type { Project } from "@/lib/types";
@@ -32,6 +33,8 @@ export interface RepoActions {
   setRules(p: Project, rules: string, paths: string): Promise<boolean>;
   /** Rebuild the project profile in the worker (docs/specs/18). */
   refreshProfile(p: Project): Promise<boolean>;
+  /** Branch for "recent commits" and push reviews; "" = default, "*" = every branch. */
+  setBranch(p: Project, branch: string): Promise<boolean>;
 }
 
 export interface RepoSection {
@@ -67,7 +70,8 @@ export function RepoTable({
   showProject?: boolean;
 }) {
   const [reviewing, setReviewing] = useState<number | null>(null);
-  const columns = FLAGS.length + 3 + (selectable ? 1 : 0) + (showProject ? 1 : 0);
+  const [branching, setBranching] = useState<number | null>(null);
+  const columns = FLAGS.length + 4 + (selectable ? 1 : 0) + (showProject ? 1 : 0);
   const all = sections.flatMap((s) => s.items);
   const isSelected = (id: number) => !!selected?.has(id);
 
@@ -103,6 +107,9 @@ export function RepoTable({
                 {f.label}
               </th>
             ))}
+            <th className="branch-col" title="Nhánh lấy danh sách commit gần đây và review push">
+              Nhánh
+            </th>
             <th className="hide-sm">Sync</th>
             <th className="actions-col" />
           </tr>
@@ -192,6 +199,20 @@ export function RepoTable({
                             />
                           </td>
                         ))}
+                        <td className="branch-col" data-label="Nhánh">
+                          <button
+                            type="button"
+                            className="link"
+                            disabled={!p.tracked}
+                            aria-expanded={branching === p.id}
+                            aria-controls={`branch-editor-${p.id}`}
+                            aria-label={`Nhánh review của ${repoName(p)}: ${branchText(p)}`}
+                            title={p.tracked ? `${branchText(p)} · bấm để đổi` : "Repo đã bỏ theo dõi"}
+                            onClick={() => setBranching(branching === p.id ? null : p.id)}
+                          >
+                            {branchText(p)}
+                          </button>
+                        </td>
                         <td className="muted hide-sm">{date(p.last_synced_at)}</td>
                         <td className="actions-col">
                           <div className="actions">
@@ -218,6 +239,18 @@ export function RepoTable({
                           </div>
                         </td>
                       </tr>
+                      {branching === p.id && (
+                        <tr id={`branch-editor-${p.id}`}>
+                          <td colSpan={columns}>
+                            <BranchEditor
+                              project={p}
+                              name={repoName(p)}
+                              onSave={(branch) => actions.setBranch(p, branch)}
+                              onClose={() => setBranching(null)}
+                            />
+                          </td>
+                        </tr>
+                      )}
                       {reviewing === p.id && (
                         <tr>
                           <td colSpan={columns}>

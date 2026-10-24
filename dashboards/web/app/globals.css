@@ -1846,6 +1846,16 @@ tr.group-row td {
   text-align: center;
   width: 68px;
 }
+.repo-table .branch-col {
+  max-width: 180px;
+}
+.repo-table .branch-col button {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .repo-table .actions-col {
   width: 1%;
 }
@@ -1975,7 +1985,13 @@ code.phrase {
   .repo-table .flag-col {
     width: auto;
   }
-  .repo-table .flag-col::before {
+  .repo-table .branch-col {
+    display: flex;
+    max-width: 60%;
+    min-width: 0;
+  }
+  .repo-table .flag-col::before,
+  .repo-table .branch-col::before {
     content: attr(data-label);
     margin-right: 4px;
     font-size: 12px;
@@ -2380,4 +2396,11 @@ textarea.rules {
 .profile-card .facts dd {
   margin: 0;
   color: var(--text-2);
+}
+
+.rerun-bar {
+  padding: 10px 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
 }

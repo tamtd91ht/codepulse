@@ -1,6 +1,7 @@
 "use client";
 
-import { use, useRef, useState } from "react";
+import Link from "next/link";
+import { use, useEffect, useRef, useState } from "react";
 
 import { Alert, Card, EmptyState, ExternalLink, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
@@ -23,6 +24,7 @@ const FINDING_TONE: Record<string, "good" | "bad" | "warn" | "info" | undefined>
 };
 const REVIEW_STATUS: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "info" }> = {
   done: { label: "Đã review", tone: "good" },
+  superseded: { label: "Đã thay bằng lần mới", tone: "info" },
   failed: { label: "Lỗi", tone: "bad" },
   skipped: { label: "Bỏ qua", tone: "warn" },
   pending: { label: "Đang chờ", tone: "info" },
@@ -94,6 +96,64 @@ function DisputeForm({ finding, onDone }: { finding: Finding; onDone: () => Prom
         </span>
       )}
     </form>
+  );
+}
+
+/** A rerun the page started: polled until the worker picks it up (force) or it settles. */
+interface RerunState {
+  force: boolean;
+  pending: boolean;
+  message: string;
+  startedAt: number;
+}
+
+const RERUN_POLL_MS = 5000;
+const RERUN_POLL_MAX_MS = 15 * 60 * 1000;
+
+/** Lead/admin: a deliberate new round for this commit or open MR (the old round is kept). */
+function RerunBar({
+  review,
+  state,
+  onRun,
+}: {
+  review: ReviewDetail;
+  state: RerunState | null;
+  onRun: (force: boolean) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const finished = review.status === "done";
+  const blocked = busy || !!state?.pending || !review.can_rerun;
+  return (
+    <div className="toolbar rerun-bar" style={{ marginBottom: 12 }}>
+      <span className="muted small">
+        {state
+          ? state.message
+          : finished
+            ? review.target_type === "mr"
+              ? "MR còn mở ở đúng head này: có thể review lại thành lần mới; lần hiện tại được giữ làm lịch sử."
+              : "Có thể review lại commit này thành lần mới; lần hiện tại được giữ làm lịch sử."
+            : "Lần review này lỗi hoặc bị bỏ qua: chạy lại được."}
+      </span>
+      <span className="spacer" />
+      {review.can_rerun && (
+        <button
+          type="button"
+          className={finished ? undefined : "primary"}
+          disabled={blocked}
+          onClick={async () => {
+            if (finished && !window.confirm("Review lại sẽ tốn ngân sách LLM và tạo lần review mới. Tiếp tục?")) return;
+            setBusy(true);
+            try {
+              await onRun(finished);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Đang gửi…" : state?.pending ? "Đang chờ worker…" : finished ? "↻ Review lại" : "Chạy lại"}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -204,11 +264,54 @@ function DeepCard({ review }: { review: ReviewDetail }) {
 
 export default function ReviewPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { data: review, error, mutate } = useApi<ReviewDetail>(`/reviews/${id}`);
+  const [rerun, setRerun] = useState<RerunState | null>(null);
+  const { data: review, error, mutate } = useApi<ReviewDetail>(`/reviews/${id}`, {
+    refreshInterval: rerun?.pending ? RERUN_POLL_MS : 0,
+  });
   const { data: me } = useApi<Me>("/auth/me");
+  // Stop polling once the worker took the rerun: a forced one supersedes this round, a plain
+  // one leaves queued/running; give up after RERUN_POLL_MAX_MS either way.
+  useEffect(() => {
+    if (!rerun?.pending || !review) return;
+    const taken = rerun.force ? review.superseded_by !== null : !["queued", "running"].includes(review.status);
+    const tooLong = Date.now() - rerun.startedAt > RERUN_POLL_MAX_MS;
+    if (taken || tooLong) {
+      setRerun({
+        ...rerun,
+        pending: false,
+        message: taken
+          ? rerun.force
+            ? "Lần review mới đã bắt đầu; xem trong bảng Lịch sử review."
+            : "Lần chạy lại đã xong."
+          : "Worker chưa nhận việc sau 15 phút; tải lại trang để xem trạng thái.",
+      });
+    }
+  }, [rerun, review]);
   if (!review) return <Loading error={error} rows={4} />;
+
+  async function startRerun(force: boolean): Promise<void> {
+    try {
+      await api.post(`/reviews/${id}/rerun`, { force });
+      setRerun({
+        force,
+        pending: true,
+        startedAt: Date.now(),
+        message: "Đã đưa vào hàng đợi; trang này tự cập nhật khi worker nhận việc.",
+      });
+      await mutate();
+    } catch (e) {
+      setRerun({
+        force,
+        pending: false,
+        startedAt: Date.now(),
+        message: `Lỗi: ${e instanceof ApiError ? e.message : String(e)}`,
+      });
+    }
+  }
   const isAuthor = me?.id === review.author_user_id;
+  const isLead = !!me && (me.is_admin || me.lead_teams.length > 0);
   const st = REVIEW_STATUS[review.status] ?? { label: review.status };
+  const newer = review.history.find((h) => h.id === review.superseded_by);
   const bySeverity = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   for (const f of review.findings) bySeverity[f.severity] += 1;
 
@@ -233,10 +336,28 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
                 Review sâu
               </Pill>
             )}
+            {review.round > 1 && <Pill tone="info">lần {review.round}</Pill>}
             {review.web_url && <ExternalLink href={review.web_url}>Mở trên GitLab</ExternalLink>}
           </span>
         }
       />
+
+      {review.status === "superseded" && (
+        <Alert tone="info">
+          Lần review này đã được thay bằng lần mới hơn
+          {newer ? (
+            <>
+              {" "}
+              (<Link href={`/reviews/${newer.id}`}>lần {newer.round}</Link>)
+            </>
+          ) : (
+            " (head mới của MR)"
+          )}
+          ; findings ở đây là lịch sử, không tính vào điểm nữa.
+        </Alert>
+      )}
+
+      {isLead && (review.can_rerun || rerun) && <RerunBar review={review} state={rerun} onRun={startRerun} />}
 
       <div className="grid kpis">
         {review.status === "done" && (
@@ -319,6 +440,50 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
       {review.summary && (
         <Card title="Tóm tắt">
           <p style={{ whiteSpace: "pre-wrap", color: "var(--text-2)" }}>{review.summary}</p>
+        </Card>
+      )}
+
+      {review.history.length > 1 && (
+        <Card title="Lịch sử review" subtitle="Mọi lần review của MR / commit này; điểm và finding của từng lần được giữ nguyên" flush>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Lần</th>
+                  <th>Commit</th>
+                  <th>Kết luận</th>
+                  <th className="num">Điểm</th>
+                  <th>Nguồn</th>
+                  <th>Ngày</th>
+                </tr>
+              </thead>
+              <tbody>
+                {review.history.map((h) => (
+                  <tr key={h.id} className={h.id === review.id ? undefined : "muted"}>
+                    <td>
+                      {h.id === review.id ? <strong>#{h.id} · lần {h.round}</strong> : <Link href={`/reviews/${h.id}`}>#{h.id} · lần {h.round}</Link>}
+                      {h.mode === "deep" ? " · sâu" : ""}
+                    </td>
+                    <td>
+                      <code>{h.reviewed_sha.slice(0, 8)}</code>
+                    </td>
+                    <td>
+                      {h.status === "done" && h.verdict ? (
+                        <span className={`verdict ${h.verdict}`}>{VERDICT_LABEL[h.verdict]}</span>
+                      ) : (
+                        <Pill tone={h.status === "failed" ? "bad" : h.status === "superseded" ? undefined : "warn"}>
+                          {REVIEW_STATUS[h.status]?.label ?? h.status}
+                        </Pill>
+                      )}
+                    </td>
+                    <td className="num">{h.score !== null ? num(h.score, 0) : "—"}</td>
+                    <td className="muted">{TRIGGER_LABEL[h.trigger] ?? h.trigger}</td>
+                    <td className="muted">{date(h.finished_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
 

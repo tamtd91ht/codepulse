@@ -13,6 +13,7 @@ from app.api.schemas import (
     BoardFindingOut,
     FindingOut,
     Page,
+    RerunIn,
     ReviewDetail,
     ReviewListItem,
     ReviewOut,
@@ -155,7 +156,49 @@ def get_review(review_id: int, principal: CurrentPrincipal, session: SessionDep)
         "findings": findings,
         "project": project.path_with_namespace if project else None,
         "web_url": url,
+        "history": _history(session, review),
+        "can_rerun": _can_rerun(session, review, project),
     }
+
+
+def _history(session: Session, review: Review) -> list[dict[str, Any]]:
+    """Every review of the same MR (all heads) or commit, oldest first."""
+    if review.mr_id is not None:
+        where = Review.mr_id == review.mr_id
+    elif review.commit_sha is not None:
+        where = Review.commit_sha == review.commit_sha
+    else:
+        return []
+    rows = session.scalars(
+        select(Review).where(Review.target_type == review.target_type, where).order_by(Review.id)
+    )
+    return [
+        {
+            "id": r.id,
+            "round": r.round,
+            "reviewed_sha": r.reviewed_sha,
+            "status": r.status,
+            "score": r.score,
+            "verdict": r.verdict,
+            "mode": r.mode,
+            "trigger": r.trigger,
+            "finished_at": r.finished_at,
+        }
+        for r in rows
+    ]
+
+
+def _can_rerun(session: Session, review: Review, project: Project | None) -> bool:
+    """A finished commit review may always run again; an MR review only while the MR is open
+    and this review is of its current head (older heads are history)."""
+    if project is None or not project.tracked or review.status not in ("done", "failed", "skipped"):
+        return False
+    if review.superseded_by is not None:
+        return False
+    if review.mr_id is None:
+        return True
+    mr = session.get(MergeRequest, review.mr_id)
+    return bool(mr and mr.state == "opened" and mr.head_sha == review.reviewed_sha)
 
 
 @router.post("/reviews/{review_id}/rerun", status_code=202)
@@ -164,22 +207,32 @@ def rerun_review(
     principal: LeadPrincipal,
     session: SessionDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
+    body: RerunIn | None = None,
 ) -> dict[str, str]:
-    """Re-run a failed or skipped review. A finished review is final for its sha and rubric:
-    a new push or a new rubric version produces a new review instead."""
+    """Re-run a failed or skipped review; with `force` also a finished one, as a new round
+    (docs/specs/17 §Lịch sử): the old round is kept and marked superseded. An MR can only be
+    reviewed again while it is open and only at its current head."""
     review = _visible_review(session, principal, review_id)
-    if review.status not in ("failed", "skipped"):
-        raise HTTPException(409, f"review is {review.status}; only failed or skipped can be re-run")
+    force = bool(body and body.force)
+    if review.status not in ("failed", "skipped") and not (force and review.status == "done"):
+        raise HTTPException(
+            409, f"review is {review.status}; only failed or skipped can be re-run (force for done)"
+        )
+    if review.superseded_by is not None:
+        raise HTTPException(409, "a newer round of this review exists already")
     project, _, _ = _target(session, review)
     if project is None:
         raise HTTPException(409, "review target is no longer known")
     if not project.tracked:
         raise HTTPException(409, "repo is not tracked; resume tracking first")
-    review.status, review.error = "queued", None
+    if review.status != "done":
+        review.status, review.error = "queued", None
     if review.mr_id is not None:
         mr = session.get(MergeRequest, review.mr_id)
         if mr is None:
             raise HTTPException(409, "merge request not found")
+        if force and (mr.state != "opened" or mr.head_sha != review.reviewed_sha):
+            raise HTTPException(409, "only an open MR at its current head can be reviewed again")
         args: tuple[Any, ...] = (project.id, mr.iid, review.reviewed_sha)
         func, job_id = (
             "review_mr_job",
@@ -193,11 +246,13 @@ def rerun_review(
         *args,
         trigger="rerun",
         requested_by=principal.user_id,
-        job_id=f"{job_id}-rerun-{review.id}",
+        force=force,
+        expected_round=review.round if force else None,
+        job_id=f"{job_id}-rerun-{review.id}-{review.round + 1 if force else review.round}",
         job_timeout=REVIEW_JOB_TIMEOUT,
         retry=REVIEW_RETRY,
     )
-    audit(session, principal.user_id, "review.rerun", f"review:{review.id}")
+    audit(session, principal.user_id, "review.rerun", f"review:{review.id}", force=force)
     session.commit()
     return {"status": "queued"}
 

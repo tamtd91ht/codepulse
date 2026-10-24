@@ -207,6 +207,11 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
         await api.patch(`/projects/${p.id}`, { review_rules: rules, review_rules_paths: paths });
         await repos.mutate();
       }, `Đã lưu quy tắc review của ${repoName(p)}.`),
+    setBranch: (p, branch) =>
+      run(async () => {
+        await api.patch(`/projects/${p.id}`, { review_branch: branch });
+        await repos.mutate();
+      }, `Đã đổi nhánh review của ${repoName(p)}.`),
     setFlag: (p: Project, flag: Flag, value: boolean) =>
       run(async () => {
         await api.patch(`/projects/${p.id}`, { [flag]: value });

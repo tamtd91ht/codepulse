@@ -1,11 +1,14 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
+
+# Project.review_branch value meaning "every branch" (docs/specs/17 §Nhánh review).
+ALL_BRANCHES = "*"
 
 
 class Connection(TimestampMixin, Base):
@@ -42,6 +45,9 @@ class Project(TimestampMixin, Base):
     external_id: Mapped[int] = mapped_column(BigInteger)
     path_with_namespace: Mapped[str]
     default_branch: Mapped[str | None]
+    # docs/specs/17 §Nhánh review: branch for "recent commits" and push reviews; NULL = the
+    # default branch, "*" = every branch.
+    review_branch: Mapped[str | None] = mapped_column(String(255))
     review_enabled: Mapped[bool | None] = mapped_column(server_default="true")
     post_mr_comment: Mapped[bool | None] = mapped_column(server_default="false")
     allow_external_llm: Mapped[bool | None] = mapped_column(server_default="true")

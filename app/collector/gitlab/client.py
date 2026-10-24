@@ -12,6 +12,7 @@ from urllib.parse import quote
 
 import httpx
 
+from app.models.source import ALL_BRANCHES
 from app.ratelimit import RateLimiter
 
 log = logging.getLogger(__name__)
@@ -170,8 +171,13 @@ class GitLabClient:
         until: datetime | None,
         limit: int,
     ) -> list[Any]:
-        """Newest first, at most `limit`, with stats; stops paginating once it has enough."""
-        params: dict[str, Any] = {"ref_name": ref, "with_stats": "true"}
+        """Newest first, at most `limit`, with stats; stops paginating once it has enough.
+        `ref` "*" lists every branch (GitLab `all=true`)."""
+        params: dict[str, Any] = {"with_stats": "true"}
+        if ref == ALL_BRANCHES:
+            params["all"] = "true"
+        else:
+            params["ref_name"] = ref
         if since:
             params["since"] = since.isoformat()
         if until:

@@ -39,6 +39,7 @@ from app.models import (
     TelegramRequest,
     User,
 )
+from app.models.source import ALL_BRANCHES
 from app.review.rubric import RUBRIC_VERSION
 from app.scoring.verdict import VERDICT_LABEL
 from app.telegram.commands import Command, ReviewArgs, match_repo, parse, parse_review
@@ -75,6 +76,22 @@ esc = html.escape
 
 
 # -- small stores (Redis in production, memory in tests) ------------------------------------------
+
+
+BRANCH_HINT = (
+    "Repo làm việc trên nhánh khác? Chọn <b>nhánh review</b> ở trang Admin, mục Repo, hoặc gõ"
+    " <code>/review type=commit branch=develop</code> (<code>branch=all</code>: mọi nhánh)."
+)
+
+
+def review_branch(project: Project, asked: str | None = None) -> str:
+    """The branch "recent commits" come from: what the person typed, else the repo's review
+    branch set in admin, else GitLab's default branch (docs/specs/17 §Nhánh review)."""
+    return asked or project.review_branch or project.default_branch or "HEAD"
+
+
+def branch_label(branch: str) -> str:
+    return "mọi nhánh" if branch == ALL_BRANCHES else f"nhánh {branch}"
 
 
 class LinkCodes(Protocol):
@@ -289,6 +306,8 @@ class Target:
     ref: str  # iid for an MR, full sha for a commit
     sha: str  # reviewed sha (MR head or the commit itself)
     label: str  # "omicrm/api !12" / "omicrm/api a1b2c3d4"
+    force: bool = False  # review again although a finished review exists (new round)
+    round: int | None = None  # with force: the round being replaced (dedupes repeated taps)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -297,6 +316,8 @@ class Target:
             "ref": self.ref,
             "sha": self.sha,
             "label": self.label,
+            "force": self.force,
+            "round": self.round,
         }
 
 
@@ -1033,7 +1054,10 @@ class BotService:
                     t.sha,
                     trigger="telegram",
                     requested_by=me.user_id,
-                    job_id=f"review-mr-{t.project_id}-{t.ref}-{t.sha[:12]}",
+                    force=t.force,
+                    expected_round=t.round if t.force else None,
+                    job_id=f"review-mr-{t.project_id}-{t.ref}-{t.sha[:12]}"
+                    + (f"-again-{t.round}" if t.force else ""),
                     job_timeout=REVIEW_JOB_TIMEOUT,
                     retry=REVIEW_RETRY,
                 )
@@ -1044,7 +1068,9 @@ class BotService:
                     t.sha,
                     trigger="telegram",
                     requested_by=me.user_id,
-                    job_id=f"review-commit-{t.sha[:12]}",
+                    force=t.force,
+                    expected_round=t.round if t.force else None,
+                    job_id=f"review-commit-{t.sha[:12]}" + (f"-again-{t.round}" if t.force else ""),
                     job_timeout=REVIEW_JOB_TIMEOUT,
                     retry=REVIEW_RETRY,
                 )
@@ -1077,6 +1103,12 @@ class BotService:
         people = self._people(args.people, me) if args.people else []
         state = self._build_picker(kind, project, args, people, me, msg, raw)
         if state is None:
+            if kind == "commit":
+                branch = review_branch(project, args.branch)
+                return (
+                    f"{esc(project.path_with_namespace)}: không có commit nào"
+                    f" trong {args.days} ngày qua trên {esc(branch_label(branch))}.\n" + BRANCH_HINT
+                )
             return "Không có mục nào trong phạm vi này."
         self._picker.save(state)
         self.pending_markup = keyboard(state)
@@ -1094,9 +1126,9 @@ class BotService:
     ) -> PickerState | None:
         only = {u.id for u in people} or None
         if kind == "commit":
-            branch = args.branch or project.default_branch or "HEAD"
+            branch = review_branch(project, args.branch)
             items = self._commit_items(project, branch, args.days, only, me)
-            scope = f"{project.path_with_namespace} · {branch} · {args.days} ngày"
+            scope = f"{project.path_with_namespace} · {branch_label(branch)} · {args.days} ngày"
         else:
             items = self._mr_items(project, only, me)
             scope = project.path_with_namespace
@@ -1116,6 +1148,7 @@ class BotService:
             raw=raw,
             project_id=project.id,
             person_id=people[0].id if len(people) == 1 else None,
+            may_force=me.is_admin or me.is_lead,
         )
 
     def _state_of(self, kind: str, project_id: int, ref: str, sha: str) -> tuple[str, str]:
@@ -1154,15 +1187,17 @@ class BotService:
     ) -> list[Item]:
         since = self._clock() - timedelta(days=max(days, 1))
         raw: list[dict[str, Any]] = []
+        fetched = False
         connection = self._connection(project)
         if connection is not None:
             try:
                 with self._make_client(connection) as client:
                     raw = client.commits_on_ref(project.external_id, branch, since, None, MAX_ITEMS)
+                fetched = True
             except GitLabError as exc:
                 log.warning("picker: gitlab commits failed", extra={"status": exc.status_code})
         items: list[Item] = []
-        if raw:
+        if fetched:  # GitLab answered: its list is the truth for this branch, even when empty
             for c in raw:
                 if len(c.get("parent_ids") or []) > 1:
                     continue
@@ -1185,7 +1220,7 @@ class BotService:
                         me,
                     )
                 )
-        else:  # DB fallback: what the last sync saw on the default branch
+        else:  # GitLab unreachable: what the last sync saw (every branch; no branch info)
             for commit in self._s.scalars(
                 select(Commit)
                 .where(
@@ -1420,10 +1455,15 @@ class BotService:
             f"/review (menu) {op} {project.path_with_namespace}{who}",
         )
         if state is None:
-            what = "commit nào trong 7 ngày qua" if op == "commit" else "MR nào đang mở"
+            what = (
+                f"commit nào trong 7 ngày qua trên {esc(branch_label(review_branch(project)))}"
+                if op == "commit"
+                else "MR nào đang mở"
+            )
             whose = f" của {esc(people[0].full_name or '')}" if people else ""
+            hint = f"\n{BRANCH_HINT}" if op == "commit" else ""
             return CallbackOutcome(
-                text=f"{esc(project.path_with_namespace)}: không có {what}{whose}.",
+                text=f"{esc(project.path_with_namespace)}: không có {what}{whose}.{hint}",
                 markup=people_keyboard(
                     "commit" if op == "commit" else "mr", project.id, *self._people_for_picker(me)
                 ),
@@ -1464,7 +1504,8 @@ class BotService:
                 idx = int(arg)
             except ValueError:
                 return CallbackOutcome(answer="Nút lạ.")
-            if not (0 <= idx < len(state.items)) or not state.items[idx].selectable:
+            item = state.items[idx] if 0 <= idx < len(state.items) else None
+            if item is None or not item.tickable(state.again):
                 return CallbackOutcome(answer="Mục này không review được.")
             if idx in state.selected:
                 state.selected.remove(idx)
@@ -1472,8 +1513,21 @@ class BotService:
                 state.selected.append(idx)
             self._picker.save(state)
             return CallbackOutcome(text=render_text(state), markup=keyboard(state))
+        if op == "again":
+            # Deliberate: finished items become tickable (a new round each, old rounds kept).
+            if not state.may_force:
+                return CallbackOutcome(answer="Chỉ lead/admin được review lại.", alert=True)
+            state.again = not state.again
+            if not state.again:
+                state.selected = [i for i in state.selected if state.items[i].selectable]
+            self._picker.save(state)
+            return CallbackOutcome(
+                answer="Có thể chọn mục đã review." if state.again else "Chỉ chọn mục chưa review.",
+                text=render_text(state),
+                markup=keyboard(state),
+            )
         if op == "all":
-            state.selected = [i for i, it in enumerate(state.items) if it.selectable][
+            state.selected = [i for i, it in enumerate(state.items) if it.tickable(state.again)][
                 : self._settings.telegram_max_targets
             ]
             self._picker.save(state)
@@ -1493,9 +1547,27 @@ class BotService:
             return self._picker_go(state, cb, me)
         return CallbackOutcome(answer="Nút này không còn hiệu lực.")
 
+    def _latest_round(self, item: Item) -> int | None:
+        """The newest round of a done item now (a forced rerun replaces exactly that one)."""
+        query = select(Review.round).where(
+            Review.target_type == item.kind,
+            Review.reviewed_sha == item.sha,
+            Review.status.in_(("done", "queued", "running")),
+        )
+        if item.kind == "mr":
+            mr_id = self._s.scalar(
+                select(MergeRequest.id).where(
+                    MergeRequest.project_id == item.project_id, MergeRequest.iid == int(item.ref)
+                )
+            )
+            query = query.where(Review.mr_id == mr_id)
+        else:
+            query = query.where(Review.commit_sha == item.sha)
+        return self._s.scalar(query.order_by(Review.round.desc()).limit(1))
+
     def _picker_go(self, state: PickerState, cb: Callback, me: Principal) -> CallbackOutcome:
         chosen = [state.items[i] for i in sorted(set(state.selected)) if 0 <= i < len(state.items)]
-        chosen = [it for it in chosen if it.selectable]
+        chosen = [it for it in chosen if it.tickable(state.again and state.may_force)]
         if not chosen:
             return CallbackOutcome(answer="Chưa chọn mục nào.", alert=True)
         if not self._limiter.allow(f"user:{me.user_id}"):
@@ -1508,7 +1580,15 @@ class BotService:
             notes.append(f"Chỉ lấy {limit} mục đầu để giữ ngân sách LLM.")
             chosen = chosen[:limit]
         targets = [
-            Target(it.kind, it.project_id, it.ref, it.sha, it.label)
+            Target(
+                it.kind,
+                it.project_id,
+                it.ref,
+                it.sha,
+                it.label,
+                force=it.state == "done",
+                round=self._latest_round(it) if it.state == "done" else None,
+            )
             for it in chosen
             if me.may_review_author(it.author_user_id)
         ]

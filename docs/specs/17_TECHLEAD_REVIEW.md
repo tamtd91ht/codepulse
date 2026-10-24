@@ -22,6 +22,20 @@
 ## 4. Ai yêu cầu review
 - `reviews.trigger` ∈ `webhook | dashboard | telegram | backfill | rerun`, `reviews.requested_by_user_id` (SET NULL khi xoá người; người không còn tồn tại lúc job chạy → NULL). Truyền qua kwargs của job RQ (`review_mr_job(..., trigger=, requested_by=)`); khi một review `failed`/`skipped` được chạy lại, dòng cũ nhận trigger/người yêu cầu mới. Dùng để sau này tách "review tự động" với "review được yêu cầu" khi đánh giá người.
 
+## 4b. Lịch sử review và review lại (2026-10-26)
+- Mỗi lần review là một dòng `reviews` riêng, gắn với **commit** (`commit_sha`) hoặc **MR + head sha** (`mr_id`, `reviewed_sha`); finding và điểm của mỗi dòng giữ nguyên vĩnh viễn (không xoá, chỉ đánh dấu). Lịch sử của một MR gồm mọi head đã review; của một commit gồm mọi lần review.
+- **Không review lại tự động**: webhook, backfill, Telegram, dashboard đều bỏ qua một sha đã có review `done`/`skipped` cùng rubric (`_claim`). Push mới lên MR → review mới cho head mới, head cũ `superseded` (đã có từ spec 06).
+- **Review lại có chủ đích** (`force`): tạo dòng mới `round = N+1` cho cùng target + sha; dòng cũ giữ findings, có `superseded_by = id mới` ngay, và chỉ chuyển `status = superseded` khi lần mới xong `done` (lần mới lỗi/bỏ qua thì lần cũ vẫn được tính). Vì metric chỉ đếm `done`, lần mới thay lần cũ trong điểm tuần/tháng; lần cũ vẫn xem được. Lần review lại của cùng head không đánh dấu finding cũ là "fixed" và không tính vào fix_rate (không có push mới). Unique key: `(target_type, mr_id, commit_sha, reviewed_sha, rubric_version, round)`.
+- Chống trùng: job mang `expected_round` (lần mà người yêu cầu thấy); worker bỏ qua nếu lần đó đã có lần mới hơn, nên bấm lặp hay hai yêu cầu cùng lúc chỉ tốn một lần review. Điều kiện MR (đang mở, đúng head) được kiểm lại khi job chạy.
+- Cho phép: commit cũ bất kỳ (repo còn theo dõi); MR chỉ khi **đang mở** và review đó là của head hiện tại (head cũ là lịch sử). Quyền: lead/admin trên dashboard (`POST /reviews/{id}/rerun {"force": true}`, audit `review.rerun force=true`), Telegram: lead/admin bấm **↻ Cho chọn mục đã review** trong danh sách chọn rồi tick (member không có nút này: không tự review lại để đổi điểm của chính mình).
+- `GET /reviews/{id}` trả `history` (mọi lần review của MR/commit đó, cũ → mới) và `can_rerun`; trang review hiện bảng lịch sử và nút **Review lại**.
+
+## 4c. Nhánh review của repo (2026-10-27)
+- Vấn đề: danh sách "commit gần đây" (Telegram /review, trang Yêu cầu review) chỉ lấy nhánh mặc định của GitLab; team làm trên `develop` hay nhánh tính năng thì báo "không có commit nào trong 7 ngày" dù repo có commit.
+- `projects.review_branch` (migration d4a7c1e9f2b6): NULL = nhánh mặc định của GitLab, tên nhánh = nhánh đó, `*` = mọi nhánh (GitLab `all=true`). Admin chọn ở Admin › Repo, cột **Nhánh** (danh sách nhánh lấy từ GitLab, gõ để tìm). Tên nhánh được kiểm tra (không khoảng trắng, không `..`, không bắt đầu bằng `-`); audit ghi tên nhánh.
+- Thứ tự chọn nhánh: `branch=` gõ trong lệnh → nhánh review của repo → nhánh mặc định → `HEAD`. Telegram nhận `branch=all` (hoặc `*`) = mọi nhánh. Khi GitLab trả lời danh sách rỗng, không lấy commit nhánh khác từ DB nữa; chỉ dùng DB khi GitLab không trả lời. Tin nhắn rỗng nói rõ nhánh và cách đổi.
+- Webhook push không đổi: chỉ push thẳng lên nhánh mặc định được review tự động (quyết định Phase 0). Review tự động push lên nhánh review là `[DECISION]` để người dùng chọn (ngân sách LLM, rebase làm review lại cả loạt commit).
+
 ## 5. Review theo yêu cầu (dashboard)
 Trang **Yêu cầu review** (`/reviews/request`, mọi người đăng nhập):
 1. Chọn dự án → repo (chỉ repo đang theo dõi; repo tắt review bị mờ) → branch (gõ để tìm trên GitLab, mặc định default branch).

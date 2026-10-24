@@ -275,6 +275,27 @@ def test_admin_sets_rules_and_reviews_carry_verdicts(
         == 422
     )
 
+    # Review branch (docs/specs/17 §Nhánh review): a branch, "*" for every branch, "" clears.
+    url = f"/api/v1/projects/{world.project.id}"
+    develop = client.patch(url, headers=admin, json={"review_branch": " develop "})
+    assert develop.status_code == 200 and develop.json()["review_branch"] == "develop"
+    audit = db_session.scalars(
+        select(AuditLog).where(AuditLog.action == "project.update").order_by(AuditLog.id.desc())
+    ).first()
+    assert audit is not None and audit.details == {"review_branch": "develop"}
+    repos = client.get("/api/v1/repos", headers=admin).json()
+    assert [r["review_branch"] for r in repos] == ["develop"]
+    assert (
+        client.patch(url, headers=admin, json={"review_branch": "*"}).json()["review_branch"] == "*"
+    )
+    assert (
+        client.patch(url, headers=admin, json={"review_branch": ""}).json()["review_branch"] is None
+    )
+    for bad in ("two words", "../etc", "-x", "a..b", "feature/", "x.lock", "a//b", "a/.x", "@"):
+        assert client.patch(url, headers=admin, json={"review_branch": bad}).status_code == 422, bad
+    lead = client.patch(url, headers=as_user(world.lead), json={"review_branch": "develop"})
+    assert lead.status_code == 403
+
     world.an_review.verdict, world.an_review.risk_score = "block", 10
     world.an_review.intent = {
         "summary": "Thêm parser",

@@ -232,6 +232,21 @@ export default function GuidePage() {
           critical/high, review lỗi. Khác với webhook GitLab (GitLab gọi CodePulse khi có MR mới), webhook này là chiều
           CodePulse gọi ra ngoài. Nút <strong>Gửi thử</strong> gửi payload mẫu để kiểm tra endpoint.
         </p>
+        <h3>Nhánh review của repo</h3>
+        <p>
+          Mặc định, danh sách &quot;commit gần đây&quot; lấy từ nhánh mặc định của GitLab. Nếu team làm trên{" "}
+          <code>develop</code> hay nhánh khác, vào Admin › Repo, bấm vào ô <strong>Nhánh</strong> của repo và chọn nhánh
+          (hoặc <strong>Mọi nhánh</strong>). Telegram và trang Yêu cầu review sẽ dùng nhánh này. Trên Telegram có thể gõ{" "}
+          <code>branch=all</code> để xem mọi nhánh một lần.
+        </p>
+        <h3>Lịch sử review và review lại</h3>
+        <p>
+          Mỗi lần review là một bản ghi riêng theo commit hoặc theo head của MR; không bao giờ bị xoá và không review lại
+          tự động. Lead/admin có thể bấm <strong>Review lại</strong> trên trang review của một commit (bất kỳ) hoặc của MR
+          còn mở ở đúng head hiện tại: lần mới thay lần cũ trong điểm tuần/tháng, lần cũ vẫn xem được trong bảng{" "}
+          <strong>Lịch sử review</strong>. Trên Telegram, lead/admin bấm <strong>↻ Cho chọn mục đã review</strong> trong danh sách chọn. Lần cũ chỉ bị
+          thay khi lần mới review xong.
+        </p>
         <h3>Thêm repo</h3>
         <ol>
           <li>Lấy Project ID của repo trên GitLab: ngay dưới tên repo, hoặc Settings → General.</li>

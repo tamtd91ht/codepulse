@@ -107,6 +107,7 @@ def list_repos(principal: CurrentPrincipal, session: SessionDep) -> list[RepoOut
             id=p.id,
             path_with_namespace=p.path_with_namespace,
             default_branch=p.default_branch,
+            review_branch=p.review_branch,
             business_project_id=p.business_project_id,
             business_project=name,
             review_enabled=bool(p.review_enabled),

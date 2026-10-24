@@ -148,6 +148,69 @@ def test_rerun_only_failed_or_skipped(
     assert dev.status_code == 403
 
 
+def test_forced_rerun_makes_a_new_round_only_for_an_open_mr_at_its_head(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    queue: FakeQueue,
+    db_session: Session,
+) -> None:
+    url = f"/api/v1/reviews/{world.an_review.id}/rerun"
+    lead = as_user(world.lead)
+    detail = client.get(f"/api/v1/reviews/{world.an_review.id}", headers=lead).json()
+    assert detail["can_rerun"] is False and detail["round"] == 1
+    assert [h["id"] for h in detail["history"]] == [world.an_review.id]
+    # MR not open: a finished review stays final.
+    assert client.post(url, json={"force": True}, headers=lead).status_code == 409
+    world.mr.state = "opened"
+    db_session.commit()
+    assert client.get(f"/api/v1/reviews/{world.an_review.id}", headers=lead).json()["can_rerun"]
+    assert client.post(url, headers=lead).status_code == 409  # done without force
+    assert client.post(url, json={"force": True}, headers=as_user(world.an)).status_code == 403
+    ok = client.post(url, json={"force": True}, headers=lead)
+    assert ok.status_code == 202
+    ((func, args, kwargs),) = queue.jobs
+    assert func.endswith("review_mr_job") and args[1:] == (7, "a" * 40)
+    assert kwargs["force"] is True and kwargs["job_id"].endswith("-2")
+    assert kwargs["expected_round"] == 1
+    db_session.refresh(world.an_review)
+    assert world.an_review.status == "done"  # untouched until the new round finishes
+    # A new push: the old head is history, it cannot be reviewed again.
+    world.mr.head_sha = "c" * 40
+    db_session.commit()
+    assert client.post(url, json={"force": True}, headers=lead).status_code == 409
+    # A superseded round never starts another one.
+    world.mr.head_sha = "a" * 40
+    newer = Review(
+        target_type="mr",
+        mr_id=world.mr.id,
+        reviewed_sha="a" * 40,
+        status="done",
+        round=2,
+        author_user_id=world.an.id,
+        rubric_version=world.an_review.rubric_version,
+    )
+    db_session.add(newer)
+    db_session.flush()
+    world.an_review.status, world.an_review.superseded_by = "superseded", newer.id
+    db_session.commit()
+    assert client.post(url, json={"force": True}, headers=lead).status_code == 409
+    history = client.get(f"/api/v1/reviews/{newer.id}", headers=lead).json()["history"]
+    assert [(h["round"], h["status"]) for h in history] == [(1, "superseded"), (2, "done")]
+
+
+def test_forced_rerun_of_an_old_commit(
+    client: TestClient, world: World, as_user: Any, queue: FakeQueue, db_session: Session
+) -> None:
+    world.binh_review.status = "done"
+    db_session.commit()
+    url = f"/api/v1/reviews/{world.binh_review.id}/rerun"
+    ok = client.post(url, json={"force": True}, headers=as_user(world.lead))
+    assert ok.status_code == 202
+    ((func, args, kwargs),) = queue.jobs
+    assert func.endswith("review_commit_job") and args[1] == "b" * 40 and kwargs["force"]
+
+
 @pytest.mark.parametrize(
     ("method", "path"),
     [

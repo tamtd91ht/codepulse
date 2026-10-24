@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -127,8 +127,15 @@ class ReviewService:
         *,
         trigger: str = "webhook",
         requested_by: int | None = None,
+        force: bool = False,
+        expected_round: int | None = None,
     ) -> Review | None:
         if not (project.review_enabled and project.tracked):
+            return None
+        if force and (mr.state != "opened" or mr.head_sha != head_sha):
+            # Checked again at run time: the MR may have been merged or pushed since the
+            # request, and an old head is history (docs/specs/17 §Lịch sử).
+            log.info("forced review dropped: mr not open at this head", extra={"mr_id": mr.id})
             return None
         review = self._claim(
             "mr",
@@ -137,6 +144,8 @@ class ReviewService:
             author=self._user_of(mr.author_account_id),
             trigger=trigger,
             requested_by=requested_by,
+            force=force,
+            expected_round=expected_round,
         )
         if review is None:
             return None
@@ -156,7 +165,9 @@ class ReviewService:
         result = self._run(review, project, target, entries, head_sha)
         if result is not None and result.status == "done":
             supersede_mr_reviews(self._session, project, mr.iid, head_sha)
-            mark_fixed_findings(self._session, mr.id, result.id)
+            # A re-judgment of the same head is not a fix: only a new push can fix findings.
+            if review.round == 1:
+                mark_fixed_findings(self._session, mr.id, result.id)
             if project.post_mr_comment:
                 findings = list(
                     self._session.scalars(
@@ -174,6 +185,8 @@ class ReviewService:
         *,
         trigger: str = "webhook",
         requested_by: int | None = None,
+        force: bool = False,
+        expected_round: int | None = None,
     ) -> Review | None:
         if not (project.review_enabled and project.tracked):
             return None
@@ -184,6 +197,8 @@ class ReviewService:
             author=self._user_of(commit.author_account_id),
             trigger=trigger,
             requested_by=requested_by,
+            force=force,
+            expected_round=expected_round,
         )
         if review is None:
             return None
@@ -234,9 +249,14 @@ class ReviewService:
         author: int | None,
         trigger: str = "webhook",
         requested_by: int | None = None,
+        force: bool = False,
+        expected_round: int | None = None,
         **target: Any,
     ) -> Review | None:
-        """Get-or-create the review row; a finished or running review of the same sha is final."""
+        """Get-or-create the review row; a finished or running review of the same sha is final
+        unless `force`: then round N+1 starts, and round N is marked superseded once N+1 is
+        done (docs/specs/17 §Lịch sử). History is never deleted. `expected_round` is the round
+        the requester saw: a duplicate or concurrent forced job finds a newer one and stops."""
         if requested_by is not None and self._session.get(User, requested_by) is None:
             requested_by = None  # the requester left between enqueue and run
         values = {
@@ -262,14 +282,34 @@ class ReviewService:
                 Review.reviewed_sha == sha,
                 Review.rubric_version == RUBRIC_VERSION,
             )
+            .order_by(Review.round.desc())
             .with_for_update()
-        ).one()
+        ).first()
+        assert review is not None  # noqa: S101 - the insert above guarantees a row
         stale = (
             review.status == "running"
             and review.started_at is not None
             and review.started_at < self._clock() - STALE_RUNNING
         )
-        if review.status in FINISHED or (review.status == "running" and not stale):
+        if force and review.status == "done":
+            if review.superseded_by is not None or (
+                expected_round is not None and review.round != expected_round
+            ):
+                # Another forced run took this round already (FOR UPDATE re-reads the row but
+                # cannot see the newer one): one paid rerun per request.
+                log.info("forced review already taken", extra={"review_id": review.id})
+                return None
+            previous = review
+            review = Review(**{**values, "round": previous.round + 1})
+            self._session.add(review)
+            self._session.flush()
+            # A pointer now; previous stays "done" (and counted) until the new round succeeds.
+            previous.superseded_by = review.id
+            log.info(
+                "review round started",
+                extra={"review_id": review.id, "round": review.round, "previous": previous.id},
+            )
+        elif review.status in FINISHED or (review.status == "running" and not stale):
             log.info(
                 "review already handled", extra={"review_id": review.id, "status": review.status}
             )
@@ -284,6 +324,13 @@ class ReviewService:
     def _finish(self, review: Review, status: str, error: str | None = None) -> Review:
         review.status, review.error = status, error
         review.finished_at = self._clock()
+        if status == "done" and review.round > 1:
+            # The new round replaces the one it was forced from, only now that it has a result.
+            self._session.execute(
+                update(Review)
+                .where(Review.superseded_by == review.id, Review.status == "done")
+                .values(status="superseded")
+            )
         self._session.flush()
         log.info(
             "review finished", extra={"review_id": review.id, "status": status, "error": error}

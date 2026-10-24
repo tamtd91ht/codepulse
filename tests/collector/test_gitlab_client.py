@@ -127,3 +127,14 @@ def test_rate_limiter_waits_for_reset_when_nearly_exhausted() -> None:
         wall_clock=lambda: 1000.0,
     )
     assert slept == [30.0]
+
+
+@respx.mock
+def test_commits_on_ref_lists_one_branch_or_every_branch(client: GitLabClient) -> None:
+    route = respx.get(f"{API}/projects/7/repository/commits").respond(json=[{"id": "a"}])
+    assert client.commits_on_ref(7, "develop", None, None, 10) == [{"id": "a"}]
+    params = route.calls.last.request.url.params
+    assert params["ref_name"] == "develop" and "all" not in params
+    client.commits_on_ref(7, "*", None, None, 10)
+    params = route.calls.last.request.url.params
+    assert params["all"] == "true" and "ref_name" not in params

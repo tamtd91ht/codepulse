@@ -1,11 +1,25 @@
 """Response and request bodies of the REST API (docs/specs/09). OpenAPI is generated from these."""
 
 import base64
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, HttpUrl, StringConstraints
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    StringConstraints,
+    field_validator,
+)
+
+from app.models.source import ALL_BRANCHES
+
+# Git ref characters GitLab accepts in practice; no spaces, no "..", no leading "-".
+BRANCH_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./+@-]{0,254}")
 
 
 class Page[T](BaseModel):
@@ -73,6 +87,7 @@ class ProjectOut(ORM):
     review_rules: str | None = None
     review_rules_paths: str | None = None
     deep_review: bool = True
+    review_branch: str | None = None  # NULL: default branch; "*": every branch
     profile_at: datetime | None = None
 
 
@@ -142,6 +157,28 @@ class ProjectPatch(BaseModel):
     # Comma/newline separated paths inside the repo, read on the default branch (max 10).
     review_rules_paths: str | None = Field(default=None, max_length=2000)
     deep_review: bool | None = None  # docs/specs/18
+    # docs/specs/17 §Nhánh review: "" clears (default branch), "*" every branch.
+    review_branch: str | None = Field(default=None, max_length=255)
+
+    @field_validator("review_branch")
+    @classmethod
+    def _branch_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if value in ("", ALL_BRANCHES):
+            return value
+        parts = value.split("/")
+        if (
+            not BRANCH_RE.fullmatch(value)
+            or ".." in value
+            or "@{" in value
+            or value == "@"
+            or any(not p or p.startswith(".") or p.endswith(".lock") for p in parts)
+            or value.endswith(".")
+        ):
+            raise ValueError("not a valid branch name")
+        return value
 
 
 class UserOut(ORM):
@@ -386,6 +423,8 @@ class ReviewOut(ORM):
     requested_by_user_id: int | None = None
     mode: str = "fast"  # docs/specs/18: fast | deep
     deep: dict[str, Any] | None = None
+    round: int = 1
+    superseded_by: int | None = None
 
 
 class ReviewListItem(ReviewOut):
@@ -394,10 +433,31 @@ class ReviewListItem(ReviewOut):
     web_url: str | None
 
 
+class ReviewRound(BaseModel):
+    """One earlier/later review of the same target (docs/specs/17 §Lịch sử)."""
+
+    id: int
+    round: int
+    reviewed_sha: str
+    status: str
+    score: Decimal | None
+    verdict: str | None
+    mode: str
+    trigger: str
+    finished_at: datetime | None
+
+
 class ReviewDetail(ReviewOut):
     findings: list[FindingOut]
     project: str | None
     web_url: str | None
+    history: list[ReviewRound] = []  # every review of this MR / commit, oldest first
+    can_rerun: bool = False  # a deliberate new round is possible (commit, or MR still open)
+
+
+class RerunIn(BaseModel):
+    # force: review a finished head again as a new round (the old one is kept, superseded)
+    force: bool = False
 
 
 # -- review on request (docs/specs/17) ------------------------------------------------------------
@@ -407,6 +467,7 @@ class RepoOut(BaseModel):
     id: int
     path_with_namespace: str
     default_branch: str | None
+    review_branch: str | None = None
     business_project_id: int | None
     business_project: str | None
     review_enabled: bool

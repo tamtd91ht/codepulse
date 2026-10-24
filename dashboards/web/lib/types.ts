@@ -145,6 +145,21 @@ export interface Review {
   requested_by_user_id: number | null;
   mode: "fast" | "deep";
   deep: DeepReport | null;
+  round: number;
+  superseded_by: number | null;
+}
+
+/** One review of the same MR / commit (docs/specs/17 §Lịch sử). */
+export interface ReviewRound {
+  id: number;
+  round: number;
+  reviewed_sha: string;
+  status: string;
+  score: Num;
+  verdict: Verdict | null;
+  mode: "fast" | "deep";
+  trigger: string;
+  finished_at: string | null;
 }
 
 /** What the deep pass did with the first pass's findings (docs/specs/18). */
@@ -214,6 +229,8 @@ export interface ReviewDetail extends Review {
   findings: Finding[];
   project: string | null;
   web_url: string | null;
+  history: ReviewRound[];
+  can_rerun: boolean;
 }
 
 export interface Page<T> {
@@ -292,6 +309,9 @@ export interface Project {
   connection_id: number | null;
   external_id: number;
   path_with_namespace: string;
+  default_branch: string | null;
+  /** null: GitLab default branch; "*": every branch (docs/specs/17 §Nhánh review). */
+  review_branch: string | null;
   review_enabled: boolean | null;
   post_mr_comment: boolean | null;
   allow_external_llm: boolean | null;
@@ -311,6 +331,7 @@ export interface Repo {
   id: number;
   path_with_namespace: string;
   default_branch: string | null;
+  review_branch: string | null;
   business_project_id: number | null;
   business_project: string | null;
   review_enabled: boolean;

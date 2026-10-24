@@ -154,14 +154,24 @@ def _load_fixes(session: Session, reviews: dict[int, ReviewFacts]) -> None:
     latest_by_mr = {r.mr_id: rid for rid, r in reviews.items() if r.mr_id is not None}
     if not latest_by_mr:
         return
-    mr_of_review: dict[int, int] = {
-        review_id: mr_id
-        for review_id, mr_id in session.execute(
-            select(Review.id, Review.mr_id).where(
+    rows_by_id = {
+        review_id: (mr_id, sha)
+        for review_id, mr_id, sha in session.execute(
+            select(Review.id, Review.mr_id, Review.reviewed_sha).where(
                 Review.mr_id.in_(latest_by_mr), Review.status.in_(("done", "superseded"))
             )
         ).tuples()
         if mr_id is not None
+    }
+    latest_sha = {
+        mr_id: rows_by_id.get(rid, (None, None))[1] for mr_id, rid in latest_by_mr.items()
+    }
+    # Earlier rounds of the latest head (a forced re-judgment) are not "before the fix": a
+    # finding the rerun stopped reporting was not fixed by anyone (docs/specs/17 §Lịch sử).
+    mr_of_review: dict[int, int] = {
+        review_id: mr_id
+        for review_id, (mr_id, sha) in rows_by_id.items()
+        if review_id == latest_by_mr[mr_id] or sha != latest_sha[mr_id]
     }
     rows = session.execute(
         select(ReviewFinding.review_id, ReviewFinding.fingerprint).where(

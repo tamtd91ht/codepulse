@@ -206,7 +206,7 @@ export default function RequestReviewPage() {
                 onChange={(e) => {
                   const next = (repos.data ?? []).find((r) => r.id === Number(e.target.value)) ?? null;
                   setRepoId(next?.id ?? null);
-                  setBranch(next?.default_branch ?? "");
+                  setBranch(next?.review_branch ?? next?.default_branch ?? "");
                   setBranchSearch("");
                 }}
                 aria-label="Repo"
@@ -226,7 +226,7 @@ export default function RequestReviewPage() {
                 value={branch}
                 onChange={(e) => {
                   setBranch(e.target.value);
-                  setBranchSearch(e.target.value);
+                  setBranchSearch(e.target.value === "*" ? "" : e.target.value);
                 }}
                 placeholder={repo ? "Branch…" : "Chọn repo trước"}
                 aria-label="Branch"
@@ -237,6 +237,7 @@ export default function RequestReviewPage() {
                 style={{ flex: "1 1 220px" }}
               />
               <datalist id="branch-options">
+                <option value="*">mọi nhánh</option>
                 {(branches.data ?? []).map((b) => (
                   <option key={b.name} value={b.name}>
                     {b.default ? "mặc định" : b.last_commit_at ? relative(b.last_commit_at) : ""}

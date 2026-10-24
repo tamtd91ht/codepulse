@@ -49,6 +49,10 @@ class Item:
     def selectable(self) -> bool:
         return self.state in ("open", "failed")
 
+    def tickable(self, again: bool) -> bool:
+        """`again`: a finished item may be ticked too (it becomes a new review round)."""
+        return self.selectable or (again and self.state == "done")
+
 
 @dataclass
 class PickerState:
@@ -62,6 +66,8 @@ class PickerState:
     items: list[Item]
     project_id: int = 0  # the repo the list came from (for the people filter)
     person_id: int | None = None  # list filtered to this CodePulse user, None = everyone
+    again: bool = False  # finished items may be ticked (each becomes a new review round)
+    may_force: bool = False  # lead/admin: a member cannot re-roll the score of their own work
     selected: list[int] = field(default_factory=list)
     page: int = 0
     raw: str = ""  # the command, for the audit log
@@ -186,9 +192,18 @@ def render_text(state: PickerState) -> str:
         who = f" · {esc(it.author)}" if it.author else ""
         when = f" · {esc(it.when)}" if it.when else ""
         lines.append(f"{mark} <b>{i + 1}.</b> {esc(it.title)}{who}{when}{tail}")
-    selectable = [i for i, it in enumerate(state.items) if it.selectable]
+    selectable = [i for i, it in enumerate(state.items) if it.tickable(state.again)]
+    if state.again:
+        lines.append("Đang cho chọn cả mục đã review: mỗi mục sẽ được review lại thành lần mới.")
     if not selectable:
-        lines.append("Không có mục nào review được trong danh sách này.")
+        lines.append(
+            "Không có mục nào review được trong danh sách này"
+            + (
+                " (bấm ↻ để review lại mục đã xong)."
+                if any(it.state == "done" for it in state.items)
+                else "."
+            )
+        )
     else:
         lines.append(
             f"Bấm số để chọn (đã chọn {len(state.selected)}), rồi bấm <b>Review đã chọn</b>."
@@ -201,7 +216,7 @@ def keyboard(state: PickerState) -> dict[str, Any]:
     rows: list[list[dict[str, str]]] = []
     row: list[dict[str, str]] = []
     for i, it in state.page_items():
-        if not it.selectable:
+        if not it.tickable(state.again):
             continue
         mark = "☑" if i in state.selected else "☐"
         row.append({"text": f"{mark} {i + 1}", "callback_data": encode("pk", state.token, "t", i)})
@@ -218,8 +233,18 @@ def keyboard(state: PickerState) -> dict[str, Any]:
         },
     ]
     rows.append(controls)
+    extras: list[dict[str, str]] = []
     if state.project_id:
-        rows.append([{"text": "👤 Người", "callback_data": encode("pk", state.token, "who")}])
+        extras.append({"text": "👤 Người", "callback_data": encode("pk", state.token, "who")})
+    if state.may_force and any(it.state == "done" for it in state.items):
+        extras.append(
+            {
+                "text": "↩ Chỉ mục mới" if state.again else "↻ Cho chọn mục đã review",
+                "callback_data": encode("pk", state.token, "again"),
+            }
+        )
+    if extras:
+        rows.append(extras)
     nav: list[dict[str, str]] = []
     if state.page > 0:
         nav.append(

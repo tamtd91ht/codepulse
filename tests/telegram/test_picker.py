@@ -43,7 +43,7 @@ def state(n: int = 3, **states: str) -> PickerState:
         chat_id=-100,
         message_id=None,
         kind="commit",
-        scope_label="demo/p · main · 7 ngày",
+        scope_label="demo/p · nhánh main · 7 ngày",
         items=items,
         raw="/review type=commit",
     )
@@ -82,12 +82,20 @@ def test_render_escapes_and_marks_states() -> None:
 
 def test_keyboard_has_toggles_for_selectable_items_and_controls() -> None:
     st = state(3, s1="done")
+    st.may_force = True  # a lead: may tick done items after the toggle
     st.selected = [2]
     kb = keyboard(st)["inline_keyboard"]
-    toggles = [b for row in kb[:-2] for b in row]
+    toggles = [b for row in kb for b in row if "|t|" in b["callback_data"]]
     assert [b["text"] for b in toggles] == ["☐ 1", "☑ 3"]  # item 2 is done: no toggle
+    # A done item exists: one button lets the owner tick it anyway (a new review round).
+    assert [b["text"] for row in kb for b in row if b["callback_data"].endswith("|again")] == [
+        "↻ Cho chọn mục đã review"
+    ]
+    st.again = True
+    again = [b["text"] for row in keyboard(st)["inline_keyboard"] for b in row]
+    assert "☐ 2" in again and "↩ Chỉ mục mới" in again
     assert toggles[0]["callback_data"] == encode("pk", st.token, "t", 0)
-    controls, nav = kb[-2], kb[-1]
+    controls, nav = kb[-3], kb[-1]
     assert controls[1]["text"] == "▶ Review đã chọn (1)"
     assert nav[-1]["text"] == "✖ Huỷ" and len(nav) == 1  # one page: no paging buttons
 

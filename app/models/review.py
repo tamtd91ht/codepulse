@@ -31,6 +31,7 @@ class Review(TimestampMixin, Base):
             "commit_sha",
             "reviewed_sha",
             "rubric_version",
+            "round",
             name="uq_reviews_target",
             postgresql_nulls_not_distinct=True,
         ),
@@ -69,6 +70,12 @@ class Review(TimestampMixin, Base):
     # docs/specs/18: fast = diff only; deep = verified in a copy of the repository.
     mode: Mapped[str] = mapped_column(server_default="fast")
     deep: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # verification report / error
+    # docs/specs/17 §Lịch sử: a deliberate "review lại" of the same sha is round N+1; the
+    # earlier round stays (status superseded, superseded_by -> the new row).
+    round: Mapped[int] = mapped_column(server_default="1")
+    superseded_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("reviews.id", ondelete="SET NULL")
+    )
 
 
 class ReviewFinding(TimestampMixin, Base):
