@@ -2334,3 +2334,50 @@ textarea.rules {
     display: none;
   }
 }
+
+/* Repo profile cards (docs/specs/18) */
+.profile-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.profile-card .head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.profile-card .name {
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.profile-card .summary {
+  margin: 0;
+  color: var(--text-2);
+}
+.profile-card .chips {
+  margin: 0;
+  gap: 6px;
+}
+.chip.small {
+  padding: 1px 9px;
+  font-size: 12px;
+}
+.profile-card .facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+.profile-card .facts dt {
+  color: var(--muted);
+  font-weight: 600;
+}
+.profile-card .facts dd {
+  margin: 0;
+  color: var(--text-2);
+}

@@ -27,7 +27,14 @@ from app.models import (
 )
 from app.telegram.client import TelegramClient, TelegramError
 from app.telegram.poller import poll_bot
-from app.telegram.service import AllowAll, BotService, Incoming, MemoryLinkCodes, incoming
+from app.telegram.service import (
+    AllowAll,
+    BotService,
+    Incoming,
+    MemoryLinkCodes,
+    MemoryWebhookGuard,
+    incoming,
+)
 from tests.api.conftest import BOX, FakeQueue, World
 
 pytestmark = pytest.mark.integration
@@ -531,6 +538,180 @@ def test_poll_bot_survives_a_crashing_command_and_marks_undeliverable_results_fa
     )
     assert request.status == "failed" and request.error and "403" in request.error
     assert bot.last_error is None
+
+
+def webhook_409() -> TelegramError:
+    return TelegramError(
+        "getUpdates -> HTTP 409: Conflict: can't use getUpdates method while webhook is "
+        "active; use deleteWebhook",
+        409,
+    )
+
+
+class WebhookedTelegram(FakeTelegram):
+    """Refuses getUpdates until the webhook is deleted, like Telegram does."""
+
+    def __init__(
+        self, errors: list[TelegramError], delete_error: TelegramError | None = None
+    ) -> None:
+        super().__init__()
+        self.errors = errors
+        self.delete_error = delete_error
+        self.webhook_deleted = 0
+
+    def get_updates(self, offset: int | None, timeout: int = 0, limit: int = 50) -> list[Any]:
+        if self.errors:
+            raise self.errors.pop(0)
+        return super().get_updates(offset, timeout, limit)
+
+    def delete_webhook(self) -> None:
+        if self.delete_error is not None:
+            raise self.delete_error
+        self.webhook_deleted += 1
+
+
+def test_poll_bot_deletes_a_foreign_webhook_and_keeps_polling(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    link(db_session, world.an)
+    tg = WebhookedTelegram([webhook_409()])
+    tg.updates = [
+        {
+            "update_id": 30,
+            "message": {
+                "message_id": 1,
+                "chat": {"id": -100, "type": "group"},
+                "from": {"id": 777, "username": "tam"},
+                "text": "/whoami",
+            },
+        }
+    ]
+    now = datetime(2026, 10, 24, 9, tzinfo=UTC)
+    handled = poll_bot(
+        db_session, bot, tg, settings, queue, no_gitlab, MemoryLinkCodes(), AllowAll(), lambda: now
+    )
+    assert tg.webhook_deleted == 1
+    assert handled == 1 and bot.last_update_id == 30 and bot.last_error is None
+    assert tg.sent and tg.sent[0]["reply_to"] == 1
+    row = db_session.scalars(
+        select(AuditLog).where(AuditLog.action == "telegram.bot.webhook_deleted")
+    ).one()
+    assert row.target == f"telegram_bot:{bot.id}" and row.actor_user_id is None
+
+    # A second tick is a plain poll: no webhook call.
+    tg.updates = []
+    poll_bot(
+        db_session, bot, tg, settings, queue, no_gitlab, MemoryLinkCodes(), AllowAll(), lambda: now
+    )
+    assert tg.webhook_deleted == 1
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TelegramError("getUpdates -> HTTP 409: Conflict: terminated by other getUpdates", 409),
+        TelegramError("getUpdates -> HTTP 401: Unauthorized", 401),
+    ],
+)
+def test_poll_bot_leaves_other_errors_to_the_caller(
+    db_session: Session,
+    bot: TelegramBot,
+    settings: Settings,
+    queue: FakeQueue,
+    error: TelegramError,
+) -> None:
+    tg = WebhookedTelegram([error])
+    now = datetime(2026, 10, 24, 9, tzinfo=UTC)
+    with pytest.raises(TelegramError):
+        poll_bot(
+            db_session,
+            bot,
+            tg,
+            settings,
+            queue,
+            no_gitlab,
+            MemoryLinkCodes(),
+            AllowAll(),
+            lambda: now,
+        )
+    assert tg.webhook_deleted == 0
+
+
+def test_poll_bot_gives_up_when_the_webhook_comes_back(
+    db_session: Session, bot: TelegramBot, settings: Settings, queue: FakeQueue
+) -> None:
+    tg = WebhookedTelegram([webhook_409(), webhook_409()])
+    now = datetime(2026, 10, 24, 9, tzinfo=UTC)
+    with pytest.raises(TelegramError) as info:
+        poll_bot(
+            db_session,
+            bot,
+            tg,
+            settings,
+            queue,
+            no_gitlab,
+            MemoryLinkCodes(),
+            AllowAll(),
+            lambda: now,
+        )
+    assert info.value.status_code == 409 and tg.webhook_deleted == 1
+
+
+def test_poll_bot_deletes_a_returning_webhook_only_once_per_ttl(
+    db_session: Session, bot: TelegramBot, settings: Settings, queue: FakeQueue
+) -> None:
+    """The other system re-registers its webhook: no tug of war, the admin sees the conflict."""
+    ticks = iter([0.0, 5.0, 3700.0])
+    guard = MemoryWebhookGuard(clock=lambda: next(ticks), ttl_s=3600)
+    now = datetime(2026, 10, 24, 9, tzinfo=UTC)
+
+    def poll(tg: WebhookedTelegram) -> int:
+        return poll_bot(
+            db_session,
+            bot,
+            tg,
+            settings,
+            queue,
+            no_gitlab,
+            MemoryLinkCodes(),
+            AllowAll(),
+            lambda: now,
+            guard,
+        )
+
+    first = WebhookedTelegram([webhook_409()])
+    assert poll(first) == 0 and first.webhook_deleted == 1
+
+    second = WebhookedTelegram([webhook_409()])
+    with pytest.raises(TelegramError) as info:
+        poll(second)
+    assert second.webhook_deleted == 0 and info.value.status_code == 409
+    assert "webhook came back" in str(info.value) and "while webhook is active" in str(info.value)
+
+    third = WebhookedTelegram([webhook_409()])  # the TTL has passed: one more attempt
+    assert poll(third) == 0 and third.webhook_deleted == 1
+
+
+def test_poll_bot_propagates_a_failing_delete_webhook(
+    db_session: Session, bot: TelegramBot, settings: Settings, queue: FakeQueue
+) -> None:
+    tg = WebhookedTelegram(
+        [webhook_409()], delete_error=TelegramError("deleteWebhook -> HTTP 401: Unauthorized", 401)
+    )
+    now = datetime(2026, 10, 24, 9, tzinfo=UTC)
+    with pytest.raises(TelegramError) as info:
+        poll_bot(
+            db_session,
+            bot,
+            tg,
+            settings,
+            queue,
+            no_gitlab,
+            MemoryLinkCodes(),
+            AllowAll(),
+            lambda: now,
+        )
+    assert info.value.status_code == 401
 
 
 def test_incoming_ignores_bots_and_non_text() -> None:

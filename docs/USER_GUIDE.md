@@ -61,6 +61,7 @@ tính vào điểm và mọi chỉ số liên quan được tính lại ngay.
 - Mỗi review có **kết luận merge**: ✅ APPROVE (không có critical/high), ⚠️ FIX REQUIRED (có high), ❌ BLOCK (có critical), kèm risk = critical×10 + high×3 + medium×1. Điểm 0–100 vẫn là chỉ số theo dõi theo thời gian; kết luận là câu trả lời cho một thay đổi cụ thể. Khiếu nại được chấp nhận sẽ cập nhật cả điểm lẫn kết luận.
 - Mục *Thay đổi làm gì và có đúng hướng không* là nhận xét thiết kế của reviewer (đúng với mô tả MR chưa, over/under-engineering, quan ngại kiến trúc), không tính vào điểm.
 - Finding có nhãn quy tắc (ví dụ *Tenant isolation*) nghĩa là vi phạm quy tắc do admin/lead của dự án đặt.
+- Review có nhãn **Review sâu** nghĩa là reviewer đã mở mã nguồn để đối chứng: thẻ *Đối chứng trong mã nguồn* cho biết finding nào được giữ, hạ mức hay loại bỏ và vì sao (kèm file bằng chứng). Finding ghi *[ngoài phần thay đổi]* là vấn đề có sẵn trong code cũ, báo để bạn biết, không tính vào điểm của bạn.
 
 ## 4. Bot Telegram (nếu dự án của bạn có)
 
@@ -73,6 +74,16 @@ tính vào điểm và mọi chỉ số liên quan được tính lại ngay.
   - `/status`, `/critical`, `/score` – xem nhanh review gần đây, lỗi nghiêm trọng đang mở, điểm kỳ gần nhất.
 - Khi review xong, bot trả về cùng chat: điểm, số finding theo mức độ và link xem chi tiết trên dashboard.
 - Quyền giống dashboard: bạn chỉ review được việc của mình; lead review được người trong team mình.
+
+Cú pháp mới của lệnh review (dạng cũ vẫn dùng được):
+
+```
+/review type=mr id=412 repo=global-api      MR !412 của repo …global-api
+/review type=commit user=tamtd              commit gần nhất của tamtd
+/review type=commit user=tamtd range=7d     commit 7 ngày qua của tamtd
+/review type=mr user=an                     MR gần nhất của An (bỏ user = của bạn)
+```
+Repo và người viết tắt được; bot tự chọn, còn mơ hồ thì hỏi lại.
 
 ## 5. Đọc các chỉ số
 

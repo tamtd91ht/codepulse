@@ -216,6 +216,15 @@ export default function GuidePage() {
           ghi rõ tên quy tắc. Từ rubric v2, mỗi review còn có <strong>kết luận merge</strong> (APPROVE / FIX REQUIRED /
           BLOCK, risk = critical×10 + high×3 + medium×1) và nhận xét <em>thay đổi làm gì, có đúng hướng không</em>.
         </p>
+        <h3>Review sâu</h3>
+        <p>
+          Mặc định mỗi review có hai lượt. Lượt nhanh chỉ đọc diff. Lượt sâu tải bản sao repo tại đúng commit, đọc
+          README, <code>CLAUDE.md</code>, <code>AGENTS.md</code>, <code>.claude/rules</code>, tài liệu bảo mật và
+          manifest để dựng <strong>hồ sơ dự án</strong> (dự án là gì, stack, mô hình bảo mật, vùng rủi ro; xem ở trang
+          dự án), rồi reviewer mở mã nguồn (chỉ đọc) để đối chứng từng finding: giữ, hạ mức hay loại bỏ kèm file bằng
+          chứng, và tìm lỗi chỉ thấy được khi nhìn nhiều file. Tắt theo repo bằng cờ <strong>Sâu</strong>. Hồ sơ cũ thì
+          bấm <strong>Làm mới hồ sơ</strong> trong ngăn chi tiết dự án.
+        </p>
         <h3>Webhook thông báo</h3>
         <p>
           Ở tab <strong>Webhook thông báo</strong>, admin đặt endpoint nhận kết quả review (Slack, Teams hoặc service nội
@@ -330,29 +339,40 @@ export default function GuidePage() {
             <tbody>
               <tr>
                 <td>
-                  <code>/review mr 123 api</code>
+                  <code>/review type=mr id=412 repo=global-api</code>
                 </td>
-                <td>Review merge request !123 của repo api (hoặc dán link MR)</td>
+                <td>
+                  Review merge request !412 (hoặc <code>id=</code>link MR). Repo viết tắt được: <code>global-api</code> hiểu là{" "}
+                  <code>cloud-saas-global-api</code>; bot tự chọn, còn mơ hồ thì hỏi lại.
+                </td>
               </tr>
               <tr>
                 <td>
-                  <code>/review commit a1b2c3d</code>
+                  <code>/review type=commit id=a1b2c3d</code>
                 </td>
                 <td>Review một commit (sha hoặc link)</td>
               </tr>
               <tr>
                 <td>
-                  <code>/review last</code> · <code>/review lastmr</code>
+                  <code>/review type=commit user=tamtd</code> · <code>/review type=mr user=an</code>
                 </td>
                 <td>
-                  Commit / MR gần nhất của bạn (lead thêm tên người: <code>/review last @an</code>)
+                  Commit / MR gần nhất của một người (viết tắt theo username, email hoặc tên; bỏ <code>user=</code> là
+                  của bạn; lead mới review được người khác)
                 </td>
               </tr>
               <tr>
                 <td>
-                  <code>/review today an@company.vn binh@company.vn</code>
+                  <code>/review type=commit user=tamtd range=7d</code>
                 </td>
-                <td>Mọi commit hôm nay của những người đó (lead)</td>
+                <td>Mọi commit trong 7 ngày qua của người đó chưa được review (<code>range=today</code> cho hôm nay)</td>
+              </tr>
+              <tr>
+                <td className="muted">Dạng cũ</td>
+                <td className="muted">
+                  <code>/review mr 123 api</code>, <code>/review commit sha</code>, <code>/review last|lastmr|today …</code> vẫn
+                  dùng được
+                </td>
               </tr>
               <tr>
                 <td>

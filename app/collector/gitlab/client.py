@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable, Iterator
 from datetime import datetime
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -17,6 +18,10 @@ log = logging.getLogger(__name__)
 
 RETRY_STATUS = {429, 500, 502, 503, 504}
 PER_PAGE = 100
+
+
+class ArchiveTooLarge(Exception):
+    """The repository archive exceeds DEEP_REVIEW_MAX_ARCHIVE_MB."""
 
 
 class GitLabError(Exception):
@@ -225,6 +230,31 @@ class GitLabClient:
         return list(
             self.paginate(f"/projects/{project_id}/repository/commits/{sha}/merge_requests")
         )
+
+    def archive(self, project_id: int, sha: str, dest: Path, max_bytes: int) -> int:
+        """Stream `archive.tar.gz?sha=` to `dest`; stops (ArchiveTooLarge) past max_bytes.
+
+        One attempt: a multi-megabyte download is not retried blindly, the caller falls back.
+        """
+        self._limiter.acquire()
+        total = 0
+        try:
+            with self._http.stream(
+                "GET", f"/projects/{project_id}/repository/archive.tar.gz", params={"sha": sha}
+            ) as response:
+                if response.is_error:
+                    raise GitLabError(
+                        f"GET archive -> HTTP {response.status_code}", response.status_code
+                    )
+                with open(dest, "wb") as out:
+                    for piece in response.iter_bytes():
+                        total += len(piece)
+                        if total > max_bytes:
+                            raise ArchiveTooLarge(f"archive larger than {max_bytes} bytes")
+                        out.write(piece)
+        except httpx.TransportError as exc:
+            raise GitLabError(f"GET archive: {exc.__class__.__name__}") from exc
+        return total
 
     def file_raw(self, project_id: int, path: str, ref: str) -> str:
         encoded = quote(path, safe="")

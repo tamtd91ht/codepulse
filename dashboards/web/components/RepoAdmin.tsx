@@ -197,6 +197,11 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
     assign,
     setTracking,
     remove: (items) => setRemoving(items),
+    refreshProfile: (p) =>
+      run(
+        () => api.post(`/projects/${p.id}/profile/refresh`),
+        `Đã đưa việc dựng lại hồ sơ của ${repoName(p)} vào hàng đợi; xem ở trang dự án sau vài phút.`,
+      ),
     setRules: (p, rules, paths) =>
       run(async () => {
         await api.patch(`/projects/${p.id}`, { review_rules: rules, review_rules_paths: paths });

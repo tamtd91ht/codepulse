@@ -2,23 +2,35 @@
 
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from rq import Queue
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.collector.gitlab.client import GitLabError
 from app.collector.sync import ClientFactory, client_factory, sync_project
 from app.config import Settings, get_settings
 from app.crypto import secret_box
 from app.db import get_redis, get_sessionmaker
 from app.models import Commit, Connection, MergeRequest, Project, Review
 from app.notifications.jobs import enqueue_review_notifications
-from app.review.providers import LLMProvider, build_provider
+from app.review.checkout import checkout
+from app.review.discover import discover
+from app.review.profile import build_profile
+from app.review.providers import (
+    AgenticProvider,
+    LLMProvider,
+    build_agentic_provider,
+    build_provider,
+)
 from app.review.service import ReviewService, ReviewSettings
 
 log = logging.getLogger(__name__)
 
-REVIEW_JOB_TIMEOUT = 30 * 60
+# Fast pass + profile + deep pass (DEEP_REVIEW_TIMEOUT_S) must fit; STALE_RUNNING is longer.
+REVIEW_JOB_TIMEOUT = 45 * 60
 
 
 class NotSyncedYet(Exception):
@@ -34,6 +46,12 @@ def review_settings(settings: Settings) -> ReviewSettings:
         min_confidence=settings.min_confidence,
         monthly_budget_usd=settings.monthly_llm_budget_usd,
         scoring_weights=settings.scoring_weights,
+        deep_review=settings.deep_review,
+        deep_max_turns=settings.deep_review_max_turns,
+        deep_timeout_s=float(settings.deep_review_timeout_s),
+        deep_max_archive_bytes=settings.deep_review_max_archive_mb * 1024 * 1024,
+        deep_min_loc=settings.deep_review_min_loc,
+        profile_ttl=timedelta(days=settings.profile_ttl_days),
     )
 
 
@@ -63,6 +81,7 @@ def run_mr_review(
     after: Callable[[Review], None] = lambda review: None,
     trigger: str = "webhook",
     requested_by: int | None = None,
+    agent: AgenticProvider | None = None,
 ) -> str:
     """Review one MR; `after` sees the finished review (notifications run once it is committed)."""
     project = session.get(Project, project_id)
@@ -88,7 +107,7 @@ def run_mr_review(
     if connection is None:
         raise ValueError(f"project {project.id} has no connection")
     with make_client(connection) as client:
-        service = ReviewService(session, client, provider, review_settings(settings))
+        service = ReviewService(session, client, provider, review_settings(settings), agent=agent)
         review = service.review_mr(
             project, mr, head_sha, trigger=trigger, requested_by=requested_by
         )
@@ -107,6 +126,7 @@ def run_commit_review(
     after: Callable[[Review], None] = lambda review: None,
     trigger: str = "webhook",
     requested_by: int | None = None,
+    agent: AgenticProvider | None = None,
 ) -> str:
     project = session.get(Project, project_id)
     if project is None:
@@ -123,7 +143,7 @@ def run_commit_review(
     if connection is None:
         raise ValueError(f"project {project.id} has no connection")
     with make_client(connection) as client:
-        service = ReviewService(session, client, provider, review_settings(settings))
+        service = ReviewService(session, client, provider, review_settings(settings), agent=agent)
         review = service.review_commit(project, commit, trigger=trigger, requested_by=requested_by)
     if review is not None:
         after(review)
@@ -164,6 +184,7 @@ def review_mr_job(
             after=finished.append,
             trigger=trigger,
             requested_by=requested_by,
+            agent=build_agentic_provider(settings),
         )
     _notify(finished)
     return status
@@ -185,6 +206,45 @@ def review_commit_job(
             after=finished.append,
             trigger=trigger,
             requested_by=requested_by,
+            agent=build_agentic_provider(settings),
         )
     _notify(finished)
     return status
+
+
+def refresh_profile_job(project_id: int) -> dict[str, Any]:
+    """Admin button: rebuild the project profile from the default branch (docs/specs/18)."""
+    settings = get_settings()
+    with get_sessionmaker()() as session, session.begin():
+        project = session.get(Project, project_id)
+        if project is None or not project.tracked:
+            return {"built": False, "reason": "repo not tracked"}
+        if project.allow_external_llm is False:
+            return {"built": False, "reason": "external LLM disabled for this repo"}
+        connection = session.get(Connection, project.connection_id)
+        if connection is None:
+            return {"built": False, "reason": "no connection"}
+        ref = project.default_branch or "HEAD"
+        with client_factory(secret_box())(connection) as client:
+            try:
+                head = str(client.commit(project.external_id, ref).get("id") or ref)
+            except GitLabError:
+                head = ref
+            with checkout(
+                client,
+                project.external_id,
+                head,
+                max_archive_bytes=settings.deep_review_max_archive_mb * 1024 * 1024,
+                sensitive_paths=settings.sensitive_paths,
+            ) as (root, _stats):
+                try:
+                    profile, usage = build_profile(
+                        build_provider(settings), discover(root), project.path_with_namespace
+                    )
+                except ValueError as exc:
+                    log.warning("profile refresh: unusable answer", extra={"error": str(exc)[:120]})
+                    return {"built": False, "reason": "unusable answer"}
+        project.profile, project.profile_sha = profile, head
+        project.profile_at = datetime.now(UTC)
+        project.profile["cost_usd"] = round(usage.cost_usd, 4)
+        return {"built": True, "confidence": profile.get("confidence")}

@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     # Commits one "today" / "open" command may queue (LLM budget guard).
     telegram_max_targets: int = Field(default=20, ge=1, le=200)
 
+    # Deep review (docs/specs/18): a second pass with read-only tools inside a copy of the repo.
+    deep_review: bool = True
+    deep_review_max_turns: int = Field(default=40, ge=5, le=200)
+    deep_review_timeout_s: int = Field(default=600, ge=60, le=3600)
+    deep_review_max_archive_mb: int = Field(default=300, ge=10, le=5000)
+    deep_review_min_loc: int = Field(default=0, ge=0)  # 0 = every review gets the second pass
+    profile_ttl_days: int = Field(default=7, ge=1, le=90)
+
     # Dashboard "Yêu cầu review": commits listed per request, and queued per request.
     review_commits_list_max: int = Field(default=200, ge=20, le=500)
     review_batch_max: int = Field(default=50, ge=1, le=200)

@@ -116,6 +116,10 @@ class TelegramClient:
         )
         return list(result) if isinstance(result, list) else []
 
+    def delete_webhook(self) -> None:
+        """Remove a webhook registered on this token; getUpdates is refused while one exists."""
+        self.call("deleteWebhook", drop_pending_updates=False)
+
     def send_message(
         self, chat_id: int, text: str, reply_to_message_id: int | None = None
     ) -> dict[str, Any]:

@@ -143,6 +143,65 @@ export interface Review {
   intent: Intent | null;
   trigger: string;
   requested_by_user_id: number | null;
+  mode: "fast" | "deep";
+  deep: DeepReport | null;
+}
+
+/** What the deep pass did with the first pass's findings (docs/specs/18). */
+export interface DeepNote {
+  title: string;
+  file_path: string;
+  line_start: number;
+  severity: Severity;
+  reason: string;
+  evidence: string;
+  new_severity?: Severity;
+}
+
+export interface DeepReport {
+  kept?: number;
+  added?: number;
+  downgraded?: DeepNote[];
+  dropped?: DeepNote[];
+  ignored_verifications?: number;
+  project_fit?: string[];
+  files_seen?: number;
+  turns?: number | null;
+  cost_usd?: number;
+  instruction_sources?: string[];
+  error?: string;
+  detail?: string;
+  skipped?: string;
+}
+
+/** The project profile built from the repository's own documents (docs/specs/18). */
+export interface RepoProfile {
+  id: number;
+  path_with_namespace: string;
+  business_project_id: number | null;
+  deep_review: boolean;
+  profile: {
+    kind?: string;
+    summary?: string;
+    domain?: string;
+    features?: string[];
+    stack?: Partial<{ languages: string[]; frameworks: string[]; datastores: string[]; messaging: string[]; infra: string[] }>;
+    security?: Partial<{
+      authentication: string;
+      authorization: string;
+      tenancy: string;
+      secrets_management: string;
+      sensitive_data: string;
+      notes: string[];
+    }>;
+    risk_areas?: string[];
+    conventions?: string[];
+    review_focus?: string[];
+    confidence?: number;
+    instruction_sources?: string[];
+  } | null;
+  profile_at: string | null;
+  profile_sha: string | null;
 }
 
 export interface ReviewListItem extends Review {
@@ -242,6 +301,8 @@ export interface Project {
   untracked_at: string | null;
   review_rules: string | null;
   review_rules_paths: string | null;
+  deep_review: boolean;
+  profile_at: string | null;
 }
 
 /* ---- review on request (docs/specs/17) ---- */

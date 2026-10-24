@@ -72,6 +72,8 @@ class ProjectOut(ORM):
     untracked_at: datetime | None
     review_rules: str | None = None
     review_rules_paths: str | None = None
+    deep_review: bool = True
+    profile_at: datetime | None = None
 
 
 RULES_MAX = 12_000  # markdown that goes into every review prompt of the scope (docs/specs/17)
@@ -137,8 +139,9 @@ class ProjectPatch(BaseModel):
     post_mr_comment: bool | None = None
     allow_external_llm: bool | None = None
     review_rules: str | None = Field(default=None, max_length=RULES_MAX)
-    # Comma/newline separated paths inside the repo, read at the reviewed sha (max 10).
+    # Comma/newline separated paths inside the repo, read on the default branch (max 10).
     review_rules_paths: str | None = Field(default=None, max_length=2000)
+    deep_review: bool | None = None  # docs/specs/18
 
 
 class UserOut(ORM):
@@ -381,6 +384,8 @@ class ReviewOut(ORM):
     intent: dict[str, Any] | None = None
     trigger: str = "webhook"
     requested_by_user_id: int | None = None
+    mode: str = "fast"  # docs/specs/18: fast | deep
+    deep: dict[str, Any] | None = None
 
 
 class ReviewListItem(ReviewOut):
@@ -450,6 +455,16 @@ class ReviewCommitsIn(BaseModel):
 class ReviewCommitsOut(BaseModel):
     queued: list[str]
     skipped: list[dict[str, str]]  # {sha, reason}
+
+
+class RepoProfileOut(BaseModel):
+    id: int
+    path_with_namespace: str
+    business_project_id: int | None
+    deep_review: bool
+    profile: dict[str, Any] | None
+    profile_at: datetime | None
+    profile_sha: str | None
 
 
 # -- metrics --------------------------------------------------------------------------------------

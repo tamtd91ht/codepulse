@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -29,3 +30,19 @@ class LLMProvider(Protocol):
     name: str
 
     def review(self, prompt: ReviewPrompt) -> ReviewResult: ...
+
+
+class AgenticProvider(Protocol):
+    """A provider that can answer with read-only tools inside a directory (docs/specs/18)."""
+
+    name: str
+
+    def review_in_repo(
+        self,
+        prompt: ReviewPrompt,
+        workdir: str,
+        *,
+        tools: Sequence[str],
+        max_turns: int,
+        timeout_s: float,
+    ) -> ReviewResult: ...

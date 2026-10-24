@@ -1,0 +1,36 @@
+# 18 – Review sâu: hiểu dự án rồi đối chứng trong mã nguồn
+
+> Ngoài spec gốc, theo yêu cầu người dùng (2026-10-25): "cần chất lượng; agent phải detect được dự án là gì, chức năng gì, bảo mật ra sao, mở `.claude` (hoặc Codex, Cursor…) trong repo nếu có và review toàn diện". Lấy ý từ quy trình `/review-mr-dev` của omicx, nhưng giữ các rào an toàn của CodePulse.
+
+## Hai lượt review
+1. **Lượt nhanh** (như trước): chỉ diff + 30 dòng ngữ cảnh + quy tắc; CLI không có tool. Kết quả là *danh sách ứng viên*.
+2. **Lượt sâu** (mới, mặc định bật): cùng job worker, ngay sau lượt nhanh.
+   - Tải bản sao repo tại đúng sha qua API archive của GitLab (token sẵn có, không git, không token trong URL) vào thư mục tạm; giải nén phòng thủ: bỏ đường dẫn tuyệt đối/`..`, symlink, `.git`, `node_modules`/`vendor`/`dist`…, file > 2 MB, và mọi đường dẫn khớp `SENSITIVE_PATHS` ở **bất kỳ tầng thư mục nào, không phân biệt hoa thường** (`deploy/.env.production`, `certs/Server.PEM` đều bị loại); dừng và bỏ lượt sâu khi vượt 1 GiB giải nén hoặc 50.000 file (chống gzip bomb); xoá sạch khi xong. Archive quá `DEEP_REVIEW_MAX_ARCHIVE_MB` (300) → bỏ lượt sâu.
+   - **Khám phá dự án** (deterministic, `app/review/discover.py`): README; file hướng dẫn của các công cụ AI có sẵn trong repo — `CLAUDE.md`, `.claude/CLAUDE.md`, `.claude/rules/**/*.md`, agent review/audit/security trong `.claude/agents`, command review trong `.claude/commands`, `AGENTS.md`/`.codex`, `.cursorrules`/`.cursor/rules`, `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`, `GEMINI.md`, `CONTRIBUTING.md`, `SECURITY.md`; tài liệu `docs/*security*`, `docs/*architecture*`, `docs/specs/*`; manifest (`pyproject.toml`, `package.json`, `pom.xml`, `go.mod`…) để đoán stack; hình dạng thư mục; ngôn ngữ theo số file. Tổng ≤ 40.000 ký tự, mỗi file ≤ 8.000, secret bị che trước khi vào prompt.
+   - **Hồ sơ dự án** (`projects.profile`, `app/review/profile.py`): một lời gọi LLM không tool từ gói khám phá → `kind`, `summary`, `domain`, `features`, `stack` (ngôn ngữ, framework, datastore, messaging, infra), `security` (authn, authz, tenancy, secrets, dữ liệu nhạy cảm), `risk_areas`, `conventions`, `review_focus`, `confidence`. Cache `PROFILE_TTL_DAYS` (7); câu trả lời không đúng định dạng → giữ hồ sơ cũ; `confidence` < 0,3 → dùng cho lượt này nhưng không cache. Admin làm mới bằng nút ở Admin (job `refresh_profile_job`, ghi sha head của default branch; từ chối khi repo không cho gửi code ra LLM ngoài). Mọi người đăng nhập xem được ở trang dự án (quyết định: hồ sơ dựng từ tài liệu công khai trong repo, cùng phạm vi với danh sách repo).
+   - **Đối chứng** (`app/review/deep.py`): Claude Code CLI chạy trong thư mục bản sao với đúng ba tool `Read`, `Grep`, `Glob` (`--tools`; **không** `--allowedTools`: đọc trong thư mục làm việc không cần duyệt, đọc ngoài nó bị từ chối trong chế độ `-p`; `--disallowedTools Bash,Write,…`, `--max-turns`, `--setting-sources ""`, `--strict-mcp-config`), biến môi trường của tiến trình con chỉ gồm danh sách trắng (PATH, HOME, proxy, token xác thực…), không có `DATABASE_URL`/secret của worker; timeout `DEEP_REVIEW_TIMEOUT_S` (600). Mọi chuỗi mô hình trả về (tóm tắt, lý do, bằng chứng, finding) được che secret trước khi lưu. Prompt gồm hồ sơ dự án, hướng dẫn review của chính repo (trích dẫn như dữ liệu), quy tắc dự án/repo (spec 17), toàn bộ diff đánh số dòng và các ứng viên của lượt nhanh. Mô hình phải: (a) với mỗi ứng viên trả `keep` / `downgrade` / `drop` kèm file bằng chứng; (b) tìm vấn đề xuyên file (caller thiếu check mới, migration lệch model, contract/consumer, quy tắc của repo); (c) điền `intent` và `project_fit`.
+   - **Gộp** (`merge`): `drop` chỉ có hiệu lực khi `evidence_file` là file **không nằm trong diff** (tác giả không sửa được trong cùng thay đổi), tồn tại trong bản sao, kèm `evidence_lines` nằm trong độ dài file và lý do; `downgrade` cần file bằng chứng ngoài diff và chỉ hạ, không nâng; mỗi ứng viên chỉ nhận quyết định đầu tiên; index lạ bị bỏ qua. Khoảng dòng của mọi finding bị cắt tối đa 200 dòng. Finding mới phải trỏ tới file và dòng có thật; nằm ngoài dòng thay đổi → lưu mức `info` với tiền tố "[ngoài phần thay đổi]" (báo cho tác giả, **không chấm điểm** vì không phải lỗi của họ); trích đoạn lấy từ file (≤ 40 dòng, che secret); khử trùng theo fingerprint. Điểm, verdict, risk tính trên danh sách cuối.
+   - Kết quả: `reviews.mode = deep`, `reviews.deep` = {kept, added, downgraded[], dropped[] (tiêu đề, lý do, bằng chứng), ignored_verifications, project_fit, files_seen, turns, cost_usd, instruction_sources}. Tóm tắt và `intent` của lượt sâu thay cho lượt nhanh.
+   - **Mọi sự cố của lượt sâu không làm hỏng review**: archive lớn, GitLab lỗi, CLI timeout, JSON sai → giữ kết quả lượt nhanh, `mode = fast`, `deep = {"error": …}`; log warning.
+
+## Vì sao an toàn hơn cách "để agent tự đọc repo"
+- Repo, diff, hồ sơ và file hướng dẫn đều là dữ liệu không tin cậy; `CLAUDE.md` của repo **không** được nạp làm system prompt (`--setting-sources ""`), chỉ được trích dẫn. Không Bash, không ghi, không mạng, không MCP.
+- Tác giả không thể "tự duyệt": bỏ một finding cần bằng chứng là file thật trong repo; file quy tắc trong diff không được dùng (spec 17); finding ngoài diff không ảnh hưởng điểm của ai.
+- File nhạy cảm không có trong bản sao; secret trong tài liệu bị che; bản sao bị xoá ngay sau lượt review.
+- Chi phí bị chặn ba tầng: `DEEP_REVIEW_MIN_LOC` (bỏ lượt sâu cho diff rất nhỏ), `--max-turns`, ngân sách LLM tháng (`MONTHLY_LLM_BUDGET_USD`, lượt sâu bị bỏ khi hết). Tắt theo repo bằng cờ **Sâu** ở Admin, hoặc toàn hệ thống bằng `DEEP_REVIEW=false`.
+- Thời gian: job review có timeout 45 phút (`REVIEW_JOB_TIMEOUT`), `STALE_RUNNING` 50 phút để dòng review của job bị giết được tiếp quản; mọi lỗi không lường trước trong lượt sâu đều được bắt, lượt nhanh luôn được lưu.
+
+## Cấu hình
+| Biến | Mặc định | Ý nghĩa |
+|---|---|---|
+| `DEEP_REVIEW` | `true` | Bật lượt sâu (cần `LLM_PROVIDER=claude_code`) |
+| `DEEP_REVIEW_MAX_TURNS` | 40 | Số lượt tool tối đa mỗi review |
+| `DEEP_REVIEW_TIMEOUT_S` | 600 | Thời gian tối đa của lượt sâu |
+| `DEEP_REVIEW_MAX_ARCHIVE_MB` | 300 | Repo lớn hơn thì bỏ lượt sâu |
+| `DEEP_REVIEW_MIN_LOC` | 0 | Diff nhỏ hơn thì chỉ lượt nhanh |
+| `PROFILE_TTL_DAYS` | 7 | Hồ sơ dự án dùng lại trong bao lâu |
+
+## API và giao diện
+- `ReviewOut.mode`, `ReviewOut.deep`; trang review có thẻ **Đối chứng trong mã nguồn** (giữ / hạ mức / loại kèm lý do và bằng chứng, nhận xét độ phù hợp với dự án) và nhãn *Review sâu*.
+- `GET /repos/profiles?business_project_id=` (mọi người đăng nhập), `POST /projects/{id}/profile/refresh` (admin, audit `project.profile_refresh`), `PATCH /projects/{id}` `deep_review`.
+- Trang dự án: thẻ **Hồ sơ repo** (loại, tóm tắt, stack, mô hình bảo mật, vùng rủi ro). Admin: cờ *Sâu* theo repo, nút làm mới hồ sơ trong ngăn chi tiết dự án.

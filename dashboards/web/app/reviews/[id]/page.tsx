@@ -97,6 +97,111 @@ function DisputeForm({ finding, onDone }: { finding: Finding; onDone: () => Prom
   );
 }
 
+function DeepCard({ review }: { review: ReviewDetail }) {
+  const d = review.deep ?? {};
+  if (review.mode !== "deep") {
+    const why =
+      d.skipped ??
+      (d.error === "checkout"
+        ? "không tải được bản sao repo (quá lớn hoặc GitLab lỗi)"
+        : d.error === "LLMError"
+          ? "lượt gọi LLM lỗi hoặc quá giờ"
+          : d.error === "ValueError"
+            ? "LLM trả kết quả không đúng định dạng"
+            : d.error
+              ? "lỗi khi chạy lượt sâu"
+              : "lượt sâu không chạy");
+    return (
+      <Alert tone="info">
+        <span title={d.detail ?? undefined}>Chưa đối chứng trong mã nguồn: {why}.</span> Kết quả trên là của lượt review
+        nhanh (chỉ diff).
+      </Alert>
+    );
+  }
+  const dropped = d.dropped ?? [];
+  const downgraded = d.downgraded ?? [];
+  const fit = d.project_fit ?? [];
+  return (
+    <Card
+      title="Đối chứng trong mã nguồn"
+      subtitle={`Reviewer đã mở repo${
+        [d.files_seen != null && `${d.files_seen} file`, d.turns != null && `${d.turns} lượt đọc`].filter(Boolean).length
+          ? ` (${[d.files_seen != null && `${d.files_seen} file`, d.turns != null && `${d.turns} lượt đọc`].filter(Boolean).join(", ")})`
+          : ""
+      } để kiểm tra từng finding và tìm lỗi xuyên file`}
+    >
+      <div className="chips" style={{ marginBottom: 12 }}>
+        <Pill tone="good" icon="checkCircle">{d.kept ?? 0} giữ nguyên</Pill>
+        <Pill tone={downgraded.length ? "warn" : undefined}>{downgraded.length} hạ mức</Pill>
+        <Pill tone={dropped.length ? "info" : undefined}>{dropped.length} loại bỏ</Pill>
+        <Pill tone={d.added ? "primary" : undefined}>{d.added ?? 0} phát hiện thêm</Pill>
+        {!!d.ignored_verifications && (
+          <Pill tone="warn" icon="alert">{d.ignored_verifications} đề nghị bỏ không có bằng chứng, đã giữ nguyên</Pill>
+        )}
+      </div>
+      {fit.length > 0 && (
+        <>
+          <h4 style={{ margin: "6px 0" }}>Độ phù hợp với dự án</h4>
+          <ul style={{ margin: "0 0 12px", paddingLeft: 20, color: "var(--text-2)" }}>
+            {fit.map((c, i) => (
+              <li key={`fit-${i}`}>{c}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {(dropped.length > 0 || downgraded.length > 0) && (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Quyết định</th>
+                <th>Finding của lượt nhanh</th>
+                <th>Lý do</th>
+                <th>Bằng chứng</th>
+              </tr>
+            </thead>
+            <tbody>
+              {downgraded.map((n, i) => (
+                <tr key={`d-${i}`}>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <SeverityBadge severity={n.severity} /> → {n.new_severity && <SeverityBadge severity={n.new_severity} />}
+                  </td>
+                  <td>
+                    {n.title} <code>{n.file_path}:{n.line_start}</code>
+                  </td>
+                  <td>{n.reason}</td>
+                  <td>
+                    <code>{n.evidence}</code>
+                  </td>
+                </tr>
+              ))}
+              {dropped.map((n, i) => (
+                <tr key={`x-${i}`} className="muted">
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <Pill>loại</Pill> <SeverityBadge severity={n.severity} />
+                  </td>
+                  <td>
+                    {n.title} <code>{n.file_path}:{n.line_start}</code>
+                  </td>
+                  <td>{n.reason}</td>
+                  <td>
+                    <code>{n.evidence}</code>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {d.instruction_sources && d.instruction_sources.length > 0 && (
+        <p className="muted small" style={{ marginBottom: 0 }}>
+          Đã đọc hướng dẫn của repo: {d.instruction_sources.join(", ")}
+        </p>
+      )}
+    </Card>
+  );
+}
+
 export default function ReviewPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: review, error, mutate } = useApi<ReviewDetail>(`/reviews/${id}`);
@@ -123,6 +228,11 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
             <span>· rubric {review.rubric_version}</span>
             <span>· {review.model ?? "—"}</span>
             <span>· {TRIGGER_LABEL[review.trigger] ?? review.trigger}</span>
+            {review.mode === "deep" && (
+              <Pill tone="primary" icon="search">
+                Review sâu
+              </Pill>
+            )}
             {review.web_url && <ExternalLink href={review.web_url}>Mở trên GitLab</ExternalLink>}
           </span>
         }
@@ -200,6 +310,10 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
             </ul>
           )}
         </Card>
+      )}
+
+      {review.status === "done" && (review.mode === "deep" || review.deep?.error || review.deep?.skipped) && (
+        <DeepCard review={review} />
       )}
 
       {review.summary && (

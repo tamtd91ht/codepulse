@@ -379,8 +379,19 @@ function RulesEditor({
                       <td className="muted small">
                         {p.review_rules_paths ? `${p.review_rules_paths.split(/[,\n]/).filter(Boolean).length} file` : "không có file"}
                         {p.review_rules ? ` · ${p.review_rules.length} ký tự riêng` : ""}
+                        {" · hồ sơ "}
+                        {p.profile_at ? date(p.profile_at) : "chưa có"}
                       </td>
-                      <td style={{ textAlign: "right" }}>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button
+                          type="button"
+                          className="sm"
+                          title="Dựng lại hồ sơ dự án từ default branch (một lượt gọi LLM, chạy nền)"
+                          disabled={busy}
+                          onClick={() => void actions.refreshProfile(p)}
+                        >
+                          Làm mới hồ sơ
+                        </button>{" "}
                         <button type="button" className="sm" aria-expanded={repoOpen === p.id} onClick={() => setRepoOpen(repoOpen === p.id ? null : p.id)}>
                           {repoOpen === p.id ? "Đóng" : "Sửa"}
                         </button>

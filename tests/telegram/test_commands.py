@@ -84,3 +84,34 @@ REPOS = [Repo("vihat/omicrm/api"), Repo("vihat/omicrm/web"), Repo("vihat/shared/
 )
 def test_match_repo(hint: str | None, expected: list[str]) -> None:
     assert [r.path for r in match_repo(REPOS, hint, lambda r: r.path)] == expected
+
+
+def test_parse_review_keyed_form() -> None:
+    assert parse_review(["type=mr", "id=412", "repo=global-api"]) == ReviewArgs(
+        "mr", ref="412", repo_hint="global-api"
+    )
+    assert parse_review(["repo=global-api", "type=merge-request", "id=!412"]) == ReviewArgs(
+        "mr", ref="412", repo_hint="global-api"
+    )
+    assert parse_review(["type=commit", "id=a1b2c3d"]) == ReviewArgs("commit", ref="a1b2c3d")
+    assert parse_review(["type=commit", "user=tamtd"]) == ReviewArgs("last", people=("tamtd",))
+    assert parse_review(["type=commit", "user=tamtd", "range=7d"]) == ReviewArgs(
+        "today", people=("tamtd",), days=7
+    )
+    assert parse_review(["type=commit", "range=today", "repo=api"]) == ReviewArgs(
+        "today", repo_hint="api", days=1
+    )
+    assert parse_review(["type=mr", "user=an"]) == ReviewArgs("lastmr", people=("an",))
+    assert parse_review(["type=mr"]) == ReviewArgs("lastmr")
+    url = "https://gitlab.company.vn/vihat/omicrm/api/-/merge_requests/412"
+    assert parse_review(["type=mr", f"id={url}"]) == ReviewArgs(
+        "mr", ref="412", repo_hint="vihat/omicrm/api"
+    )
+    # Errors are messages, not exceptions.
+    assert "type" in str(parse_review(["repo=api"]))
+    assert "range" in str(parse_review(["type=mr", "range=7d"]))
+    assert "id" in str(parse_review(["type=mr", "id=abc"]))
+    assert isinstance(parse_review(["type=commit", "range=soon"]), str)
+    assert "Không hiểu" in str(parse_review(["type=commit", "extra"]))
+    assert "bỏ user=" in str(parse_review(["type=mr", "id=5", "user=an"]))
+    assert parse_review(["type=commit", "range=999d", "user=me"]).days == 90  # type: ignore[union-attr]

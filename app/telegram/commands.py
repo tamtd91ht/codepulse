@@ -1,5 +1,20 @@
 """Command grammar of the review bot. Pure functions: parsing and matching, no I/O.
 
+Preferred form (order-free key=value pairs; every key but type is optional):
+
+    /review type=mr|merge-request|commit [id=<iid|sha|url>] [repo=<hint>] [user=<hint>]
+            [range=today|3d|7d|30d]
+
+    type=mr id=412 repo=global-api        review MR !412 of cloud-saas-global-api
+    type=commit user=tamtd                the latest commit of tamtd (in the bot's scope)
+    type=commit user=tamtd range=7d       tamtd's commits of the last 7 days
+    type=mr user=an                       the latest MR of An
+
+Hints may be abbreviated ("global-api" for "cloud-saas-global-api", "tamtd" for
+tamtd@company.vn); the bot resolves them, asking an LLM when several items fit.
+
+Legacy positional form, still accepted:
+
     /review mr <iid|url> [repo]        review one merge request
     /review commit <sha> [repo]        review one commit
     /review last [repo] [user]         the latest commit of a person (default: you)
@@ -18,6 +33,8 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import urlsplit
+
+from app.telegram.resolve import rank
 
 Action = Literal["mr", "commit", "last", "lastmr", "today", "open"]
 ACTIONS: tuple[Action, ...] = ("mr", "commit", "last", "lastmr", "today", "open")
@@ -76,12 +93,84 @@ class ReviewArgs:
     ref: str | None = None  # MR iid or commit sha when given directly
     repo_hint: str | None = None  # repo path hint (argument or taken from a URL)
     people: tuple[str, ...] = ()  # user hints ("me", "@name", email, name part)
+    days: int = 1  # window of the "today" action (range=7d -> 7)
+
+
+KEYS = {"type", "id", "sha", "mr", "repo", "project", "user", "author", "range", "since"}
+TYPES = {
+    "mr": "mr",
+    "merge-request": "mr",
+    "merge_request": "mr",
+    "mergerequest": "mr",
+    "commit": "commit",
+}
+RANGE = re.compile(r"^(?:(?P<today>today|hôm nay|homnay)|(?P<n>\d{1,3})\s*d(?:ays?)?)$", re.I)
+MAX_RANGE_DAYS = 90
+
+
+def parse_keyed(args: Sequence[str]) -> ReviewArgs | str | None:
+    """`key=value` form; None when the words are not in that form at all."""
+    pairs: dict[str, str] = {}
+    free: list[str] = []
+    for word in args:
+        key, sep, value = word.partition("=")
+        if sep and key.casefold() in KEYS:
+            pairs[key.casefold()] = value.strip().strip("\"'")
+        else:
+            free.append(word)
+    if not pairs:
+        return None
+    if free:
+        return (
+            f"Không hiểu '{' '.join(free)}'."
+            " Cú pháp: /review type=mr|commit [id=] [repo=] [user=] [range=]"
+        )
+    kind_name = TYPES.get(pairs.get("type", "").casefold())
+    if kind_name is None:
+        return "Thiếu hoặc sai type. Dùng type=mr (merge-request) hoặc type=commit."
+    kind: Action = "mr" if kind_name == "mr" else "commit"
+    ref = pairs.get("id") or pairs.get("sha") or pairs.get("mr") or None
+    repo = pairs.get("repo") or pairs.get("project") or None
+    user = pairs.get("user") or pairs.get("author") or None
+    window = pairs.get("range") or pairs.get("since") or None
+    if ref and (from_url := parse_gitlab_url(ref)):
+        url_kind, path, value = from_url
+        if url_kind != kind:
+            return f"Link đó là {url_kind}, không phải {kind}."
+        ref, repo = value, repo or path
+    if ref and user:
+        return (
+            "id= đã chỉ rõ một MR/commit; bỏ user= (hoặc bỏ id= để lấy mục gần nhất của người đó)."
+        )
+    if ref:
+        ref = ref.lstrip("!#")
+        if kind == "mr" and not ref.isdigit():
+            return "id của merge request phải là số (ví dụ id=412) hoặc link."
+        if kind == "commit" and not SHA.match(ref):
+            return "id của commit phải là 7-40 ký tự hex hoặc link commit."
+        return ReviewArgs(kind, ref=ref, repo_hint=repo)
+    people = (user,) if user else ()
+    if window:
+        m = RANGE.match(window)
+        if not m:
+            return "range phải là today hoặc số ngày, ví dụ range=7d."
+        days = 1 if m["today"] else min(int(m["n"]), MAX_RANGE_DAYS)
+        if kind == "mr":
+            return (
+                "range chỉ dùng với type=commit; với MR hãy dùng id= hoặc bỏ trống để lấy MR"
+                " gần nhất."
+            )
+        return ReviewArgs("today", repo_hint=repo, people=people, days=max(days, 1))
+    return ReviewArgs("last" if kind == "commit" else "lastmr", repo_hint=repo, people=people)
 
 
 def parse_review(args: Sequence[str]) -> ReviewArgs | str:
     """Interpret the words after /review; returns an error message on bad usage."""
     if not args:
         return "Thiếu loại review. Dùng /help để xem cú pháp."
+    keyed = parse_keyed(args)
+    if keyed is not None:
+        return keyed
     action = args[0].casefold()
     rest = list(args[1:])
     if action not in ACTIONS:
@@ -133,7 +222,11 @@ def parse_gitlab_url(text: str) -> tuple[str, str, str] | None:
 
 
 def match_repo[T](projects: Iterable[T], hint: str | None, path_of: Callable[[T], str]) -> list[T]:
-    """Repos whose GitLab path equals the hint or ends with "/<hint>"; all when no hint."""
+    """Repos a hint may mean, best first; all when no hint.
+
+    Exact path, then "/<hint>" suffix, then substring, then the last path segment ending with
+    the hint ("global-api" -> "vihat/cloud-saas-global-api"), then token overlap. Several
+    results mean the caller should ask (or let the resolver pick)."""
     items = list(projects)
     if not hint:
         return items
@@ -144,4 +237,11 @@ def match_repo[T](projects: Iterable[T], hint: str | None, path_of: Callable[[T]
     suffix = [p for p in items if path_of(p).casefold().endswith(f"/{needle}")]
     if suffix:
         return suffix
-    return [p for p in items if needle in path_of(p).casefold()]
+    inside = [p for p in items if needle in path_of(p).casefold()]
+    if inside:
+        return inside
+    ranked = rank(needle, [path_of(p) for p in items])
+    if not ranked:
+        return []
+    best = ranked[0][0]
+    return [items[i] for score, i in ranked if score >= best - 0.25]

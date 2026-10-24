@@ -66,6 +66,9 @@ class Review(TimestampMixin, Base):
     requested_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
+    # docs/specs/18: fast = diff only; deep = verified in a copy of the repository.
+    mode: Mapped[str] = mapped_column(server_default="fast")
+    deep: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # verification report / error
 
 
 class ReviewFinding(TimestampMixin, Base):

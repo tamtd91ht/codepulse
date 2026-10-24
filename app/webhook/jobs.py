@@ -17,7 +17,7 @@ from app.review.status import supersede_mr_reviews
 
 log = logging.getLogger(__name__)
 
-REVIEW_JOB_TIMEOUT = 30 * 60
+REVIEW_JOB_TIMEOUT = 45 * 60  # keep equal to app.workers.review_jobs.REVIEW_JOB_TIMEOUT
 REVIEW_ACTIONS = {"open", "reopen"}
 NULL_SHA = "0" * 40
 # A review that finds its MR not synced yet (sync running) waits and tries again.

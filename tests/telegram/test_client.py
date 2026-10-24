@@ -31,6 +31,16 @@ def test_get_me_and_send_message() -> None:
 
 
 @respx.mock
+def test_delete_webhook_keeps_pending_updates() -> None:
+    route = respx.post(f"{BASE}/deleteWebhook").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": True})
+    )
+    with client() as c:
+        c.delete_webhook()
+    assert json.loads(route.calls[0].request.content) == {"drop_pending_updates": False}
+
+
+@respx.mock
 def test_retries_on_429_with_retry_after_then_succeeds() -> None:
     route = respx.post(f"{BASE}/getUpdates")
     route.side_effect = [

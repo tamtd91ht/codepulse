@@ -9,12 +9,12 @@ import { dateTime, relative } from "@/lib/format";
 import type { BusinessProject, Project, TelegramBot, TelegramRequest } from "@/lib/types";
 
 const COMMANDS: [string, string][] = [
-  ["/review mr <số|link> [repo]", "review một merge request"],
-  ["/review commit <sha|link> [repo]", "review một commit"],
-  ["/review last [repo] [người]", "commit gần nhất của một người"],
-  ["/review lastmr [repo] [người]", "MR gần nhất của một người"],
-  ["/review today [repo] [người...]", "các commit hôm nay của một hoặc nhiều người"],
+  ["/review type=mr id=412 repo=global-api", "review MR !412; repo viết tắt được (cloud-saas-global-api)"],
+  ["/review type=commit id=<sha> [repo=…]", "review một commit"],
+  ["/review type=commit user=tamtd [range=7d]", "commit gần nhất (hoặc trong 7 ngày) của một người, user viết tắt được"],
+  ["/review type=mr user=an", "MR gần nhất của một người (bỏ user = của bạn)"],
   ["/review open [repo]", "MR đang mở chưa được review (lead)"],
+  ["/review mr|commit|last|lastmr|today …", "dạng cũ, vẫn dùng được"],
   ["/status · /critical [repo] · /score [người] [week|month]", "xem nhanh"],
   ["/repos · /sync [repo] · /whoami · /link <mã> · /unlink", "tiện ích"],
 ];

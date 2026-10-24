@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.collector.gitlab.client import GitLabClient, GitLabError
+from app.collector.gitlab.client import ArchiveTooLarge, GitLabClient, GitLabError
 from app.models import (
     Account,
     BusinessProject,
@@ -27,10 +27,19 @@ from app.models import (
     User,
 )
 from app.review import comment
-from app.review.postprocess import postprocess
-from app.review.prepare import chunk, prepare
+from app.review.checkout import CheckoutError, checkout
+from app.review.deep import TOOLS, DeepOutcome, build_deep_prompt, merge, parse_deep
+from app.review.discover import discover
+from app.review.postprocess import Finding, postprocess
+from app.review.prepare import PreparedDiff, chunk, prepare, redact
+from app.review.profile import (
+    MIN_CACHED_CONFIDENCE,
+    build_profile,
+    profile_is_fresh,
+    render_profile,
+)
 from app.review.prompt import ReviewParseError, ReviewTarget, build_prompt, review_chunk
-from app.review.providers.base import LLMError, LLMProvider, ReviewResult
+from app.review.providers.base import AgenticProvider, LLMError, LLMProvider, ReviewResult
 from app.review.rubric import RUBRIC_VERSION
 from app.review.rules import build_rules
 from app.review.schema import Intent, LLMFinding
@@ -42,7 +51,8 @@ log = logging.getLogger(__name__)
 
 FINISHED = ("done", "skipped", "superseded")
 # A "running" review older than this was left by a crashed worker and may be taken over.
-STALE_RUNNING = timedelta(minutes=30)
+# Must exceed the worker job timeout (REVIEW_JOB_TIMEOUT), or a killed job's row is never freed.
+STALE_RUNNING = timedelta(minutes=50)
 
 
 @dataclass
@@ -54,6 +64,13 @@ class ReviewSettings:
     min_confidence: float
     monthly_budget_usd: float = 0.0  # 0 = unlimited
     scoring_weights: Mapping[str, float] | None = None
+    # docs/specs/18
+    deep_review: bool = False
+    deep_max_turns: int = 40
+    deep_timeout_s: float = 600.0
+    deep_max_archive_bytes: int = 300 * 1024 * 1024
+    deep_min_loc: int = 0
+    profile_ttl: timedelta = timedelta(days=7)
 
 
 def _paths(entries: list[dict[str, Any]]) -> set[str]:
@@ -91,12 +108,14 @@ class ReviewService:
         provider: LLMProvider,
         settings: ReviewSettings,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        agent: AgenticProvider | None = None,
     ) -> None:
         self._session = session
         self._client = client
         self._provider = provider
         self._settings = settings
         self._clock = clock
+        self._agent = agent  # deep review provider; None = fast reviews only
 
     # -- entry points --------------------------------------------------------------------------
 
@@ -324,7 +343,9 @@ class ReviewService:
         processed = postprocess(
             raw_findings, {f.path: f for f in prepared.files}, settings.min_confidence
         )
-        for f in processed.findings:
+        outcome = self._deep(review, project, target, prepared, processed.findings, sha)
+        final: list[Finding] = outcome.findings if outcome else processed.findings
+        for f in final:
             self._session.add(
                 ReviewFinding(
                     review_id=review.id,
@@ -343,27 +364,142 @@ class ReviewService:
                     rule_id=f.rule_id,
                 )
             )
-        review.verdict, review.risk_score = assess((f.severity, "open") for f in processed.findings)
-        review.intent = merge_intents(intents)
+        review.verdict, review.risk_score = assess((f.severity, "open") for f in final)
+        review.intent = (
+            outcome.intent.model_dump() if outcome and outcome.intent else merge_intents(intents)
+        )
         review.score = Decimal(
             str(
                 review_score(
-                    [ScoredFinding(f.severity, f.confidence) for f in processed.findings],
+                    [ScoredFinding(f.severity, f.confidence) for f in final],
                     prepared.loc,
                     weights_for(RUBRIC_VERSION, settings.scoring_weights),
                 )
             )
         )
-        review.summary = "\n\n".join(s for s in summaries if s)[:4000]
+        summary = "\n\n".join(s for s in summaries if s)
+        if outcome and outcome.summary:
+            summary = outcome.summary
+        review.summary = redact(summary)[:4000]
         log.info(
             "review postprocessed",
             extra={
                 "review_id": review.id,
-                "kept": len(processed.findings),
+                "kept": len(final),
                 "dropped": dict(processed.dropped),
+                "mode": review.mode,
             },
         )
         return self._finish(review, "done")
+
+    # -- deep review (docs/specs/18) -----------------------------------------------------------
+
+    def _deep(
+        self,
+        review: Review,
+        project: Project,
+        target: ReviewTarget,
+        prepared: PreparedDiff,
+        candidates: list[Finding],
+        sha: str,
+    ) -> DeepOutcome | None:
+        """Second pass with the repository open. Never raises: on any trouble the first pass
+        stands and `review.deep` says why."""
+        settings = self._settings
+        review.mode = "fast"
+        agent = self._agent
+        if agent is None or not settings.deep_review or not project.deep_review:
+            return None
+        if prepared.loc < settings.deep_min_loc:
+            review.deep = {"skipped": f"diff dưới {settings.deep_min_loc} LOC"}
+            return None
+        if not self._within_budget():
+            review.deep = {"skipped": "hết ngân sách LLM tháng"}
+            return None
+        try:
+            with checkout(
+                self._client,
+                project.external_id,
+                sha,
+                max_archive_bytes=settings.deep_max_archive_bytes,
+                sensitive_paths=settings.sensitive_paths,
+            ) as (root, stats):
+                docs = discover(root)
+                profile = self._profile(project, docs, sha, review)
+                prompt = build_deep_prompt(
+                    target,
+                    render_profile(profile) if profile else "",
+                    "\n\n".join(f"### {d.path}\n{d.text}" for d in docs.instructions),
+                    target.conventions,
+                    prepared,
+                    candidates,
+                )
+                result = agent.review_in_repo(
+                    prompt,
+                    str(root),
+                    tools=TOOLS,
+                    max_turns=settings.deep_max_turns,
+                    timeout_s=settings.deep_timeout_s,
+                )
+                self._add_usage(review, result)
+                deep = parse_deep(result.output)
+                outcome = merge(
+                    candidates,
+                    deep,
+                    root,
+                    {f.path: f for f in prepared.files},
+                    settings.min_confidence,
+                )
+        except (ArchiveTooLarge, CheckoutError) as exc:
+            review.deep = {"error": "checkout", "detail": str(exc)[:200]}
+            log.warning("deep review skipped: checkout", extra={"review_id": review.id})
+            return None
+        except (GitLabError, LLMError, ValueError) as exc:
+            review.deep = {"error": exc.__class__.__name__, "detail": str(exc)[:200]}
+            log.warning(
+                "deep review failed; first pass kept",
+                extra={"review_id": review.id, "error": exc.__class__.__name__},
+            )
+            return None
+        except Exception as exc:  # the spec promises the fast pass always survives
+            review.deep = {"error": exc.__class__.__name__}
+            log.exception("deep review crashed; first pass kept", extra={"review_id": review.id})
+            return None
+        review.mode = "deep"
+        review.deep = {
+            **outcome.report(),
+            "files_seen": stats.files,
+            "turns": (result.raw or {}).get("num_turns"),
+            "cost_usd": round(result.cost_usd, 4),
+            "instruction_sources": docs.instruction_paths[:20],
+        }
+        return outcome
+
+    def _profile(
+        self, project: Project, docs: Any, sha: str, review: Review
+    ) -> dict[str, Any] | None:
+        """The cached project profile, rebuilt when stale (one plain LLM call, billed to the
+        review that needed it so the monthly budget sees it)."""
+        if profile_is_fresh(project, self._settings.profile_ttl, self._clock()):
+            return project.profile
+        try:
+            profile, usage = build_profile(self._provider, docs, project.path_with_namespace)
+        except (LLMError, ValueError) as exc:
+            log.warning("project profile not built", extra={"error": exc.__class__.__name__})
+            return project.profile
+        self._add_usage(review, usage)
+        if float(profile.get("confidence") or 0) < MIN_CACHED_CONFIDENCE:
+            # Thin documents: use it for this review, but ask again next time.
+            return profile
+        project.profile, project.profile_sha, project.profile_at = profile, sha, self._clock()
+        project.profile["cost_usd"] = round(usage.cost_usd, 4)
+        self._session.flush()
+        return project.profile
+
+    def _add_usage(self, review: Review, call: ReviewResult) -> None:
+        review.prompt_tokens = (review.prompt_tokens or 0) + call.prompt_tokens
+        review.completion_tokens = (review.completion_tokens or 0) + call.completion_tokens
+        review.cost_usd = Decimal(str(round(float(review.cost_usd or 0) + call.cost_usd, 4)))
 
     def month_spend_usd(self) -> float:
         now = self._clock()

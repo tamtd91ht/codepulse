@@ -18,6 +18,20 @@
 - Audit: `telegram.bot.*` (admin), `telegram.link`, `telegram.unlink`, `telegram.link_code`, `telegram.review`, `telegram.sync`.
 
 ## Lệnh
+Dạng ưu tiên (2026-10-26): các cặp `key=value`, không cần đúng thứ tự, chỉ `type` là bắt buộc.
+
+```
+/review type=mr|merge-request|commit [id=<iid|sha|link>] [repo=<gợi ý>] [user=<gợi ý>] [range=today|7d]
+/review type=mr id=412 repo=global-api      # MR !412 của …cloud-saas-global-api
+/review type=commit user=tamtd              # commit gần nhất của tamtd
+/review type=commit user=tamtd range=7d     # commit 7 ngày qua của tamtd (tối đa TELEGRAM_MAX_TARGETS)
+/review type=mr user=an                     # MR gần nhất của An; bỏ user = của bạn
+```
+
+- **Viết tắt**: `repo` khớp đường dẫn, hậu tố, chuỗi con, rồi theo token ở cuối tên (`global-api` → `vihat/cloud-saas-global-api`); `user` khớp `@username`, email, phần trước `@` của email (`tamtd`), một phần tên, hoặc tài khoản git/GitLab đã gắn. Còn nhiều kết quả → **LLM chọn** (`app/telegram/resolve.py`: một lời gọi nhỏ, không tool, timeout 20 s không thử lại để không nghẽn poller, chỉ gửi danh sách tên trong phạm vi bot và trong phạm vi người gửi được xem, cần độ tin cậy ≥ 0.6); không chọn được → bot liệt kê và hỏi lại. Không có LLM (provider lỗi) → luôn hỏi lại.
+- `range` chỉ dùng với `type=commit`; `type=mr` không `id` = MR gần nhất của người đó.
+- Dạng cũ bên dưới vẫn dùng được.
+
 | Lệnh | Ý nghĩa | Quyền |
 |---|---|---|
 | `/review mr <iid\|link> [repo]` | Review một MR (head hiện tại lấy từ GitLab) | tác giả / lead / admin |

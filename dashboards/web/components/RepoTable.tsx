@@ -6,9 +6,10 @@ import { IconButton } from "@/components/icons";
 import { date, localDay } from "@/lib/format";
 import type { Project } from "@/lib/types";
 
-export type Flag = "review_enabled" | "post_mr_comment" | "allow_external_llm";
+export type Flag = "review_enabled" | "deep_review" | "post_mr_comment" | "allow_external_llm";
 export const FLAGS: { key: Flag; label: string; hint: string }[] = [
   { key: "review_enabled", label: "Review", hint: "AI review MR/commit mới" },
+  { key: "deep_review", label: "Sâu", hint: "Lượt hai: mở mã nguồn để đối chứng từng finding và tìm lỗi xuyên file (tốn thêm LLM; chỉ có tác dụng khi cờ Review bật)" },
   { key: "post_mr_comment", label: "Comment", hint: "Đăng comment tổng hợp lên MR" },
   { key: "allow_external_llm", label: "LLM", hint: "Cho gửi code ra LLM bên ngoài (thiếu thì không review)" },
 ];
@@ -29,6 +30,8 @@ export interface RepoActions {
   remove(items: Project[]): void;
   /** Repo-level review rules: free text and files inside the repo (docs/specs/17). */
   setRules(p: Project, rules: string, paths: string): Promise<boolean>;
+  /** Rebuild the project profile in the worker (docs/specs/18). */
+  refreshProfile(p: Project): Promise<boolean>;
 }
 
 export interface RepoSection {

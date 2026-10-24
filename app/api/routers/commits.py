@@ -24,11 +24,12 @@ from app.api.schemas import (
     CommitListOut,
     CommitRowOut,
     RepoOut,
+    RepoProfileOut,
     ReviewCommitsIn,
     ReviewCommitsOut,
     UserOut,
 )
-from app.api.security import CurrentPrincipal, Principal
+from app.api.security import AdminPrincipal, CurrentPrincipal, Principal
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.gitlab.convert import Converter
 from app.collector.gitlab.extract import _commit as gl_commit
@@ -112,6 +113,53 @@ def list_repos(principal: CurrentPrincipal, session: SessionDep) -> list[RepoOut
         )
         for p, name in rows
     ]
+
+
+@router.get("/repos/profiles", response_model=list[RepoProfileOut])
+def repo_profiles(
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    business_project_id: int | None = None,
+) -> list[RepoProfileOut]:
+    """Project profiles (docs/specs/18): what each repo is, its stack and security model.
+    Built from the repository's own documents, so anyone signed in may read them."""
+    query = select(Project).where(Project.tracked).order_by(Project.path_with_namespace)
+    if business_project_id is not None:
+        query = query.where(Project.business_project_id == business_project_id)
+    return [
+        RepoProfileOut(
+            id=p.id,
+            path_with_namespace=p.path_with_namespace,
+            business_project_id=p.business_project_id,
+            deep_review=bool(p.deep_review),
+            profile=p.profile,
+            profile_at=p.profile_at,
+            profile_sha=p.profile_sha,
+        )
+        for p in session.scalars(query)
+    ]
+
+
+@router.post("/projects/{project_id}/profile/refresh", status_code=202)
+def refresh_profile(
+    project_id: int,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    queue: Annotated[Enqueuer, Depends(get_queue)],
+) -> dict[str, str]:
+    """Rebuild the profile from the default branch (one LLM call, runs in the worker)."""
+    project = _tracked_project(session, project_id)
+    if project.allow_external_llm is False:
+        raise HTTPException(409, "this repo does not allow sending code to an external LLM")
+    queue.enqueue(
+        "app.workers.review_jobs.refresh_profile_job",
+        project.id,
+        job_id=f"profile-{project.id}",
+        job_timeout=REVIEW_JOB_TIMEOUT,
+    )
+    audit(session, principal.user_id, "project.profile_refresh", f"project:{project.id}")
+    session.commit()
+    return {"status": "queued"}
 
 
 @router.get("/people", response_model=list[UserOut])

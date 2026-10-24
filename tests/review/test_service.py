@@ -1,4 +1,7 @@
+import io
+import tarfile
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -327,3 +330,194 @@ def test_rules_files_touched_by_the_diff_are_not_used(db_session: Session) -> No
     text = build_rules(None, project, lambda p: f"content of {p}", skip={"rules.md"})
     assert "content of rules.md" not in text and "không dùng" in text
     assert "content of other.md" in text
+
+
+# -- deep review (docs/specs/18) -------------------------------------------------------------------
+
+
+def archive_bytes(files: dict[str, str]) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, text in files.items():
+            data = text.encode()
+            info = tarfile.TarInfo(f"demo-p-{HEAD[:8]}/{name}")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+DEEP_SETTINGS = ReviewSettings(
+    **{**SETTINGS.__dict__, "deep_review": True, "deep_max_archive_bytes": 10_000_000}
+)
+REPO_FILES = {
+    "README.md": "# demo\nMột dịch vụ thu phí.",
+    "CLAUDE.md": "Rules: every query carries tenantId.",
+    ".claude/rules/critical/money.md": "# Money\n- idempotent",
+    "app/review/parser.py": "import re\n" * 10,
+    "app/guard.py": "def guard(ctx):\n    assert ctx.tenant\n",
+}
+
+
+def profile_answer() -> dict[str, Any]:
+    return {
+        "kind": "backend-service",
+        "summary": "Dịch vụ thu phí.",
+        "domain": "payments",
+        "features": ["thu phí"],
+        "stack": {"languages": ["Python"]},
+        "security": {"tenancy": "tenantId từ JWT"},
+        "risk_areas": ["app/billing"],
+        "confidence": 0.7,
+    }
+
+
+def deep_answer(prompt: ReviewPrompt) -> dict[str, Any]:
+    return {
+        "summary": "Parser mới; đã đối chứng.",
+        "intent": {
+            "summary": "Thêm parser",
+            "matches_intent": True,
+            "altitude": "right",
+            "concerns": [],
+        },
+        "verifications": [
+            {
+                "index": 0,
+                "decision": "downgrade",
+                "severity": "medium",
+                "reason": "guard() chặn ở caller",
+                "evidence_file": "app/guard.py",
+                "evidence_lines": "1-2",
+            }
+        ],
+        "findings": [
+            {
+                "severity": "high",
+                "category": "bug",
+                "file_path": "app/review/parser.py",
+                "line_start": 6,
+                "line_end": 6,
+                "title": "Parser bỏ qua lỗi",
+                "message": "m",
+                "confidence": 0.8,
+                "evidence": "app/review/parser.py:6",
+            }
+        ],
+        "project_fit": ["Đúng kiến trúc; nên đặt parser cạnh app/billing"],
+    }
+
+
+class ProfileOrChunk:
+    """The plain provider: the profile call (by its system prompt) or the first-pass chunk."""
+
+    name = "fake"
+
+    def __init__(self, chunk: FakeLLMProvider) -> None:
+        self._chunk = chunk
+        self._profile = FakeLLMProvider(lambda p: profile_answer())
+
+    def review(self, prompt: ReviewPrompt) -> Any:
+        if "onboarding brief" in prompt.system:
+            return self._profile.review(prompt)
+        return self._chunk.review(prompt)
+
+
+def mount_deep(router: respx.MockRouter, iid: int = 1) -> None:
+    mount(router)
+    router.get(f"{API}/projects/1001/merge_requests/{iid}").respond(
+        json=fixture("merge_requests.json")[0]
+    )
+    router.get(f"{API}/projects/1001/repository/archive.tar.gz").mock(
+        return_value=httpx.Response(200, content=archive_bytes(REPO_FILES))
+    )
+
+
+def test_deep_review_verifies_candidates_adds_findings_and_caches_the_profile(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    agent = FakeLLMProvider(deep_answer)
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount_deep(router)
+        service = ReviewService(
+            db_session, client, ProfileOrChunk(FakeLLMProvider(sqli)), DEEP_SETTINGS, agent=agent
+        )
+        review = service.review_mr(project, merge_request, HEAD)
+
+    assert review is not None and review.status == "done" and review.mode == "deep"
+    findings = db_session.scalars(
+        select(ReviewFinding).where(ReviewFinding.review_id == review.id)
+    ).all()
+    assert sorted((f.title, f.severity) for f in findings) == [
+        ("Parser bỏ qua lỗi", "high"),
+        ("SQL injection", "medium"),  # downgraded with evidence
+    ]
+    assert (review.verdict, review.risk_score) == ("fix_required", 4)
+    assert review.deep is not None and review.deep["kept"] == 1 and review.deep["added"] == 1
+    assert review.deep["downgraded"][0]["evidence"] == "app/guard.py:1-2"
+    assert review.deep["project_fit"] == ["Đúng kiến trúc; nên đặt parser cạnh app/billing"]
+    assert review.deep["instruction_sources"] == ["CLAUDE.md", ".claude/rules/critical/money.md"]
+    assert review.summary == "Parser mới; đã đối chứng."
+    assert review.intent is not None and review.intent["summary"] == "Thêm parser"
+    (call,) = agent.repo_calls
+    assert call["tools"] == ["Read", "Grep", "Glob"] and call["max_turns"] == 40
+    assert "Kind: backend-service · Domain: payments" in call["prompt"].user
+    assert "### CLAUDE.md" in call["prompt"].user
+    assert "[0] critical security" in call["prompt"].user
+    assert not Path(call["workdir"]).exists()  # the checkout is gone
+    assert project.profile is not None and project.profile["domain"] == "payments"
+    assert project.profile_sha == HEAD and project.profile_at is not None
+    assert float(review.cost_usd or 0) == pytest.approx(0.03)  # chunk + profile + deep
+
+
+def test_deep_review_failure_keeps_the_first_pass(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+
+    def broken(prompt: ReviewPrompt) -> Any:
+        raise LLMError("deep timeout")
+
+    agent = FakeLLMProvider(broken)
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount_deep(router)
+        service = ReviewService(
+            db_session, client, ProfileOrChunk(FakeLLMProvider(sqli)), DEEP_SETTINGS, agent=agent
+        )
+        review = service.review_mr(project, merge_request, HEAD)
+    assert review is not None and (review.status, review.mode) == ("done", "fast")
+    assert review.deep == {"error": "LLMError", "detail": "deep timeout"}
+    assert review.verdict == "block"  # the first pass's critical stands
+
+    # Archive too large: skipped before any model call, first pass stands.
+    other = MergeRequest(project_id=project.id, iid=2, title="Other", head_sha="e" * 40)
+    db_session.add(other)
+    db_session.flush()
+    small = ReviewSettings(**{**DEEP_SETTINGS.__dict__, "deep_max_archive_bytes": 100})
+    agent = FakeLLMProvider(deep_answer)
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount_deep(router, iid=2)
+        router.get(f"{API}/projects/1001/repository/archive.tar.gz").mock(
+            return_value=httpx.Response(200, content=b"x" * 5000)
+        )
+        service = ReviewService(
+            db_session, client, ProfileOrChunk(FakeLLMProvider()), small, agent=agent
+        )
+        review2 = service.review_mr(project, other, "e" * 40)
+    assert review2 is not None and review2.mode == "fast"
+    assert review2.deep is not None and review2.deep["error"] == "checkout"
+    assert agent.repo_calls == []
+
+
+def test_deep_review_respects_the_repo_switch(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    project.deep_review = False
+    agent = FakeLLMProvider(deep_answer)
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount_deep(router)
+        service = ReviewService(db_session, client, FakeLLMProvider(), DEEP_SETTINGS, agent=agent)
+        review = service.review_mr(project, merge_request, HEAD)
+    assert review is not None and review.mode == "fast" and review.deep is None
+    assert agent.repo_calls == []

@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Severity = Literal["critical", "high", "medium", "low", "info"]
+MAX_FINDING_LINES = 200
 Category = Literal["security", "bug", "performance", "maintainability", "testing", "style", "docs"]
 
 
@@ -33,6 +34,8 @@ class LLMFinding(BaseModel):
     def _ordered_lines(self) -> "LLMFinding":
         if self.line_end < self.line_start:
             self.line_start, self.line_end = self.line_end, self.line_start
+        # A finding spans a hunk, not a file: an absurd range would be iterated later.
+        self.line_end = min(self.line_end, self.line_start + MAX_FINDING_LINES)
         return self
 
 

@@ -52,9 +52,14 @@ class Project(TimestampMixin, Base):
     # Untracked repos keep their history but are no longer synced, reviewed or fed by webhooks.
     tracked: Mapped[bool] = mapped_column(server_default="true")
     untracked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Repo-specific rules, and files inside the repo (comma list, read at the reviewed sha).
+    # Repo-specific rules, and files inside the repo (comma list, read on the default branch).
     review_rules: Mapped[str | None]
     review_rules_paths: Mapped[str | None]
+    # docs/specs/18: second pass with the repo open, and the cached project profile.
+    deep_review: Mapped[bool] = mapped_column(server_default="true")
+    profile: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    profile_sha: Mapped[str | None]
+    profile_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class RawGitlab(TimestampMixin, Base):

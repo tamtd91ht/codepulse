@@ -296,3 +296,33 @@ def test_admin_sets_rules_and_reviews_carry_verdicts(
         ).json()["items"]
         == []
     )
+
+
+def test_repo_profiles_are_readable_and_admins_can_refresh(
+    client: TestClient, world: World, as_user: Any, db_session: Session, queue: FakeQueue
+) -> None:
+    world.project.profile = {"kind": "backend-service", "summary": "Demo", "version": 1}
+    db_session.flush()
+    rows = client.get("/api/v1/repos/profiles", headers=as_user(world.an)).json()
+    assert rows[0]["profile"]["summary"] == "Demo" and rows[0]["deep_review"] is True
+    denied = client.post(
+        f"/api/v1/projects/{world.project.id}/profile/refresh", headers=as_user(world.lead)
+    )
+    assert denied.status_code == 403
+    queued = client.post(
+        f"/api/v1/projects/{world.project.id}/profile/refresh", headers=as_user(world.admin)
+    )
+    assert queued.status_code == 202
+    assert queue.jobs[-1][0] == "app.workers.review_jobs.refresh_profile_job"
+    off = client.patch(
+        f"/api/v1/projects/{world.project.id}",
+        headers=as_user(world.admin),
+        json={"deep_review": False},
+    )
+    assert off.status_code == 200 and off.json()["deep_review"] is False
+    world.project.allow_external_llm = False
+    db_session.flush()
+    refused = client.post(
+        f"/api/v1/projects/{world.project.id}/profile/refresh", headers=as_user(world.admin)
+    )
+    assert refused.status_code == 409

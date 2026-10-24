@@ -42,6 +42,7 @@ from app.models import (
 from app.review.rubric import RUBRIC_VERSION
 from app.scoring.verdict import VERDICT_LABEL
 from app.telegram.commands import Command, ReviewArgs, match_repo, parse, parse_review
+from app.telegram.resolve import NoResolver, Resolver
 from app.webhook.jobs import REVIEW_JOB_TIMEOUT, REVIEW_RETRY
 
 log = logging.getLogger(__name__)
@@ -127,6 +128,38 @@ class AllowAll:
         return True
 
 
+WEBHOOK_TAKEOVER_TTL_S = 3600
+
+
+class WebhookGuard(Protocol):
+    """Remembers that the poller deleted a bot's webhook, so a returning one is not fought."""
+
+    def claim(self, bot_id: int) -> bool: ...
+
+
+class RedisWebhookGuard:
+    def __init__(self, redis: Redis, ttl_s: int = WEBHOOK_TAKEOVER_TTL_S) -> None:
+        self._redis, self._ttl = redis, ttl_s
+
+    def claim(self, bot_id: int) -> bool:
+        return bool(self._redis.set(f"tg:webhook_deleted:{bot_id}", 1, ex=self._ttl, nx=True))
+
+
+class MemoryWebhookGuard:
+    def __init__(
+        self, clock: Callable[[], float] = time.monotonic, ttl_s: int = WEBHOOK_TAKEOVER_TTL_S
+    ) -> None:
+        self._until: dict[int, float] = {}
+        self._clock, self._ttl = clock, ttl_s
+
+    def claim(self, bot_id: int) -> bool:
+        now = self._clock()
+        if self._until.get(bot_id, 0.0) > now:
+            return False
+        self._until[bot_id] = now + self._ttl
+        return True
+
+
 # -- incoming messages ----------------------------------------------------------------------------
 
 
@@ -205,8 +238,10 @@ class BotService:
         link_codes: LinkCodes,
         limiter: CommandLimiter,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        resolver: Resolver | None = None,
     ) -> None:
         self._s = session
+        self._resolver: Resolver = resolver or NoResolver()
         self._bot = bot
         self._settings = settings
         self._queue = queue
@@ -333,12 +368,15 @@ class BotService:
             f"<b>CodePulse review bot</b> · {esc(scope)}",
             "",
             "<b>Review</b>",
-            "/review mr &lt;số|link&gt; [repo] - review một merge request",
-            "/review commit &lt;sha|link&gt; [repo] - review một commit",
-            "/review last [repo] [người] - commit gần nhất của một người",
-            "/review lastmr [repo] [người] - MR gần nhất của một người",
-            "/review today [repo] [người...] - các commit hôm nay của một hoặc nhiều người",
-            "/review open [repo] - các MR đang mở chưa được review (lead)",
+            "<b>/review type=mr|commit [id=…] [repo=…] [user=…] [range=…]</b>",
+            "  type=mr id=412 repo=global-api - review MR !412 của repo …global-api",
+            "  type=commit user=tamtd - commit gần nhất của tamtd",
+            "  type=commit user=tamtd range=7d - commit 7 ngày qua của tamtd",
+            "  type=mr user=an - MR gần nhất của An (bỏ user = của bạn)",
+            "  repo/user viết tắt được; bot tự chọn, hỏi lại khi còn mơ hồ",
+            "Dạng cũ vẫn dùng được: /review mr &lt;số|link&gt; [repo],",
+            "  /review commit &lt;sha&gt; [repo], /review last|lastmr [repo] [người],",
+            "  /review today [repo] [người...], /review open [repo] (lead)",
             "",
             "<b>Xem</b>",
             "/status - review gần đây của bạn · /critical [repo] - lỗi nghiêm trọng đang mở",
@@ -403,19 +441,25 @@ class BotService:
         return f"<b>Repo của {esc(self._scope_label())}</b>\n" + "\n".join(rows)
 
     def _pick_repos(self, hint: str | None, *, one: bool) -> list[Project]:
-        repos = match_repo(self._scope(), hint, lambda p: p.path_with_namespace)
+        scope = self._scope()
+        repos = match_repo(scope, hint, lambda p: p.path_with_namespace)
         if not repos:
             raise Denied(
                 f"Không tìm thấy repo '{esc(hint)}' trong {esc(self._scope_label())}. Gõ /repos."
                 if hint
                 else "Dự án này chưa có repo nào đang theo dõi."
             )
+        if one and len(repos) > 1 and hint:
+            # Several repos fit the abbreviation: let the resolver choose among them.
+            picked = self._resolver.pick("repo", hint, [p.path_with_namespace for p in repos])
+            if picked is not None:
+                return [repos[picked]]
+            names = ", ".join(f"<code>{esc(p.path_with_namespace)}</code>" for p in repos[:8])
+            raise Denied(f"Có nhiều repo khớp '{esc(hint)}', hãy nói rõ: {names}")
         if one and len(repos) > 1:
             names = ", ".join(f"<code>{esc(p.path_with_namespace)}</code>" for p in repos[:8])
             raise Denied(f"Có nhiều repo khớp, hãy nói rõ: {names}")
         return repos
-
-    # -- people --------------------------------------------------------------------------------
 
     def _people(self, hints: tuple[str, ...], me: Principal) -> list[User]:
         if not hints:
@@ -436,47 +480,85 @@ class BotService:
         return list(users.values())
 
     def _find_user(self, hint: str, me: Principal) -> User | None:
+        """A person from "me", @gitlab-username, email, an email/username prefix ("tamtd"), or
+        part of the name; several fits -> the resolver picks, else the sender is asked."""
         word = hint.strip()
         if word.casefold() == "me":
             return self._s.get(User, me.user_id)
-        if word.startswith("@"):
+        bare = word[1:] if word.startswith("@") else word
+        if word.startswith("@") or "@" not in word:
             account = self._s.scalars(
                 select(Account).where(
                     Account.kind == "gitlab_user",
-                    func.lower(Account.display_name) == word[1:].casefold(),
+                    func.lower(Account.display_name) == bare.casefold(),
                     Account.user_id.is_not(None),
                 )
             ).first()
             if account and account.user_id is not None:
                 return self._s.get(User, account.user_id)
-            word = word[1:]
-        if "@" in word:
+        if "@" in bare:
             return self._s.scalars(
-                select(User).where(func.lower(User.primary_email) == word.casefold())
+                select(User).where(func.lower(User.primary_email) == bare.casefold())
             ).first()
-        if len(word) < 2:
+        if len(bare) < 2:
             return None
-        matches = list(
+        needle = bare.casefold()
+        # Email local part ("tamtd" -> tamtd@company.vn), then name parts, then any account.
+        by_email = list(
             self._s.scalars(
                 select(User)
                 .where(
                     User.active.is_not(False),
-                    func.lower(User.full_name).contains(word.casefold(), autoescape=True),
+                    func.lower(User.primary_email).startswith(f"{needle}@", autoescape=True),
                 )
-                .order_by(User.id)
                 .limit(3)
             )
         )
+        if len(by_email) == 1:
+            return by_email[0]
+        matches = by_email or list(
+            self._s.scalars(
+                select(User)
+                .where(
+                    User.active.is_not(False),
+                    func.lower(User.full_name).contains(needle, autoescape=True),
+                )
+                .order_by(User.id)
+                .limit(8)
+            )
+        )
+        if not matches:
+            accounts = list(
+                self._s.scalars(
+                    select(Account).where(
+                        Account.user_id.is_not(None),
+                        func.lower(Account.external_key).contains(needle, autoescape=True)
+                        | func.lower(Account.display_name).contains(needle, autoescape=True),
+                    )
+                )
+            )
+            seen: dict[int, User] = {}
+            for account in accounts:
+                if account.user_id is not None and account.user_id not in seen:
+                    user = self._s.get(User, account.user_id)
+                    if user is not None:
+                        seen[user.id] = user
+            matches = list(seen.values())[:8]
         if len(matches) == 1:
             return matches[0]
         if len(matches) > 1:
-            # Only names the sender may see are spelled out.
             visible = me.visible_users()
             shown = [u for u in matches if visible is None or u.id in visible]
+            picked = self._resolver.pick(
+                "user", hint, [f"{u.full_name or ''} · {u.primary_email or ''}" for u in shown]
+            )
+            if picked is not None:
+                return shown[picked]
+            # Only names the sender may see are spelled out.
             names = ", ".join(esc(u.full_name or "") for u in shown)
             raise Denied(
                 f"'{esc(hint)}' khớp nhiều người{f' ({names})' if names else ''};"
-                " dùng email hoặc @username."
+                " dùng @username GitLab hoặc email."
             )
         return None
 
@@ -682,8 +764,8 @@ class BotService:
         people = self._people(args.people, me)
         accounts = self._accounts_of(people)
         today = self._clock().astimezone(self._tz).date()
-        start = datetime.combine(today, datetime.min.time(), self._tz)
-        end = start + timedelta(days=1)
+        end = datetime.combine(today, datetime.min.time(), self._tz) + timedelta(days=1)
+        start = end - timedelta(days=max(args.days, 1))
         active = select(Review.commit_sha).where(
             Review.commit_sha.is_not(None), Review.status.in_(TAKEN)
         )
@@ -714,7 +796,12 @@ class BotService:
         notes: list[str] = []
         if not targets:
             notes.append(
-                self._nothing_for(people, f"commit mới hôm nay ({today:%d/%m}, chưa review)")
+                self._nothing_for(
+                    people,
+                    f"commit mới hôm nay ({today:%d/%m}, chưa review)"
+                    if args.days <= 1
+                    else f"commit mới trong {args.days} ngày qua (chưa review)",
+                )
                 + "\nDữ liệu theo lần sync gần nhất; /sync để lấy mới."
             )
         return self._cap(targets, notes)

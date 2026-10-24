@@ -136,3 +136,11 @@ Khác với webhook GitLab (GitLab gọi CodePulse khi có MR/commit mới), web
 - **Rubric v2**: review cũ (v1) giữ nguyên điểm và verdict đã backfill; review lại một sha cũ tạo review v2 mới. Chạy `make eval` sau khi đổi prompt/model (bộ case trong `tests/eval/cases`).
 - **Verdict**: BLOCK khi có critical, FIX REQUIRED khi có high, APPROVE còn lại; risk = critical×10 + high×3 + medium×1. Duyệt khiếu nại "không phải lỗi" làm verdict tính lại ngay; `codepulse metrics recompute` tính lại hàng loạt.
 - **Review theo yêu cầu** (menu *Yêu cầu review*): tối đa `REVIEW_BATCH_MAX` (50) commit mỗi lần, danh sách tối đa `REVIEW_COMMITS_LIST_MAX` (200). Commit trên branch chưa sync vẫn review được (CodePulse tạo dòng commit từ GitLab). Tốn ngân sách LLM như review tự động; hết ngân sách → review `failed`, bấm chạy lại khi sang tháng.
+
+## 13. Review sâu (hồ sơ dự án + đối chứng trong repo)
+
+- Bật mặc định khi `LLM_PROVIDER=claude_code`. Worker cần đủ đĩa tạm cho bản sao repo (tối đa `DEEP_REVIEW_MAX_ARCHIVE_MB`, mặc định 300 MB, giải nén có thể gấp vài lần) và CLI `claude` đã đăng nhập như lượt nhanh.
+- Chi phí: mỗi review thêm một lượt gọi có tool (bị chặn bởi `DEEP_REVIEW_MAX_TURNS` và `DEEP_REVIEW_TIMEOUT_S`) và, mỗi 7 ngày một lần cho mỗi repo, một lượt gọi dựng hồ sơ. Theo dõi ở Admin → LLM & Chi phí; hết ngân sách tháng thì lượt sâu tự bỏ, lượt nhanh vẫn chạy.
+- Tắt: cờ **Sâu** ở Admin → Dự án & Repo (theo repo) hoặc `DEEP_REVIEW=false` (toàn hệ thống). `DEEP_REVIEW_MIN_LOC=50` để chỉ review sâu các diff đáng kể.
+- Hồ sơ dự án: xem ở trang dự án; sai hoặc cũ → Admin → ngăn chi tiết dự án → **Làm mới hồ sơ** (job `profile-<id>`). Hồ sơ dựng từ tài liệu của repo; repo không có README/CLAUDE.md sẽ có hồ sơ mỏng (`confidence` thấp) — thêm tài liệu vào repo là cách cải thiện đúng nhất.
+- Sự cố: `reviews.deep.error = checkout` (archive quá lớn / GitLab lỗi), `LLMError` (CLI timeout, lỗi API), `ValueError` (output không đúng schema). Review vẫn `done` với kết quả lượt nhanh; xem cột *mode* để biết.

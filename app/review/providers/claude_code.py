@@ -24,6 +24,38 @@ Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 _KEY_RE = re.compile(r"sk-ant-[A-Za-z0-9_\-]+")
+# Variables the claude subprocess may see (upper-cased names). Everything else stays home.
+ENV_PASSTHROUGH = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PROGRAMDATA",
+        "SYSTEMROOT",
+        "SYSTEMDRIVE",
+        "COMSPEC",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "LANG",
+        "LC_ALL",
+        "TZ",
+        "TERM",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "SSL_CERT_FILE",
+        "REQUESTS_CA_BUNDLE",
+        "NODE_EXTRA_CA_CERTS",
+        "CLAUDE_CONFIG_DIR",
+        "ANTHROPIC_BASE_URL",
+        "DISABLE_TELEMETRY",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    }
+)
 
 
 def scrub_secrets(text: str, secret: str = "") -> str:
@@ -77,8 +109,60 @@ class ClaudeCodeProvider:
             cmd += ["--model", self._model]
         return cmd
 
+    def repo_command(self, prompt: ReviewPrompt, tools: Sequence[str], max_turns: int) -> list[str]:
+        """Deep review (docs/specs/18): only the named read-only tools, no settings from the
+        checkout (its CLAUDE.md is data in the prompt, never an instruction), bounded turns."""
+        allowed = ",".join(tools)
+        # No --allowedTools on purpose: inside the working directory Read/Grep/Glob need no
+        # approval, outside it they hit a permission prompt that print mode answers "no".
+        # Auto-approving Read would let an injected instruction read /proc/self/environ or
+        # ~/.claude credentials and echo them into the review text.
+        cmd = [
+            self._binary,
+            "-p",
+            "--output-format",
+            "json",
+            "--tools",
+            allowed,
+            "--disallowedTools",
+            "Bash,Write,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,Agent",
+            "--max-turns",
+            str(max_turns),
+            "--no-session-persistence",
+            "--setting-sources",
+            "",
+            "--strict-mcp-config",
+            "--system-prompt",
+            prompt.system,
+            "--json-schema",
+            json.dumps(prompt.json_schema, separators=(",", ":")),
+        ]
+        if self._model:
+            cmd += ["--model", self._model]
+        return cmd
+
+    def review_in_repo(
+        self,
+        prompt: ReviewPrompt,
+        workdir: str,
+        *,
+        tools: Sequence[str],
+        max_turns: int,
+        timeout_s: float,
+    ) -> ReviewResult:
+        """One attempt (a deep pass is expensive); the caller decides whether to fall back."""
+        cmd = self.repo_command(prompt, tools, max_turns)
+        self._limiter.acquire()
+        try:
+            data = self._run_once(cmd, prompt.user, cwd=workdir, timeout_s=timeout_s)
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            raise LLMError(f"claude deep review: {exc.__class__.__name__}") from None
+        return self._result(data)
+
     def _env(self) -> Mapping[str, str]:
-        env = dict(os.environ)
+        """A minimal environment: the CLI gets what it needs to run and authenticate, not the
+        worker's DATABASE_URL / secrets (the model's text is stored and posted to GitLab)."""
+        env = {k: v for k, v in os.environ.items() if k.upper() in ENV_PASSTHROUGH}
         if self._auth_token:
             # `claude setup-token` issues sk-ant-oat… tokens; anything else is an API key.
             key = (
@@ -89,20 +173,28 @@ class ClaudeCodeProvider:
             env[key] = self._auth_token
         return env
 
-    def _run_once(self, cmd: Sequence[str], stdin: str) -> dict[str, Any]:
-        with tempfile.TemporaryDirectory(prefix="codepulse-review-") as cwd:
-            completed = self._runner(
-                list(cmd),
-                input=stdin,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self._timeout_s,
-                cwd=cwd,
-                env=self._env(),
-                check=False,
-            )
+    def _run_once(
+        self,
+        cmd: Sequence[str],
+        stdin: str,
+        cwd: str | None = None,
+        timeout_s: float | None = None,
+    ) -> dict[str, Any]:
+        if cwd is None:
+            with tempfile.TemporaryDirectory(prefix="codepulse-review-") as empty:
+                return self._run_once(cmd, stdin, cwd=empty, timeout_s=timeout_s)
+        completed = self._runner(
+            list(cmd),
+            input=stdin,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_s or self._timeout_s,
+            cwd=cwd,
+            env=self._env(),
+            check=False,
+        )
         if completed.returncode != 0 and not completed.stdout.strip():
             # stderr may echo the prompt; keep only its tail, scrubbed before it is cut.
             tail = scrub_secrets(completed.stderr, self._auth_token)[-300:]
@@ -153,7 +245,10 @@ class ClaudeCodeProvider:
                     self._sleep(min(2.0**attempt * 2, 30.0))
         else:
             raise LLMError(f"claude failed after {self._max_retries + 1} attempts") from last
+        return self._result(data)
 
+    @staticmethod
+    def _result(data: Mapping[str, Any]) -> ReviewResult:
         usage = data.get("usage") or {}
         prompt_tokens = sum(
             int(usage.get(k) or 0)
@@ -163,7 +258,7 @@ class ClaudeCodeProvider:
         output = data.get("structured_output")
         return ReviewResult(
             output=output if output is not None else data.get("result", ""),
-            model=models[0] if models else (self._model or "claude"),
+            model=models[0] if models else "claude",
             prompt_tokens=prompt_tokens,
             completion_tokens=int(usage.get("output_tokens") or 0),
             cost_usd=float(data.get("total_cost_usd") or 0.0),

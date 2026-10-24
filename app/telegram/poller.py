@@ -8,27 +8,34 @@ records `last_error` and never blocks the others.
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from redis import Redis
 from rq import Queue
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
+from app.api.audit import audit
 from app.collector.gitlab.client import GitLabClient
 from app.collector.sync import ClientFactory, Enqueuer
 from app.config import Settings, get_settings
 from app.crypto import SecretBox, secret_box
 from app.db import get_redis, get_sessionmaker
 from app.models import Connection, TelegramBot
+from app.review.providers import build_provider
 from app.telegram.client import TelegramClient, TelegramError
+from app.telegram.resolve import LLMResolver, NoResolver, Resolver
 from app.telegram.service import (
     AllowAll,
     BotService,
     CommandLimiter,
     LinkCodes,
     MemoryLinkCodes,
+    MemoryWebhookGuard,
     RedisCommandLimiter,
     RedisLinkCodes,
+    RedisWebhookGuard,
+    WebhookGuard,
     finished_requests,
     incoming,
 )
@@ -55,6 +62,43 @@ def interactive_client_factory(box: SecretBox) -> ClientFactory:
     return make
 
 
+def _fetch_updates(
+    session: Session,
+    client: TelegramClient,
+    bot: TelegramBot,
+    offset: int | None,
+    guard: WebhookGuard,
+) -> list[Any]:
+    """getUpdates; a webhook left on the token by another system (HTTP 409) is removed.
+
+    Telegram serves a token either by webhook or by getUpdates, never both. CodePulse only
+    polls, so a webhook can only come from somewhere else; it is deleted (pending updates
+    kept) with a warning and an audit row. The guard allows that once per bot per TTL: if
+    the webhook comes back within it, the other system is re-registering it, and fighting
+    over the token every tick would break both sides silently, so the 409 is raised instead
+    and lands in `last_error` where the admin can see the conflict.
+    """
+    try:
+        return client.get_updates(offset=offset, limit=MAX_UPDATES_PER_TICK)
+    except TelegramError as exc:
+        if exc.status_code != 409 or "webhook" not in str(exc).lower():
+            raise
+        if not guard.claim(bot.id):
+            raise TelegramError(
+                f"{exc} (webhook came back after CodePulse deleted it; "
+                "another system shares this bot token)",
+                409,
+            ) from None
+        log.warning(
+            "telegram webhook found on a polled bot; deleting it so getUpdates works",
+            extra={"bot_id": bot.id, "error": str(exc)},
+        )
+        client.delete_webhook()
+        audit(session, None, "telegram.bot.webhook_deleted", f"telegram_bot:{bot.id}")
+        session.commit()
+        return client.get_updates(offset=offset, limit=MAX_UPDATES_PER_TICK)
+
+
 def poll_bot(
     session: Session,
     bot: TelegramBot,
@@ -65,10 +109,12 @@ def poll_bot(
     link_codes: LinkCodes,
     limiter: CommandLimiter,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    webhook_guard: WebhookGuard | None = None,
+    resolver: Resolver | None = None,
 ) -> int:
     """Handle new messages of one bot and post finished results; returns updates handled."""
     offset = (bot.last_update_id or 0) + 1 if bot.last_update_id is not None else None
-    updates = client.get_updates(offset=offset, limit=MAX_UPDATES_PER_TICK)
+    updates = _fetch_updates(session, client, bot, offset, webhook_guard or MemoryWebhookGuard())
     handled = 0
     for update in updates:
         update_id = int(update.get("update_id") or 0)
@@ -79,7 +125,15 @@ def poll_bot(
         bot.last_update_id = max(bot.last_update_id or 0, update_id)
         if message is not None:
             service = BotService(
-                session, bot, settings, queue, make_client, link_codes, limiter, clock
+                session,
+                bot,
+                settings,
+                queue,
+                make_client,
+                link_codes,
+                limiter,
+                clock,
+                resolver=resolver,
             )
             try:
                 reply = service.handle(message)
@@ -136,6 +190,8 @@ def tick(
     limiter: CommandLimiter,
     telegram_client: Callable[[str], TelegramClient],
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    webhook_guard: WebhookGuard | None = None,
+    resolver: Resolver | None = None,
 ) -> dict[int, int]:
     """Poll every enabled bot once; {bot_id: updates handled}. Errors are per bot."""
     handled: dict[int, int] = {}
@@ -166,6 +222,8 @@ def tick(
                     telegram_client,
                     clock,
                     handled,
+                    webhook_guard,
+                    resolver,
                 )
             finally:
                 lock_conn.execute(select(func.pg_advisory_unlock(ADVISORY_LOCK_NAMESPACE, bot_id)))
@@ -184,6 +242,8 @@ def _poll_one(
     telegram_client: Callable[[str], TelegramClient],
     clock: Callable[[], datetime],
     handled: dict[int, int],
+    webhook_guard: WebhookGuard | None,
+    resolver: Resolver | None = None,
 ) -> None:
     """One bot's turn; any failure lands in `last_error` and never escapes to the other bots."""
     bot = session.get(TelegramBot, bot_id)
@@ -192,7 +252,17 @@ def _poll_one(
     try:
         with telegram_client(box.decrypt(bot.token_encrypted)) as client:
             handled[bot_id] = poll_bot(
-                session, bot, client, settings, queue, make_client, link_codes, limiter, clock
+                session,
+                bot,
+                client,
+                settings,
+                queue,
+                make_client,
+                link_codes,
+                limiter,
+                clock,
+                webhook_guard,
+                resolver=resolver,
             )
     except Exception as exc:
         session.rollback()
@@ -205,6 +275,15 @@ def _poll_one(
         log.exception("telegram bot poll failed", extra={"bot_id": bot_id})
     finally:
         session.commit()
+
+
+def default_resolver(settings: Settings) -> Resolver:
+    """The LLM picks among several repos/people that fit an abbreviation; no LLM = ask back."""
+    try:
+        return LLMResolver(build_provider(settings, timeout_s=20.0, max_retries=0))
+    except Exception:  # provider not configured: the bot still works, it just asks
+        log.warning("telegram resolver unavailable; ambiguous hints will be asked back")
+        return NoResolver()
 
 
 def telegram_tick_job() -> None:
@@ -229,6 +308,8 @@ def telegram_tick_job() -> None:
             lambda token: TelegramClient(
                 token, api_base=settings.telegram_api_base, max_retry_after=MAX_RETRY_AFTER_S
             ),
+            webhook_guard=RedisWebhookGuard(redis),
+            resolver=default_resolver(settings),
         )
 
 
