@@ -29,8 +29,14 @@ Dạng ưu tiên (2026-10-26): các cặp `key=value`, không cần đúng thứ
 ```
 
 - **Viết tắt**: `repo` khớp đường dẫn, hậu tố, chuỗi con, rồi theo token ở cuối tên (`global-api` → `vihat/cloud-saas-global-api`); `user` khớp `@username`, email, phần trước `@` của email (`tamtd`), một phần tên, hoặc tài khoản git/GitLab đã gắn. Còn nhiều kết quả → **LLM chọn** (`app/telegram/resolve.py`: một lời gọi nhỏ, không tool, timeout 20 s không thử lại để không nghẽn poller, chỉ gửi danh sách tên trong phạm vi bot và trong phạm vi người gửi được xem, cần độ tin cậy ≥ 0.6); không chọn được → bot liệt kê và hỏi lại. Không có LLM (provider lỗi) → luôn hỏi lại.
-- `range` chỉ dùng với `type=commit`; `type=mr` không `id` = MR gần nhất của người đó.
+- `range` chỉ dùng với `type=commit`.
 - Dạng cũ bên dưới vẫn dùng được.
+
+### Chọn bằng nút (không cần mở GitLab)
+- `/review` không tham số → menu nút: **Commit gần đây** / **MR đang mở**; dự án có nhiều repo → thêm bước chọn repo (tối đa 8 nút).
+- `type=commit` không `id=` và không `user=` (hoặc có `range=`) → bot liệt kê commit của **mọi người** trên nhánh (`branch=`, mặc định default branch; GitLab trước, DB khi GitLab lỗi), tối đa 40 mục, 8 mục/trang, bỏ merge commit; mỗi mục ghi tiêu đề, tác giả, thời gian và trạng thái: ⬜ chọn được, ✅ đã review (kèm verdict/điểm), ⏳ đang review, ↻ lần trước lỗi, 🚫 ngoài quyền của người gọi. `type=mr` không `id=` → danh sách MR đang mở tương tự. `user=` lọc danh sách theo người; `all=1` bỏ qua bước chọn và xếp hàng tất cả như trước.
+- Bàn phím inline: nút số để tick, **Chọn hết**, **Review đã chọn (n)**, **Trước/Sau**, **Huỷ**. Trạng thái chọn lưu Redis (`tg:pick:<token>`, 30 phút); chỉ người gọi lệnh bấm được (người khác được báo); hết hạn → báo gõ lại. Bấm **Review đã chọn** → kiểm tra quyền theo tác giả từng mục, enqueue như lệnh thường (`trigger=telegram`, `telegram_requests` để trả kết quả về chat), sửa tin nhắn thành danh sách đã xếp hàng và gỡ nút. Mọi lần bấm đều được `answerCallbackQuery` để tắt vòng xoay.
+- Poller nhận thêm `callback_query` trong `getUpdates`; lỗi khi xử lý một lần bấm chỉ hiện thông báo cho người bấm, không chặn bot.
 
 | Lệnh | Ý nghĩa | Quyền |
 |---|---|---|

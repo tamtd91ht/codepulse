@@ -94,9 +94,29 @@ class ReviewArgs:
     repo_hint: str | None = None  # repo path hint (argument or taken from a URL)
     people: tuple[str, ...] = ()  # user hints ("me", "@name", email, name part)
     days: int = 1  # window of the "today" action (range=7d -> 7)
+    branch: str | None = None  # branch= (default: the repo's default branch)
+    # Keyed form without a single explicit target: show the picker (buttons) instead of queuing
+    # everything; all=1 queues everything at once like the legacy actions.
+    pick: bool = False
 
 
-KEYS = {"type", "id", "sha", "mr", "repo", "project", "user", "author", "range", "since"}
+KEYS = {
+    "type",
+    "id",
+    "sha",
+    "mr",
+    "repo",
+    "project",
+    "user",
+    "author",
+    "range",
+    "since",
+    "branch",
+    "ref",
+    "all",
+    "auto",
+}
+TRUE_WORDS = {"1", "true", "yes", "y", "on", "có"}
 TYPES = {
     "mr": "mr",
     "merge-request": "mr",
@@ -123,7 +143,7 @@ def parse_keyed(args: Sequence[str]) -> ReviewArgs | str | None:
     if free:
         return (
             f"Không hiểu '{' '.join(free)}'."
-            " Cú pháp: /review type=mr|commit [id=] [repo=] [user=] [range=]"
+            " Cú pháp: /review type=mr|commit [id=] [repo=] [branch=] [user=] [range=] [all=1]"
         )
     kind_name = TYPES.get(pairs.get("type", "").casefold())
     if kind_name is None:
@@ -133,6 +153,8 @@ def parse_keyed(args: Sequence[str]) -> ReviewArgs | str | None:
     repo = pairs.get("repo") or pairs.get("project") or None
     user = pairs.get("user") or pairs.get("author") or None
     window = pairs.get("range") or pairs.get("since") or None
+    branch = pairs.get("branch") or pairs.get("ref") or None
+    auto = (pairs.get("all") or pairs.get("auto") or "").casefold() in TRUE_WORDS
     if ref and (from_url := parse_gitlab_url(ref)):
         url_kind, path, value = from_url
         if url_kind != kind:
@@ -150,18 +172,27 @@ def parse_keyed(args: Sequence[str]) -> ReviewArgs | str | None:
             return "id của commit phải là 7-40 ký tự hex hoặc link commit."
         return ReviewArgs(kind, ref=ref, repo_hint=repo)
     people = (user,) if user else ()
+    days = 7
     if window:
         m = RANGE.match(window)
         if not m:
             return "range phải là today hoặc số ngày, ví dụ range=7d."
-        days = 1 if m["today"] else min(int(m["n"]), MAX_RANGE_DAYS)
+        days = 1 if m["today"] else max(1, min(int(m["n"]), MAX_RANGE_DAYS))
         if kind == "mr":
             return (
-                "range chỉ dùng với type=commit; với MR hãy dùng id= hoặc bỏ trống để lấy MR"
-                " gần nhất."
+                "range chỉ dùng với type=commit; với MR hãy dùng id= hoặc bỏ trống để chọn"
+                " trong danh sách MR đang mở."
             )
-        return ReviewArgs("today", repo_hint=repo, people=people, days=max(days, 1))
-    return ReviewArgs("last" if kind == "commit" else "lastmr", repo_hint=repo, people=people)
+    # One person, no window: their latest item, queued at once (one tap on the phone).
+    if user and not window:
+        action: Action = "last" if kind == "commit" else "lastmr"
+        return ReviewArgs(action, repo_hint=repo, people=people, branch=branch)
+    # Otherwise a list: the picker, unless all=1 asks for everything right away.
+    if kind == "commit":
+        return ReviewArgs(
+            "today", repo_hint=repo, people=people, days=days, branch=branch, pick=not auto
+        )
+    return ReviewArgs("open", repo_hint=repo, people=people, branch=branch, pick=not auto)
 
 
 def parse_review(args: Sequence[str]) -> ReviewArgs | str:

@@ -35,7 +35,7 @@ from app.telegram.service import (
     MemoryWebhookGuard,
     incoming,
 )
-from tests.api.conftest import BOX, FakeQueue, World
+from tests.api.conftest import FakeQueue, World
 
 pytestmark = pytest.mark.integration
 
@@ -51,6 +51,8 @@ class FakeTelegram(TelegramClient):
         self.username = username
         self.sent: list[dict[str, Any]] = []
         self.updates: list[dict[str, Any]] = []
+        self.edited: list[dict[str, Any]] = []
+        self.answered: list[dict[str, Any]] = []
 
     def get_me(self) -> dict[str, Any]:
         return {"username": self.username, "can_join_groups": True}
@@ -59,10 +61,37 @@ class FakeTelegram(TelegramClient):
         return [u for u in self.updates if offset is None or u["update_id"] >= offset][:limit]
 
     def send_message(
-        self, chat_id: int, text: str, reply_to_message_id: int | None = None
+        self,
+        chat_id: int,
+        text: str,
+        reply_to_message_id: int | None = None,
+        reply_markup: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        self.sent.append({"chat_id": chat_id, "text": text, "reply_to": reply_to_message_id})
+        self.sent.append(
+            {
+                "chat_id": chat_id,
+                "text": text,
+                "reply_to": reply_to_message_id,
+                "markup": reply_markup,
+            }
+        )
         return {"message_id": len(self.sent)}
+
+    def edit_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> None:
+        self.edited.append(
+            {"chat_id": chat_id, "message_id": message_id, "text": text, "markup": reply_markup}
+        )
+
+    def answer_callback(
+        self, callback_id: str, text: str | None = None, alert: bool = False
+    ) -> None:
+        self.answered.append({"id": callback_id, "text": text, "alert": alert})
 
 
 class FakeGitLab(GitLabClient):
@@ -95,23 +124,6 @@ def message(
         first_name="Tâm",
         text=text,
     )
-
-
-@pytest.fixture
-def bot(db_session: Session, world: World) -> TelegramBot:
-    bp = BusinessProject(name="OmiCRM")
-    db_session.add(bp)
-    db_session.flush()
-    world.project.business_project_id = bp.id
-    bot = TelegramBot(
-        name="OmiCRM bot",
-        bot_username="CodePulseBot",
-        token_encrypted=BOX.encrypt(TOKEN),
-        business_project_id=bp.id,
-    )
-    db_session.add(bot)
-    db_session.flush()
-    return bot
 
 
 def service(

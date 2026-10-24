@@ -85,6 +85,8 @@ Cú pháp mới của lệnh review (dạng cũ vẫn dùng được):
 ```
 Repo và người viết tắt được; bot tự chọn, còn mơ hồ thì hỏi lại.
 
+Trên điện thoại chỉ cần gõ `/review` rồi bấm nút: bot đưa danh sách commit gần đây (của mọi người trên nhánh) hoặc MR đang mở, bạn tick các mục muốn review rồi bấm **Review đã chọn**. Mục đã review hiện ✅ kèm kết quả, mục đang chạy hiện ⏳, mục ngoài quyền của bạn hiện 🚫. Không cần mở GitLab để lấy số MR hay mã commit.
+
 ## 5. Đọc các chỉ số
 
 | Chỉ số | Ý nghĩa |

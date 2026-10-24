@@ -339,6 +339,16 @@ export default function GuidePage() {
             <tbody>
               <tr>
                 <td>
+                  <code>/review</code>
+                </td>
+                <td>
+                  Menu nút bấm: <strong>Commit gần đây</strong> (của mọi người trên nhánh) hoặc <strong>MR đang mở</strong>; tick các
+                  mục rồi bấm <strong>Review đã chọn</strong>. Không cần mở GitLab lấy số MR hay mã commit. Cùng kết quả với{" "}
+                  <code>/review type=commit repo=…</code> không truyền <code>user=</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>
                   <code>/review type=mr id=412 repo=global-api</code>
                 </td>
                 <td>

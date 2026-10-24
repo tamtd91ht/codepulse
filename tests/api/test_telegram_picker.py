@@ -1,0 +1,240 @@
+"""Choosing commits / MRs with buttons (docs/specs/15 §Chọn bằng nút)."""
+
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.config import Settings
+from app.models import Account, Commit, MergeRequest, Review, TelegramBot, TelegramRequest
+from app.telegram.picker import MemoryPickerStore
+from app.telegram.poller import poll_bot
+from app.telegram.service import AllowAll, MemoryLinkCodes
+from tests.api.conftest import FakeQueue, World
+from tests.api.test_telegram import FakeTelegram, link, no_gitlab
+
+NOW = datetime(2026, 10, 24, 9, tzinfo=UTC)
+
+
+def message_update(update_id: int, text: str, from_id: int = 777) -> dict[str, Any]:
+    return {
+        "update_id": update_id,
+        "message": {
+            "message_id": update_id,
+            "chat": {"id": -100, "type": "group"},
+            "from": {"id": from_id, "username": "tam"},
+            "text": text,
+        },
+    }
+
+
+def tap(update_id: int, data: str, from_id: int = 777, message_id: int = 1) -> dict[str, Any]:
+    return {
+        "update_id": update_id,
+        "callback_query": {
+            "id": f"cb{update_id}",
+            "from": {"id": from_id, "username": "tam"},
+            "message": {"message_id": message_id, "chat": {"id": -100, "type": "group"}},
+            "data": data,
+        },
+    }
+
+
+def buttons(markup: dict[str, Any] | None) -> dict[str, str]:
+    """text -> callback_data of every button in a keyboard."""
+    return {
+        b["text"]: b["callback_data"]
+        for row in (markup or {}).get("inline_keyboard", [])
+        for b in row
+    }
+
+
+def seed_commits(db_session: Session, world: World) -> None:
+    an = Account(kind="git_email", external_key="an@x.vn", user_id=world.an.id)
+    binh = Account(kind="git_email", external_key="binh@x.vn", user_id=world.binh.id)
+    db_session.add_all([an, binh])
+    db_session.flush()
+    db_session.add_all(
+        [
+            Commit(
+                sha="1" * 40,
+                project_id=world.project.id,
+                author_account_id=an.id,
+                authored_at=NOW - timedelta(hours=1),
+                message="feat: one\n",
+            ),
+            Commit(
+                sha="2" * 40,
+                project_id=world.project.id,
+                author_account_id=binh.id,
+                authored_at=NOW - timedelta(hours=5),
+                message="fix: two\n",
+            ),
+            Commit(
+                sha="3" * 40,
+                project_id=world.project.id,
+                author_account_id=an.id,
+                authored_at=NOW - timedelta(days=2),
+                message="chore: three\n",
+            ),
+            Commit(
+                sha="4" * 40,
+                project_id=world.project.id,
+                author_account_id=an.id,
+                authored_at=NOW - timedelta(days=20),
+                message="old\n",
+            ),
+            Commit(
+                sha="5" * 40,
+                project_id=world.project.id,
+                author_account_id=an.id,
+                authored_at=NOW - timedelta(hours=2),
+                is_merge=True,
+                message="Merge\n",
+            ),
+        ]
+    )
+    db_session.add(
+        Review(
+            target_type="commit",
+            commit_sha="3" * 40,
+            reviewed_sha="3" * 40,
+            status="done",
+            rubric_version="v2",
+            score=82,
+            verdict="approve",
+        )
+    )
+    db_session.flush()
+
+
+def run(
+    db_session: Session,
+    bot: TelegramBot,
+    settings: Settings,
+    queue: FakeQueue,
+    tg: FakeTelegram,
+    store: MemoryPickerStore,
+) -> int:
+    return poll_bot(
+        db_session,
+        bot,
+        tg,
+        settings,
+        queue,
+        no_gitlab,
+        MemoryLinkCodes(),
+        AllowAll(),
+        lambda: NOW,
+        picker=store,
+    )
+
+
+def test_commit_picker_lists_everyone_and_queues_the_ticked_ones(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    seed_commits(db_session, world)
+    world.project.default_branch = "main"
+    link(db_session, world.lead, 777)
+    link(db_session, world.binh, 999)  # another linked person: may look, may not tap this list
+    db_session.commit()
+    tg = FakeTelegram()
+    store = MemoryPickerStore()
+    tg.updates = [message_update(1, "/review type=commit repo=demo/p")]
+    run(db_session, bot, settings, queue, tg, store)
+
+    (listing,) = tg.sent
+    text = listing["text"]
+    assert (
+        "<b>Commit gần đây</b> · demo/p · main · 7 ngày · 3 mục" in text
+    )  # merge + 20-day-old left out
+    assert "feat: one · An" in text and "fix: two · Binh" in text
+    assert "✅ <b>3.</b> chore: three" in text and "đã review: APPROVE 82" in text
+    kb = buttons(listing["markup"])
+    assert set(kb) >= {"☐ 1", "☐ 2", "☑ Chọn hết", "▶ Review đã chọn (0)", "✖ Huỷ"}
+    assert "☐ 3" not in kb  # already reviewed: no toggle
+    toggle_one = kb["☐ 1"]
+    token = toggle_one.split("|")[1]
+
+    # Someone else taps: refused; the owner taps: the list is redrawn with the tick.
+    tg.updates = [tap(2, toggle_one, from_id=999), tap(3, toggle_one)]
+    run(db_session, bot, settings, queue, tg, store)
+    assert tg.answered[0]["alert"] is True and "người khác" in tg.answered[0]["text"]
+    assert tg.edited and "☑ <b>1.</b> feat: one" in tg.edited[-1]["text"]
+    assert "▶ Review đã chọn (1)" in buttons(tg.edited[-1]["markup"])
+
+    # Go: the ticked commit is queued through the normal job, a request row remembers the chat.
+    tg.updates = [tap(4, f"pk|{token}|go")]
+    run(db_session, bot, settings, queue, tg, store)
+    assert [args for func, args, _ in queue.jobs] == [(world.project.id, "1" * 40)]
+    assert (
+        queue.jobs[0][2]["trigger"] == "telegram"
+        and queue.jobs[0][2]["requested_by"] == world.lead.id
+    )
+    assert "Đã đưa <b>1</b> review" in tg.edited[-1]["text"] and tg.edited[-1]["markup"] is None
+    request = db_session.scalars(select(TelegramRequest)).one()
+    assert request.targets[0]["sha"] == "1" * 40 and request.user_id == world.lead.id
+    assert store.load(token) is None  # consumed
+
+    # The list is gone: a late tap says so instead of crashing.
+    tg.updates = [tap(5, f"pk|{token}|t|0")]
+    run(db_session, bot, settings, queue, tg, store)
+    assert "hết hạn" in tg.answered[-1]["text"]
+
+
+def test_member_sees_others_as_blocked_and_select_all_respects_it(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    seed_commits(db_session, world)
+    link(db_session, world.an, 777)
+    db_session.commit()
+    tg = FakeTelegram()
+    store = MemoryPickerStore()
+    tg.updates = [message_update(1, "/review type=commit")]
+    run(db_session, bot, settings, queue, tg, store)
+    text = tg.sent[0]["text"]
+    assert "🚫 <b>2.</b> fix: two · Binh" in text and "ngoài quyền review" in text
+    kb = buttons(tg.sent[0]["markup"])
+    assert "☐ 2" not in kb and "☐ 1" in kb
+    token = kb["☐ 1"].split("|")[1]
+    tg.updates = [tap(2, f"pk|{token}|all"), tap(3, f"pk|{token}|go")]
+    run(db_session, bot, settings, queue, tg, store)
+    assert [args[1] for _, args, _ in queue.jobs] == ["1" * 40]  # binh's commit never queued
+
+
+def test_bare_review_opens_the_menu_and_mr_picker_lists_open_mrs(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    link(db_session, world.lead, 777)
+    world.mr.state = "opened"
+    world.mr.title = "Add parser"
+    db_session.add(
+        MergeRequest(
+            project_id=world.project.id, iid=9, head_sha="9" * 40, state="opened", title="Fix auth"
+        )
+    )
+    db_session.commit()
+    tg = FakeTelegram()
+    store = MemoryPickerStore()
+    tg.updates = [message_update(1, "/review")]
+    run(db_session, bot, settings, queue, tg, store)
+    menu = buttons(tg.sent[0]["markup"])
+    assert "🔀 MR đang mở" in menu and tg.sent[0]["text"] == "Bạn muốn review gì?"
+    # One repo in scope: the menu goes straight to the MR list, edited into the same message.
+    tg.updates = [tap(2, menu["🔀 MR đang mở"])]
+    run(db_session, bot, settings, queue, tg, store)
+    listed = tg.edited[-1]
+    assert "<b>MR đang mở</b> · demo/p · 2 mục" in listed["text"]
+    assert "!9 Fix auth" in listed["text"]
+    assert "✅" in listed["text"]  # !7 already has a done review for its head
+    kb = buttons(listed["markup"])
+    toggle = next(v for k, v in kb.items() if k.startswith("☐"))
+    token = toggle.split("|")[1]
+    tg.updates = [tap(3, toggle), tap(4, f"pk|{token}|go")]
+    run(db_session, bot, settings, queue, tg, store)
+    (job,) = queue.jobs
+    assert job[0].endswith("review_mr_job") and job[1] == (world.project.id, 9, "9" * 40)
+    tg.updates = [tap(5, "mn||x")]
+    run(db_session, bot, settings, queue, tg, store)
+    assert tg.edited[-1]["text"] == "Đã huỷ."

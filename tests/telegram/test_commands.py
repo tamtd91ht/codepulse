@@ -95,14 +95,21 @@ def test_parse_review_keyed_form() -> None:
     )
     assert parse_review(["type=commit", "id=a1b2c3d"]) == ReviewArgs("commit", ref="a1b2c3d")
     assert parse_review(["type=commit", "user=tamtd"]) == ReviewArgs("last", people=("tamtd",))
+    # Lists go through the button picker unless all=1 asks for everything at once.
     assert parse_review(["type=commit", "user=tamtd", "range=7d"]) == ReviewArgs(
-        "today", people=("tamtd",), days=7
+        "today", people=("tamtd",), days=7, pick=True
     )
     assert parse_review(["type=commit", "range=today", "repo=api"]) == ReviewArgs(
-        "today", repo_hint="api", days=1
+        "today", repo_hint="api", days=1, pick=True
+    )
+    assert parse_review(["type=commit", "repo=api", "branch=dev"]) == ReviewArgs(
+        "today", repo_hint="api", days=7, branch="dev", pick=True
+    )
+    assert parse_review(["type=commit", "repo=api", "all=1"]) == ReviewArgs(
+        "today", repo_hint="api", days=7, pick=False
     )
     assert parse_review(["type=mr", "user=an"]) == ReviewArgs("lastmr", people=("an",))
-    assert parse_review(["type=mr"]) == ReviewArgs("lastmr")
+    assert parse_review(["type=mr"]) == ReviewArgs("open", pick=True)
     url = "https://gitlab.company.vn/vihat/omicrm/api/-/merge_requests/412"
     assert parse_review(["type=mr", f"id={url}"]) == ReviewArgs(
         "mr", ref="412", repo_hint="vihat/omicrm/api"

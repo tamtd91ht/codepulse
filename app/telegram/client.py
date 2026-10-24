@@ -112,7 +112,11 @@ class TelegramClient:
 
     def get_updates(self, offset: int | None, timeout: int = 0, limit: int = 50) -> list[Any]:
         result = self.call(
-            "getUpdates", offset=offset, timeout=timeout, limit=limit, allowed_updates=["message"]
+            "getUpdates",
+            offset=offset,
+            timeout=timeout,
+            limit=limit,
+            allowed_updates=["message", "callback_query"],
         )
         return list(result) if isinstance(result, list) else []
 
@@ -121,11 +125,17 @@ class TelegramClient:
         self.call("deleteWebhook", drop_pending_updates=False)
 
     def send_message(
-        self, chat_id: int, text: str, reply_to_message_id: int | None = None
+        self,
+        chat_id: int,
+        text: str,
+        reply_to_message_id: int | None = None,
+        reply_markup: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Send HTML text; longer messages are split on line breaks under Telegram's limit."""
+        """Send HTML text; longer messages are split on line breaks under Telegram's limit.
+        The keyboard, when given, goes on the last part."""
         last: dict[str, Any] = {}
-        for i, part in enumerate(split_message(text)):
+        parts = split_message(text)
+        for i, part in enumerate(parts):
             result = self.call(
                 "sendMessage",
                 chat_id=chat_id,
@@ -134,9 +144,39 @@ class TelegramClient:
                 disable_web_page_preview=True,
                 reply_to_message_id=reply_to_message_id if i == 0 else None,
                 allow_sending_without_reply=True,
+                reply_markup=reply_markup if i == len(parts) - 1 else None,
             )
             last = result if isinstance(result, dict) else {}
         return last
+
+    def edit_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> None:
+        """Replace a message the bot sent (the picker list); no keyboard = buttons removed."""
+        self.call(
+            "editMessageText",
+            chat_id=chat_id,
+            message_id=message_id,
+            text=split_message(text)[0],
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=reply_markup or {"inline_keyboard": []},
+        )
+
+    def answer_callback(
+        self, callback_id: str, text: str | None = None, alert: bool = False
+    ) -> None:
+        """Stop the button spinner; `alert` pops the text up instead of a toast."""
+        self.call(
+            "answerCallbackQuery",
+            callback_query_id=callback_id,
+            text=(text or "")[:200] or None,
+            show_alert=alert or None,
+        )
 
 
 def split_message(text: str, limit: int = MAX_MESSAGE) -> list[str]:

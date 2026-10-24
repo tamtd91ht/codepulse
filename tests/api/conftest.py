@@ -16,6 +16,7 @@ from app.api.security import issue_token
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
 from app.models import (
+    BusinessProject,
     Commit,
     Connection,
     MergeRequest,
@@ -26,11 +27,13 @@ from app.models import (
     ReviewFinding,
     Team,
     TeamMember,
+    TelegramBot,
     User,
 )
 from app.review.rubric import RUBRIC_VERSION
 
 BOX = SecretBox(Fernet.generate_key().decode())
+TELEGRAM_TOKEN = "123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef"  # fake bot token for tests
 WEEK = date(2026, 10, 5)
 
 
@@ -207,3 +210,20 @@ def as_user(settings: Settings) -> Any:
         return {"Authorization": f"Bearer {issue_token(user.id, settings)}"}
 
     return headers
+
+
+@pytest.fixture
+def bot(db_session: Session, world: World) -> TelegramBot:
+    bp = BusinessProject(name="OmiCRM")
+    db_session.add(bp)
+    db_session.flush()
+    world.project.business_project_id = bp.id
+    bot = TelegramBot(
+        name="OmiCRM bot",
+        bot_username="CodePulseBot",
+        token_encrypted=BOX.encrypt(TELEGRAM_TOKEN),
+        business_project_id=bp.id,
+    )
+    db_session.add(bot)
+    db_session.flush()
+    return bot

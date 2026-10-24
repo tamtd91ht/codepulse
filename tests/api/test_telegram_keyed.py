@@ -1,4 +1,3 @@
-# ruff: noqa: F811 - the `bot` fixture is imported from test_telegram and shadowed by params
 """The key=value review command with abbreviated repo/user hints (docs/specs/15 §Lệnh)."""
 
 from collections.abc import Sequence
@@ -10,7 +9,7 @@ from app.config import Settings
 from app.models import Account, BusinessProject, Commit, Project, TelegramBot
 from app.telegram.resolve import Kind
 from tests.api.conftest import FakeQueue, World
-from tests.api.test_telegram import bot, link, message, service  # noqa: F401 - fixture
+from tests.api.test_telegram import link, message, service
 
 
 class PickLast:
@@ -85,7 +84,9 @@ def test_abbreviated_repo_and_user_resolve_deterministically(
     assert queue.jobs[-1][1] == (api.id, "1" * 40)
 
     reply = (
-        svc.handle(message("/review type=commit user=binh range=7d repo=global-api", from_id=888))
+        svc.handle(
+            message("/review type=commit user=binh range=7d repo=global-api all=1", from_id=888)
+        )
         or ""
     )
     # 2222 is inside 7 days, 3333 is not; 1111 is queued again (same RQ job id: one run).

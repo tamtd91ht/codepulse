@@ -42,6 +42,19 @@ from app.models import (
 from app.review.rubric import RUBRIC_VERSION
 from app.scoring.verdict import VERDICT_LABEL
 from app.telegram.commands import Command, ReviewArgs, match_repo, parse, parse_review
+from app.telegram.picker import (
+    MAX_ITEMS,
+    Item,
+    MemoryPickerStore,
+    PickerState,
+    PickerStore,
+    decode,
+    keyboard,
+    menu_keyboard,
+    new_token,
+    render_text,
+    repo_keyboard,
+)
 from app.telegram.resolve import NoResolver, Resolver
 from app.webhook.jobs import REVIEW_JOB_TIMEOUT, REVIEW_RETRY
 
@@ -175,6 +188,50 @@ class Incoming:
     text: str
 
 
+@dataclass(frozen=True)
+class Callback:
+    """A tap on one of the bot's inline buttons."""
+
+    update_id: int
+    callback_id: str
+    chat_id: int
+    message_id: int
+    from_id: int
+    username: str | None
+    data: str
+
+
+@dataclass
+class CallbackOutcome:
+    """What the poller does after a tap: answer the tap (always), maybe rewrite the message."""
+
+    answer: str | None = None
+    alert: bool = False
+    text: str | None = None  # new message text (keyboard from `markup`, none = buttons removed)
+    markup: dict[str, Any] | None = None
+    send: str | None = None  # an extra message after the edit (results that need room)
+
+
+def callback(update: dict[str, Any]) -> Callback | None:
+    query = update.get("callback_query")
+    if not isinstance(query, dict):
+        return None
+    message = query.get("message") or {}
+    chat = message.get("chat") or {}
+    sender = query.get("from") or {}
+    if not query.get("id") or chat.get("id") is None or not message.get("message_id"):
+        return None
+    return Callback(
+        update_id=int(update.get("update_id") or 0),
+        callback_id=str(query["id"]),
+        chat_id=int(chat["id"]),
+        message_id=int(message["message_id"]),
+        from_id=int(sender.get("id") or 0),
+        username=sender.get("username"),
+        data=str(query.get("data") or ""),
+    )
+
+
 def incoming(update: dict[str, Any]) -> Incoming | None:
     """The text message inside an update, or None for anything else (edits, joins, media)."""
     message = update.get("message")
@@ -197,6 +254,28 @@ def incoming(update: dict[str, Any]) -> Incoming | None:
         first_name=str(sender.get("first_name") or ""),
         text=text,
     )
+
+
+def parse_ts(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def relative_time(when: datetime | None, now: datetime) -> str:
+    if when is None:
+        return ""
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    seconds = max(0, int((now - when).total_seconds()))
+    if seconds < 3600:
+        return f"{max(1, seconds // 60)} phút trước"
+    if seconds < 86400:
+        return f"{seconds // 3600} giờ trước"
+    return f"{seconds // 86400} ngày trước"
 
 
 # -- targets --------------------------------------------------------------------------------------
@@ -239,9 +318,13 @@ class BotService:
         limiter: CommandLimiter,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         resolver: Resolver | None = None,
+        picker: PickerStore | None = None,
     ) -> None:
         self._s = session
         self._resolver: Resolver = resolver or NoResolver()
+        self._picker: PickerStore = picker or MemoryPickerStore()
+        # Set while handling a message whose reply carries buttons; the poller reads it.
+        self.pending_markup: dict[str, Any] | None = None
         self._bot = bot
         self._settings = settings
         self._queue = queue
@@ -368,7 +451,10 @@ class BotService:
             f"<b>CodePulse review bot</b> · {esc(scope)}",
             "",
             "<b>Review</b>",
-            "<b>/review type=mr|commit [id=…] [repo=…] [user=…] [range=…]</b>",
+            "<b>/review</b> - menu bấm nút: chọn commit / MR trong danh sách, không cần mở GitLab",
+            "<b>/review type=mr|commit [id=…] [repo=…] [branch=…] [user=…] [range=…] [all=1]</b>",
+            "  type=commit [repo=…] - danh sách commit 7 ngày qua của mọi người, tick rồi review",
+            "  type=mr [repo=…] - danh sách MR đang mở để chọn",
             "  type=mr id=412 repo=global-api - review MR !412 của repo …global-api",
             "  type=commit user=tamtd - commit gần nhất của tamtd",
             "  type=commit user=tamtd range=7d - commit 7 ngày qua của tamtd",
@@ -594,11 +680,17 @@ class BotService:
     # -- review commands -----------------------------------------------------------------------
 
     def _review(self, command: Command, msg: Incoming, me: Principal) -> str:
+        if not command.args:
+            # Bare /review on a phone: buttons, not syntax.
+            self.pending_markup = menu_keyboard()
+            return "Bạn muốn review gì?"
         parsed = parse_review(command.args)
         if isinstance(parsed, str):
             return esc(parsed)
         if not self._limiter.allow(f"user:{me.user_id}"):
             return "Bạn gửi quá nhiều lệnh review trong 10 phút; thử lại sau ít phút."
+        if parsed.pick:
+            return self._start_picker(parsed, msg, me, command.raw)
         targets: list[Target]
         notes: list[str] = []
         match parsed.action:
@@ -975,6 +1067,401 @@ class BotService:
         )
         self._s.flush()
         return queued
+
+    # -- picker: choose commits / MRs with buttons (docs/specs/15 §Chọn bằng nút) ---------------
+
+    def _start_picker(self, args: ReviewArgs, msg: Incoming, me: Principal, raw: str) -> str:
+        kind = "commit" if args.action in ("today", "last", "commit") else "mr"
+        project = self._pick_repos(args.repo_hint, one=True)[0]
+        people = self._people(args.people, me) if args.people else []
+        state = self._build_picker(kind, project, args, people, me, msg, raw)
+        if state is None:
+            return "Không có mục nào trong phạm vi này."
+        self._picker.save(state)
+        self.pending_markup = keyboard(state)
+        return render_text(state)
+
+    def _build_picker(
+        self,
+        kind: str,
+        project: Project,
+        args: ReviewArgs,
+        people: list[User],
+        me: Principal,
+        msg: Incoming,
+        raw: str,
+    ) -> PickerState | None:
+        only = {u.id for u in people} or None
+        if kind == "commit":
+            branch = args.branch or project.default_branch or "HEAD"
+            items = self._commit_items(project, branch, args.days, only, me)
+            scope = f"{project.path_with_namespace} · {branch} · {args.days} ngày"
+        else:
+            items = self._mr_items(project, only, me)
+            scope = project.path_with_namespace
+        if not items:
+            return None
+        return PickerState(
+            token=new_token(),
+            owner_from_id=msg.from_id,
+            user_id=me.user_id,
+            chat_id=msg.chat_id,
+            message_id=None,
+            kind="commit" if kind == "commit" else "mr",
+            scope_label=scope,
+            items=items[:MAX_ITEMS],
+            raw=raw,
+        )
+
+    def _state_of(self, kind: str, project_id: int, ref: str, sha: str) -> tuple[str, str]:
+        target = Target(kind, project_id, ref, sha, "")
+        mr_id = None
+        if kind == "mr":
+            mr_id = self._s.scalar(
+                select(MergeRequest.id).where(
+                    MergeRequest.project_id == project_id, MergeRequest.iid == int(ref)
+                )
+            )
+        review = self._existing(target, mr_id)
+        if review is None:
+            return "open", ""
+        if review.status in ("queued", "running"):
+            return "running", ""
+        if review.status == "failed":
+            return "failed", ""
+        score = f"{review.score:.0f}" if review.score is not None else ""
+        verdict = VERDICT_LABEL.get(review.verdict or "", "")
+        return "done", " ".join(x for x in (verdict, score) if x)
+
+    def _user_by_email(self, email: str) -> tuple[int | None, str]:
+        account = self._s.scalars(
+            select(Account).where(
+                Account.kind == "git_email", Account.external_key == email.casefold()
+            )
+        ).first()
+        if account is None or account.user_id is None:
+            return None, ""
+        user = self._s.get(User, account.user_id)
+        return (user.id, user.full_name or "") if user else (None, "")
+
+    def _commit_items(
+        self, project: Project, branch: str, days: int, only: set[int] | None, me: Principal
+    ) -> list[Item]:
+        since = self._clock() - timedelta(days=max(days, 1))
+        raw: list[dict[str, Any]] = []
+        connection = self._connection(project)
+        if connection is not None:
+            try:
+                with self._make_client(connection) as client:
+                    raw = client.commits_on_ref(project.external_id, branch, since, None, MAX_ITEMS)
+            except GitLabError as exc:
+                log.warning("picker: gitlab commits failed", extra={"status": exc.status_code})
+        items: list[Item] = []
+        if raw:
+            for c in raw:
+                if len(c.get("parent_ids") or []) > 1:
+                    continue
+                sha = str(c.get("id") or "")
+                uid, name = self._user_by_email(str(c.get("author_email") or ""))
+                items.append(
+                    self._item(
+                        "commit",
+                        project,
+                        sha,
+                        sha,
+                        str(c.get("title") or (c.get("message") or "").splitlines()[:1] or [""])[
+                            :80
+                        ]
+                        if isinstance(c.get("title"), str)
+                        else "",
+                        uid,
+                        name or str(c.get("author_name") or ""),
+                        parse_ts(c.get("authored_date") or c.get("created_at")),
+                        me,
+                    )
+                )
+        else:  # DB fallback: what the last sync saw on the default branch
+            for commit in self._s.scalars(
+                select(Commit)
+                .where(
+                    Commit.project_id == project.id,
+                    Commit.authored_at >= since,
+                    Commit.is_merge.is_not(True),
+                )
+                .order_by(Commit.authored_at.desc())
+                .limit(MAX_ITEMS)
+            ):
+                uid = self._user_of_account(commit.author_account_id)
+                user = self._s.get(User, uid) if uid else None
+                title = (commit.message or "").strip().splitlines()[:1] or [commit.sha[:8]]
+                items.append(
+                    self._item(
+                        "commit",
+                        project,
+                        commit.sha,
+                        commit.sha,
+                        title[0][:80],
+                        uid,
+                        (user.full_name if user else None) or "",
+                        commit.authored_at,
+                        me,
+                    )
+                )
+        if only is not None:
+            items = [i for i in items if i.author_user_id in only]
+        return items
+
+    def _mr_items(self, project: Project, only: set[int] | None, me: Principal) -> list[Item]:
+        raw: list[dict[str, Any]] = []
+        connection = self._connection(project)
+        if connection is not None:
+            try:
+                with self._make_client(connection) as client:
+                    raw = client.open_merge_requests(project.external_id, MAX_ITEMS)
+            except GitLabError as exc:
+                log.warning("picker: gitlab mrs failed", extra={"status": exc.status_code})
+        items: list[Item] = []
+        if raw:
+            for m in raw:
+                head = str(m.get("sha") or "")
+                author = m.get("author") or {}
+                account = self._s.scalars(
+                    select(Account).where(
+                        Account.kind == "gitlab_user", Account.external_key == str(author.get("id"))
+                    )
+                ).first()
+                uid = account.user_id if account else None
+                user = self._s.get(User, uid) if uid else None
+                items.append(
+                    self._item(
+                        "mr",
+                        project,
+                        str(m.get("iid")),
+                        head,
+                        f"!{m.get('iid')} {str(m.get('title') or '')[:70]}",
+                        uid,
+                        (user.full_name if user else None) or str(author.get("name") or ""),
+                        parse_ts(m.get("updated_at")),
+                        me,
+                    )
+                )
+        else:
+            for mr in self._s.scalars(
+                select(MergeRequest)
+                .where(
+                    MergeRequest.project_id == project.id,
+                    MergeRequest.state == "opened",
+                    MergeRequest.head_sha.is_not(None),
+                )
+                .order_by(MergeRequest.id.desc())
+                .limit(MAX_ITEMS)
+            ):
+                uid = self._user_of_account(mr.author_account_id)
+                user = self._s.get(User, uid) if uid else None
+                items.append(
+                    self._item(
+                        "mr",
+                        project,
+                        str(mr.iid),
+                        mr.head_sha or "",
+                        f"!{mr.iid} {(mr.title or '')[:70]}",
+                        uid,
+                        (user.full_name if user else None) or "",
+                        mr.created_at_src,
+                        me,
+                    )
+                )
+        if only is not None:
+            items = [i for i in items if i.author_user_id in only]
+        return items
+
+    def _item(
+        self,
+        kind: str,
+        project: Project,
+        ref: str,
+        sha: str,
+        title: str,
+        author_user_id: int | None,
+        author: str,
+        when: datetime | None,
+        me: Principal,
+    ) -> Item:
+        state, result = self._state_of(kind, project.id, ref, sha) if sha else ("open", "")
+        if state in ("open", "failed") and not me.may_review_author(author_user_id):
+            state = "blocked"
+        short = ref[:8] if kind == "commit" else f"!{ref}"
+        return Item(
+            kind="commit" if kind == "commit" else "mr",
+            project_id=project.id,
+            ref=ref,
+            sha=sha,
+            label=f"{project.path_with_namespace} {short}",
+            title=title or short,
+            author=author,
+            author_user_id=author_user_id,
+            when=relative_time(when, self._clock()),
+            state=state,
+            result=result,
+        )
+
+    def handle_callback(self, cb: Callback) -> CallbackOutcome:
+        """A button tap: toggle / page / go / cancel on a picker, or the menu and repo choice."""
+        allowed = self._bot.allowed_chat_ids or []
+        if allowed and cb.chat_id not in allowed:
+            return CallbackOutcome(answer="Bot không phục vụ chat này.", alert=True)
+        action = decode(cb.data)
+        if action is None:
+            return CallbackOutcome(answer="Nút này không còn hiệu lực.")
+        account = self._s.scalars(
+            select(Account).where(
+                Account.kind == TELEGRAM_KIND, Account.external_key == str(cb.from_id)
+            )
+        ).first()
+        if account is None or account.user_id is None:
+            return CallbackOutcome(answer="Bạn chưa liên kết tài khoản: gõ /link MÃ.", alert=True)
+        user = self._s.get(User, account.user_id)
+        if user is None or user.active is False:
+            return CallbackOutcome(answer="Tài khoản của bạn đang tắt.", alert=True)
+        me = load_principal(self._s, user.id, self._settings)
+        try:
+            if action.kind == "menu":
+                return self._menu_callback(action.op, cb, me)
+            if action.kind == "repo":
+                return self._repo_callback(action.op, int(action.arg or 0), cb, me)
+            return self._picker_callback(action.token, action.op, action.arg, cb, me)
+        except Denied as exc:
+            return CallbackOutcome(answer=str(exc)[:200], alert=True)
+        except GitLabError as exc:
+            log.warning("telegram callback: gitlab error", extra={"status": exc.status_code})
+            return CallbackOutcome(answer="GitLab không trả lời được; thử lại sau.", alert=True)
+
+    def _menu_callback(self, op: str, cb: Callback, me: Principal) -> CallbackOutcome:
+        if op == "x":
+            return CallbackOutcome(answer="Đã huỷ.", text="Đã huỷ.")
+        if op not in ("commit", "mr"):
+            return CallbackOutcome(answer="Nút này không còn hiệu lực.")
+        repos = self._scope()
+        if not repos:
+            return CallbackOutcome(answer="Dự án chưa có repo nào.", alert=True)
+        if len(repos) > 1:
+            what = "commit gần đây" if op == "commit" else "MR đang mở"
+            return CallbackOutcome(
+                text=f"Chọn repo để xem {what}:",
+                markup=repo_keyboard(
+                    "commit" if op == "commit" else "mr",
+                    [(p.id, p.path_with_namespace) for p in repos],
+                ),
+            )
+        return self._repo_callback(op, repos[0].id, cb, me)
+
+    def _repo_callback(
+        self, op: str, project_id: int, cb: Callback, me: Principal
+    ) -> CallbackOutcome:
+        project = next((p for p in self._scope() if p.id == project_id), None)
+        if project is None or op not in ("commit", "mr"):
+            return CallbackOutcome(answer="Repo không còn trong phạm vi bot.", alert=True)
+        args = ReviewArgs("today" if op == "commit" else "open", days=7, pick=True)
+        msg = Incoming(cb.update_id, cb.chat_id, "", cb.message_id, cb.from_id, cb.username, "", "")
+        state = self._build_picker(
+            op, project, args, [], me, msg, f"/review (menu) {op} {project.path_with_namespace}"
+        )
+        if state is None:
+            what = "commit nào trong 7 ngày qua" if op == "commit" else "MR nào đang mở"
+            return CallbackOutcome(text=f"{esc(project.path_with_namespace)}: không có {what}.")
+        state.message_id = cb.message_id
+        self._picker.save(state)
+        return CallbackOutcome(text=render_text(state), markup=keyboard(state))
+
+    def _picker_callback(
+        self, token: str, op: str, arg: str, cb: Callback, me: Principal
+    ) -> CallbackOutcome:
+        state = self._picker.load(token)
+        if state is None:
+            return CallbackOutcome(
+                answer="Danh sách đã hết hạn; gõ lại lệnh /review.",
+                alert=True,
+                text="Danh sách đã hết hạn; gõ lại lệnh /review.",
+            )
+        if cb.from_id != state.owner_from_id:
+            return CallbackOutcome(
+                answer="Danh sách này của người khác; gõ /review để có danh sách của bạn.",
+                alert=True,
+            )
+        state.message_id = cb.message_id
+        if op == "x":
+            self._picker.delete(token)
+            return CallbackOutcome(answer="Đã huỷ.", text="Đã huỷ.")
+        if op == "t":
+            try:
+                idx = int(arg)
+            except ValueError:
+                return CallbackOutcome(answer="Nút lạ.")
+            if not (0 <= idx < len(state.items)) or not state.items[idx].selectable:
+                return CallbackOutcome(answer="Mục này không review được.")
+            if idx in state.selected:
+                state.selected.remove(idx)
+            else:
+                state.selected.append(idx)
+            self._picker.save(state)
+            return CallbackOutcome(text=render_text(state), markup=keyboard(state))
+        if op == "all":
+            state.selected = [i for i, it in enumerate(state.items) if it.selectable][
+                : self._settings.telegram_max_targets
+            ]
+            self._picker.save(state)
+            return CallbackOutcome(
+                answer=f"Đã chọn {len(state.selected)} mục.",
+                text=render_text(state),
+                markup=keyboard(state),
+            )
+        if op == "pg":
+            try:
+                state.page = max(0, min(int(arg), state.pages - 1))
+            except ValueError:
+                return CallbackOutcome(answer="Nút lạ.")
+            self._picker.save(state)
+            return CallbackOutcome(text=render_text(state), markup=keyboard(state))
+        if op == "go":
+            return self._picker_go(state, cb, me)
+        return CallbackOutcome(answer="Nút này không còn hiệu lực.")
+
+    def _picker_go(self, state: PickerState, cb: Callback, me: Principal) -> CallbackOutcome:
+        chosen = [state.items[i] for i in sorted(set(state.selected)) if 0 <= i < len(state.items)]
+        chosen = [it for it in chosen if it.selectable]
+        if not chosen:
+            return CallbackOutcome(answer="Chưa chọn mục nào.", alert=True)
+        if not self._limiter.allow(f"user:{me.user_id}"):
+            return CallbackOutcome(
+                answer="Bạn gửi quá nhiều lệnh review trong 10 phút.", alert=True
+            )
+        limit = self._settings.telegram_max_targets
+        notes: list[str] = []
+        if len(chosen) > limit:
+            notes.append(f"Chỉ lấy {limit} mục đầu để giữ ngân sách LLM.")
+            chosen = chosen[:limit]
+        targets = [
+            Target(it.kind, it.project_id, it.ref, it.sha, it.label)
+            for it in chosen
+            if me.may_review_author(it.author_user_id)
+        ]
+        if not targets:
+            return CallbackOutcome(
+                answer="Các mục đã chọn nằm ngoài quyền review của bạn.", alert=True
+            )
+        msg = Incoming(
+            cb.update_id, cb.chat_id, "", cb.message_id, cb.from_id, cb.username, "", state.raw
+        )
+        queued = self._enqueue(targets, me, msg, state.raw or "/review (picker)")
+        self._picker.delete(state.token)
+        lines = [
+            *notes,
+            f"Đã đưa <b>{len(queued)}</b> review vào hàng đợi; tôi sẽ báo kết quả ở đây khi xong.",
+            *[f"• {esc(t.label)}" for t in queued[:10]],
+        ]
+        if len(queued) > 10:
+            lines.append(f"… và {len(queued) - 10} mục nữa")
+        return CallbackOutcome(answer=f"Đã xếp hàng {len(queued)} review.", text="\n".join(lines))
 
     # -- read-only commands --------------------------------------------------------------------
 

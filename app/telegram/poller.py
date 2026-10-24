@@ -24,10 +24,13 @@ from app.db import get_redis, get_sessionmaker
 from app.models import Connection, TelegramBot
 from app.review.providers import build_provider
 from app.telegram.client import TelegramClient, TelegramError
+from app.telegram.picker import PickerStore, RedisPickerStore
 from app.telegram.resolve import LLMResolver, NoResolver, Resolver
 from app.telegram.service import (
     AllowAll,
     BotService,
+    Callback,
+    CallbackOutcome,
     CommandLimiter,
     LinkCodes,
     MemoryLinkCodes,
@@ -36,6 +39,7 @@ from app.telegram.service import (
     RedisLinkCodes,
     RedisWebhookGuard,
     WebhookGuard,
+    callback,
     finished_requests,
     incoming,
 )
@@ -99,6 +103,30 @@ def _fetch_updates(
         return client.get_updates(offset=offset, limit=MAX_UPDATES_PER_TICK)
 
 
+def _apply_callback(
+    client: TelegramClient, tap: Callback, outcome: CallbackOutcome, bot_id: int
+) -> None:
+    """Answer the tap first (the spinner), then rewrite the list; failures only get logged."""
+    try:
+        client.answer_callback(tap.callback_id, outcome.answer, outcome.alert)
+    except TelegramError as exc:
+        log.warning(
+            "telegram answerCallbackQuery failed", extra={"bot_id": bot_id, "error": str(exc)}
+        )
+    if outcome.text is not None:
+        try:
+            client.edit_message(tap.chat_id, tap.message_id, outcome.text, outcome.markup)
+        except TelegramError as exc:
+            log.warning(
+                "telegram editMessageText failed", extra={"bot_id": bot_id, "error": str(exc)}
+            )
+    if outcome.send:
+        try:
+            client.send_message(tap.chat_id, outcome.send)
+        except TelegramError as exc:
+            log.warning("telegram reply failed", extra={"bot_id": bot_id, "error": str(exc)})
+
+
 def poll_bot(
     session: Session,
     bot: TelegramBot,
@@ -111,6 +139,7 @@ def poll_bot(
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     webhook_guard: WebhookGuard | None = None,
     resolver: Resolver | None = None,
+    picker: PickerStore | None = None,
 ) -> int:
     """Handle new messages of one bot and post finished results; returns updates handled."""
     offset = (bot.last_update_id or 0) + 1 if bot.last_update_id is not None else None
@@ -119,6 +148,7 @@ def poll_bot(
     for update in updates:
         update_id = int(update.get("update_id") or 0)
         message = incoming(update)
+        tap = callback(update) if message is None else None
         reply: str | None = None
         # The command's effects and the acknowledged offset land in one transaction, so a
         # crash cannot replay the message (a lost reply is the cheaper failure).
@@ -134,6 +164,7 @@ def poll_bot(
                 limiter,
                 clock,
                 resolver=resolver,
+                picker=picker,
             )
             try:
                 reply = service.handle(message)
@@ -150,11 +181,39 @@ def poll_bot(
                 reply = "Có lỗi khi xử lý lệnh; admin đã được ghi log. Thử lại sau."
             if reply:
                 try:
-                    client.send_message(message.chat_id, reply, message.message_id)
+                    client.send_message(
+                        message.chat_id,
+                        reply,
+                        message.message_id,
+                        reply_markup=service.pending_markup,
+                    )
                 except TelegramError as exc:
                     log.warning(
                         "telegram reply failed", extra={"bot_id": bot.id, "error": str(exc)}
                     )
+        elif tap is not None:
+            service = BotService(
+                session,
+                bot,
+                settings,
+                queue,
+                make_client,
+                link_codes,
+                limiter,
+                clock,
+                resolver=resolver,
+                picker=picker,
+            )
+            try:
+                outcome = service.handle_callback(tap)
+                session.commit()
+            except Exception:
+                session.rollback()
+                bot.last_update_id = max(bot.last_update_id or 0, update_id)
+                session.commit()
+                log.exception("telegram callback failed", extra={"bot_id": bot.id})
+                outcome = CallbackOutcome(answer="Có lỗi khi xử lý; thử lại sau.", alert=True)
+            _apply_callback(client, tap, outcome, bot.id)
         else:
             session.commit()
         handled += 1
@@ -192,6 +251,7 @@ def tick(
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     webhook_guard: WebhookGuard | None = None,
     resolver: Resolver | None = None,
+    picker: PickerStore | None = None,
 ) -> dict[int, int]:
     """Poll every enabled bot once; {bot_id: updates handled}. Errors are per bot."""
     handled: dict[int, int] = {}
@@ -224,6 +284,7 @@ def tick(
                     handled,
                     webhook_guard,
                     resolver,
+                    picker,
                 )
             finally:
                 lock_conn.execute(select(func.pg_advisory_unlock(ADVISORY_LOCK_NAMESPACE, bot_id)))
@@ -244,6 +305,7 @@ def _poll_one(
     handled: dict[int, int],
     webhook_guard: WebhookGuard | None,
     resolver: Resolver | None = None,
+    picker: PickerStore | None = None,
 ) -> None:
     """One bot's turn; any failure lands in `last_error` and never escapes to the other bots."""
     bot = session.get(TelegramBot, bot_id)
@@ -263,6 +325,7 @@ def _poll_one(
                 clock,
                 webhook_guard,
                 resolver=resolver,
+                picker=picker,
             )
     except Exception as exc:
         session.rollback()
@@ -310,6 +373,7 @@ def telegram_tick_job() -> None:
             ),
             webhook_guard=RedisWebhookGuard(redis),
             resolver=default_resolver(settings),
+            picker=RedisPickerStore(redis),
         )
 
 

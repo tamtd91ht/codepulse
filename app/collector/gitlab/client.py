@@ -189,6 +189,16 @@ class GitLabClient:
             params["updated_after"] = updated_after.isoformat()
         return self.paginate(f"/projects/{project_id}/merge_requests", params)
 
+    def open_merge_requests(self, project_id: int, limit: int = 40) -> list[Any]:
+        """Open MRs, most recently updated first (for the Telegram picker)."""
+        params: dict[str, Any] = {"state": "opened", "order_by": "updated_at", "sort": "desc"}
+        out: list[Any] = []
+        for item in self.paginate(f"/projects/{project_id}/merge_requests", params):
+            out.append(item)
+            if len(out) >= limit:
+                break
+        return out
+
     def mr_diffs(self, project_id: int, iid: int) -> list[Any]:
         try:
             return list(self.paginate(f"/projects/{project_id}/merge_requests/{iid}/diffs"))
