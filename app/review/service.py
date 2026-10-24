@@ -38,6 +38,7 @@ from app.review.profile import (
     profile_is_fresh,
     render_profile,
 )
+from app.review.progress import NullProgress, ProgressSink
 from app.review.prompt import ReviewParseError, ReviewTarget, build_prompt, review_chunk
 from app.review.providers.base import AgenticProvider, LLMError, LLMProvider, ReviewResult
 from app.review.rubric import RUBRIC_VERSION
@@ -109,8 +110,10 @@ class ReviewService:
         settings: ReviewSettings,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         agent: AgenticProvider | None = None,
+        progress: ProgressSink | None = None,
     ) -> None:
         self._session = session
+        self._progress: ProgressSink = progress or NullProgress()
         self._client = client
         self._provider = provider
         self._settings = settings
@@ -149,6 +152,13 @@ class ReviewService:
         )
         if review is None:
             return None
+        self._begin(review, project, "mr", str(mr.iid), mr.title or "", head_sha)
+        return self._tracked(review, lambda: self._mr_claimed(review, project, mr, head_sha))
+
+    def _mr_claimed(
+        self, review: Review, project: Project, mr: MergeRequest, head_sha: str
+    ) -> Review:
+        self._progress.stage(review.id, "diff")
         description = ""
         try:
             info = self._client.merge_request(project.external_id, mr.iid)
@@ -202,11 +212,19 @@ class ReviewService:
         )
         if review is None:
             return None
+        first_line = (commit.message or "").strip().splitlines()[:1]
+        title = first_line[0] if first_line else commit.sha
+        self._begin(review, project, "commit", commit.sha, title, commit.sha)
+        return self._tracked(review, lambda: self._commit_claimed(review, project, commit, title))
+
+    def _commit_claimed(
+        self, review: Review, project: Project, commit: Commit, title: str
+    ) -> Review:
+        self._progress.stage(review.id, "diff")
         try:
             entries = self._client.commit_diff(project.external_id, commit.sha)
         except GitLabError as exc:
             return self._fail(review, f"gitlab: {exc}")
-        title = (commit.message or "").strip().splitlines()[0] if commit.message else commit.sha
         target = ReviewTarget(
             project.path_with_namespace,
             title,
@@ -216,6 +234,44 @@ class ReviewService:
         return self._run(review, project, target, entries, commit.sha)
 
     # -- steps ---------------------------------------------------------------------------------
+
+    def _tracked(self, review: Review, work: Callable[[], Review]) -> Review:
+        """Run a claimed review and tell the live view how it ended (None: it crashed)."""
+        try:
+            result = work()
+        except BaseException:
+            self._progress.end(review.id, None)
+            raise
+        self._progress.end(review.id, result.status)
+        return result
+
+    def _begin(
+        self, review: Review, project: Project, kind: str, ref: str, title: str, sha: str
+    ) -> None:
+        """Announce a claimed review to the live progress view (target and people only)."""
+        author = self._session.get(User, review.author_user_id) if review.author_user_id else None
+        requester = (
+            self._session.get(User, review.requested_by_user_id)
+            if review.requested_by_user_id
+            else None
+        )
+        self._progress.start(
+            review.id,
+            {
+                "kind": kind,
+                "project_id": project.id,
+                "project": project.path_with_namespace,
+                "ref": ref,
+                "sha": sha,
+                "title": title[:120],
+                "author_user_id": review.author_user_id,
+                "author": (author.full_name if author else None),
+                "requested_by": (requester.full_name if requester else None),
+                "trigger": review.trigger,
+                "round": review.round,
+                "started_at": self._clock().isoformat(),
+            },
+        )
 
     def _rules(self, project: Project, changed: set[str]) -> str:
         """Team rules for the prompt (docs/specs/17): dự án + repo text, plus files read from the
@@ -370,12 +426,17 @@ class ReviewService:
                 return None  # context is a bonus; the diff alone is reviewable
 
         chunks = chunk(prepared, settings.max_tokens_per_chunk, fetch_context)
+        self._progress.stage(
+            review.id, "llm", f"{len(chunks)} phần", loc=prepared.loc, files=len(prepared.files)
+        )
         calls: list[ReviewResult] = []
         raw_findings: list[LLMFinding] = []
         summaries: list[str] = []
         intents: list[Intent] = []
         try:
-            for piece in chunks:
+            for number, piece in enumerate(chunks, 1):
+                if len(chunks) > 1:
+                    self._progress.stage(review.id, "llm", f"phần {number}/{len(chunks)}")
                 result = review_chunk(self._provider, build_prompt(target, piece))
                 calls += result.calls
                 raw_findings += result.review.findings
@@ -391,6 +452,7 @@ class ReviewService:
             raw_findings, {f.path: f for f in prepared.files}, settings.min_confidence
         )
         outcome = self._deep(review, project, target, prepared, processed.findings, sha)
+        self._progress.stage(review.id, "save")
         final: list[Finding] = outcome.findings if outcome else processed.findings
         for f in final:
             self._session.add(
@@ -463,6 +525,7 @@ class ReviewService:
         if not self._within_budget():
             review.deep = {"skipped": "hết ngân sách LLM tháng"}
             return None
+        self._progress.stage(review.id, "deep", "tải mã nguồn")
         try:
             with checkout(
                 self._client,
@@ -473,6 +536,7 @@ class ReviewService:
             ) as (root, stats):
                 docs = discover(root)
                 profile = self._profile(project, docs, sha, review)
+                self._progress.stage(review.id, "deep", "agent đang đọc code", files=stats.files)
                 prompt = build_deep_prompt(
                     target,
                     render_profile(profile) if profile else "",
@@ -529,6 +593,7 @@ class ReviewService:
         review that needed it so the monthly budget sees it)."""
         if profile_is_fresh(project, self._settings.profile_ttl, self._clock()):
             return project.profile
+        self._progress.stage(review.id, "profile", "dựng hồ sơ dự án")
         try:
             profile, usage = build_profile(self._provider, docs, project.path_with_namespace)
         except (LLMError, ValueError) as exc:

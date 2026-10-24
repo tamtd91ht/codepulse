@@ -19,6 +19,7 @@ from app.notifications.jobs import enqueue_review_notifications
 from app.review.checkout import checkout
 from app.review.discover import discover
 from app.review.profile import build_profile
+from app.review.progress import ProgressSink, RedisProgress, progress_redis
 from app.review.providers import (
     AgenticProvider,
     LLMProvider,
@@ -84,6 +85,7 @@ def run_mr_review(
     agent: AgenticProvider | None = None,
     force: bool = False,
     expected_round: int | None = None,
+    progress: ProgressSink | None = None,
 ) -> str:
     """Review one MR; `after` sees the finished review (notifications run once it is committed)."""
     project = session.get(Project, project_id)
@@ -109,7 +111,9 @@ def run_mr_review(
     if connection is None:
         raise ValueError(f"project {project.id} has no connection")
     with make_client(connection) as client:
-        service = ReviewService(session, client, provider, review_settings(settings), agent=agent)
+        service = ReviewService(
+            session, client, provider, review_settings(settings), agent=agent, progress=progress
+        )
         review = service.review_mr(
             project,
             mr,
@@ -137,6 +141,7 @@ def run_commit_review(
     agent: AgenticProvider | None = None,
     force: bool = False,
     expected_round: int | None = None,
+    progress: ProgressSink | None = None,
 ) -> str:
     project = session.get(Project, project_id)
     if project is None:
@@ -153,7 +158,9 @@ def run_commit_review(
     if connection is None:
         raise ValueError(f"project {project.id} has no connection")
     with make_client(connection) as client:
-        service = ReviewService(session, client, provider, review_settings(settings), agent=agent)
+        service = ReviewService(
+            session, client, provider, review_settings(settings), agent=agent, progress=progress
+        )
         review = service.review_commit(
             project,
             commit,
@@ -207,6 +214,7 @@ def review_mr_job(
             agent=build_agentic_provider(settings),
             force=force,
             expected_round=expected_round,
+            progress=RedisProgress(progress_redis(str(settings.redis_url))),
         )
     _notify(finished)
     return status
@@ -237,6 +245,7 @@ def review_commit_job(
             agent=build_agentic_provider(settings),
             force=force,
             expected_round=expected_round,
+            progress=RedisProgress(progress_redis(str(settings.redis_url))),
         )
     _notify(finished)
     return status

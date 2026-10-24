@@ -578,3 +578,62 @@ def test_a_failed_new_round_leaves_the_old_round_counted(
     assert failed is not None and (failed.status, failed.round) == ("failed", 2)
     db_session.refresh(first)
     assert (first.status, first.superseded_by) == ("done", failed.id)
+
+
+class Recorder:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, Any]] = []
+
+    def start(self, review_id: int, info: dict[str, Any]) -> None:
+        self.events.append(("start", info))
+
+    def stage(self, review_id: int, stage: str, detail: str = "", **extra: Any) -> None:
+        self.events.append(("stage", stage))
+
+    def end(self, review_id: int, status: str | None = None) -> None:
+        self.events.append(("end", (review_id, status)))
+
+
+def test_a_review_reports_its_stages_to_the_live_view(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    recorder = Recorder()
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount(router)
+        router.get(f"{API}/projects/1001/merge_requests/1").respond(
+            json=fixture("merge_requests.json")[0]
+        )
+        service = ReviewService(
+            db_session, client, FakeLLMProvider(sqli), SETTINGS, progress=recorder
+        )
+        review = service.review_mr(project, merge_request, HEAD, trigger="dashboard")
+    assert review is not None and review.status == "done"
+    kind, info = recorder.events[0]
+    assert kind == "start" and (info["kind"], info["ref"], info["title"]) == ("mr", "1", "Parser")
+    assert info["trigger"] == "dashboard" and info["project"] == project.path_with_namespace
+    stages = [e[1] for e in recorder.events if e[0] == "stage"]
+    assert stages == ["diff", "llm", "save"]
+    assert recorder.events[-1] == ("end", (review.id, "done"))
+
+
+def test_the_live_view_is_cleared_when_a_review_fails(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    recorder = Recorder()
+
+    def boom(prompt: ReviewPrompt) -> Any:
+        raise LLMError("claude failed")
+
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount(router)
+        router.get(f"{API}/projects/1001/merge_requests/1").respond(
+            json=fixture("merge_requests.json")[0]
+        )
+        service = ReviewService(
+            db_session, client, FakeLLMProvider(boom), SETTINGS, progress=recorder
+        )
+        review = service.review_mr(project, merge_request, HEAD)
+    assert review is not None and review.status == "failed"
+    assert recorder.events[-1] == ("end", (review.id, "failed"))

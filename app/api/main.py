@@ -15,6 +15,7 @@ from sqlalchemy import Engine
 from app import health
 from app.api import auth
 from app.api.routers import (
+    activity,
     admin,
     commits,
     disputes,
@@ -55,6 +56,7 @@ for api_router in (
     admin.router,
     llm.router,
     reviews.router,
+    activity.router,
     metrics.router,
     disputes.router,
     telegram.router,

@@ -36,6 +36,13 @@
 - Thứ tự chọn nhánh: `branch=` gõ trong lệnh → nhánh review của repo → nhánh mặc định → `HEAD`. Telegram nhận `branch=all` (hoặc `*`) = mọi nhánh. Khi GitLab trả lời danh sách rỗng, không lấy commit nhánh khác từ DB nữa; chỉ dùng DB khi GitLab không trả lời. Tin nhắn rỗng nói rõ nhánh và cách đổi.
 - Webhook push không đổi: chỉ push thẳng lên nhánh mặc định được review tự động (quyết định Phase 0). Review tự động push lên nhánh review là `[DECISION]` để người dùng chọn (ngân sách LLM, rebase làm review lại cả loạt commit).
 
+## 4d. Tiến trình review trên web (2026-10-27)
+- Một job review chạy trong một transaction DB, nên dòng `running` không ai thấy cho tới khi xong. Worker ghi thêm bản ghi tiến trình vào Redis (`cp:review:active:{id}`, chỉ mục `cp:reviews:active`, TTL 50 phút, làm mới ở mỗi bước): repo, MR/commit, tiêu đề, tác giả, người yêu cầu, nguồn, lần review, bước (`diff` → `llm` "phần i/n" → `deep`/`profile` → `save`), LOC. Không lưu code, diff hay nội dung finding. Redis lỗi không làm hỏng review; job xong (kể cả lỗi) thì xoá bản ghi.
+- Khi review kết thúc, worker ghi kết quả thật (`done`/`failed`/`skipped`, hoặc rỗng nếu job crash và RQ sẽ thử lại) vào danh sách `cp:reviews:recent` (30 mục, TTL 1 giờ); web hiện các mục kết thúc trong 15 phút.
+- Việc đang chờ đọc từ **id** job trong hàng đợi RQ (`review-mr-{project}-{iid}-{sha}`, `review-commit-{sha}`, hậu tố `-rerun`/`-again`), một lệnh LRANGE, không giải nén (unpickle) job; quét tối đa 200, hiện 20. Commit chưa sync (chưa biết repo) không hiện.
+- `GET /activity/reviews` trả `running`, `queued`, `queued_total`, `recent`, `hidden`. Quyền như yêu cầu review: chính mình, người mình lead; admin thấy hết; tác giả chưa map cần lead/admin; việc chưa sync (chưa biết tác giả) chỉ admin thấy; repo không còn theo dõi không hiện. Việc của người khác chỉ hiện số đếm (`hidden`). Redis lỗi thì trả danh sách rỗng, không lỗi 500. Worker ghi tiến trình qua client Redis timeout 2 giây.
+- Dashboard: nút nổi góc phải dưới "Đang review api MR !128 +1"; bấm mở bảng chi tiết (các bước, đã chạy bao lâu, ai yêu cầu, link GitLab), mục **Vừa kết thúc** có link tới trang review và kết quả (xong / lỗi / bỏ qua). Hỏi lại mỗi 4 giây khi có việc, 20 giây khi rảnh, dừng khi tab ẩn; mất kết nối thì nút mờ đi.
+
 ## 5. Review theo yêu cầu (dashboard)
 Trang **Yêu cầu review** (`/reviews/request`, mọi người đăng nhập):
 1. Chọn dự án → repo (chỉ repo đang theo dõi; repo tắt review bị mờ) → branch (gõ để tìm trên GitLab, mặc định default branch).

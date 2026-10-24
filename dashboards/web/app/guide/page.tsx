@@ -232,6 +232,13 @@ export default function GuidePage() {
           critical/high, review lỗi. Khác với webhook GitLab (GitLab gọi CodePulse khi có MR mới), webhook này là chiều
           CodePulse gọi ra ngoài. Nút <strong>Gửi thử</strong> gửi payload mẫu để kiểm tra endpoint.
         </p>
+        <h3>Tiến trình review</h3>
+        <p>
+          Khi có review đang chạy, góc phải dưới hiện nút <strong>Đang review …</strong>. Bấm vào để xem từng review: đang
+          ở bước nào (lấy diff, review AI, review sâu, chấm điểm), đã chạy bao lâu, ai yêu cầu, và các review đang chờ.
+          Review vừa xong có link tới trang kết quả. Bạn chỉ thấy chi tiết review của mình và người mình lead; còn lại chỉ
+          hiện số lượng.
+        </p>
         <h3>Nhánh review của repo</h3>
         <p>
           Mặc định, danh sách &quot;commit gần đây&quot; lấy từ nhánh mặc định của GitLab. Nếu team làm trên{" "}

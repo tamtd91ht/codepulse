@@ -2404,3 +2404,170 @@ textarea.rules {
   border-radius: var(--radius);
   background: var(--surface-2);
 }
+
+/* ---------- Reviews in progress (docs/specs/17 §Tiến trình) ---------- */
+.activity {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  /* Above the sticky top bar (40), below the mobile nav backdrop (50) and drawer (60). */
+  z-index: 45;
+  display: flex;
+  /* The panel follows the pill in the DOM (keyboard order) but shows above it. */
+  flex-direction: column-reverse;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: calc(100vw - 32px);
+}
+.activity-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 32px));
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  font-size: 13px;
+}
+.activity-pill.busy {
+  border-color: var(--primary);
+}
+.activity-pill.stale {
+  opacity: 0.7;
+  border-style: dashed;
+}
+.activity-panel:focus {
+  outline: none;
+}
+.activity-recent .small {
+  margin-left: 2px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.activity-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-more {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 12px;
+}
+.spinner.inline {
+  display: inline-block;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  vertical-align: -1px;
+}
+.activity-panel {
+  width: min(400px, calc(100vw - 32px));
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  box-shadow: var(--shadow-lg);
+}
+.activity-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.activity-head .spacer {
+  flex: 1;
+}
+.activity-body {
+  overflow-y: auto;
+  padding: 8px 16px 14px;
+}
+.activity-body h4 {
+  margin: 12px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.activity-body ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.activity-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.activity-item:last-child {
+  border-bottom: 0;
+}
+.activity-target {
+  font-size: 13px;
+}
+.activity-title {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.activity-recent li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+.stages {
+  display: flex;
+  gap: 4px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.stages li {
+  flex: 1;
+  padding-top: 6px;
+  border-top: 3px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+}
+.stages li.done {
+  border-top-color: var(--good);
+}
+.stages li.now {
+  border-top-color: var(--primary);
+  color: var(--text);
+  font-weight: 600;
+}
+@media (max-width: 700px) {
+  .activity {
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    align-items: stretch;
+  }
+  .activity-pill {
+    max-width: none;
+    justify-content: center;
+  }
+  .activity-panel {
+    width: auto;
+  }
+  /* Room for the full-width pill so it never covers the last rows or the footer. */
+  body:has(.activity) main {
+    padding-bottom: 72px;
+  }
+}

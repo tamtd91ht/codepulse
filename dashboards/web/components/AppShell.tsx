@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { Icon, type IconName, IconButton } from "@/components/icons";
+import { ReviewActivity } from "@/components/ReviewActivity";
 import { RAIL_KEY, ThemeToggle } from "@/components/theme";
 import { Avatar } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
@@ -220,6 +221,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </footer>
         </main>
       </div>
+      {me && <ReviewActivity />}
     </div>
   );
 }

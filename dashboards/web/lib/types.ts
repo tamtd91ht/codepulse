@@ -506,3 +506,41 @@ export interface LlmCheck {
   usage: { reviews: number; cost_usd: number; budget_usd: number; budget_pct: number | null };
   checked_at: string;
 }
+
+/* ---- reviews in progress (docs/specs/17 §Tiến trình) ---- */
+
+export interface ActivityItem {
+  state: "running" | "queued" | "ended";
+  review_id: number | null;
+  kind: "mr" | "commit";
+  project_id: number;
+  project: string;
+  ref: string;
+  sha: string;
+  title: string;
+  author: string | null;
+  author_user_id: number | null;
+  requested_by: string | null;
+  trigger: string;
+  round: number;
+  started_at: string | null;
+  enqueued_at: string | null;
+  stage: string | null;
+  detail: string;
+  stage_at: string | null;
+  loc: number | null;
+  files: number | null;
+  web_url: string | null;
+  /** ended: done | failed | skipped; null when the job crashed (RQ may retry it). */
+  status: string | null;
+  ended_at: string | null;
+}
+
+export interface ActivityOut {
+  running: ActivityItem[];
+  queued: ActivityItem[];
+  queued_total: number;
+  /** Ended in the last 15 minutes, newest first. */
+  recent: ActivityItem[];
+  hidden: number;
+}

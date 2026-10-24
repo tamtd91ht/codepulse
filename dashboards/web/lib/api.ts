@@ -60,7 +60,16 @@ export const api = {
  */
 export function useApi<T>(
   path: string | null,
-  { redirect = true, keepPreviousData = false, refreshInterval = 0 } = {},
+  {
+    redirect = true,
+    keepPreviousData = false,
+    refreshInterval = 0,
+  }: {
+    redirect?: boolean;
+    keepPreviousData?: boolean;
+    /** ms between polls; a function decides from the latest data (0 = no polling). */
+    refreshInterval?: number | ((latest?: T) => number);
+  } = {},
 ): SWRResponse<T, ApiError> {
   return useSWR<T, ApiError>(path, (p: string) => request<T>(p, undefined, redirect), {
     keepPreviousData,

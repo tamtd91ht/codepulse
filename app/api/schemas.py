@@ -581,3 +581,40 @@ class Leaderboard(BaseModel):
     period_start: date
     team_metrics: MetricsOut | None
     members: list[LeaderboardRow] | None  # None for managers: aggregates only (Phase 0)
+
+
+# -- reviews in progress (docs/specs/17 §Tiến trình) ---------------------------------------------
+
+
+class ActivityItem(BaseModel):
+    state: Literal["running", "queued", "ended"]
+    review_id: int | None = None  # running only; the page exists once the review ends
+    kind: Literal["mr", "commit"]
+    project_id: int
+    project: str
+    ref: str  # MR iid or commit sha
+    sha: str
+    title: str
+    author: str | None = None
+    author_user_id: int | None = None
+    requested_by: str | None = None
+    trigger: str
+    round: int = 1
+    started_at: datetime | None = None
+    enqueued_at: datetime | None = None
+    stage: str | None = None  # start | diff | llm | deep | profile | save
+    detail: str = ""
+    stage_at: datetime | None = None
+    loc: int | None = None
+    files: int | None = None
+    web_url: str | None = None
+    status: str | None = None  # ended: done | failed | skipped; None = the job crashed
+    ended_at: datetime | None = None
+
+
+class ActivityOut(BaseModel):
+    running: list[ActivityItem]
+    queued: list[ActivityItem]  # the first ones you may see
+    queued_total: int  # all waiting review jobs you may see
+    recent: list[ActivityItem] = []  # ended in the last 15 minutes, newest first
+    hidden: int  # running or waiting reviews of people outside your scope (count only)
