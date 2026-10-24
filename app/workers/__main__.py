@@ -23,7 +23,10 @@ class JobContextWorker(Worker):
 def main() -> None:
     configure_logging()
     redis = get_redis()
-    JobContextWorker([Queue(name, connection=redis) for name in QUEUES], connection=redis).work()
+    worker = JobContextWorker([Queue(name, connection=redis) for name in QUEUES], connection=redis)
+    # with_scheduler: delayed retries (REVIEW_RETRY waits 60/120/300 s) live in RQ's scheduled
+    # registry and only run when a worker also acts as scheduler; without it they never run.
+    worker.work(with_scheduler=True)
 
 
 if __name__ == "__main__":

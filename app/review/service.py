@@ -158,7 +158,7 @@ class ReviewService:
     def _mr_claimed(
         self, review: Review, project: Project, mr: MergeRequest, head_sha: str
     ) -> Review:
-        self._progress.stage(review.id, "diff")
+        self._step(review.id, "diff")
         description = ""
         try:
             info = self._client.merge_request(project.external_id, mr.iid)
@@ -220,7 +220,7 @@ class ReviewService:
     def _commit_claimed(
         self, review: Review, project: Project, commit: Commit, title: str
     ) -> Review:
-        self._progress.stage(review.id, "diff")
+        self._step(review.id, "diff")
         try:
             entries = self._client.commit_diff(project.external_id, commit.sha)
         except GitLabError as exc:
@@ -245,6 +245,12 @@ class ReviewService:
         self._progress.end(review.id, result.status)
         return result
 
+    def _step(self, review_id: int, stage: str, detail: str = "", **extra: Any) -> None:
+        """A stage of a running review: a log line (so `docker compose logs worker` shows a
+        long review is alive) and the live view on the dashboard."""
+        log.info("review stage", extra={"review_id": review_id, "stage": stage, "detail": detail})
+        self._progress.stage(review_id, stage, detail, **extra)
+
     def _begin(
         self, review: Review, project: Project, kind: str, ref: str, title: str, sha: str
     ) -> None:
@@ -254,6 +260,17 @@ class ReviewService:
             self._session.get(User, review.requested_by_user_id)
             if review.requested_by_user_id
             else None
+        )
+        log.info(
+            "review started",
+            extra={
+                "review_id": review.id,
+                "project_id": project.id,
+                "kind": kind,
+                "ref": ref[:12],
+                "trigger": review.trigger,
+                "round": review.round,
+            },
         )
         self._progress.start(
             review.id,
@@ -426,7 +443,7 @@ class ReviewService:
                 return None  # context is a bonus; the diff alone is reviewable
 
         chunks = chunk(prepared, settings.max_tokens_per_chunk, fetch_context)
-        self._progress.stage(
+        self._step(
             review.id, "llm", f"{len(chunks)} phần", loc=prepared.loc, files=len(prepared.files)
         )
         calls: list[ReviewResult] = []
@@ -436,7 +453,7 @@ class ReviewService:
         try:
             for number, piece in enumerate(chunks, 1):
                 if len(chunks) > 1:
-                    self._progress.stage(review.id, "llm", f"phần {number}/{len(chunks)}")
+                    self._step(review.id, "llm", f"phần {number}/{len(chunks)}")
                 result = review_chunk(self._provider, build_prompt(target, piece))
                 calls += result.calls
                 raw_findings += result.review.findings
@@ -452,7 +469,7 @@ class ReviewService:
             raw_findings, {f.path: f for f in prepared.files}, settings.min_confidence
         )
         outcome = self._deep(review, project, target, prepared, processed.findings, sha)
-        self._progress.stage(review.id, "save")
+        self._step(review.id, "save")
         final: list[Finding] = outcome.findings if outcome else processed.findings
         for f in final:
             self._session.add(
@@ -525,7 +542,7 @@ class ReviewService:
         if not self._within_budget():
             review.deep = {"skipped": "hết ngân sách LLM tháng"}
             return None
-        self._progress.stage(review.id, "deep", "tải mã nguồn")
+        self._step(review.id, "deep", "tải mã nguồn")
         try:
             with checkout(
                 self._client,
@@ -536,7 +553,7 @@ class ReviewService:
             ) as (root, stats):
                 docs = discover(root)
                 profile = self._profile(project, docs, sha, review)
-                self._progress.stage(review.id, "deep", "agent đang đọc code", files=stats.files)
+                self._step(review.id, "deep", "agent đang đọc code", files=stats.files)
                 prompt = build_deep_prompt(
                     target,
                     render_profile(profile) if profile else "",
@@ -593,7 +610,7 @@ class ReviewService:
         review that needed it so the monthly budget sees it)."""
         if profile_is_fresh(project, self._settings.profile_ttl, self._clock()):
             return project.profile
-        self._progress.stage(review.id, "profile", "dựng hồ sơ dự án")
+        self._step(review.id, "profile", "dựng hồ sơ dự án")
         try:
             profile, usage = build_profile(self._provider, docs, project.path_with_namespace)
         except (LLMError, ValueError) as exc:
