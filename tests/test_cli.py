@@ -144,3 +144,41 @@ def test_rotate_replaces_token_and_secret(db_session: Session) -> None:
     assert new_secret != old_secret and len(new_secret) >= 32
     with pytest.raises(CliError, match="--token and/or"):
         cli(db_session, "connections", "rotate", str(connection.id))
+
+
+def test_resync_queues_a_full_collect_of_every_tracked_repo(db_session: Session) -> None:
+    project = setup_project(db_session)
+    other = Project(
+        connection_id=project.connection_id,
+        external_id=1002,
+        path_with_namespace="demo/old",
+        tracked=False,
+    )
+    db_session.add(other)
+    db_session.flush()
+    calls: list[tuple[int, bool]] = []
+
+    def enqueue(project_id: int, full: bool = False) -> None:
+        calls.append((project_id, full))
+
+    out = io.StringIO()
+    assert run(
+        build_parser().parse_args(["projects", "resync"]),
+        db_session,
+        BOX,
+        make_client,
+        out,
+        enqueue,
+    )
+    assert calls == [(project.id, True)]  # the untracked repo is left alone
+    assert "1 repo" in out.getvalue()
+    calls.clear()
+    run(
+        build_parser().parse_args(["projects", "resync", "--project", str(project.id)]),
+        db_session,
+        BOX,
+        make_client,
+        io.StringIO(),
+        enqueue,
+    )
+    assert calls == [(project.id, True)]

@@ -63,6 +63,7 @@ class GitLabClient:
         )
         self._max_retries = max_retries
         self._sleep = sleep
+        self._mr_diffs_broken = False  # set once /diffs failed and /changes answered
         self._limiter = RateLimiter(max_per_second, sleep=sleep)
 
     def close(self) -> None:
@@ -228,13 +229,22 @@ class GitLabClient:
         return out
 
     def mr_diffs(self, project_id: int, iid: int) -> list[Any]:
-        try:
-            return list(self.paginate(f"/projects/{project_id}/merge_requests/{iid}/diffs"))
-        except GitLabError as exc:
-            if exc.status_code != 404:
-                raise
-        # GitLab < 15.7 has no /diffs; /changes returns the same file entries under "changes".
+        """File entries of an MR. GitLab < 15.7 has no /diffs (404) and some instances answer
+        it with HTTP 500 for every MR; /changes returns the same entries under "changes".
+        Once /diffs failed that way, this client goes straight to /changes."""
+        if not self._mr_diffs_broken:
+            try:
+                # No retries: a failing /diffs has a fallback right below.
+                with self.retries(0):
+                    return list(self.paginate(f"/projects/{project_id}/merge_requests/{iid}/diffs"))
+            except GitLabError as exc:
+                status = exc.status_code or 0
+                if status != 404 and status < 500:
+                    raise
         changes = self.get(f"/projects/{project_id}/merge_requests/{iid}/changes")
+        if not self._mr_diffs_broken:
+            self._mr_diffs_broken = True
+            log.warning("gitlab /diffs unusable, using /changes", extra={"project": project_id})
         return list(changes.get("changes", []))
 
     def mr_commits(self, project_id: int, iid: int) -> Iterator[Any]:

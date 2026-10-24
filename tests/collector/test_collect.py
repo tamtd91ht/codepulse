@@ -98,6 +98,7 @@ def test_one_item_gitlab_cannot_serve_does_not_fail_the_sync(db_session: Session
     ):
         # Registered first, so it wins over the generic routes: GitLab 500s on one MR's diffs.
         router.get(f"{API}/projects/1001/merge_requests/1/diffs").respond(500)
+        router.get(f"{API}/projects/1001/merge_requests/1/changes").respond(500)
         router.get(f"{API}/projects/1001/pipelines/7002").respond(404)
         mount(router)
         result = GitLabCollector(client, clock=lambda: NOW).collect(db_session, project, None)
@@ -150,9 +151,11 @@ def test_a_broken_item_costs_one_retry_not_the_full_backoff(db_session: Session)
         GitLabClient(BASE, "t", max_per_second=1000, max_retries=5, sleep=sleeps.append) as client,
     ):
         diffs = router.get(f"{API}/projects/1001/merge_requests/1/diffs").respond(500)
+        changes = router.get(f"{API}/projects/1001/merge_requests/1/changes").respond(500)
         mount(router)
         result = GitLabCollector(client, clock=lambda: NOW).collect(db_session, project, None)
         assert client._max_retries == 5  # the limit only applied inside the item call
     backoffs = [s for s in sleeps if s >= 0.5]  # the rate limiter's tiny pauses aside
-    assert diffs.call_count == 2 and len(backoffs) == 1
+    # /diffs once (it has a fallback), /changes once plus the single item retry.
+    assert diffs.call_count == 1 and changes.call_count == 2 and len(backoffs) == 1
     assert result.counts["skipped.mr_diffs"] == 1

@@ -113,6 +113,7 @@ def test_a_part_gitlab_cannot_serve_keeps_the_stored_merge_request(db_session: S
     with respx.mock(assert_all_called=False) as router:
         router.get(f"{BASE}/api/v4/projects/1001/merge_requests/1/notes").respond(502)
         router.get(f"{BASE}/api/v4/projects/1001/merge_requests/1/diffs").respond(500)
+        router.get(f"{BASE}/api/v4/projects/1001/merge_requests/1/changes").respond(500)
         mount(router)
         result = sync_project(
             db_session,
@@ -126,3 +127,22 @@ def test_a_part_gitlab_cannot_serve_keeps_the_stored_merge_request(db_session: S
     assert (mr.additions, mr.deletions, mr.first_review_at, mr.review_rounds) == before
     assert result.counts is not None and result.counts["skipped.merge_request"] == 1
     assert project.last_synced_at == NOW + timedelta(minutes=30)  # the rest synced fine
+
+
+def test_full_sync_collects_the_whole_backfill_window_again(db_session: Session) -> None:
+    project = make_project(db_session)
+    project.last_synced_at = NOW - timedelta(minutes=10)
+    db_session.flush()
+    with respx.mock(assert_all_called=False) as router:
+        mount(router)
+        result = sync_project(
+            db_session,
+            project,
+            make_client,
+            backfill_days=90,
+            ignore_paths=IGNORE,
+            now=NOW,
+            full=True,
+        )
+    assert result.window_start == NOW - timedelta(days=90)
+    assert project.last_synced_at == NOW

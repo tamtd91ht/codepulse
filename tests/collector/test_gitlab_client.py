@@ -101,6 +101,29 @@ def test_mr_diffs_falls_back_to_changes_on_old_gitlab(client: GitLabClient) -> N
     assert client.mr_diffs(7, 3) == [{"new_path": "a.py", "diff": "@@"}]
 
 
+@respx.mock
+def test_mr_diffs_falls_back_to_changes_when_diffs_answers_500(
+    client: GitLabClient, sleeps: list[float]
+) -> None:
+    diffs = respx.get(url__regex=rf"{API}/projects/7/merge_requests/\d+/diffs").respond(500)
+    respx.get(url__regex=rf"{API}/projects/7/merge_requests/\d+/changes").respond(
+        json={"changes": [{"new_path": "a.py", "diff": "@@"}]}
+    )
+    assert client.mr_diffs(7, 3) == [{"new_path": "a.py", "diff": "@@"}]
+    backoffs = [s for s in sleeps if s >= 0.5]  # the rate limiter's tiny pauses aside
+    assert diffs.call_count == 1 and backoffs == []  # no backoff on the broken endpoint
+    assert client.mr_diffs(7, 4) == [{"new_path": "a.py", "diff": "@@"}]
+    assert diffs.call_count == 1  # remembered: straight to /changes
+
+
+@respx.mock
+def test_mr_diffs_does_not_hide_auth_errors(client: GitLabClient) -> None:
+    respx.get(f"{API}/projects/7/merge_requests/3/diffs").respond(403)
+    with pytest.raises(GitLabError) as err:
+        client.mr_diffs(7, 3)
+    assert err.value.status_code == 403
+
+
 def test_rate_limiter_spaces_requests() -> None:
     now = [0.0]
     slept: list[float] = []

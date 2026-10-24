@@ -4,7 +4,7 @@ import logging
 import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from sqlalchemy import func, select
@@ -95,8 +95,11 @@ def sync_project(
     ignore_paths: list[str],
     allowed_email_domains: Sequence[str] = (),
     now: datetime | None = None,
+    full: bool = False,
 ) -> SyncResult:
-    """Run inside the caller's transaction; last_synced_at only advances if everything succeeds."""
+    """Run inside the caller's transaction; last_synced_at only advances if everything succeeds.
+    `full`: collect the whole backfill window again (e.g. after a collector fix), not only what
+    changed since the last sync."""
     if not project.tracked:
         log.info("sync skipped: repo not tracked", extra={"project_id": project.id})
         return SyncResult(project.id, skipped=True)
@@ -111,7 +114,11 @@ def sync_project(
     if connection is None:
         raise ValueError(f"project {project.id} has no connection")
     started = now or datetime.now(UTC)
-    since = window_start(project, started, backfill_days)
+    since = (
+        started - timedelta(days=backfill_days)
+        if full
+        else window_start(project, started, backfill_days)
+    )
 
     with make_client(connection) as client:
         collected = GitLabCollector(client, clock=lambda: started).collect(session, project, since)
@@ -160,7 +167,7 @@ def fetch_commit(
     return True
 
 
-def sync_project_job(project_id: int) -> dict[str, object]:
+def sync_project_job(project_id: int, full: bool = False) -> dict[str, object]:
     """RQ entry point."""
     settings = get_settings()
     with get_sessionmaker()() as session, session.begin():
@@ -174,6 +181,7 @@ def sync_project_job(project_id: int) -> dict[str, object]:
             backfill_days=settings.backfill_days,
             ignore_paths=settings.ignore_paths,
             allowed_email_domains=settings.allowed_email_domains,
+            full=full,
         )
     return {"project_id": result.project_id, "skipped": result.skipped, "counts": result.counts}
 

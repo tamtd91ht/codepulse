@@ -213,6 +213,11 @@ def build_parser() -> argparse.ArgumentParser:
     sync = proj.add_parser("sync", help="collect now (inline), or --enqueue for the worker")
     sync.add_argument("project_id", type=int)
     sync.add_argument("--enqueue", action="store_true")
+    resync = proj.add_parser(
+        "resync",
+        help="queue a full re-collect of the backfill window (every tracked repo, or --project)",
+    )
+    resync.add_argument("--project", type=int, help="CodePulse project id; default: all tracked")
 
     ident = sub.add_parser("identity").add_subparsers(dest="command", required=True)
     imp = ident.add_parser("import")
@@ -236,7 +241,7 @@ def run(
     box: SecretBox,
     make_client: ClientFactory,
     out: TextIO,
-    enqueue: Callable[[int], None] | None = None,
+    enqueue: Callable[..., None] | None = None,
 ) -> bool:
     """Execute one command inside the caller's transaction; False means roll back."""
     settings = get_settings()
@@ -263,6 +268,18 @@ def run(
                 raise CliError("no queue available")
             enqueue(args.project_id)
             out.write(f"sync of project {args.project_id} queued\n")
+        case ("projects", "resync"):
+            if enqueue is None:
+                raise CliError("no queue available")
+            if args.project is not None:
+                ids = [_project(session, args.project).id]
+            else:
+                ids = list(
+                    session.scalars(select(Project.id).where(Project.tracked).order_by(Project.id))
+                )
+            for project_id in ids:
+                enqueue(project_id, full=True)
+            out.write(f"full re-sync queued for {len(ids)} repo(s)\n")
         case ("projects", "sync"):
             result = sync_project(
                 session,
@@ -307,11 +324,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = build_parser().parse_args(argv)
 
-    def enqueue(project_id: int) -> None:
+    def enqueue(project_id: int, full: bool = False) -> None:
         Queue("default", connection=get_redis()).enqueue(
             "app.collector.sync.sync_project_job",
             project_id,
-            job_id=f"sync-project-{project_id}",
+            full=full,
+            job_id=f"sync-project-{project_id}" + ("-full" if full else ""),
             job_timeout=SYNC_JOB_TIMEOUT,
         )
 
