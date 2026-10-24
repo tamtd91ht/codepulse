@@ -183,6 +183,43 @@ def test_commit_picker_lists_everyone_and_queues_the_ticked_ones(
     assert "hết hạn" in tg.answered[-1]["text"]
 
 
+def test_people_step_filters_the_list_to_one_person(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    seed_commits(db_session, world)
+    link(db_session, world.lead, 777)
+    db_session.commit()
+    tg = FakeTelegram()
+    store = MemoryPickerStore()
+    tg.updates = [message_update(1, "/review")]
+    run(db_session, bot, settings, queue, tg, store)
+    menu = buttons(tg.sent[0]["markup"])
+    tg.updates = [tap(2, menu["📝 Commit gần đây"])]
+    run(db_session, bot, settings, queue, tg, store)
+    who = buttons(tg.edited[-1]["markup"])
+    tg.updates = [tap(3, who["Binh"])]
+    run(db_session, bot, settings, queue, tg, store)
+    text = tg.edited[-1]["text"]
+    assert "1 mục" in text and "fix: two · Binh" in text and "feat: one" not in text
+    assert "· Binh" in text.splitlines()[0]  # the scope line names the person
+    # The "Người" button inside the list goes back to the people keyboard.
+    kb = buttons(tg.edited[-1]["markup"])
+    tg.updates = [tap(4, kb["👤 Người"])]
+    run(db_session, bot, settings, queue, tg, store)
+    assert "👥 Mọi người" in buttons(tg.edited[-1]["markup"])
+    # A member only has themself: no people step, straight to the list.
+    tg2 = FakeTelegram()
+    link(db_session, world.an, 778)
+    db_session.commit()
+    tg2.updates = [
+        message_update(5, "/review", from_id=778),
+    ]
+    run(db_session, bot, settings, queue, tg2, store)
+    tg2.updates = [tap(6, buttons(tg2.sent[0]["markup"])["📝 Commit gần đây"], from_id=778)]
+    run(db_session, bot, settings, queue, tg2, store)
+    assert "<b>Commit gần đây</b>" in tg2.edited[-1]["text"]
+
+
 def test_member_sees_others_as_blocked_and_select_all_respects_it(
     db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
 ) -> None:
@@ -221,8 +258,12 @@ def test_bare_review_opens_the_menu_and_mr_picker_lists_open_mrs(
     run(db_session, bot, settings, queue, tg, store)
     menu = buttons(tg.sent[0]["markup"])
     assert "🔀 MR đang mở" in menu and tg.sent[0]["text"] == "Bạn muốn review gì?"
-    # One repo in scope: the menu goes straight to the MR list, edited into the same message.
+    # One repo in scope, but a lead may review several people: pick whose MRs first.
     tg.updates = [tap(2, menu["🔀 MR đang mở"])]
+    run(db_session, bot, settings, queue, tg, store)
+    who = buttons(tg.edited[-1]["markup"])
+    assert "👥 Mọi người" in who and "An" in who and "Binh" in who and "Outsider" not in who
+    tg.updates = [tap(20, who["👥 Mọi người"])]
     run(db_session, bot, settings, queue, tg, store)
     listed = tg.edited[-1]
     assert "<b>MR đang mở</b> · demo/p · 2 mục" in listed["text"]
@@ -231,10 +272,10 @@ def test_bare_review_opens_the_menu_and_mr_picker_lists_open_mrs(
     kb = buttons(listed["markup"])
     toggle = next(v for k, v in kb.items() if k.startswith("☐"))
     token = toggle.split("|")[1]
-    tg.updates = [tap(3, toggle), tap(4, f"pk|{token}|go")]
+    tg.updates = [tap(21, toggle), tap(22, f"pk|{token}|go")]
     run(db_session, bot, settings, queue, tg, store)
     (job,) = queue.jobs
     assert job[0].endswith("review_mr_job") and job[1] == (world.project.id, 9, "9" * 40)
-    tg.updates = [tap(5, "mn||x")]
+    tg.updates = [tap(23, "mn||x")]
     run(db_session, bot, settings, queue, tg, store)
     assert tg.edited[-1]["text"] == "Đã huỷ."

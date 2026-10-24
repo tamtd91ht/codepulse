@@ -52,6 +52,7 @@ from app.telegram.picker import (
     keyboard,
     menu_keyboard,
     new_token,
+    people_keyboard,
     render_text,
     repo_keyboard,
 )
@@ -1101,6 +1102,8 @@ class BotService:
             scope = project.path_with_namespace
         if not items:
             return None
+        if people:
+            scope += " · " + ", ".join((u.full_name or u.primary_email or "?") for u in people[:3])
         return PickerState(
             token=new_token(),
             owner_from_id=msg.from_id,
@@ -1111,6 +1114,8 @@ class BotService:
             scope_label=scope,
             items=items[:MAX_ITEMS],
             raw=raw,
+            project_id=project.id,
+            person_id=people[0].id if len(people) == 1 else None,
         )
 
     def _state_of(self, kind: str, project_id: int, ref: str, sha: str) -> tuple[str, str]:
@@ -1329,6 +1334,11 @@ class BotService:
                 return self._menu_callback(action.op, cb, me)
             if action.kind == "repo":
                 return self._repo_callback(action.op, int(action.arg or 0), cb, me)
+            if action.kind == "person":
+                project_part, _, user_part = action.arg.partition(":")
+                return self._person_callback(
+                    action.op, int(project_part or 0), int(user_part or 0), cb, me
+                )
             return self._picker_callback(action.token, action.op, action.arg, cb, me)
         except Denied as exc:
             return CallbackOutcome(answer=str(exc)[:200], alert=True)
@@ -1339,6 +1349,8 @@ class BotService:
     def _menu_callback(self, op: str, cb: Callback, me: Principal) -> CallbackOutcome:
         if op == "x":
             return CallbackOutcome(answer="Đã huỷ.", text="Đã huỷ.")
+        if op == "noop":
+            return CallbackOutcome(answer="Gõ /review type=… user=tên để lọc người khác.")
         if op not in ("commit", "mr"):
             return CallbackOutcome(answer="Nút này không còn hiệu lực.")
         repos = self._scope()
@@ -1361,14 +1373,61 @@ class BotService:
         project = next((p for p in self._scope() if p.id == project_id), None)
         if project is None or op not in ("commit", "mr"):
             return CallbackOutcome(answer="Repo không còn trong phạm vi bot.", alert=True)
+        people, more = self._people_for_picker(me)
+        if len(people) > 1:
+            # Whose work? Everyone, or one of the people this person may review.
+            what = "commit gần đây" if op == "commit" else "MR đang mở"
+            return CallbackOutcome(
+                text=f"{esc(project.path_with_namespace)} · {what}: của ai?",
+                markup=people_keyboard(
+                    "commit" if op == "commit" else "mr", project.id, people, more
+                ),
+            )
+        return self._person_callback(op, project.id, 0, cb, me)
+
+    def _people_for_picker(self, me: Principal) -> tuple[list[tuple[int, str]], int]:
+        """(user_id, name) the caller may review, at most 12; the rest is a count."""
+        query = select(User).where(User.active.is_not(False)).order_by(User.full_name, User.id)
+        visible = me.visible_users()
+        if visible is not None:
+            query = query.where(User.id.in_(visible))
+        users = list(self._s.scalars(query))
+        shown = [(u.id, u.full_name or u.primary_email or f"#{u.id}") for u in users[:12]]
+        return shown, max(0, len(users) - 12)
+
+    def _person_callback(
+        self, op: str, project_id: int, user_id: int, cb: Callback, me: Principal
+    ) -> CallbackOutcome:
+        project = next((p for p in self._scope() if p.id == project_id), None)
+        if project is None or op not in ("commit", "mr"):
+            return CallbackOutcome(answer="Repo không còn trong phạm vi bot.", alert=True)
+        people: list[User] = []
+        if user_id:
+            person = self._s.get(User, user_id)
+            if person is None or not me.can_see_user(person.id):
+                return CallbackOutcome(answer="Bạn không review được người này.", alert=True)
+            people = [person]
         args = ReviewArgs("today" if op == "commit" else "open", days=7, pick=True)
         msg = Incoming(cb.update_id, cb.chat_id, "", cb.message_id, cb.from_id, cb.username, "", "")
+        who = f" user={people[0].primary_email}" if people else ""
         state = self._build_picker(
-            op, project, args, [], me, msg, f"/review (menu) {op} {project.path_with_namespace}"
+            op,
+            project,
+            args,
+            people,
+            me,
+            msg,
+            f"/review (menu) {op} {project.path_with_namespace}{who}",
         )
         if state is None:
             what = "commit nào trong 7 ngày qua" if op == "commit" else "MR nào đang mở"
-            return CallbackOutcome(text=f"{esc(project.path_with_namespace)}: không có {what}.")
+            whose = f" của {esc(people[0].full_name or '')}" if people else ""
+            return CallbackOutcome(
+                text=f"{esc(project.path_with_namespace)}: không có {what}{whose}.",
+                markup=people_keyboard(
+                    "commit" if op == "commit" else "mr", project.id, *self._people_for_picker(me)
+                ),
+            )
         state.message_id = cb.message_id
         self._picker.save(state)
         return CallbackOutcome(text=render_text(state), markup=keyboard(state))
@@ -1392,6 +1451,14 @@ class BotService:
         if op == "x":
             self._picker.delete(token)
             return CallbackOutcome(answer="Đã huỷ.", text="Đã huỷ.")
+        if op == "who":
+            people, more = self._people_for_picker(me)
+            self._picker.delete(token)
+            what = "commit gần đây" if state.kind == "commit" else "MR đang mở"
+            return CallbackOutcome(
+                text=f"{esc(state.scope_label)} · {what}: của ai?",
+                markup=people_keyboard(state.kind, state.project_id, people, more),
+            )
         if op == "t":
             try:
                 idx = int(arg)

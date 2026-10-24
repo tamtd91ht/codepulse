@@ -60,6 +60,8 @@ class PickerState:
     kind: Kind
     scope_label: str  # "omicrm/api · main · 7 ngày"
     items: list[Item]
+    project_id: int = 0  # the repo the list came from (for the people filter)
+    person_id: int | None = None  # list filtered to this CodePulse user, None = everyone
     selected: list[int] = field(default_factory=list)
     page: int = 0
     raw: str = ""  # the command, for the audit log
@@ -149,13 +151,16 @@ def encode(kind: str, token: str = "", op: str = "", arg: str | int = "") -> str
     return data
 
 
+KINDS = {"pk": "pick", "mn": "menu", "rp": "repo", "us": "person"}
+
+
 def decode(data: str) -> Action | None:
+    """pk|token|op|arg · mn||commit · rp||kind|project · us||kind|project:user (0 = everyone)"""
     parts = (data or "").split("|")
-    if not parts or parts[0] not in ("pk", "mn", "rp"):
+    if not parts or parts[0] not in KINDS:
         return None
-    kind = {"pk": "pick", "mn": "menu", "rp": "repo"}[parts[0]]
     parts += [""] * (4 - len(parts))
-    return Action(kind, parts[1], parts[2], parts[3])
+    return Action(KINDS[parts[0]], parts[1], parts[2], parts[3])
 
 
 # -- rendering ------------------------------------------------------------------------------------
@@ -213,6 +218,8 @@ def keyboard(state: PickerState) -> dict[str, Any]:
         },
     ]
     rows.append(controls)
+    if state.project_id:
+        rows.append([{"text": "👤 Người", "callback_data": encode("pk", state.token, "who")}])
     nav: list[dict[str, str]] = []
     if state.page > 0:
         nav.append(
@@ -237,6 +244,34 @@ def menu_keyboard() -> dict[str, Any]:
             [{"text": "✖ Huỷ", "callback_data": encode("mn", op="x")}],
         ]
     }
+
+
+def people_keyboard(
+    kind: Kind, project_id: int, people: list[tuple[int, str]], more: int = 0
+) -> dict[str, Any]:
+    """Everyone first, then the people the caller may review (two per row), then cancel."""
+    rows: list[list[dict[str, str]]] = [
+        [{"text": "👥 Mọi người", "callback_data": encode("us", op=kind, arg=f"{project_id}:0")}]
+    ]
+    row: list[dict[str, str]] = []
+    for user_id, name in people:
+        row.append(
+            {
+                "text": name[:28] or f"#{user_id}",
+                "callback_data": encode("us", op=kind, arg=f"{project_id}:{user_id}"),
+            }
+        )
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    if more:
+        rows.append(
+            [{"text": f"… còn {more} người: gõ user=tên", "callback_data": encode("mn", op="noop")}]
+        )
+    rows.append([{"text": "✖ Huỷ", "callback_data": encode("mn", op="x")}])
+    return {"inline_keyboard": rows}
 
 
 def repo_keyboard(kind: Kind, repos: list[tuple[int, str]]) -> dict[str, Any]:

@@ -112,6 +112,28 @@ def test_menu_and_repo_keyboards() -> None:
     assert repos[0][0]["callback_data"] == "rp||mr|1"
 
 
+def test_people_keyboard_offers_everyone_then_people() -> None:
+    from app.telegram.picker import people_keyboard
+
+    kb = people_keyboard("commit", 7, [(1, "An"), (2, "Bình"), (3, "Chi")], more=2)[
+        "inline_keyboard"
+    ]
+    assert kb[0][0]["text"] == "👥 Mọi người" and kb[0][0]["callback_data"] == "us||commit|7:0"
+    assert [b["text"] for b in kb[1]] == ["An", "Bình"] and kb[1][1][
+        "callback_data"
+    ] == "us||commit|7:2"
+    assert kb[-2][0]["text"].startswith("… còn 2 người")
+    action = decode("us||commit|7:2")
+    assert action is not None and (action.kind, action.op, action.arg) == (
+        "person",
+        "commit",
+        "7:2",
+    )
+    st = state(1)
+    st.project_id = 7
+    assert any(b["text"] == "👤 Người" for row in keyboard(st)["inline_keyboard"] for b in row)
+
+
 def test_memory_store_round_trips_and_expires() -> None:
     now = [100.0]
     store = MemoryPickerStore(clock=lambda: now[0], ttl_s=60)
