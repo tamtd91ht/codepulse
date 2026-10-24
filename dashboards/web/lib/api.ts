@@ -19,15 +19,28 @@ async function request<T>(path: string, init?: RequestInit, redirectOn401 = true
     window.location.href = "/login";
   }
   if (!response.ok) {
-    let detail = response.statusText;
+    let detail: unknown = response.statusText;
     try {
       detail = (await response.json()).detail ?? detail;
     } catch {
       /* not JSON */
     }
-    throw new ApiError(response.status, typeof detail === "string" ? detail : JSON.stringify(detail));
+    throw new ApiError(response.status, typeof detail === "string" ? detail : describeDetail(detail));
   }
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
+}
+
+/** Pydantic's 422 body is a list of {loc, msg}; show "field: message" instead of raw JSON. */
+function describeDetail(detail: unknown): string {
+  if (Array.isArray(detail) && detail.every((d) => d && typeof d === "object" && "msg" in d)) {
+    return detail
+      .map((d: { loc?: unknown[]; msg?: string }) => {
+        const field = (d.loc ?? []).filter((p) => p !== "body").join(".");
+        return field ? `${field}: ${d.msg}` : String(d.msg);
+      })
+      .join("; ");
+  }
+  return JSON.stringify(detail);
 }
 
 export const api = {

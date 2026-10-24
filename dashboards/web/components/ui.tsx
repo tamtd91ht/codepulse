@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode, useMemo, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Line, LineChart, YAxis } from "recharts";
 
 import { Icon, type IconName, IconButton } from "@/components/icons";
@@ -403,6 +403,92 @@ export function PersonLink({ id, name, email }: { id: number; name: string | nul
       <div className="who">
         <Link href={`/members/${id}`}>{name ?? email ?? `#${id}`}</Link>
       </div>
+    </div>
+  );
+}
+
+/* ---------- Side drawer ---------- */
+
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * A panel sliding in from the right for "details of one thing" (a dự án, a bot). Escape (inside
+ * the panel) and a click on the backdrop close it; Tab stays inside; the page behind stops
+ * scrolling; focus goes to the close button on open and back to the opener on close.
+ */
+export function Drawer({
+  title,
+  onClose,
+  width = 720,
+  children,
+}: {
+  title: ReactNode;
+  onClose: () => void;
+  width?: number;
+  children: ReactNode;
+}) {
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const aside = useRef<HTMLElement>(null);
+  const pressedBackdrop = useRef(false);
+  // The latest onClose without re-running the mount effect (callers pass inline arrows).
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButton.current?.focus();
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+      opener?.focus();
+    };
+  }, []);
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      close.current();
+      return;
+    }
+    if (e.key !== "Tab" || !aside.current) return;
+    const focusable = [...aside.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+  return (
+    <div
+      className="side-drawer-backdrop"
+      onMouseDown={(e) => {
+        pressedBackdrop.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        // Only a press that started on the backdrop closes: a text selection that ends there must not.
+        if (pressedBackdrop.current && e.target === e.currentTarget) close.current();
+        pressedBackdrop.current = false;
+      }}
+    >
+      <aside
+        ref={aside}
+        className="side-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="side-drawer-title"
+        style={{ width: `min(${width}px, 100%)` }}
+        onKeyDown={onKeyDown}
+      >
+        <div className="side-drawer-head">
+          <h2 id="side-drawer-title">{title}</h2>
+          <IconButton ref={closeButton} icon="close" label="Đóng" onClick={onClose} />
+        </div>
+        <div className="side-drawer-body">{children}</div>
+      </aside>
     </div>
   );
 }

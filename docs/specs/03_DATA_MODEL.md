@@ -95,6 +95,20 @@ CREATE TABLE finding_disputes (
 );
 ```
 
+## Webhook thông báo (xem 16)
+```sql
+CREATE TABLE notification_webhooks (
+  id SERIAL PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL,
+  format TEXT NOT NULL DEFAULT 'json',          -- json|slack|teams
+  secret_encrypted TEXT, events JSONB NOT NULL,  -- ["review.done","review.failed","review.severe"]
+  business_project_id INT REFERENCES business_projects(id) ON DELETE CASCADE,
+  project_id INT REFERENCES projects(id) ON DELETE CASCADE,   -- cả hai NULL = mọi repo
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  last_delivery_at TIMESTAMPTZ, last_status_code INT, last_error TEXT,
+  failures INT NOT NULL DEFAULT 0, deliveries INT NOT NULL DEFAULT 0
+);
+```
+
 ## Metrics (tổng hợp – xem 08)
 ```sql
 CREATE TABLE metrics_user_period (

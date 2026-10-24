@@ -14,7 +14,16 @@ from sqlalchemy import Engine
 
 from app import health
 from app.api import auth
-from app.api.routers import admin, disputes, llm, metrics, overview, reviews, telegram
+from app.api.routers import (
+    admin,
+    disputes,
+    llm,
+    metrics,
+    notifications,
+    overview,
+    reviews,
+    telegram,
+)
 from app.collector.gitlab.client import GitLabError
 from app.config import get_settings
 from app.db import get_engine, get_redis
@@ -49,6 +58,7 @@ for api_router in (
     disputes.router,
     telegram.router,
     overview.router,
+    notifications.router,
 ):
     app.include_router(api_router, prefix="/api/v1")
 # docs/specs/11: CORS for the dashboard origin only; cookies need credentials.

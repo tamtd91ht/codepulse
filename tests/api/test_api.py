@@ -153,6 +153,12 @@ def test_rerun_only_failed_or_skipped(
     [
         ("get", "/api/v1/connections"),
         ("patch", "/api/v1/connections/1"),
+        ("delete", "/api/v1/connections/1"),
+        ("get", "/api/v1/webhooks"),
+        ("post", "/api/v1/webhooks"),
+        ("patch", "/api/v1/webhooks/1"),
+        ("delete", "/api/v1/webhooks/1"),
+        ("post", "/api/v1/webhooks/1/test"),
         ("post", "/api/v1/projects/1/webhook"),
         ("post", "/api/v1/projects/import-group"),
         ("get", "/api/v1/projects"),

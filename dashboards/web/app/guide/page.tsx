@@ -189,7 +189,8 @@ export default function GuidePage() {
           </li>
           <li>
             Đổi token: nhập token mới ở dòng của kết nối và bấm <strong>Đổi token</strong>. CodePulse thử token với
-            GitLab trước khi lưu; sau đó hãy thu hồi token cũ trên GitLab.
+            GitLab trước khi lưu; sau đó hãy thu hồi token cũ trên GitLab. Biểu tượng bút đổi tên kết nối; chỉ xoá được
+            kết nối khi không còn repo nào dùng nó.
           </li>
         </ol>
         <h3>Dự án, group và repo</h3>
@@ -200,9 +201,20 @@ export default function GuidePage() {
             thể từ nhiều group.
           </li>
           <li>
-            Tạo dự án ở thẻ <strong>Dự án</strong>. Xoá dự án chỉ bỏ cách nhóm; repo và lịch sử review vẫn giữ.
+            Tab <strong>Dự án &amp; Repo</strong> mặc định hiện mỗi dự án là một ô (số repo, bao nhiêu repo bật review,
+            sync gần nhất); bấm vào ô để mở ngăn chi tiết: đổi tên, repo của dự án với đầy đủ nút Sync / Webhook /
+            Review / Bỏ theo dõi, thêm repo có sẵn vào dự án, bot Telegram và webhook thông báo của dự án. Nút{" "}
+            <strong>Danh sách</strong> chuyển sang bảng toàn bộ repo để lọc, chọn nhiều và thao tác hàng loạt.
           </li>
+          <li>Xoá dự án chỉ bỏ cách nhóm; repo và lịch sử review vẫn giữ.</li>
         </ul>
+        <h3>Webhook thông báo</h3>
+        <p>
+          Ở tab <strong>Webhook thông báo</strong>, admin đặt endpoint nhận kết quả review (Slack, Teams hoặc service nội
+          bộ nhận JSON có chữ ký HMAC), theo phạm vi mọi dự án / một dự án / một repo và theo sự kiện: review xong, có
+          critical/high, review lỗi. Khác với webhook GitLab (GitLab gọi CodePulse khi có MR mới), webhook này là chiều
+          CodePulse gọi ra ngoài. Nút <strong>Gửi thử</strong> gửi payload mẫu để kiểm tra endpoint.
+        </p>
         <h3>Thêm repo</h3>
         <ol>
           <li>Lấy Project ID của repo trên GitLab: ngay dưới tên repo, hoặc Settings → General.</li>

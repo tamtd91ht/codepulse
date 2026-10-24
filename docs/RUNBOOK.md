@@ -44,7 +44,7 @@ codepulse projects add <gitlab_project_id>
 codepulse projects register-webhook <id>
 codepulse projects sync <id>
 ```
-Bật/tắt AI review, comment lên MR, cho phép gửi code ra LLM: dashboard → Admin → Projects.
+Bật/tắt AI review, comment lên MR, cho phép gửi code ra LLM: dashboard → Admin → Dự án & Repo (bấm vào ô dự án để xem repo của nó, hoặc chuyển sang **Danh sách** để thao tác hàng loạt).
 Project có `allow_external_llm = false` **không được review** ở v1 (chưa có provider local).
 
 ## 3. Xoay token / secret
@@ -121,3 +121,11 @@ Job 03:00 hằng ngày xoá `code_excerpt` của finding và dữ liệu thô Gi
 6. Sự cố thường gặp: `HTTP 401 Unauthorized` = token sai/đã thu hồi; `HTTP 409 Conflict` = một tiến trình khác đang `getUpdates` cùng token (ví dụ chạy hai môi trường với cùng bot); không trả lời trong nhóm = Group Privacy còn bật hoặc chat id không nằm trong danh sách cho phép.
 7. Lệnh và quyền: xem `docs/specs/15_TELEGRAM_BOT.md`. Mọi lệnh review được ghi audit log (`telegram.review`) và tốn ngân sách LLM như review thường.
 
+## 11. Webhook thông báo kết quả review
+
+Khác với webhook GitLab (GitLab gọi CodePulse khi có MR/commit mới), webhook thông báo là chiều ra: CodePulse POST kết quả review tới endpoint của bạn. Chi tiết payload: `docs/specs/16_NOTIFICATION_WEBHOOKS.md`.
+
+1. Dashboard **Admin → Webhook thông báo → Thêm webhook**: tên, URL, định dạng (`JSON` cho service của bạn, `Slack`/`Teams` cho incoming webhook của kênh chat), phạm vi (mọi dự án / một dự án / một repo), sự kiện (`Review xong`, `Có critical/high`, `Review lỗi`), secret tuỳ chọn (≥16 ký tự) để ký HMAC-SHA256.
+2. Bấm **Gửi thử**: CodePulse gửi sự kiện `ping` với payload mẫu và báo mã HTTP endpoint trả về.
+3. Gửi thật chạy trong worker (job `notify-review-<id>`) ngay sau khi review được lưu; endpoint cần trả 2xx trong 10 giây. 5xx/429/lỗi mạng được thử lại 3 lần; sau 20 lần lỗi liên tiếp webhook tự tắt, cột **Gửi gần nhất** cho biết lý do; bấm **Bật lại** sau khi sửa endpoint.
+4. Xoá kết nối GitLab: chỉ xoá được khi không còn repo nào dùng nó (gỡ hẳn repo ở Dự án & Repo trước); đổi tên kết nối bằng biểu tượng bút ở tab Kết nối GitLab.

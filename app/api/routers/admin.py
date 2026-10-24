@@ -87,8 +87,21 @@ def _require_reachable_base_url(settings: Settings) -> None:
 
 
 @router.get("/connections", response_model=list[ConnectionOut])
-def list_connections(principal: AdminPrincipal, session: SessionDep) -> list[Connection]:
-    return list(session.scalars(select(Connection).order_by(Connection.id)))
+def list_connections(principal: AdminPrincipal, session: SessionDep) -> list[ConnectionOut]:
+    repos = (
+        select(Project.connection_id, func.count().label("n"))
+        .group_by(Project.connection_id)
+        .subquery()
+    )
+    rows = session.execute(
+        select(Connection, func.coalesce(repos.c.n, 0))
+        .outerjoin(repos, repos.c.connection_id == Connection.id)
+        .order_by(Connection.id)
+    ).all()
+    return [
+        ConnectionOut(id=c.id, name=c.name, kind=c.kind, base_url=c.base_url, repos=int(n))
+        for c, n in rows
+    ]
 
 
 @router.post("/connections", response_model=ConnectionOut, status_code=201)
@@ -142,6 +155,33 @@ def update_connection(
     )
     session.commit()
     return connection
+
+
+@router.delete("/connections/{connection_id}", status_code=204)
+def delete_connection(connection_id: int, principal: AdminPrincipal, session: SessionDep) -> None:
+    """Remove a GitLab connection nobody uses; its repos (and their history) must go first."""
+    connection = _get(session, Connection, connection_id, "connection")
+    repos = session.scalar(
+        select(func.count()).select_from(Project).where(Project.connection_id == connection.id)
+    )
+    if repos:
+        raise HTTPException(
+            409, f"connection still has {repos} repo(s); remove them first (Dự án & Repo → Gỡ hẳn)"
+        )
+    session.delete(connection)
+    audit(
+        session,
+        principal.user_id,
+        "connection.delete",
+        f"connection:{connection_id}",
+        name=connection.name,
+        base_url=connection.base_url,
+    )
+    try:
+        session.commit()
+    except IntegrityError:  # a repo was registered on it meanwhile
+        session.rollback()
+        raise HTTPException(409, "a repo was just added to this connection; try again") from None
 
 
 # -- business projects ("dự án") ---------------------------------------------------------------

@@ -1,15 +1,18 @@
 """RQ entry points for reviews (task 3.5). Enqueued by app.webhook.jobs."""
 
 import logging
+from collections.abc import Callable
 
+from rq import Queue
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.collector.sync import ClientFactory, client_factory, sync_project
 from app.config import Settings, get_settings
 from app.crypto import secret_box
-from app.db import get_sessionmaker
-from app.models import Commit, Connection, MergeRequest, Project
+from app.db import get_redis, get_sessionmaker
+from app.models import Commit, Connection, MergeRequest, Project, Review
+from app.notifications.jobs import enqueue_review_notifications
 from app.review.providers import LLMProvider, build_provider
 from app.review.service import ReviewService, ReviewSettings
 
@@ -57,7 +60,9 @@ def run_mr_review(
     make_client: ClientFactory,
     provider: LLMProvider,
     settings: Settings,
+    after: Callable[[Review], None] = lambda review: None,
 ) -> str:
+    """Review one MR; `after` sees the finished review (notifications run once it is committed)."""
     project = session.get(Project, project_id)
     if project is None:
         return "project not found"
@@ -83,6 +88,8 @@ def run_mr_review(
     with make_client(connection) as client:
         service = ReviewService(session, client, provider, review_settings(settings))
         review = service.review_mr(project, mr, head_sha)
+    if review is not None:
+        after(review)
     return review.status if review else "not reviewed"
 
 
@@ -93,6 +100,7 @@ def run_commit_review(
     make_client: ClientFactory,
     provider: LLMProvider,
     settings: Settings,
+    after: Callable[[Review], None] = lambda review: None,
 ) -> str:
     project = session.get(Project, project_id)
     if project is None:
@@ -111,13 +119,26 @@ def run_commit_review(
     with make_client(connection) as client:
         service = ReviewService(session, client, provider, review_settings(settings))
         review = service.review_commit(project, commit)
+    if review is not None:
+        after(review)
     return review.status if review else "not reviewed"
+
+
+def _notify(finished: list[Review]) -> None:
+    """After the review transaction committed: queue the notification webhooks, if any."""
+    if not finished:
+        return
+    with get_sessionmaker()() as session, session.begin():
+        queue = Queue("default", connection=get_redis())
+        for review in finished:
+            enqueue_review_notifications(session, queue, review)
 
 
 def review_mr_job(project_id: int, iid: int, head_sha: str) -> str:
     settings = get_settings()
+    finished: list[Review] = []
     with get_sessionmaker()() as session, session.begin():
-        return run_mr_review(
+        status = run_mr_review(
             session,
             project_id,
             iid,
@@ -125,17 +146,24 @@ def review_mr_job(project_id: int, iid: int, head_sha: str) -> str:
             client_factory(secret_box()),
             build_provider(settings),
             settings,
+            after=finished.append,
         )
+    _notify(finished)
+    return status
 
 
 def review_commit_job(project_id: int, sha: str) -> str:
     settings = get_settings()
+    finished: list[Review] = []
     with get_sessionmaker()() as session, session.begin():
-        return run_commit_review(
+        status = run_commit_review(
             session,
             project_id,
             sha,
             client_factory(secret_box()),
             build_provider(settings),
             settings,
+            after=finished.append,
         )
+    _notify(finished)
+    return status

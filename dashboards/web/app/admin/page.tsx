@@ -2,21 +2,23 @@
 
 import { type FormEvent, type KeyboardEvent, useEffect, useState } from "react";
 
-import { Icon, type IconName } from "@/components/icons";
+import { Icon, type IconName, IconButton } from "@/components/icons";
 import { LlmCheck } from "@/components/LlmCheck";
 import { RepoAdmin } from "@/components/RepoAdmin";
 import { TeamAdmin } from "@/components/TeamAdmin";
 import { TelegramAdmin } from "@/components/TelegramAdmin";
 import { Card, EmptyState, Loading, Message, PageHeader } from "@/components/ui";
+import { WebhookAdmin } from "@/components/WebhookAdmin";
 import { ApiError, api, useApi } from "@/lib/api";
 import type { Account, Connection, LlmCosts, Person } from "@/lib/types";
 
-type Tab = "gitlab" | "repos" | "people" | "telegram" | "llm";
+type Tab = "gitlab" | "repos" | "people" | "telegram" | "webhooks" | "llm";
 const TABS: { key: Tab; label: string; icon: IconName; hint: string }[] = [
   { key: "gitlab", label: "Kết nối GitLab", icon: "gitlab", hint: "Token bot và máy chủ GitLab" },
   { key: "repos", label: "Dự án & Repo", icon: "folder", hint: "Dự án, group, repo, review theo repo" },
   { key: "people", label: "Người & Team", icon: "members", hint: "Tài khoản, người dùng, team, vai trò" },
   { key: "telegram", label: "Telegram", icon: "pulse", hint: "Bot nhận lệnh review theo dự án" },
+  { key: "webhooks", label: "Webhook thông báo", icon: "webhook", hint: "POST kết quả review tới endpoint của bạn" },
   { key: "llm", label: "LLM & Chi phí", icon: "activity", hint: "Kết nối LLM, chi phí theo tháng" },
 ];
 const isTab = (v: string): v is Tab => TABS.some((t) => t.key === v);
@@ -85,6 +87,7 @@ export default function AdminPage() {
         {tab === "repos" && <ReposTab />}
         {tab === "people" && <PeopleTab />}
         {tab === "telegram" && <TelegramAdmin />}
+        {tab === "webhooks" && <WebhookAdmin />}
         {tab === "llm" && <LlmTab />}
       </div>
     </>
@@ -121,7 +124,8 @@ function useActions() {
 
 function ConnectionsTab() {
   const connections = useApi<Connection[]>("/connections");
-  const { message, setMessage, submit, busy } = useActions();
+  const { message, setMessage, run, submit, busy } = useActions();
+  const [renaming, setRenaming] = useState<number | null>(null);
   return (
     <>
       <Message text={message} onClose={() => setMessage(null)} />
@@ -141,31 +145,76 @@ function ConnectionsTab() {
                 <tr>
                   <th>Tên</th>
                   <th>URL</th>
+                  <th className="num">Repo</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
                 {connections.data.map((c) => (
                   <tr key={c.id}>
-                    <td>{c.name}</td>
-                    <td className="muted">{c.base_url}</td>
                     <td>
-                      <form
-                        className="toolbar"
-                        style={{ margin: 0, justifyContent: "flex-end" }}
-                        onSubmit={(e) =>
-                          submit(
-                            e,
-                            (f) => api.patch(`/connections/${c.id}`, { token: f.get("token") }),
-                            `Đã đổi token của ${c.name}; thu hồi token cũ trên GitLab.`,
-                          )
-                        }
-                      >
-                        <input name="token" type="password" placeholder="Token mới" required autoComplete="new-password" />
-                        <button type="submit" disabled={busy}>
-                          Đổi token
-                        </button>
-                      </form>
+                      {renaming === c.id ? (
+                        <form
+                          className="inline-edit"
+                          onSubmit={(e) =>
+                            submit(
+                              e,
+                              async (f) => {
+                                await api.patch(`/connections/${c.id}`, { name: f.get("name") });
+                                await connections.mutate();
+                                setRenaming(null);
+                              },
+                              "Đã đổi tên kết nối.",
+                            )
+                          }
+                        >
+                          <input name="name" defaultValue={c.name} required maxLength={100} aria-label="Tên kết nối" autoFocus />
+                          <button type="submit" className="primary" disabled={busy}>
+                            Lưu
+                          </button>
+                          <IconButton icon="close" label="Huỷ" onClick={() => setRenaming(null)} />
+                        </form>
+                      ) : (
+                        <span className="inline-edit">
+                          <strong>{c.name}</strong>
+                          <IconButton icon="edit" label="Đổi tên" onClick={() => setRenaming(c.id)} />
+                        </span>
+                      )}
+                    </td>
+                    <td className="muted">{c.base_url}</td>
+                    <td className="num">{c.repos}</td>
+                    <td>
+                      <div className="toolbar" style={{ margin: 0, justifyContent: "flex-end" }}>
+                        <form
+                          className="toolbar"
+                          style={{ margin: 0 }}
+                          onSubmit={(e) =>
+                            submit(
+                              e,
+                              (f) => api.patch(`/connections/${c.id}`, { token: f.get("token") }),
+                              `Đã đổi token của ${c.name}; thu hồi token cũ trên GitLab.`,
+                            )
+                          }
+                        >
+                          <input name="token" type="password" placeholder="Token mới" required autoComplete="new-password" />
+                          <button type="submit" disabled={busy}>
+                            Đổi token
+                          </button>
+                        </form>
+                        <IconButton
+                          icon="remove"
+                          label={c.repos ? `Còn ${c.repos} repo dùng kết nối này: gỡ repo trước (Dự án & Repo)` : "Xoá kết nối"}
+                          tone="danger"
+                          disabled={busy || c.repos > 0}
+                          onClick={() =>
+                            window.confirm(`Xoá kết nối "${c.name}" (${c.base_url})?`) &&
+                            void run(async () => {
+                              await api.delete(`/connections/${c.id}`);
+                              await connections.mutate();
+                            }, `Đã xoá kết nối ${c.name}.`)
+                          }
+                        />
+                      </div>
                     </td>
                   </tr>
                 ))}

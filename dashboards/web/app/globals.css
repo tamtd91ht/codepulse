@@ -2066,3 +2066,169 @@ code.phrase {
   height: 36px;
 }
 
+
+/* Side drawer (details of one dự án / bot) */
+.side-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: flex-end;
+  background: rgb(2 6 23 / 50%);
+  backdrop-filter: blur(2px);
+}
+.side-drawer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  animation: drawer-in 0.18s ease-out;
+}
+@keyframes drawer-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .side-drawer {
+    animation: none;
+  }
+}
+.side-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.side-drawer-head h2 {
+  margin: 0;
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+.side-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px 24px;
+}
+.drawer-section + .drawer-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.drawer-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.drawer-kpis {
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+}
+.kpi.compact {
+  min-height: 0;
+  padding: 10px 12px;
+}
+.kpi.compact .value {
+  font-size: 20px;
+  overflow-wrap: anywhere;
+}
+
+/* Dự án tiles (admin, default view) */
+.tiles {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
+  margin-bottom: 16px;
+}
+.tiles > .tile {
+  margin: 0; /* not the stacked-card spacing */
+}
+.tile {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  text-align: left;
+  height: auto;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s,
+    transform 0.15s;
+}
+.tile:hover,
+.tile:focus-visible {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+  background: var(--surface);
+}
+.tile.ghost,
+.tile.ghost:hover,
+.tile.ghost:focus-visible {
+  border-style: dashed;
+  background: var(--surface-2);
+}
+.tile .head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tile .name {
+  font-weight: 650;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.tile .desc {
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tile .big {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.tile .big .unit {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.tile .meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 22px;
+}
+.url-cell {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+.inline-edit {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}

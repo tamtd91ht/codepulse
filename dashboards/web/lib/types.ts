@@ -164,6 +164,37 @@ export interface Connection {
   name: string;
   kind: string;
   base_url: string;
+  repos: number; // repos registered through it; a connection with repos cannot be deleted
+}
+
+/** Outbound notification webhook (docs/specs/16): finished reviews POSTed to an endpoint. */
+export type WebhookEvent = "review.done" | "review.failed" | "review.severe";
+export type WebhookFormat = "json" | "slack" | "teams";
+
+export interface NotificationWebhook {
+  id: number;
+  name: string;
+  url: string;
+  format: WebhookFormat;
+  has_secret: boolean;
+  events: WebhookEvent[];
+  business_project_id: number | null;
+  project_id: number | null;
+  enabled: boolean;
+  last_delivery_at: string | null;
+  last_status_code: number | null;
+  last_error: string | null;
+  failures: number;
+  deliveries: number;
+  created_at: string;
+}
+
+export interface WebhookTestResult {
+  ok: boolean;
+  status_code: number | null;
+  error: string | null;
+  attempts: number;
+  enabled: boolean;
 }
 
 export interface GroupImport {

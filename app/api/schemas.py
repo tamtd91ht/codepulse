@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, StringConstraints
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, HttpUrl, StringConstraints
 
 
 class Page[T](BaseModel):
@@ -38,6 +38,7 @@ class ConnectionOut(ORM):
     name: str
     kind: str
     base_url: str  # tokens and webhook secrets are never returned
+    repos: int = 0  # repos registered through it (tracked or not); a connection with repos stays
 
 
 class ConnectionIn(BaseModel):
@@ -132,6 +133,68 @@ class UserOut(ORM):
     full_name: str | None
     primary_email: str | None
     active: bool | None
+
+
+# -- notification webhooks (docs/specs/16) --------------------------------------------------------
+
+WebhookEvent = Literal["review.done", "review.failed", "review.severe"]
+WebhookFormat = Literal["json", "slack", "teams"]
+
+
+def _no_userinfo(url: HttpUrl) -> HttpUrl:
+    # user:password@host would be sent as Basic auth and stored/returned in clear; use a secret.
+    if url.username or url.password:
+        raise ValueError("credentials in the URL are not allowed; use the secret field")
+    return url
+
+
+WebhookUrl = Annotated[HttpUrl, AfterValidator(_no_userinfo)]  # http(s), no userinfo
+WebhookSecret = Annotated[str, StringConstraints(min_length=16, max_length=200)]
+
+
+class NotificationWebhookOut(BaseModel):
+    id: int
+    name: str
+    url: str
+    format: str
+    has_secret: bool  # the secret itself is never returned
+    events: list[str]
+    business_project_id: int | None
+    project_id: int | None
+    enabled: bool
+    last_delivery_at: datetime | None
+    last_status_code: int | None
+    last_error: str | None
+    failures: int
+    deliveries: int
+    created_at: datetime
+
+
+class NotificationWebhookIn(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    url: WebhookUrl
+    format: WebhookFormat = "json"
+    secret: WebhookSecret | None = None
+    events: list[WebhookEvent] = Field(min_length=1, max_length=3)
+    business_project_id: int | None = None
+    project_id: int | None = None  # pinned repo; with business_project_id it must belong to it
+    enabled: bool = True
+
+
+class NotificationWebhookPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: (
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+        | None
+    ) = None
+    url: WebhookUrl | None = None
+    format: WebhookFormat | None = None
+    secret: WebhookSecret | Literal[""] | None = None  # "" (or null) removes it
+    events: list[WebhookEvent] | None = Field(default=None, min_length=1, max_length=3)
+    business_project_id: int | None = None
+    project_id: int | None = None
+    enabled: bool | None = None
 
 
 class UserIn(BaseModel):
