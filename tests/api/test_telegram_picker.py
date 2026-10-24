@@ -172,6 +172,7 @@ def test_commit_picker_lists_everyone_and_queues_the_ticked_ones(
         queue.jobs[0][2]["trigger"] == "telegram"
         and queue.jobs[0][2]["requested_by"] == world.lead.id
     )
+    assert queue.jobs[0][2]["at_front"] is True  # reviews do not wait behind syncs
     assert "Đã đưa <b>1</b> review" in tg.edited[-1]["text"] and tg.edited[-1]["markup"] is None
     request = db_session.scalars(select(TelegramRequest)).one()
     assert request.targets[0]["sha"] == "1" * 40 and request.user_id == world.lead.id

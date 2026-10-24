@@ -33,6 +33,7 @@ def _enqueue_review(queue: Enqueuer, func: str, *args: Any, job_id: str) -> None
         job_id=job_id,
         job_timeout=REVIEW_JOB_TIMEOUT,
         retry=REVIEW_RETRY,
+        at_front=True,  # reviews before syncs: people wait for them
     )
 
 

@@ -1060,6 +1060,7 @@ class BotService:
                     + (f"-again-{t.round}" if t.force else ""),
                     job_timeout=REVIEW_JOB_TIMEOUT,
                     retry=REVIEW_RETRY,
+                    at_front=True,
                 )
             else:
                 self._queue.enqueue(
@@ -1073,6 +1074,7 @@ class BotService:
                     job_id=f"review-commit-{t.sha[:12]}" + (f"-again-{t.round}" if t.force else ""),
                     job_timeout=REVIEW_JOB_TIMEOUT,
                     retry=REVIEW_RETRY,
+                    at_front=True,
                 )
             queued.append(t)
         request = TelegramRequest(

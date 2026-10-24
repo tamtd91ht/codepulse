@@ -251,6 +251,7 @@ def rerun_review(
         job_id=f"{job_id}-rerun-{review.id}-{review.round + 1 if force else review.round}",
         job_timeout=REVIEW_JOB_TIMEOUT,
         retry=REVIEW_RETRY,
+        at_front=True,
     )
     audit(session, principal.user_id, "review.rerun", f"review:{review.id}", force=force)
     session.commit()

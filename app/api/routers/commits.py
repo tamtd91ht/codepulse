@@ -410,6 +410,7 @@ def review_commits(
                 job_id=f"review-commit-{commit.sha[:12]}",
                 job_timeout=REVIEW_JOB_TIMEOUT,
                 retry=REVIEW_RETRY,
+                at_front=True,
             )
             queued.append(commit.sha)
     audit(

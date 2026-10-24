@@ -27,6 +27,9 @@ EP_MR_DIFFS = "mr_diffs"  # params.iid, payload: list of file stats
 EP_PIPELINE = "pipeline"  # one row per pipeline
 
 SYNC_OVERLAP = timedelta(hours=1)
+# Per-item detail calls (one MR's diffs, notes...) retry once: a transient blip passes, a
+# diff GitLab can never render (HTTP 500 on huge MRs) is skipped in ~1 s instead of ~30 s.
+ITEM_RETRIES = 1
 
 
 def skippable(exc: GitLabError) -> bool:
@@ -80,7 +83,8 @@ class GitLabCollector:
         def detail(endpoint: str, fetch: Callable[[], Any], **params: Any) -> Any | None:
             """A per-item call; an item GitLab cannot serve is logged and skipped."""
             try:
-                return fetch()
+                with self._client.retries(ITEM_RETRIES):
+                    return fetch()
             except GitLabError as exc:
                 if not skippable(exc):
                     raise

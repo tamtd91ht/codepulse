@@ -4,6 +4,7 @@ import logging
 import random
 import time
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -66,6 +67,17 @@ class GitLabClient:
 
     def close(self) -> None:
         self._http.close()
+
+    @contextmanager
+    def retries(self, max_retries: int) -> Iterator[None]:
+        """Fewer retries for the calls inside: a per-item call whose 5xx is usually permanent
+        (GitLab cannot render a huge diff) must not cost ~30 s of backoff each time."""
+        saved = self._max_retries
+        self._max_retries = min(saved, max_retries)
+        try:
+            yield
+        finally:
+            self._max_retries = saved
 
     def __enter__(self) -> "GitLabClient":
         return self

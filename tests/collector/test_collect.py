@@ -139,3 +139,20 @@ def test_fetch_commit_brings_one_commit_in_without_a_sync(db_session: Session) -
     assert commit is not None and commit.project_id == project.id
     assert project.last_synced_at is None  # not a sync
     assert not any(path.endswith("/merge_requests") for path in listed)
+
+
+@pytest.mark.integration
+def test_a_broken_item_costs_one_retry_not_the_full_backoff(db_session: Session) -> None:
+    project = make_project(db_session)
+    sleeps: list[float] = []
+    with (
+        respx.mock(assert_all_called=False) as router,
+        GitLabClient(BASE, "t", max_per_second=1000, max_retries=5, sleep=sleeps.append) as client,
+    ):
+        diffs = router.get(f"{API}/projects/1001/merge_requests/1/diffs").respond(500)
+        mount(router)
+        result = GitLabCollector(client, clock=lambda: NOW).collect(db_session, project, None)
+        assert client._max_retries == 5  # the limit only applied inside the item call
+    backoffs = [s for s in sleeps if s >= 0.5]  # the rate limiter's tiny pauses aside
+    assert diffs.call_count == 2 and len(backoffs) == 1
+    assert result.counts["skipped.mr_diffs"] == 1
