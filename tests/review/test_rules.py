@@ -1,5 +1,11 @@
 from app.models import BusinessProject, Project
-from app.review.rules import MAX_FILE_CHARS, MAX_RULES_CHARS, build_rules, rule_paths
+from app.review.rules import (
+    MAX_FILE_CHARS,
+    MAX_RULES_CHARS,
+    build_rules,
+    collect_rules,
+    rule_paths,
+)
 
 
 def test_rule_paths_are_relative_deduped_and_capped() -> None:
@@ -64,3 +70,38 @@ def test_build_rules_survives_fetch_errors_and_clips_large_text() -> None:
         lambda p: "y" * (MAX_FILE_CHARS + 100),
     )
     assert big.count("y") == MAX_FILE_CHARS
+
+
+def test_collect_rules_records_every_source_and_its_status() -> None:
+    bp = BusinessProject(name="OmiCRM", review_rules="- tenantId on every query")
+    project = Project(
+        external_id=1,
+        path_with_namespace="demo/api",
+        review_rules_paths=".claude/rules/money.md, missing.md, .claude/rules/changed.md",
+    )
+    files = {".claude/rules/money.md": "# Money safety", ".claude/rules/changed.md": "x"}
+    _, sources = collect_rules(bp, project, files.get, skip={".claude/rules/changed.md"})
+    assert [(s["kind"], s["name"], s["status"]) for s in sources] == [
+        ("business_project", "Quy tắc dự án OmiCRM", "used"),
+        ("file", ".claude/rules/money.md", "used"),
+        ("file", "missing.md", "missing"),
+        ("file", ".claude/rules/changed.md", "changed_in_diff"),
+    ]
+    first, again = sources[0]["hash"], collect_rules(bp, project, files.get)[1][0]["hash"]
+    assert first == again  # same text, same fingerprint
+    bp.review_rules = "- tenantId on every query and every cache key"
+    assert collect_rules(bp, project, files.get)[1][0]["hash"] != first
+
+
+def test_rules_beyond_the_prompt_budget_are_marked_cut() -> None:
+    bp = BusinessProject(name="A", review_rules="a" * MAX_RULES_CHARS)
+    project = Project(
+        external_id=1,
+        path_with_namespace="x",
+        review_rules="b" * MAX_RULES_CHARS,
+        review_rules_paths="late.md",
+    )
+    _, sources = collect_rules(bp, project, {"late.md": "c" * 100}.get)
+    # Each admin block is clipped to half the budget; with headings the second one overflows
+    # (only its beginning reaches the model) and the file no longer fits at all.
+    assert [s["status"] for s in sources] == ["used", "partial", "cut"]

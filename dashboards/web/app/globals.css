@@ -2647,3 +2647,45 @@ textarea.rules {
   }
 }
 
+/* Review basis (docs/specs/17 §Căn cứ review) */
+.basis {
+  display: grid;
+  gap: 16px;
+}
+.basis h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.basis td .pill {
+  margin-left: 6px;
+}
+.basis-docs {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+.basis-docs > div {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+.basis-docs dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+.basis-docs dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .basis-docs > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+

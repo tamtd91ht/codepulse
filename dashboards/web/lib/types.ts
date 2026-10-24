@@ -147,6 +147,7 @@ export interface Review {
   deep: DeepReport | null;
   round: number;
   superseded_by: number | null;
+  basis: ReviewBasis | null;
 }
 
 /** One review of the same MR / commit (docs/specs/17 §Lịch sử). */
@@ -160,6 +161,25 @@ export interface ReviewRound {
   mode: "fast" | "deep";
   trigger: string;
   finished_at: string | null;
+  basis: ReviewBasis | null;
+}
+
+/** One team-rule source a review used (docs/specs/17 §Căn cứ review). */
+export interface BasisRule {
+  kind: "business_project" | "project" | "file" | string;
+  name: string; // the heading a finding cites in rule_id, or the file path
+  status: "used" | "missing" | "changed_in_diff" | "cut" | string;
+  chars?: number;
+  hash?: string;
+}
+
+/** What a review was checked against: names and fingerprints only. */
+export interface ReviewBasis {
+  rubric?: { version: string; lens: string[] };
+  rules?: BasisRule[];
+  rules_ref?: string;
+  instructions?: { path: string; kind: string }[];
+  profile?: { sha: string | null; built_at: string | null; confidence: number | null } | null;
 }
 
 /** What the deep pass did with the first pass's findings (docs/specs/18). */

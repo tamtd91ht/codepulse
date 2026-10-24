@@ -183,6 +183,7 @@ def _history(session: Session, review: Review) -> list[dict[str, Any]]:
             "mode": r.mode,
             "trigger": r.trigger,
             "finished_at": r.finished_at,
+            "basis": r.basis,
         }
         for r in rows
     ]

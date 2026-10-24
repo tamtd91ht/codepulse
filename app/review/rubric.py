@@ -8,6 +8,8 @@ failure, will it hold under production traffic, and does it do what the change c
 """
 
 RUBRIC_VERSION = "v2"
+# The four questions of the rubric, in order (shown as the review's "basis").
+RUBRIC_LENS = ("Bảo mật", "Đúng dữ liệu", "Chịu tải", "Dễ bảo trì")
 
 RUBRIC = """\
 You review as the tech lead who must approve this change for production. Four questions, in

@@ -29,7 +29,7 @@ from app.models import (
 from app.review import comment
 from app.review.checkout import CheckoutError, checkout
 from app.review.deep import TOOLS, DeepOutcome, build_deep_prompt, merge, parse_deep
-from app.review.discover import discover
+from app.review.discover import discover, instruction_kind
 from app.review.postprocess import Finding, postprocess
 from app.review.prepare import PreparedDiff, chunk, prepare, redact
 from app.review.profile import (
@@ -41,8 +41,8 @@ from app.review.profile import (
 from app.review.progress import NullProgress, ProgressSink
 from app.review.prompt import ReviewParseError, ReviewTarget, build_prompt, review_chunk
 from app.review.providers.base import AgenticProvider, LLMError, LLMProvider, ReviewResult
-from app.review.rubric import RUBRIC_VERSION
-from app.review.rules import build_rules
+from app.review.rubric import RUBRIC_LENS, RUBRIC_VERSION
+from app.review.rules import collect_rules
 from app.review.schema import Intent, LLMFinding
 from app.review.status import mark_fixed_findings, supersede_mr_reviews
 from app.scoring.formula import ScoredFinding, review_score, weights_for
@@ -114,6 +114,7 @@ class ReviewService:
     ) -> None:
         self._session = session
         self._progress: ProgressSink = progress or NullProgress()
+        self._pending_basis: dict[int, dict[str, Any]] = {}
         self._client = client
         self._provider = provider
         self._settings = settings
@@ -170,7 +171,7 @@ class ReviewService:
             project.path_with_namespace,
             mr.title or "",
             description,
-            conventions=self._rules(project, _paths(entries)),
+            conventions=self._rules(review, project, _paths(entries)),
         )
         result = self._run(review, project, target, entries, head_sha)
         if result is not None and result.status == "done":
@@ -229,7 +230,7 @@ class ReviewService:
             project.path_with_namespace,
             title,
             kind="Commit",
-            conventions=self._rules(project, _paths(entries)),
+            conventions=self._rules(review, project, _paths(entries)),
         )
         return self._run(review, project, target, entries, commit.sha)
 
@@ -290,7 +291,7 @@ class ReviewService:
             },
         )
 
-    def _rules(self, project: Project, changed: set[str]) -> str:
+    def _rules(self, review: Review, project: Project, changed: set[str]) -> str:
         """Team rules for the prompt (docs/specs/17): dự án + repo text, plus files read from the
         repo's default branch, never from the change under review (its author could rewrite
         them in the same commit); a rules file touched by the diff is left out."""
@@ -307,7 +308,15 @@ class ReviewService:
             except GitLabError:
                 return None
 
-        return build_rules(business, project, fetch, skip=changed)
+        text, sources = collect_rules(business, project, fetch, skip=changed)
+        # Kept aside: it becomes the review's basis only if the LLM pass actually starts
+        # (a skipped or budget-blocked review was not checked against anything).
+        self._pending_basis[review.id] = {
+            "rubric": {"version": RUBRIC_VERSION, "lens": list(RUBRIC_LENS)},
+            "rules": sources,
+            "rules_ref": ref,
+        }
+        return text
 
     def _user_of(self, account_id: int | None) -> int | None:
         if account_id is None:
@@ -388,6 +397,7 @@ class ReviewService:
             )
             return None
         review.status, review.error = "running", None
+        review.basis = None  # a failed/skipped row taken over: its old basis is not this run's
         review.started_at = self._clock()
         # A failed/skipped/stale row taken over records what asked for this run.
         review.trigger, review.requested_by_user_id = trigger, requested_by
@@ -443,6 +453,7 @@ class ReviewService:
                 return None  # context is a bonus; the diff alone is reviewable
 
         chunks = chunk(prepared, settings.max_tokens_per_chunk, fetch_context)
+        review.basis = self._pending_basis.pop(review.id, None)
         self._step(
             review.id, "llm", f"{len(chunks)} phần", loc=prepared.loc, files=len(prepared.files)
         )
@@ -594,6 +605,21 @@ class ReviewService:
             log.exception("deep review crashed; first pass kept", extra={"review_id": review.id})
             return None
         review.mode = "deep"
+        review.basis = {
+            **(review.basis or {}),
+            "instructions": [
+                {"path": p, "kind": instruction_kind(p)} for p in docs.instruction_paths[:40]
+            ],
+            "profile": (
+                {
+                    "sha": (project.profile_sha or "")[:12] or None,
+                    "built_at": project.profile_at.isoformat() if project.profile_at else None,
+                    "confidence": profile.get("confidence"),
+                }
+                if profile
+                else None
+            ),
+        }
         review.deep = {
             **outcome.report(),
             "files_seen": stats.files,

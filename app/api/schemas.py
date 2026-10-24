@@ -449,6 +449,7 @@ class ReviewOut(ORM):
     deep: dict[str, Any] | None = None
     round: int = 1
     superseded_by: int | None = None
+    basis: dict[str, Any] | None = None  # docs/specs/17 §Căn cứ review
 
 
 class ReviewListItem(ReviewOut):
@@ -469,6 +470,7 @@ class ReviewRound(BaseModel):
     mode: str
     trigger: str
     finished_at: datetime | None
+    basis: dict[str, Any] | None = None
 
 
 class ReviewDetail(ReviewOut):

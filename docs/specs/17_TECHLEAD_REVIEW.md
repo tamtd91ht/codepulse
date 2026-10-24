@@ -37,6 +37,10 @@
 - Thứ tự chọn nhánh: `branch=` gõ trong lệnh → nhánh review của repo → nhánh mặc định → `HEAD`. Telegram nhận `branch=all` (hoặc `*`) = mọi nhánh. Khi GitLab trả lời danh sách rỗng, không lấy commit nhánh khác từ DB nữa; chỉ dùng DB khi GitLab không trả lời. Tin nhắn rỗng nói rõ nhánh và cách đổi.
 - Webhook push không đổi: chỉ push thẳng lên nhánh mặc định được review tự động (quyết định Phase 0). Review tự động push lên nhánh review là `[DECISION]` để người dùng chọn (ngân sách LLM, rebase làm review lại cả loạt commit).
 
+## 4e. Căn cứ review (2026-10-27)
+- Mỗi lần review lưu `reviews.basis` (migration e2b8f4c1a7d3): rubric (phiên bản + 4 câu hỏi), từng nguồn quy tắc đội (quy tắc dự án, quy tắc repo, file quy tắc trong repo) với trạng thái `used` / `missing` / `changed_in_diff` / `cut`, số ký tự và dấu vân tay sha256 10 ký tự, nhánh đọc file; với review sâu thêm danh sách tài liệu repo đã đọc theo loại (kỹ năng `.claude/skills/*review|security|audit*/SKILL.md`, reviewer agent, quy tắc, lệnh review, hướng dẫn AI như CLAUDE.md/AGENTS.md, tài liệu) và hồ sơ dự án (commit, ngày dựng, độ tin cậy). Chỉ lưu tên, đường dẫn và dấu vân tay, không lưu nội dung quy tắc hay file.
+- Trang review có thẻ **Căn cứ review** (kèm số finding viện dẫn từng quy tắc qua `rule_id`, đánh dấu quy tắc đã đổi so với lần review trước); bảng **Lịch sử review** có cột **Căn cứ**.
+
 ## 4d. Tiến trình review trên web (2026-10-27)
 - Một job review chạy trong một transaction DB, nên dòng `running` không ai thấy cho tới khi xong. Worker ghi thêm bản ghi tiến trình vào Redis (`cp:review:active:{id}`, chỉ mục `cp:reviews:active`, TTL 50 phút, làm mới ở mỗi bước): repo, MR/commit, tiêu đề, tác giả, người yêu cầu, nguồn, lần review, bước (`diff` → `llm` "phần i/n" → `deep`/`profile` → `save`), LOC. Không lưu code, diff hay nội dung finding. Redis lỗi không làm hỏng review; job xong (kể cả lỗi) thì xoá bản ghi.
 - Khi review kết thúc, worker ghi kết quả thật (`done`/`failed`/`skipped`, hoặc rỗng nếu job crash và RQ sẽ thử lại) vào danh sách `cp:reviews:recent` (30 mục, TTL 1 giờ); web hiện các mục kết thúc trong 15 phút.

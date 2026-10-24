@@ -280,6 +280,15 @@ def test_rules_reach_the_prompt_and_verdict_intent_rule_id_are_stored(
     ).one()
     assert finding.rule_id == "Quy tắc dự án OmiCRM"
     assert review.rubric_version == RUBRIC_VERSION
+    # The basis records what the review was checked against: names and hashes, never text.
+    basis = review.basis
+    assert basis is not None and basis["rubric"]["version"] == RUBRIC_VERSION
+    assert [(r["kind"], r["name"], r["status"]) for r in basis["rules"]] == [
+        ("business_project", "Quy tắc dự án OmiCRM", "used"),
+        ("file", ".claude/rules/money.md", "used"),
+    ]
+    assert all(len(r["hash"]) == 10 for r in basis["rules"])
+    assert "tenantId" not in str(basis)
 
 
 def test_merge_intents_takes_the_worst_verdict_and_unions_concerns() -> None:
@@ -457,6 +466,11 @@ def test_deep_review_verifies_candidates_adds_findings_and_caches_the_profile(
     assert review.deep["downgraded"][0]["evidence"] == "app/guard.py:1-2"
     assert review.deep["project_fit"] == ["Đúng kiến trúc; nên đặt parser cạnh app/billing"]
     assert review.deep["instruction_sources"] == ["CLAUDE.md", ".claude/rules/critical/money.md"]
+    assert review.basis is not None and review.basis["instructions"] == [
+        {"path": "CLAUDE.md", "kind": "instructions"},
+        {"path": ".claude/rules/critical/money.md", "kind": "rules"},
+    ]
+    assert review.basis["rubric"]["version"] == RUBRIC_VERSION and review.basis["profile"]
     assert review.summary == "Parser mới; đã đối chứng."
     assert review.intent is not None and review.intent["summary"] == "Thêm parser"
     (call,) = agent.repo_calls
@@ -637,3 +651,13 @@ def test_the_live_view_is_cleared_when_a_review_fails(
         review = service.review_mr(project, merge_request, HEAD)
     assert review is not None and review.status == "failed"
     assert recorder.events[-1] == ("end", (review.id, "failed"))
+
+
+def test_a_review_skipped_before_the_llm_records_no_basis(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    project.review_rules = "- tenantId everywhere"
+    project.allow_external_llm = False
+    review = run(db_session, FakeLLMProvider(sqli), project, merge_request)
+    assert review.status == "skipped" and review.basis is None

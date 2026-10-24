@@ -6,8 +6,10 @@ piece keeps its heading so a finding can cite it in `rule_id`. Everything is cap
 context for the model, not the whole handbook.
 """
 
+import hashlib
 import logging
 from collections.abc import Callable
+from typing import Any
 
 from app.models import BusinessProject, Project
 
@@ -43,32 +45,62 @@ def _clip(text: str, limit: int, label: str) -> str:
     return text[:limit].rstrip() + "\n(… rút gọn)"
 
 
-def build_rules(
+def _digest(text: str) -> str:
+    """Short fingerprint of a rule text: shows whether rules changed between two reviews."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:10]
+
+
+def collect_rules(
     business_project: BusinessProject | None,
     project: Project,
     fetch: FileFetcher,
     skip: set[str] | None = None,
-) -> str:
-    """The `conventions` block of the prompt: empty string when nobody configured anything.
+) -> tuple[str, list[dict[str, Any]]]:
+    """The `conventions` block of the prompt (empty when nobody configured anything) and one
+    record per source: kind, name (the heading a finding cites in rule_id), status, size, hash.
 
     `skip`: paths the change under review touches; a rules file among them is not used (the
     author could have edited it) and the prompt says so."""
     parts: list[str] = []
+    sources: list[dict[str, Any]] = []
+    spans: dict[int, tuple[int, int]] = {}  # source index -> (start, end) in the merged text
+    offset = 0
+
+    def add(part: str) -> tuple[int, int]:
+        nonlocal offset
+        start = offset + (2 if parts else 0)  # the blank-line separator
+        parts.append(part)
+        offset = start + len(part)
+        return start, offset
+
+    def used(kind: str, name: str, text: str) -> None:
+        spans[len(sources)] = add(f"## {name}\n{text}")
+        sources.append(
+            {
+                "kind": kind,
+                "name": name,
+                "status": "used",
+                "chars": len(text),
+                "hash": _digest(text),
+            }
+        )
+
     if business_project and business_project.review_rules:
-        parts.append(
-            f"## Quy tắc dự án {business_project.name}\n"
-            + _clip(business_project.review_rules, MAX_RULES_CHARS // 2, "business_project")
+        used(
+            "business_project",
+            f"Quy tắc dự án {business_project.name}",
+            _clip(business_project.review_rules, MAX_RULES_CHARS // 2, "business_project"),
         )
     if project.review_rules:
-        parts.append(
-            f"## Quy tắc repo {project.path_with_namespace}\n"
-            + _clip(project.review_rules, MAX_RULES_CHARS // 2, "project")
+        used(
+            "project",
+            f"Quy tắc repo {project.path_with_namespace}",
+            _clip(project.review_rules, MAX_RULES_CHARS // 2, "project"),
         )
     for path in rule_paths(project.review_rules_paths):
         if skip and path in skip:
-            parts.append(
-                f"## {path}\n(file này bị thay đổi trong chính diff đang review nên không dùng)"
-            )
+            add(f"## {path}\n(file này bị thay đổi trong chính diff đang review nên không dùng)")
+            sources.append({"kind": "file", "name": path, "status": "changed_in_diff"})
             continue
         try:
             text = fetch(path)
@@ -76,6 +108,25 @@ def build_rules(
             log.warning("review rules file not fetched", extra={"path": path})
             text = None
         if text:
-            parts.append(f"## {path}\n" + _clip(text, MAX_FILE_CHARS, path))
+            used("file", path, _clip(text, MAX_FILE_CHARS, path))
+        else:
+            sources.append({"kind": "file", "name": path, "status": "missing"})
     merged = "\n\n".join(parts)
-    return merged[:MAX_RULES_CHARS] if len(merged) > MAX_RULES_CHARS else merged
+    if len(merged) > MAX_RULES_CHARS:
+        merged = merged[:MAX_RULES_CHARS]
+        for index, (begin, finish) in spans.items():
+            if begin >= MAX_RULES_CHARS:
+                sources[index]["status"] = "cut"  # not in the prompt at all
+            elif finish > MAX_RULES_CHARS:
+                sources[index]["status"] = "partial"  # only its beginning reached the model
+    return merged, sources
+
+
+def build_rules(
+    business_project: BusinessProject | None,
+    project: Project,
+    fetch: FileFetcher,
+    skip: set[str] | None = None,
+) -> str:
+    """The `conventions` block only (see collect_rules)."""
+    return collect_rules(business_project, project, fetch, skip)[0]

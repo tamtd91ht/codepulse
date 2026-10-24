@@ -45,6 +45,9 @@ INSTRUCTION_GLOBS = (
     ".claude/agents/*audit*.md",
     ".claude/agents/*security*.md",
     ".claude/commands/*review*.md",
+    ".claude/skills/*review*/SKILL.md",
+    ".claude/skills/*security*/SKILL.md",
+    ".claude/skills/*audit*/SKILL.md",
     ".cursor/rules/*",
     ".github/instructions/*.md",
     "docs/*security*.md",
@@ -289,3 +292,18 @@ def render(docs: ProjectDocs) -> str:
 
 def mentions_review_rules(docs: ProjectDocs) -> bool:
     return any(re.search(r"review|rule|security|tenant", d.path, re.I) for d in docs.instructions)
+
+
+def instruction_kind(path: str) -> str:
+    """What an instruction file is, for the review's "basis" (docs/specs/17 §Căn cứ review)."""
+    if path.startswith(".claude/skills/"):
+        return "skill"
+    if path.startswith(".claude/agents/"):
+        return "agent"
+    if path.startswith(".claude/commands/"):
+        return "command"
+    if path.startswith((".claude/rules/", ".cursor/rules/", ".github/instructions/")):
+        return "rules"
+    if path.startswith("docs/"):
+        return "doc"
+    return "instructions"  # CLAUDE.md, AGENTS.md, .cursorrules, CONTRIBUTING.md, ...

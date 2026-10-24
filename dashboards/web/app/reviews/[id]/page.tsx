@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { use, useEffect, useRef, useState } from "react";
 
+import { BasisCard, basisSummary, changedRules, previousRun } from "@/components/ReviewBasis";
 import { Alert, Card, EmptyState, ExternalLink, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, TRIGGER_LABEL, VERDICT_LABEL, date, num } from "@/lib/format";
@@ -253,7 +254,7 @@ function DeepCard({ review }: { review: ReviewDetail }) {
           </table>
         </div>
       )}
-      {d.instruction_sources && d.instruction_sources.length > 0 && (
+      {d.instruction_sources && d.instruction_sources.length > 0 && !review.basis?.instructions && (
         <p className="muted small" style={{ marginBottom: 0 }}>
           Đã đọc hướng dẫn của repo: {d.instruction_sources.join(", ")}
         </p>
@@ -437,6 +438,17 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
         <DeepCard review={review} />
       )}
 
+      {(review.status === "done" || review.status === "superseded") && (
+        <BasisCard
+          basis={review.basis}
+          findings={review.findings}
+          mode={review.mode}
+          deepError={!!review.deep?.error}
+          history={review.history}
+          reviewId={review.id}
+        />
+      )}
+
       {review.summary && (
         <Card title="Tóm tắt">
           <p style={{ whiteSpace: "pre-wrap", color: "var(--text-2)" }}>{review.summary}</p>
@@ -454,11 +466,12 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
                   <th>Kết luận</th>
                   <th className="num">Điểm</th>
                   <th>Nguồn</th>
+                  <th>Căn cứ</th>
                   <th>Ngày</th>
                 </tr>
               </thead>
               <tbody>
-                {review.history.map((h) => (
+                {review.history.map((h, i) => (
                   <tr key={h.id} className={h.id === review.id ? undefined : "muted"}>
                     <td>
                       {h.id === review.id ? <strong>#{h.id} · lần {h.round}</strong> : <Link href={`/reviews/${h.id}`}>#{h.id} · lần {h.round}</Link>}
@@ -478,6 +491,19 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
                     </td>
                     <td className="num">{h.score !== null ? num(h.score, 0) : "—"}</td>
                     <td className="muted">{TRIGGER_LABEL[h.trigger] ?? h.trigger}</td>
+                    <td className="muted small">
+                      {basisSummary(h.basis)}
+                      {(() => {
+                        const before = previousRun(review.history, i);
+                        const changed = before ? changedRules(h.basis, before.basis) : [];
+                        return changed.length > 0 ? (
+                          <>
+                            {" · "}
+                            <span title={`So với #${before?.id}: ${changed.join(", ")}`}>quy tắc đã đổi</span>
+                          </>
+                        ) : null;
+                      })()}
+                    </td>
                     <td className="muted">{date(h.finished_at)}</td>
                   </tr>
                 ))}

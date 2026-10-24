@@ -86,3 +86,24 @@ def test_profile_freshness_follows_ttl_and_version() -> None:
     assert not profile_is_fresh(project, timedelta(days=7), now)
     project.profile, project.profile_at = {"version": 0}, now
     assert not profile_is_fresh(project, timedelta(days=7), now)
+
+
+def test_review_skills_are_read_and_every_instruction_has_a_kind(tmp_path: Path) -> None:
+    from app.review.discover import discover, instruction_kind
+
+    for rel in (
+        "CLAUDE.md",
+        ".claude/skills/security-review/SKILL.md",
+        ".claude/skills/release-notes/SKILL.md",  # not a review skill: not read
+        ".claude/agents/backend-reviewer.md",
+        ".claude/rules/critical/tenant.md",
+    ):
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# x" + chr(10), encoding="utf-8")
+    paths = discover(tmp_path).instruction_paths
+    assert ".claude/skills/security-review/SKILL.md" in paths
+    assert ".claude/skills/release-notes/SKILL.md" not in paths
+    assert {instruction_kind(p) for p in paths} == {"instructions", "skill", "agent", "rules"}
+    assert instruction_kind("docs/specs/00_README.md") == "doc"
+    assert instruction_kind(".claude/commands/review-pr.md") == "command"
