@@ -23,6 +23,8 @@ const INSTRUCTION_KIND: { kind: string; label: string }[] = [
   { kind: "doc", label: "Tài liệu" },
 ];
 const NOT_LOADED_REASON: Record<string, string> = {
+  catalog: "trong mục lục, agent mở khi cần",
+  // Reviews before the per-commit selection.
   name: "tên không thuộc nhóm review",
   budget: "hết giới hạn ký tự",
 };
@@ -95,8 +97,11 @@ export function BasisCard({
   const changed = new Set(changedRules(basis, previous?.basis ?? null));
   const cites = (rule: BasisRule) => findings.filter((f) => f.rule_id === rule.name).length;
   const rules = basis.rules ?? [];
-  const instructions = basis.instructions ?? [];
+  const procedure = (basis.instructions ?? []).filter((d) => d.procedure);
+  const instructions = (basis.instructions ?? []).filter((d) => !d.procedure);
   const notLoaded = basis.instructions_not_loaded ?? [];
+  const opened = notLoaded.filter((d) => d.read);
+  const indexed = notLoaded.filter((d) => !d.read);
   const sharedRepo = basis.claude_repo;
 
   return (
@@ -192,12 +197,22 @@ export function BasisCard({
                 ? "Review sâu đã thử mở repo nhưng lỗi (xem thẻ Đối chứng trong mã nguồn); kết quả dựa trên diff và quy tắc ở trên."
                 : "Review nhanh: chỉ đọc diff và quy tắc ở trên, không mở mã nguồn của repo."}
             </p>
-          ) : instructions.length === 0 ? (
+          ) : instructions.length === 0 && procedure.length === 0 ? (
             <p className="muted small" style={{ margin: 0 }}>
               Review sâu đã mở repo nhưng không thấy CLAUDE.md, AGENTS.md, .claude/rules, agent hay kỹ năng review nào.
             </p>
           ) : (
             <dl className="basis-docs">
+              {procedure.length > 0 && (
+                <div>
+                  <dt>Quy trình review</dt>
+                  <dd>
+                    {procedure.map((d) => (
+                      <DocRef key={`${d.source}:${d.path}`} doc={d} sharedRepo={sharedRepo?.repo} />
+                    ))}
+                  </dd>
+                </div>
+              )}
               {INSTRUCTION_KIND.map(({ kind, label }) => {
                 const paths = instructions.filter((d) => d.kind === kind);
                 if (!paths.length) return null;
@@ -206,35 +221,42 @@ export function BasisCard({
                     <dt>{label}</dt>
                     <dd>
                       {paths.map((d) => (
-                        <span key={`${d.source}:${d.path}`}>
-                          <code title={d.source === "shared" ? `từ ${sharedRepo?.repo ?? "repo dùng chung"}` : undefined}>
-                            {d.path}
-                          </code>
-                          {d.source === "shared" && <Pill tone="info">dùng chung</Pill>}
-                          {d.status && d.status !== "used" && (
-                            <Pill tone={RULE_STATUS[d.status]?.tone}>{RULE_STATUS[d.status]?.label ?? d.status}</Pill>
-                          )}
-                        </span>
+                        <DocRef key={`${d.source}:${d.path}`} doc={d} sharedRepo={sharedRepo?.repo} />
                       ))}
                     </dd>
                   </div>
                 );
               })}
+              {opened.length > 0 && (
+                <div>
+                  <dt>Agent tự mở thêm</dt>
+                  <dd>
+                    {opened.map((d) => (
+                      <DocRef key={`${d.source}:${d.path}`} doc={d} sharedRepo={sharedRepo?.repo} />
+                    ))}
+                  </dd>
+                </div>
+              )}
             </dl>
           )}
-          {mode === "deep" && notLoaded.length > 0 && (
+          {mode === "deep" && indexed.length > 0 && (
             <details className="small" style={{ marginTop: 6 }}>
-              <summary className="muted">Có {notLoaded.length} file .claude không được nạp</summary>
+              <summary className="muted">
+                {indexed.some((d) => d.reason === "catalog")
+                  ? `${indexed.length} file .claude khác nằm trong mục lục, agent không cần mở cho thay đổi này`
+                  : `Có ${indexed.length} file .claude không được nạp`}
+              </summary>
               <ul className="muted" style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-                {notLoaded.map((d) => (
+                {indexed.map((d) => (
                   <li key={`${d.source}:${d.path}`}>
                     <code>{d.path}</code>
                     {d.source === "shared" ? " (dùng chung)" : ""} · {NOT_LOADED_REASON[d.reason] ?? d.reason}
+                    {d.why?.length ? ` · ${d.why.join("; ")}` : ""}
                   </li>
                 ))}
               </ul>
               <p className="muted" style={{ margin: "4px 0 0" }}>
-                Muốn nạp thêm: Admin › Repo › mở dự án › Repo .claude dùng chung › File nạp thêm.
+                Muốn luôn trích một file: Admin › Repo › mở dự án › Repo .claude dùng chung › File nạp thêm.
               </p>
             </details>
           )}
@@ -251,5 +273,21 @@ export function BasisCard({
         </section>
       </div>
     </Card>
+  );
+}
+
+type BasisDoc = Pick<NonNullable<ReviewBasis["instructions"]>[number], "path" | "source" | "status" | "why">;
+
+/** One quoted or opened Claude file: its path, where it came from and why it was chosen. */
+function DocRef({ doc, sharedRepo }: { doc: BasisDoc; sharedRepo?: string }) {
+  return (
+    <span>
+      <code title={doc.source === "shared" ? `từ ${sharedRepo ?? "repo dùng chung"}` : undefined}>{doc.path}</code>
+      {doc.source === "shared" && <Pill tone="info">dùng chung</Pill>}
+      {doc.status && doc.status !== "used" && (
+        <Pill tone={RULE_STATUS[doc.status]?.tone}>{RULE_STATUS[doc.status]?.label ?? doc.status}</Pill>
+      )}
+      {doc.why?.length ? <span className="muted small"> ({doc.why.join("; ")})</span> : null}
+    </span>
   );
 }

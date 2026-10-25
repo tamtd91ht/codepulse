@@ -20,6 +20,7 @@ from typing import Any
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.models import BusinessProject
 from app.review.checkout import CheckoutError, checkout
+from app.review.claude_kit import SHARED_MOUNT, KitFile, mount_shared, scan
 from app.review.discover import Doc, ProjectDocs, discover, instruction_kind
 from app.review.rules import rule_paths
 
@@ -50,10 +51,12 @@ def as_repo_layout(root: Path) -> Path:
 
 @dataclass
 class SharedConfig:
-    """What the review got from the shared repo; `docs` is None when it could not be read."""
+    """What the review got from the shared repo; `docs` is None when it could not be read.
+    `files`: its whole catalogue (claude_kit), with paths where the agent can Read them."""
 
     info: dict[str, Any]
     docs: ProjectDocs | None = None
+    files: list[KitFile] = field(default_factory=list)
 
 
 def load_shared_config(
@@ -62,10 +65,14 @@ def load_shared_config(
     connection_id: int | None,
     *,
     sensitive_paths: list[str],
+    mount_into: Path | None = None,
 ) -> SharedConfig | None:
     """None when the dự án has no shared repo. Never raises for GitLab or archive trouble: the
     review goes on with the repo's own files and the basis records why. The texts are read into
-    memory; the downloaded copy is gone when this returns."""
+    memory; the downloaded copy is gone when this returns.
+
+    `mount_into`: the deep review's checkout. The .claude folder is copied there under
+    SHARED_MOUNT so the agent can Read every file of it, not only the ones quoted."""
     if business is None or not business.claude_repo_external_id or not business.claude_repo_path:
         return None
     info: dict[str, Any] = {
@@ -87,7 +94,12 @@ def load_shared_config(
             max_archive_bytes=MAX_ARCHIVE_BYTES,
             sensitive_paths=sensitive_paths,
         ) as (root, stats):
-            docs = discover(as_repo_layout(root), info["include"])
+            layout = as_repo_layout(root)
+            docs = discover(layout, info["include"])
+            mounted = mount_shared(layout / ".claude", mount_into) if mount_into else None
+            # Not mounted (preview, or the path is taken): named after the repo, not readable.
+            prefix = SHARED_MOUNT if mounted else f"{business.claude_repo_path}:.claude"
+            files = scan(mounted or layout / ".claude", prefix, "shared")
     except (GitLabError, CheckoutError, OSError, KeyError) as exc:
         log.warning(
             "shared .claude repo not read",
@@ -95,7 +107,16 @@ def load_shared_config(
         )
         return SharedConfig({**info, "status": "error", "detail": str(exc)[:200]})
     return SharedConfig(
-        {**info, "ref": ref, "sha": sha[:12], "files": stats.files, "status": "used"}, docs
+        {
+            **info,
+            "ref": ref,
+            "sha": sha[:12],
+            "files": stats.files,
+            "status": "used",
+            "mounted": bool(mount_into and mounted),
+        },
+        docs,
+        files,
     )
 
 

@@ -13,6 +13,17 @@
    - Kết quả: `reviews.mode = deep`, `reviews.deep` = {kept, added, downgraded[], dropped[] (tiêu đề, lý do, bằng chứng), ignored_verifications, project_fit, files_seen, turns, cost_usd, instruction_sources}. Tóm tắt và `intent` của lượt sâu thay cho lượt nhanh.
    - **Mọi sự cố của lượt sâu không làm hỏng review**: archive lớn, GitLab lỗi, CLI timeout, JSON sai → giữ kết quả lượt nhanh, `mode = fast`, `deep = {"error": …}`; log warning.
 
+## Chọn file .claude theo commit (người dùng 2026-10-25)
+> "khi check nếu project có nạp .claude thì load hết rules, skills liên quan đến nội dung commit; xem trong commands có lệnh dạng /review-mr, /review… để biết cách dự án review" và "review là hành động có chủ đích nên khi cần thì đọc vào rules, skills; khác code là phải nạp sẵn từ đầu phiên".
+
+Nạp theo thứ tự cố định trong 40.000 ký tự làm rơi đúng những file quan trọng (lệnh review, skill bảo mật). Thay bằng `app/review/claude_kit.py`, áp dụng cho `.claude` của repo được review và repo dùng chung:
+- **Danh mục**: mọi `CLAUDE.md`, `rules/**/*.md`, `agents/**/*.md`, `commands/**/*.md`, `skills/*/SKILL.md` (≤ 300 file) với loại, tên (`/review-mr-dev`, tên skill…), `description` của frontmatter (hoặc đoạn đầu), `paths:`. Che secret trước khi dùng.
+- **Quy trình review**: lệnh trong `commands/` có tên chứa *review*/*audit*; lệnh về MR/commit/diff đứng đầu. Trích riêng (≤ 15.000 ký tự/file, ≤ 30.000 tổng), agent duyệt các bước kiểm tra của nó trước, finding từ đó ghi `rule_id` = tên lệnh. Chỉ dùng như tiêu chí (kiểm tra gì), mọi chỉ dẫn về tool, định dạng, đăng comment, chạy lệnh đều bị bỏ qua.
+- **Xếp hạng theo thay đổi** (deterministic): File nạp thêm (+100), rule có `paths:` khớp file bị sửa (+50; có `paths:` mà không khớp → không dùng, như Claude Code), `CLAUDE.md` (+40), file được lệnh review nhắc đúng tên (+20), skill/agent tên review/audit (+5), cộng độ trùng từ khoá giữa tên/mô tả/tiêu đề mục/đường dẫn của file với đường dẫn, dòng thay đổi, tiêu đề của commit (trọng số theo độ hiếm). Chỉ ≤ 6 file điểm cao nhất được trích sẵn (vẫn trong 40.000 ký tự cùng tài liệu khác của repo).
+- **Mục lục, nạp khi cần**: mọi file còn lại liệt kê (đường dẫn, loại, tên, mô tả, đánh dấu `[liên quan]` nếu có điểm) ≤ 12.000 ký tự. Repo dùng chung được chép vào bản sao ở `.codepulse/claude-shared/` để agent `Read` được; đường dẫn đó không bao giờ là file bằng chứng hay vị trí của finding. Prompt yêu cầu agent đọc mọi file mà quy trình review bảo áp dụng và mọi file có mô tả liên quan tới thay đổi trước khi kết luận. `DEEP_REVIEW_MAX_TURNS` mặc định 60 để đủ lượt đọc.
+- File `.claude` của repo nằm trong chính diff không được dùng (tác giả có thể vừa sửa).
+- `reviews.basis`: `instructions` thêm `procedure` và `why` (lý do chọn); `instructions_not_loaded` ghi `reason = catalog`, `read` (agent đã tự mở hay chưa). Thẻ Căn cứ review hiển thị Quy trình review, file được trích kèm lý do, "Agent tự mở thêm" và phần mục lục không dùng. Nút Kiểm tra repo dùng chung hiển thị lệnh review tìm thấy, file luôn trích và file chọn theo commit.
+
 ## Vì sao an toàn hơn cách "để agent tự đọc repo"
 - Repo, diff, hồ sơ và file hướng dẫn đều là dữ liệu không tin cậy; `CLAUDE.md` của repo **không** được nạp làm system prompt (`--setting-sources ""`), chỉ được trích dẫn. Không Bash, không ghi, không mạng, không MCP.
 - Tác giả không thể "tự duyệt": bỏ một finding cần bằng chứng là file thật trong repo; file quy tắc trong diff không được dùng (spec 17); finding ngoài diff không ảnh hưởng điểm của ai.
@@ -24,7 +35,7 @@
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
 | `DEEP_REVIEW` | `true` | Bật lượt sâu (cần `LLM_PROVIDER=claude_code`) |
-| `DEEP_REVIEW_MAX_TURNS` | 40 | Số lượt tool tối đa mỗi review |
+| `DEEP_REVIEW_MAX_TURNS` | 60 | Số lượt tool tối đa mỗi review |
 | `DEEP_REVIEW_TIMEOUT_S` | 600 | Thời gian tối đa của lượt sâu |
 | `DEEP_REVIEW_MAX_ARCHIVE_MB` | 300 | Repo lớn hơn thì bỏ lượt sâu |
 | `DEEP_REVIEW_MIN_LOC` | 0 | Diff nhỏ hơn thì chỉ lượt nhanh |

@@ -239,16 +239,19 @@ export default function GuidePage() {
             Không có tool, không đọc <code>.claude</code>.
           </li>
           <li>
-            <strong>Lượt sâu</strong>: thêm <code>CLAUDE.md</code>, <code>AGENTS.md</code>, mọi file trong{" "}
-            <code>.claude/rules</code>, và skill / agent / command có tên chứa <em>review</em>, <em>security</em> hoặc{" "}
-            <em>audit</em>, lấy từ repo được review và từ repo .claude dùng chung của dự án (nếu có). Mỗi file tối đa
-            8.000 ký tự, tổng 40.000 ký tự. Skill mang tên khác (ví dụ <code>java-conventions</code>) chỉ được nạp khi
-            khai báo ở <strong>File nạp thêm</strong>. Reviewer được dùng Read/Grep/Glob trong bản sao repo, tối đa 40
-            lượt.
+            <strong>Lượt sâu</strong> làm như một người review của dự án: đọc <strong>quy trình review</strong> trước
+            (các lệnh có tên chứa <em>review</em> trong <code>.claude/commands</code>, ví dụ <code>/review-mr-dev</code>
+            , lệnh review MR/commit đứng đầu), rồi nạp đúng những skill / rule / agent mà thay đổi cần. CodePulse trích
+            sẵn <code>CLAUDE.md</code>, file ở <strong>File nạp thêm</strong> và vài file khớp nhất với commit (rule có{" "}
+            <code>paths:</code> khớp file bị sửa, file mà lệnh review nhắc tên, file có từ khoá trùng với đường dẫn /
+            mã / tiêu đề thay đổi). Các file còn lại nằm trong một mục lục kèm mô tả; repo .claude dùng chung được chép
+            vào bản sao nên agent tự mở (Read) file nào cần, như cách Claude Code nạp skill khi dùng. Áp dụng cho cả{" "}
+            <code>.claude</code> của repo được review và repo dùng chung của dự án. Reviewer chỉ có Read/Grep/Glob, tối
+            đa 60 lượt.
           </li>
           <li>
-            Thẻ <strong>Căn cứ review</strong> trên trang kết quả liệt kê từng file đã vào prompt (của repo hay dùng
-            chung, đủ hay bị cắt) và các file <code>.claude</code> không được nạp kèm lý do.
+            Thẻ <strong>Căn cứ review</strong> trên trang kết quả liệt kê quy trình review đã dùng, từng file được trích
+            kèm lý do chọn, các file agent đã tự mở thêm, và phần mục lục không cần đến.
           </li>
         </ul>
         <h3>Repo .claude dùng chung của dự án</h3>

@@ -179,8 +179,28 @@ export interface ReviewBasis {
   rules?: BasisRule[];
   rules_ref?: string;
   /** source/status since the shared .claude repo; older reviews have path and kind only. */
-  instructions?: { path: string; kind: string; source?: "repo" | "shared"; status?: string }[];
-  instructions_not_loaded?: { path: string; source: "repo" | "shared"; reason: string }[];
+  instructions?: {
+    path: string;
+    kind: string;
+    source?: "repo" | "shared";
+    status?: string;
+    /** One of the project's review commands (/review-mr…), quoted as the review procedure. */
+    procedure?: boolean;
+    /** Why it was chosen for this change: "lệnh review", "khớp: tenant, invoice"… */
+    why?: string[];
+  }[];
+  /**
+   * reason "catalog": listed in the index the agent loads from on demand (`read`: it did);
+   * "name" | "budget" on reviews before the per-commit selection.
+   */
+  instructions_not_loaded?: {
+    path: string;
+    source: "repo" | "shared";
+    reason: string;
+    kind?: string;
+    read?: boolean;
+    why?: string[];
+  }[];
   claude_repo?: {
     repo: string;
     ref: string | null;
@@ -337,6 +357,18 @@ export interface BusinessProject {
   claude_repo_include: string | null;
 }
 
+/** One file of a shared .claude repo, as the preview lists it (path relative to .claude). */
+export interface ClaudeRepoFile {
+  path: string;
+  kind: string;
+  name: string;
+  description: string;
+  chars: number;
+  clipped: boolean;
+  procedure: boolean;
+  why: string[];
+}
+
 /** POST /business-projects/{id}/claude-repo/preview: what a deep review would load from it. */
 export interface ClaudeRepoPreview {
   info: {
@@ -347,8 +379,10 @@ export interface ClaudeRepoPreview {
     status: "used" | "error" | "other_connection";
     detail?: string;
   };
-  loaded: { path: string; kind: string; chars: number; clipped: boolean }[];
-  not_loaded: { path: string; reason: string }[];
+  /** Quoted in every deep review: review commands (procedure), CLAUDE.md, pinned files. */
+  loaded: ClaudeRepoFile[];
+  /** Chosen per commit (reason "by_commit"), or only when a changed file matches its `paths:`. */
+  not_loaded: (ClaudeRepoFile & { reason: string })[];
 }
 
 /** A GitLab project, i.e. one git repo. */

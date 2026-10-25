@@ -1,6 +1,7 @@
 """The dự án's optional shared .claude repo (outside the spec, requested by the user; see
 PROGRESS.md and app/review/claude_repo.py). Admins pick a GitLab repo, a branch and extra
-globs; "Kiểm tra" downloads it and shows which files a deep review would load."""
+globs; "Kiểm tra" downloads it and shows which files a deep review always quotes (review
+commands, CLAUDE.md, pinned files) and which it picks per commit (app/review/claude_kit.py)."""
 
 from typing import Annotated, Any
 
@@ -16,8 +17,9 @@ from app.collector.sync import client_factory
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
 from app.models import BusinessProject, Connection
+from app.review.claude_kit import MIN_SCORE, KitFile, select
 from app.review.claude_repo import load_shared_config
-from app.review.discover import instruction_kind
+from app.review.discover import CLIPPED
 
 router = APIRouter(tags=["admin"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -80,8 +82,8 @@ def preview_claude_repo(
     box: BoxDep,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> ClaudeRepoPreviewOut:
-    """Download the shared repo now and list what a deep review would load from it (and what
-    it would not, with the reason). Nothing is sent to the model."""
+    """Download the shared repo now and list what every deep review quotes from it and what is
+    chosen per commit (with the reason). Nothing is sent to the model."""
     bp = _get(session, BusinessProject, bp_id, "dự án")
     if not bp.claude_repo_connection_id:
         raise HTTPException(404, "no shared .claude repo configured")
@@ -92,17 +94,26 @@ def preview_claude_repo(
         )
     if shared is None:
         raise HTTPException(404, "no shared .claude repo configured")
-    loaded: list[dict[str, Any]] = []
-    not_loaded: list[dict[str, Any]] = []
-    if shared.docs is not None:
-        loaded = [
-            {
-                "path": d.path,
-                "kind": instruction_kind(d.path),
-                "chars": len(d.text),
-                "clipped": d.clipped,
-            }
-            for d in shared.docs.instructions
-        ]
-        not_loaded = [{"path": p, "reason": r} for p, r in shared.docs.not_loaded]
+    # No change to rank against: what is left is exactly what each commit decides.
+    chosen = select(shared.files, [], "", None, shared.info["include"])
+
+    def row(f: KitFile) -> dict[str, Any]:
+        return {
+            "path": f.rel,
+            "kind": f.kind,
+            "name": f.name,
+            "description": f.description,
+            "chars": f.chars,
+            "clipped": f.text.endswith(CLIPPED),
+            "procedure": f.procedure,
+            "why": f.why,
+        }
+
+    every = chosen.procedure + chosen.ranked + chosen.catalog
+    loaded = [row(f) for f in every if f.procedure or f.score >= MIN_SCORE]
+    not_loaded = [
+        {**row(f), "reason": "paths" if f.globs else "by_commit"}
+        for f in every
+        if not (f.procedure or f.score >= MIN_SCORE)
+    ]
     return ClaudeRepoPreviewOut(info=shared.info, loaded=loaded, not_loaded=not_loaded)

@@ -74,7 +74,8 @@ class Settings(BaseSettings):
 
     # Deep review (docs/specs/18): a second pass with read-only tools inside a copy of the repo.
     deep_review: bool = True
-    deep_review_max_turns: int = Field(default=40, ge=5, le=200)
+    # 60: the agent also Reads the skills and rules the change needs (claude_kit).
+    deep_review_max_turns: int = Field(default=60, ge=5, le=200)
     deep_review_timeout_s: int = Field(default=600, ge=60, le=3600)
     deep_review_max_archive_mb: int = Field(default=300, ge=10, le=5000)
     deep_review_min_loc: int = Field(default=0, ge=0)  # 0 = every review gets the second pass

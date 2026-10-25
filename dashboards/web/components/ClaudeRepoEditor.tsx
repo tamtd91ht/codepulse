@@ -5,7 +5,7 @@ import { useSWRConfig } from "swr";
 
 import { Alert } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
-import type { BusinessProject, ClaudeRepoPreview, Connection } from "@/lib/types";
+import type { BusinessProject, ClaudeRepoFile, ClaudeRepoPreview, Connection } from "@/lib/types";
 
 const KIND_LABEL: Record<string, string> = {
   skill: "skill",
@@ -16,8 +16,8 @@ const KIND_LABEL: Record<string, string> = {
   doc: "tài liệu",
 };
 const REASON_LABEL: Record<string, string> = {
-  name: "tên không thuộc nhóm review (thêm vào “File nạp thêm” nếu cần)",
-  budget: "hết giới hạn ký tự",
+  by_commit: "chọn theo nội dung từng commit",
+  paths: "chỉ khi commit sửa file khớp paths:",
 };
 
 /**
@@ -144,8 +144,8 @@ export function ClaudeRepoEditor({ project, busy }: { project: BusinessProject; 
           </label>
           <label style={{ display: "grid", gap: 4 }}>
             <span className="small muted">
-              File nạp thêm, tính từ thư mục .claude (mặc định chỉ nạp skill/agent/command có tên chứa review, security,
-              audit; mọi rules và CLAUDE.md)
+              File nạp thêm (luôn trích), tính từ thư mục .claude (mặc định: lệnh review và CLAUDE.md luôn nạp; skill/rule/agent khác
+              chọn theo nội dung từng commit, phần còn lại agent tự mở từ mục lục khi cần)
             </span>
             <textarea
               name="include"
@@ -191,6 +191,24 @@ export function ClaudeRepoEditor({ project, busy }: { project: BusinessProject; 
   );
 }
 
+function FileList({ files }: { files: ClaudeRepoFile[] }) {
+  return (
+    <ul className="small" style={{ margin: "0 0 8px", paddingLeft: 18 }}>
+      {files.map((d) => (
+        <li key={d.path}>
+          <code>{d.kind === "command" ? d.name : d.path}</code>{" "}
+          <span className="muted">
+            · {KIND_LABEL[d.kind] ?? d.kind}
+            {d.description ? ` · ${d.description}` : ""}
+            {d.why.includes("nạp thêm") ? " · nạp thêm" : ""}
+            {d.clipped ? " · bị rút gọn (file quá dài, agent vẫn đọc được bản đủ)" : ""}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function PreviewResult({ preview }: { preview: ClaudeRepoPreview }) {
   const { info } = preview;
   if (info.status !== "used")
@@ -201,37 +219,52 @@ function PreviewResult({ preview }: { preview: ClaudeRepoPreview }) {
           : `Không tải được repo: ${info.detail ?? "lỗi không rõ"}`}
       </Alert>
     );
+  const procedure = preview.loaded.filter((d) => d.procedure);
+  const always = preview.loaded.filter((d) => !d.procedure);
   return (
     <div style={{ marginTop: 10 }}>
       <p className="small">
-        <code>{info.repo}</code> @ {info.ref} ({info.sha}) · {info.files} file. Review sâu sẽ nạp{" "}
-        <b>{preview.loaded.length}</b> file:
+        <code>{info.repo}</code> @ {info.ref} ({info.sha}) · {info.files} file.
       </p>
-      <ul className="small" style={{ margin: "0 0 8px", paddingLeft: 18 }}>
-        {preview.loaded.map((d) => (
-          <li key={d.path}>
-            <code>{d.path}</code> <span className="muted">· {KIND_LABEL[d.kind] ?? d.kind}</span>
-            {d.clipped && <span className="muted"> · bị rút gọn (file dài hơn 8.000 ký tự)</span>}
-          </li>
-        ))}
-      </ul>
+      <p className="small" style={{ margin: "0 0 4px" }}>
+        <b>Quy trình review của dự án</b> (lệnh review, agent đọc trước tiên):
+      </p>
+      {procedure.length === 0 ? (
+        <p className="small muted" style={{ margin: "0 0 8px" }}>
+          Không thấy lệnh nào tên có “review” trong <code>commands/</code> (ví dụ <code>/review-mr</code>); review dựa
+          trên rubric của CodePulse và các file dưới đây.
+        </p>
+      ) : (
+        <FileList files={procedure} />
+      )}
+      {always.length > 0 && (
+        <>
+          <p className="small" style={{ margin: "0 0 4px" }}>
+            Luôn trích vào prompt:
+          </p>
+          <FileList files={always} />
+        </>
+      )}
       {preview.not_loaded.length > 0 && (
         <>
           <p className="small muted" style={{ margin: "0 0 4px" }}>
-            Không nạp {preview.not_loaded.length} file:
+            Chọn theo từng commit ({preview.not_loaded.length} file): file khớp nội dung thay đổi được trích sẵn, còn lại
+            nằm trong mục lục để agent tự mở khi cần.
           </p>
           <ul className="small muted" style={{ margin: 0, paddingLeft: 18 }}>
             {preview.not_loaded.map((d) => (
               <li key={d.path}>
-                <code>{d.path}</code> · {REASON_LABEL[d.reason] ?? d.reason}
+                <code>{d.path}</code> · {KIND_LABEL[d.kind] ?? d.kind}
+                {d.reason === "paths" ? ` · ${REASON_LABEL.paths}` : ""}
+                {d.description ? ` · ${d.description}` : ""}
               </li>
             ))}
           </ul>
         </>
       )}
       <p className="muted small">
-        Khi review thật, file dùng chung và file của repo chia nhau giới hạn 40.000 ký tự; trang chi tiết review (thẻ
-        Căn cứ review) cho biết file nào đã thực sự vào prompt.
+        Toàn bộ repo được chép vào bản sao khi review sâu, nên agent đọc được mọi skill/rule ở đây; thẻ Căn cứ review
+        của từng review cho biết file nào được trích, vì sao, và file nào agent đã tự mở.
       </p>
     </div>
   );

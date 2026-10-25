@@ -26,7 +26,7 @@ from app.models import (
     ReviewFinding,
     User,
 )
-from app.review import comment
+from app.review import claude_kit, comment
 from app.review.checkout import CheckoutError, checkout
 from app.review.claude_repo import include_globs, load_shared_config, pack_instructions
 from app.review.deep import (
@@ -37,7 +37,7 @@ from app.review.deep import (
     merge,
     parse_deep,
 )
-from app.review.discover import discover
+from app.review.discover import CLIPPED, discover
 from app.review.live import LiveTracker, describe
 from app.review.postprocess import Finding, postprocess
 from app.review.prepare import PreparedDiff, chunk, prepare, redact
@@ -598,21 +598,53 @@ class ReviewService:
                     business,
                     project.connection_id,
                     sensitive_paths=settings.sensitive_paths,
+                    mount_into=root,
                 )
-                shared_docs = shared.docs.instructions if shared and shared.docs else []
                 shared_repo = shared.info["repo"] if shared else ""
+                # Claude files of both sources, chosen by what this change touches; a repo
+                # file the change itself edits is not used (the author could have written it).
+                # Excluded files (too large, ignored, binary) were changed all the same.
+                in_diff = {f.path for f in prepared.files} | set(prepared.excluded)
+                kit = [
+                    *(shared.files if shared else []),
+                    *(
+                        f
+                        for f in claude_kit.scan(root / ".claude", ".claude", "repo")
+                        if f.path not in in_diff
+                    ),
+                ]
+                chosen = claude_kit.select(
+                    kit, prepared.files, target.title, target.description, extra
+                )
+                ranked = {(f.source, f.path): f for f in chosen.ranked}
                 packed = pack_instructions(
                     [
                         (
                             "shared",
                             f"Cấu hình Claude dùng chung của dự án (repo {shared_repo})",
-                            f"{shared_repo}:",
-                            shared_docs,
+                            "",
+                            [f.doc() for f in chosen.ranked if f.source == "shared"],
                         ),
-                        ("repo", f"Của repo {project.path_with_namespace}", "", docs.instructions),
+                        (
+                            "repo",
+                            f"Của repo {project.path_with_namespace}",
+                            "",
+                            # AGENTS.md, Cursor/Copilot files, docs: as discover() found them.
+                            [d for d in docs.instructions if not d.path.startswith(".claude/")]
+                            + [f.doc() for f in chosen.ranked if f.source == "repo"],
+                        ),
                     ],
                     MAX_INSTRUCTIONS_CHARS,
                 )
+                for record in packed.records:
+                    picked = ranked.get((record["source"], record["path"]))
+                    if picked is not None:
+                        record["why"], record["kind"] = picked.why, picked.kind
+                # What was not quoted is listed for the agent: ranked files that did not fit
+                # first, then the rest.
+                cut = {r["path"] for r in packed.records if r["status"] == "cut"}
+                unquoted = [f for f in chosen.ranked if f.path in cut] + chosen.catalog
+                origin = {"shared": f"dùng chung {shared_repo}", "repo": "của repo"}
                 profile = self._profile(project, docs, sha, review)
                 self._step(review.id, "deep", "agent đang đọc code", files=stats.files)
                 prompt = build_deep_prompt(
@@ -622,6 +654,9 @@ class ReviewService:
                     target.conventions,
                     prepared,
                     candidates,
+                    claude_kit.render_procedure(chosen.procedure),
+                    claude_kit.render_catalog(unquoted, origin),
+                    shared_mounted=bool(shared and shared.info.get("mounted")),
                 )
                 tracker = LiveTracker(str(root))
                 result = agent.review_in_repo(
@@ -660,13 +695,30 @@ class ReviewService:
         review.basis = {
             **(review.basis or {}),
             # What the model was given (source, kind, whether it fit) and what it was not.
-            "instructions": packed.records[:60],
+            "instructions": [
+                {
+                    "path": f.path,
+                    "kind": f.kind,
+                    "source": f.source,
+                    "status": "partial" if f.text.endswith(CLIPPED) else "used",
+                    "procedure": True,
+                    "why": f.why,
+                }
+                for f in chosen.procedure
+            ]
+            + packed.records[:80],
+            # Not quoted: the agent saw them listed and could Read them; `read` says whether it did.
             "instructions_not_loaded": [
-                {"path": path, "source": source, "reason": reason}
-                for source, found in (("shared", shared.docs if shared else None), ("repo", docs))
-                if found is not None
-                for path, reason in found.not_loaded
-            ][:40],
+                {
+                    "path": f.path,
+                    "source": f.source,
+                    "kind": f.kind,
+                    "reason": "catalog",
+                    "read": f.path in tracker.reads,
+                    **({"why": f.why} if f.why else {}),
+                }
+                for f in unquoted
+            ][:120],
             "claude_repo": shared.info if shared else None,
             "profile": (
                 {

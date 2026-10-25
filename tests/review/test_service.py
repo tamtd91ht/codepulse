@@ -477,14 +477,17 @@ def test_deep_review_verifies_candidates_adds_findings_and_caches_the_profile(
     assert review.deep["instruction_sources"] == ["CLAUDE.md", ".claude/rules/critical/money.md"]
     assert review.basis is not None and review.basis["instructions"] == [
         {"path": "CLAUDE.md", "kind": "instructions", "source": "repo", "status": "used"},
+    ]
+    # Nothing in the change is about money: the rule is in the index, for the agent to Read.
+    assert review.basis["claude_repo"] is None and review.basis["instructions_not_loaded"] == [
         {
             "path": ".claude/rules/critical/money.md",
-            "kind": "rules",
             "source": "repo",
-            "status": "used",
-        },
+            "kind": "rules",
+            "reason": "catalog",
+            "read": False,
+        }
     ]
-    assert review.basis["claude_repo"] is None and review.basis["instructions_not_loaded"] == []
     assert review.basis["rubric"]["version"] == RUBRIC_VERSION and review.basis["profile"]
     assert review.summary == "Parser mới; đã đối chứng."
     assert review.intent is not None and review.intent["summary"] == "Thêm parser"
@@ -492,6 +495,9 @@ def test_deep_review_verifies_candidates_adds_findings_and_caches_the_profile(
     assert call["tools"] == ["Read", "Grep", "Glob"] and call["max_turns"] == 40
     assert "Kind: backend-service · Domain: payments" in call["prompt"].user
     assert "### CLAUDE.md" in call["prompt"].user
+    assert "- .claude/rules/critical/money.md (rules critical/money, của repo)" in (
+        call["prompt"].user
+    )
     assert "[0] critical security" in call["prompt"].user
     assert not Path(call["workdir"]).exists()  # the checkout is gone
     assert project.profile is not None and project.profile["domain"] == "payments"
@@ -727,6 +733,7 @@ SHARED_FILES = {
     "skills/java-conventions/SKILL.md": "Đặt tên package theo domain.",
     "skills/deploy/SKILL.md": "Không liên quan review.",
     "agents/security-reviewer.md": "Soát quyền truy cập.",
+    "commands/review-mr.md": "---\ndescription: Review MR\n---\nÁp dụng skill deploy-checklist.",
 }
 
 
@@ -763,27 +770,39 @@ def test_deep_review_reads_the_shared_claude_repo_of_the_dự_án(
         "ref": "main",
         "include": ["skills/java-conventions/SKILL.md"],
         "sha": "c" * 12,
-        "files": 5,
+        "files": 6,
         "status": "used",
+        "mounted": True,
     }
+    mount = ".codepulse/claude-shared"
     shared = [
-        (i["path"], i["kind"], i["status"])
+        (i["path"], i["kind"], i["status"], bool(i.get("procedure")))
         for i in review.basis["instructions"]
         if i["source"] == "shared"
     ]
-    assert shared == [
-        (".claude/CLAUDE.md", "instructions", "used"),
-        (".claude/agents/security-reviewer.md", "agent", "used"),
-        (".claude/skills/code-review/SKILL.md", "skill", "used"),
-        (".claude/skills/java-conventions/SKILL.md", "skill", "used"),  # via claude_repo_include
+    assert shared[:3] == [
+        (f"{mount}/commands/review-mr.md", "command", "used", True),  # the review procedure
+        (f"{mount}/skills/java-conventions/SKILL.md", "skill", "used", False),  # pinned
+        (f"{mount}/CLAUDE.md", "instructions", "used", False),
     ]
-    assert {"path": ".claude/skills/deploy/SKILL.md", "source": "shared", "reason": "name"} in (
-        review.basis["instructions_not_loaded"]
-    )
-    user = agent.repo_calls[0]["prompt"].user
-    # Shared files come first and carry their repo, so they are not taken for checkout files.
-    assert user.index("### demo/claude-config:.claude/CLAUDE.md") < user.index("### CLAUDE.md")
-    assert "Kiểm tra idempotency" in user and "Không liên quan review" not in user
+    # Named for review: worth quoting, after those (their order follows the score).
+    assert sorted(shared[3:]) == [
+        (f"{mount}/agents/security-reviewer.md", "agent", "used", False),
+        (f"{mount}/skills/code-review/SKILL.md", "skill", "used", False),
+    ]
+    (deploy,) = [
+        (d["source"], d["kind"], d["reason"], d["read"])
+        for d in review.basis["instructions_not_loaded"]
+        if d["path"] == f"{mount}/skills/deploy/SKILL.md"
+    ]
+    assert deploy == ("shared", "skill", "catalog", False)
+    call = agent.repo_calls[0]
+    user = call["prompt"].user
+    # The procedure first; shared files sit where the agent can Read them, and before the repo's.
+    assert user.index("Áp dụng skill deploy-checklist") < user.index(f"### {mount}/CLAUDE.md")
+    assert user.index(f"### {mount}/CLAUDE.md") < user.index("### CLAUDE.md")
+    assert "Kiểm tra idempotency" in user and f"### {mount}/skills/deploy/SKILL.md" not in user
+    assert f"- {mount}/skills/deploy/SKILL.md (skill deploy" in user  # indexed, not quoted
 
 
 def test_an_unreadable_shared_repo_does_not_stop_the_deep_review(

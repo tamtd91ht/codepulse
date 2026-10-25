@@ -3,7 +3,14 @@ from typing import Any
 
 import pytest
 
-from app.review.deep import DeepReview, build_deep_prompt, merge, parse_deep, render_candidates
+from app.review.deep import (
+    DeepReview,
+    _resolve,
+    build_deep_prompt,
+    merge,
+    parse_deep,
+    render_candidates,
+)
 from app.review.postprocess import Finding
 from app.review.prepare import PreparedDiff, parse_diff
 from app.review.prompt import ReviewTarget
@@ -249,3 +256,30 @@ def test_absurd_line_ranges_are_clamped(repo: Path) -> None:
     assert deep.findings[0].line_end == 202
     # "./app/api.py" normalises to the diff file; the range exceeds the file -> dropped.
     assert merge([], deep, repo, DIFF, 0.5).findings == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".codepulse/claude-shared/rules/x.md",
+        "./.codepulse/claude-shared/rules/x.md",
+        ".codepulse//claude-shared/rules/x.md",
+        "app/../.codepulse/claude-shared/rules/x.md",
+    ],
+)
+def test_the_shared_kit_is_never_a_repository_file(repo: Path, path: str) -> None:
+    kit = repo / ".codepulse" / "claude-shared" / "rules"
+    kit.mkdir(parents=True)
+    (kit / "x.md").write_text("a\nb\n")
+    assert _resolve(repo, path) is None
+    assert _resolve(repo, "app/api.py") is not None
+
+
+def test_the_prompt_names_the_shared_kit_only_when_codepulse_put_it_there() -> None:
+    prepared = PreparedDiff(files=list(DIFF.values()), excluded={})
+    target = ReviewTarget("demo/p", "Add lookup", "desc")
+    mounted = build_deep_prompt(target, "", "", "", prepared, [], shared_mounted=True)
+    assert "shared Claude configuration sits in .codepulse/claude-shared/" in mounted.user
+    absent = build_deep_prompt(target, "", "", "", prepared, [])
+    assert "claude-shared" not in absent.user
+    assert "no shared Claude configuration is in the checkout" in absent.user

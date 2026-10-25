@@ -63,6 +63,7 @@ def test_admin_sets_checks_and_clears_the_shared_claude_repo(
                         "skills/code-review/SKILL.md": "review",
                         "skills/java/SKILL.md": "java",
                         "skills/deploy/SKILL.md": "deploy",
+                        "commands/review-mr.md": "---\ndescription: Review MR\n---\nsteps",
                     }
                 ),
             )
@@ -86,11 +87,18 @@ def test_admin_sets_checks_and_clears_the_shared_claude_repo(
     assert preview.status_code == 200
     out = preview.json()
     assert out["info"]["status"] == "used" and out["info"]["sha"] == "d" * 12
-    assert [d["path"] for d in out["loaded"]] == [
-        ".claude/skills/code-review/SKILL.md",
-        ".claude/skills/java/SKILL.md",
+    # Always quoted: the review command, the pinned skill, a skill named for review.
+    assert [(d["path"], d["procedure"]) for d in out["loaded"]] == [
+        ("commands/review-mr.md", True),
+        ("skills/java/SKILL.md", False),
+        ("skills/code-review/SKILL.md", False),
     ]
-    assert out["not_loaded"] == [{"path": ".claude/skills/deploy/SKILL.md", "reason": "name"}]
+    assert out["loaded"][0]["name"] == "/review-mr"
+    assert out["loaded"][0]["description"] == "Review MR"
+    # The rest is chosen per commit, or Read by the agent from the index.
+    assert [(d["path"], d["reason"]) for d in out["not_loaded"]] == [
+        ("skills/deploy/SKILL.md", "by_commit")
+    ]
 
     assert client.delete(path, headers=admin).status_code == 204
     db_session.refresh(business)

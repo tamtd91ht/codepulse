@@ -765,5 +765,6 @@ def gitlab_repo_path(value: str) -> str:
 
 class ClaudeRepoPreviewOut(BaseModel):
     info: dict[str, Any]  # repo, ref, sha, files, status (used | error | other_connection)
-    loaded: list[dict[str, Any]]  # path, kind, chars, clipped
-    not_loaded: list[dict[str, Any]]  # path, reason (name | budget)
+    # path (relative to .claude), kind, name, description, chars, clipped, procedure, why
+    loaded: list[dict[str, Any]]  # quoted in every deep review
+    not_loaded: list[dict[str, Any]]  # same + reason (by_commit | paths): chosen per commit
