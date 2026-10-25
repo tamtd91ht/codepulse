@@ -527,6 +527,24 @@ export interface LlmCheck {
   checked_at: string;
 }
 
+/** GET /admin/llm-token: which credential reviews use; never contains the token. */
+export interface LlmToken {
+  active: "stored" | "env_oauth" | "env_api_key" | "none";
+  token_hint: string | null;
+  stored: boolean;
+  stored_source: "login" | "paste" | null;
+  stored_by: string | null;
+  stored_at: string | null;
+  login_supported: boolean;
+}
+
+/** POST /admin/llm-login: a `claude setup-token` run waiting for the code from claude.ai. */
+export interface LlmLogin {
+  login_id: string;
+  url: string;
+  expires_in_s: number;
+}
+
 /* ---- reviews in progress (docs/specs/17 §Tiến trình) ---- */
 
 export interface ActivityItem {

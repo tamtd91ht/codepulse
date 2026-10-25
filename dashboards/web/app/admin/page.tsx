@@ -2,6 +2,7 @@
 
 import { type FormEvent, type KeyboardEvent, useEffect, useState } from "react";
 
+import { ClaudeLogin } from "@/components/ClaudeLogin";
 import { Icon, type IconName, IconButton } from "@/components/icons";
 import { LlmCheck } from "@/components/LlmCheck";
 import { RepoAdmin } from "@/components/RepoAdmin";
@@ -393,6 +394,7 @@ function LlmTab() {
           <code>codepulse metrics recompute</code>.
         </p>
       </Card>
+      <ClaudeLogin />
       <LlmCheck />
     </>
   );

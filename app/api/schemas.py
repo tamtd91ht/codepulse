@@ -644,3 +644,37 @@ class ActivityOut(BaseModel):
     queued_total: int  # all waiting review jobs you may see
     recent: list[ActivityItem] = []  # ended in the last 15 minutes, newest first
     hidden: int  # running or waiting reviews of people outside your scope (count only)
+
+
+# -- Claude subscription token set from the Admin screen (outside the spec; see PROGRESS.md) ----
+
+
+class LlmTokenIn(BaseModel):
+    # Only a subscription token (`claude setup-token`); an API key stays in LLM_API_KEY.
+    token: Annotated[
+        str, StringConstraints(strip_whitespace=True, pattern=r"^sk-ant-oat\d*-[A-Za-z0-9_-]{20,}$")
+    ]
+
+
+class LlmTokenOut(BaseModel):
+    # What reviews use now: stored (dashboard) > env_oauth > env_api_key > none.
+    active: Literal["stored", "env_oauth", "env_api_key", "none"]
+    token_hint: str | None  # masked, never the token
+    stored: bool
+    stored_source: str | None = None  # login | paste
+    stored_by: str | None = None  # the admin's name
+    stored_at: datetime | None = None
+    login_supported: bool  # whether "Đăng nhập Claude" can run on this host
+
+
+class LlmLoginOut(BaseModel):
+    login_id: str
+    url: str
+    expires_in_s: int
+
+
+class LlmLoginCodeIn(BaseModel):
+    # The code claude.ai shows after sign-in ("<code>#<state>").
+    code: Annotated[
+        str, StringConstraints(strip_whitespace=True, pattern=r"^[A-Za-z0-9_#.\-]{8,512}$")
+    ]

@@ -38,6 +38,7 @@ PING = ReviewPrompt(
     },
 )
 
+AUTH_STORED = "subscription session (set from the Admin screen)"
 AUTH_OAUTH = "subscription session (CLAUDE_CODE_OAUTH_TOKEN)"
 AUTH_API_KEY = "API key (LLM_API_KEY)"
 AUTH_NONE = "none"
@@ -50,7 +51,7 @@ ACCOUNT_NOTE_FROM_ENV = (
 
 @dataclass
 class AuthInfo:
-    method: str  # one of AUTH_OAUTH / AUTH_API_KEY / AUTH_NONE
+    method: str  # one of AUTH_STORED / AUTH_OAUTH / AUTH_API_KEY / AUTH_NONE
     token_hint: str | None  # e.g. "sk-ant-oat01-…AbCd", never the token
     cli_method: str | None = None  # `claude auth status` authMethod: oauth_token, api_key, ...
     logged_in: bool | None = None
@@ -101,8 +102,10 @@ def mask_token(token: str) -> str | None:
     return f"{prefix}…{tail}"
 
 
-def _auth_token(settings: Settings) -> tuple[str, str]:
+def _auth_token(settings: Settings, stored: str) -> tuple[str, str]:
     """The token ClaudeCodeProvider gets (same precedence as build_provider) and its label."""
+    if stored:
+        return stored, AUTH_STORED
     oauth = settings.claude_code_oauth_token.get_secret_value()
     if oauth:
         return oauth, AUTH_OAUTH
@@ -177,11 +180,14 @@ def _ping(provider: ClaudeCodeProvider, token: str, clock: Callable[[], float]) 
 def check_llm(
     settings: Settings,
     *,
+    stored_token: str = "",
     runner: Runner = subprocess.run,
     clock: Callable[[], float] = time.monotonic,
 ) -> LLMCheckReport:
-    """Configuration, account and one live call; never raises for an LLM/CLI failure."""
-    token, method = _auth_token(settings)
+    """Configuration, account and one live call; never raises for an LLM/CLI failure.
+
+    `stored_token` is the token set from the Admin screen, if any (it wins, like in reviews)."""
+    token, method = _auth_token(settings, stored_token)
     auth = AuthInfo(method=method, token_hint=mask_token(token))
     model = settings.llm_model or "default"
     if settings.llm_provider != "claude_code":

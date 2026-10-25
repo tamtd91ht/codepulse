@@ -113,10 +113,20 @@ def test_session_token_wins_over_the_api_key() -> None:
         claude_code_oauth_token=SecretStr("sk-ant-oat01-session"),
         llm_api_key=SecretStr("sk-ant-api03-key"),
     )
-    provider = build_provider(settings)
+    provider = build_provider(settings, stored_token=lambda: "")
     assert isinstance(provider, ClaudeCodeProvider)
     assert provider._env()["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-session"
     assert "sk-ant-api03-key" not in provider._env().values()
+
+
+def test_token_set_from_the_dashboard_wins_over_the_environment() -> None:
+    settings = Settings(
+        claude_code_oauth_token=SecretStr("sk-ant-oat01-env"),
+        llm_api_key=SecretStr("sk-ant-api03-key"),
+    )
+    provider = build_provider(settings, stored_token=lambda: "sk-ant-oat01-stored")
+    assert isinstance(provider, ClaudeCodeProvider)
+    assert provider._env()["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-stored"
 
 
 def test_fake_provider_records_prompts() -> None:

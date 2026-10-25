@@ -7,6 +7,7 @@ import { ApiError, api } from "@/lib/api";
 import type { LlmCheck as Report } from "@/lib/types";
 
 const AUTH_LABEL: Record<string, string> = {
+  "subscription session (set from the Admin screen)": "Phiên gói Claude (đăng nhập từ trang Admin)",
   "subscription session (CLAUDE_CODE_OAUTH_TOKEN)": "Phiên gói Claude (CLAUDE_CODE_OAUTH_TOKEN)",
   "API key (LLM_API_KEY)": "API key (LLM_API_KEY)",
   none: "Chưa cấu hình token (CLI dùng đăng nhập sẵn có, nếu có)",

@@ -1,4 +1,7 @@
+from collections.abc import Callable
+
 from app.config import Settings
+from app.review.credentials import load_stored_claude_token
 from app.review.providers.base import (
     AgenticProvider,
     LLMError,
@@ -23,12 +26,17 @@ __all__ = [
 
 
 def build_provider(
-    settings: Settings, *, timeout_s: float | None = None, max_retries: int | None = None
+    settings: Settings,
+    *,
+    timeout_s: float | None = None,
+    max_retries: int | None = None,
+    stored_token: Callable[[], str] = load_stored_claude_token,
 ) -> LLMProvider:
     """Only the Phase 0 provider exists; others raise until they are implemented.
 
     `timeout_s` / `max_retries` override the defaults for short interactive calls (the
-    Telegram resolver), where waiting minutes would stall the poller."""
+    Telegram resolver), where waiting minutes would stall the poller. The token an admin set
+    from the dashboard (`stored_token`) wins over the environment."""
     if settings.llm_provider == "claude_code":
         extra: dict[str, float | int] = {}
         if timeout_s is not None:
@@ -39,7 +47,8 @@ def build_provider(
             binary=settings.claude_code_bin,
             model=settings.llm_model,
             auth_token=(
-                settings.claude_code_oauth_token.get_secret_value()
+                stored_token()
+                or settings.claude_code_oauth_token.get_secret_value()
                 or settings.llm_api_key.get_secret_value()
             ),
             **extra,  # type: ignore[arg-type]
@@ -47,9 +56,11 @@ def build_provider(
     raise NotImplementedError(f"LLM_PROVIDER={settings.llm_provider} is not implemented yet")
 
 
-def build_agentic_provider(settings: Settings) -> AgenticProvider | None:
+def build_agentic_provider(
+    settings: Settings, *, stored_token: Callable[[], str] = load_stored_claude_token
+) -> AgenticProvider | None:
     """The deep review needs a provider with read-only tools; only Claude Code has one."""
     if not settings.deep_review:
         return None
-    provider = build_provider(settings)
+    provider = build_provider(settings, stored_token=stored_token)
     return provider if isinstance(provider, ClaudeCodeProvider) else None
