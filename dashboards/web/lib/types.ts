@@ -527,6 +527,17 @@ export interface LlmCheck {
   checked_at: string;
 }
 
+/** GET/PUT /admin/review-settings: a review setting over its .env default. */
+export interface ReviewSetting {
+  key: string;
+  env: string;
+  value: number;
+  default: number;
+  overridden: boolean;
+  minimum: number;
+  maximum: number;
+}
+
 /** GET /admin/llm-token: which credential reviews use; never contains the token. */
 export interface LlmToken {
   active: "stored" | "env_oauth" | "env_api_key" | "none";

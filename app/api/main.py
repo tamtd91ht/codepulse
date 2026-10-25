@@ -24,6 +24,7 @@ from app.api.routers import (
     notifications,
     overview,
     reviews,
+    settings,
     telegram,
 )
 from app.collector.gitlab.client import GitLabError
@@ -63,6 +64,7 @@ for api_router in (
     overview.router,
     notifications.router,
     commits.router,
+    settings.router,
 ):
     app.include_router(api_router, prefix="/api/v1")
 # docs/specs/11: CORS for the dashboard origin only; cookies need credentials.

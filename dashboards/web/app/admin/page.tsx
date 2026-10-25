@@ -6,6 +6,7 @@ import { ClaudeLogin } from "@/components/ClaudeLogin";
 import { Icon, type IconName, IconButton } from "@/components/icons";
 import { LlmCheck } from "@/components/LlmCheck";
 import { RepoAdmin } from "@/components/RepoAdmin";
+import { ReviewSettings } from "@/components/ReviewSettings";
 import { TeamAdmin } from "@/components/TeamAdmin";
 import { TelegramAdmin } from "@/components/TelegramAdmin";
 import { Card, EmptyState, Loading, Message, PageHeader } from "@/components/ui";
@@ -394,6 +395,7 @@ function LlmTab() {
           <code>codepulse metrics recompute</code>.
         </p>
       </Card>
+      <ReviewSettings />
       <ClaudeLogin />
       <LlmCheck />
     </>

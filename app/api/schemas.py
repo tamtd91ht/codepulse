@@ -678,3 +678,23 @@ class LlmLoginCodeIn(BaseModel):
     code: Annotated[
         str, StringConstraints(strip_whitespace=True, pattern=r"^[A-Za-z0-9_#.\-]{8,512}$")
     ]
+
+
+# -- review settings edited on the Admin screen (outside the spec; see PROGRESS.md) --------------
+
+
+class ReviewSettingOut(BaseModel):
+    key: str
+    env: str  # the environment variable it overrides
+    value: int  # what reviews use now
+    default: int  # from the environment
+    overridden: bool
+    minimum: int
+    maximum: int
+
+
+class ReviewSettingsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # None = back to the environment default; the bounds are app/admin_settings.EDITABLE.
+    max_review_loc: Annotated[int, Field(ge=1, le=1_000_000)] | None = None

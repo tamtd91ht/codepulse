@@ -330,6 +330,14 @@ export default function GuidePage() {
           Tab <strong>LLM &amp; Chi phí</strong> cho thấy số review, chi phí ước tính và phần trăm ngân sách tháng, và nút
           kiểm tra kết nối LLM.
         </p>
+        <h3>Đăng nhập Claude và cài đặt review</h3>
+        <p>
+          Thẻ <strong>Đăng nhập Claude</strong> cho review chạy bằng phiên của gói Claude (Pro/Max) thay vì API key:
+          bấm <strong>Đăng nhập Claude</strong>, đăng nhập trên claude.ai, dán mã vào ô xác nhận; hoặc dán token tạo bằng{" "}
+          <code>claude setup-token</code>. Token được mã hoá và ưu tiên hơn cấu hình trong .env. Thẻ{" "}
+          <strong>Cài đặt review</strong> đổi ngưỡng số dòng tối đa mỗi MR/commit (<code>MAX_REVIEW_LOC</code>); diff
+          lớn hơn bị bỏ qua với lý do &quot;MR quá lớn&quot;.
+        </p>
         <h3>Kết nối LLM</h3>
         <p>
           Ở thẻ <strong>Kết nối LLM</strong>, bấm <strong>Kiểm tra kết nối</strong> để xem provider, model, phiên bản

@@ -9,6 +9,7 @@ from rq import Queue
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.admin_settings import effective
 from app.collector.gitlab.client import GitLabError
 from app.collector.sync import ClientFactory, client_factory, fetch_commit, sync_project
 from app.config import Settings, get_settings
@@ -38,11 +39,13 @@ class NotSyncedYet(Exception):
     """The target is not in the domain layer yet (a sync is running); RQ retries the job."""
 
 
-def review_settings(settings: Settings) -> ReviewSettings:
+def review_settings(settings: Settings, session: Session | None = None) -> ReviewSettings:
+    """From the environment, with what an admin set on the Admin screen on top (app_settings)."""
+    edited = effective(session, settings) if session is not None else {}
     return ReviewSettings(
         ignore_paths=settings.ignore_paths,
         sensitive_paths=settings.sensitive_paths,
-        max_review_loc=settings.max_review_loc,
+        max_review_loc=edited.get("max_review_loc", settings.max_review_loc),
         max_tokens_per_chunk=settings.max_tokens_per_chunk,
         min_confidence=settings.min_confidence,
         monthly_budget_usd=settings.monthly_llm_budget_usd,
@@ -112,7 +115,12 @@ def run_mr_review(
         raise ValueError(f"project {project.id} has no connection")
     with make_client(connection) as client:
         service = ReviewService(
-            session, client, provider, review_settings(settings), agent=agent, progress=progress
+            session,
+            client,
+            provider,
+            review_settings(settings, session),
+            agent=agent,
+            progress=progress,
         )
         review = service.review_mr(
             project,
@@ -162,7 +170,12 @@ def run_commit_review(
         raise ValueError(f"project {project.id} has no connection")
     with make_client(connection) as client:
         service = ReviewService(
-            session, client, provider, review_settings(settings), agent=agent, progress=progress
+            session,
+            client,
+            provider,
+            review_settings(settings, session),
+            agent=agent,
+            progress=progress,
         )
         review = service.review_commit(
             project,
