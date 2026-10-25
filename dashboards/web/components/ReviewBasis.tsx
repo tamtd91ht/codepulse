@@ -183,6 +183,9 @@ export function BasisCard({
                 <span className="muted">
                   {" "}
                   @ {sharedRepo.ref} ({sharedRepo.sha})
+                  {sharedRepo.mount_error ? (
+                    <Pill tone="warn">không chép được vào bản sao: agent chỉ dùng phần được trích</Pill>
+                  ) : null}
                 </span>
               ) : (
                 <Pill tone="warn">

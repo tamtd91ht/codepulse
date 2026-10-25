@@ -96,7 +96,7 @@ def load_shared_config(
         ) as (root, stats):
             layout = as_repo_layout(root)
             docs = discover(layout, info["include"])
-            mounted = mount_shared(layout / ".claude", mount_into) if mount_into else None
+            mounted, mount_error = _mount(layout / ".claude", mount_into, business)
             # Not mounted (preview, or the path is taken): named after the repo, not readable.
             prefix = SHARED_MOUNT if mounted else f"{business.claude_repo_path}:.claude"
             files = scan(mounted or layout / ".claude", prefix, "shared")
@@ -114,10 +114,29 @@ def load_shared_config(
             "files": stats.files,
             "status": "used",
             "mounted": bool(mount_into and mounted),
+            **({"mount_error": mount_error} if mount_error else {}),
         },
         docs,
         files,
     )
+
+
+def _mount(
+    claude_dir: Path, root: Path | None, business: BusinessProject
+) -> tuple[Path | None, str | None]:
+    """The shared folder copied into the checkout, or None and why it was not. A failed copy
+    costs only the agent's on-demand reading: the files are still read, quoted and indexed
+    from the download."""
+    if root is None:
+        return None, None
+    try:
+        return mount_shared(claude_dir, root), None
+    except OSError as exc:
+        log.warning(
+            "shared .claude repo not copied into the checkout",
+            extra={"repo": business.claude_repo_path, "error": exc.__class__.__name__},
+        )
+        return None, exc.__class__.__name__
 
 
 @dataclass

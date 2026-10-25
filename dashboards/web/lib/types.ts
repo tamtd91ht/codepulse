@@ -205,6 +205,9 @@ export interface ReviewBasis {
     repo: string;
     ref: string | null;
     sha?: string;
+    /** Copied into the checkout for the agent to Read; mount_error says why not. */
+    mounted?: boolean;
+    mount_error?: string;
     status: "used" | "error" | "other_connection";
     detail?: string;
   } | null;

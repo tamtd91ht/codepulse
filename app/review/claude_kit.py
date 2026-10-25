@@ -210,12 +210,19 @@ def scan(claude_dir: Path, prefix: str, source: str) -> list[KitFile]:
 
 def mount_shared(claude_dir: Path, root: Path) -> Path | None:
     """Copy the shared .claude folder into the checkout under SHARED_MOUNT (Read, Grep and Glob
-    only work inside the working directory). None when the repo already has that path."""
+    only work inside the working directory). None when the repo already has that path.
+
+    On a failed copy the partial folder is removed before the error goes up, so the agent never
+    reads half a configuration that the prompt does not mention."""
     target = root / SHARED_MOUNT
     if target.exists() or not claude_dir.is_dir():
         return None
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(claude_dir, target, symlinks=False, ignore_dangling_symlinks=True)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(claude_dir, target, symlinks=False, ignore_dangling_symlinks=True)
+    except OSError:
+        shutil.rmtree(target, ignore_errors=True)
+        raise
     return target
 
 

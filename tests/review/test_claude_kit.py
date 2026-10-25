@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+
+from app.models import BusinessProject
 from app.review.claude_kit import (
     SHARED_MOUNT,
     mount_shared,
@@ -7,6 +10,7 @@ from app.review.claude_kit import (
     scan,
     select,
 )
+from app.review.claude_repo import _mount
 from app.review.prepare import parse_diff
 
 TENANT_DIFF = """@@ -1,2 +1,3 @@
@@ -124,3 +128,35 @@ def test_catalog_lists_paths_and_relevance(tmp_path: Path) -> None:
     text = render_catalog(files, {"repo": "của repo"})
     assert "- .claude/skills/kafka-architect/SKILL.md (skill kafka-architect, của repo)" in text
     assert "[liên quan:" in text
+
+
+def test_a_failed_copy_leaves_nothing_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    claude = kit(tmp_path / "shared")
+    root = tmp_path / "checkout"
+    root.mkdir()
+
+    def half_copy(src: Path, dst: Path, **_: object) -> None:
+        (Path(dst) / "rules").mkdir(parents=True)
+        (Path(dst) / "rules" / "half.md").write_text("half")
+        raise OSError("disk full")
+
+    monkeypatch.setattr("app.review.claude_kit.shutil.copytree", half_copy)
+    with pytest.raises(OSError):
+        mount_shared(claude, root)
+    assert not (root / SHARED_MOUNT).exists()
+
+
+def test_the_shared_repo_is_still_used_when_it_cannot_be_copied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    claude = kit(tmp_path / "shared")
+    business = BusinessProject(name="x", claude_repo_path="demo/cfg")
+
+    def broken(*_: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("app.review.claude_repo.mount_shared", broken)
+    assert _mount(claude, tmp_path / "checkout", business) == (None, "OSError")
+    assert _mount(claude, None, business) == (None, None)  # preview: nothing to copy into
