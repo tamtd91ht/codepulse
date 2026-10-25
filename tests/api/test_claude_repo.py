@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.schemas import gitlab_repo_path
 from app.models import AuditLog, BusinessProject
 from tests.api.conftest import World
 
@@ -71,6 +72,9 @@ def test_admin_sets_checks_and_clears_the_shared_claude_repo(
         assert missing.status_code == 422
         bad_branch = client.put(path, headers=admin, json={**body, "ref": "dev"})
         assert bad_branch.status_code == 422
+        # The repo's web link, as pasted from the browser, works like the bare path.
+        link = {**body, "path": "https://gitlab.example.com/demo/claude-config/-/tree/main"}
+        assert client.put(path, headers=admin, json=link).status_code == 204
         assert client.put(path, headers=admin, json=body).status_code == 204
 
         listed = client.get("/api/v1/business-projects", headers=admin).json()
@@ -95,7 +99,31 @@ def test_admin_sets_checks_and_clears_the_shared_claude_repo(
     actions = db_session.scalars(
         select(AuditLog.action).where(AuditLog.action == "business_project.claude_repo")
     ).all()
-    assert len(actions) == 2
+    assert len(actions) == 3
+
+
+@pytest.mark.parametrize(
+    ("pasted", "path"),
+    [
+        ("omicrm/claude-config", "omicrm/claude-config"),
+        (
+            "https://gitlab.vihatgroup.com/vihat-saas/omicx/service/cloud-saas-omicx-claude-ai",
+            "vihat-saas/omicx/service/cloud-saas-omicx-claude-ai",
+        ),
+        ("https://gitlab.example.com/a/b/-/tree/develop/skills?ref_type=heads", "a/b"),
+        ("https://gitlab.example.com/a/b.git", "a/b"),
+        ("git@gitlab.example.com:a/b/c.git", "a/b/c"),
+        ("  /a/b/  ", "a/b"),
+    ],
+)
+def test_the_repo_path_is_taken_from_a_link_or_clone_url(pasted: str, path: str) -> None:
+    assert gitlab_repo_path(pasted) == path
+
+
+@pytest.mark.parametrize("pasted", ["claude-config", "https://gitlab.example.com/", "a b/c", ""])
+def test_a_value_without_group_and_repo_is_refused(pasted: str) -> None:
+    with pytest.raises(ValueError, match="nhóm/repo"):
+        gitlab_repo_path(pasted)
 
 
 def test_shared_claude_repo_is_admin_only(

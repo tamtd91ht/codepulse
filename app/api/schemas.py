@@ -734,14 +734,33 @@ class ClaudeRepoIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     connection_id: int
-    # GitLab full path, e.g. "omicrm/claude-config".
-    path: Annotated[
-        str,
-        StringConstraints(strip_whitespace=True, pattern=r"^[A-Za-z0-9_.\-]+(/[A-Za-z0-9_.\-]+)+$"),
-    ]
+    # GitLab full path, e.g. "omicrm/claude-config"; a pasted repo link or clone URL is accepted
+    # and reduced to the path.
+    path: Annotated[str, StringConstraints(strip_whitespace=True, max_length=512)]
     ref: Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)] | None = None
     # Extra globs relative to the .claude folder (comma or newline separated).
     include: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("path")
+    @classmethod
+    def _repo_path(cls, value: str) -> str:
+        return gitlab_repo_path(value)
+
+
+GITLAB_PATH_RE = re.compile(r"[A-Za-z0-9_.\-]+(/[A-Za-z0-9_.\-]+)+")
+
+
+def gitlab_repo_path(value: str) -> str:
+    """ "group/sub/repo" from what an admin pastes: the path itself, the repo's web link (also a
+    deeper one such as …/-/tree/main), or an https / ssh clone URL."""
+    text = value.strip()
+    text = re.sub(r"^[a-z][a-z0-9+.-]*://[^/]+", "", text, flags=re.IGNORECASE)  # https://host
+    text = re.sub(r"^[^@/\s]+@[^:/\s]+:", "", text)  # git@host:
+    text = text.split("/-/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    text = text.strip("/").removesuffix(".git")
+    if not GITLAB_PATH_RE.fullmatch(text):
+        raise ValueError("cần dạng nhóm/repo hoặc link repo GitLab, ví dụ omicrm/claude-config")
+    return text
 
 
 class ClaudeRepoPreviewOut(BaseModel):

@@ -129,14 +129,13 @@ export function ClaudeRepoEditor({ project, busy }: { project: BusinessProject; 
             <input type="hidden" name="connection_id" value={connections.data?.[0]?.id ?? ""} />
           )}
           <label style={{ display: "grid", gap: 4 }}>
-            <span className="small muted">Đường dẫn repo trên GitLab</span>
+            <span className="small muted">Repo trên GitLab: dán link repo hoặc đường dẫn nhóm/repo</span>
             <input
               name="path"
               required
+              maxLength={512}
               defaultValue={project.claude_repo_path ?? ""}
-              placeholder="omicrm/claude-config"
-              pattern="^\s*[A-Za-z0-9_.\-]+(/[A-Za-z0-9_.\-]+)+\s*$"
-              title="Dạng nhóm/repo, ví dụ omicrm/claude-config"
+              placeholder="https://gitlab.example.com/omicrm/claude-config hoặc omicrm/claude-config"
             />
           </label>
           <label style={{ display: "grid", gap: 4 }}>
