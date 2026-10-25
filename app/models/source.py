@@ -32,6 +32,17 @@ class BusinessProject(TimestampMixin, Base):
     description: Mapped[str | None]
     # Team rules (markdown) put into every review prompt of this dự án (docs/specs/17).
     review_rules: Mapped[str | None]
+    # Optional shared .claude repo (skills, agents, rules, CLAUDE.md for every repo of the dự án;
+    # outside the spec, requested by the user, see PROGRESS.md). Read by the deep review at
+    # `claude_repo_ref` (NULL = its default branch). `claude_repo_include`: extra globs,
+    # relative to the .claude folder, of files to load besides the review-named ones.
+    claude_repo_connection_id: Mapped[int | None] = mapped_column(
+        ForeignKey("connections.id", ondelete="SET NULL")
+    )
+    claude_repo_external_id: Mapped[int | None] = mapped_column(BigInteger)
+    claude_repo_path: Mapped[str | None]
+    claude_repo_ref: Mapped[str | None] = mapped_column(String(255))
+    claude_repo_include: Mapped[str | None]
 
 
 class Project(TimestampMixin, Base):

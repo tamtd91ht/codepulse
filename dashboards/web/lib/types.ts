@@ -178,7 +178,16 @@ export interface ReviewBasis {
   rubric?: { version: string; lens: string[] };
   rules?: BasisRule[];
   rules_ref?: string;
-  instructions?: { path: string; kind: string }[];
+  /** source/status since the shared .claude repo; older reviews have path and kind only. */
+  instructions?: { path: string; kind: string; source?: "repo" | "shared"; status?: string }[];
+  instructions_not_loaded?: { path: string; source: "repo" | "shared"; reason: string }[];
+  claude_repo?: {
+    repo: string;
+    ref: string | null;
+    sha?: string;
+    status: "used" | "error" | "other_connection";
+    detail?: string;
+  } | null;
   profile?: { sha: string | null; built_at: string | null; confidence: number | null } | null;
 }
 
@@ -321,6 +330,25 @@ export interface BusinessProject {
   description: string | null;
   repos: number;
   review_rules: string | null;
+  /** Optional shared .claude repo read by the deep review of every repo of the dự án. */
+  claude_repo_connection_id: number | null;
+  claude_repo_path: string | null;
+  claude_repo_ref: string | null;
+  claude_repo_include: string | null;
+}
+
+/** POST /business-projects/{id}/claude-repo/preview: what a deep review would load from it. */
+export interface ClaudeRepoPreview {
+  info: {
+    repo: string;
+    ref: string | null;
+    sha?: string;
+    files?: number;
+    status: "used" | "error" | "other_connection";
+    detail?: string;
+  };
+  loaded: { path: string; kind: string; chars: number; clipped: boolean }[];
+  not_loaded: { path: string; reason: string }[];
 }
 
 /** A GitLab project, i.e. one git repo. */

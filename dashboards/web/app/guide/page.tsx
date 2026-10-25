@@ -225,6 +225,42 @@ export default function GuidePage() {
           chứng, và tìm lỗi chỉ thấy được khi nhìn nhiều file. Tắt theo repo bằng cờ <strong>Sâu</strong>. Hồ sơ cũ thì
           bấm <strong>Làm mới hồ sơ</strong> trong ngăn chi tiết dự án.
         </p>
+        <h3>Claude review như thế nào (và đọc những skill nào)</h3>
+        <ul>
+          <li>
+            CodePulse gọi <strong>Claude Code CLI</strong> ở chế độ không tương tác, bằng phiên của gói Claude đã đăng
+            nhập ở Admin (hoặc token trong .env). CLI chạy với <code>--setting-sources &quot;&quot;</code>: nó{" "}
+            <strong>không</strong> tự nạp <code>CLAUDE.md</code>, skills hay settings của repo như khi bạn dùng Claude
+            Code trên máy. Thay vào đó CodePulse tự chọn file và chép nội dung vào prompt dưới dạng dữ liệu tham khảo, để
+            nội dung trong repo không thể ra lệnh cho reviewer.
+          </li>
+          <li>
+            <strong>Lượt nhanh</strong>: chỉ diff + quy tắc dự án/repo (ô Quy tắc review và các file quy tắc đã khai báo).
+            Không có tool, không đọc <code>.claude</code>.
+          </li>
+          <li>
+            <strong>Lượt sâu</strong>: thêm <code>CLAUDE.md</code>, <code>AGENTS.md</code>, mọi file trong{" "}
+            <code>.claude/rules</code>, và skill / agent / command có tên chứa <em>review</em>, <em>security</em> hoặc{" "}
+            <em>audit</em>, lấy từ repo được review và từ repo .claude dùng chung của dự án (nếu có). Mỗi file tối đa
+            8.000 ký tự, tổng 40.000 ký tự. Skill mang tên khác (ví dụ <code>java-conventions</code>) chỉ được nạp khi
+            khai báo ở <strong>File nạp thêm</strong>. Reviewer được dùng Read/Grep/Glob trong bản sao repo, tối đa 40
+            lượt.
+          </li>
+          <li>
+            Thẻ <strong>Căn cứ review</strong> trên trang kết quả liệt kê từng file đã vào prompt (của repo hay dùng
+            chung, đủ hay bị cắt) và các file <code>.claude</code> không được nạp kèm lý do.
+          </li>
+        </ul>
+        <h3>Repo .claude dùng chung của dự án</h3>
+        <p>
+          Nếu các service của dự án dùng chung một repo cấu hình Claude (skills, agents, rules, CLAUDE.md), mở ngăn chi
+          tiết dự án → <strong>Repo .claude dùng chung</strong>, nhập đường dẫn GitLab (ví dụ{" "}
+          <code>omicrm/claude-config</code>), nhánh nếu không dùng nhánh mặc định, và các file cần nạp thêm. Mục này
+          không bắt buộc. Repo có thể chứa thư mục <code>.claude/</code> hoặc chính là nội dung thư mục đó. Nút{" "}
+          <strong>Kiểm tra</strong> tải repo và cho biết file nào sẽ được nạp. Khi một file có cả ở repo dùng chung và ở
+          repo đang review, bản của repo đang review được ưu tiên. Repo dùng chung phải nằm cùng kết nối GitLab với các
+          repo của dự án.
+        </p>
         <h3>Webhook thông báo</h3>
         <p>
           Ở tab <strong>Webhook thông báo</strong>, admin đặt endpoint nhận kết quả review (Slack, Teams hoặc service nội

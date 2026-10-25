@@ -157,6 +157,10 @@ class GitLabClient:
     def project(self, project_id: int) -> Any:
         return self.get(f"/projects/{project_id}")
 
+    def project_by_path(self, path: str) -> Any:
+        """A project by its full path (`group/sub/repo`)."""
+        return self.get(f"/projects/{quote(path.strip('/'), safe='')}")
+
     def commits(self, project_id: int, since: datetime | None) -> Iterator[Any]:
         params: dict[str, Any] = {"with_stats": "true", "all": "true"}
         if since:

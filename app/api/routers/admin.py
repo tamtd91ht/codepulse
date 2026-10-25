@@ -207,7 +207,16 @@ def list_business_projects(
         .order_by(BusinessProject.name)
     ).all()
     return [
-        BusinessProjectOut(id=bp.id, name=bp.name, description=bp.description, repos=int(n))
+        BusinessProjectOut(
+            id=bp.id,
+            name=bp.name,
+            description=bp.description,
+            repos=int(n),
+            claude_repo_connection_id=bp.claude_repo_connection_id,
+            claude_repo_path=bp.claude_repo_path,
+            claude_repo_ref=bp.claude_repo_ref,
+            claude_repo_include=bp.claude_repo_include,
+        )
         for bp, n in rows
     ]
 

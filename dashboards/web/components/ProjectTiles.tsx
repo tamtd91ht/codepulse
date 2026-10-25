@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 
+import { ClaudeRepoEditor } from "@/components/ClaudeRepoEditor";
 import { Icon, IconButton } from "@/components/icons";
 import { BulkBranch, type RepoActions, repoName, RepoTable, UNASSIGNED } from "@/components/RepoTable";
 import { Drawer, EmptyState, Pill, Segmented } from "@/components/ui";
@@ -356,6 +357,11 @@ export function ProjectDrawer({
       {project && (
         <div className="drawer-section">
           <RulesEditor key={project.id} project={project} repos={items} actions={actions} onSaveRules={onSaveRules} busy={busy} />
+        </div>
+      )}
+      {project && (
+        <div className="drawer-section">
+          <ClaudeRepoEditor key={project.id} project={project} busy={busy} />
         </div>
       )}
     </Drawer>

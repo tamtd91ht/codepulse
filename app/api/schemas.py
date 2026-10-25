@@ -125,6 +125,11 @@ class BusinessProjectOut(ORM):
     description: str | None
     review_rules: str | None = None
     repos: int = 0  # tracked repos assigned to it
+    # Optional shared .claude repo (see app/review/claude_repo.py).
+    claude_repo_connection_id: int | None = None
+    claude_repo_path: str | None = None
+    claude_repo_ref: str | None = None
+    claude_repo_include: str | None = None
 
 
 class RepoAssignment(BaseModel):
@@ -720,3 +725,26 @@ class LiveReviewOut(BaseModel):
     review_id: int
     running: bool
     events: list[LiveEvent]
+
+
+# -- the dự án's shared .claude repo (outside the spec; see PROGRESS.md) --------------------------
+
+
+class ClaudeRepoIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    connection_id: int
+    # GitLab full path, e.g. "omicrm/claude-config".
+    path: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, pattern=r"^[A-Za-z0-9_.\-]+(/[A-Za-z0-9_.\-]+)+$"),
+    ]
+    ref: Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)] | None = None
+    # Extra globs relative to the .claude folder (comma or newline separated).
+    include: str | None = Field(default=None, max_length=2000)
+
+
+class ClaudeRepoPreviewOut(BaseModel):
+    info: dict[str, Any]  # repo, ref, sha, files, status (used | error | other_connection)
+    loaded: list[dict[str, Any]]  # path, kind, chars, clipped
+    not_loaded: list[dict[str, Any]]  # path, reason (name | budget)

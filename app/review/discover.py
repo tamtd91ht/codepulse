@@ -10,6 +10,7 @@ instruction to CodePulse.
 import os
 import re
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
@@ -146,10 +147,25 @@ EXTENSION_LANGUAGES = {
 }
 
 
+CLIPPED = "\n(… rút gọn)"
+# Claude configuration files worth reporting when they were NOT loaded (the basis says why).
+CLAUDE_FILES = (
+    ".claude/CLAUDE.md",
+    ".claude/skills/*/SKILL.md",
+    ".claude/agents/*.md",
+    ".claude/commands/*.md",
+    ".claude/rules/*.md",
+)
+
+
 @dataclass
 class Doc:
     path: str
     text: str
+
+    @property
+    def clipped(self) -> bool:
+        return self.text.endswith(CLIPPED)
 
 
 @dataclass
@@ -161,6 +177,8 @@ class ProjectDocs:
     frameworks: list[str] = field(default_factory=list)
     tree: list[str] = field(default_factory=list)
     files: int = 0
+    # Claude files found but not handed to the model: (path, "name" | "budget").
+    not_loaded: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def instruction_paths(self) -> list[str]:
@@ -173,7 +191,7 @@ def _read(path: Path, limit: int) -> str:
     except OSError:
         return ""
     text = redact(text)
-    return text if len(text) <= limit else text[:limit].rstrip() + "\n(… rút gọn)"
+    return text if len(text) <= limit else text[:limit].rstrip() + CLIPPED
 
 
 def _walk(root: Path) -> tuple[list[str], Counter[str], int]:
@@ -211,7 +229,9 @@ def _tree(paths: list[str]) -> list[str]:
     return out[:MAX_TREE_ENTRIES]
 
 
-def discover(root: Path) -> ProjectDocs:
+def discover(root: Path, extra_globs: Sequence[str] = ()) -> ProjectDocs:
+    """`extra_globs`: more files to load, relative to the `.claude` folder (the dự án's
+    "claude_repo_include"), e.g. `skills/java-conventions/SKILL.md` or `skills/*/SKILL.md`."""
     docs = ProjectDocs()
     paths, languages, total = _walk(root)
     docs.files = total
@@ -228,16 +248,23 @@ def discover(root: Path) -> ProjectDocs:
     seen: set[str] = set()
     candidates: list[str] = [p for p in INSTRUCTION_FILES if (root / p).is_file()]
     hidden = sorted(_hidden_files(root))  # os.walk above skipped dot-directories on purpose
-    for pattern in INSTRUCTION_GLOBS:
+    extra = [".claude/" + g.strip().lstrip("/") for g in extra_globs if g.strip()]
+    for pattern in (*INSTRUCTION_GLOBS, *extra):
         candidates += sorted(p for p in paths + hidden if fnmatch(p, pattern))
     for rel in candidates:
-        if rel in seen or budget <= 0:
+        if rel in seen:
             continue
         seen.add(rel)
+        if budget <= 0:
+            docs.not_loaded.append((rel, "budget"))
+            continue
         text = _read(root / rel, min(MAX_FILE_CHARS, budget))
         if text.strip():
             docs.instructions.append(Doc(rel, text))
             budget -= len(text)
+    for rel in sorted(hidden):
+        if rel not in seen and any(fnmatch(rel, pattern) for pattern in CLAUDE_FILES):
+            docs.not_loaded.append((rel, "name"))
 
     hints: list[str] = []
     for name, label in MANIFESTS.items():

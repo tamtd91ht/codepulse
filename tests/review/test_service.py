@@ -11,7 +11,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.collector.gitlab.client import GitLabClient
-from app.models import Commit, MergeRequest, Project, Review, ReviewFinding, User
+from app.models import (
+    BusinessProject,
+    Commit,
+    MergeRequest,
+    Project,
+    Review,
+    ReviewFinding,
+    User,
+)
 from app.review.progress import MemoryProgress
 from app.review.providers import FakeLLMProvider, LLMError, ReviewPrompt
 from app.review.rubric import RUBRIC_VERSION
@@ -468,9 +476,15 @@ def test_deep_review_verifies_candidates_adds_findings_and_caches_the_profile(
     assert review.deep["project_fit"] == ["Đúng kiến trúc; nên đặt parser cạnh app/billing"]
     assert review.deep["instruction_sources"] == ["CLAUDE.md", ".claude/rules/critical/money.md"]
     assert review.basis is not None and review.basis["instructions"] == [
-        {"path": "CLAUDE.md", "kind": "instructions"},
-        {"path": ".claude/rules/critical/money.md", "kind": "rules"},
+        {"path": "CLAUDE.md", "kind": "instructions", "source": "repo", "status": "used"},
+        {
+            "path": ".claude/rules/critical/money.md",
+            "kind": "rules",
+            "source": "repo",
+            "status": "used",
+        },
     ]
+    assert review.basis["claude_repo"] is None and review.basis["instructions_not_loaded"] == []
     assert review.basis["rubric"]["version"] == RUBRIC_VERSION and review.basis["profile"]
     assert review.summary == "Parser mới; đã đối chứng."
     assert review.intent is not None and review.intent["summary"] == "Thêm parser"
@@ -704,3 +718,100 @@ def test_deep_review_streams_its_actions_to_the_live_view(
         ("end", None),
     ]
     assert "SECRET" not in str(entries)
+
+
+SHARED_FILES = {
+    # The repo *is* the .claude folder: skills/, agents/, CLAUDE.md at its root.
+    "CLAUDE.md": "Dự án: mọi service dùng tenantId từ JWT.",
+    "skills/code-review/SKILL.md": "---\nname: code-review\n---\nKiểm tra idempotency.",
+    "skills/java-conventions/SKILL.md": "Đặt tên package theo domain.",
+    "skills/deploy/SKILL.md": "Không liên quan review.",
+    "agents/security-reviewer.md": "Soát quyền truy cập.",
+}
+
+
+def test_deep_review_reads_the_shared_claude_repo_of_the_dự_án(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    business = BusinessProject(
+        name="Thu phí",
+        claude_repo_connection_id=project.connection_id,
+        claude_repo_external_id=2002,
+        claude_repo_path="demo/claude-config",
+        claude_repo_include="skills/java-conventions/SKILL.md",
+    )
+    db_session.add(business)
+    db_session.flush()
+    project.business_project_id = business.id
+    agent = FakeLLMProvider(deep_answer)
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount_deep(router)
+        router.get(f"{API}/projects/2002").respond(json={"id": 2002, "default_branch": "main"})
+        router.get(f"{API}/projects/2002/repository/commits/main").respond(json={"id": "c" * 40})
+        router.get(f"{API}/projects/2002/repository/archive.tar.gz").mock(
+            return_value=httpx.Response(200, content=archive_bytes(SHARED_FILES))
+        )
+        service = ReviewService(
+            db_session, client, ProfileOrChunk(FakeLLMProvider(sqli)), DEEP_SETTINGS, agent=agent
+        )
+        review = service.review_mr(project, merge_request, HEAD)
+
+    assert review is not None and review.mode == "deep" and review.basis is not None
+    assert review.basis["claude_repo"] == {
+        "repo": "demo/claude-config",
+        "ref": "main",
+        "include": ["skills/java-conventions/SKILL.md"],
+        "sha": "c" * 12,
+        "files": 5,
+        "status": "used",
+    }
+    shared = [
+        (i["path"], i["kind"], i["status"])
+        for i in review.basis["instructions"]
+        if i["source"] == "shared"
+    ]
+    assert shared == [
+        (".claude/CLAUDE.md", "instructions", "used"),
+        (".claude/agents/security-reviewer.md", "agent", "used"),
+        (".claude/skills/code-review/SKILL.md", "skill", "used"),
+        (".claude/skills/java-conventions/SKILL.md", "skill", "used"),  # via claude_repo_include
+    ]
+    assert {"path": ".claude/skills/deploy/SKILL.md", "source": "shared", "reason": "name"} in (
+        review.basis["instructions_not_loaded"]
+    )
+    user = agent.repo_calls[0]["prompt"].user
+    # Shared files come first and carry their repo, so they are not taken for checkout files.
+    assert user.index("### demo/claude-config:.claude/CLAUDE.md") < user.index("### CLAUDE.md")
+    assert "Kiểm tra idempotency" in user and "Không liên quan review" not in user
+
+
+def test_an_unreadable_shared_repo_does_not_stop_the_deep_review(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    business = BusinessProject(
+        name="Thu phí",
+        claude_repo_connection_id=project.connection_id,
+        claude_repo_external_id=2002,
+        claude_repo_path="demo/claude-config",
+        claude_repo_ref="main",
+    )
+    db_session.add(business)
+    db_session.flush()
+    project.business_project_id = business.id
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount_deep(router)
+        router.get(f"{API}/projects/2002/repository/commits/main").respond(404)
+        service = ReviewService(
+            db_session,
+            client,
+            ProfileOrChunk(FakeLLMProvider(sqli)),
+            DEEP_SETTINGS,
+            agent=FakeLLMProvider(deep_answer),
+        )
+        review = service.review_mr(project, merge_request, HEAD)
+
+    assert review is not None and review.mode == "deep" and review.basis is not None
+    assert review.basis["claude_repo"]["status"] == "error"
+    assert {i["source"] for i in review.basis["instructions"]} == {"repo"}

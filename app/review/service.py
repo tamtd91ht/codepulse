@@ -28,8 +28,16 @@ from app.models import (
 )
 from app.review import comment
 from app.review.checkout import CheckoutError, checkout
-from app.review.deep import TOOLS, DeepOutcome, build_deep_prompt, merge, parse_deep
-from app.review.discover import discover, instruction_kind
+from app.review.claude_repo import include_globs, load_shared_config, pack_instructions
+from app.review.deep import (
+    MAX_INSTRUCTIONS_CHARS,
+    TOOLS,
+    DeepOutcome,
+    build_deep_prompt,
+    merge,
+    parse_deep,
+)
+from app.review.discover import discover
 from app.review.live import LiveTracker, describe
 from app.review.postprocess import Finding, postprocess
 from app.review.prepare import PreparedDiff, chunk, prepare, redact
@@ -308,15 +316,16 @@ class ReviewService:
             },
         )
 
+    def _business(self, project: Project) -> BusinessProject | None:
+        if project.business_project_id is None:
+            return None
+        return self._session.get(BusinessProject, project.business_project_id)
+
     def _rules(self, review: Review, project: Project, changed: set[str]) -> str:
         """Team rules for the prompt (docs/specs/17): dự án + repo text, plus files read from the
         repo's default branch, never from the change under review (its author could rewrite
         them in the same commit); a rules file touched by the diff is left out."""
-        business = (
-            self._session.get(BusinessProject, project.business_project_id)
-            if project.business_project_id is not None
-            else None
-        )
+        business = self._business(project)
         ref = project.default_branch or "HEAD"
 
         def fetch(path: str) -> str | None:
@@ -579,13 +588,37 @@ class ReviewService:
                 max_archive_bytes=settings.deep_max_archive_bytes,
                 sensitive_paths=settings.sensitive_paths,
             ) as (root, stats):
-                docs = discover(root)
+                business = self._business(project)
+                extra = include_globs(business.claude_repo_include if business else None)
+                docs = discover(root, extra)
+                if business is not None and business.claude_repo_path:
+                    self._step(review.id, "deep", f"đọc repo .claude {business.claude_repo_path}")
+                shared = load_shared_config(
+                    self._client,
+                    business,
+                    project.connection_id,
+                    sensitive_paths=settings.sensitive_paths,
+                )
+                shared_docs = shared.docs.instructions if shared and shared.docs else []
+                shared_repo = shared.info["repo"] if shared else ""
+                packed = pack_instructions(
+                    [
+                        (
+                            "shared",
+                            f"Cấu hình Claude dùng chung của dự án (repo {shared_repo})",
+                            f"{shared_repo}:",
+                            shared_docs,
+                        ),
+                        ("repo", f"Của repo {project.path_with_namespace}", "", docs.instructions),
+                    ],
+                    MAX_INSTRUCTIONS_CHARS,
+                )
                 profile = self._profile(project, docs, sha, review)
                 self._step(review.id, "deep", "agent đang đọc code", files=stats.files)
                 prompt = build_deep_prompt(
                     target,
                     render_profile(profile) if profile else "",
-                    "\n\n".join(f"### {d.path}\n{d.text}" for d in docs.instructions),
+                    packed.text,
                     target.conventions,
                     prepared,
                     candidates,
@@ -626,9 +659,15 @@ class ReviewService:
         review.mode = "deep"
         review.basis = {
             **(review.basis or {}),
-            "instructions": [
-                {"path": p, "kind": instruction_kind(p)} for p in docs.instruction_paths[:40]
-            ],
+            # What the model was given (source, kind, whether it fit) and what it was not.
+            "instructions": packed.records[:60],
+            "instructions_not_loaded": [
+                {"path": path, "source": source, "reason": reason}
+                for source, found in (("shared", shared.docs if shared else None), ("repo", docs))
+                if found is not None
+                for path, reason in found.not_loaded
+            ][:40],
+            "claude_repo": shared.info if shared else None,
             "profile": (
                 {
                     "sha": (project.profile_sha or "")[:12] or None,

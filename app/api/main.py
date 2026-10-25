@@ -17,6 +17,7 @@ from app.api import auth
 from app.api.routers import (
     activity,
     admin,
+    claude_repo,
     commits,
     disputes,
     llm,
@@ -65,6 +66,7 @@ for api_router in (
     notifications.router,
     commits.router,
     settings.router,
+    claude_repo.router,
 ):
     app.include_router(api_router, prefix="/api/v1")
 # docs/specs/11: CORS for the dashboard origin only; cookies need credentials.

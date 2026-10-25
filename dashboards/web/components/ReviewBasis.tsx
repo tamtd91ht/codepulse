@@ -22,16 +22,22 @@ const INSTRUCTION_KIND: { kind: string; label: string }[] = [
   { kind: "instructions", label: "Hướng dẫn AI" },
   { kind: "doc", label: "Tài liệu" },
 ];
+const NOT_LOADED_REASON: Record<string, string> = {
+  name: "tên không thuộc nhóm review",
+  budget: "hết giới hạn ký tự",
+};
 
 /** "v2 · 2 quy tắc · 5 tài liệu" for the history table. */
 export function basisSummary(basis: ReviewBasis | null): string {
   if (!basis) return "—";
   const rules = (basis.rules ?? []).filter((r) => r.status === "used").length;
-  const docs = (basis.instructions ?? []).length;
+  const docs = (basis.instructions ?? []).filter((d) => d.status !== "cut");
+  const shared = docs.filter((d) => d.source === "shared").length;
   return [
     basis.rubric ? `rubric ${basis.rubric.version}` : null,
     `${rules} quy tắc`,
-    docs ? `${docs} tài liệu repo` : null,
+    docs.length - shared ? `${docs.length - shared} tài liệu repo` : null,
+    shared ? `${shared} file .claude dùng chung` : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -90,6 +96,8 @@ export function BasisCard({
   const cites = (rule: BasisRule) => findings.filter((f) => f.rule_id === rule.name).length;
   const rules = basis.rules ?? [];
   const instructions = basis.instructions ?? [];
+  const notLoaded = basis.instructions_not_loaded ?? [];
+  const sharedRepo = basis.claude_repo;
 
   return (
     <Card title="Căn cứ review" subtitle="Những gì AI đã đối chiếu trong lần review này">
@@ -162,7 +170,22 @@ export function BasisCard({
         </section>
 
         <section>
-          <h4>Tài liệu, agent và kỹ năng trong repo</h4>
+          <h4>Tài liệu, agent và kỹ năng (.claude)</h4>
+          {mode === "deep" && sharedRepo && (
+            <p className="small" style={{ margin: "0 0 6px" }}>
+              Repo .claude dùng chung của dự án: <code>{sharedRepo.repo}</code>
+              {sharedRepo.status === "used" ? (
+                <span className="muted">
+                  {" "}
+                  @ {sharedRepo.ref} ({sharedRepo.sha})
+                </span>
+              ) : (
+                <Pill tone="warn">
+                  {sharedRepo.status === "other_connection" ? "khác kết nối GitLab, không đọc được" : "không tải được"}
+                </Pill>
+              )}
+            </p>
+          )}
           {mode !== "deep" ? (
             <p className="muted small" style={{ margin: 0 }}>
               {deepError
@@ -183,13 +206,37 @@ export function BasisCard({
                     <dt>{label}</dt>
                     <dd>
                       {paths.map((d) => (
-                        <code key={d.path}>{d.path}</code>
+                        <span key={`${d.source}:${d.path}`}>
+                          <code title={d.source === "shared" ? `từ ${sharedRepo?.repo ?? "repo dùng chung"}` : undefined}>
+                            {d.path}
+                          </code>
+                          {d.source === "shared" && <Pill tone="info">dùng chung</Pill>}
+                          {d.status && d.status !== "used" && (
+                            <Pill tone={RULE_STATUS[d.status]?.tone}>{RULE_STATUS[d.status]?.label ?? d.status}</Pill>
+                          )}
+                        </span>
                       ))}
                     </dd>
                   </div>
                 );
               })}
             </dl>
+          )}
+          {mode === "deep" && notLoaded.length > 0 && (
+            <details className="small" style={{ marginTop: 6 }}>
+              <summary className="muted">Có {notLoaded.length} file .claude không được nạp</summary>
+              <ul className="muted" style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                {notLoaded.map((d) => (
+                  <li key={`${d.source}:${d.path}`}>
+                    <code>{d.path}</code>
+                    {d.source === "shared" ? " (dùng chung)" : ""} · {NOT_LOADED_REASON[d.reason] ?? d.reason}
+                  </li>
+                ))}
+              </ul>
+              <p className="muted" style={{ margin: "4px 0 0" }}>
+                Muốn nạp thêm: Admin › Repo › mở dự án › Repo .claude dùng chung › File nạp thêm.
+              </p>
+            </details>
           )}
           {basis.profile && (
             <p className="muted small" style={{ marginBottom: 0 }}>

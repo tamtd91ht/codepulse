@@ -2718,3 +2718,8 @@ textarea.rules {
   font-weight: 600;
   flex: none;
 }
+.basis-docs dd > span {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}

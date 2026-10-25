@@ -1,0 +1,156 @@
+"""The dự án's shared .claude repo, and how its instruction files join the repo's own in the
+deep review (outside the spec, requested by the user; see PROGRESS.md).
+
+Many dự án keep one GitLab repo with the Claude configuration every service shares (skills,
+agents, rules, CLAUDE.md), either as a `.claude/` folder or as the folder's contents at the repo
+root. The deep review downloads it (same archive path and filters as the reviewed repo),
+discovers its instruction files like the repo's own, and quotes both to the model as data:
+the shared ones first, the repo's after them, the repo's winning where they disagree.
+
+Everything that was or was not loaded, and why, goes into the review's basis, so an admin can
+check that the skills they expect were in front of the model.
+"""
+
+import logging
+import shutil
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from app.collector.gitlab.client import GitLabClient, GitLabError
+from app.models import BusinessProject
+from app.review.checkout import CheckoutError, checkout
+from app.review.discover import Doc, ProjectDocs, discover, instruction_kind
+from app.review.rules import rule_paths
+
+log = logging.getLogger(__name__)
+
+# A configuration repo, not a service: anything bigger is not what we think it is.
+MAX_ARCHIVE_BYTES = 20 * 1024 * 1024
+# What a .claude folder holds at its top level; a repo with these at its root *is* the folder.
+CLAUDE_ENTRIES = ("skills", "agents", "commands", "rules", "CLAUDE.md", "settings.json")
+
+
+def include_globs(spec: str | None) -> list[str]:
+    """`claude_repo_include`: comma/newline separated globs relative to the .claude folder."""
+    return rule_paths(spec)
+
+
+def as_repo_layout(root: Path) -> Path:
+    """A directory where the configuration sits under `.claude/`, as discover() expects."""
+    if (root / ".claude").is_dir():
+        return root
+    if not any((root / name).exists() for name in CLAUDE_ENTRIES):
+        return root  # nothing recognisable; discover() still reads a CLAUDE.md/AGENTS.md
+    wrapped = root.parent / "claude-repo"
+    wrapped.mkdir()
+    shutil.move(str(root), str(wrapped / ".claude"))
+    return wrapped
+
+
+@dataclass
+class SharedConfig:
+    """What the review got from the shared repo; `docs` is None when it could not be read."""
+
+    info: dict[str, Any]
+    docs: ProjectDocs | None = None
+
+
+def load_shared_config(
+    client: GitLabClient,
+    business: BusinessProject | None,
+    connection_id: int | None,
+    *,
+    sensitive_paths: list[str],
+) -> SharedConfig | None:
+    """None when the dự án has no shared repo. Never raises for GitLab or archive trouble: the
+    review goes on with the repo's own files and the basis records why. The texts are read into
+    memory; the downloaded copy is gone when this returns."""
+    if business is None or not business.claude_repo_external_id or not business.claude_repo_path:
+        return None
+    info: dict[str, Any] = {
+        "repo": business.claude_repo_path,
+        "ref": business.claude_repo_ref,
+        "include": include_globs(business.claude_repo_include),
+    }
+    if business.claude_repo_connection_id != connection_id:
+        # The review's GitLab client holds another instance's token.
+        return SharedConfig({**info, "status": "other_connection"})
+    external_id = business.claude_repo_external_id
+    try:
+        ref = business.claude_repo_ref or str(client.project(external_id)["default_branch"])
+        sha = str(client.commit(external_id, ref).get("id") or ref)
+        with checkout(
+            client,
+            external_id,
+            sha,
+            max_archive_bytes=MAX_ARCHIVE_BYTES,
+            sensitive_paths=sensitive_paths,
+        ) as (root, stats):
+            docs = discover(as_repo_layout(root), info["include"])
+    except (GitLabError, CheckoutError, OSError, KeyError) as exc:
+        log.warning(
+            "shared .claude repo not read",
+            extra={"repo": business.claude_repo_path, "error": exc.__class__.__name__},
+        )
+        return SharedConfig({**info, "status": "error", "detail": str(exc)[:200]})
+    return SharedConfig(
+        {**info, "ref": ref, "sha": sha[:12], "files": stats.files, "status": "used"}, docs
+    )
+
+
+@dataclass
+class Packed:
+    text: str
+    records: list[dict[str, Any]] = field(default_factory=list)
+
+
+def pack_instructions(groups: list[tuple[str, str, str, list[Doc]]], limit: int) -> Packed:
+    """Quote instruction files of several sources inside `limit` characters.
+
+    `groups`: (source id, heading, path prefix shown to the model, docs) in prompt order; the
+    prefix keeps a shared file from passing for one in the checkout. Each non-empty source is
+    guaranteed an equal share; what one does not use goes to the others. Every file gets a
+    record: used, partial (only its start fits, or discover() clipped it) or cut (not in the
+    prompt)."""
+    live = [group for group in groups if group[3]]
+    if not live:
+        return Packed("")
+    # Exactly what each group adds to the text: its heading and every "### path\ntext" block,
+    # each followed by the blank-line separator.
+    sizes = [
+        len(f"#### {heading}") + 2 + sum(len(f"### {prefix}{d.path}\n{d.text}") + 2 for d in docs)
+        for _, heading, prefix, docs in live
+    ]
+    budgets = [0] * len(live)
+    remaining, open_ = limit, list(range(len(live)))
+    while open_ and remaining > 0:
+        share = remaining // len(open_)
+        if share == 0:
+            break
+        for i in list(open_):
+            take = min(share, sizes[i] - budgets[i])
+            budgets[i] += take
+            remaining -= take
+            if budgets[i] >= sizes[i]:
+                open_.remove(i)
+    parts: list[str] = []
+    records: list[dict[str, Any]] = []
+    for (source, heading, prefix, docs), budget in zip(live, budgets, strict=True):
+        parts.append(f"#### {heading}")
+        budget -= len(parts[-1]) + 2
+        for doc in docs:
+            block = f"### {prefix}{doc.path}\n{doc.text}"
+            record = {"path": doc.path, "kind": instruction_kind(doc.path), "source": source}
+            if budget <= len(doc.path) + 20:
+                record["status"] = "cut"
+            elif len(block) > budget:
+                parts.append(block[:budget].rstrip() + "\n(… cắt bớt)")
+                record["status"] = "partial"
+                budget = 0
+            else:
+                parts.append(block)
+                record["status"] = "partial" if doc.clipped else "used"
+                budget -= len(block) + 2
+            records.append(record)
+    return Packed("\n\n".join(parts), records)
