@@ -56,6 +56,7 @@ from app.telegram.picker import (
     people_keyboard,
     render_text,
     repo_keyboard,
+    repo_pages,
 )
 from app.telegram.resolve import NoResolver, Resolver
 from app.webhook.jobs import REVIEW_JOB_TIMEOUT, REVIEW_RETRY
@@ -92,6 +93,13 @@ def review_branch(project: Project, asked: str | None = None) -> str:
 
 def branch_label(branch: str) -> str:
     return "mọi nhánh" if branch == ALL_BRANCHES else f"nhánh {branch}"
+
+
+def repo_names(repos: list[Project], limit: int = 15) -> str:
+    """Repo paths for a "say which one" reply; what does not fit is counted, not dropped."""
+    names = ", ".join(f"<code>{esc(p.path_with_namespace)}</code>" for p in repos[:limit])
+    more = len(repos) - limit
+    return names + (f" và {more} repo khác (gõ /repos để xem hết)" if more > 0 else "")
 
 
 class LinkCodes(Protocol):
@@ -562,11 +570,9 @@ class BotService:
             picked = self._resolver.pick("repo", hint, [p.path_with_namespace for p in repos])
             if picked is not None:
                 return [repos[picked]]
-            names = ", ".join(f"<code>{esc(p.path_with_namespace)}</code>" for p in repos[:8])
-            raise Denied(f"Có nhiều repo khớp '{esc(hint)}', hãy nói rõ: {names}")
+            raise Denied(f"Có nhiều repo khớp '{esc(hint)}', hãy nói rõ: {repo_names(repos)}")
         if one and len(repos) > 1:
-            names = ", ".join(f"<code>{esc(p.path_with_namespace)}</code>" for p in repos[:8])
-            raise Denied(f"Có nhiều repo khớp, hãy nói rõ: {names}")
+            raise Denied(f"Có nhiều repo khớp, hãy nói rõ: {repo_names(repos)}")
         return repos
 
     def _people(self, hints: tuple[str, ...], me: Principal) -> list[User]:
@@ -1368,7 +1374,8 @@ class BotService:
         me = load_principal(self._s, user.id, self._settings)
         try:
             if action.kind == "menu":
-                return self._menu_callback(action.op, cb, me)
+                page = int(action.arg) if action.arg.isdigit() else 0
+                return self._menu_callback(action.op, cb, me, page)
             if action.kind == "repo":
                 return self._repo_callback(action.op, int(action.arg or 0), cb, me)
             if action.kind == "person":
@@ -1383,7 +1390,9 @@ class BotService:
             log.warning("telegram callback: gitlab error", extra={"status": exc.status_code})
             return CallbackOutcome(answer="GitLab không trả lời được; thử lại sau.", alert=True)
 
-    def _menu_callback(self, op: str, cb: Callback, me: Principal) -> CallbackOutcome:
+    def _menu_callback(
+        self, op: str, cb: Callback, me: Principal, page: int = 0
+    ) -> CallbackOutcome:
         if op == "x":
             return CallbackOutcome(answer="Đã huỷ.", text="Đã huỷ.")
         if op == "noop":
@@ -1395,12 +1404,13 @@ class BotService:
             return CallbackOutcome(answer="Dự án chưa có repo nào.", alert=True)
         if len(repos) > 1:
             what = "commit gần đây" if op == "commit" else "MR đang mở"
+            choices = [(p.id, p.path_with_namespace) for p in repos]
+            pages = repo_pages(choices)
+            page = min(max(page, 0), pages - 1)
+            paging = f", trang {page + 1}/{pages}" if pages > 1 else ""
             return CallbackOutcome(
-                text=f"Chọn repo để xem {what}:",
-                markup=repo_keyboard(
-                    "commit" if op == "commit" else "mr",
-                    [(p.id, p.path_with_namespace) for p in repos],
-                ),
+                text=f"Chọn repo để xem {what} ({len(repos)} repo{paging}):",
+                markup=repo_keyboard("commit" if op == "commit" else "mr", choices, page),
             )
         return self._repo_callback(op, repos[0].id, cb, me)
 

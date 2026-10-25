@@ -118,6 +118,33 @@ def test_menu_and_repo_keyboards() -> None:
     ]
     assert [row[0]["text"] for row in repos[:2]] == ["api", "web"]
     assert repos[0][0]["callback_data"] == "rp||mr|1"
+    assert [b["text"] for b in repos[-1]] == ["✖ Huỷ"]  # one page: no paging buttons
+
+
+def test_repo_keyboard_pages_through_every_repo() -> None:
+    from app.telegram.picker import REPO_PAGE_SIZE, repo_pages
+
+    repos = [(i, f"vihat/omicrm/svc-{i:02}") for i in range(1, 2 * REPO_PAGE_SIZE + 4)]
+    assert repo_pages(repos) == 3
+    seen: list[str] = []
+    for page in range(3):
+        kb = repo_keyboard("commit", repos, page)["inline_keyboard"]
+        seen += [row[0]["callback_data"] for row in kb[:-1]]
+        nav = {b["text"]: b["callback_data"] for b in kb[-1]}
+        if page > 0:
+            assert nav["◀ Trước"] == f"mn||commit|{page - 1}"
+        if page < 2:
+            assert nav["Sau ▶"] == f"mn||commit|{page + 1}"
+    assert seen == [f"rp||commit|{i}" for i, _ in repos]  # none left out
+
+
+def test_repo_keyboard_tells_same_named_repos_apart() -> None:
+    kb = repo_keyboard("mr", [(1, "vihat/omicrm/api"), (2, "vihat/billing/api"), (3, "x/web")])
+    assert [row[0]["text"] for row in kb["inline_keyboard"][:3]] == [
+        "omicrm/api",
+        "billing/api",
+        "web",
+    ]
 
 
 def test_people_keyboard_offers_everyone_then_people() -> None:

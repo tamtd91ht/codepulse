@@ -299,17 +299,29 @@ def people_keyboard(
     return {"inline_keyboard": rows}
 
 
-def repo_keyboard(kind: Kind, repos: list[tuple[int, str]]) -> dict[str, Any]:
-    """One button per repo (short name), at most 8, then cancel."""
+REPO_PAGE_SIZE = 8
+
+
+def repo_pages(repos: list[tuple[int, str]]) -> int:
+    return max(1, (len(repos) + REPO_PAGE_SIZE - 1) // REPO_PAGE_SIZE)
+
+
+def repo_keyboard(kind: Kind, repos: list[tuple[int, str]], page: int = 0) -> dict[str, Any]:
+    """One button per repo (short name), REPO_PAGE_SIZE per page, then paging and cancel.
+    Every repo of the scope is reachable: the pages carry the rest."""
+    page = min(max(page, 0), repo_pages(repos) - 1)
+    leaves = [path.split("/")[-1] for _, path in repos]
     rows: list[list[dict[str, str]]] = []
-    for project_id, path in repos[:8]:
-        rows.append(
-            [
-                {
-                    "text": path.split("/")[-1][:40],
-                    "callback_data": encode("rp", op=kind, arg=project_id),
-                }
-            ]
-        )
-    rows.append([{"text": "✖ Huỷ", "callback_data": encode("mn", op="x")}])
+    for project_id, path in repos[page * REPO_PAGE_SIZE : (page + 1) * REPO_PAGE_SIZE]:
+        leaf = path.split("/")[-1]
+        # Two repos with the same name in different groups: show the group too.
+        label = "/".join(path.split("/")[-2:]) if leaves.count(leaf) > 1 else leaf
+        rows.append([{"text": label[:40], "callback_data": encode("rp", op=kind, arg=project_id)}])
+    nav: list[dict[str, str]] = []
+    if page > 0:
+        nav.append({"text": "◀ Trước", "callback_data": encode("mn", op=kind, arg=page - 1)})
+    if page < repo_pages(repos) - 1:
+        nav.append({"text": "Sau ▶", "callback_data": encode("mn", op=kind, arg=page + 1)})
+    nav.append({"text": "✖ Huỷ", "callback_data": encode("mn", op="x")})
+    rows.append(nav)
     return {"inline_keyboard": rows}
