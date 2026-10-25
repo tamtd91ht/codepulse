@@ -12,15 +12,15 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select, tuple_
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_queue, get_session
-from app.api.schemas import ActivityItem, ActivityOut
+from app.api.schemas import ActivityItem, ActivityOut, LiveReviewOut
 from app.api.security import CurrentPrincipal, Principal
 from app.db import get_redis
-from app.models import Account, Commit, Connection, MergeRequest, Project, User
+from app.models import Account, Commit, Connection, MergeRequest, Project, Review, User
 from app.review.progress import ProgressReader, RedisProgress, queued_reviews
 
 router = APIRouter(tags=["reviews"])
@@ -110,6 +110,30 @@ def review_activity(
         recent=recent,
         hidden=hidden,
     )
+
+
+@router.get("/activity/reviews/{review_id}/live", response_model=LiveReviewOut)
+def live_review(
+    review_id: int,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    progress: Annotated[ProgressReader, Depends(get_progress)],
+) -> LiveReviewOut:
+    """What the deep pass did so far (tools, paths, patterns; never file contents). Kept an hour
+    after the review; same visibility as the review itself."""
+    record = next((r for r in progress.active() if r.get("review_id") == review_id), None) or next(
+        (r for r in progress.recent() if r.get("review_id") == review_id), None
+    )
+    if record is not None:
+        author, running = record.get("author_user_id"), "stage" in record
+    else:
+        review = session.get(Review, review_id)  # ended more than a few minutes ago
+        if review is None:
+            raise HTTPException(404, "review not found")
+        author, running = review.author_user_id, False
+    if not principal.may_review_author(author):
+        raise HTTPException(404, "review not found")
+    return LiveReviewOut(review_id=review_id, running=running, events=progress.live(review_id))
 
 
 def _may_see_queued(principal: Principal, item: dict[str, Any]) -> bool:

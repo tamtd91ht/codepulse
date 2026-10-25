@@ -237,7 +237,9 @@ export default function GuidePage() {
           Khi có review đang chạy, góc phải dưới hiện nút <strong>Đang review …</strong>. Bấm vào để xem từng review: đang
           ở bước nào (lấy diff, review AI, review sâu, chấm điểm), đã chạy bao lâu, ai yêu cầu, và các review đang chờ.
           Review vừa xong có link tới trang kết quả. Bạn chỉ thấy chi tiết review của mình và người mình lead; còn lại chỉ
-          hiện số lượng.
+          hiện số lượng. Ở bước review sâu có nút <strong>Xem trực tiếp</strong>: danh sách Claude đang mở file nào, tìm
+          gì (Read / Grep / Glob), đang ở lượt mấy. Chỉ hiện tên tool, đường dẫn và mẫu tìm kiếm; nội dung file và lời
+          của model không được gửi lên trình duyệt. Diễn biến được giữ một giờ.
         </p>
         <h3>Nhánh review của repo</h3>
         <p>

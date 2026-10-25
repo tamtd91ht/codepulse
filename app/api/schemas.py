@@ -698,3 +698,25 @@ class ReviewSettingsIn(BaseModel):
 
     # None = back to the environment default; the bounds are app/admin_settings.EDITABLE.
     max_review_loc: Annotated[int, Field(ge=1, le=1_000_000)] | None = None
+
+
+class LiveEvent(BaseModel):
+    """One action of the deep pass (app/review/live.py): no file contents, no model prose."""
+
+    kind: str  # start | thinking | tool | answer | end
+    turn: int = 0
+    at: float | None = None  # unix seconds
+    tool: str | None = None
+    target: str | None = None  # Read: path; Grep/Glob: pattern
+    path: str | None = None
+    glob: str | None = None
+    lines: int | None = None
+    model: str | None = None
+    ok: bool | None = None
+    turns: int | None = None
+
+
+class LiveReviewOut(BaseModel):
+    review_id: int
+    running: bool
+    events: list[LiveEvent]

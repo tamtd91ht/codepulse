@@ -155,3 +155,28 @@ def test_nothing_running(client: TestClient, world: World, as_user: Any, live: A
     body = client.get("/api/v1/activity/reviews", headers=as_user(world.an)).json()
     assert body == {"running": [], "queued": [], "queued_total": 0, "recent": [], "hidden": 0}
     assert client.get("/api/v1/activity/reviews").status_code == 401
+
+
+def test_live_view_of_a_review_follows_its_visibility(
+    client: TestClient, world: World, as_user: Any, live: Any
+) -> None:
+    progress, _ = live
+    progress.event(900, [{"kind": "tool", "tool": "Read", "target": "src/app.py", "turn": 1}])
+    progress.event(901, [{"kind": "tool", "tool": "Grep", "target": "tenant_id", "turn": 1}])
+
+    body = client.get("/api/v1/activity/reviews/900/live", headers=as_user(world.an)).json()
+    assert body["running"] is True
+    assert [(e["tool"], e["target"]) for e in body["events"]] == [("Read", "src/app.py")]
+
+    # The unmapped author's review: leads and admins only, invisible (404) to a member.
+    assert (
+        client.get("/api/v1/activity/reviews/901/live", headers=as_user(world.an)).status_code
+        == 404
+    )
+    lead = client.get("/api/v1/activity/reviews/901/live", headers=as_user(world.lead))
+    assert lead.status_code == 200 and lead.json()["events"][0]["target"] == "tenant_id"
+
+    ended = client.get("/api/v1/activity/reviews/903/live", headers=as_user(world.an)).json()
+    assert ended == {"review_id": 903, "running": False, "events": []}
+    missing = client.get("/api/v1/activity/reviews/123456/live", headers=as_user(world.admin))
+    assert missing.status_code == 404

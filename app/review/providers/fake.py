@@ -15,9 +15,15 @@ def no_findings(prompt: ReviewPrompt) -> dict[str, Any]:
 class FakeLLMProvider:
     name = "fake"
 
-    def __init__(self, responder: Responder = no_findings, cost_usd: float = 0.01) -> None:
+    def __init__(
+        self,
+        responder: Responder = no_findings,
+        cost_usd: float = 0.01,
+        events: Sequence[dict[str, Any]] = (),
+    ) -> None:
         self._responder = responder
         self._cost = cost_usd
+        self._events = list(events)  # stream-json events replayed to a deep review's on_event
         self.prompts: list[ReviewPrompt] = []
         self.repo_calls: list[dict[str, Any]] = []  # deep review calls (prompt, workdir, ...)
 
@@ -29,10 +35,14 @@ class FakeLLMProvider:
         tools: Sequence[str],
         max_turns: int,
         timeout_s: float,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> ReviewResult:
         self.repo_calls.append(
             {"prompt": prompt, "workdir": workdir, "tools": list(tools), "max_turns": max_turns}
         )
+        if on_event is not None:
+            for event in self._events:
+                on_event(event)
         return ReviewResult(
             output=self._responder(prompt),
             model="fake-model",

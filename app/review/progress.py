@@ -9,7 +9,9 @@ When a review ends, a short record with its outcome goes to a capped "recent" li
 `end()` runs just before the job's transaction commits: for a moment a review is in neither the
 running list nor the database. The web treats that as "ended", which is harmless.
 
-No code, diff or finding text is stored here: only the target, people and stage names.
+No code, diff or finding text is stored here: only the target, people and stage names. The
+live view of a deep review (app/review/live.py) adds what the agent did: tool, file path, search
+pattern, never what it read or wrote.
 """
 
 import json
@@ -27,6 +29,9 @@ log = logging.getLogger(__name__)
 INDEX_KEY = "cp:reviews:active"
 ITEM_KEY = "cp:review:active:{}"
 RECENT_KEY = "cp:reviews:recent"
+LIVE_KEY = "cp:review:live:{}"
+LIVE_MAX = 300  # entries kept per review (the newest)
+LIVE_TTL_S = 60 * 60
 # Longer than REVIEW_JOB_TIMEOUT (45 min): a live review always refreshes before expiry.
 TTL_S = 50 * 60
 MAX_ACTIVE = 50
@@ -59,11 +64,13 @@ class ProgressSink(Protocol):
     def start(self, review_id: int, info: dict[str, Any]) -> None: ...
     def stage(self, review_id: int, stage: str, detail: str = "", **extra: Any) -> None: ...
     def end(self, review_id: int, status: str | None = None) -> None: ...
+    def event(self, review_id: int, entries: list[dict[str, Any]]) -> None: ...
 
 
 class ProgressReader(Protocol):
     def active(self) -> list[dict[str, Any]]: ...
     def recent(self) -> list[dict[str, Any]]: ...
+    def live(self, review_id: int) -> list[dict[str, Any]]: ...
 
 
 class NullProgress:
@@ -74,6 +81,9 @@ class NullProgress:
         return None
 
     def end(self, review_id: int, status: str | None = None) -> None:
+        return None
+
+    def event(self, review_id: int, entries: list[dict[str, Any]]) -> None:
         return None
 
 
@@ -92,6 +102,7 @@ class MemoryProgress:
     def __init__(self) -> None:
         self.items: dict[int, dict[str, Any]] = {}
         self.ended: list[dict[str, Any]] = []
+        self.events: dict[int, list[dict[str, Any]]] = {}
 
     def start(self, review_id: int, info: dict[str, Any]) -> None:
         self.items[review_id] = {**info, "review_id": review_id, "stage": "start", "detail": ""}
@@ -110,6 +121,12 @@ class MemoryProgress:
 
     def recent(self) -> list[dict[str, Any]]:
         return self.ended[:RECENT_MAX]
+
+    def event(self, review_id: int, entries: list[dict[str, Any]]) -> None:
+        self.events[review_id] = (self.events.get(review_id, []) + entries)[-LIVE_MAX:]
+
+    def live(self, review_id: int) -> list[dict[str, Any]]:
+        return list(self.events.get(review_id, []))
 
 
 class RedisProgress:
@@ -158,7 +175,35 @@ class RedisProgress:
         except (RedisError, ValueError) as exc:
             log.warning("review progress not cleared", extra={"error": exc.__class__.__name__})
 
+    def event(self, review_id: int, entries: list[dict[str, Any]]) -> None:
+        """Append live-view entries; kept for an hour after the review so it can be looked at."""
+        if not entries:
+            return
+        key = LIVE_KEY.format(review_id)
+        try:
+            pipe = self._redis.pipeline()
+            pipe.rpush(key, *(json.dumps(e, default=str) for e in entries))
+            pipe.ltrim(key, -LIVE_MAX, -1)
+            pipe.expire(key, LIVE_TTL_S)
+            pipe.execute()
+        except RedisError as exc:
+            log.warning("live review event not recorded", extra={"error": exc.__class__.__name__})
+
     # -- API side: Redis trouble means "nothing to show", never an error page ------------------
+
+    def live(self, review_id: int) -> list[dict[str, Any]]:
+        try:
+            raws = self._redis.lrange(LIVE_KEY.format(review_id), 0, -1)
+        except RedisError as exc:
+            log.warning("live review not readable", extra={"error": exc.__class__.__name__})
+            return []
+        out: list[dict[str, Any]] = []
+        for raw in raws:
+            try:
+                out.append(json.loads(raw))
+            except ValueError:
+                continue
+        return out
 
     def active(self) -> list[dict[str, Any]]:
         """Running reviews, oldest first; ids whose record expired are dropped from the index."""

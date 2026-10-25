@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -45,4 +45,5 @@ class AgenticProvider(Protocol):
         tools: Sequence[str],
         max_turns: int,
         timeout_s: float,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> ReviewResult: ...

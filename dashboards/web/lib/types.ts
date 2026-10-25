@@ -527,6 +527,27 @@ export interface LlmCheck {
   checked_at: string;
 }
 
+/** GET /activity/reviews/{id}/live: the deep pass's actions (tool, path, pattern; no contents). */
+export interface LiveEvent {
+  kind: "start" | "thinking" | "tool" | "answer" | "end" | string;
+  turn: number;
+  at: number | null;
+  tool: string | null;
+  target: string | null;
+  path: string | null;
+  glob: string | null;
+  lines: number | null;
+  model: string | null;
+  ok: boolean | null;
+  turns: number | null;
+}
+
+export interface LiveReview {
+  review_id: number;
+  running: boolean;
+  events: LiveEvent[];
+}
+
 /** GET/PUT /admin/review-settings: a review setting over its .env default. */
 export interface ReviewSetting {
   key: string;

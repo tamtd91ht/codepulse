@@ -9,6 +9,9 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from app.review.progress import (
     INDEX_KEY,
     ITEM_KEY,
+    LIVE_KEY,
+    LIVE_MAX,
+    LIVE_TTL_S,
     RECENT_KEY,
     RECENT_MAX,
     RedisProgress,
@@ -67,11 +70,16 @@ class FakeRedis:
     def lpush(self, key: str, value: str) -> None:
         self.lists.setdefault(key, []).insert(0, value)
 
+    def rpush(self, key: str, *values: str) -> None:
+        self.lists.setdefault(key, []).extend(values)
+
     def ltrim(self, key: str, start: int, end: int) -> None:
-        self.lists[key] = self.lists.get(key, [])[start : end + 1]
+        self.lists[key] = self.lrange(key, start, end)
 
     def lrange(self, key: str, start: int, end: int) -> list[str]:
-        return self.lists.get(key, [])[start : end + 1]
+        """Redis ranges: both ends inclusive, -1 is the last element."""
+        items = self.lists.get(key, [])
+        return items[start : (end + 1) or None]
 
 
 class BrokenRedis:
@@ -168,3 +176,20 @@ def test_queued_reviews_survives_an_unreachable_queue() -> None:
         raise RedisConnectionError("down")
 
     assert queued_reviews(SimpleNamespace(get_job_ids=down)) == []
+
+
+def test_live_entries_are_capped_and_expire() -> None:
+    redis = FakeRedis()
+    progress = RedisProgress(redis)  # type: ignore[arg-type]
+    progress.event(41, [{"kind": "tool", "turn": n} for n in range(LIVE_MAX + 3)])
+    progress.event(41, [])  # nothing to write
+    kept = progress.live(41)
+    assert len(kept) == LIVE_MAX and kept[0]["turn"] == 3 and kept[-1]["turn"] == LIVE_MAX + 2
+    assert redis.ttl[LIVE_KEY.format(41)] == LIVE_TTL_S
+    assert progress.live(42) == []
+
+
+def test_live_view_survives_a_broken_redis() -> None:
+    progress = RedisProgress(BrokenRedis())  # type: ignore[arg-type]
+    progress.event(41, [{"kind": "tool"}])
+    assert progress.live(41) == []

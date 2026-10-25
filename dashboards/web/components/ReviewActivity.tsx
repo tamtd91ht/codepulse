@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 
 import { Icon, IconButton } from "@/components/icons";
+import { LiveLog } from "@/components/LiveLog";
 import { ExternalLink } from "@/components/ui";
 import { useApi } from "@/lib/api";
 import { TRIGGER_LABEL } from "@/lib/format";
@@ -64,6 +65,7 @@ export function ReviewActivity() {
     refreshInterval: (d?: ActivityOut) => (d && d.running.length + d.queued_total > 0 ? BUSY_MS : IDLE_MS),
   });
   const [dismissed, setDismissed] = useState<Set<number>>(() => new Set());
+  const [watching, setWatching] = useState<number | null>(null);
   const pillRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const panelId = useId();
@@ -153,7 +155,21 @@ export function ReviewActivity() {
                           {" "}
                           · đã chạy <Elapsed from={r.started_at} />
                         </span>
+                        {r.review_id !== null && (r.stage === "deep" || r.stage === "profile") && (
+                          <>
+                            {" "}
+                            <button
+                              type="button"
+                              className="link"
+                              aria-expanded={watching === r.review_id}
+                              onClick={() => setWatching(watching === r.review_id ? null : r.review_id)}
+                            >
+                              {watching === r.review_id ? "Ẩn diễn biến" : "Xem trực tiếp"}
+                            </button>
+                          </>
+                        )}
                       </div>
+                      {r.review_id !== null && watching === r.review_id && <LiveLog reviewId={r.review_id} />}
                     </li>
                   ))}
                 </ul>

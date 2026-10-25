@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.collector.gitlab.client import GitLabClient
 from app.models import Commit, MergeRequest, Project, Review, ReviewFinding, User
+from app.review.progress import MemoryProgress
 from app.review.providers import FakeLLMProvider, LLMError, ReviewPrompt
 from app.review.rubric import RUBRIC_VERSION
 from app.review.service import ReviewService, ReviewSettings, merge_intents
@@ -607,6 +608,9 @@ class Recorder:
     def end(self, review_id: int, status: str | None = None) -> None:
         self.events.append(("end", (review_id, status)))
 
+    def event(self, review_id: int, entries: list[dict[str, Any]]) -> None:
+        self.events.append(("event", entries))
+
 
 def test_a_review_reports_its_stages_to_the_live_view(
     db_session: Session, mr: tuple[Project, MergeRequest]
@@ -661,3 +665,42 @@ def test_a_review_skipped_before_the_llm_records_no_basis(
     project.allow_external_llm = False
     review = run(db_session, FakeLLMProvider(sqli), project, merge_request)
     assert review.status == "skipped" and review.basis is None
+
+
+def test_deep_review_streams_its_actions_to_the_live_view(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    events: list[dict[str, Any]] = [
+        {"type": "system", "subtype": "init", "model": "claude-sonnet-5-5"},
+        {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "tool_use", "name": "Grep", "input": {"pattern": "guard"}}]
+            },
+        },
+        {"type": "user", "message": {"content": [{"type": "tool_result", "content": "SECRET"}]}},
+        {"type": "result", "subtype": "success", "is_error": False, "num_turns": 1},
+    ]
+    agent = FakeLLMProvider(deep_answer, events=events)
+    progress = MemoryProgress()
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount_deep(router)
+        service = ReviewService(
+            db_session,
+            client,
+            ProfileOrChunk(FakeLLMProvider(sqli)),
+            DEEP_SETTINGS,
+            agent=agent,
+            progress=progress,
+        )
+        review = service.review_mr(project, merge_request, HEAD)
+
+    assert review is not None and review.mode == "deep"
+    entries = progress.live(review.id)
+    assert [(e["kind"], e.get("target")) for e in entries] == [
+        ("start", None),
+        ("tool", "guard"),
+        ("end", None),
+    ]
+    assert "SECRET" not in str(entries)

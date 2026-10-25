@@ -2689,3 +2689,32 @@ textarea.rules {
   }
 }
 
+
+/* Live view of a deep review: what the agent opens and searches (no file contents). */
+.live-log {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  max-height: 220px;
+  overflow: auto;
+  list-style: none;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.live-log li {
+  display: flex;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.live-log .turn {
+  color: var(--muted);
+  flex: none;
+  min-width: 2.5em;
+}
+.live-log .tool {
+  font-weight: 600;
+  flex: none;
+}

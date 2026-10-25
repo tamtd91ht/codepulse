@@ -30,6 +30,7 @@ from app.review import comment
 from app.review.checkout import CheckoutError, checkout
 from app.review.deep import TOOLS, DeepOutcome, build_deep_prompt, merge, parse_deep
 from app.review.discover import discover, instruction_kind
+from app.review.live import LiveTracker, describe
 from app.review.postprocess import Finding, postprocess
 from app.review.prepare import PreparedDiff, chunk, prepare, redact
 from app.review.profile import (
@@ -251,6 +252,22 @@ class ReviewService:
         long review is alive) and the live view on the dashboard."""
         log.info("review stage", extra={"review_id": review_id, "stage": stage, "detail": detail})
         self._progress.stage(review_id, stage, detail, **extra)
+
+    def _live(self, review_id: int, tracker: LiveTracker, event: dict[str, Any]) -> None:
+        """One stream-json event of the deep pass: into the live view, and the latest action
+        into the running review's stage line."""
+        entries = tracker.entries(event)
+        if not entries:
+            return
+        self._progress.event(review_id, entries)
+        last = entries[-1]
+        self._progress.stage(
+            review_id,
+            "deep",
+            f"lượt {tracker.turns}/{self._settings.deep_max_turns} · {describe(last)}",
+            turns=tracker.turns,
+            files_read=len(tracker.reads),
+        )
 
     def _begin(
         self, review: Review, project: Project, kind: str, ref: str, title: str, sha: str
@@ -573,12 +590,14 @@ class ReviewService:
                     prepared,
                     candidates,
                 )
+                tracker = LiveTracker(str(root))
                 result = agent.review_in_repo(
                     prompt,
                     str(root),
                     tools=TOOLS,
                     max_turns=settings.deep_max_turns,
                     timeout_s=settings.deep_timeout_s,
+                    on_event=lambda event: self._live(review.id, tracker, event),
                 )
                 self._add_usage(review, result)
                 deep = parse_deep(result.output)

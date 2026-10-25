@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
@@ -21,6 +22,65 @@ log = logging.getLogger(__name__)
 
 # What the CLI subprocess call looks like; injected in tests.
 Runner = Callable[..., subprocess.CompletedProcess[str]]
+# One stream-json event from the CLI (`--output-format stream-json --verbose`).
+EventSink = Callable[[dict[str, Any]], None]
+
+
+def stream_lines(
+    cmd: Sequence[str],
+    *,
+    stdin: str,
+    cwd: str,
+    env: Mapping[str, str],
+    timeout_s: float,
+    on_line: Callable[[str], None],
+) -> tuple[int, str]:
+    """Run the CLI and hand every stdout line over as it arrives: (exit code, stderr).
+
+    A watchdog kills the process at the deadline (TimeoutExpired is raised afterwards)."""
+    proc = subprocess.Popen(  # noqa: S603 - the configured CLI, argv list, no shell
+        list(cmd),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=cwd,
+        env=dict(env),
+    )
+    timed_out = threading.Event()
+
+    def kill() -> None:
+        timed_out.set()
+        proc.kill()
+
+    watchdog = threading.Timer(timeout_s, kill)
+    watchdog.daemon = True
+    watchdog.start()
+    assert proc.stdin and proc.stdout and proc.stderr  # noqa: S101 - the PIPEs above
+    err_pipe = proc.stderr
+    stderr: list[str] = []
+    drain = threading.Thread(target=lambda: stderr.append(err_pipe.read()), daemon=True)
+    drain.start()
+    try:
+        try:
+            proc.stdin.write(stdin)
+            proc.stdin.close()
+        except OSError:
+            pass  # the CLI died before reading; its exit code and stderr say why
+        for line in proc.stdout:
+            on_line(line)
+        proc.wait()
+    finally:
+        watchdog.cancel()
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        drain.join(timeout=5)
+    if timed_out.is_set():
+        raise subprocess.TimeoutExpired(list(cmd), timeout_s)
+    return proc.returncode, "".join(stderr)
 
 
 _KEY_RE = re.compile(r"sk-ant-[A-Za-z0-9_\-]+")
@@ -78,6 +138,7 @@ class ClaudeCodeProvider:
         max_retries: int = 3,
         max_per_minute: float = 30.0,
         runner: Runner = subprocess.run,
+        streamer: Callable[..., tuple[int, str]] = stream_lines,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._binary = binary
@@ -86,6 +147,7 @@ class ClaudeCodeProvider:
         self._timeout_s = timeout_s
         self._max_retries = max_retries
         self._runner = runner
+        self._streamer = streamer
         self._sleep = sleep
         self._limiter = RateLimiter(max_per_minute / 60.0, sleep=sleep)
 
@@ -109,7 +171,9 @@ class ClaudeCodeProvider:
             cmd += ["--model", self._model]
         return cmd
 
-    def repo_command(self, prompt: ReviewPrompt, tools: Sequence[str], max_turns: int) -> list[str]:
+    def repo_command(
+        self, prompt: ReviewPrompt, tools: Sequence[str], max_turns: int, *, stream: bool = False
+    ) -> list[str]:
         """Deep review (docs/specs/18): only the named read-only tools, no settings from the
         checkout (its CLAUDE.md is data in the prompt, never an instruction), bounded turns."""
         allowed = ",".join(tools)
@@ -121,7 +185,7 @@ class ClaudeCodeProvider:
             self._binary,
             "-p",
             "--output-format",
-            "json",
+            *(["stream-json", "--verbose"] if stream else ["json"]),
             "--tools",
             allowed,
             "--disallowedTools",
@@ -149,15 +213,50 @@ class ClaudeCodeProvider:
         tools: Sequence[str],
         max_turns: int,
         timeout_s: float,
+        on_event: EventSink | None = None,
     ) -> ReviewResult:
-        """One attempt (a deep pass is expensive); the caller decides whether to fall back."""
-        cmd = self.repo_command(prompt, tools, max_turns)
+        """One attempt (a deep pass is expensive); the caller decides whether to fall back.
+
+        With `on_event` the CLI streams (stream-json) and every event is handed over as it
+        arrives, for the live view; the result is the same either way."""
+        cmd = self.repo_command(prompt, tools, max_turns, stream=on_event is not None)
         self._limiter.acquire()
         try:
-            data = self._run_once(cmd, prompt.user, cwd=workdir, timeout_s=timeout_s)
+            if on_event is None:
+                data = self._run_once(cmd, prompt.user, cwd=workdir, timeout_s=timeout_s)
+            else:
+                data = self._stream_once(cmd, prompt.user, workdir, timeout_s, on_event)
         except (subprocess.TimeoutExpired, OSError) as exc:
             raise LLMError(f"claude deep review: {exc.__class__.__name__}") from None
         return self._result(data)
+
+    def _stream_once(
+        self, cmd: Sequence[str], stdin: str, cwd: str, timeout_s: float, on_event: EventSink
+    ) -> dict[str, Any]:
+        result: dict[str, Any] | None = None
+
+        def on_line(line: str) -> None:
+            nonlocal result
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                return
+            if not isinstance(event, dict):
+                return
+            if event.get("type") == "result":
+                result = event
+            try:
+                on_event(event)
+            except Exception:  # the live view is a bonus: never break the review over it
+                log.warning("live review event not handled", exc_info=True)
+
+        code, stderr = self._streamer(
+            cmd, stdin=stdin, cwd=cwd, env=self._env(), timeout_s=timeout_s, on_line=on_line
+        )
+        if result is None:
+            tail = scrub_secrets(stderr, self._auth_token)[-300:]
+            raise LLMError(f"claude exited {code} without a result: {tail}")
+        return self._checked(result)
 
     def _env(self) -> Mapping[str, str]:
         """A minimal environment: the CLI gets what it needs to run and authenticate, not the
@@ -203,6 +302,9 @@ class ClaudeCodeProvider:
             data = json.loads(completed.stdout)
         except json.JSONDecodeError as exc:
             raise LLMError("claude returned non-JSON output") from exc
+        return self._checked(data)
+
+    def _checked(self, data: Any) -> dict[str, Any]:
         if not isinstance(data, dict):
             raise LLMError("claude returned JSON that is not an object")
         if data.get("is_error") or data.get("subtype") != "success":
