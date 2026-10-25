@@ -79,6 +79,9 @@ esc = html.escape
 # -- small stores (Redis in production, memory in tests) ------------------------------------------
 
 
+# How many of a branch's commits the picker reads when it keeps only some people's.
+MAX_SCAN = 400
+
 BRANCH_HINT = (
     "Repo làm việc trên nhánh khác? Chọn <b>nhánh review</b> ở trang Admin, mục Repo, hoặc gõ"
     " <code>/review type=commit branch=develop</code> (<code>branch=all</code>: mọi nhánh)."
@@ -1186,7 +1189,16 @@ class BotService:
             )
         ).first()
         if account is None or account.user_id is None:
-            return None, ""
+            # Not linked yet (e.g. only seen on a branch the sync does not walk): the person
+            # whose primary email it is.
+            user = (
+                self._s.scalars(
+                    select(User).where(func.lower(User.primary_email) == email.casefold())
+                ).first()
+                if email
+                else None
+            )
+            return (user.id, user.full_name or "") if user else (None, "")
         user = self._s.get(User, account.user_id)
         return (user.id, user.full_name or "") if user else (None, "")
 
@@ -1200,7 +1212,10 @@ class BotService:
         if connection is not None:
             try:
                 with self._make_client(connection) as client:
-                    raw = client.commits_on_ref(project.external_id, branch, since, None, MAX_ITEMS)
+                    # One person's commits: scan deeper, else a busy branch's newest MAX_ITEMS
+                    # (everyone's) push theirs out before the filter below.
+                    limit = MAX_ITEMS if only is None else MAX_SCAN
+                    raw = client.commits_on_ref(project.external_id, branch, since, None, limit)
                 fetched = True
             except GitLabError as exc:
                 log.warning("picker: gitlab commits failed", extra={"status": exc.status_code})
@@ -1237,7 +1252,7 @@ class BotService:
                     Commit.is_merge.is_not(True),
                 )
                 .order_by(Commit.authored_at.desc())
-                .limit(MAX_ITEMS)
+                .limit(MAX_ITEMS if only is None else MAX_SCAN)
             ):
                 uid = self._user_of_account(commit.author_account_id)
                 user = self._s.get(User, uid) if uid else None

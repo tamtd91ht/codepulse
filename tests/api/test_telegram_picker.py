@@ -419,3 +419,64 @@ def test_the_repo_review_branch_is_listed_and_an_empty_branch_says_how_to_change
         picker=MemoryPickerStore(),
     )
     assert BranchGitLab.asked[-1] == "*" and "mọi nhánh" in tg.sent[-1]["text"]
+
+
+class BusyGitLab(FakeGitLab):
+    """A busy branch: 50 newer commits of Bình, then one of An under an email no account has."""
+
+    limits: ClassVar[list[int]] = []
+
+    def commits_on_ref(
+        self, project_id: int, ref: str, since: Any, until: Any, limit: int
+    ) -> list[Any]:
+        BusyGitLab.limits.append(limit)
+        raw = [
+            {
+                "id": f"{i:040x}",
+                "title": f"binh {i}",
+                "author_email": "binh@x.vn",
+                "author_name": "binh",
+                "authored_date": (NOW - timedelta(hours=1, minutes=i)).isoformat(),
+                "parent_ids": ["p"],
+            }
+            for i in range(50)
+        ]
+        raw.append(
+            {
+                "id": "a" * 40,
+                "title": "feat: an on dev",
+                "author_email": "an@x.vn",  # An's primary email, never synced into an account
+                "author_name": "AnND",
+                "authored_date": (NOW - timedelta(days=3)).isoformat(),
+                "parent_ids": ["p"],
+            }
+        )
+        return raw[:limit]
+
+
+def test_one_persons_commits_on_a_busy_branch_are_found(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    link(db_session, world.lead, 777)
+    db_session.commit()
+    tg = FakeTelegram()
+    BusyGitLab.limits = []
+    tg.updates = [
+        message_update(1, "/review type=commit repo=demo/p branch=dev user=an@x.vn range=7d")
+    ]
+    poll_bot(
+        db_session,
+        bot,
+        tg,
+        settings,
+        queue,
+        lambda connection: BusyGitLab(),
+        MemoryLinkCodes(),
+        AllowAll(),
+        lambda: NOW,
+        picker=MemoryPickerStore(),
+    )
+    (reply,) = tg.sent
+    assert "feat: an on dev" in reply["text"]
+    assert "binh 0" not in reply["text"]
+    assert BusyGitLab.limits[-1] > 51
