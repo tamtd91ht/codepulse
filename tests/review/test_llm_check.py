@@ -135,6 +135,16 @@ def test_interactive_login_reveals_the_account() -> None:
     }
     assert report["account_note"] is None
     assert "configDirectory" not in json.dumps(report)
+    shown = {k: v for k, v in STATUS_LOGIN.items() if k != "configDirectory"}
+    assert report["cli_auth_status"] == shown
+
+
+def test_cli_auth_status_is_shown_without_secrets() -> None:
+    status = {**STATUS_ENV_TOKEN, "note": f"token {TOKEN}", "projectsDirectory": "/home/x"}
+    report = run(ok_runner(status=(1, json.dumps(status), "")))
+    shown = report["cli_auth_status"]
+    assert shown["authMethod"] == "oauth_token" and "projectsDirectory" not in shown
+    assert TOKEN not in json.dumps(report)
 
 
 def test_default_model_and_api_key_auth() -> None:

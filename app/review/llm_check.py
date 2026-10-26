@@ -48,6 +48,9 @@ ACCOUNT_NOTE_FROM_ENV = (
     "(`claude auth login`); with a token from the environment it knows the auth method only."
 )
 
+# Local paths of the api container; nothing an admin needs to see.
+_CLI_STATUS_HIDDEN = {"configDirectory", "projectsDirectory"}
+
 
 @dataclass
 class AuthInfo:
@@ -86,6 +89,7 @@ class LLMCheckReport:
     account: AccountInfo | None
     account_note: str | None
     status: LiveStatus
+    cli_auth_status: dict[str, Any] | None = None  # `claude auth status --json`, minus paths
     checked_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
@@ -152,6 +156,15 @@ def _str_or_none(value: Any) -> str | None:
     return str(value) if value else None
 
 
+def _shown_status(info: dict[str, Any], token: str) -> dict[str, Any]:
+    """The `auth status` answer as the CLI gave it, without local paths or anything key-shaped."""
+    return {
+        key: scrub_secrets(value, token) if isinstance(value, str) else value
+        for key, value in info.items()
+        if key not in _CLI_STATUS_HIDDEN
+    }
+
+
 def _ping(provider: ClaudeCodeProvider, token: str, clock: Callable[[], float]) -> LiveStatus:
     started = clock()
     try:
@@ -215,6 +228,7 @@ def check_llm(
     version, cli_error = _version(provider, token)
     account: AccountInfo | None = None
     note: str | None = None
+    shown_status: dict[str, Any] | None = None
     if cli_error is not None:
         status = LiveStatus(ok=False, error=cli_error)
         note = "The CLI could not be run, so the account is unknown."
@@ -223,6 +237,7 @@ def check_llm(
         if info is None:
             note = "`claude auth status` gave no answer, so the account is unknown."
         else:
+            shown_status = _shown_status(info, token)
             auth.cli_method = _str_or_none(info.get("authMethod"))
             auth.logged_in = bool(info.get("loggedIn"))
             account = AccountInfo(
@@ -254,4 +269,5 @@ def check_llm(
         account=account,
         account_note=note,
         status=status,
+        cli_auth_status=shown_status,
     )

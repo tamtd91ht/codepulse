@@ -102,6 +102,16 @@ export function LlmCheck() {
                 Không đọc được tài khoản: CLI không chạy được hoặc <code>claude auth status</code> không trả lời.
               </p>
             ))}
+          {report.cli_auth_status && (
+            <details style={{ padding: "0 18px" }}>
+              <summary className="muted">
+                Kết quả <code>claude auth status</code>
+              </summary>
+              <pre className="small" style={{ overflowX: "auto", whiteSpace: "pre-wrap" }}>
+                {JSON.stringify(report.cli_auth_status, null, 2)}
+              </pre>
+            </details>
+          )}
           <p className="muted">Kiểm tra lúc {new Date(report.checked_at).toLocaleString("vi-VN")}.</p>
         </>
       )}

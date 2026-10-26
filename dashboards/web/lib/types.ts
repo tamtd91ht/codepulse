@@ -579,6 +579,8 @@ export interface LlmCheck {
     api_provider: string | null;
   } | null;
   account_note: string | null;
+  /** `claude auth status --json` as the CLI printed it (local paths dropped); null if no answer. */
+  cli_auth_status: Record<string, unknown> | null;
   status: {
     ok: boolean;
     latency_ms: number | null;
