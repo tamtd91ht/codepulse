@@ -15,6 +15,7 @@ from rq import Queue
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
+from app.admin_settings import with_overrides
 from app.api.audit import audit
 from app.collector.gitlab.client import GitLabClient
 from app.collector.sync import ClientFactory, Enqueuer
@@ -317,7 +318,8 @@ def _poll_one(
                 session,
                 bot,
                 client,
-                settings,
+                # Links in replies use the Admin screen's public URL, if one is set.
+                with_overrides(session, settings),
                 queue,
                 make_client,
                 link_codes,

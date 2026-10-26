@@ -691,18 +691,21 @@ class LlmLoginCodeIn(BaseModel):
 class ReviewSettingOut(BaseModel):
     key: str
     env: str  # the environment variable it overrides
-    value: int  # what reviews use now
-    default: int  # from the environment
+    kind: str  # int | model | url
+    value: int | str  # what reviews use now
+    default: int | str  # from the environment (or the built-in default)
     overridden: bool
-    minimum: int
-    maximum: int
+    minimum: int | None = None  # int settings only
+    maximum: int | None = None
 
 
 class ReviewSettingsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # None = back to the environment default; the bounds are app/admin_settings.EDITABLE.
-    max_review_loc: Annotated[int, Field(ge=1, le=1_000_000)] | None = None
+    # None = back to the environment default; app/admin_settings.clean checks the values.
+    max_review_loc: Annotated[int, Field(ge=1, le=1_000_000, strict=True)] | None = None
+    llm_model: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+    public_url: Annotated[str, Field(min_length=1, max_length=300)] | None = None
 
 
 class LiveEvent(BaseModel):

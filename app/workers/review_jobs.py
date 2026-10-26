@@ -9,7 +9,7 @@ from rq import Queue
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.admin_settings import effective
+from app.admin_settings import effective, with_overrides
 from app.collector.gitlab.client import GitLabError
 from app.collector.sync import ClientFactory, client_factory, fetch_commit, sync_project
 from app.config import Settings, get_settings
@@ -45,7 +45,7 @@ def review_settings(settings: Settings, session: Session | None = None) -> Revie
     return ReviewSettings(
         ignore_paths=settings.ignore_paths,
         sensitive_paths=settings.sensitive_paths,
-        max_review_loc=edited.get("max_review_loc", settings.max_review_loc),
+        max_review_loc=int(edited.get("max_review_loc", settings.max_review_loc)),
         max_tokens_per_chunk=settings.max_tokens_per_chunk,
         min_confidence=settings.min_confidence,
         monthly_budget_usd=settings.monthly_llm_budget_usd,
@@ -234,18 +234,20 @@ def review_mr_job(
     settings = get_settings()
     finished: list[Review] = []
     with get_sessionmaker()() as session, session.begin():
+        # The model an admin picked on the Admin screen, if any (app/admin_settings).
+        tuned = with_overrides(session, settings)
         status = run_mr_review(
             session,
             project_id,
             iid,
             head_sha,
             client_factory(secret_box()),
-            build_provider(settings),
+            build_provider(tuned),
             settings,
             after=finished.append,
             trigger=trigger,
             requested_by=requested_by,
-            agent=build_agentic_provider(settings),
+            agent=build_agentic_provider(tuned),
             force=force,
             expected_round=expected_round,
             progress=RedisProgress(progress_redis(str(settings.redis_url))),
@@ -270,17 +272,19 @@ def review_commit_job(
         _prefetch_commit(session, project_id, sha, client_factory(secret_box()), settings)
     finished: list[Review] = []
     with get_sessionmaker()() as session, session.begin():
+        # The model an admin picked on the Admin screen, if any (app/admin_settings).
+        tuned = with_overrides(session, settings)
         status = run_commit_review(
             session,
             project_id,
             sha,
             client_factory(secret_box()),
-            build_provider(settings),
+            build_provider(tuned),
             settings,
             after=finished.append,
             trigger=trigger,
             requested_by=requested_by,
-            agent=build_agentic_provider(settings),
+            agent=build_agentic_provider(tuned),
             force=force,
             expected_round=expected_round,
             progress=RedisProgress(progress_redis(str(settings.redis_url))),
@@ -316,7 +320,9 @@ def refresh_profile_job(project_id: int) -> dict[str, Any]:
             ) as (root, _stats):
                 try:
                     profile, usage = build_profile(
-                        build_provider(settings), discover(root), project.path_with_namespace
+                        build_provider(with_overrides(session, settings)),
+                        discover(root),
+                        project.path_with_namespace,
                     )
                 except ValueError as exc:
                     log.warning("profile refresh: unusable answer", extra={"error": str(exc)[:120]})

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.admin_settings import link_base
 from app.api.audit import audit
 from app.api.deps import get_secret_box, get_session
 from app.api.schemas import (
@@ -179,9 +180,10 @@ def test_webhook(
 ) -> dict[str, Any]:
     """POST a sample `ping` payload to the endpoint and report what it answered."""
     hook = _get(session, NotificationWebhook, webhook_id, "webhook")
+    links = link_base(session, settings)
     session.commit()  # no transaction stays open while the endpoint is called
     with http:
-        result = send_test(hook, session, box, settings.dashboard_url, http)
+        result = send_test(hook, session, box, links, http)
     session.refresh(hook)
     audit(
         session,

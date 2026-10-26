@@ -615,13 +615,14 @@ export interface LiveReview {
 
 /** GET/PUT /admin/review-settings: a review setting over its .env default. */
 export interface ReviewSetting {
-  key: string;
+  key: "max_review_loc" | "llm_model" | "public_url";
   env: string;
-  value: number;
-  default: number;
+  kind: "int" | "model" | "url";
+  value: number | string;
+  default: number | string;
   overridden: boolean;
-  minimum: number;
-  maximum: number;
+  minimum: number | null;
+  maximum: number | null;
 }
 
 /** GET /admin/llm-token: which credential reviews use; never contains the token. */

@@ -1,12 +1,13 @@
 """Review settings edited on the Admin screen (outside the spec, requested by the user; see
-PROGRESS.md). Today MAX_REVIEW_LOC; the next review uses the new value, no restart."""
+PROGRESS.md): MAX_REVIEW_LOC, the review model and the base of the links sent out. The next
+review uses the new value, no restart."""
 
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.admin_settings import EDITABLE, effective, overrides, set_value
+from app.admin_settings import EDITABLE, defaults, effective, overrides, set_value
 from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.schemas import ReviewSettingOut, ReviewSettingsIn
@@ -21,15 +22,17 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 def _out(session: Session, settings: Settings) -> list[ReviewSettingOut]:
     stored = overrides(session)
     values = effective(session, settings)
+    base = defaults(settings)
     return [
         ReviewSettingOut(
             key=key,
             env=spec.env,
+            kind=spec.kind,
             value=values[key],
-            default=int(getattr(settings, key)),
+            default=base[key],
             overridden=key in stored,
-            minimum=spec.minimum,
-            maximum=spec.maximum,
+            minimum=spec.minimum if spec.kind == "int" else None,
+            maximum=spec.maximum if spec.kind == "int" else None,
         )
         for key, spec in EDITABLE.items()
     ]

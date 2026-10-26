@@ -15,6 +15,7 @@ import httpx
 from sqlalchemy import case, or_, select, update
 from sqlalchemy.orm import Session
 
+from app.admin_settings import link_base
 from app.collector.sync import Enqueuer
 from app.config import get_settings
 from app.crypto import SecretBox, secret_box
@@ -221,4 +222,5 @@ def deliver_review_job(review_id: int) -> dict[str, int]:
         review = session.get(Review, review_id)
         if review is None:
             return {"sent": 0}
-        return {"sent": notify_review(session, review, secret_box(), settings.dashboard_url)}
+        links = link_base(session, settings)
+        return {"sent": notify_review(session, review, secret_box(), links)}

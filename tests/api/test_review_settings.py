@@ -5,14 +5,19 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.admin_settings import DEFAULT_REVIEW_MODEL, link_base, with_overrides
 from app.config import Settings
 from app.models import AuditLog
 from app.workers.review_jobs import review_settings
 from tests.api.conftest import World
 
 
+def _item(body: list[dict[str, Any]], key: str) -> dict[str, Any]:
+    return next(item for item in body if item["key"] == key)
+
+
 def _loc(body: list[dict[str, Any]]) -> dict[str, Any]:
-    return next(item for item in body if item["key"] == "max_review_loc")
+    return _item(body, "max_review_loc")
 
 
 @pytest.mark.parametrize("who", ["lead", "manager", "an"])
@@ -35,6 +40,7 @@ def test_max_review_loc_overrides_the_environment_and_reaches_the_worker(
     assert initial == {
         "key": "max_review_loc",
         "env": "MAX_REVIEW_LOC",
+        "kind": "int",
         "value": settings.max_review_loc,
         "default": settings.max_review_loc,
         "overridden": False,
@@ -61,7 +67,59 @@ def test_max_review_loc_overrides_the_environment_and_reaches_the_worker(
     assert review_settings(settings, db_session).max_review_loc == settings.max_review_loc
 
 
-@pytest.mark.parametrize("body", [{"max_review_loc": 0}, {"max_review_loc": "x"}, {"other": 1}])
+def test_review_model_defaults_to_opus_and_reaches_the_provider(
+    client: TestClient, world: World, as_user: Any, settings: Settings, db_session: Session
+) -> None:
+    admin = as_user(world.admin)
+    settings.llm_model = ""
+    initial = _item(client.get("/api/v1/admin/review-settings", headers=admin).json(), "llm_model")
+    assert initial["value"] == DEFAULT_REVIEW_MODEL == "claude-opus-5-5"
+    assert initial["kind"] == "model" and initial["overridden"] is False
+
+    response = client.put(
+        "/api/v1/admin/review-settings", headers=admin, json={"llm_model": " claude-sonnet-5-5 "}
+    )
+    assert response.status_code == 200
+    assert _item(response.json(), "llm_model")["value"] == "claude-sonnet-5-5"
+    assert with_overrides(db_session, settings).llm_model == "claude-sonnet-5-5"
+    assert settings.llm_model == ""  # the shared Settings object is not changed
+
+    client.put("/api/v1/admin/review-settings", headers=admin, json={"llm_model": None})
+    assert with_overrides(db_session, settings).llm_model == DEFAULT_REVIEW_MODEL
+
+
+def test_public_url_replaces_the_link_base(
+    client: TestClient, world: World, as_user: Any, settings: Settings, db_session: Session
+) -> None:
+    admin = as_user(world.admin)
+    assert link_base(db_session, settings) == "https://dash.example.com"
+    response = client.put(
+        "/api/v1/admin/review-settings", headers=admin, json={"public_url": "abc.xyz/codepulse/"}
+    )
+    assert response.status_code == 200
+    assert _item(response.json(), "public_url")["value"] == "https://abc.xyz/codepulse"
+    assert link_base(db_session, settings) == "https://abc.xyz/codepulse"
+    assert with_overrides(db_session, settings).dashboard_url == "https://abc.xyz/codepulse"
+
+    client.put("/api/v1/admin/review-settings", headers=admin, json={"public_url": None})
+    assert link_base(db_session, settings) == "https://dash.example.com"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"max_review_loc": 0},
+        {"max_review_loc": "x"},
+        {"max_review_loc": True},
+        {"other": 1},
+        {"llm_model": "--dangerously-skip-permissions"},
+        {"llm_model": "opus 5"},
+        {"public_url": "ftp://abc.xyz"},
+        {"public_url": "https://abc.xyz/?a=1"},
+        {"public_url": "https://user:pw@abc.xyz"},
+        {"public_url": "abc.xyz:port"},
+    ],
+)
 def test_bad_values_are_refused(
     client: TestClient, world: World, as_user: Any, body: dict[str, Any]
 ) -> None:

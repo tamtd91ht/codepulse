@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.admin_settings import with_overrides
 from app.api.audit import audit
 from app.api.deps import get_secret_box, get_session
 from app.api.schemas import LlmLoginCodeIn, LlmLoginOut, LlmTokenIn, LlmTokenOut
@@ -74,7 +75,11 @@ def llm_check(
     POST because it makes a real (tiny) LLM call that is billed. The token is never returned.
     """
     stored = stored_claude_token(session, box)
-    report = check_llm(settings, stored_token=stored.token if stored else "", runner=runner)
+    report = check_llm(
+        with_overrides(session, settings),
+        stored_token=stored.token if stored else "",
+        runner=runner,
+    )
     audit(
         session,
         principal.user_id,

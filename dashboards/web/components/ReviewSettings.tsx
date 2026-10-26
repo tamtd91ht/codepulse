@@ -6,21 +6,38 @@ import { Alert } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import type { ReviewSetting } from "@/lib/types";
 
-/** Admin card: review settings that override their .env default (today MAX_REVIEW_LOC). */
+type Key = ReviewSetting["key"];
+
+// Suggestions only: any id `claude --model` accepts can be typed under "Khác".
+const MODELS: { id: string; label: string }[] = [
+  { id: "claude-opus-5-5", label: "Claude Opus 5.5 (mặc định, kỹ nhất)" },
+  { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
+  { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5 (nhanh, rẻ hơn)" },
+  { id: "claude-haiku-5-5", label: "Claude Haiku 5.5 (nhanh nhất)" },
+];
+const OTHER = "__other__";
+
+/** Admin card: review settings that override their .env default (MAX_REVIEW_LOC, the review
+ * model, the base URL of the links sent out). */
 export function ReviewSettings() {
   const settings = useApi<ReviewSetting[]>("/admin/review-settings");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const loc = settings.data?.find((s) => s.key === "max_review_loc");
+  const [customModel, setCustomModel] = useState(false);
+  const find = (key: Key) => settings.data?.find((s) => s.key === key);
+  const loc = find("max_review_loc");
+  const model = find("llm_model");
+  const link = find("public_url");
 
-  async function save(value: number | null) {
+  async function save(key: Key, value: number | string | null) {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      await settings.mutate(await api.put<ReviewSetting[]>("/admin/review-settings", { max_review_loc: value }), false);
-      setNotice(value === null ? "Đã trả về giá trị trong .env." : "Đã lưu. Áp dụng cho review tiếp theo.");
+      await settings.mutate(await api.put<ReviewSetting[]>("/admin/review-settings", { [key]: value }), false);
+      setNotice(value === null ? "Đã trả về giá trị mặc định." : "Đã lưu. Áp dụng cho review tiếp theo.");
+      if (key === "llm_model") setCustomModel(false);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     } finally {
@@ -28,10 +45,11 @@ export function ReviewSettings() {
     }
   }
 
-  const submit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    save(Number(new FormData(e.currentTarget).get("max_review_loc")));
-  };
+  const field = (e: FormEvent<HTMLFormElement>, name: string) =>
+    String(new FormData(e.currentTarget).get(name) ?? "").trim();
+
+  const known = model ? MODELS.some((m) => m.id === model.value) : true;
+  const showCustom = customModel || !known;
 
   return (
     <section className="card">
@@ -44,18 +62,118 @@ export function ReviewSettings() {
       {settings.error && <Alert tone="error">Lỗi: {settings.error.message}</Alert>}
       {error && <Alert tone="error">Lỗi: {error}</Alert>}
       {notice && <Alert tone="success">{notice}</Alert>}
+
+      {model && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const picked = field(e, "llm_model");
+            save("llm_model", picked === OTHER ? field(e, "custom_model") : picked);
+          }}
+          style={{ display: "grid", gap: 10, padding: "0 18px 14px" }}
+        >
+          <label style={{ display: "grid", gap: 4, maxWidth: 420 }}>
+            <span className="small muted">Model dùng để review ({model.env})</span>
+            <select
+              key={String(model.value)}
+              name="llm_model"
+              defaultValue={known ? String(model.value) : OTHER}
+              onChange={(e) => setCustomModel(e.target.value === OTHER)}
+            >
+              {MODELS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+              <option value={OTHER}>Khác (nhập id model)…</option>
+            </select>
+          </label>
+          {showCustom && (
+            <label style={{ display: "grid", gap: 4, maxWidth: 420 }}>
+              <span className="small muted">Id model, ví dụ claude-sonnet-5-5 hoặc opus</span>
+              <input
+                key={String(model.value)}
+                name="custom_model"
+                required
+                maxLength={100}
+                defaultValue={known ? "" : String(model.value)}
+              />
+            </label>
+          )}
+          <p className="muted small">
+            Dùng cho cả lượt review nhanh, lượt review sâu và hồ sơ dự án. Model mạnh hơn bắt được nhiều lỗi hơn nhưng
+            chậm hơn và tốn nhiều lượt dùng của gói hơn. Đang dùng: <code>{String(model.value)}</code>
+            {model.overridden ? ` · mặc định: ${model.default}.` : " (mặc định)."}
+          </p>
+          <div className="toolbar">
+            <button className="primary" type="submit" disabled={busy}>
+              Lưu model
+            </button>
+            {model.overridden && (
+              <button type="button" onClick={() => save("llm_model", null)} disabled={busy}>
+                Về mặc định ({String(model.default)})
+              </button>
+            )}
+          </div>
+        </form>
+      )}
+
+      {link && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            save("public_url", field(e, "public_url"));
+          }}
+          style={{ display: "grid", gap: 10, padding: "0 18px 14px" }}
+        >
+          <label style={{ display: "grid", gap: 4, maxWidth: 420 }}>
+            <span className="small muted">Địa chỉ trong link gửi đi (thay {link.env})</span>
+            <input
+              key={String(link.value)}
+              name="public_url"
+              required
+              maxLength={300}
+              placeholder="https://codepulse.company.vn"
+              defaultValue={String(link.value)}
+            />
+          </label>
+          <p className="muted small">
+            Link xem kết quả review trong Telegram, webhook thông báo và email báo cáo dùng địa chỉ này, ví dụ{" "}
+            <code>{String(link.value)}/reviews/42</code>. Nhập tên miền (abc.xyz) thì tự thêm https://. Đăng nhập và
+            CORS vẫn theo {link.env}.{" "}
+            {link.overridden ? `Mặc định: ${link.default}.` : "Đang dùng giá trị trong .env."}
+          </p>
+          <div className="toolbar">
+            <button className="primary" type="submit" disabled={busy}>
+              Lưu địa chỉ
+            </button>
+            {link.overridden && (
+              <button type="button" onClick={() => save("public_url", null)} disabled={busy}>
+                Về mặc định ({String(link.default)})
+              </button>
+            )}
+          </div>
+        </form>
+      )}
+
       {loc && (
-        <form onSubmit={submit} style={{ display: "grid", gap: 10, padding: "0 18px 14px" }}>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            save("max_review_loc", Number(field(e, "max_review_loc")));
+          }}
+          style={{ display: "grid", gap: 10, padding: "0 18px 14px" }}
+        >
           <label style={{ display: "grid", gap: 4, maxWidth: 320 }}>
             <span className="small muted">Số dòng thay đổi tối đa mỗi MR/commit ({loc.env})</span>
             <input
-              key={loc.value}
+              key={String(loc.value)}
               name="max_review_loc"
               type="number"
               required
-              min={loc.minimum}
-              max={loc.maximum}
-              defaultValue={loc.value}
+              min={loc.minimum ?? undefined}
+              max={loc.maximum ?? undefined}
+              defaultValue={Number(loc.value)}
             />
           </label>
           <p className="muted small">
@@ -68,8 +186,8 @@ export function ReviewSettings() {
               Lưu
             </button>
             {loc.overridden && (
-              <button type="button" onClick={() => save(null)} disabled={busy}>
-                Về mặc định ({loc.default})
+              <button type="button" onClick={() => save("max_review_loc", null)} disabled={busy}>
+                Về mặc định ({String(loc.default)})
               </button>
             )}
           </div>

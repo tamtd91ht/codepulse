@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.admin_settings import with_overrides
 from app.config import Settings, get_settings
 from app.models import MetricsTeamPeriod, MetricsUserPeriod, Team, TeamMember, User
 from app.reporting.notify import Delivery, DeliveryError, Sender
@@ -191,6 +192,8 @@ def send_reports_job(period_type: PeriodType) -> dict[str, int]:
     start = previous_period(period_start_of(datetime.now(tz).date(), period_type), period_type)
     delivery = Delivery(settings.smtp_url.get_secret_value(), settings.smtp_from)
     with get_sessionmaker()() as session:
+        # Links in the e-mails use the Admin screen's public URL, if one is set.
+        settings = with_overrides(session, settings)
         teams = send_team_reports(session, period_type, start, settings, delivery)
         people = send_personal_reports(session, period_type, start, settings, delivery)
     return {
