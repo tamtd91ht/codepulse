@@ -1,9 +1,10 @@
 """Dashboard sign-in with GitLab OAuth / OpenID Connect (Phase 0 decision: GitLab SSO)."""
 
 import hmac
+import re
 import secrets
 from typing import Annotated, Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -11,6 +12,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.admin_settings import link_base
 from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.security import SESSION_COOKIE, CurrentPrincipal, issue_token, public_user
@@ -23,8 +25,58 @@ STATE_COOKIE = "codepulse_oauth_state"
 SCOPES = "openid email profile read_user"
 
 
-def _callback_url(settings: Settings) -> str:
-    return settings.app_base_url.rstrip("/") + "/api/v1/auth/callback"
+DEFAULT_PORTS = {"http": 80, "https": 443}
+HOST_HEADER = re.compile(r"^[A-Za-z0-9.\-]+(:[0-9]{1,5})?$|^\[[0-9A-Fa-f:.]+\](:[0-9]{1,5})?$")
+
+
+def _seen_host(request: Request) -> tuple[str, int | None] | None:
+    """(hostname, port or None) the browser used, from the dashboard proxy's X-Forwarded-Host
+    or Host; None when missing or not a plain host[:port]."""
+    raw = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    seen = raw.split(",")[0].strip()
+    if not HOST_HEADER.match(seen):
+        return None
+    try:
+        parts = urlsplit(f"//{seen}")
+        return (parts.hostname or "").lower(), parts.port
+    except ValueError:  # port out of range
+        return None
+
+
+def _serves(base: str, host: str, port: int | None) -> bool:
+    parts = urlsplit(base)
+    default = DEFAULT_PORTS.get(parts.scheme)
+    return (parts.hostname or "").lower() == host and (parts.port or default) == (port or default)
+
+
+def _origin(base: str) -> str:
+    parts = urlsplit(base)
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def _site(request: Request, session: Session, settings: Settings) -> tuple[str, str]:
+    """(base of the callback, where to land after sign-in) for the address the browser used.
+
+    The OAuth state cookie lives on that address, so the callback must come back to it: a domain
+    put in front of ip:port (DASHBOARD_URL or the Admin public URL) signs in there. A host that
+    APP_BASE_URL already serves keeps the registered <APP_BASE_URL> callback (cookies ignore the
+    port). Only configured addresses are used, with their scheme from config, never the header's.
+    """
+    app_base = settings.app_base_url.rstrip("/")
+    dashboard = settings.dashboard_url.rstrip("/")
+    seen = _seen_host(request)
+    if seen is None or seen[0] == (urlsplit(app_base).hostname or "").lower():
+        return app_base, dashboard
+    if _serves(dashboard, *seen):
+        return _origin(dashboard), dashboard
+    public = link_base(session, settings).rstrip("/")
+    if _serves(public, *seen):
+        return _origin(public), public
+    return app_base, dashboard
+
+
+def _callback_url(base: str) -> str:
+    return base + "/api/v1/auth/callback"
 
 
 def _gitlab(settings: Settings) -> str:
@@ -33,8 +85,8 @@ def _gitlab(settings: Settings) -> str:
     return settings.gitlab_oauth_url.rstrip("/")
 
 
-def _secure(settings: Settings) -> bool:
-    return settings.app_base_url.startswith("https://")
+def _secure(base: str) -> bool:
+    return base.startswith("https://")
 
 
 def get_oauth_http() -> httpx.Client:
@@ -42,12 +94,17 @@ def get_oauth_http() -> httpx.Client:
 
 
 @router.get("/login")
-def login(settings: Annotated[Settings, Depends(get_settings)]) -> RedirectResponse:
+def login(
+    request: Request,
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> RedirectResponse:
+    base, _ = _site(request, session, settings)
     state = secrets.token_urlsafe(24)
     query = urlencode(
         {
             "client_id": settings.gitlab_oauth_client_id,
-            "redirect_uri": _callback_url(settings),
+            "redirect_uri": _callback_url(base),
             "response_type": "code",
             "scope": SCOPES,
             "state": state,
@@ -55,7 +112,7 @@ def login(settings: Annotated[Settings, Depends(get_settings)]) -> RedirectRespo
     )
     response = RedirectResponse(f"{_gitlab(settings)}/oauth/authorize?{query}", status_code=302)
     response.set_cookie(
-        STATE_COOKIE, state, max_age=600, httponly=True, samesite="lax", secure=_secure(settings)
+        STATE_COOKIE, state, max_age=600, httponly=True, samesite="lax", secure=_secure(base)
     )
     return response
 
@@ -104,6 +161,7 @@ def callback(
     expected = request.cookies.get(STATE_COOKIE, "")
     if not expected or not hmac.compare_digest(expected, state):
         raise HTTPException(400, "invalid OAuth state")
+    site, landing = _site(request, session, settings)
     base = _gitlab(settings)
     try:
         token = http.post(
@@ -113,7 +171,7 @@ def callback(
                 "client_secret": settings.gitlab_oauth_client_secret.get_secret_value(),
                 "code": code,
                 "grant_type": "authorization_code",
-                "redirect_uri": _callback_url(settings),
+                "redirect_uri": _callback_url(site),
             },
         )
         token.raise_for_status()
@@ -132,14 +190,14 @@ def callback(
     audit(session, user.id, "auth.login", f"user:{user.id}")
     session.commit()
 
-    response = RedirectResponse(settings.dashboard_url, status_code=302)
+    response = RedirectResponse(landing, status_code=302)
     response.set_cookie(
         SESSION_COOKIE,
         issue_token(user.id, settings),
         max_age=settings.session_ttl_hours * 3600,
         httponly=True,
         samesite="lax",
-        secure=_secure(settings),
+        secure=_secure(site),
     )
     response.delete_cookie(STATE_COOKIE)
     return response

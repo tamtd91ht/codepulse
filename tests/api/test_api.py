@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -15,6 +16,7 @@ from app.api.security import SESSION_COOKIE
 from app.config import Settings
 from app.models import (
     Account,
+    AppSetting,
     AuditLog,
     Commit,
     Connection,
@@ -558,6 +560,70 @@ def test_login_redirects_to_gitlab_with_state(client: TestClient) -> None:
         in (response.headers["location"])
     )
     assert response.cookies.get(STATE_COOKIE)
+
+
+def _redirect_uri(location: str) -> str:
+    return parse_qs(urlsplit(location).query)["redirect_uri"][0]
+
+
+def test_sign_in_stays_on_the_public_domain_in_front_of_ip_port(
+    client: TestClient, world: World, db_session: Session, oauth: Any
+) -> None:
+    db_session.add(AppSetting(key="public_url", value="https://codepulse.vihat.vn"))
+    db_session.add(Account(kind="gitlab_user", external_key="42", user_id=world.an.id))
+    db_session.flush()
+    # The dashboard proxy forwards the browser's Host; uvicorn sees its own address.
+    proxied = {"X-Forwarded-Host": "CodePulse.vihat.vn:443, proxy.internal"}
+    login = client.get("/api/v1/auth/login", headers=proxied, follow_redirects=False)
+    callback = "https://codepulse.vihat.vn/api/v1/auth/callback"
+    assert _redirect_uri(login.headers["location"]) == callback
+    assert "secure" in login.headers["set-cookie"].lower()
+
+    router = oauth({"sub": "42", "email": "someone@else.com"})
+    client.cookies.set(STATE_COOKIE, "st")
+    response = client.get(
+        "/api/v1/auth/callback?code=c&state=st", headers=proxied, follow_redirects=False
+    )
+    assert response.headers["location"] == "https://codepulse.vihat.vn"
+    token = next(c.request for c in router.calls if c.request.url.path == "/oauth/token")
+    assert parse_qs(token.content.decode())["redirect_uri"] == [callback]
+
+
+@pytest.mark.parametrize(
+    ("host", "callback", "landing"),
+    [
+        # The dashboard's own address (no public URL set).
+        ("dash.example.com", "https://dash.example.com", "https://dash.example.com"),
+        # APP_BASE_URL's host on another port keeps the callback registered for it.
+        ("codepulse.example.com:3000", "https://codepulse.example.com", "https://dash.example.com"),
+        # Unknown, forged or malformed hosts fall back to APP_BASE_URL.
+        ("evil.test", "https://codepulse.example.com", "https://dash.example.com"),
+        ("a:abc", "https://codepulse.example.com", "https://dash.example.com"),
+        ("a:99999", "https://codepulse.example.com", "https://dash.example.com"),
+        ("evil@dash.example.com", "https://codepulse.example.com", "https://dash.example.com"),
+    ],
+)
+def test_sign_in_origin_only_follows_configured_hosts(
+    client: TestClient,
+    world: World,
+    db_session: Session,
+    oauth: Any,
+    host: str,
+    callback: str,
+    landing: str,
+) -> None:
+    db_session.add(Account(kind="gitlab_user", external_key="42", user_id=world.an.id))
+    db_session.flush()
+    login = client.get("/api/v1/auth/login", headers={"Host": host}, follow_redirects=False)
+    assert login.status_code == 302
+    assert _redirect_uri(login.headers["location"]) == callback + "/api/v1/auth/callback"
+
+    oauth({"sub": "42", "email": "someone@else.com"})
+    client.cookies.set(STATE_COOKIE, "st")
+    response = client.get(
+        "/api/v1/auth/callback?code=c&state=st", headers={"Host": host}, follow_redirects=False
+    )
+    assert response.headers["location"] == landing
 
 
 def test_callback_signs_in_a_registered_gitlab_user(

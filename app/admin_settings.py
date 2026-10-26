@@ -38,8 +38,8 @@ EDITABLE: dict[str, Editable] = {
     "max_review_loc": Editable("MAX_REVIEW_LOC", "int", 1, 1_000_000),
     # The model of every review call (fast pass, deep pass, project profile).
     "llm_model": Editable("LLM_MODEL", "model"),
-    # Base of the links sent out (Telegram, notification webhooks, report e-mails). Sign-in and
-    # CORS keep DASHBOARD_URL: this only changes what people click.
+    # Base of the links sent out (Telegram, notification webhooks, report e-mails). Sign-in also
+    # accepts it as an origin (app/api/auth.py); CORS keeps DASHBOARD_URL.
     "public_url": Editable("DASHBOARD_URL", "url"),
 }
 
