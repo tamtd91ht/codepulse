@@ -49,6 +49,11 @@ def review_settings(settings: Settings, session: Session | None = None) -> Revie
         max_tokens_per_chunk=settings.max_tokens_per_chunk,
         min_confidence=settings.min_confidence,
         monthly_budget_usd=settings.monthly_llm_budget_usd,
+        claude_file_chars=int(edited.get("claude_file_chars", settings.claude_file_chars)),
+        fast_guidance_chars=int(edited.get("fast_guidance_chars", settings.fast_guidance_chars)),
+        deep_instructions_chars=int(
+            edited.get("deep_instructions_chars", settings.deep_instructions_chars)
+        ),
         scoring_weights=settings.scoring_weights,
         deep_review=settings.deep_review,
         deep_max_turns=settings.deep_review_max_turns,

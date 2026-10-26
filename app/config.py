@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     monthly_llm_budget_usd: float = Field(default=200, ge=0)
     max_review_loc: int = Field(default=1500, gt=0)
     max_tokens_per_chunk: int = Field(default=12000, gt=0)
+    # How much of the .claude configuration (rules, skills, agents, CLAUDE.md, review commands)
+    # reaches the model: per file, and in total for the first pass and the deep pass. Also
+    # editable on Admin > Cài đặt review (app/admin_settings.py).
+    claude_file_chars: int = Field(default=60_000, ge=2_000, le=500_000)
+    fast_guidance_chars: int = Field(default=120_000, ge=5_000, le=1_000_000)
+    deep_instructions_chars: int = Field(default=300_000, ge=10_000, le=2_000_000)
     # 0.4 since rubric v3, which asks for honest confidence instead of hedged severity.
     min_confidence: float = Field(default=0.4, ge=0, le=1)
     # JSON, e.g. {"critical": 25, "high": 10, "medium": 4, "low": 1, "info": 0}; empty = rubric's.

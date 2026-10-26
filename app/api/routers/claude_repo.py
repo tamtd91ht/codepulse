@@ -8,6 +8,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.admin_settings import effective
 from app.api.audit import audit
 from app.api.deps import get_secret_box, get_session
 from app.api.schemas import ClaudeRepoIn, ClaudeRepoPreviewOut
@@ -114,7 +115,11 @@ def preview_claude_repo(
     connection = _get(session, Connection, bp.claude_repo_connection_id, "connection")
     with client_factory(box)(connection) as client:
         shared = load_shared_config(
-            client, bp, connection.id, sensitive_paths=settings.sensitive_paths
+            client,
+            bp,
+            connection.id,
+            sensitive_paths=settings.sensitive_paths,
+            file_chars=int(effective(session, settings)["claude_file_chars"]),
         )
     if shared is None:
         raise HTTPException(404, "no shared .claude repo configured")

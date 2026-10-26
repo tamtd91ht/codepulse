@@ -635,7 +635,13 @@ export interface LiveReview {
 
 /** GET/PUT /admin/review-settings: a review setting over its .env default. */
 export interface ReviewSetting {
-  key: "max_review_loc" | "llm_model" | "public_url";
+  key:
+    | "max_review_loc"
+    | "llm_model"
+    | "public_url"
+    | "claude_file_chars"
+    | "fast_guidance_chars"
+    | "deep_instructions_chars";
   env: string;
   kind: "int" | "model" | "url";
   value: number | string;

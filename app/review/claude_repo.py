@@ -20,7 +20,7 @@ from typing import Any
 from app.collector.gitlab.client import ArchiveTooLarge, GitLabClient, GitLabError
 from app.models import BusinessProject, Project
 from app.review.checkout import CheckoutError, checkout
-from app.review.claude_kit import SHARED_MOUNT, KitFile, mount_shared, scan
+from app.review.claude_kit import MAX_FILE_CHARS, SHARED_MOUNT, KitFile, mount_shared, scan
 from app.review.discover import CLIPPED, Doc, ProjectDocs, discover, instruction_kind
 from app.review.rules import rule_paths
 
@@ -66,6 +66,7 @@ def load_shared_config(
     *,
     sensitive_paths: list[str],
     mount_into: Path | None = None,
+    file_chars: int = MAX_FILE_CHARS,
 ) -> SharedConfig | None:
     """None when the dự án has no shared repo. Never raises for GitLab or archive trouble: the
     review goes on with the repo's own files and the basis records why. The texts are read into
@@ -99,7 +100,7 @@ def load_shared_config(
             mounted, mount_error = _mount(layout / ".claude", mount_into, business)
             # Not mounted (preview, or the path is taken): named after the repo, not readable.
             prefix = SHARED_MOUNT if mounted else f"{business.claude_repo_path}:.claude"
-            files = scan(mounted or layout / ".claude", prefix, "shared")
+            files = scan(mounted or layout / ".claude", prefix, "shared", file_chars)
     except (GitLabError, ArchiveTooLarge, CheckoutError, OSError, KeyError) as exc:
         log.warning(
             "shared .claude repo not read",
@@ -146,6 +147,7 @@ def load_repo_claude(
     *,
     changed: set[str],
     sensitive_paths: list[str],
+    file_chars: int = MAX_FILE_CHARS,
 ) -> tuple[list[KitFile], str | None]:
     """The reviewed repo's own `.claude` at the reviewed commit, for the first pass (the deep
     pass reads it from its full checkout). Only that folder is downloaded. A file the change
@@ -160,7 +162,7 @@ def load_repo_claude(
             sensitive_paths=sensitive_paths,
             path=".claude",
         ) as (root, _):
-            files = scan(root / ".claude", ".claude", "repo")
+            files = scan(root / ".claude", ".claude", "repo", file_chars)
     except GitLabError as exc:
         if exc.status_code == 404:  # no such folder at this commit
             return [], "none"

@@ -125,3 +125,20 @@ def test_bad_values_are_refused(
 ) -> None:
     response = client.put("/api/v1/admin/review-settings", headers=as_user(world.admin), json=body)
     assert response.status_code == 422
+
+
+def test_claude_limits_are_editable_and_reach_the_review_worker(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    admin = as_user(world.admin)
+    body = client.get("/api/v1/admin/review-settings", headers=admin).json()
+    assert _item(body, "claude_file_chars")["value"] == settings.claude_file_chars == 60_000
+    assert _item(body, "deep_instructions_chars")["env"] == "DEEP_INSTRUCTIONS_CHARS"
+    low = client.put("/api/v1/admin/review-settings", headers=admin, json={"claude_file_chars": 10})
+    assert low.status_code == 422
+    put = {"claude_file_chars": 90_000, "fast_guidance_chars": 200_000}
+    saved = client.put("/api/v1/admin/review-settings", headers=admin, json=put)
+    assert saved.status_code == 200, saved.text
+    worker = review_settings(settings, db_session)
+    assert (worker.claude_file_chars, worker.fast_guidance_chars) == (90_000, 200_000)
+    assert worker.deep_instructions_chars == settings.deep_instructions_chars

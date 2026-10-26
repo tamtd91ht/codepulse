@@ -878,8 +878,10 @@ def test_deep_review_names_incomplete_quotes_and_quotes_a_copy_once(
                 content=archive_bytes({**SHARED_FILES, "skills/perf/SKILL.md": long_skill}),
             )
         )
+        # A small per-file limit (Admin: CLAUDE_FILE_CHARS), so the long skill is clipped.
+        clipped = ReviewSettings(**{**DEEP_SETTINGS.__dict__, "claude_file_chars": 8_000})
         service = ReviewService(
-            db_session, client, ProfileOrChunk(FakeLLMProvider(sqli)), DEEP_SETTINGS, agent=agent
+            db_session, client, ProfileOrChunk(FakeLLMProvider(sqli)), clipped, agent=agent
         )
         review = service.review_mr(project, merge_request, HEAD)
 

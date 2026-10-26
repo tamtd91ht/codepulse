@@ -15,8 +15,8 @@ from app.models import BusinessProject, Project
 
 log = logging.getLogger(__name__)
 
-MAX_RULES_CHARS = 20_000  # about 5k tokens, inside the smallest chunk budget
-MAX_FILE_CHARS = 6_000
+MAX_RULES_CHARS = 60_000  # about 15k tokens of team rules in every part of the diff
+MAX_FILE_CHARS = 30_000
 MAX_FILES = 10
 
 FileFetcher = Callable[[str], str | None]  # path -> text at the reviewed sha, None if missing

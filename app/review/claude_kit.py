@@ -43,16 +43,16 @@ from app.review.prepare import DiffFile, redact
 # the reviewed repo: never valid as evidence or as the place of a finding.
 SHARED_MOUNT = ".codepulse/claude-shared"
 
-MAX_FILE_CHARS = 8_000
+MAX_FILE_CHARS = 60_000  # default of CLAUDE_FILE_CHARS
 MAX_PROCEDURE_FILE_CHARS = 15_000
-MAX_PROCEDURE_CHARS = 30_000
+MAX_PROCEDURE_CHARS = 120_000
 MAX_CATALOG_CHARS = 12_000
 MAX_DESCRIPTION = 200
 MAX_FILES = 300
 # Under this score a file is only listed in the catalog, not quoted.
 MIN_SCORE = 4.0
 # Quoted up front; the rest the agent Reads from the index when the review calls for it.
-MAX_QUOTED = 10
+MAX_QUOTED = 30
 
 # Review commands about a change (MR / commit / diff) go before the topical ones (/review-api).
 CHANGE_REVIEW = re.compile(r"mr|merge|pr\b|pull|commit|diff|change|code|dev", re.I)
@@ -170,7 +170,9 @@ def _wanted(rel: PurePosixPath) -> bool:
     return top in ("agents", "commands", "rules")
 
 
-def scan(claude_dir: Path, prefix: str, source: str) -> list[KitFile]:
+def scan(
+    claude_dir: Path, prefix: str, source: str, max_chars: int = MAX_FILE_CHARS
+) -> list[KitFile]:
     """Every skill, agent, command, rule and CLAUDE.md under `claude_dir` (a `.claude` folder);
     `prefix` is that folder's path relative to the checkout, so the agent can Read it."""
     if not claude_dir.is_dir():
@@ -196,7 +198,7 @@ def scan(claude_dir: Path, prefix: str, source: str) -> list[KitFile]:
         if isinstance(globs, str):
             globs = [g.strip() for g in globs.split(",") if g.strip()]
         procedure = kind == "command" and bool(REVIEWISH.search(name))
-        limit = MAX_PROCEDURE_FILE_CHARS if procedure else MAX_FILE_CHARS
+        limit = max(max_chars, MAX_PROCEDURE_FILE_CHARS) if procedure else max_chars
         text = redact(raw)
         out.append(
             KitFile(

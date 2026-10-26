@@ -36,7 +36,6 @@ from app.review.claude_repo import (
     pack_instructions,
 )
 from app.review.deep import (
-    MAX_INSTRUCTIONS_CHARS,
     TOOLS,
     DeepOutcome,
     build_deep_prompt,
@@ -55,7 +54,6 @@ from app.review.profile import (
 )
 from app.review.progress import NullProgress, ProgressSink
 from app.review.prompt import (
-    MAX_GUIDANCE_CHARS,
     ReviewParseError,
     ReviewTarget,
     build_prompt,
@@ -86,6 +84,10 @@ class ReviewSettings:
     max_tokens_per_chunk: int
     min_confidence: float
     monthly_budget_usd: float = 0.0  # 0 = unlimited
+    # .claude files quoted to the model: per file, first pass total, deep pass total.
+    claude_file_chars: int = claude_kit.MAX_FILE_CHARS
+    fast_guidance_chars: int = 120_000
+    deep_instructions_chars: int = 300_000
     scoring_weights: Mapping[str, float] | None = None
     # docs/specs/18
     deep_review: bool = False
@@ -601,6 +603,7 @@ class ReviewService:
                 business,
                 project.connection_id,
                 sensitive_paths=self._settings.sensitive_paths,
+                file_chars=self._settings.claude_file_chars,
             )
             shared_files = shared.files if shared else []
         in_diff = {f.path for f in prepared.files} | set(prepared.excluded)
@@ -610,6 +613,7 @@ class ReviewService:
             sha,
             changed=in_diff,
             sensitive_paths=self._settings.sensitive_paths,
+            file_chars=self._settings.claude_file_chars,
         )
         if not shared_files and not repo_files:
             return "", []
@@ -638,7 +642,7 @@ class ReviewService:
                     [f.doc() for f in picked if f.source == "repo"],
                 ),
             ],
-            MAX_GUIDANCE_CHARS,
+            self._settings.fast_guidance_chars,
         )
         why = {f.path: f.why for f in picked}
         for record in packed.records:
@@ -689,6 +693,7 @@ class ReviewService:
                     project.connection_id,
                     sensitive_paths=settings.sensitive_paths,
                     mount_into=root,
+                    file_chars=settings.claude_file_chars,
                 )
                 shared_repo = shared.info["repo"] if shared else ""
                 # Claude files of both sources, chosen by what this change touches; a repo
@@ -698,7 +703,9 @@ class ReviewService:
                 shared_files = shared.files if shared else []
                 repo_files = [
                     f
-                    for f in claude_kit.scan(root / ".claude", ".claude", "repo")
+                    for f in claude_kit.scan(
+                        root / ".claude", ".claude", "repo", settings.claude_file_chars
+                    )
                     if f.path not in in_diff
                 ]
                 # Of two equal files select() keeps the first: the shared one when the agent can
@@ -726,7 +733,7 @@ class ReviewService:
                             + [f.doc() for f in chosen.ranked if f.source == "repo"],
                         ),
                     ],
-                    MAX_INSTRUCTIONS_CHARS,
+                    settings.deep_instructions_chars,
                 )
                 for record in packed.records:
                     picked = ranked.get((record["source"], record["path"]))

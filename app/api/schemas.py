@@ -712,6 +712,9 @@ class ReviewSettingsIn(BaseModel):
     max_review_loc: Annotated[int, Field(ge=1, le=1_000_000, strict=True)] | None = None
     llm_model: Annotated[str, Field(min_length=1, max_length=100)] | None = None
     public_url: Annotated[str, Field(min_length=1, max_length=300)] | None = None
+    claude_file_chars: Annotated[int, Field(strict=True)] | None = None
+    fast_guidance_chars: Annotated[int, Field(strict=True)] | None = None
+    deep_instructions_chars: Annotated[int, Field(strict=True)] | None = None
 
 
 class LiveEvent(BaseModel):

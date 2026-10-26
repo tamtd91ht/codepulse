@@ -62,9 +62,9 @@ Diff:
 Context (unchanged surrounding code, for understanding only):
 {context}"""
 
-MAX_CONVENTIONS_CHARS = 20_000  # app/review/rules.py caps earlier; this is the hard stop
+MAX_CONVENTIONS_CHARS = 60_000  # app/review/rules.py caps earlier; this is the hard stop
 MAX_PROFILE_CHARS = 6_000
-MAX_GUIDANCE_CHARS = 24_000  # app/review/service.py packs it to this budget
+MAX_GUIDANCE_CHARS = 1_000_000  # hard stop; service.py packs to FAST_GUIDANCE_CHARS
 
 EXTENSION_LANGUAGES = {
     ".py": "Python",

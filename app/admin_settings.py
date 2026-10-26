@@ -38,6 +38,11 @@ EDITABLE: dict[str, Editable] = {
     "max_review_loc": Editable("MAX_REVIEW_LOC", "int", 1, 1_000_000),
     # The model of every review call (fast pass, deep pass, project profile).
     "llm_model": Editable("LLM_MODEL", "model"),
+    # .claude files quoted to the model (app/review/claude_kit.py, claude_repo.py): one file,
+    # the first pass in total (repeated in each part of a large diff), the deep pass in total.
+    "claude_file_chars": Editable("CLAUDE_FILE_CHARS", "int", 2_000, 500_000),
+    "fast_guidance_chars": Editable("FAST_GUIDANCE_CHARS", "int", 5_000, 1_000_000),
+    "deep_instructions_chars": Editable("DEEP_INSTRUCTIONS_CHARS", "int", 10_000, 2_000_000),
     # Base of the links sent out (Telegram, notification webhooks, report e-mails). Sign-in also
     # accepts it as an origin (app/api/auth.py); CORS keeps DASHBOARD_URL.
     "public_url": Editable("DASHBOARD_URL", "url"),
@@ -50,6 +55,9 @@ def defaults(settings: Settings) -> dict[str, Value]:
         "max_review_loc": settings.max_review_loc,
         "llm_model": settings.llm_model.strip() or DEFAULT_REVIEW_MODEL,
         "public_url": settings.dashboard_url.rstrip("/"),
+        "claude_file_chars": settings.claude_file_chars,
+        "fast_guidance_chars": settings.fast_guidance_chars,
+        "deep_instructions_chars": settings.deep_instructions_chars,
     }
 
 

@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 
 TOOLS = ("Read", "Grep", "Glob")
 MAX_DIFF_CHARS = 120_000
-MAX_INSTRUCTIONS_CHARS = 40_000
+MAX_INSTRUCTIONS_CHARS = 2_000_000  # hard stop; service.py packs to DEEP_INSTRUCTIONS_CHARS
 MAX_EXCERPT_LINES = 40
 Decision = Literal["keep", "downgrade", "drop"]
 
@@ -234,7 +234,7 @@ def build_deep_prompt(
             instructions=instructions_text[:MAX_INSTRUCTIONS_CHARS] or "(none found)",
             incomplete=incomplete_text or "(none: every quoted file is complete)",
             catalog=catalog_text or "(none)",
-            rules=rules_text[:20_000] or "(none)",
+            rules=rules_text[:60_000] or "(none)",
             checklist=render_checklists(
                 [f.path for f in prepared.files],
                 {

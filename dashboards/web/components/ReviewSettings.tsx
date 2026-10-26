@@ -17,6 +17,25 @@ const MODELS: { id: string; label: string }[] = [
 ];
 const OTHER = "__other__";
 
+// How much of the .claude configuration reaches the model (app/review/claude_kit.py).
+const LIMITS: { key: Key; label: string; hint: string }[] = [
+  {
+    key: "claude_file_chars",
+    label: "Ký tự tối đa mỗi file .claude",
+    hint: "Một rule / skill / agent / CLAUDE.md dài hơn chỉ được đưa phần đầu (“chỉ đưa vào một phần”).",
+  },
+  {
+    key: "fast_guidance_chars",
+    label: "Tổng ký tự .claude ở lượt review đầu",
+    hint: "Lặp lại ở mỗi phần khi diff lớn bị chia nhỏ. File chọn cho thay đổi vượt tổng này bị “không đưa vào”.",
+  },
+  {
+    key: "deep_instructions_chars",
+    label: "Tổng ký tự .claude ở lượt review sâu",
+    hint: "Lượt sâu vẫn tự mở (Read) được file chưa đưa vào, nhưng đưa sẵn thì chắc chắn được áp dụng.",
+  },
+];
+
 /** Admin card: review settings that override their .env default (MAX_REVIEW_LOC, the review
  * model, the base URL of the links sent out). */
 export function ReviewSettings() {
@@ -155,6 +174,51 @@ export function ReviewSettings() {
           </div>
         </form>
       )}
+
+      {LIMITS.map(({ key, label, hint }) => {
+        const s = find(key);
+        if (!s) return null;
+        return (
+          <form
+            key={key}
+            onSubmit={(e) => {
+              e.preventDefault();
+              save(key, Number(field(e, key)));
+            }}
+            style={{ display: "grid", gap: 10, padding: "0 18px 14px" }}
+          >
+            <label style={{ display: "grid", gap: 4, maxWidth: 320 }}>
+              <span className="small muted">
+                {label} ({s.env})
+              </span>
+              <input
+                key={String(s.value)}
+                name={key}
+                type="number"
+                required
+                min={s.minimum ?? undefined}
+                max={s.maximum ?? undefined}
+                step={1000}
+                defaultValue={Number(s.value)}
+              />
+            </label>
+            <p className="muted small">
+              {hint} Khoảng 4 ký tự = 1 token; số lớn hơn thì mỗi review tốn nhiều lượt dùng của gói hơn.{" "}
+              {s.overridden ? `Mặc định trong .env: ${s.default}.` : "Đang dùng giá trị trong .env."}
+            </p>
+            <div className="toolbar">
+              <button className="primary" type="submit" disabled={busy}>
+                Lưu
+              </button>
+              {s.overridden && (
+                <button type="button" onClick={() => save(key, null)} disabled={busy}>
+                  Về mặc định ({String(s.default)})
+                </button>
+              )}
+            </div>
+          </form>
+        );
+      })}
 
       {loc && (
         <form
