@@ -98,6 +98,7 @@ def team_metrics(
     team_id: int,
     principal: CurrentPrincipal,
     session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
     period: Period = "month",
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
@@ -107,6 +108,7 @@ def team_metrics(
     if not principal.can_see_team(team_id):
         raise HTTPException(403, "not allowed to see this team")
     start, end = _default_range(period, date_from, date_to)
+    tz = ZoneInfo(settings.report_tz)
     series = session.scalars(
         select(MetricsTeamPeriod)
         .where(
@@ -120,6 +122,7 @@ def team_metrics(
         "owner": f"team:{team_id}",
         "series": series,
         "delta": compare_team(session, team_id, period, end).delta,
+        "period_range": period_bounds(end, period, tz),
     }
 
 
@@ -179,6 +182,9 @@ def leaderboard(
                 **MetricsOut.model_validate(m).model_dump(),
                 "user": UserOut.model_validate(u),
                 "trend": [history.get(u.id, {}).get(w) for w in weeks],
+                # Someone who left the team since: in its numbers, but the lead no longer sees
+                # their findings, so the row's counts cannot link to them.
+                "viewable": principal.can_see_user(u.id),
             }
             for m, u in rows
         ]

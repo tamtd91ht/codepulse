@@ -6,6 +6,7 @@ import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAx
 import {
   Card,
   ChartTip,
+  CountLink,
   EmptyState,
   Kpi,
   Loading,
@@ -17,12 +18,13 @@ import {
   Sparkline,
   useSort,
 } from "@/components/ui";
-import { qs, useApi } from "@/lib/api";
+import { type BoardScope, boardLink, qs, useApi } from "@/lib/api";
 import {
   CATEGORY_LABEL,
   SEVERITIES,
   SEVERITY_LABEL,
   num,
+  periodLabel,
   ratio,
   shiftMonths,
   shiftWeeks,
@@ -53,6 +55,8 @@ function RankList({ items, warm }: { items: { label: string; count: number; mono
   );
 }
 
+const person = (m: LeaderboardRow) => ({ id: m.user.id, name: m.user.full_name ?? m.user.primary_email ?? "" });
+
 const cell = (m: LeaderboardRow, key: string): number | string | null => {
   switch (key) {
     case "name":
@@ -74,8 +78,11 @@ const cell = (m: LeaderboardRow, key: string): number | string | null => {
   }
 };
 
-function MembersTable({ members }: { members: LeaderboardRow[] }) {
+function MembersTable({ members, scope }: { members: LeaderboardRow[]; scope: BoardScope | null }) {
   const { sorted, sort, toggle } = useSort(members, { key: "qi", dir: "desc" }, cell);
+  // A person's numbers are not split by team; someone who left is in them but not viewable.
+  const link = (severity: "critical" | "high", m: LeaderboardRow) =>
+    scope && m.viewable !== false ? boardLink(severity, { ...scope, team: undefined, user: person(m) }) : null;
   if (members.length === 0)
     return (
       <EmptyState icon="members" title="Chưa có dữ liệu thành viên trong kỳ này">
@@ -122,8 +129,12 @@ function MembersTable({ members }: { members: LeaderboardRow[] }) {
               </td>
               <td className="num">{m.reviews_count ?? 0}</td>
               <td className="num">{num(m.avg_score)}</td>
-              <td className={`num${m.critical ? " bad" : ""}`}>{m.critical ?? 0}</td>
-              <td className="num">{m.high ?? 0}</td>
+              <td className={`num${m.critical ? " bad" : ""}`}>
+                <CountLink n={m.critical ?? 0} href={link("critical", m)} />
+              </td>
+              <td className="num">
+                <CountLink n={m.high ?? 0} href={link("high", m)} />
+              </td>
               <td className="num">{num(m.defect_density, 2)}</td>
               <td className="num">{ratio(m.fix_rate)}</td>
               <td className="num">
@@ -171,8 +182,6 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
   const { data: board, error: boardError } = useApi<Leaderboard>(start && `/leaderboard${qs({ team_id: id, period, start })}`, keep);
   const { data: hot, error: hotError } = useApi<Hotspots>(start && `/metrics/teams/${id}/hotspots${qs({ period, start })}`, keep);
 
-  const periodLabel =
-    start === null ? "…" : period === "week" ? `Tuần từ ${weekLabel(start)}` : `Tháng ${start.slice(5, 7)}/${start.slice(0, 4)}`;
   const header = (
     <PageHeader
       eyebrow="Team overview"
@@ -190,7 +199,7 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
             ]}
           />
           <Pager
-            label={periodLabel}
+            label={periodLabel(period, start)}
             onPrev={() => step(-1)}
             onNext={() => step(1)}
             nextDisabled={start === null || start >= latest}
@@ -209,7 +218,21 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
       </>
     );
 
-  const current = series.series.find((m) => m.period_start === start) ?? null;
+  // The period of this response: while the next one loads, numbers and links stay together.
+  const shown = series.period_range?.[0].slice(0, 10) ?? start;
+  const current = series.series.find((m) => m.period_start === shown) ?? null;
+  // Team and person numbers count as status=counted does. Linked only where the list can match
+  // the number: a stored row (metrics are built after the period ends; the running week has
+  // none), and for the team tiles a viewer who sees the members' findings (lead, admin: the
+  // leaderboard lists members only for them).
+  const scope: BoardScope | null =
+    series.period_range && team && current && shown
+      ? {
+          team: { id: team.id, name: team.name },
+          period: { range: series.period_range, label: periodLabel(period, shown), counted: true },
+        }
+      : null;
+  const teamScope = board?.members ? scope : null;
   const d = series.delta;
   const chart = series.series.map((m) => ({
     period: period === "week" ? weekLabel(m.period_start) : m.period_start.slice(0, 7),
@@ -223,11 +246,20 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
       <div className="grid kpis">
         <Kpi label="Quality Index" value={current?.quality_index} change={d.quality_index} hint="50% điểm TB + 20% mật độ lỗi thấp + 15% build + 15% fix rate" />
         <Kpi
-          label="Critical + High"
-          value={(current?.critical ?? 0) + (current?.high ?? 0)}
+          label="Critical"
+          value={current?.critical ?? 0}
           digits={0}
-          change={d.critical === null || d.high === null ? null : (d.critical ?? 0) + (d.high ?? 0)}
+          change={d.critical ?? null}
           higherIsBetter={false}
+          href={teamScope ? boardLink("critical", teamScope) : undefined}
+        />
+        <Kpi
+          label="High"
+          value={current?.high ?? 0}
+          digits={0}
+          change={d.high ?? null}
+          higherIsBetter={false}
+          href={teamScope ? boardLink("high", teamScope) : undefined}
         />
         <Kpi label="Mật độ lỗi" unit="/ 100 LOC" value={current?.defect_density} change={d.defect_density} higherIsBetter={false} digits={2} />
         <Kpi label="Build success" unit="%" value={current?.build_success_rate} change={d.build_success_rate} digits={0} />
@@ -287,7 +319,7 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
         flush
       >
         {board?.members ? (
-          <MembersTable members={board.members} />
+          <MembersTable members={board.members} scope={scope} />
         ) : board || boardError?.status === 403 ? (
           <EmptyState icon="user" title="Điểm từng người chỉ hiển thị cho lead của team">
             Quyết định Phase 0: manager xem số liệu tổng hợp, không xem điểm cá nhân.

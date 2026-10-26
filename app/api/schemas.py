@@ -588,11 +588,14 @@ class MetricsSeries(BaseModel):
     series: list[MetricsOut]
     delta: dict[str, float | None]  # latest period vs the one before (docs/specs/08 §3)
     team_quality_index: float | None = None
+    # [from, to) instants of the latest period, for links to the findings it counts.
+    period_range: tuple[datetime, datetime] | None = None
 
 
 class LeaderboardRow(MetricsOut):
     user: UserOut
     trend: list[Decimal | None]  # quality index of the last 8 weeks, oldest first (sparkline)
+    viewable: bool = True  # the viewer may list this person's findings (not someone who left)
 
 
 class Hotspots(BaseModel):

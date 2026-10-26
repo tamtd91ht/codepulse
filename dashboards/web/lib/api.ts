@@ -84,25 +84,37 @@ export function qs(params: Record<string, string | number | null | undefined>): 
   return entries.length ? `?${new URLSearchParams(entries.map(([k, v]) => [k, String(v)]))}` : "";
 }
 
-/** What a dashboard count is about: a dự án, one of its repos, the period it was found in. */
+/**
+ * What a dashboard count is about: a dự án, one of its repos, a team or a person, the period it
+ * was found in. `counted`: team and person numbers, which leave out false positives and count a
+ * member's findings in the team they were in that day (status=counted on /findings).
+ */
 export interface BoardScope {
   project?: { id: number; name: string } | null;
   repo?: { id: number; path: string };
-  period?: { range: [string, string]; label: string };
+  team?: { id: number; name: string };
+  user?: { id: number; name: string };
+  period?: { range: [string, string]; label: string; counted?: boolean };
 }
 
 /**
  * The Critical Board showing what a dashboard count counts: one severity, open now, or found in
- * `period` ([from, to) instants and a label) when given, narrowed to `project` or `repo`.
+ * `period` ([from, to) instants and a label) when given, narrowed to the rest of `scope`.
  */
 export function boardLink(severity: "critical" | "high", scope: BoardScope = {}): string {
-  const { project, repo, period } = scope;
+  const { project, repo, team, user, period } = scope;
   return `/critical${qs({
     severity,
     bp: project?.id,
     bp_name: project?.name,
     repo_id: repo?.id,
     repo: repo?.path,
-    ...(period ? { status: "any", from: period.range[0], to: period.range[1], period: period.label } : {}),
+    team: team?.id,
+    team_name: team?.name,
+    user: user?.id,
+    user_name: user?.name,
+    ...(period
+      ? { status: period.counted ? "counted" : "any", from: period.range[0], to: period.range[1], period: period.label }
+      : {}),
   })}`;
 }

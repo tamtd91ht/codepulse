@@ -60,11 +60,15 @@ export interface MetricsSeries {
   series: Metrics[];
   delta: Record<string, number | null>;
   team_quality_index: number | null;
+  /** [from, to) instants of the latest period (team series), for links to its findings. */
+  period_range?: [string, string] | null;
 }
 
 export interface LeaderboardRow extends Metrics {
   user: Person;
   trend: Num[];
+  /** false: left the team since; the viewer can no longer list their findings. */
+  viewable?: boolean;
 }
 
 export interface Leaderboard {

@@ -1,7 +1,9 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -25,8 +27,10 @@ from app.models import (
     Project,
     Review,
     ReviewFinding,
+    TeamMember,
     User,
 )
+from app.scoring.aggregate import aggregate
 from tests.api.conftest import BOX, WEEK, FakeQueue, World
 
 pytestmark = pytest.mark.integration
@@ -76,6 +80,115 @@ def test_team_metrics_visibility(
 ) -> None:
     url = f"/api/v1/metrics/teams/{world.backend.id}?period=week&from={WEEK}&to={WEEK}"
     assert client.get(url, headers=as_user(getattr(world, who))).status_code == status
+
+
+def test_team_counts_link_to_the_findings_they_count(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    # A fixed high counts (it was found); a false positive and a non-member's finding do not.
+    db_session.add_all(
+        [
+            ReviewFinding(
+                review_id=world.an_review.id,
+                severity="high",
+                category="bug",
+                title="fixed",
+                status="fixed",
+            ),
+            ReviewFinding(
+                review_id=world.an_review.id,
+                severity="high",
+                category="bug",
+                title="not a bug",
+                status="false_positive",
+            ),
+        ]
+    )
+    db_session.flush()
+    aggregate(db_session, "week", WEEK, ZoneInfo(settings.report_tz))
+    db_session.flush()
+    lead = as_user(world.lead)
+    url = f"/api/v1/metrics/teams/{world.backend.id}?period=week&from={WEEK}&to={WEEK}"
+    body = client.get(url, headers=lead).json()
+    (current,) = body["series"]
+    lo, hi = body["period_range"]
+
+    def findings(**params: Any) -> list[dict[str, Any]]:
+        res = client.get("/api/v1/findings", params={"limit": 200, **params}, headers=lead)
+        assert res.status_code == 200, res.text
+        return list(res.json()["items"])
+
+    counted = {"found_from": lo, "found_to": hi, "status": "counted"}
+    team = {"team_id": world.backend.id, **counted}
+    assert len(findings(severity="critical", **team)) == current["critical"] == 1
+    assert [f["title"] for f in findings(severity="high", **team)] == ["fixed"]
+    assert current["high"] == 1
+    # A person's row in the members table links the same way.
+    assert len(findings(severity="high", user_id=world.an.id, **counted)) == 1
+    # Not in Mobile on that day: nothing of An's counts there.
+    outsider = as_user(world.admin)
+    res = client.get(
+        "/api/v1/findings",
+        params={"team_id": world.mobile.id, "severity": "critical", **counted},
+        headers=outsider,
+    )
+    assert res.json()["items"] == []
+    # Without a period, "counted" matches no number shown anywhere.
+    res = client.get("/api/v1/findings", params={"status": "counted"}, headers=lead)
+    assert res.status_code == 422
+
+
+def test_team_counts_follow_the_report_day_and_membership(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    # 23:30 UTC on Sunday is Monday in Asia/Ho_Chi_Minh: a member who joined Backend that
+    # Monday counts there; one who left on that Monday no longer does.
+    assert settings.report_tz == "Asia/Ho_Chi_Minh"
+    late = datetime(2026, 10, 11, 23, 30, tzinfo=UTC)  # Monday 2026-10-12, 06:30 local
+    db_session.add(Commit(sha="e" * 40, project_id=world.project.id))
+    db_session.flush()
+    review = Review(
+        target_type="commit",
+        commit_sha="e" * 40,
+        reviewed_sha="e" * 40,
+        status="done",
+        author_user_id=world.outsider.id,
+        score=Decimal(60),
+        finished_at=late,
+        rubric_version="v1",
+    )
+    db_session.add(review)
+    db_session.flush()
+    db_session.add(
+        ReviewFinding(review_id=review.id, severity="critical", category="bug", title="x")
+    )
+    db_session.add(
+        TeamMember(
+            team_id=world.backend.id, user_id=world.outsider.id, joined_at=date(2026, 10, 12)
+        )
+    )
+    mobile = db_session.scalars(
+        select(TeamMember).where(
+            TeamMember.team_id == world.mobile.id, TeamMember.user_id == world.outsider.id
+        )
+    ).one()
+    mobile.left_at = date(2026, 10, 12)
+    db_session.flush()
+    admin = as_user(world.admin)
+    week = {"found_from": "2026-10-12T00:00:00+07:00", "found_to": "2026-10-19T00:00:00+07:00"}
+
+    def titles(team: Any) -> list[str]:
+        params = {"team_id": team.id, "severity": "critical", "status": "counted", **week}
+        res = client.get("/api/v1/findings", params=params, headers=admin)
+        assert res.status_code == 200, res.text
+        return [f["title"] for f in res.json()["items"]]
+
+    assert titles(world.backend) == ["x"]
+    assert titles(world.mobile) == []
+    # An inactive author is left out, as the metrics leave them out.
+    world.outsider.active = False
+    db_session.flush()
+    assert titles(world.backend) == []
 
 
 def test_leaderboard_hides_people_from_managers(

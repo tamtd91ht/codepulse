@@ -4,7 +4,8 @@ from datetime import UTC, date, datetime, time
 from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Select, select
+from sqlalchemy import Date, Select, exists, func, or_, select
+from sqlalchemy import cast as sql_cast
 from sqlalchemy.orm import Session
 
 from app.api.audit import audit
@@ -22,6 +23,7 @@ from app.api.schemas import (
 )
 from app.api.security import CurrentPrincipal, LeadPrincipal, Principal
 from app.collector.sync import Enqueuer
+from app.config import Settings, get_settings
 from app.models import (
     Commit,
     Connection,
@@ -263,8 +265,11 @@ def rerun_review(
 def list_findings(
     principal: CurrentPrincipal,
     session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
     severity: Annotated[list[str] | None, Query()] = None,
-    status: Literal["open", "fixed", "disputed", "accepted_risk", "false_positive", "any"] = "open",
+    status: Literal[
+        "open", "fixed", "disputed", "accepted_risk", "false_positive", "any", "counted"
+    ] = "open",
     project_id: int | None = None,
     business_project_id: int | None = None,
     found_from: datetime | None = None,
@@ -277,10 +282,17 @@ def list_findings(
     """Critical Board (docs/specs/10): findings of the latest review of each MR/commit.
 
     The dashboards link their counts here: `business_project_id` (a dự án's repos),
-    `found_from`/`found_to` (reviews finished in [from, to), the dashboard's period) and
-    `status=any` (found in the period, whatever became of them since)."""
+    `found_from`/`found_to` (reviews finished in [from, to), the dashboard's period),
+    `status=any` (found in the period, whatever became of them since: dự án numbers) and
+    `status=counted` (what team and person metrics count, app/scoring/aggregate.py: not a
+    false positive, an active author, and `team_id` = the team the author was in that day).
+    Those metrics are a snapshot of their last aggregation; this list is live, so a change
+    since (a user deactivated, membership edited, a review rerun) shows here first."""
     if user_id is not None and not principal.can_see_user(user_id):
         raise HTTPException(403, "not allowed to see this person's findings")
+    if status == "counted" and (found_from is None or found_to is None):
+        # Only a period's metrics count this way; without one it matches no number shown.
+        raise HTTPException(422, "status=counted needs found_from and found_to")
     query = scoped(
         select(ReviewFinding, Review, User)
         .join(Review, Review.id == ReviewFinding.review_id)
@@ -288,7 +300,12 @@ def list_findings(
         .where(Review.status == "done"),
         principal,
     )
-    if status != "any":
+    if status == "counted":
+        query = query.where(
+            or_(ReviewFinding.status.is_(None), ReviewFinding.status != "false_positive"),
+            Review.author_user_id.in_(select(User.id).where(User.active.is_not(False))),
+        )
+    elif status != "any":
         query = query.where(ReviewFinding.status == status)
     if found_from is not None:
         query = query.where(Review.finished_at >= found_from)
@@ -306,10 +323,22 @@ def list_findings(
     if team_id is not None:
         if not principal.can_see_team(team_id):
             raise HTTPException(403, "not allowed to see this team")
-        members = select(TeamMember.user_id).where(
-            TeamMember.team_id == team_id, TeamMember.left_at.is_(None)
-        )
-        query = query.where(Review.author_user_id.in_(members))
+        if status == "counted":
+            # Membership on the review's day (REPORT_TZ), as the team's numbers attribute it.
+            day = sql_cast(func.timezone(settings.report_tz, Review.finished_at), Date)
+            query = query.where(
+                exists().where(
+                    TeamMember.team_id == team_id,
+                    TeamMember.user_id == Review.author_user_id,
+                    TeamMember.joined_at <= day,
+                    or_(TeamMember.left_at.is_(None), TeamMember.left_at > day),
+                )
+            )
+        else:
+            members = select(TeamMember.user_id).where(
+                TeamMember.team_id == team_id, TeamMember.left_at.is_(None)
+            )
+            query = query.where(Review.author_user_id.in_(members))
     if project_id is not None:
         mr_ids = select(MergeRequest.id).where(MergeRequest.project_id == project_id)
         shas = select(Commit.sha).where(Commit.project_id == project_id)

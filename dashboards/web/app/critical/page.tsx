@@ -10,8 +10,9 @@ import type { BoardFinding, Me, Page, Team } from "@/lib/types";
 type Level = "" | "critical" | "high";
 
 /**
- * What a dashboard count links here with (lib/api boardLink): one severity, one dự án or repo,
- * and for "new in the period" counts the period's [from, to) with status=any.
+ * What a dashboard count links here with (lib/api boardLink): one severity, a dự án, repo, team
+ * or person, and for "new in the period" counts the period's [from, to) with status=any (dự án
+ * numbers) or status=counted (team and person numbers).
  */
 interface Scope {
   severity: Level;
@@ -19,6 +20,10 @@ interface Scope {
   bpName: string;
   repoId: string;
   repo: string;
+  team: string;
+  teamName: string;
+  userId: string;
+  userName: string;
   status: string;
   from: string;
   to: string;
@@ -31,6 +36,10 @@ const NO_SCOPE: Scope = {
   bpName: "",
   repoId: "",
   repo: "",
+  team: "",
+  teamName: "",
+  userId: "",
+  userName: "",
   status: "",
   from: "",
   to: "",
@@ -40,13 +49,18 @@ const NO_SCOPE: Scope = {
 function readScope(): Scope {
   const p = new URLSearchParams(window.location.search);
   const severity = p.get("severity");
+  const status = p.get("status");
   return {
     severity: severity === "critical" || severity === "high" ? severity : "",
     bp: p.get("bp") ?? "",
     bpName: p.get("bp_name") ?? "",
     repoId: p.get("repo_id") ?? "",
     repo: p.get("repo") ?? "",
-    status: p.get("status") === "any" ? "any" : "",
+    team: p.get("team") ?? "",
+    teamName: p.get("team_name") ?? "",
+    userId: p.get("user") ?? "",
+    userName: p.get("user_name") ?? "",
+    status: status === "any" || status === "counted" ? status : "",
     from: p.get("from") ?? "",
     to: p.get("to") ?? "",
     period: p.get("period") ?? "",
@@ -71,6 +85,8 @@ export default function CriticalBoard() {
     const read = readScope();
     setScope(read);
     setProject(read.repo);
+    setTeam(read.team);
+    setPerson(read.userId);
   }, []);
   const { data: teams } = useApi<Team[]>("/teams/visible");
   const { data: me } = useApi<Me>("/auth/me");
@@ -82,6 +98,7 @@ export default function CriticalBoard() {
       limit: 200,
       business_project_id: scope.bp,
       project_id: scope.repoId,
+      user_id: scope.userId,
       status: scope.status,
       found_from: scope.from,
       found_to: scope.to,
@@ -108,13 +125,17 @@ export default function CriticalBoard() {
     .filter((f) => !project || f.project === project)
     .sort((a, b) => b.age_days - a.age_days);
   const people = [
-    ...new Map((data?.items ?? []).filter((f) => f.author_user_id !== null).map((f) => [f.author_user_id, f.author])).entries(),
+    ...new Map([
+      // The person a link came for stays selectable even with nothing listed.
+      ...(scope?.userId ? [[Number(scope.userId), scope.userName || null] as const] : []),
+      ...(data?.items ?? []).filter((f) => f.author_user_id !== null).map((f) => [f.author_user_id, f.author] as const),
+    ]).entries(),
   ];
   const projects = [...new Set([...(data?.items ?? []).map((f) => f.project), ...(project ? [project] : [])])].sort();
   const critical = rows.filter((f) => f.severity === "critical").length;
-  const scoped = !!scope && (scope.bp !== "" || scope.from !== "" || scope.severity !== "");
+  const scoped = !!scope && (scope.bp !== "" || scope.team !== "" || scope.userId !== "" || scope.from !== "" || scope.severity !== "");
   const filtering = !!(team || person || project) || scoped;
-  const found = scope?.status === "any";
+  const found = scope?.status === "any" || scope?.status === "counted";
   const level = scope?.severity || "critical / high";
   // The URL keeps the level, so a reload or a copied link shows the same list.
   const setLevel = (severity: Level) => {
@@ -128,6 +149,11 @@ export default function CriticalBoard() {
     // The link's repo filter is applied by the server; picking another one is local.
     setProject(repo);
     setScope((s) => (s && s.repoId ? { ...s, repoId: "" } : s));
+  };
+  const setUser = (userId: string) => {
+    // Like the repo: the link's person is filtered by the server, another pick is local.
+    setPerson(userId);
+    setScope((s) => (s && s.userId ? { ...s, userId: "" } : s));
   };
   const clear = () => {
     setTeam("");
@@ -144,7 +170,11 @@ export default function CriticalBoard() {
         title={found ? `Finding ${level} mới${scope?.period ? ` · ${scope.period}` : ""}` : `Finding ${level} đang mở`}
         subtitle={[
           scope?.bpName ? `Dự án ${scope.bpName}${project ? ` · repo ${project}` : ""}.` : null,
-          found
+          scope?.teamName && scope.team !== "" && team === scope.team ? `Team ${scope.teamName}.` : null,
+          scope?.userName && scope.userId !== "" && person === scope.userId ? `Của ${scope.userName}.` : null,
+          scope?.status === "counted"
+            ? "Tìm thấy trong kỳ, tính như chỉ số team/thành viên: bỏ finding đã duyệt là không phải lỗi, tính theo team của người viết vào ngày review. Chỉ số được tổng hợp định kỳ, danh sách thì cập nhật ngay nên có thể lệch nếu có thay đổi sau lần tổng hợp gần nhất."
+            : found
             ? "Tìm thấy trong kỳ, kể cả đã sửa hoặc khiếu nại sau đó."
             : "Lâu nhất xếp trước. Bấm vào vấn đề để xem review và trích đoạn code.",
         ]
@@ -183,7 +213,7 @@ export default function CriticalBoard() {
             </option>
           ))}
         </select>
-        <select value={person} onChange={(e) => setPerson(e.target.value)} aria-label="Lọc theo người">
+        <select value={person} onChange={(e) => setUser(e.target.value)} aria-label="Lọc theo người">
           <option value="">Mọi người</option>
           {people.map(([pid, name]) => (
             <option key={String(pid)} value={String(pid)}>
