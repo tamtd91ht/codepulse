@@ -104,6 +104,20 @@ export function BasisCard({
   const opened = notLoaded.filter((d) => d.read);
   const indexed = notLoaded.filter((d) => !d.read);
   const sharedRepo = basis.claude_repo;
+  // The catalog split by where each file came from, so the shared repo's files are named after it.
+  const sharedName = sharedRepo?.repo ?? "repo .claude dùng chung";
+  const indexedGroups = [
+    {
+      key: "shared",
+      label: (
+        <>
+          repo dùng chung <code>{sharedName}</code>
+        </>
+      ),
+      docs: indexed.filter((d) => d.source === "shared"),
+    },
+    { key: "repo", label: <>thư mục .claude của repo này</>, docs: indexed.filter((d) => d.source !== "shared") },
+  ].filter((g) => g.docs.length > 0);
 
   return (
     <Card title="Căn cứ review" subtitle="Những gì AI đã đối chiếu trong lần review này">
@@ -247,24 +261,37 @@ export function BasisCard({
             <details className="small" style={{ marginTop: 6 }}>
               <summary className="muted">
                 {indexed.some((d) => d.reason === "catalog")
-                  ? `${indexed.length} file .claude khác nằm trong mục lục, agent không cần mở cho thay đổi này`
-                  : `Có ${indexed.length} file .claude không được nạp`}
-              </summary>
-              <ul className="muted" style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-                {indexed.map((d) => (
-                  <li key={`${d.source}:${d.path}`}>
-                    <code>{d.path}</code>
-                    {d.source === "shared" ? " (dùng chung)" : ""} · {NOT_LOADED_REASON[d.reason] ?? d.reason}
-                    {d.same_as ? (
-                      <>
-                        {" "}
-                        (giống <code>{d.same_as}</code>)
-                      </>
-                    ) : null}
-                    {d.why?.length ? ` · ${d.why.join("; ")}` : ""}
-                  </li>
+                  ? `${indexed.length} file .claude còn lại nằm trong mục lục, agent không cần mở cho thay đổi này`
+                  : `Có ${indexed.length} file .claude không được nạp`}{" "}
+                ({indexedGroups.map((g, i) => (
+                  <span key={g.key}>
+                    {i > 0 && ", "}
+                    {g.docs.length} từ {g.label}
+                  </span>
                 ))}
-              </ul>
+                )
+              </summary>
+              {indexedGroups.map((g) => (
+                <div key={g.key} style={{ marginTop: 4 }}>
+                  <div className="muted">
+                    Từ {g.label} ({g.docs.length} file):
+                  </div>
+                  <ul className="muted" style={{ margin: "2px 0 0", paddingLeft: 18 }}>
+                    {g.docs.map((d) => (
+                      <li key={`${d.source}:${d.path}`}>
+                        <code>{d.path}</code> · {NOT_LOADED_REASON[d.reason] ?? d.reason}
+                        {d.same_as ? (
+                          <>
+                            {" "}
+                            (giống <code>{d.same_as}</code>)
+                          </>
+                        ) : null}
+                        {d.why?.length ? ` · ${d.why.join("; ")}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
               <p className="muted" style={{ margin: "4px 0 0" }}>
                 Muốn luôn trích một file: Admin › Repo › mở dự án › Repo .claude dùng chung › File nạp thêm.
               </p>
