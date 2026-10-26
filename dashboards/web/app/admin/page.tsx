@@ -269,67 +269,82 @@ function PeopleTab() {
   const unmapped = useApi<Account[]>("/identity/unmapped");
   const users = useApi<Person[]>("/users");
   const { message, setMessage, run, busy } = useActions();
+  // Collapsed by default: a long list of unrecognised accounts buries the cards above it.
+  const [showUnmapped, setShowUnmapped] = useState(false);
   return (
     <>
       <Message text={message} onClose={() => setMessage(null)} />
-      <Card title="Tài khoản chưa gắn người" subtitle="Tài khoản Git, GitLab hoặc Telegram chưa nhận ra; chọn người để gắn." flush>
-        {!unmapped.data || !users.data ? (
-          <div style={{ padding: "0 18px 16px" }}>
-            <Loading error={unmapped.error ?? users.error} />
-          </div>
-        ) : unmapped.data.length === 0 ? (
-          <EmptyState icon="checkCircle" tone="good" title="Mọi tài khoản đã được gắn" />
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Loại</th>
-                  <th>Tài khoản</th>
-                  <th>Gắn với</th>
-                </tr>
-              </thead>
-              <tbody>
-                {unmapped.data.map((a) => (
-                  <tr key={a.id}>
-                    <td className="muted">{KIND[a.kind] ?? a.kind}</td>
-                    <td>
-                      {a.external_key}
-                      {a.display_name ? <span className="muted"> ({a.display_name})</span> : ""}
-                    </td>
-                    <td>
-                      <select
-                        className="compact"
-                        defaultValue=""
-                        disabled={busy}
-                        aria-label={`Gắn ${a.external_key} với người`}
-                        onChange={(e) =>
-                          e.target.value &&
-                          run(async () => {
-                            await api.put(`/accounts/${a.id}/user`, { user_id: Number(e.target.value) });
-                            await unmapped.mutate();
-                          }, `Đã gắn ${a.external_key}.`)
-                        }
-                      >
-                        <option value="">Gắn với…</option>
-                        {(users.data ?? [])
-                          .filter((u) => u.active !== false)
-                          .map((u) => (
-                            <option key={u.id} value={u.id}>
-                              {u.full_name ?? u.primary_email}
-                            </option>
-                          ))}
-                      </select>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
       <GitLabMembers />
       <TeamAdmin />
+      <Card
+        title={`Tài khoản chưa gắn người${unmapped.data ? ` (${unmapped.data.length})` : ""}`}
+        subtitle="Tài khoản Git, GitLab hoặc Telegram chưa nhận ra; chọn người để gắn."
+        actions={
+          <button type="button" onClick={() => setShowUnmapped((v) => !v)} aria-expanded={showUnmapped}>
+            {showUnmapped ? "Thu gọn" : "Mở ra"}
+          </button>
+        }
+        flush
+      >
+        {showUnmapped && (
+          <>
+            {!unmapped.data || !users.data ? (
+              <div style={{ padding: "0 18px 16px" }}>
+                <Loading error={unmapped.error ?? users.error} />
+              </div>
+            ) : unmapped.data.length === 0 ? (
+              <EmptyState icon="checkCircle" tone="good" title="Mọi tài khoản đã được gắn" />
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Loại</th>
+                      <th>Tài khoản</th>
+                      <th>Gắn với</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {unmapped.data.map((a) => (
+                      <tr key={a.id}>
+                        <td className="muted">{KIND[a.kind] ?? a.kind}</td>
+                        <td>
+                          {a.external_key}
+                          {a.display_name ? <span className="muted"> ({a.display_name})</span> : ""}
+                        </td>
+                        <td>
+                          <select
+                            className="compact"
+                            defaultValue=""
+                            disabled={busy}
+                            aria-label={`Gắn ${a.external_key} với người`}
+                            onChange={(e) =>
+                              e.target.value &&
+                              run(async () => {
+                                await api.put(`/accounts/${a.id}/user`, { user_id: Number(e.target.value) });
+                                await unmapped.mutate();
+                              }, `Đã gắn ${a.external_key}.`)
+                            }
+                          >
+                            <option value="">Gắn với…</option>
+                            {(users.data ?? [])
+                              .filter((u) => u.active !== false)
+                              .map((u) => (
+                                <option key={u.id} value={u.id}>
+                                  {u.full_name ?? u.primary_email}
+                                </option>
+                              ))}
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </Card>
     </>
   );
 }

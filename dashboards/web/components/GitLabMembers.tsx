@@ -126,6 +126,25 @@ export function GitLabMembers() {
     setInvalid(({ [id]: _, ...rest }) => rest);
     setConfirming(false);
   };
+  /** A person linked by mistake: removed (review history stays), so the member can be linked again. */
+  async function removePerson(userId: number | null) {
+    if (userId === null) return;
+    const name = nameOf(userId);
+    if (
+      !window.confirm(
+        `Xoá người dùng "${name}"? Lịch sử review vẫn giữ (không còn gắn tác giả); ` +
+          "tài khoản GitLab/Git/Telegram của họ trở về chưa gắn người để gắn lại cho đúng.",
+      )
+    )
+      return;
+    try {
+      await api.delete(`/users/${userId}`);
+      await Promise.all([users.mutate(), mutate("/identity/unmapped"), load(source)]);
+      setMessage({ text: `Đã xoá ${name}.` });
+    } catch (e) {
+      setMessage({ text: `Lỗi: ${e instanceof ApiError ? e.message : String(e)}` });
+    }
+  }
   const pending = (members?.members ?? []).filter((m) => m.action !== "linked");
   const counts = { create: 0, link: 0, skip: 0, other: 0 };
   for (const m of pending) counts[rows[m.gitlab_id]?.action ?? "skip"] += 1;
@@ -341,7 +360,12 @@ export function GitLabMembers() {
                         </td>
                         <td>
                           {m.action === "linked" ? (
-                            <span>Đã gắn với {nameOf(m.user_id)}</span>
+                            <span>
+                              Đã gắn với {nameOf(m.user_id)}{" "}
+                              <button type="button" className="danger compact" onClick={() => void removePerson(m.user_id)}>
+                                Xoá người này
+                              </button>
+                            </span>
                           ) : (
                             <>
                               <select

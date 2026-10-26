@@ -17,6 +17,11 @@ const SCOPE: Record<PurgeScope, { label: string; detail: string }> = {
     detail:
       "Như trên, thêm commit, MR, ghi chú MR, pipeline và dữ liệu GitLab thô. Giữ repo, dự án và cấu hình; lần đồng bộ tới thu thập lại từ đầu.",
   },
+  people: {
+    label: "Toàn bộ kể cả người dùng",
+    detail:
+      "Như “Toàn bộ”, thêm mọi người dùng, team, thành viên team và tài khoản Git/GitLab/Telegram đã gắn. Chỉ giữ các admin trong ADMIN_EMAILS (để còn đăng nhập) và kết nối GitLab.",
+  },
   all: {
     label: "Toàn bộ (reset)",
     detail:

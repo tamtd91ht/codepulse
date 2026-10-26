@@ -2,20 +2,24 @@
 
 Like app/collector/removal.py, this is an explicit exception to docs/specs/AGENTS.md "review
 history is never deleted": an ADMIN_EMAILS admin chose to start clean. Only rows in this
-server's database go; nothing is sent to GitLab (repo webhooks stay where they are). Users,
-their GitLab accounts, teams, connections and the audit log are kept by every scope.
+server's database go; nothing is sent to GitLab (repo webhooks stay where they are). The
+GitLab connections and the audit log are kept by every scope; users, their accounts and teams
+by every scope but "people", which keeps only the ADMIN_EMAILS admins (and their accounts).
 """
 
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Delete, delete, func, select, text, update
+from sqlalchemy import Delete, delete, func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from app.models import (
+    Account,
     AppSetting,
+    AuditLog,
     BusinessProject,
     Commit,
     FindingDispute,
@@ -31,11 +35,14 @@ from app.models import (
     Review,
     ReviewFinding,
     StoredSecret,
+    Team,
+    TeamMember,
     TelegramBot,
     TelegramRequest,
+    User,
 )
 
-Scope = Literal["reviews", "collected", "all"]
+Scope = Literal["reviews", "collected", "all", "people"]
 
 LOCK_TIMEOUT = "5s"
 
@@ -44,6 +51,7 @@ CONFIRMATION: dict[Scope, str] = {
     "reviews": "xoa review",
     "collected": "xoa du lieu",
     "all": "xoa toan bo",
+    "people": "xoa ca nguoi dung",
 }
 
 # Children first. Each scope also deletes everything of the scopes before it.
@@ -71,15 +79,24 @@ _CONFIG: list[tuple[str, Any]] = [
     ("app_settings", AppSetting),
     ("stored_secrets", StoredSecret),
 ]
+# "people": everyone but the admins who must still sign in (see purge()).
+_PEOPLE: list[tuple[str, Any]] = [
+    ("team_members", TeamMember),
+    ("teams", Team),
+    ("accounts", Account),
+    ("users", User),
+]
 
 
 def tables(scope: Scope) -> list[tuple[str, Any]]:
     """(table, model) deleted by `scope`, in delete order."""
     out = list(_REVIEWS)
-    if scope in ("collected", "all"):
+    if scope in ("collected", "all", "people"):
         out += _COLLECTED
-    if scope == "all":
+    if scope in ("all", "people"):
         out += _CONFIG
+    if scope == "people":
+        out += _PEOPLE
     return out
 
 
@@ -87,7 +104,7 @@ def counts(session: Session) -> dict[str, int]:
     """Rows per table that some scope would delete."""
     return {
         table: int(session.scalar(select(func.count()).select_from(model)) or 0)
-        for table, model in tables("all")
+        for table, model in tables("people")
     }
 
 
@@ -99,7 +116,9 @@ class PurgeResult:
     last_day: date | None = None
 
 
-def purge(session: Session, scope: Scope, tz: ZoneInfo) -> PurgeResult:
+def purge(
+    session: Session, scope: Scope, tz: ZoneInfo, keep_users: Collection[int] = ()
+) -> PurgeResult:
     """Delete in the caller's transaction. The repo rows are locked first, so a sync running now
     waits instead of inserting rows that would break the deletes.
 
@@ -116,8 +135,20 @@ def purge(session: Session, scope: Scope, tz: ZoneInfo) -> PurgeResult:
         if days:
             result.first_day = min(days).astimezone(tz).date()
             result.last_day = max(days).astimezone(tz).date()
+    keep = list(keep_users)
+    if scope == "people":
+        # Audit entries stay, without the person who acted.
+        session.execute(
+            update(AuditLog).where(AuditLog.actor_user_id.not_in(keep)).values(actor_user_id=None)
+        )
     for table, model in tables(scope):
         statement: Delete = delete(model)
+        if model is Account:
+            statement = statement.where(
+                or_(Account.user_id.is_(None), Account.user_id.not_in(keep))
+            )
+        elif model is User:
+            statement = statement.where(User.id.not_in(keep))
         result.rows[table] = session.execute(statement).rowcount  # type: ignore[attr-defined]
     if scope == "collected":
         # The next sync collects every repo again from the start of the backfill window.

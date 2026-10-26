@@ -6,6 +6,7 @@ from typing import Annotated
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,7 @@ from app.collector.purge import CONFIRMATION, counts, purge, tables
 from app.collector.removal import REMOVAL_JOB_TIMEOUT
 from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
+from app.models import User
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +51,12 @@ def purge_data(
     if body.confirm.strip().casefold() != expected:
         raise HTTPException(422, f'type "{expected}" to confirm')
     try:
-        result = purge(session, body.scope, ZoneInfo(settings.report_tz))
+        # "people" keeps whoever must still sign in: ADMIN_EMAILS and the admin doing it.
+        admins = {e.lower() for e in settings.admin_emails}
+        keep = {principal.user_id} | set(
+            session.scalars(select(User.id).where(func.lower(User.primary_email).in_(admins)))
+        )
+        result = purge(session, body.scope, ZoneInfo(settings.report_tz), keep)
     except (IntegrityError, OperationalError):  # a sync inserted rows, or a lock/deadlock timeout
         session.rollback()
         raise HTTPException(

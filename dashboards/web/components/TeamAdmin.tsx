@@ -151,8 +151,8 @@ export function TeamAdmin() {
             Git/GitLab chưa nhận ra được gắn với người ở mục &ldquo;Tài khoản chưa gắn người&rdquo;.
           </p>
           {users.data && users.data.length > 0 && (
-            <details>
-              <summary className="muted">Danh sách người dùng ({users.data.length})</summary>
+            <details open>
+              <summary className="muted">Danh sách người dùng ({users.data.length}) · bấm thùng rác để xoá người khai báo sai</summary>
               <div className="table-wrap">
                 <table>
                   <tbody>

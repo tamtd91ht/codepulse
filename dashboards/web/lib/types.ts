@@ -708,7 +708,7 @@ export interface ActivityOut {
 }
 
 /** GET/POST /admin/purge: wipe this server's data (ADMIN_EMAILS only). */
-export type PurgeScope = "reviews" | "collected" | "all";
+export type PurgeScope = "reviews" | "collected" | "all" | "people";
 export interface PurgeInfo {
   scopes: { scope: PurgeScope; confirm: string; tables: string[] }[];
   counts: Record<string, number>;

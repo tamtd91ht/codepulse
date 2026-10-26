@@ -805,7 +805,7 @@ class ClaudeRepoPreviewOut(BaseModel):
 
 
 class PurgeScopeOut(BaseModel):
-    scope: Literal["reviews", "collected", "all"]
+    scope: Literal["reviews", "collected", "all", "people"]
     confirm: str  # what the admin must type
     tables: list[str]  # deleted, in order
 
@@ -816,12 +816,12 @@ class PurgeInfoOut(BaseModel):
 
 
 class PurgeIn(BaseModel):
-    scope: Literal["reviews", "collected", "all"]
+    scope: Literal["reviews", "collected", "all", "people"]
     confirm: str = Field(min_length=1, max_length=100)
 
 
 class PurgeOut(BaseModel):
-    scope: Literal["reviews", "collected", "all"]
+    scope: Literal["reviews", "collected", "all", "people"]
     rows: dict[str, int]  # deleted rows per table
     # False when the metrics re-aggregation could not be queued (Redis down).
     recompute_queued: bool
