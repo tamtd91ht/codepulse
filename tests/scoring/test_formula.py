@@ -61,3 +61,35 @@ def test_quality_index_rescales_missing_components() -> None:
     # No pipelines and nothing severe to fix: (0.5*80 + 0.2*70) / 0.7
     assert quality_index(80, 3.0, None, None) == 77.14
     assert quality_index(None, 3.0, 90, 0.5) is None
+
+
+H, M, L = ScoredFinding("high", 0.8), ScoredFinding("medium", 0.7), ScoredFinding("low", 0.6)
+
+
+@pytest.mark.parametrize(
+    ("findings", "loc", "v2", "v3"),
+    [
+        ([H, M, M, L, L, L], 400, 92.3, 80.0),  # a high finding caps v3 at 80
+        ([H, M, M, L, L, L], 1000, 96.92, 80.0),
+        ([H, H, H], 1500, 96.8, 80.0),
+        ([M] * 5, 800, 96.5, 91.25),  # sqrt(4) = 2 instead of 4
+        ([L] * 6, 300, 97.6, 95.59),
+        ([], 5000, 100.0, 100.0),
+    ],
+)
+def test_v3_no_longer_forgives_large_changes(
+    findings: list[ScoredFinding], loc: int, v2: float, v3: float
+) -> None:
+    from app.scoring.formula import weights_for
+
+    assert review_score(findings, loc, weights_for("v2"), "v2") == v2
+    assert review_score(findings, loc, weights_for("v3"), "v3") == v3
+
+
+def test_v3_keeps_the_critical_cap_and_ignores_false_positives() -> None:
+    from app.scoring.formula import weights_for
+
+    critical = ScoredFinding("critical", 0.5)
+    assert review_score([critical], 10_000, weights_for("v3"), "v3") == 50.0
+    disputed = ScoredFinding("high", 0.9, "false_positive")
+    assert review_score([disputed], 100, weights_for("v3"), "v3") == 100.0

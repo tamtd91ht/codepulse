@@ -6,7 +6,7 @@ findings keep a short excerpt.
 
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -27,6 +27,7 @@ from app.models import (
     User,
 )
 from app.review import claude_kit, comment
+from app.review.checklists import select_checklists
 from app.review.checkout import CheckoutError, checkout
 from app.review.claude_repo import include_globs, load_shared_config, pack_instructions
 from app.review.deep import (
@@ -37,7 +38,7 @@ from app.review.deep import (
     merge,
     parse_deep,
 )
-from app.review.discover import CLIPPED, discover
+from app.review.discover import CLIPPED, Doc, discover
 from app.review.live import LiveTracker, describe
 from app.review.postprocess import Finding, postprocess
 from app.review.prepare import PreparedDiff, chunk, prepare, redact
@@ -48,7 +49,14 @@ from app.review.profile import (
     render_profile,
 )
 from app.review.progress import NullProgress, ProgressSink
-from app.review.prompt import ReviewParseError, ReviewTarget, build_prompt, review_chunk
+from app.review.prompt import (
+    MAX_GUIDANCE_CHARS,
+    ReviewParseError,
+    ReviewTarget,
+    build_prompt,
+    languages,
+    review_chunk,
+)
 from app.review.providers.base import AgenticProvider, LLMError, LLMProvider, ReviewResult
 from app.review.rubric import RUBRIC_LENS, RUBRIC_VERSION
 from app.review.rules import collect_rules
@@ -479,7 +487,18 @@ class ReviewService:
                 return None  # context is a bonus; the diff alone is reviewable
 
         chunks = chunk(prepared, settings.max_tokens_per_chunk, fetch_context)
+        # What the project is and how its team reviews, before the first pass: the cached
+        # profile (the deep pass refreshes it) and the shared .claude files this change needs.
+        target.profile = render_profile(project.profile) if project.profile else ""
+        target.guidance, guidance = self._guidance(review, project, target, prepared)
         review.basis = self._pending_basis.pop(review.id, None)
+        if review.basis is not None:
+            review.basis["checklists"] = select_checklists(
+                [f.path for f in prepared.files],
+                {lang for piece in chunks for lang in languages(piece).split(", ")},
+            )
+            review.basis["fast_guidance"] = guidance[:40]
+            review.basis["fast_profile"] = bool(target.profile)
         self._step(
             review.id, "llm", f"{len(chunks)} phần", loc=prepared.loc, files=len(prepared.files)
         )
@@ -537,6 +556,7 @@ class ReviewService:
                     [ScoredFinding(f.severity, f.confidence) for f in final],
                     prepared.loc,
                     weights_for(RUBRIC_VERSION, settings.scoring_weights),
+                    RUBRIC_VERSION,
                 )
             )
         )
@@ -554,6 +574,41 @@ class ReviewService:
             },
         )
         return self._finish(review, "done")
+
+    def _guidance(
+        self, review: Review, project: Project, target: ReviewTarget, prepared: PreparedDiff
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """The dự án's shared .claude files for the first pass, chosen by what the change
+        touches (review procedure first, then CLAUDE.md, rules and skills that match), and a
+        record per file for the basis. Empty when the dự án has none or it cannot be read."""
+        business = self._business(project)
+        if business is None or not business.claude_repo_path:
+            return "", []
+        self._step(review.id, "llm", f"đọc repo .claude {business.claude_repo_path}")
+        shared = load_shared_config(
+            self._client,
+            business,
+            project.connection_id,
+            sensitive_paths=self._settings.sensitive_paths,
+        )
+        if shared is None or not shared.files:
+            return "", []
+        chosen = claude_kit.select(
+            shared.files,
+            prepared.files,
+            target.title,
+            target.description,
+            include_globs(business.claude_repo_include),
+        )
+        picked = [*chosen.procedure, *chosen.ranked]
+        packed = pack_instructions(
+            [("shared", f"repo {business.claude_repo_path}", "", [f.doc() for f in picked])],
+            MAX_GUIDANCE_CHARS,
+        )
+        why = {f.path: f.why for f in picked}
+        for record in packed.records:
+            record["why"] = why.get(record["path"], [])
+        return packed.text, packed.records
 
     # -- deep review (docs/specs/18) -----------------------------------------------------------
 
@@ -645,7 +700,23 @@ class ReviewService:
                 cut = {r["path"] for r in packed.records if r["status"] == "cut"}
                 unquoted = [f for f in chosen.ranked if f.path in cut] + chosen.catalog
                 origin = {"shared": f"dùng chung {shared_repo}", "repo": "của repo"}
-                profile = self._profile(project, docs, sha, review)
+                # The shared CLAUDE.md usually says what the dự án is: the profile reads it too,
+                # after the repository's own documents, named after the shared repo.
+                profile_docs = (
+                    replace(
+                        docs,
+                        instructions=[
+                            *docs.instructions,
+                            *(
+                                Doc(f"{shared_repo}:{d.path}", d.text)
+                                for d in shared.docs.instructions
+                            ),
+                        ],
+                    )
+                    if shared and shared.docs
+                    else docs
+                )
+                profile = self._profile(project, profile_docs, sha, review)
                 self._step(review.id, "deep", "agent đang đọc code", files=stats.files)
                 prompt = build_deep_prompt(
                     target,

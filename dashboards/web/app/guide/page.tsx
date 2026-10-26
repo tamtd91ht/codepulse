@@ -52,7 +52,8 @@ export default function GuidePage() {
           </li>
           <li>
             Điểm review (0–100) tính bằng <strong>công thức cố định</strong> từ các finding và kích thước thay đổi,
-            không phải điểm do AI tự cho. Có ít nhất một lỗi critical thì điểm tối đa là 50.
+            không phải điểm do AI tự cho. Có ít nhất một lỗi critical thì điểm tối đa là 50; từ rubric v3, có lỗi high
+            thì tối đa 80, và MR lớn không còn được “chia đều” lỗi theo tỉ lệ thuận với số dòng.
           </li>
           <li>
             Kèm các chỉ số quy trình: thời gian chờ review, kích thước MR, số vòng review, tỉ lệ build thành công,

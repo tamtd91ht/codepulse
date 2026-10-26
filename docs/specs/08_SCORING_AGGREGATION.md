@@ -11,6 +11,17 @@ review_score = clamp(100 − penalty / size_factor, 0, 100)
 - Finding bị dispute được chấp nhận (`false_positive`) → tính lại điểm review.
 - `[DECISION]` Có giới hạn tối đa điểm sàn khi có critical (vd: có critical → score ≤ 50)? → **Đã chốt: có**, review có ≥ 1 critical → `review_score ≤ 50`.
 
+### Rubric v3 (người dùng chốt 2026-10-26)
+Với v1/v2, MR 1000 LOC có 1 high + 2 medium vẫn được ~97 trong khi kết luận là FIX REQUIRED (penalty chia tuyến tính cho LOC/200). Từ `rubric_version = v3`:
+```
+weight       = {critical: 30, high: 15, medium: 5, low: 1.5, info: 0}
+size_factor  = max(1, sqrt(loc_reviewed / 200))
+review_score = clamp(100 − penalty / size_factor, 0, 100)
+có critical  → ≤ 50;  có high → ≤ 80
+```
+- Review v1/v2 giữ nguyên cách tính (kể cả khi recompute sau dispute); điểm chỉ so sánh trong cùng rubric_version.
+- Ví dụ: 400 LOC 1H+2M+3L 92.3 → 80; 800 LOC 5 medium 96.5 → 91.25; 300 LOC 6 low 97.6 → 95.6.
+
 ## 2. Chỉ số theo người / kỳ (tuần ISO, tháng)
 | Metric | Công thức |
 |---|---|

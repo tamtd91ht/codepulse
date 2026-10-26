@@ -1,5 +1,6 @@
 """Review score 0-100 (docs/specs/08 §1). The LLM's own score is never used as the result."""
 
+import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
@@ -10,17 +11,44 @@ DEFAULT_WEIGHTS: Mapping[str, float] = {
     "low": 1,
     "info": 0,
 }
+# v3 (2026-10-26): v2 scored a 1000-LOC change with a high finding about 97 while its verdict
+# said FIX REQUIRED; heavier weights, a sub-linear size factor and a high cap fix that.
+WEIGHTS_V3: Mapping[str, float] = {
+    "critical": 30,
+    "high": 15,
+    "medium": 5,
+    "low": 1.5,
+    "info": 0,
+}
 # Weights are versioned with the rubric (docs/specs/08): a score is only comparable with scores
 # computed under the same rubric_version.
 WEIGHTS_BY_RUBRIC: Mapping[str, Mapping[str, float]] = {
     "v1": DEFAULT_WEIGHTS,
     "v2": DEFAULT_WEIGHTS,
+    "v3": WEIGHTS_V3,
 }
 SEVERITIES = frozenset(DEFAULT_WEIGHTS)
 
 # Phase 0 decision: any critical finding caps the review at 50, however large the MR is.
 CRITICAL_SCORE_CAP = 50.0
+# From v3: a high finding (verdict FIX REQUIRED) caps the review at 80.
+HIGH_SCORE_CAP = 80.0
 LOC_PER_SIZE_UNIT = 200
+
+
+@dataclass(frozen=True)
+class SizeRule:
+    """How a rubric version spreads the penalty over the size of the change."""
+
+    sqrt_size: bool  # v3: sqrt(loc / 200); before: loc / 200, which forgave large changes
+    high_cap: float | None
+
+
+SIZE_RULES: Mapping[str, SizeRule] = {
+    "v1": SizeRule(sqrt_size=False, high_cap=None),
+    "v2": SizeRule(sqrt_size=False, high_cap=None),
+    "v3": SizeRule(sqrt_size=True, high_cap=HIGH_SCORE_CAP),
+}
 
 
 @dataclass(frozen=True)
@@ -54,12 +82,18 @@ def review_score(
     findings: Iterable[ScoredFinding],
     loc_reviewed: int,
     weights: Mapping[str, float] = DEFAULT_WEIGHTS,
+    rubric_version: str | None = None,
 ) -> float:
+    """`rubric_version` picks the size rule the review was scored under (None: v1)."""
+    rule = SIZE_RULES.get(rubric_version or "v1", SIZE_RULES["v1"])
     counted = [f for f in findings if f.status != "false_positive"]
-    size_factor = max(1.0, loc_reviewed / LOC_PER_SIZE_UNIT)
+    units = loc_reviewed / LOC_PER_SIZE_UNIT
+    size_factor = max(1.0, math.sqrt(units) if rule.sqrt_size else units)
     score = min(100.0, max(0.0, 100.0 - penalty(counted, weights) / size_factor))
     if any(f.severity == "critical" for f in counted):
         score = min(score, CRITICAL_SCORE_CAP)
+    if rule.high_cap is not None and any(f.severity == "high" for f in counted):
+        score = min(score, rule.high_cap)
     return round(score, 2)
 
 

@@ -23,10 +23,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from app.review.checklists import render_checklists
 from app.review.claude_kit import SHARED_MOUNT
 from app.review.postprocess import SEVERITY_RANK, Finding, fingerprint
 from app.review.prepare import DiffFile, PreparedDiff, redact
-from app.review.prompt import ReviewTarget
+from app.review.prompt import EXTENSION_LANGUAGES, ReviewTarget
 from app.review.providers.base import ReviewPrompt
 from app.review.rubric import RUBRIC
 from app.review.schema import Intent, LLMFinding
@@ -130,7 +131,8 @@ Your job, in order:
 3. Look for problems the diff alone cannot show, using the repository: callers that now miss a
    check added elsewhere, a migration that does not match the model, a contract or event
    consumers depend on, a rule from the repository's own instructions, a convention everyone
-   else follows, a check from a skill or rule you loaded in step 0. Report problems as new
+   else follows, a check from a skill or rule you loaded in step 0, an item of the CHECKLIST
+   the first pass missed. Report problems as new
    findings with file_path, line numbers that exist, and the evidence. Findings on
    lines outside the diff are informational for the author (they are not scored) but still
    useful; say so in the message.
@@ -169,6 +171,10 @@ CLAUDE FILES INDEX (not quoted; path, kind, name, description; Read the ones thi
 
 TEAM RULES (set by the project's admins in CodePulse):
 {rules}
+
+CHECKLIST (what a senior reviewer checks for the languages and areas this change touches; the
+repository's own instructions win where they disagree):
+{checklist}
 
 CANDIDATE FINDINGS from the first pass (index, severity, category, file:line, title):
 {candidates}
@@ -221,6 +227,13 @@ def build_deep_prompt(
             instructions=instructions_text[:MAX_INSTRUCTIONS_CHARS] or "(none found)",
             catalog=catalog_text or "(none)",
             rules=rules_text[:20_000] or "(none)",
+            checklist=render_checklists(
+                [f.path for f in prepared.files],
+                {
+                    EXTENSION_LANGUAGES.get(PurePosixPath(f.path).suffix.lower(), "")
+                    for f in prepared.files
+                },
+            ),
             candidates=render_candidates(candidates),
             diff=diff,
         ),

@@ -10,6 +10,8 @@
 - Không nạp được file (GitLab lỗi, file không có) → review vẫn chạy, chỉ thiếu phần đó; log warning.
 
 ## 2. Rubric v2 (techlead)
+> Từ 2026-10-26 là **v3**: cùng 4 câu hỏi, thêm tách bạch severity (tác động) và confidence (độ chắc chắn), yêu cầu duyệt từng file theo rubric + checklist theo ngôn ngữ (`app/review/checklists.py`), trọng số/công thức điểm v3 (spec 08). Lượt nhanh nhận thêm hồ sơ dự án đã cache và các file của repo .claude dùng chung hợp với commit.
+
 - `RUBRIC_VERSION = "v2"`; trọng số điểm giữ nguyên v1 (`WEIGHTS_BY_RUBRIC["v2"]`). Review của sha đã có kết quả v1 vẫn giữ; yêu cầu review lại sẽ tạo review v2 mới (theo nguyên tắc "một review là cuối cùng với sha + rubric của nó").
 - Bốn câu hỏi theo thứ tự ưu tiên: an toàn (authz, tenant/ownership, injection, SSRF, secret, PII) → đúng và toàn vẹn dữ liệu khi concurrency / lỗi một phần (transaction, idempotency, race, tiền) → chịu tải (N+1, truy vấn không giới hạn, blocking trên request path, thiếu timeout/retry/circuit breaker, cache không TTL) → rõ ràng, bảo trì được. Severity chấm theo tác động production.
 - Output thêm `intent` (không chấm điểm): `summary`, `matches_intent` (đúng với mô tả MR không), `altitude` (over / right / under), `concerns` (≤ 5 quan ngại thiết kế không vi phạm rule). Nhiều chunk → gộp: summary đầu tiên, concerns hợp nhất, matches_intent = AND, altitude lấy mức xấu nhất. Lưu `reviews.intent` (JSONB), hiện trên trang review, comment MR và payload webhook.

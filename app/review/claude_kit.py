@@ -46,7 +46,7 @@ MAX_FILES = 300
 # Under this score a file is only listed in the catalog, not quoted.
 MIN_SCORE = 4.0
 # Quoted up front; the rest the agent Reads from the index when the review calls for it.
-MAX_QUOTED = 6
+MAX_QUOTED = 10
 
 # Review commands about a change (MR / commit / diff) go before the topical ones (/review-api).
 CHANGE_REVIEW = re.compile(r"mr|merge|pr\b|pull|commit|diff|change|code|dev", re.I)

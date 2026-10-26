@@ -389,7 +389,9 @@ def recompute_scores(
             )
         ]
         weights = weights_for(review.rubric_version, weights_override)
-        score = Decimal(str(review_score(findings, review.loc_reviewed or 0, weights)))
+        score = Decimal(
+            str(review_score(findings, review.loc_reviewed or 0, weights, review.rubric_version))
+        )
         verdict, risk = assess((f.severity, f.status) for f in findings)
         if review.score != score or review.verdict != verdict or review.risk_score != risk:
             review.score, review.verdict, review.risk_score = score, verdict, risk

@@ -16,6 +16,7 @@ from app.models import (
     TelegramBot,
     TelegramRequest,
 )
+from app.review.rubric import RUBRIC_VERSION
 from app.telegram.picker import MemoryPickerStore
 from app.telegram.poller import poll_bot
 from app.telegram.service import AllowAll, MemoryLinkCodes
@@ -109,7 +110,7 @@ def seed_commits(db_session: Session, world: World) -> None:
             commit_sha="3" * 40,
             reviewed_sha="3" * 40,
             status="done",
-            rubric_version="v2",
+            rubric_version=RUBRIC_VERSION,
             score=82,
             verdict="approve",
         )

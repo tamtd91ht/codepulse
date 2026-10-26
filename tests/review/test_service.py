@@ -752,6 +752,8 @@ def test_deep_review_reads_the_shared_claude_repo_of_the_dự_án(
     db_session.flush()
     project.business_project_id = business.id
     agent = FakeLLMProvider(deep_answer)
+    fast = FakeLLMProvider(sqli)
+    plain = ProfileOrChunk(fast)
     with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
         mount_deep(router)
         router.get(f"{API}/projects/2002").respond(json={"id": 2002, "default_branch": "main"})
@@ -759,10 +761,20 @@ def test_deep_review_reads_the_shared_claude_repo_of_the_dự_án(
         router.get(f"{API}/projects/2002/repository/archive.tar.gz").mock(
             return_value=httpx.Response(200, content=archive_bytes(SHARED_FILES))
         )
-        service = ReviewService(
-            db_session, client, ProfileOrChunk(FakeLLMProvider(sqli)), DEEP_SETTINGS, agent=agent
-        )
+        service = ReviewService(db_session, client, plain, DEEP_SETTINGS, agent=agent)
         review = service.review_mr(project, merge_request, HEAD)
+
+    # The first pass already gets the shared configuration this change needs, and the profile
+    # reads the shared CLAUDE.md under the shared repo's name.
+    (first,) = fast.prompts
+    assert "Áp dụng skill deploy-checklist" in first.user  # the review procedure
+    assert "Dự án: mọi service dùng tenantId từ JWT." in first.user
+    assert "Không liên quan review." not in first.user
+    guided = {g["path"]: g["status"] for g in review.basis["fast_guidance"]}
+    assert guided["demo/claude-config:.claude/commands/review-mr.md"] == "used"
+    assert "### General" in first.user and review.basis["checklists"][0] == "General"
+    (profile_call,) = plain._profile.prompts
+    assert "### demo/claude-config:.claude/CLAUDE.md\nDự án: mọi service" in profile_call.user
 
     assert review is not None and review.mode == "deep" and review.basis is not None
     assert review.basis["claude_repo"] == {

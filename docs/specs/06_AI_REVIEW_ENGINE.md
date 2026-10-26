@@ -64,7 +64,7 @@ Context:\n{context}
 
 ## Hậu xử lý
 - [ ] Kiểm tra `file_path`/`line` có nằm trong diff; nếu không → hạ thành `info` hoặc loại bỏ.
-- [ ] Loại finding `confidence < MIN_CONFIDENCE` (mặc định 0.5).
+- [ ] Loại finding `confidence < MIN_CONFIDENCE` (mặc định 0.4 từ rubric v3, trước đó 0.5).
 - [ ] **Không dùng `score` của LLM làm điểm cuối** – điểm cuối tính bằng công thức ở `08` (LLM score chỉ tham khảo, lưu ở `score_breakdown`).
 - [ ] Lưu `model`, `rubric_version`, token, chi phí.
 

@@ -5,9 +5,15 @@ same.
 v2 (2026-10-25): the techlead lens. The reviewer reads a member's change the way a lead does
 before approving a merge: is it safe, does it keep data correct under concurrency and partial
 failure, will it hold under production traffic, and does it do what the change claims to do.
+
+v3 (2026-10-26): scores of v2 sat above 95 even when the verdict was FIX REQUIRED. The reviewer
+is told to keep severity (impact) apart from confidence (certainty) instead of lowering both
+when unsure, to go through every file against the rubric and the built-in checklists
+(app/review/checklists.py), and the score uses the v3 weights and size rule
+(app/scoring/formula.py).
 """
 
-RUBRIC_VERSION = "v2"
+RUBRIC_VERSION = "v3"
 # The four questions of the rubric, in order (shown as the review's "basis").
 RUBRIC_LENS = ("Bảo mật", "Đúng dữ liệu", "Chịu tải", "Dễ bảo trì")
 
@@ -58,5 +64,12 @@ Design & intent (fill the `intent` object; it informs the reviewer and is not sc
 - concerns: up to 5 short design concerns that break no rule (wrong layer, duplicated concept,
   contract that will be hard to evolve); leave empty when there are none
 
-Only report what is visible in the diff. When unsure, lower the severity and the confidence.
+Severity and confidence are two different things:
+- severity is the production impact IF the problem is real (the definitions above);
+- confidence (0..1) is how sure you are that it is real: 0.9+ you can point at the exact line
+  and failing case, 0.6-0.8 it depends on code you cannot see, below 0.5 a hunch.
+When unsure, lower the confidence, never the severity: a possible SQL injection is a critical
+finding with confidence 0.6, not a medium one.
+Report every real problem you find, low ones included; do not stop after the first few. A change
+with no problems gets no findings: never invent one to look thorough.
 """
