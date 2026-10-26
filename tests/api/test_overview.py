@@ -71,6 +71,81 @@ def test_overview_groups_reviews_by_project(
         unassigned["id"] is None and unassigned["reviews"] == 0 and unassigned["open_severe"] == 1
     )
     assert unassigned["delta"]["reviews"] == -1
+    # Critical and high apart, found in the period and open now.
+    totals = body["totals"]
+    assert (totals["open_critical"], totals["open_high"]) == (1, 1)
+    assert (totals["delta"]["critical"], totals["delta"]["high"]) == (1, -1)
+    assert (omi["open_critical"], omi["open_high"]) == (1, 0)
+    assert (unassigned["open_critical"], unassigned["open_high"]) == (0, 1)
+
+
+def test_dashboard_counts_link_to_the_same_findings(
+    client: TestClient, world: World, omicrm: BusinessProject, db_session: Session, as_user: Any
+) -> None:
+    # A repo of the dự án no longer tracked, with an open critical from last week, and a high
+    # of this week already fixed: open now vs found in the period must both match the list.
+    old = Project(
+        connection_id=world.project.connection_id,
+        external_id=1003,
+        path_with_namespace="demo/old",
+        business_project_id=omicrm.id,
+        tracked=False,
+    )
+    db_session.add(old)
+    db_session.flush()
+    db_session.add(Commit(sha="d" * 40, project_id=old.id))
+    db_session.flush()
+    stale = Review(
+        target_type="commit",
+        commit_sha="d" * 40,
+        reviewed_sha="d" * 40,
+        status="done",
+        score=Decimal(70),
+        finished_at=datetime(2026, 9, 29, 9, tzinfo=UTC),
+        rubric_version="v1",
+    )
+    db_session.add(stale)
+    db_session.flush()
+    db_session.add_all(
+        [
+            ReviewFinding(review_id=stale.id, severity="critical", category="bug", title="z"),
+            ReviewFinding(
+                review_id=world.an_review.id,
+                severity="high",
+                category="bug",
+                title="fixed",
+                status="fixed",
+            ),
+        ]
+    )
+    db_session.flush()
+    admin = as_user(world.admin)
+    body = client.get(f"/api/v1/metrics/projects?period=week&start={WEEK}", headers=admin).json()
+    lo, hi = body["period_range"]
+    omi = body["projects"][0]
+
+    def findings(**params: Any) -> list[dict[str, Any]]:
+        res = client.get("/api/v1/findings", params={"limit": 200, **params}, headers=admin)
+        assert res.status_code == 200, res.text
+        return list(res.json()["items"])
+
+    new = {"business_project_id": omicrm.id, "found_from": lo, "found_to": hi, "status": "any"}
+    assert len(findings(severity="critical", **new)) == omi["critical"] == 1
+    # The fixed high was found this week: counted as new, not as open.
+    assert len(findings(severity="high", **new)) == omi["high"] == 1
+    assert findings(severity="high", business_project_id=omicrm.id) == []
+    assert omi["open_high"] == 0
+    # Last week's high (demo/q, no dự án) is outside this period and this dự án.
+    assert len(findings(severity="high", found_from=lo, found_to=hi, status="any")) == 1
+    assert len(findings(severity="high")) == body["totals"]["open_high"] == 1
+    # Open now includes the untracked repo, on the card, the detail page and the list alike.
+    assert len(findings(severity="critical", business_project_id=omicrm.id)) == 2
+    assert omi["open_critical"] == 2
+    detail = client.get(
+        f"/api/v1/metrics/projects/{omicrm.id}?period=week&start={WEEK}", headers=admin
+    ).json()
+    assert detail["totals"]["open_critical"] == 2
+    assert client.get("/api/v1/findings?status=Any", headers=admin).status_code == 422
 
 
 def test_overview_rejects_future_periods(client: TestClient, world: World, as_user: Any) -> None:
@@ -90,7 +165,9 @@ def test_project_detail_has_repos_series_categories_and_scoped_recent(
         repo["path_with_namespace"] == "demo/p"
         and repo["avg_score"] == 50.0
         and repo["open_severe"] == 1
+        and repo["open_critical"] == 1
     )
+    assert body["totals"]["open_critical"] == 1 and len(body["period_range"]) == 2
     assert len(body["series"]) == 12 and body["series"][-1]["reviews"] == 1
     assert body["categories"] == [{"category": "security", "count": 1}]
     # The lead of Backend sees An's and Binh's reviews; an outsider sees none of them.

@@ -83,3 +83,26 @@ export function qs(params: Record<string, string | number | null | undefined>): 
   const entries = Object.entries(params).filter(([, v]) => v !== null && v !== undefined && v !== "");
   return entries.length ? `?${new URLSearchParams(entries.map(([k, v]) => [k, String(v)]))}` : "";
 }
+
+/** What a dashboard count is about: a dự án, one of its repos, the period it was found in. */
+export interface BoardScope {
+  project?: { id: number; name: string } | null;
+  repo?: { id: number; path: string };
+  period?: { range: [string, string]; label: string };
+}
+
+/**
+ * The Critical Board showing what a dashboard count counts: one severity, open now, or found in
+ * `period` ([from, to) instants and a label) when given, narrowed to `project` or `repo`.
+ */
+export function boardLink(severity: "critical" | "high", scope: BoardScope = {}): string {
+  const { project, repo, period } = scope;
+  return `/critical${qs({
+    severity,
+    bp: project?.id,
+    bp_name: project?.name,
+    repo_id: repo?.id,
+    repo: repo?.path,
+    ...(period ? { status: "any", from: period.range[0], to: period.range[1], period: period.label } : {}),
+  })}`;
+}

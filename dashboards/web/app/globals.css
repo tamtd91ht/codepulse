@@ -1037,6 +1037,12 @@ form.toolbar {
 .grid.kpis {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
 }
+/* Eight tiles one per row would fill a phone screen before any content. */
+@media (max-width: 480px) {
+  .grid.kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 .grid.two {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
 }
@@ -1120,6 +1126,20 @@ form.toolbar {
   flex-direction: column;
   gap: 6px;
   min-height: 108px;
+}
+/* A tile that opens the list behind its number. */
+.kpi.link {
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.kpi.link:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+}
+.kpi.link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 .kpi .label {
   color: var(--muted);

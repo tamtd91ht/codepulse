@@ -79,6 +79,7 @@ export function Kpi({
   digits = 1,
   unit,
   hint,
+  href,
 }: {
   label: string;
   value: Num | number | undefined;
@@ -87,13 +88,15 @@ export function Kpi({
   digits?: number;
   unit?: string;
   hint?: string;
+  /** Where the number comes from: the tile links there. */
+  href?: string;
 }) {
   const has = change !== null && change !== undefined && change !== 0;
   const good = has && change > 0 === higherIsBetter;
   const bad = has && !good;
   const trend: IconName = !has ? "minus" : change > 0 ? "trendUp" : "trendDown";
-  return (
-    <div className="card kpi">
+  const body = (
+    <>
       <div className="label">{label}</div>
       <div className="value">
         {num(value ?? null, digits)}
@@ -114,8 +117,21 @@ export function Kpi({
         )}
       </div>
       {hint && <div className="muted small">{hint}</div>}
-    </div>
+    </>
   );
+  return href ? (
+    <Link href={href} className="card kpi link">
+      {body}
+      <span className="visually-hidden">, xem danh sách</span>
+    </Link>
+  ) : (
+    <div className="card kpi">{body}</div>
+  );
+}
+
+/** A count that opens the findings it counts (nothing to open at 0, or without `href`). */
+export function CountLink({ n, href }: { n: number; href: string | null }) {
+  return n && href ? <Link href={href}>{n}</Link> : <>{n}</>;
 }
 
 export function SeverityBadge({ severity }: { severity: Severity }) {

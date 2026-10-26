@@ -487,11 +487,13 @@ export interface ProjectAgg {
   info: number;
   severe: number; // critical + high found in the period
   open_severe: number; // open critical/high right now
+  open_critical: number;
+  open_high: number;
   approve: number;
   fix_required: number;
   block: number;
   pass_rate: number | null; // % of judged reviews that were APPROVE
-  delta: { reviews: number; avg_score: number | null; severe: number };
+  delta: { reviews: number; avg_score: number | null; severe: number; critical: number; high: number };
 }
 
 export interface ProjectEntry extends ProjectAgg {
@@ -505,6 +507,8 @@ export interface ProjectEntry extends ProjectAgg {
 export interface ProjectsOverview {
   period_type: "week" | "month";
   period_start: string;
+  /** [from, to) instants of the period, for links to the findings found in it. */
+  period_range: [string, string];
   trend_starts: string[];
   totals: ProjectAgg & { projects: number; repos: number };
   projects: ProjectEntry[];
@@ -521,9 +525,10 @@ export interface ProjectDetail {
   project: { id: number; name: string; description: string | null };
   period_type: "week" | "month";
   period_start: string;
+  period_range: [string, string];
   totals: ProjectAgg & { repos: number };
   repos: ProjectRepoRow[];
-  series: (Omit<ProjectAgg, "delta" | "open_severe"> & { period_start: string })[];
+  series: (Omit<ProjectAgg, "delta" | "open_severe" | "open_critical" | "open_high"> & { period_start: string })[];
   categories: { category: string; count: number }[];
   recent: ReviewListItem[];
   next_period_start: string;

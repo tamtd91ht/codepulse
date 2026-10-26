@@ -136,11 +136,30 @@ def _severities(session: Session, review_ids: list[int]) -> dict[int, dict[str, 
     return out
 
 
-def _open_severe(session: Session) -> dict[int, int]:
-    """Open critical/high findings per project (any period): the backlog that matters now."""
+@dataclass
+class Open:
+    """Open findings of one severity group (any period): the backlog that matters now."""
+
+    critical: int = 0
+    high: int = 0
+
+    @property
+    def severe(self) -> int:
+        return self.critical + self.high
+
+    def add(self, other: "Open") -> None:
+        self.critical += other.critical
+        self.high += other.high
+
+    def as_dict(self) -> dict[str, int]:
+        return {"open_severe": self.severe, "open_critical": self.critical, "open_high": self.high}
+
+
+def _open_severe(session: Session) -> dict[int, Open]:
+    """Open critical and high findings per project (any period)."""
     rp = _review_project()
     rows = session.execute(
-        select(Project.id, func.count())
+        select(Project.id, ReviewFinding.severity, func.count())
         .select_from(ReviewFinding)
         .join(Review, Review.id == ReviewFinding.review_id)
         .join(rp, rp.c.review_id == Review.id)
@@ -150,9 +169,19 @@ def _open_severe(session: Session) -> dict[int, int]:
             ReviewFinding.status == "open",
             ReviewFinding.severity.in_(SEVERE),
         )
-        .group_by(Project.id)
+        .group_by(Project.id, ReviewFinding.severity)
     ).all()
-    return {int(p): int(n) for p, n in rows}
+    out: dict[int, Open] = defaultdict(Open)
+    for p, severity, n in rows:
+        setattr(out[int(p)], str(severity), int(n))
+    return out
+
+
+def _open_of(open_by_project: dict[int, Open], project_ids: Any) -> Open:
+    total = Open()
+    for project_id in project_ids:
+        total.add(open_by_project.get(project_id, Open()))
+    return total
 
 
 def _bucket(rows: list[Row], sev: dict[int, dict[str, int]], key: Any) -> dict[Any, Bucket]:
@@ -180,6 +209,8 @@ def _delta(cur: Bucket, prev: Bucket) -> dict[str, float | None]:
             else None
         ),
         "severe": cur.severe - prev.severe,
+        "critical": cur.severity["critical"] - prev.severity["critical"],
+        "high": cur.severity["high"] - prev.severity["high"],
     }
 
 
@@ -240,10 +271,13 @@ def projects_overview(
         ).all()
     )
     repos_by_bp: dict[int | None, int] = defaultdict(int)
-    open_by_bp: dict[int | None, int] = defaultdict(int)
-    for project_id, bp_id in projects:
+    for _project_id, bp_id in projects:
         repos_by_bp[bp_id] += 1
-        open_by_bp[bp_id] += open_by_project.get(int(project_id), 0)
+    # Open findings of every repo, tracked or not: the dự án's detail page and the findings
+    # list its count links to include repos no longer tracked too.
+    open_by_bp: dict[int | None, Open] = defaultdict(Open)
+    for project_id, bp_id in session.execute(select(Project.id, Project.business_project_id)):
+        open_by_bp[bp_id].add(open_by_project.get(int(project_id), Open()))
     names = {
         bp.id: bp for bp in session.scalars(select(BusinessProject).order_by(BusinessProject.name))
     }
@@ -259,7 +293,7 @@ def projects_overview(
             "repos": repos_by_bp.get(bp_id, 0),
             **cur.as_dict(),
             "severe": cur.severe,
-            "open_severe": open_by_bp.get(bp_id, 0),
+            **open_by_bp.get(bp_id, Open()).as_dict(),
             "delta": _delta(cur, prev),
             "trend": [(trend.get((bp_id, s)) or Bucket()).avg_score for s in trend_starts],
         }
@@ -285,11 +319,14 @@ def projects_overview(
     return {
         "period_type": period,
         "period_start": period_start.isoformat(),
+        # The period's [from, to) instants: the dashboard links its "new" counts to the findings
+        # list with them, so both count the same reviews.
+        "period_range": [lo.isoformat(), hi.isoformat()],
         "trend_starts": [s.isoformat() for s in trend_starts],
         "totals": {
             **total_cur.as_dict(),
             "severe": total_cur.severe,
-            "open_severe": sum(open_by_project.values()),
+            **_open_of(open_by_project, list(open_by_project)).as_dict(),
             "projects": len(names),
             "repos": len(projects),
             "delta": _delta(total_cur, total_prev),
@@ -387,10 +424,11 @@ def project_detail(
         "project": {"id": bp.id, "name": bp.name, "description": bp.description},
         "period_type": period,
         "period_start": period_start.isoformat(),
+        "period_range": [lo.isoformat(), hi.isoformat()],
         "totals": {
             **cur.as_dict(),
             "severe": cur.severe,
-            "open_severe": sum(open_by_project.get(i, 0) for i in repo_ids),
+            **_open_of(open_by_project, repo_ids).as_dict(),
             "repos": len(repos),
             "delta": _delta(cur, prev),
         },
@@ -401,7 +439,7 @@ def project_detail(
                 "tracked": p.tracked,
                 **(by_repo.get(p.id) or Bucket()).as_dict(),
                 "severe": (by_repo.get(p.id) or Bucket()).severe,
-                "open_severe": open_by_project.get(p.id, 0),
+                **open_by_project.get(p.id, Open()).as_dict(),
                 "last_review_at": last_review.get(p.id),
             }
             for p in repos

@@ -1,49 +1,172 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Card, EmptyState, ExternalLink, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
-import { qs, useApi } from "@/lib/api";
-import type { BoardFinding, Page, Team } from "@/lib/types";
+import { api, qs, useApi } from "@/lib/api";
+import type { BoardFinding, Me, Page, Team } from "@/lib/types";
+
+type Level = "" | "critical" | "high";
+
+/**
+ * What a dashboard count links here with (lib/api boardLink): one severity, one dự án or repo,
+ * and for "new in the period" counts the period's [from, to) with status=any.
+ */
+interface Scope {
+  severity: Level;
+  bp: string;
+  bpName: string;
+  repoId: string;
+  repo: string;
+  status: string;
+  from: string;
+  to: string;
+  period: string;
+}
+
+const NO_SCOPE: Scope = {
+  severity: "",
+  bp: "",
+  bpName: "",
+  repoId: "",
+  repo: "",
+  status: "",
+  from: "",
+  to: "",
+  period: "",
+};
+
+function readScope(): Scope {
+  const p = new URLSearchParams(window.location.search);
+  const severity = p.get("severity");
+  return {
+    severity: severity === "critical" || severity === "high" ? severity : "",
+    bp: p.get("bp") ?? "",
+    bpName: p.get("bp_name") ?? "",
+    repoId: p.get("repo_id") ?? "",
+    repo: p.get("repo") ?? "",
+    status: p.get("status") === "any" ? "any" : "",
+    from: p.get("from") ?? "",
+    to: p.get("to") ?? "",
+    period: p.get("period") ?? "",
+  };
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  fixed: "Đã sửa",
+  disputed: "Đang khiếu nại",
+  accepted_risk: "Chấp nhận rủi ro",
+  false_positive: "Không phải lỗi",
+};
 
 /** Every open critical/high finding (docs/specs/10 "Critical Board"). */
 export default function CriticalBoard() {
+  const [scope, setScope] = useState<Scope | null>(null);
   const [team, setTeam] = useState("");
   const [person, setPerson] = useState("");
   const [project, setProject] = useState("");
+  // The link's filters are read once on arrival (not with useSearchParams: no Suspense boundary).
+  useEffect(() => {
+    const read = readScope();
+    setScope(read);
+    setProject(read.repo);
+  }, []);
   const { data: teams } = useApi<Team[]>("/teams/visible");
-  const { data, error } = useApi<Page<BoardFinding>>(`/findings${qs({ team_id: team, limit: 200 })}&severity=critical&severity=high`, {
-    keepPreviousData: true,
-  });
+  const { data: me } = useApi<Me>("/auth/me");
+  const severities = scope?.severity ? [scope.severity] : ["critical", "high"];
+  const path =
+    scope &&
+    `/findings${qs({
+      team_id: team,
+      limit: 200,
+      business_project_id: scope.bp,
+      project_id: scope.repoId,
+      status: scope.status,
+      found_from: scope.from,
+      found_to: scope.to,
+    })}${severities.map((s) => `&severity=${s}`).join("")}`;
+  const { data, error } = useApi<Page<BoardFinding>>(path, { keepPreviousData: true });
+  // Pages after the first 200, for the query they were loaded with.
+  const [more, setMore] = useState<{ path: string; items: BoardFinding[]; cursor: string | null } | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const extra = more && more.path === path ? more : null;
+  const cursor = extra ? extra.cursor : (data?.next_cursor ?? null);
+  const loadMore = async () => {
+    if (!path || !cursor) return;
+    setLoadingMore(true);
+    try {
+      const page = await api.get<Page<BoardFinding>>(`${path}&cursor=${encodeURIComponent(cursor)}`);
+      setMore({ path, items: [...(extra?.items ?? []), ...page.items], cursor: page.next_cursor });
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
-  const rows = (data?.items ?? [])
+  const rows = [...(data?.items ?? []), ...(extra?.items ?? [])]
     .filter((f) => !person || String(f.author_user_id) === person)
     .filter((f) => !project || f.project === project)
     .sort((a, b) => b.age_days - a.age_days);
   const people = [
     ...new Map((data?.items ?? []).filter((f) => f.author_user_id !== null).map((f) => [f.author_user_id, f.author])).entries(),
   ];
-  const projects = [...new Set((data?.items ?? []).map((f) => f.project))].sort();
+  const projects = [...new Set([...(data?.items ?? []).map((f) => f.project), ...(project ? [project] : [])])].sort();
   const critical = rows.filter((f) => f.severity === "critical").length;
-  const filtering = !!(team || person || project);
+  const scoped = !!scope && (scope.bp !== "" || scope.from !== "" || scope.severity !== "");
+  const filtering = !!(team || person || project) || scoped;
+  const found = scope?.status === "any";
+  const level = scope?.severity || "critical / high";
+  // The URL keeps the level, so a reload or a copied link shows the same list.
+  const setLevel = (severity: Level) => {
+    const url = new URL(window.location.href);
+    if (severity) url.searchParams.set("severity", severity);
+    else url.searchParams.delete("severity");
+    window.history.replaceState(null, "", url);
+    setScope((s) => (s ? { ...s, severity } : s));
+  };
+  const setRepo = (repo: string) => {
+    // The link's repo filter is applied by the server; picking another one is local.
+    setProject(repo);
+    setScope((s) => (s && s.repoId ? { ...s, repoId: "" } : s));
+  };
+  const clear = () => {
+    setTeam("");
+    setPerson("");
+    setProject("");
+    setScope(NO_SCOPE);
+    window.history.pushState(null, "", "/critical");
+  };
 
   return (
     <>
       <PageHeader
         eyebrow="Critical board"
-        title="Finding critical / high đang mở"
-        subtitle="Lâu nhất xếp trước. Bấm vào vấn đề để xem review và trích đoạn code."
+        title={found ? `Finding ${level} mới${scope?.period ? ` · ${scope.period}` : ""}` : `Finding ${level} đang mở`}
+        subtitle={[
+          scope?.bpName ? `Dự án ${scope.bpName}${project ? ` · repo ${project}` : ""}.` : null,
+          found
+            ? "Tìm thấy trong kỳ, kể cả đã sửa hoặc khiếu nại sau đó."
+            : "Lâu nhất xếp trước. Bấm vào vấn đề để xem review và trích đoạn code.",
+        ]
+          .filter(Boolean)
+          .join(" ")}
         actions={
           data && (
             <>
-              <Pill tone={critical ? "bad" : "good"}>{critical} critical</Pill>
-              <Pill tone={rows.length - critical ? "warn" : "good"}>{rows.length - critical} high</Pill>
+              {scope?.severity !== "high" && <Pill tone={critical ? "bad" : "good"}>{critical} critical</Pill>}
+              {scope?.severity !== "critical" && (
+                <Pill tone={rows.length - critical ? "warn" : "good"}>{rows.length - critical} high</Pill>
+              )}
             </>
           )
         }
       />
       <div className="toolbar">
+        <select value={scope?.severity ?? ""} onChange={(e) => setLevel(e.target.value as Level)} aria-label="Lọc theo mức">
+          <option value="">Critical và high</option>
+          <option value="critical">Chỉ critical</option>
+          <option value="high">Chỉ high</option>
+        </select>
         <select value={team} onChange={(e) => setTeam(e.target.value)} aria-label="Lọc theo team">
           <option value="">Mọi team</option>
           {teams?.map((t) => (
@@ -52,7 +175,7 @@ export default function CriticalBoard() {
             </option>
           ))}
         </select>
-        <select value={project} onChange={(e) => setProject(e.target.value)} aria-label="Lọc theo repo">
+        <select value={project} onChange={(e) => setRepo(e.target.value)} aria-label="Lọc theo repo">
           <option value="">Mọi repo</option>
           {projects.map((p) => (
             <option key={p} value={p}>
@@ -69,24 +192,22 @@ export default function CriticalBoard() {
           ))}
         </select>
         {filtering && (
-          <button
-            className="ghost"
-            onClick={() => {
-              setTeam("");
-              setPerson("");
-              setProject("");
-            }}
-          >
+          <button className="ghost" onClick={clear}>
             Bỏ lọc
           </button>
         )}
       </div>
 
+      {scoped && me && !me.is_admin && (
+        <p className="muted small">
+          Danh sách chỉ gồm finding bạn được quyền xem; số trên dashboard tính cho mọi người nên có thể lớn hơn.
+        </p>
+      )}
       {!data ? (
         <Loading error={error} rows={5} />
       ) : rows.length === 0 ? (
         <Card>
-          <EmptyState icon="checkCircle" tone="good" title="Không có finding critical/high nào đang mở">
+          <EmptyState icon="checkCircle" tone="good" title={found ? `Không có finding ${level} nào trong kỳ` : `Không có finding ${level} nào đang mở`}>
             {filtering ? "Thử bỏ bớt bộ lọc." : "Mọi vấn đề nghiêm trọng đã được xử lý hoặc khiếu nại."}
           </EmptyState>
         </Card>
@@ -112,6 +233,12 @@ export default function CriticalBoard() {
                     </td>
                     <td style={{ whiteSpace: "normal", minWidth: 240 }}>
                       <Link href={`/reviews/${f.review_id}`}>{f.title}</Link>
+                      {f.status && f.status !== "open" && (
+                        <>
+                          {" "}
+                          <Pill tone={f.status === "fixed" ? "good" : "info"}>{STATUS_LABEL[f.status] ?? f.status}</Pill>
+                        </>
+                      )}
                     </td>
                     <td>
                       <code>
@@ -126,6 +253,14 @@ export default function CriticalBoard() {
               </tbody>
             </table>
           </div>
+          {cursor && (
+            <div className="muted small" style={{ padding: "10px 16px" }}>
+              Đang hiện {rows.length} finding đầu tiên, còn nữa.{" "}
+              <button className="ghost" onClick={loadMore} disabled={loadingMore}>
+                {loadingMore ? "Đang tải…" : "Tải thêm"}
+              </button>
+            </div>
+          )}
         </Card>
       )}
     </>

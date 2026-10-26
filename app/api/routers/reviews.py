@@ -264,23 +264,41 @@ def list_findings(
     principal: CurrentPrincipal,
     session: SessionDep,
     severity: Annotated[list[str] | None, Query()] = None,
-    status: str = "open",
+    status: Literal["open", "fixed", "disputed", "accepted_risk", "false_positive", "any"] = "open",
     project_id: int | None = None,
+    business_project_id: int | None = None,
+    found_from: datetime | None = None,
+    found_to: datetime | None = None,
     user_id: int | None = None,
     team_id: int | None = None,
     cursor: str | None = None,
     limit: Limit = 50,
 ) -> Page[Any]:
-    """Critical Board (docs/specs/10): findings of the latest review of each MR/commit."""
+    """Critical Board (docs/specs/10): findings of the latest review of each MR/commit.
+
+    The dashboards link their counts here: `business_project_id` (a dự án's repos),
+    `found_from`/`found_to` (reviews finished in [from, to), the dashboard's period) and
+    `status=any` (found in the period, whatever became of them since)."""
     if user_id is not None and not principal.can_see_user(user_id):
         raise HTTPException(403, "not allowed to see this person's findings")
     query = scoped(
         select(ReviewFinding, Review, User)
         .join(Review, Review.id == ReviewFinding.review_id)
         .outerjoin(User, User.id == Review.author_user_id)
-        .where(Review.status == "done", ReviewFinding.status == status),
+        .where(Review.status == "done"),
         principal,
     )
+    if status != "any":
+        query = query.where(ReviewFinding.status == status)
+    if found_from is not None:
+        query = query.where(Review.finished_at >= found_from)
+    if found_to is not None:
+        query = query.where(Review.finished_at < found_to)
+    if business_project_id is not None:
+        repos = select(Project.id).where(Project.business_project_id == business_project_id)
+        mr_ids = select(MergeRequest.id).where(MergeRequest.project_id.in_(repos))
+        shas = select(Commit.sha).where(Commit.project_id.in_(repos))
+        query = query.where(Review.mr_id.in_(mr_ids) | Review.commit_sha.in_(shas))
     if severity:
         query = query.where(ReviewFinding.severity.in_(severity))
     if user_id is not None:

@@ -16,18 +16,13 @@ import {
 } from "recharts";
 
 import { Icon } from "@/components/icons";
-import { Card, ChartTip, EmptyState, Kpi, Loading, PageHeader, Pager, Pill, Segmented, Sparkline } from "@/components/ui";
-import { qs, useApi } from "@/lib/api";
-import { num, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
+import { Card, ChartTip, CountLink, EmptyState, Kpi, Loading, PageHeader, Pager, Pill, Segmented, Sparkline } from "@/components/ui";
+import { boardLink, qs, useApi } from "@/lib/api";
+import { num, periodLabel, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
 import type { ProjectEntry, ProjectsOverview } from "@/lib/types";
 
 type Period = "week" | "month";
 const COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)", "var(--chart-6)"];
-
-function periodLabel(period: Period, start: string | null): string {
-  if (!start) return "…";
-  return period === "week" ? `Tuần từ ${weekLabel(start)}` : `Tháng ${start.slice(5, 7)}/${start.slice(0, 4)}`;
-}
 
 function scoreTone(score: number | null): "good" | "warn" | "bad" | undefined {
   if (score === null) return undefined;
@@ -65,8 +60,10 @@ function ProjectCard({ p }: { p: ProjectEntry }) {
       </div>
       <div className="stats">
         {p.pass_rate !== null && <Pill tone={p.pass_rate >= 80 ? "good" : p.pass_rate >= 50 ? "warn" : "bad"}>{num(p.pass_rate, 0)}% approve</Pill>}
-        <Pill tone={p.severe ? "bad" : "good"}>{p.severe} critical/high mới</Pill>
-        <Pill tone={p.open_severe ? "warn" : undefined}>{p.open_severe} đang mở</Pill>
+        <Pill tone={p.critical ? "bad" : "good"}>{p.critical} critical mới</Pill>
+        <Pill tone={p.high ? "warn" : "good"}>{p.high} high mới</Pill>
+        <Pill tone={p.open_critical ? "bad" : undefined}>{p.open_critical} critical đang mở</Pill>
+        <Pill tone={p.open_high ? "warn" : undefined}>{p.open_high} high đang mở</Pill>
         {p.delta.reviews !== 0 && (
           <Pill>
             {p.delta.reviews > 0 ? "+" : ""}
@@ -138,7 +135,14 @@ export default function OverviewPage() {
 
   const t = data.totals;
   const named = data.projects.filter((p) => p.id !== null);
-  const bars = data.projects.map((p) => ({ name: p.name, reviews: p.reviews, severe: p.severe, open: p.open_severe }));
+  const bars = data.projects.map((p) => ({
+    name: p.name,
+    reviews: p.reviews,
+    critical: p.critical,
+    high: p.high,
+  }));
+  // From the response, not the cursor: while the next period loads, links keep the shown one.
+  const inPeriod = { range: data.period_range, label: periodLabel(data.period_type, data.period_start) };
   const trendRows = data.trend_starts.map((s, i) => ({
     period: period === "week" ? weekLabel(s) : s.slice(5, 7),
     ...Object.fromEntries(named.slice(0, 6).map((p) => [p.name, p.trend[i]])),
@@ -150,8 +154,10 @@ export default function OverviewPage() {
       <div className="grid kpis">
         <Kpi label="Reviews trong kỳ" value={t.reviews} digits={0} change={t.delta.reviews} />
         <Kpi label="Điểm trung bình" value={t.avg_score} change={t.delta.avg_score} hint="Trung bình điểm review (0–100) của mọi dự án" />
-        <Kpi label="Critical + High mới" value={t.severe} digits={0} change={t.delta.severe} higherIsBetter={false} />
-        <Kpi label="Critical/High đang mở" value={t.open_severe} digits={0} hint="Finding nghiêm trọng chưa xử lý, mọi thời kỳ" />
+        <Kpi label="Critical mới" value={t.critical} digits={0} change={t.delta.critical} higherIsBetter={false} href={boardLink("critical", { period: inPeriod })} />
+        <Kpi label="High mới" value={t.high} digits={0} change={t.delta.high} higherIsBetter={false} href={boardLink("high", { period: inPeriod })} />
+        <Kpi label="Critical đang mở" value={t.open_critical} digits={0} hint="Chưa xử lý, mọi thời kỳ" href={boardLink("critical")} />
+        <Kpi label="High đang mở" value={t.open_high} digits={0} hint="Chưa xử lý, mọi thời kỳ" href={boardLink("high")} />
         <Kpi label="Tỉ lệ APPROVE" value={t.pass_rate} unit="%" hint={`${t.approve} approve · ${t.fix_required} fix · ${t.block} block`} />
         <Kpi label="Dự án · Repo" value={t.projects} digits={0} unit={`· ${t.repos} repo`} />
       </div>
@@ -188,8 +194,8 @@ export default function OverviewPage() {
                     <Tooltip content={<ChartTip digits={0} />} cursor={{ fill: "var(--surface-2)" }} />
                     <Legend iconType="circle" iconSize={8} />
                     <Bar dataKey="reviews" name="Reviews" fill="var(--chart-1)" radius={[4, 4, 0, 0]} maxBarSize={40} />
-                    <Bar dataKey="severe" name="Critical + High mới" fill="var(--sev-high)" radius={[4, 4, 0, 0]} maxBarSize={40} />
-                    <Bar dataKey="open" name="Đang mở" fill="var(--sev-critical)" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                    <Bar dataKey="critical" name="Critical mới" fill="var(--sev-critical)" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                    <Bar dataKey="high" name="High mới" fill="var(--sev-high)" radius={[4, 4, 0, 0]} maxBarSize={40} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -225,7 +231,8 @@ export default function OverviewPage() {
                     <th className="num">High</th>
                     <th className="num">Medium</th>
                     <th className="num">Low</th>
-                    <th className="num">Đang mở C/H</th>
+                    <th className="num">Critical đang mở</th>
+                    <th className="num">High đang mở</th>
                     <th className="num">LOC</th>
                   </tr>
                 </thead>
@@ -238,11 +245,20 @@ export default function OverviewPage() {
                       <td className="num">
                         {p.avg_score === null ? <span className="faint">—</span> : <Pill tone={scoreTone(p.avg_score)}>{num(p.avg_score, 1)}</Pill>}
                       </td>
-                      <td className={`num${p.critical ? " bad" : ""}`}>{p.critical}</td>
-                      <td className="num">{p.high}</td>
+                      <td className={`num${p.critical ? " bad" : ""}`}>
+                        <CountLink n={p.critical} href={p.id === null ? null : boardLink("critical", { project: { id: p.id, name: p.name }, period: inPeriod })} />
+                      </td>
+                      <td className="num">
+                        <CountLink n={p.high} href={p.id === null ? null : boardLink("high", { project: { id: p.id, name: p.name }, period: inPeriod })} />
+                      </td>
                       <td className="num">{p.medium}</td>
                       <td className="num">{p.low}</td>
-                      <td className={`num${p.open_severe ? " bad" : ""}`}>{p.open_severe}</td>
+                      <td className={`num${p.open_critical ? " bad" : ""}`}>
+                        <CountLink n={p.open_critical} href={p.id === null ? null : boardLink("critical", { project: { id: p.id, name: p.name } })} />
+                      </td>
+                      <td className="num">
+                        <CountLink n={p.open_high} href={p.id === null ? null : boardLink("high", { project: { id: p.id, name: p.name } })} />
+                      </td>
                       <td className="num muted">{p.loc.toLocaleString("vi-VN")}</td>
                     </tr>
                   ))}

@@ -124,3 +124,9 @@ export function weekLabel(week: string): string {
   const d = new Date(`${week}T00:00:00Z`);
   return `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
+
+/** "Tuần từ 05/10" or "Tháng 10/2026" for a period starting on `start` (YYYY-MM-DD). */
+export function periodLabel(period: "week" | "month", start: string | null): string {
+  if (!start) return "…";
+  return period === "week" ? `Tuần từ ${weekLabel(start)}` : `Tháng ${start.slice(5, 7)}/${start.slice(0, 4)}`;
+}
