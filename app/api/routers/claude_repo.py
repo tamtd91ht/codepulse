@@ -12,7 +12,7 @@ from app.api.audit import audit
 from app.api.deps import get_secret_box, get_session
 from app.api.schemas import ClaudeRepoIn, ClaudeRepoPreviewOut
 from app.api.security import AdminPrincipal
-from app.collector.gitlab.client import GitLabError
+from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.sync import client_factory
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
@@ -33,6 +33,27 @@ def _get[M](session: Session, model: type[M], ident: int, name: str) -> M:
     return row
 
 
+# Folders a pasted link may point at: the repo itself, or its .claude folder (both read the same).
+LINK_FOLDERS = ("", ".claude")
+
+
+def _ref_of_link(client: GitLabClient, project_id: int, path: str, words: list[str]) -> str:
+    """The branch of a folder link (…/-/tree/feature/x/.claude): the longest leading words that
+    name a branch; what follows must be the repo root or its .claude folder."""
+    for end in range(min(len(words), 8), 0, -1):
+        ref = "/".join(words[:end])
+        if client.branch_exists(project_id, ref):
+            folder = "/".join(words[end:])
+            if folder not in LINK_FOLDERS:
+                raise HTTPException(
+                    422,
+                    f"link trỏ tới thư mục {folder}; chỉ dùng được .claude ở gốc repo"
+                    f" (…/-/tree/{ref}/.claude) hoặc repo mà nội dung chính là .claude",
+                )
+            return ref
+    raise HTTPException(422, f"không thấy nhánh nào của {path} trong link; nhập nhánh riêng")
+
+
 @router.put("/business-projects/{bp_id}/claude-repo", status_code=204)
 def set_claude_repo(
     bp_id: int, body: ClaudeRepoIn, principal: AdminPrincipal, session: SessionDep, box: BoxDep
@@ -47,12 +68,15 @@ def set_claude_repo(
             if exc.status_code == 404:
                 raise HTTPException(422, f"GitLab has no repo {body.path} (or no access)") from None
             raise
-        if body.ref and not client.branch_exists(int(info["id"]), body.ref):
-            raise HTTPException(422, f"branch {body.ref} not found in {body.path}")
+        ref = body.ref
+        if not ref and body.tree:
+            ref = _ref_of_link(client, int(info["id"]), body.path, body.tree)
+        elif ref and not client.branch_exists(int(info["id"]), ref):
+            raise HTTPException(422, f"branch {ref} not found in {body.path}")
     bp.claude_repo_connection_id = connection.id
     bp.claude_repo_external_id = int(info["id"])
     bp.claude_repo_path = str(info.get("path_with_namespace") or body.path)
-    bp.claude_repo_ref = body.ref or None
+    bp.claude_repo_ref = ref or None
     bp.claude_repo_include = (body.include or "").strip() or None
     audit(
         session,

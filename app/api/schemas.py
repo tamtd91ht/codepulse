@@ -5,6 +5,7 @@ import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
+from urllib.parse import unquote
 
 from pydantic import (
     AfterValidator,
@@ -14,6 +15,7 @@ from pydantic import (
     HttpUrl,
     StringConstraints,
     field_validator,
+    model_validator,
 )
 
 from app.models.source import ALL_BRANCHES
@@ -746,6 +748,16 @@ class ClaudeRepoIn(BaseModel):
     ref: Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)] | None = None
     # Extra globs relative to the .claude folder (comma or newline separated).
     include: str | None = Field(default=None, max_length=2000)
+    # From a pasted folder link (…/-/tree/dev/.claude): the words after /-/tree/, which hold
+    # the branch and the folder; the router tells them apart by asking GitLab.
+    tree: list[str] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _tree_of_link(cls, data: Any) -> Any:
+        if isinstance(data, dict) and isinstance(data.get("path"), str):
+            return {**data, "tree": gitlab_tree_words(data["path"])}
+        return data
 
     @field_validator("path")
     @classmethod
@@ -767,6 +779,15 @@ def gitlab_repo_path(value: str) -> str:
     if not GITLAB_PATH_RE.fullmatch(text):
         raise ValueError("cần dạng nhóm/repo hoặc link repo GitLab, ví dụ omicrm/claude-config")
     return text
+
+
+def gitlab_tree_words(value: str) -> list[str]:
+    """["dev", ".claude"] from a link like …/-/tree/dev/.claude?ref_type=heads (also /-/blob/);
+    [] for anything else. A branch may itself contain "/", so the split is left to GitLab."""
+    match = re.search(r"/-/(?:tree|blob)/([^?#\s]+)", value)
+    if not match:
+        return []
+    return [unquote(w) for w in match.group(1).strip("/").split("/") if w]
 
 
 class ClaudeRepoPreviewOut(BaseModel):

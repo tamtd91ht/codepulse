@@ -137,12 +137,14 @@ def checkout(
     *,
     max_archive_bytes: int,
     sensitive_paths: list[str],
+    path: str | None = None,
 ) -> Iterator[tuple[Path, ExtractStats]]:
-    """Yield (root, stats) of a temporary read-only copy; removed afterwards whatever happens."""
+    """Yield (root, stats) of a temporary read-only copy; removed afterwards whatever happens.
+    `path`: only that folder (it keeps its place under root)."""
     tmp = Path(tempfile.mkdtemp(prefix="codepulse-deep-"))
     try:
         archive = tmp / "repo.tar.gz"
-        client.archive(project_external_id, sha, archive, max_archive_bytes)
+        client.archive(project_external_id, sha, archive, max_archive_bytes, path)
         root = tmp / "src"
         root.mkdir()
         stats = extract(archive, root, sensitive_paths)

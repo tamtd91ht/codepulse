@@ -926,3 +926,36 @@ def test_an_unreadable_shared_repo_does_not_stop_the_deep_review(
     assert review is not None and review.mode == "deep" and review.basis is not None
     assert review.basis["claude_repo"]["status"] == "error"
     assert {i["source"] for i in review.basis["instructions"]} == {"repo"}
+
+
+def test_the_first_pass_reads_the_reviewed_repos_own_claude_folder(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr  # no dự án, so no shared repo: only the repo's own .claude
+    provider = FakeLLMProvider(sqli)
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount(router)
+        # Replaces mount()'s "no .claude" route (respx keeps one route per pattern).
+        own = router.get(
+            f"{API}/projects/1001/repository/archive.tar.gz", params={"path": ".claude"}
+        )
+        own.mock(
+            return_value=httpx.Response(
+                200, content=archive_bytes({".claude/CLAUDE.md": "Repo: luôn kiểm tra tenantId."})
+            )
+        )
+        router.get(f"{API}/projects/1001/merge_requests/1").respond(
+            json=fixture("merge_requests.json")[0]
+        )
+        review = ReviewService(db_session, client, provider, SETTINGS).review_mr(
+            project, merge_request, HEAD
+        )
+    assert own.calls.last.request.url.params["sha"] == HEAD
+    assert "Repo: luôn kiểm tra tenantId." in provider.prompts[0].user
+    assert review.basis is not None
+    (guided,) = review.basis["fast_guidance"]
+    assert (guided["path"], guided["source"], guided["status"]) == (
+        ".claude/CLAUDE.md",
+        "repo",
+        "used",
+    )

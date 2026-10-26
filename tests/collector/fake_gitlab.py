@@ -43,6 +43,10 @@ def mount(router: respx.MockRouter, project_id: int = 1001) -> respx.MockRouter:
     router.get(url__regex=rf"{p}/repository/files/.+/raw").mock(
         return_value=httpx.Response(404, json={"message": "404 File Not Found"})
     )
+    # The repo's own .claude for the review's first pass: none by default.
+    router.get(f"{p}/repository/archive.tar.gz", params={"path": ".claude"}).mock(
+        return_value=httpx.Response(404, json={"message": "404 Not Found"})
+    )
     router.get(url__regex=rf"{API}/users/(?P<uid>\d+)$").mock(
         side_effect=lambda r, uid: _serve(f"users_{uid}.json")
     )

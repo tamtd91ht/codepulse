@@ -129,17 +129,24 @@ export function ClaudeRepoEditor({ project, busy }: { project: BusinessProject; 
             <input type="hidden" name="connection_id" value={connections.data?.[0]?.id ?? ""} />
           )}
           <label style={{ display: "grid", gap: 4 }}>
-            <span className="small muted">Repo trên GitLab: dán link repo hoặc đường dẫn nhóm/repo</span>
+            <span className="small muted">
+              Repo trên GitLab: dán link repo, link thư mục .claude (…/-/tree/dev/.claude) hoặc đường dẫn nhóm/repo
+            </span>
             <input
               name="path"
               required
               maxLength={512}
               defaultValue={project.claude_repo_path ?? ""}
-              placeholder="https://gitlab.example.com/omicrm/claude-config hoặc omicrm/claude-config"
+              placeholder="https://gitlab.example.com/omicrm/web/-/tree/dev/.claude hoặc omicrm/claude-config"
+              onChange={(e) => {
+                // A folder link carries its branch: the server reads it when the branch field is empty.
+                const ref = e.currentTarget.form?.elements.namedItem("ref");
+                if (/\/-\/(tree|blob)\//.test(e.currentTarget.value) && ref instanceof HTMLInputElement) ref.value = "";
+              }}
             />
           </label>
           <label style={{ display: "grid", gap: 4 }}>
-            <span className="small muted">Nhánh (để trống = nhánh mặc định)</span>
+            <span className="small muted">Nhánh (để trống = nhánh trong link, nếu không có thì nhánh mặc định)</span>
             <input name="ref" defaultValue={project.claude_repo_ref ?? ""} placeholder="main" maxLength={255} />
           </label>
           <label style={{ display: "grid", gap: 4 }}>

@@ -141,3 +141,39 @@ def test_shared_claude_repo_is_admin_only(
     body = {"connection_id": world.project.connection_id, "path": "demo/claude-config"}
     assert client.put(path, headers=as_user(world.lead), json=body).status_code == 403
     assert client.delete(path, headers=as_user(world.lead)).status_code == 403
+
+
+def test_a_pasted_claude_folder_link_sets_the_branch(
+    client: TestClient, world: World, as_user: Any, business: BusinessProject, db_session: Session
+) -> None:
+    admin = as_user(world.admin)
+    path = f"/api/v1/business-projects/{business.id}/claude-repo"
+    web = "https://gitlab.example.com/demo/claude-config/-/tree"
+    with respx.mock(assert_all_called=False) as router:
+        router.route(host="testserver").pass_through()
+        router.get(f"{API}/projects/demo%2Fclaude-config").respond(
+            json={"id": 2002, "path_with_namespace": "demo/claude-config", "default_branch": "main"}
+        )
+        router.get(f"{API}/projects/2002/repository/branches/dev").respond(json={"name": "dev"})
+        router.get(f"{API}/projects/2002/repository/branches/feature%2Fx").respond(
+            json={"name": "feature/x"}
+        )
+        router.get(url__regex=r".*/repository/branches/.*").respond(404)
+
+        def put(link: str) -> httpx.Response:
+            body = {"connection_id": world.project.connection_id, "path": link}
+            return client.put(path, headers=admin, json=body)
+
+        assert put(f"{web}/dev/.claude?ref_type=heads").status_code == 204
+        db_session.refresh(business)
+        assert (business.claude_repo_path, business.claude_repo_ref) == (
+            "demo/claude-config",
+            "dev",
+        )
+        # A branch name with "/" is found by asking GitLab, longest first.
+        assert put(f"{web}/feature/x/.claude").status_code == 204
+        db_session.refresh(business)
+        assert business.claude_repo_ref == "feature/x"
+        wrong_folder = put(f"{web}/dev/docs")
+        assert wrong_folder.status_code == 422 and "docs" in wrong_folder.text
+        assert put(f"{web}/nope/.claude").status_code == 422

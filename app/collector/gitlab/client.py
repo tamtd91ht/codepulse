@@ -283,16 +283,20 @@ class GitLabClient:
             self.paginate(f"/projects/{project_id}/repository/commits/{sha}/merge_requests")
         )
 
-    def archive(self, project_id: int, sha: str, dest: Path, max_bytes: int) -> int:
+    def archive(
+        self, project_id: int, sha: str, dest: Path, max_bytes: int, path: str | None = None
+    ) -> int:
         """Stream `archive.tar.gz?sha=` to `dest`; stops (ArchiveTooLarge) past max_bytes.
+        `path`: only that folder of the repository.
 
         One attempt: a multi-megabyte download is not retried blindly, the caller falls back.
         """
         self._limiter.acquire()
         total = 0
+        params = {"sha": sha, **({"path": path} if path else {})}
         try:
             with self._http.stream(
-                "GET", f"/projects/{project_id}/repository/archive.tar.gz", params={"sha": sha}
+                "GET", f"/projects/{project_id}/repository/archive.tar.gz", params=params
             ) as response:
                 if response.is_error:
                     raise GitLabError(

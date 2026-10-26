@@ -29,7 +29,12 @@ from app.models import (
 from app.review import claude_kit, comment
 from app.review.checklists import select_checklists
 from app.review.checkout import CheckoutError, checkout
-from app.review.claude_repo import include_globs, load_shared_config, pack_instructions
+from app.review.claude_repo import (
+    include_globs,
+    load_repo_claude,
+    load_shared_config,
+    pack_instructions,
+)
 from app.review.deep import (
     MAX_INSTRUCTIONS_CHARS,
     TOOLS,
@@ -490,7 +495,7 @@ class ReviewService:
         # What the project is and how its team reviews, before the first pass: the cached
         # profile (the deep pass refreshes it) and the shared .claude files this change needs.
         target.profile = render_profile(project.profile) if project.profile else ""
-        target.guidance, guidance = self._guidance(review, project, target, prepared)
+        target.guidance, guidance = self._guidance(review, project, target, prepared, sha)
         review.basis = self._pending_basis.pop(review.id, None)
         if review.basis is not None:
             review.basis["checklists"] = select_checklists(
@@ -576,33 +581,63 @@ class ReviewService:
         return self._finish(review, "done")
 
     def _guidance(
-        self, review: Review, project: Project, target: ReviewTarget, prepared: PreparedDiff
+        self,
+        review: Review,
+        project: Project,
+        target: ReviewTarget,
+        prepared: PreparedDiff,
+        sha: str,
     ) -> tuple[str, list[dict[str, Any]]]:
-        """The dự án's shared .claude files for the first pass, chosen by what the change
-        touches (review procedure first, then CLAUDE.md, rules and skills that match), and a
-        record per file for the basis. Empty when the dự án has none or it cannot be read."""
+        """The .claude files for the first pass: the dự án's shared repo and the reviewed repo's
+        own `.claude`, chosen by what the change touches (review procedure first, then
+        CLAUDE.md, rules and skills that match), and a record per file for the basis. Empty
+        when neither exists or can be read."""
         business = self._business(project)
-        if business is None or not business.claude_repo_path:
-            return "", []
-        self._step(review.id, "llm", f"đọc repo .claude {business.claude_repo_path}")
-        shared = load_shared_config(
+        shared_files: list[claude_kit.KitFile] = []
+        if business is not None and business.claude_repo_path:
+            self._step(review.id, "llm", f"đọc repo .claude {business.claude_repo_path}")
+            shared = load_shared_config(
+                self._client,
+                business,
+                project.connection_id,
+                sensitive_paths=self._settings.sensitive_paths,
+            )
+            shared_files = shared.files if shared else []
+        in_diff = {f.path for f in prepared.files} | set(prepared.excluded)
+        repo_files, _ = load_repo_claude(
             self._client,
-            business,
-            project.connection_id,
+            project,
+            sha,
+            changed=in_diff,
             sensitive_paths=self._settings.sensitive_paths,
         )
-        if shared is None or not shared.files:
+        if not shared_files and not repo_files:
             return "", []
+        # Of two equal files select() keeps the first: the repo's own copy.
         chosen = claude_kit.select(
-            shared.files,
+            [*repo_files, *shared_files],
             prepared.files,
             target.title,
             target.description,
-            include_globs(business.claude_repo_include),
+            include_globs(business.claude_repo_include if business else None),
         )
         picked = [*chosen.procedure, *chosen.ranked]
+        shared_name = business.claude_repo_path if business else ""
         packed = pack_instructions(
-            [("shared", f"repo {business.claude_repo_path}", "", [f.doc() for f in picked])],
+            [
+                (
+                    "shared",
+                    f"repo {shared_name}",
+                    "",
+                    [f.doc() for f in picked if f.source == "shared"],
+                ),
+                (
+                    "repo",
+                    f"của repo {project.path_with_namespace}",
+                    "",
+                    [f.doc() for f in picked if f.source == "repo"],
+                ),
+            ],
             MAX_GUIDANCE_CHARS,
         )
         why = {f.path: f.why for f in picked}

@@ -17,8 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.collector.gitlab.client import GitLabClient, GitLabError
-from app.models import BusinessProject
+from app.collector.gitlab.client import ArchiveTooLarge, GitLabClient, GitLabError
+from app.models import BusinessProject, Project
 from app.review.checkout import CheckoutError, checkout
 from app.review.claude_kit import SHARED_MOUNT, KitFile, mount_shared, scan
 from app.review.discover import CLIPPED, Doc, ProjectDocs, discover, instruction_kind
@@ -100,7 +100,7 @@ def load_shared_config(
             # Not mounted (preview, or the path is taken): named after the repo, not readable.
             prefix = SHARED_MOUNT if mounted else f"{business.claude_repo_path}:.claude"
             files = scan(mounted or layout / ".claude", prefix, "shared")
-    except (GitLabError, CheckoutError, OSError, KeyError) as exc:
+    except (GitLabError, ArchiveTooLarge, CheckoutError, OSError, KeyError) as exc:
         log.warning(
             "shared .claude repo not read",
             extra={"repo": business.claude_repo_path, "error": exc.__class__.__name__},
@@ -137,6 +137,40 @@ def _mount(
             extra={"repo": business.claude_repo_path, "error": exc.__class__.__name__},
         )
         return None, exc.__class__.__name__
+
+
+def load_repo_claude(
+    client: GitLabClient,
+    project: Project,
+    sha: str,
+    *,
+    changed: set[str],
+    sensitive_paths: list[str],
+) -> tuple[list[KitFile], str | None]:
+    """The reviewed repo's own `.claude` at the reviewed commit, for the first pass (the deep
+    pass reads it from its full checkout). Only that folder is downloaded. A file the change
+    itself edits is left out (its author could have written it). ([], why) when the repo has
+    none or it cannot be read; the review goes on without it."""
+    try:
+        with checkout(
+            client,
+            project.external_id,
+            sha,
+            max_archive_bytes=MAX_ARCHIVE_BYTES,
+            sensitive_paths=sensitive_paths,
+            path=".claude",
+        ) as (root, _):
+            files = scan(root / ".claude", ".claude", "repo")
+    except GitLabError as exc:
+        if exc.status_code == 404:  # no such folder at this commit
+            return [], "none"
+        log.warning("repo .claude not read", extra={"error": exc.__class__.__name__})
+        return [], "error"
+    except (ArchiveTooLarge, CheckoutError, OSError) as exc:  # old GitLab: whole repo
+        log.warning("repo .claude not read", extra={"error": exc.__class__.__name__})
+        return [], "error"
+    files = [f for f in files if f.path not in changed]
+    return files, None if files else "none"
 
 
 @dataclass
