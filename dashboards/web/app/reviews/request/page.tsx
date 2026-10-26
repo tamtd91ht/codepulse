@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import { Icon } from "@/components/icons";
+import { LinkAuthor } from "@/components/LinkAuthor";
 import { Alert, Card, EmptyState, Loading, PageHeader, Pill, Segmented } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
 import { VERDICT_LABEL, dateTime, localDay, relative } from "@/lib/format";
@@ -413,6 +414,12 @@ export default function RequestReviewPage() {
                           <span className="muted" title="Chưa gắn với người nào trong CodePulse">
                             {c.author_name ?? "—"} <Icon name="alertCircle" size={12} />
                           </span>
+                        )}
+                        {!c.user_id && c.author_email && (
+                          <>
+                            {" "}
+                            <LinkAuthor email={c.author_email} name={c.author_name} onDone={() => void commits.mutate()} />
+                          </>
                         )}
                       </td>
                       <td className="muted" title={c.authored_at ? dateTime(c.authored_at) : undefined}>

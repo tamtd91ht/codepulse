@@ -391,6 +391,11 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
                   <span className="muted">{b.repos} repo</span>
                   <IconButton icon="panelLeft" label="Mở dự án" onClick={() => setOpenTile(b.id)} />
                   <IconButton
+                    icon="members"
+                    label={`Thành viên GitLab của ${b.name}`}
+                    onClick={() => window.location.assign(`/admin?members=bp:${b.id}#people`)}
+                  />
+                  <IconButton
                     icon="edit"
                     label={`Đổi tên / mô tả ${b.name}`}
                     onClick={() => {

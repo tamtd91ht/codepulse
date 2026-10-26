@@ -445,6 +445,8 @@ export interface CommitRow {
   title: string;
   authored_at: string | null;
   author_name: string | null;
+  /** Admins only: to link an author nobody is recognised as. */
+  author_email?: string | null;
   user_id: number | null;
   user_name: string | null;
   is_merge: boolean;
@@ -709,4 +711,36 @@ export interface PurgeResult {
   scope: PurgeScope;
   rows: Record<string, number>;
   recompute_queued: boolean;
+}
+
+/** GET /projects/{id}/gitlab-members, /business-projects/{id}/gitlab-members. */
+export interface GitLabMember {
+  gitlab_id: number;
+  username: string;
+  name: string | null;
+  state: string;
+  access: string;
+  email: string | null;
+  repos: string[];
+  /** Sent back on import: the GitLab the member is read back from. */
+  connection_id: number;
+  /** linked: already someone's; link: firm match; review: weak hint (same name), not preselected; create: no match; skip: bot or blocked. */
+  action: "linked" | "link" | "review" | "create" | "skip";
+  user_id: number | null;
+  /** same_email | username_domain | commit_noreply | commit_email | same_name | bot | a GitLab state. */
+  reason: string | null;
+}
+
+export interface GitLabMembers {
+  repos: number;
+  /** More than 200 repos or 1000 members: the list is not complete. */
+  truncated: boolean;
+  members: GitLabMember[];
+}
+
+export interface GitLabMembersImported {
+  created: number;
+  linked: number;
+  skipped: number;
+  emails_linked: number;
 }

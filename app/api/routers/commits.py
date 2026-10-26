@@ -265,6 +265,8 @@ def _row(
         title=title[:200],
         authored_at=raw.get("authored_date") or raw.get("created_at"),
         author_name=raw.get("author_name"),
+        # For the admin to link an unrecognised author to a person; nobody else needs it.
+        author_email=(raw.get("author_email") or None) if principal.is_admin else None,
         user_id=user_id,
         user_name=user_name,
         is_merge=is_merge,

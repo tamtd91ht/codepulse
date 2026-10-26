@@ -518,6 +518,7 @@ class CommitRowOut(BaseModel):
     title: str
     authored_at: str | None
     author_name: str | None
+    author_email: str | None = None  # admins only: to link an unmapped author
     user_id: int | None
     user_name: str | None
     is_merge: bool
@@ -821,3 +822,68 @@ class PurgeOut(BaseModel):
     rows: dict[str, int]  # deleted rows per table
     # False when the metrics re-aggregation could not be queued (Redis down).
     recompute_queued: bool
+
+
+# -- GitLab members -> CodePulse people (outside the spec; see PROGRESS.md) ------------------------
+
+
+class GitLabMemberOut(BaseModel):
+    gitlab_id: int
+    username: str
+    name: str | None
+    state: str
+    access: str  # guest | reporter | developer | maintainer | owner
+    email: str | None  # public (or visible to the token); used to suggest a match
+    repos: list[str]
+    connection_id: int  # sent back on import: the GitLab the user is read back from
+    # linked: already a person's; link: firm match; review: weak hint (same name), not
+    # preselected; create: no match; skip: bot, blocked or deactivated
+    action: Literal["linked", "link", "review", "create", "skip"]
+    user_id: int | None  # the linked or suggested person
+    # same_email | username_domain | commit_noreply | commit_email | same_name | bot | <state>
+    reason: str | None
+
+
+class GitLabMembersOut(BaseModel):
+    repos: int  # repos listed
+    truncated: bool  # more than 200 repos or 1000 members: the list is not complete
+    members: list[GitLabMemberOut]
+
+
+class GitLabMemberChoice(BaseModel):
+    """What the admin confirmed; the username and state are read back from GitLab."""
+
+    gitlab_id: int = Field(gt=0)
+    connection_id: int
+    action: Literal["link", "create", "skip"]
+    user_id: int | None = None  # link
+    full_name: str | None = Field(default=None, max_length=255)  # create
+    email: str | None = Field(default=None, pattern=r"^$|^[^@\s]+@[^@\s]+$", max_length=255)
+    move: bool = False  # take the account from the person it is linked to
+
+
+class GitLabMembersImport(BaseModel):
+    members: list[GitLabMemberChoice] = Field(min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def _once_each(self) -> "GitLabMembersImport":
+        ids = [m.gitlab_id for m in self.members]
+        if len(ids) != len(set(ids)):
+            raise ValueError("each GitLab member may appear once")
+        return self
+
+
+class GitLabMembersImported(BaseModel):
+    created: int
+    linked: int
+    skipped: int
+    emails_linked: int  # commit emails tied to the people afterwards
+
+
+class AuthorLinkIn(BaseModel):
+    """A commit author (git email) to an existing person, or to a new one."""
+
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+$", max_length=255)
+    name: str | None = Field(default=None, max_length=255)
+    user_id: int | None = None
+    create: bool = False  # True: a new person named `name`, with `email` as primary email

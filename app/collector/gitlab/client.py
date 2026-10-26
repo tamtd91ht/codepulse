@@ -275,6 +275,10 @@ class GitLabClient:
     def user(self, user_id: int) -> Any:
         return self.get(f"/users/{user_id}")
 
+    def project_members(self, project_id: int) -> Iterator[Any]:
+        """Everyone with access to the project, inherited group members included."""
+        return self.paginate(f"/projects/{project_id}/members/all", {"per_page": 100})
+
     def merge_request(self, project_id: int, iid: int) -> Any:
         return self.get(f"/projects/{project_id}/merge_requests/{iid}")
 

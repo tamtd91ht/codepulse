@@ -3,6 +3,7 @@
 import { type FormEvent, type KeyboardEvent, useEffect, useState } from "react";
 
 import { ClaudeLogin } from "@/components/ClaudeLogin";
+import { GitLabMembers } from "@/components/GitLabMembers";
 import { Icon, type IconName, IconButton } from "@/components/icons";
 import { LlmCheck } from "@/components/LlmCheck";
 import { PurgeData } from "@/components/PurgeData";
@@ -327,6 +328,7 @@ function PeopleTab() {
           </div>
         )}
       </Card>
+      <GitLabMembers />
       <TeamAdmin />
     </>
   );
