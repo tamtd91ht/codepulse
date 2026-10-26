@@ -150,6 +150,48 @@ export function TeamAdmin() {
             {users.data ? `${users.data.filter((u) => u.active !== false).length} người đang hoạt động.` : ""} Tài khoản
             Git/GitLab chưa nhận ra được gắn với người ở mục &ldquo;Tài khoản chưa gắn người&rdquo;.
           </p>
+          {users.data && users.data.length > 0 && (
+            <details>
+              <summary className="muted">Danh sách người dùng ({users.data.length})</summary>
+              <div className="table-wrap">
+                <table>
+                  <tbody>
+                    {users.data.map((u) => (
+                      <tr key={u.id} className={u.active === false ? "muted" : undefined}>
+                        <td>{u.full_name ?? "—"}</td>
+                        <td>
+                          <code>{u.primary_email ?? "—"}</code>
+                          {u.active === false ? " · đã tắt" : ""}
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          <IconButton
+                            icon="remove"
+                            label={`Xoá ${u.full_name ?? u.primary_email ?? "người này"}`}
+                            tone="danger"
+                            onClick={() => {
+                              const name = u.full_name ?? u.primary_email ?? `#${u.id}`;
+                              if (
+                                !window.confirm(
+                                  `Xoá người dùng "${name}"? Lịch sử review vẫn giữ (không còn gắn tác giả); ` +
+                                    "tài khoản Git/GitLab/Telegram của họ trở về chưa gắn người.",
+                                )
+                              )
+                                return;
+                              void run(async () => {
+                                await api.delete(`/users/${u.id}`);
+                                await users.mutate();
+                                if (teamId) await members.mutate();
+                              }, `Đã xoá ${name}.`);
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
         </div>
       </div>
 

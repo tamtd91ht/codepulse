@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from rq import Retry
-from sqlalchemy import ColumnElement, and_, func, or_, select, update
+from sqlalchemy import ColumnElement, and_, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -58,13 +58,17 @@ from app.crypto import SecretBox
 from app.identity.autolink import unmapped_accounts
 from app.models import (
     Account,
+    AuditLog,
     BusinessProject,
     Connection,
+    FindingDispute,
     MergeRequest,
+    MetricsUserPeriod,
     Project,
     Review,
     Team,
     TeamMember,
+    TelegramRequest,
     User,
 )
 from app.models.source import ALL_BRANCHES
@@ -799,6 +803,78 @@ def update_user(
     audit(session, principal.user_id, "user.update", f"user:{user.id}", **changes)
     session.commit()
     return user
+
+
+@router.delete("/users/{user_id}", status_code=204)
+def delete_user(
+    user_id: int,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+    queue: Annotated[Enqueuer, Depends(get_queue)],
+) -> None:
+    """Remove a person created by mistake (outside the spec, requested by the user).
+
+    Review history stays (docs/specs/AGENTS.md): their reviews, disputes and Telegram requests
+    lose the author instead, their Git/GitLab/Telegram accounts go back to "not linked" so the
+    right person can claim them, and the team numbers of the periods they had reviews in are
+    re-aggregated without them."""
+    if user_id == principal.user_id:
+        raise HTTPException(409, "you cannot remove yourself")
+    user = _get(session, User, user_id, "user")
+    first, last = session.execute(
+        select(func.min(Review.finished_at), func.max(Review.finished_at)).where(
+            Review.author_user_id == user_id
+        )
+    ).one()
+    rows = {
+        "reviews": session.execute(
+            update(Review).where(Review.author_user_id == user_id).values(author_user_id=None)
+        ).rowcount,  # type: ignore[attr-defined]
+        "accounts": session.execute(
+            update(Account).where(Account.user_id == user_id).values(user_id=None)
+        ).rowcount,  # type: ignore[attr-defined]
+        "team_members": session.execute(
+            delete(TeamMember).where(TeamMember.user_id == user_id)
+        ).rowcount,  # type: ignore[attr-defined]
+        "metrics": session.execute(
+            delete(MetricsUserPeriod).where(MetricsUserPeriod.user_id == user_id)
+        ).rowcount,  # type: ignore[attr-defined]
+    }
+    session.execute(
+        update(FindingDispute).where(FindingDispute.raised_by == user_id).values(raised_by=None)
+    )
+    session.execute(
+        update(FindingDispute).where(FindingDispute.decided_by == user_id).values(decided_by=None)
+    )
+    session.execute(
+        update(TelegramRequest).where(TelegramRequest.user_id == user_id).values(user_id=None)
+    )
+    session.execute(
+        update(AuditLog).where(AuditLog.actor_user_id == user_id).values(actor_user_id=None)
+    )
+    audit(
+        session,
+        principal.user_id,
+        "user.delete",
+        f"user:{user_id}",
+        email=user.primary_email,
+        name=user.full_name,
+        rows=rows,
+    )
+    session.delete(user)
+    session.commit()
+    if first is not None and last is not None:
+        tz = ZoneInfo(settings.report_tz)
+        try:
+            queue.enqueue(
+                "app.scoring.aggregate.recompute_job",
+                first.astimezone(tz).date().isoformat(),
+                last.astimezone(tz).date().isoformat(),
+                job_timeout=REMOVAL_JOB_TIMEOUT * 6,
+            )
+        except Exception:
+            log.exception("could not queue the re-aggregation after removing a user")
 
 
 @router.get("/teams", response_model=list[TeamOut])
