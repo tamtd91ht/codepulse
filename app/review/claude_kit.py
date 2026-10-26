@@ -15,12 +15,18 @@ skills). Instead:
 - everything else is an index (path, description, why it may matter), the way Claude Code lists
   skills: a review is a deliberate act, so the agent loads what the change needs when it needs
   it instead of starting with everything. The shared repo is copied into the checkout under
-  SHARED_MOUNT, so the agent can Read any of it.
+  SHARED_MOUNT, so the agent can Read any of it;
+- a file with the same content as another (a skill copied into the repo's .claude) is quoted
+  once, so the copy does not take the budget of another file;
+- a quoted file that had to be shortened, or a chosen one left out for lack of room, is named
+  to the agent with its real size: it decides whether the rest matters for this change and Reads
+  it, instead of the cut silently deciding for it.
 
 Deterministic; the texts are redacted and are data for the model, never instructions to
 CodePulse.
 """
 
+import hashlib
 import math
 import re
 import shutil
@@ -72,6 +78,7 @@ class KitFile:
     text: str  # redacted, capped
     chars: int  # size before capping
     procedure: bool = False
+    digest: str = ""  # of the whole redacted text: equal content is quoted once
     score: float = 0.0
     why: list[str] = field(default_factory=list)  # why it was chosen, for the basis
 
@@ -84,6 +91,8 @@ class Selection:
     procedure: list[KitFile] = field(default_factory=list)  # quoted in their own section
     ranked: list[KitFile] = field(default_factory=list)  # quoted while the budget lasts
     catalog: list[KitFile] = field(default_factory=list)  # listed only, readable on demand
+    # (copy, kept): same content as a file already in the selection, left out.
+    duplicates: list[tuple[KitFile, KitFile]] = field(default_factory=list)
 
 
 # -- reading ---------------------------------------------------------------------------------
@@ -201,6 +210,7 @@ def scan(claude_dir: Path, prefix: str, source: str) -> list[KitFile]:
                 text=text if len(text) <= limit else text[:limit].rstrip() + CLIPPED,
                 chars=len(text),
                 procedure=procedure,
+                digest=hashlib.sha256(text.encode()).hexdigest(),
             )
         )
         if len(out) == MAX_FILES:
@@ -293,6 +303,22 @@ def select(
     """Split the catalogue into the review procedure, the files worth quoting for this change
     (best first) and the ones only listed. `pinned`: globs relative to a .claude folder that
     the admin always wants loaded ("File nạp thêm")."""
+    # Of files with equal content (across or within sources) the first is kept: the caller lists
+    # the source the agent can Read first. A copy would only repeat it; an admin's pinned glob
+    # still counts when it names the copy's place.
+    kept: dict[str, KitFile] = {}
+    duplicates: list[tuple[KitFile, KitFile]] = []
+    unique: list[KitFile] = []
+    rels: dict[int, list[str]] = {}
+    for f in files:
+        first = kept.setdefault(f.digest, f) if f.digest else f
+        if first is f:
+            unique.append(f)
+            rels[id(f)] = [f.rel]
+        else:
+            duplicates.append((f, first))
+            rels[id(first)].append(f.rel)
+    files = unique
     changed = [f.path for f in diff_files]
     terms = change_terms(diff_files, title, description)
     procedures = [f for f in files if f.procedure]
@@ -310,7 +336,7 @@ def select(
     for f in files:
         why: list[str] = []
         score = 0.0
-        if any(fnmatch(f.rel, g) for g in pinned):
+        if any(fnmatch(rel, g) for rel in rels[id(f)] for g in pinned):
             score += 100
             why.append("nạp thêm")
         if f.procedure:
@@ -353,7 +379,7 @@ def select(
     # The index: likely ones first (they are what the agent should open), then by path.
     catalog = [f for f in by_score if f.score >= MIN_SCORE and f not in ranked]
     catalog += sorted((f for f in rest if f.score < MIN_SCORE), key=lambda f: f.path)
-    return Selection(chosen, ranked, catalog)
+    return Selection(chosen, ranked, catalog, duplicates)
 
 
 # -- rendering -------------------------------------------------------------------------------
@@ -379,4 +405,18 @@ def render_catalog(files: list[KitFile], origin: dict[str, str]) -> str:
             break
         lines.append(line)
         used += len(line) + 1
+    return "\n".join(lines)
+
+
+def render_incomplete(items: list[tuple[str, int, int | None]]) -> str:
+    """Claude files the agent saw only part of: (path, characters quoted, full size or None when
+    unknown). 0 quoted = chosen for this change but left out for lack of room."""
+    lines: list[str] = []
+    for path, quoted, size in items:
+        if quoted:
+            total = f" of {size}" if size else ""
+            lines.append(f"- {path}: only the first ~{quoted}{total} characters are quoted")
+        else:
+            total = f", {size} characters" if size else ""
+            lines.append(f"- {path}: not quoted (no room){total}")
     return "\n".join(lines)

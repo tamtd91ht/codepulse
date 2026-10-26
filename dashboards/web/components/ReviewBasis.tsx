@@ -27,6 +27,7 @@ const NOT_LOADED_REASON: Record<string, string> = {
   // Reviews before the per-commit selection.
   name: "tên không thuộc nhóm review",
   budget: "hết giới hạn ký tự",
+  duplicate: "trùng nội dung, chỉ đưa vào một bản",
 };
 
 /** "v2 · 2 quy tắc · 5 tài liệu" for the history table. */
@@ -254,6 +255,12 @@ export function BasisCard({
                   <li key={`${d.source}:${d.path}`}>
                     <code>{d.path}</code>
                     {d.source === "shared" ? " (dùng chung)" : ""} · {NOT_LOADED_REASON[d.reason] ?? d.reason}
+                    {d.same_as ? (
+                      <>
+                        {" "}
+                        (giống <code>{d.same_as}</code>)
+                      </>
+                    ) : null}
                     {d.why?.length ? ` · ${d.why.join("; ")}` : ""}
                   </li>
                 ))}
@@ -279,7 +286,10 @@ export function BasisCard({
   );
 }
 
-type BasisDoc = Pick<NonNullable<ReviewBasis["instructions"]>[number], "path" | "source" | "status" | "why">;
+type BasisDoc = Pick<
+  NonNullable<ReviewBasis["instructions"]>[number],
+  "path" | "source" | "status" | "why" | "read"
+>;
 
 /** One quoted or opened Claude file: its path, where it came from and why it was chosen. */
 function DocRef({ doc, sharedRepo }: { doc: BasisDoc; sharedRepo?: string }) {
@@ -290,6 +300,9 @@ function DocRef({ doc, sharedRepo }: { doc: BasisDoc; sharedRepo?: string }) {
       {doc.status && doc.status !== "used" && (
         <Pill tone={RULE_STATUS[doc.status]?.tone}>{RULE_STATUS[doc.status]?.label ?? doc.status}</Pill>
       )}
+      {/* Partial or left out: the agent was told and could open the whole file. */}
+      {doc.read === true && <Pill tone="good">agent đã mở file</Pill>}
+      {doc.read === false && <span className="muted small"> · agent chưa mở file</span>}
       {doc.why?.length ? <span className="muted small"> ({doc.why.join("; ")})</span> : null}
     </span>
   );

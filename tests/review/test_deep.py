@@ -283,3 +283,14 @@ def test_the_prompt_names_the_shared_kit_only_when_codepulse_put_it_there() -> N
     absent = build_deep_prompt(target, "", "", "", prepared, [])
     assert "claude-shared" not in absent.user
     assert "no shared Claude configuration is in the checkout" in absent.user
+
+
+def test_the_prompt_tells_the_agent_which_quotes_are_incomplete() -> None:
+    prepared = PreparedDiff(files=list(DIFF.values()), excluded={})
+    target = ReviewTarget("demo/p", "Add lookup", "desc")
+    line = "- .claude/rules/perf.md: only the first ~8000 of 15300 characters are quoted"
+    prompt = build_deep_prompt(target, "", "", "", prepared, [], incomplete_text=line)
+    assert "INCOMPLETE QUOTES" in prompt.user and line in prompt.user
+    assert "Read the whole" in prompt.system
+    complete = build_deep_prompt(target, "", "", "", prepared, [])
+    assert "(none: every quoted file is complete)" in complete.user

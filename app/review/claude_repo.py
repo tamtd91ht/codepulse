@@ -21,7 +21,7 @@ from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.models import BusinessProject
 from app.review.checkout import CheckoutError, checkout
 from app.review.claude_kit import SHARED_MOUNT, KitFile, mount_shared, scan
-from app.review.discover import Doc, ProjectDocs, discover, instruction_kind
+from app.review.discover import CLIPPED, Doc, ProjectDocs, discover, instruction_kind
 from app.review.rules import rule_paths
 
 log = logging.getLogger(__name__)
@@ -152,7 +152,7 @@ def pack_instructions(groups: list[tuple[str, str, str, list[Doc]]], limit: int)
     prefix keeps a shared file from passing for one in the checkout. Each non-empty source is
     guaranteed an equal share; what one does not use goes to the others. Every file gets a
     record: used, partial (only its start fits, or discover() clipped it) or cut (not in the
-    prompt)."""
+    prompt), and `quoted`: how many characters of the file the prompt holds."""
     live = [group for group in groups if group[3]]
     if not live:
         return Packed("")
@@ -181,16 +181,22 @@ def pack_instructions(groups: list[tuple[str, str, str, list[Doc]]], limit: int)
         budget -= len(parts[-1]) + 2
         for doc in docs:
             block = f"### {prefix}{doc.path}\n{doc.text}"
-            record = {"path": doc.path, "kind": instruction_kind(doc.path), "source": source}
+            record: dict[str, Any] = {
+                "path": doc.path,
+                "kind": instruction_kind(doc.path),
+                "source": source,
+            }
             if budget <= len(doc.path) + 20:
-                record["status"] = "cut"
+                record["status"], record["quoted"] = "cut", 0
             elif len(block) > budget:
                 parts.append(block[:budget].rstrip() + "\n(… cắt bớt)")
                 record["status"] = "partial"
+                record["quoted"] = max(budget - (len(block) - len(doc.text)), 0)
                 budget = 0
             else:
                 parts.append(block)
                 record["status"] = "partial" if doc.clipped else "used"
+                record["quoted"] = len(doc.text) - (len(CLIPPED) if doc.clipped else 0)
                 budget -= len(block) + 2
             records.append(record)
     return Packed("\n\n".join(parts), records)

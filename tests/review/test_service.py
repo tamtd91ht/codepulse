@@ -476,7 +476,13 @@ def test_deep_review_verifies_candidates_adds_findings_and_caches_the_profile(
     assert review.deep["project_fit"] == ["Đúng kiến trúc; nên đặt parser cạnh app/billing"]
     assert review.deep["instruction_sources"] == ["CLAUDE.md", ".claude/rules/critical/money.md"]
     assert review.basis is not None and review.basis["instructions"] == [
-        {"path": "CLAUDE.md", "kind": "instructions", "source": "repo", "status": "used"},
+        {
+            "path": "CLAUDE.md",
+            "kind": "instructions",
+            "source": "repo",
+            "status": "used",
+            "quoted": 36,
+        },
     ]
     # Nothing in the change is about money: the rule is in the index, for the agent to Read.
     assert review.basis["claude_repo"] is None and review.basis["instructions_not_loaded"] == [
@@ -815,6 +821,80 @@ def test_deep_review_reads_the_shared_claude_repo_of_the_dự_án(
     assert user.index(f"### {mount}/CLAUDE.md") < user.index("### CLAUDE.md")
     assert "Kiểm tra idempotency" in user and f"### {mount}/skills/deploy/SKILL.md" not in user
     assert f"- {mount}/skills/deploy/SKILL.md (skill deploy" in user  # indexed, not quoted
+
+
+class ReadingAgent(FakeLLMProvider):
+    """A deep-review agent that Reads `paths` (relative to the checkout) before answering."""
+
+    def __init__(self, paths: list[str]) -> None:
+        super().__init__(deep_answer)
+        self._paths = paths
+
+    def review_in_repo(self, prompt: ReviewPrompt, workdir: str, **kwargs: Any) -> Any:
+        reads = [
+            {"type": "tool_use", "name": "Read", "input": {"file_path": f"{workdir}/{p}"}}
+            for p in self._paths
+        ]
+        self._events = [{"type": "assistant", "message": {"content": reads}}]
+        return super().review_in_repo(prompt, workdir, **kwargs)
+
+
+def test_deep_review_names_incomplete_quotes_and_quotes_a_copy_once(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    long_skill = "Đo p99 của mọi endpoint dưới 200ms.\n" * 300
+    business = BusinessProject(
+        name="Thu phí",
+        claude_repo_connection_id=project.connection_id,
+        claude_repo_external_id=2002,
+        claude_repo_path="demo/claude-config",
+        claude_repo_include="skills/perf/SKILL.md",
+    )
+    db_session.add(business)
+    db_session.flush()
+    project.business_project_id = business.id
+    mount_path = ".codepulse/claude-shared"
+    perf = f"{mount_path}/skills/perf/SKILL.md"
+    agent = ReadingAgent([perf])
+    # The repo carries a copy of a shared skill.
+    repo_files = {
+        **REPO_FILES,
+        ".claude/skills/code-review/SKILL.md": SHARED_FILES["skills/code-review/SKILL.md"],
+    }
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount(router)
+        router.get(f"{API}/projects/1001/merge_requests/1").respond(
+            json=fixture("merge_requests.json")[0]
+        )
+        router.get(f"{API}/projects/1001/repository/archive.tar.gz").mock(
+            return_value=httpx.Response(200, content=archive_bytes(repo_files))
+        )
+        router.get(f"{API}/projects/2002").respond(json={"id": 2002, "default_branch": "main"})
+        router.get(f"{API}/projects/2002/repository/commits/main").respond(json={"id": "c" * 40})
+        router.get(f"{API}/projects/2002/repository/archive.tar.gz").mock(
+            return_value=httpx.Response(
+                200,
+                content=archive_bytes({**SHARED_FILES, "skills/perf/SKILL.md": long_skill}),
+            )
+        )
+        service = ReviewService(
+            db_session, client, ProfileOrChunk(FakeLLMProvider(sqli)), DEEP_SETTINGS, agent=agent
+        )
+        review = service.review_mr(project, merge_request, HEAD)
+
+    assert review is not None and review.mode == "deep" and review.basis is not None
+    user = agent.repo_calls[0]["prompt"].user
+    # The agent is told the long skill is incomplete, with its real size.
+    assert f"- {perf}: only the first ~8000 of {len(long_skill)} characters are quoted" in user
+    # The repo's copy of a shared skill is quoted once, and reported as a duplicate.
+    assert user.count("Kiểm tra idempotency") == 1
+    (copy,) = [d for d in review.basis["instructions_not_loaded"] if d["reason"] == "duplicate"]
+    assert copy["path"] == ".claude/skills/code-review/SKILL.md"
+    assert copy["same_as"] == f"{mount_path}/skills/code-review/SKILL.md"
+    # The basis says the agent opened the whole skill.
+    (record,) = [i for i in review.basis["instructions"] if i["path"] == perf]
+    assert (record["status"], record["quoted"], record["read"]) == ("partial", 8000, True)
 
 
 def test_an_unreadable_shared_repo_does_not_stop_the_deep_review(

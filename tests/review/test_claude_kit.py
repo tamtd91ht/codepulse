@@ -7,6 +7,7 @@ from app.review.claude_kit import (
     SHARED_MOUNT,
     mount_shared,
     render_catalog,
+    render_incomplete,
     scan,
     select,
 )
@@ -98,6 +99,54 @@ def test_select_follows_the_change(tmp_path: Path) -> None:
     # Unrelated, and a path-scoped rule whose paths the change does not touch.
     assert "kafka-architect" in catalog and "frontend" in catalog
     assert by_name["frontend"].why == ["paths không khớp"]
+
+
+def test_a_file_in_both_sources_is_chosen_once(tmp_path: Path) -> None:
+    shared = scan(kit(tmp_path / "shared"), SHARED_MOUNT, "shared")
+    claude = kit(tmp_path / "repo")
+    write(claude, "rules/critical/tenant-isolation.md", "# Tenant isolation\nRepo's own version.")
+    repo = scan(claude, ".claude", "repo")
+    diff = [parse_diff("app/invoice/repository.py", TENANT_DIFF)]
+    chosen = select([*shared, *repo], diff, "Filter invoices by tenant", None)
+    kept = [*chosen.procedure, *chosen.ranked, *chosen.catalog]
+    # Equal content: the shared copy stays, the repo's is reported as its duplicate.
+    assert all(f.source == "shared" for f in kept if f.name != "critical/tenant-isolation")
+    copies = {copy.path: first.path for copy, first in chosen.duplicates}
+    assert copies[".claude/skills/kafka-architect/SKILL.md"] == (
+        f"{SHARED_MOUNT}/skills/kafka-architect/SKILL.md"
+    )
+    # A file with the same name but other content is a different file: both are kept.
+    tenant = [f.source for f in kept if f.name == "critical/tenant-isolation"]
+    assert sorted(tenant) == ["repo", "shared"]
+    assert ".claude/rules/critical/tenant-isolation.md" not in copies
+
+
+def test_the_first_copy_is_kept_and_a_pin_on_the_copy_still_counts(tmp_path: Path) -> None:
+    shared = scan(kit(tmp_path / "shared"), SHARED_MOUNT, "shared")
+    claude = tmp_path / "repo" / ".claude"
+    # The shared rule copied into the repo as a skill: same text, another place.
+    text = (tmp_path / "shared/.claude/rules/critical/tenant-isolation.md").read_text("utf-8")
+    write(claude, "skills/tenant/SKILL.md", text)
+    repo = scan(claude, ".claude", "repo")
+    diff = [parse_diff("web/app/page.tsx", "@@ -1 +1 @@\n-a\n+b\n")]
+    # Repo first (the shared kit is not mounted): the readable repo copy is the one kept.
+    chosen = select([*repo, *shared], diff, "x", None, ["skills/tenant/SKILL.md"])
+    assert {c.path: f.path for c, f in chosen.duplicates}[
+        f"{SHARED_MOUNT}/rules/critical/tenant-isolation.md"
+    ] == ".claude/skills/tenant/SKILL.md"
+    # Pinned by the place of the shared copy's twin, the kept file is still loaded first.
+    chosen = select([*shared, *repo], diff, "x", None, ["skills/tenant/SKILL.md"])
+    assert chosen.ranked[0].path == f"{SHARED_MOUNT}/rules/critical/tenant-isolation.md"
+    assert "nạp thêm" in chosen.ranked[0].why
+
+
+def test_incomplete_quotes_name_the_real_size() -> None:
+    text = render_incomplete([("a/SKILL.md", 8000, 15300), ("b.md", 0, 4200), ("c.md", 900, None)])
+    assert text.splitlines() == [
+        "- a/SKILL.md: only the first ~8000 of 15300 characters are quoted",
+        "- b.md: not quoted (no room), 4200 characters",
+        "- c.md: only the first ~900 characters are quoted",
+    ]
 
 
 def test_paths_and_pinned_globs_win(tmp_path: Path) -> None:

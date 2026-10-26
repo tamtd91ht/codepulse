@@ -47,6 +47,12 @@ def test_pack_shares_the_budget_and_reports_what_fit() -> None:
     assert by_path[".claude/rules/x.md"]["status"] == "partial"  # clipped by discover()
     statuses = [by_path[d.path]["status"] for d in shared]
     assert statuses[0] == "used" and statuses[-1] == "cut" and "partial" in statuses
+    # How much of each file the prompt holds, for the agent's INCOMPLETE QUOTES.
+    assert by_path["CLAUDE.md"]["quoted"] == 100
+    assert by_path[".claude/rules/x.md"]["quoted"] == 50
+    assert by_path[shared[-1].path]["quoted"] == 0
+    partial = next(by_path[d.path] for d in shared if by_path[d.path]["status"] == "partial")
+    assert 0 < partial["quoted"] < 300
     assert "### group/cfg:.claude/skills/s0/SKILL.md" in packed.text
     assert len(packed.text) < 1200
     assert pack_instructions([("repo", "Repo", "", [])], 1000).text == ""

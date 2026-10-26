@@ -188,9 +188,14 @@ export interface ReviewBasis {
     procedure?: boolean;
     /** Why it was chosen for this change: "lệnh review", "khớp: tenant, invoice"… */
     why?: string[];
+    /** Characters of the file the prompt held. */
+    quoted?: number;
+    /** status partial | cut: whether the agent opened the file (it was told the quote is incomplete). */
+    read?: boolean;
   }[];
   /**
    * reason "catalog": listed in the index the agent loads from on demand (`read`: it did);
+   * "duplicate": same content as `same_as`, quoted once;
    * "name" | "budget" on reviews before the per-commit selection.
    */
   instructions_not_loaded?: {
@@ -200,6 +205,8 @@ export interface ReviewBasis {
     kind?: string;
     read?: boolean;
     why?: string[];
+    /** reason "duplicate": the file with the same content that was used instead. */
+    same_as?: string;
   }[];
   claude_repo?: {
     repo: string;

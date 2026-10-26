@@ -660,14 +660,16 @@ class ReviewService:
                 # file the change itself edits is not used (the author could have written it).
                 # Excluded files (too large, ignored, binary) were changed all the same.
                 in_diff = {f.path for f in prepared.files} | set(prepared.excluded)
-                kit = [
-                    *(shared.files if shared else []),
-                    *(
-                        f
-                        for f in claude_kit.scan(root / ".claude", ".claude", "repo")
-                        if f.path not in in_diff
-                    ),
+                shared_files = shared.files if shared else []
+                repo_files = [
+                    f
+                    for f in claude_kit.scan(root / ".claude", ".claude", "repo")
+                    if f.path not in in_diff
                 ]
+                # Of two equal files select() keeps the first: the shared one when the agent can
+                # Read it (mounted), else the repo's own copy.
+                mounted = bool(shared and shared.info.get("mounted"))
+                kit = [*shared_files, *repo_files] if mounted else [*repo_files, *shared_files]
                 chosen = claude_kit.select(
                     kit, prepared.files, target.title, target.description, extra
                 )
@@ -699,6 +701,18 @@ class ReviewService:
                 # first, then the rest.
                 cut = {r["path"] for r in packed.records if r["status"] == "cut"}
                 unquoted = [f for f in chosen.ranked if f.path in cut] + chosen.catalog
+                # Files the agent saw only part of, with their real size: it weighs whether the
+                # rest matters for this change and Reads it, rather than the budget deciding.
+                sizes = {f.path: f.chars for f in [*chosen.procedure, *chosen.ranked]}
+                incomplete = [
+                    (f.path, len(f.text) - len(CLIPPED), f.chars)
+                    for f in chosen.procedure
+                    if f.text.endswith(CLIPPED)
+                ] + [
+                    (r["path"], r["quoted"], sizes.get(r["path"]))
+                    for r in packed.records
+                    if r["status"] in ("partial", "cut")
+                ]
                 origin = {"shared": f"dùng chung {shared_repo}", "repo": "của repo"}
                 # The shared CLAUDE.md usually says what the dự án is: the profile reads it too,
                 # after the repository's own documents, named after the shared repo.
@@ -727,7 +741,8 @@ class ReviewService:
                     candidates,
                     claude_kit.render_procedure(chosen.procedure),
                     claude_kit.render_catalog(unquoted, origin),
-                    shared_mounted=bool(shared and shared.info.get("mounted")),
+                    shared_mounted=mounted,
+                    incomplete_text=claude_kit.render_incomplete(incomplete),
                 )
                 tracker = LiveTracker(str(root))
                 result = agent.review_in_repo(
@@ -763,9 +778,14 @@ class ReviewService:
             log.exception("deep review crashed; first pass kept", extra={"review_id": review.id})
             return None
         review.mode = "deep"
+        # Opening a copy of a file reads the same text as opening the file itself.
+        opened = set(tracker.reads) | {
+            first.path for copy, first in chosen.duplicates if copy.path in tracker.reads
+        }
         review.basis = {
             **(review.basis or {}),
-            # What the model was given (source, kind, whether it fit) and what it was not.
+            # What the model was given (source, kind, whether it fit) and what it was not; for a
+            # file it saw only part of, `read`: whether the agent opened the file.
             "instructions": [
                 {
                     "path": f.path,
@@ -774,22 +794,37 @@ class ReviewService:
                     "status": "partial" if f.text.endswith(CLIPPED) else "used",
                     "procedure": True,
                     "why": f.why,
+                    **({"read": f.path in opened} if f.text.endswith(CLIPPED) else {}),
                 }
                 for f in chosen.procedure
             ]
-            + packed.records[:80],
+            + [
+                {**r, "read": r["path"] in opened} if r["status"] in ("partial", "cut") else r
+                for r in packed.records[:80]
+            ],
             # Not quoted: the agent saw them listed and could Read them; `read` says whether it did.
+            # A copy of a file already chosen (same content) is not quoted twice.
             "instructions_not_loaded": [
                 {
                     "path": f.path,
                     "source": f.source,
                     "kind": f.kind,
                     "reason": "catalog",
-                    "read": f.path in tracker.reads,
+                    "read": f.path in opened,
                     **({"why": f.why} if f.why else {}),
                 }
                 for f in unquoted
-            ][:120],
+            ][:120]
+            + [
+                {
+                    "path": copy.path,
+                    "source": copy.source,
+                    "kind": copy.kind,
+                    "reason": "duplicate",
+                    "same_as": first.path,
+                }
+                for copy, first in chosen.duplicates
+            ][:40],
             "claude_repo": shared.info if shared else None,
             "profile": (
                 {
