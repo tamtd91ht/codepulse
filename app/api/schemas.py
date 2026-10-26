@@ -771,3 +771,29 @@ class ClaudeRepoPreviewOut(BaseModel):
     # path (relative to .claude), kind, name, description, chars, clipped, procedure, why
     loaded: list[dict[str, Any]]  # quoted in every deep review
     not_loaded: list[dict[str, Any]]  # same + reason (by_commit | paths): chosen per commit
+
+
+# -- wiping this server's data from the Admin screen (outside the spec; see PROGRESS.md) --------
+
+
+class PurgeScopeOut(BaseModel):
+    scope: Literal["reviews", "collected", "all"]
+    confirm: str  # what the admin must type
+    tables: list[str]  # deleted, in order
+
+
+class PurgeInfoOut(BaseModel):
+    scopes: list[PurgeScopeOut]
+    counts: dict[str, int]  # rows per table now
+
+
+class PurgeIn(BaseModel):
+    scope: Literal["reviews", "collected", "all"]
+    confirm: str = Field(min_length=1, max_length=100)
+
+
+class PurgeOut(BaseModel):
+    scope: Literal["reviews", "collected", "all"]
+    rows: dict[str, int]  # deleted rows per table
+    # False when the metrics re-aggregation could not be queued (Redis down).
+    recompute_queued: bool

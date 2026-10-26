@@ -5,6 +5,7 @@ import { type FormEvent, type KeyboardEvent, useEffect, useState } from "react";
 import { ClaudeLogin } from "@/components/ClaudeLogin";
 import { Icon, type IconName, IconButton } from "@/components/icons";
 import { LlmCheck } from "@/components/LlmCheck";
+import { PurgeData } from "@/components/PurgeData";
 import { RepoAdmin } from "@/components/RepoAdmin";
 import { ReviewSettings } from "@/components/ReviewSettings";
 import { TeamAdmin } from "@/components/TeamAdmin";
@@ -14,7 +15,7 @@ import { WebhookAdmin } from "@/components/WebhookAdmin";
 import { ApiError, api, useApi } from "@/lib/api";
 import type { Account, Connection, LlmCosts, Person } from "@/lib/types";
 
-type Tab = "gitlab" | "repos" | "people" | "telegram" | "webhooks" | "llm";
+type Tab = "gitlab" | "repos" | "people" | "telegram" | "webhooks" | "llm" | "data";
 const TABS: { key: Tab; label: string; icon: IconName; hint: string }[] = [
   { key: "gitlab", label: "Kết nối GitLab", icon: "gitlab", hint: "Token bot và máy chủ GitLab" },
   { key: "repos", label: "Dự án & Repo", icon: "folder", hint: "Dự án, group, repo, review theo repo" },
@@ -22,6 +23,7 @@ const TABS: { key: Tab; label: string; icon: IconName; hint: string }[] = [
   { key: "telegram", label: "Telegram", icon: "pulse", hint: "Bot nhận lệnh review theo dự án" },
   { key: "webhooks", label: "Webhook thông báo", icon: "webhook", hint: "POST kết quả review tới endpoint của bạn" },
   { key: "llm", label: "LLM & Chi phí", icon: "activity", hint: "Kết nối LLM, chi phí theo tháng" },
+  { key: "data", label: "Xoá dữ liệu", icon: "remove", hint: "Làm sạch dữ liệu trên server này" },
 ];
 const isTab = (v: string): v is Tab => TABS.some((t) => t.key === v);
 const KIND: Record<string, string> = { git_email: "Email git", gitlab_user: "GitLab", telegram: "Telegram" };
@@ -91,6 +93,7 @@ export default function AdminPage() {
         {tab === "telegram" && <TelegramAdmin />}
         {tab === "webhooks" && <WebhookAdmin />}
         {tab === "llm" && <LlmTab />}
+        {tab === "data" && <PurgeData />}
       </div>
     </>
   );

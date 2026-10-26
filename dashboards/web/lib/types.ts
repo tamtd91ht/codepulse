@@ -694,3 +694,15 @@ export interface ActivityOut {
   recent: ActivityItem[];
   hidden: number;
 }
+
+/** GET/POST /admin/purge: wipe this server's data (ADMIN_EMAILS only). */
+export type PurgeScope = "reviews" | "collected" | "all";
+export interface PurgeInfo {
+  scopes: { scope: PurgeScope; confirm: string; tables: string[] }[];
+  counts: Record<string, number>;
+}
+export interface PurgeResult {
+  scope: PurgeScope;
+  rows: Record<string, number>;
+  recompute_queued: boolean;
+}
