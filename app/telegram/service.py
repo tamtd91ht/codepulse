@@ -42,13 +42,21 @@ from app.models import (
 from app.models.source import ALL_BRANCHES
 from app.review.rubric import RUBRIC_VERSION
 from app.scoring.verdict import VERDICT_LABEL
-from app.telegram.commands import Command, ReviewArgs, match_repo, parse, parse_review
+from app.telegram.commands import (
+    MAX_RANGE_DAYS,
+    Command,
+    ReviewArgs,
+    match_repo,
+    parse,
+    parse_review,
+)
 from app.telegram.picker import (
     MAX_ITEMS,
     Item,
     MemoryPickerStore,
     PickerState,
     PickerStore,
+    all_branches_row,
     decode,
     keyboard,
     menu_keyboard,
@@ -1116,6 +1124,11 @@ class BotService:
         if state is None:
             if kind == "commit":
                 branch = review_branch(project, args.branch)
+                if branch != ALL_BRANCHES and len(people) <= 1:
+                    who = people[0].id if people else 0
+                    self.pending_markup = {
+                        "inline_keyboard": [all_branches_row(project.id, who, args.days)]
+                    }
                 return (
                     f"{esc(project.path_with_namespace)}: không có commit nào"
                     f" trong {args.days} ngày qua trên {esc(branch_label(branch))}.\n" + BRANCH_HINT
@@ -1159,6 +1172,8 @@ class BotService:
             raw=raw,
             project_id=project.id,
             person_id=people[0].id if len(people) == 1 else None,
+            branch=args.branch or "",
+            days=args.days,
             may_force=me.is_admin or me.is_lead,
         )
 
@@ -1394,9 +1409,17 @@ class BotService:
             if action.kind == "repo":
                 return self._repo_callback(action.op, int(action.arg or 0), cb, me)
             if action.kind == "person":
-                project_part, _, user_part = action.arg.partition(":")
+                project_part, user_part, branch_part, days_part = (
+                    [*action.arg.split(":"), "", "", "", ""]
+                )[:4]
                 return self._person_callback(
-                    action.op, int(project_part or 0), int(user_part or 0), cb, me
+                    action.op,
+                    int(project_part or 0),
+                    int(user_part or 0),
+                    cb,
+                    me,
+                    all_branches=branch_part == ALL_BRANCHES,
+                    days=max(1, min(int(days_part), MAX_RANGE_DAYS)) if days_part.isdigit() else 7,
                 )
             return self._picker_callback(action.token, action.op, action.arg, cb, me)
         except Denied as exc:
@@ -1458,7 +1481,15 @@ class BotService:
         return shown, max(0, len(users) - 12)
 
     def _person_callback(
-        self, op: str, project_id: int, user_id: int, cb: Callback, me: Principal
+        self,
+        op: str,
+        project_id: int,
+        user_id: int,
+        cb: Callback,
+        me: Principal,
+        *,
+        all_branches: bool = False,
+        days: int = 7,
     ) -> CallbackOutcome:
         project = next((p for p in self._scope() if p.id == project_id), None)
         if project is None or op not in ("commit", "mr"):
@@ -1469,9 +1500,16 @@ class BotService:
             if person is None or not me.can_see_user(person.id):
                 return CallbackOutcome(answer="Bạn không review được người này.", alert=True)
             people = [person]
-        args = ReviewArgs("today" if op == "commit" else "open", days=7, pick=True)
+        every = all_branches and op == "commit"
+        args = ReviewArgs(
+            "today" if op == "commit" else "open",
+            days=days,
+            branch=ALL_BRANCHES if every else None,
+            pick=True,
+        )
         msg = Incoming(cb.update_id, cb.chat_id, "", cb.message_id, cb.from_id, cb.username, "", "")
         who = f" user={people[0].primary_email}" if people else ""
+        on = " branch=all" if every else ""
         state = self._build_picker(
             op,
             project,
@@ -1479,21 +1517,29 @@ class BotService:
             people,
             me,
             msg,
-            f"/review (menu) {op} {project.path_with_namespace}{who}",
+            f"/review (menu) {op} {project.path_with_namespace}{who}{on}",
         )
         if state is None:
+            branch = review_branch(project, args.branch)
             what = (
-                f"commit nào trong 7 ngày qua trên {esc(branch_label(review_branch(project)))}"
+                f"commit nào trong {days} ngày qua trên {esc(branch_label(branch))}"
                 if op == "commit"
                 else "MR nào đang mở"
             )
             whose = f" của {esc(people[0].full_name or '')}" if people else ""
-            hint = f"\n{BRANCH_HINT}" if op == "commit" else ""
+            hint = f"\n{BRANCH_HINT}" if op == "commit" and not every else ""
+            markup = people_keyboard(
+                "commit" if op == "commit" else "mr",
+                project.id,
+                *self._people_for_picker(me),
+                all_branches=every,
+            )
+            if op == "commit" and not every:
+                # The usual reason: the work is on a feature branch. One tap to look there.
+                markup["inline_keyboard"].insert(0, all_branches_row(project.id, user_id, days))
             return CallbackOutcome(
                 text=f"{esc(project.path_with_namespace)}: không có {what}{whose}.{hint}",
-                markup=people_keyboard(
-                    "commit" if op == "commit" else "mr", project.id, *self._people_for_picker(me)
-                ),
+                markup=markup,
             )
         state.message_id = cb.message_id
         self._picker.save(state)
@@ -1524,7 +1570,25 @@ class BotService:
             what = "commit gần đây" if state.kind == "commit" else "MR đang mở"
             return CallbackOutcome(
                 text=f"{esc(state.scope_label)} · {what}: của ai?",
-                markup=people_keyboard(state.kind, state.project_id, people, more),
+                markup=people_keyboard(
+                    state.kind,
+                    state.project_id,
+                    people,
+                    more,
+                    all_branches=state.branch == ALL_BRANCHES,
+                ),
+            )
+        if op == "br":
+            # Same repo, person and window; the other branch scope (every branch <-> review).
+            self._picker.delete(token)
+            return self._person_callback(
+                state.kind,
+                state.project_id,
+                state.person_id or 0,
+                cb,
+                me,
+                all_branches=state.branch != ALL_BRANCHES,
+                days=state.days,
             )
         if op == "t":
             try:

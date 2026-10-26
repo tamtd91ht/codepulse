@@ -481,3 +481,95 @@ def test_one_persons_commits_on_a_busy_branch_are_found(
     assert "feat: an on dev" in reply["text"]
     assert "binh 0" not in reply["text"]
     assert BusyGitLab.limits[-1] > 51
+
+
+class FeatureBranchGitLab(FakeGitLab):
+    """The work is on a feature branch: the review branch is empty, every branch is not."""
+
+    asked: ClassVar[list[str]] = []
+
+    def commits_on_ref(
+        self, project_id: int, ref: str, since: Any, until: Any, limit: int
+    ) -> list[Any]:
+        FeatureBranchGitLab.asked.append(ref)
+        if ref != "*":
+            return []
+        return [
+            {
+                "id": "f" * 40,
+                "parent_ids": ["e" * 40],
+                "title": "Add invoice export",
+                "author_email": "an@x.vn",
+                "author_name": "An",
+                "authored_date": (NOW - timedelta(hours=2)).isoformat(),
+            }
+        ]
+
+
+def test_the_menu_offers_every_branch_when_the_review_branch_is_empty(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    world.project.default_branch = "main"
+    link(db_session, world.lead, 777)
+    db_session.commit()
+    tg = FakeTelegram()
+    store = MemoryPickerStore()
+    FeatureBranchGitLab.asked = []
+
+    def step(update: dict[str, Any]) -> None:
+        tg.updates = [update]
+        poll_bot(
+            db_session,
+            bot,
+            tg,
+            settings,
+            queue,
+            lambda connection: FeatureBranchGitLab(),
+            MemoryLinkCodes(),
+            AllowAll(),
+            lambda: NOW,
+            picker=store,
+        )
+
+    step(message_update(1, "/review"))
+    step(tap(2, buttons(tg.sent[0]["markup"])["📝 Commit gần đây"]))
+    step(tap(3, buttons(tg.edited[-1]["markup"])["👥 Mọi người"]))
+    empty = tg.edited[-1]
+    assert "không có commit nào trong 7 ngày qua trên nhánh main" in empty["text"]
+    step(tap(4, buttons(empty["markup"])["🌿 Xem mọi nhánh"]))
+    listed = tg.edited[-1]
+    assert FeatureBranchGitLab.asked == ["main", "*"]
+    assert "mọi nhánh" in listed["text"] and "Add invoice export" in listed["text"]
+    kb = buttons(listed["markup"])
+    # The person step keeps the branch scope; the toggle goes back to the review branch.
+    step(tap(5, kb["👤 Người"]))
+    an = buttons(tg.edited[-1]["markup"])["An"]
+    assert an.endswith(":*")
+    step(tap(6, an))
+    assert FeatureBranchGitLab.asked[-1] == "*" and "Add invoice export" in tg.edited[-1]["text"]
+    step(tap(7, buttons(tg.edited[-1]["markup"])["🌿 Nhánh review"]))
+    assert FeatureBranchGitLab.asked[-1] == "main"
+
+
+def test_an_empty_typed_list_offers_every_branch_too(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    world.project.default_branch = "main"
+    link(db_session, world.lead, 777)
+    db_session.commit()
+    tg = FakeTelegram()
+    tg.updates = [message_update(1, "/review type=commit repo=demo/p range=3d")]
+    poll_bot(
+        db_session,
+        bot,
+        tg,
+        settings,
+        queue,
+        lambda connection: FeatureBranchGitLab(),
+        MemoryLinkCodes(),
+        AllowAll(),
+        lambda: NOW,
+        picker=MemoryPickerStore(),
+    )
+    (reply,) = tg.sent
+    assert buttons(reply["markup"])["🌿 Xem mọi nhánh"].endswith(f"{world.project.id}:0:*:3")

@@ -17,6 +17,8 @@ from typing import Any, Literal, Protocol
 
 from redis import Redis
 
+from app.models.source import ALL_BRANCHES
+
 
 def esc(text: object) -> str:
     return html.escape(str(text), quote=False)
@@ -66,6 +68,8 @@ class PickerState:
     items: list[Item]
     project_id: int = 0  # the repo the list came from (for the people filter)
     person_id: int | None = None  # list filtered to this CodePulse user, None = everyone
+    branch: str = ""  # commits: the branch asked for ("*" every branch), "" = the review branch
+    days: int = 7  # commits: the window of the list
     again: bool = False  # finished items may be ticked (each becomes a new review round)
     may_force: bool = False  # lead/admin: a member cannot re-roll the score of their own work
     selected: list[int] = field(default_factory=list)
@@ -161,7 +165,8 @@ KINDS = {"pk": "pick", "mn": "menu", "rp": "repo", "us": "person"}
 
 
 def decode(data: str) -> Action | None:
-    """pk|token|op|arg · mn||commit · rp||kind|project · us||kind|project:user (0 = everyone)"""
+    """pk|token|op|arg · mn||commit · rp||kind|project · us||kind|project:user[:*[:days]]
+    (user 0 = everyone, * = every branch)"""
     parts = (data or "").split("|")
     if not parts or parts[0] not in KINDS:
         return None
@@ -236,6 +241,10 @@ def keyboard(state: PickerState) -> dict[str, Any]:
     extras: list[dict[str, str]] = []
     if state.project_id:
         extras.append({"text": "👤 Người", "callback_data": encode("pk", state.token, "who")})
+        if state.kind == "commit":
+            # Work often sits on a feature branch, not the review branch the list starts on.
+            label = "🌿 Nhánh review" if state.branch == ALL_BRANCHES else "🌿 Mọi nhánh"
+            extras.append({"text": label, "callback_data": encode("pk", state.token, "br")})
     if state.may_force and any(it.state == "done" for it in state.items):
         extras.append(
             {
@@ -271,19 +280,43 @@ def menu_keyboard() -> dict[str, Any]:
     }
 
 
+def person_arg(project_id: int, user_id: int, all_branches: bool = False, days: int = 7) -> str:
+    """`us` callback arg: project:user[:*[:days]] (user 0 = everyone, * = every branch)."""
+    if not all_branches:
+        return f"{project_id}:{user_id}"
+    return f"{project_id}:{user_id}:{ALL_BRANCHES}" + (f":{days}" if days != 7 else "")
+
+
+def all_branches_row(project_id: int, user_id: int, days: int = 7) -> list[dict[str, str]]:
+    """One button: the same commit list over every branch."""
+    arg = person_arg(project_id, user_id, True, days)
+    return [{"text": "🌿 Xem mọi nhánh", "callback_data": encode("us", op="commit", arg=arg)}]
+
+
 def people_keyboard(
-    kind: Kind, project_id: int, people: list[tuple[int, str]], more: int = 0
+    kind: Kind,
+    project_id: int,
+    people: list[tuple[int, str]],
+    more: int = 0,
+    all_branches: bool = False,
 ) -> dict[str, Any]:
-    """Everyone first, then the people the caller may review (two per row), then cancel."""
+    """Everyone first, then the people the caller may review (two per row), then cancel.
+    `all_branches`: the commit list the person comes from covered every branch; keep it."""
+    every = all_branches and kind == "commit"
     rows: list[list[dict[str, str]]] = [
-        [{"text": "👥 Mọi người", "callback_data": encode("us", op=kind, arg=f"{project_id}:0")}]
+        [
+            {
+                "text": "👥 Mọi người",
+                "callback_data": encode("us", op=kind, arg=person_arg(project_id, 0, every)),
+            }
+        ]
     ]
     row: list[dict[str, str]] = []
     for user_id, name in people:
         row.append(
             {
                 "text": name[:28] or f"#{user_id}",
-                "callback_data": encode("us", op=kind, arg=f"{project_id}:{user_id}"),
+                "callback_data": encode("us", op=kind, arg=person_arg(project_id, user_id, every)),
             }
         )
         if len(row) == 2:
