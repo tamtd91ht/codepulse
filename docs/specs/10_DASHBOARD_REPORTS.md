@@ -26,6 +26,13 @@
 ### 4. Review Detail
 - [ ] Summary, điểm, findings với code excerpt, nút Dispute
 
+### 6. Thành viên (đánh giá theo người; người dùng 2026-10-27, ngoài spec gốc)
+- [x] Khoảng thời gian 7/30/90 ngày hoặc tuỳ chọn; lọc team, dự án, repo; tìm tên; chỉ người có review / cần hỗ trợ
+- [x] KPI: người có review, review (MR/commit/LOC), điểm TB theo LOC, tỉ lệ approve, critical, high (bấm mở Critical Board)
+- [x] Biểu đồ điểm TB theo người (thấp nhất trên cùng) + kết luận cả nhóm
+- [x] Bảng: review, điểm TB (+ thấp nhất), kết luận (thanh chia theo verdict), critical/high/khác, lỗi/100 LOC, xu hướng tuần, review gần nhất; dòng đỏ khi có critical hoặc điểm TB < 65
+- [x] Trang Member Detail thêm thẻ **Đánh giá trong kỳ**: tóm tắt, kết luận, loại lỗi, theo tuần, theo repo
+
 ### 5. Admin
 - [ ] Projects, connections, unmapped accounts, rubric/weights, chi phí LLM theo tháng
 

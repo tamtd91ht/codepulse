@@ -625,6 +625,74 @@ class Leaderboard(BaseModel):
     members: list[LeaderboardRow] | None  # None for managers: aggregates only (Phase 0)
 
 
+# -- per-member evaluation (Thành viên page; app/scoring/evaluation.py) --------------------------
+
+
+class EvaluationBucket(BaseModel):
+    """Reviews of one person / repo / everyone over the range, counted like the score counts."""
+
+    reviews: int = 0
+    mrs: int = 0
+    commits: int = 0
+    loc: int = 0
+    repos: int = 0
+    avg_score: float | None = None  # LOC-weighted (docs/specs/08 §2)
+    min_score: float | None = None
+    last_review_at: datetime | None = None
+    verdicts: dict[str, int] = {}  # approve / needs_human / fix_required / block
+    pass_rate: float | None = None  # % approve among judged reviews
+    critical: int = 0
+    high: int = 0
+    medium: int = 0
+    low: int = 0
+    info: int = 0
+    findings: int = 0
+    findings_per_100_loc: float | None = None
+    disputed: int = 0  # findings a lead accepted as false positive
+    rejected: int = 0  # findings the verification refuted
+    needs_attention: bool = False  # any critical, or average below 65
+
+
+class MemberEvaluationRow(EvaluationBucket):
+    user_id: int
+    user: UserOut
+    teams: list[str] = []  # current teams, by name
+    trend: list[float | None]  # LOC-weighted average per week of `weeks`
+
+
+class EvaluationTotals(EvaluationBucket):
+    members: int = 0  # people with at least one review in the range
+
+
+class MembersEvaluation(BaseModel):
+    from_: date = Field(alias="from")
+    to: date
+    range: tuple[datetime, datetime]  # [lo, hi) instants of `finished_at`, for list links
+    weeks: list[date]
+    totals: EvaluationTotals
+    members: list[MemberEvaluationRow]
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class RepoEvaluationRow(EvaluationBucket):
+    project_id: int | None
+    path: str | None
+
+
+class MemberEvaluationDetail(BaseModel):
+    user: UserOut
+    from_: date = Field(alias="from")
+    to: date
+    range: tuple[datetime, datetime]
+    summary: EvaluationBucket
+    by_repo: list[RepoEvaluationRow]
+    categories: list[dict[str, str | int]]  # [{"category": "testing", "count": 12}], most first
+    weeks: list[date]
+    trend: list[float | None]
+    trend_reviews: list[int]
+    model_config = ConfigDict(populate_by_name=True)
+
+
 # -- reviews in progress (docs/specs/17 §Tiến trình) ---------------------------------------------
 
 

@@ -73,6 +73,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     ? [
         { href: "/overview", label: "Tổng quan", icon: "activity" },
         { href: "/teams", label: "Team", icon: "members" },
+        // Per-person evaluation: a lead sees their team, admin everyone (a developer only
+        // themselves, which the "Của tôi" page already shows).
+        ...(isAdmin || me.lead_teams.length > 0 ? [{ href: "/members", label: "Thành viên", icon: "pulse" } as Item] : []),
         { href: `/members/${me.id}`, label: "Của tôi", icon: "user" },
         { href: "/reviews/request", label: "Yêu cầu review", icon: "review" },
         { href: "/critical", label: "Critical Board", icon: "alert" },
@@ -97,7 +100,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   const navLink = (item: Item) => {
-    const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+    const active = pathname === item.href || (item.href !== "/members" && pathname.startsWith(`${item.href}/`));
     return (
       <Link
         key={item.href}

@@ -46,3 +46,10 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | POST | `/repos/{id}/review-commits` | Xếp hàng review các commit đã chọn (≤ REVIEW_BATCH_MAX) | theo tác giả: mình / người mình lead / admin |
 | GET | `/reviews?verdict=&trigger=` | Lọc thêm theo kết luận merge và nguồn yêu cầu | như cũ |
 | PATCH | `/business-projects/{id}` `review_rules`, `/projects/{id}` `review_rules`, `review_rules_paths` | Quy tắc review | admin |
+
+## Bổ sung (đánh giá theo thành viên, người dùng 2026-10-27)
+| Method | Path | Mô tả | Quyền |
+|---|---|---|---|
+| GET | `/members/evaluation?from&to&team_id&business_project_id&project_id` | Mỗi người trong phạm vi: số review hoàn tất, điểm TB theo LOC, kết luận, finding theo mức, xu hướng tuần (tính trực tiếp từ `reviews`, tối đa 366 ngày, mặc định 30 ngày; bỏ người dùng không hoạt động như số liệu đã lưu; `mrs`/`commits` là số lượt review, MR review nhiều vòng tính nhiều lần) | developer, manager: chỉ dòng của chính mình; lead: team mình; admin: tất cả |
+| GET | `/members/{id}/evaluation?from&to` | Một người: tóm tắt, theo repo, kết luận, loại lỗi, theo tuần | bản thân, lead, admin |
+

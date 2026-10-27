@@ -5,6 +5,7 @@ import { use, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { IconButton } from "@/components/icons";
+import { MemberEvaluation } from "@/components/MemberEvaluation";
 import { Alert, Avatar, Card, ChartTip, EmptyState, ExternalLink, Kpi, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, date, num, ratio, weekLabel } from "@/lib/format";
@@ -259,6 +260,8 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
           </Card>
         </>
       )}
+
+      <MemberEvaluation person={person} />
 
       <Card title="Loại lỗi theo tuần" subtitle="Số finding của mỗi loại, 12 tuần gần nhất">
         {heat ? <Heatmap cells={heat} /> : <Loading error={heatError} rows={4} />}

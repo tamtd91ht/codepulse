@@ -2499,18 +2499,18 @@ textarea.rules {
   padding: 1px 9px;
   font-size: 12px;
 }
-.profile-card .facts {
+.profile-card .eval-facts {
   display: grid;
   grid-template-columns: max-content 1fr;
   gap: 4px 12px;
   margin: 0;
   font-size: 13px;
 }
-.profile-card .facts dt {
+.profile-card .eval-facts dt {
   color: var(--muted);
   font-weight: 600;
 }
-.profile-card .facts dd {
+.profile-card .eval-facts dd {
   margin: 0;
   color: var(--text-2);
 }
@@ -2865,4 +2865,258 @@ textarea.rules {
 .knowledge-facts dd {
   margin: 0;
   color: var(--text-2);
+}
+
+/* ---------- Per-member evaluation (Thành viên page, member page) ---------- */
+
+.range-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.range-dates {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.range-problem {
+  color: var(--bad-text);
+  flex-basis: 100%;
+}
+@media (max-width: 700px) {
+  .range-picker,
+  .range-dates {
+    width: 100%;
+  }
+  .range-dates input {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}
+.range-dates input {
+  width: auto;
+}
+.toolbar.filters {
+  gap: 10px 14px;
+  align-items: flex-end;
+}
+.toolbar.filters .filter {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+}
+.toolbar.filters .filter select,
+.toolbar.filters .filter input {
+  max-width: 260px;
+}
+.toolbar.filters .filter.search input {
+  width: 200px;
+}
+.toolbar.filters .check {
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+  padding-bottom: 6px;
+  cursor: pointer;
+}
+@media (max-width: 700px) {
+  .toolbar.filters .filter {
+    flex: 1 1 45%;
+  }
+  .toolbar.filters .filter select,
+  .toolbar.filters .filter input,
+  .toolbar.filters .filter.search input {
+    width: 100%;
+    max-width: none;
+  }
+}
+
+/* While a new range loads, the old numbers stay but fade. */
+.eval-dim {
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+
+.score.good {
+  color: var(--good);
+}
+.scoretd.num.warn,
+.stat-value .warn {
+  color: var(--warn);
+}
+.score.bad {
+  color: var(--bad-text);
+}
+td.num.warn,
+.stat-value .warn {
+  color: var(--warn);
+}
+
+/* Verdict mix: one bar split by share, legend with counts underneath. */
+.mix {
+  min-width: 0;
+}
+.mix-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-2);
+  gap: 1px;
+}
+.mix.compact .mix-bar {
+  width: 96px;
+  height: 8px;
+}
+.mix-bar > span,
+.mix-legend .dot {
+  background: var(--faint);
+}
+.mix-bar > .approve,
+.mix-legend .dot.approve {
+  background: var(--chart-2);
+}
+.mix-bar > .needs_human,
+.mix-legend .dot.needs_human {
+  background: var(--chart-5);
+}
+.mix-bar > .fix_required,
+.mix-legend .dot.fix_required {
+  background: var(--chart-3);
+}
+.mix-bar > .block,
+.mix-legend .dot.block {
+  background: var(--sev-critical);
+}
+.mix-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.mix-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.mix-legend .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* Severity counts as four small chips; zeros fade so the eye lands on what is there. */
+.sev-row {
+  display: inline-flex;
+  gap: 4px;
+}
+.sev-count {
+  min-width: 26px;
+  padding: 0 6px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--sev-t);
+  background: color-mix(in srgb, var(--sev-c) 14%, transparent);
+}
+.sev-count.critical {
+  --sev-c: var(--sev-critical);
+  --sev-t: var(--sev-critical-text);
+}
+.sev-count.high {
+  --sev-c: var(--sev-high);
+  --sev-t: var(--sev-high-text);
+}
+.sev-count.medium {
+  --sev-c: var(--sev-medium);
+  --sev-t: var(--sev-medium-text);
+}
+.sev-count.low {
+  --sev-c: var(--sev-low);
+  --sev-t: var(--sev-low-text);
+}
+.sev-count.zero {
+  color: var(--faint);
+  background: var(--surface-2);
+  font-weight: 500;
+}
+
+/* Summary strip of a card: big numbers with labels, wrapping on narrow screens. */
+.stats-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  margin-bottom: 16px;
+}
+.stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.stat-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* Label / value pairs. */
+.eval-facts {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.eval-facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 13px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--border);
+}
+.eval-facts dt {
+  color: var(--muted);
+}
+.eval-facts dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* The evaluation table: a flagged row gets a red edge, the sub-lines stay quiet. */
+.eval-table td .sub,
+table td .sub {
+  font-weight: 400;
+}
+tr.attention td:first-child {
+  box-shadow: inset 3px 0 0 var(--sev-critical);
+}
+tr.attention {
+  background: color-mix(in srgb, var(--bad-soft) 55%, transparent);
+}
+/* The sticky first cell paints its own background; give it the same tint. */
+tr.attention > td:first-child {
+  background: color-mix(in srgb, var(--bad-soft) 55%, var(--surface));
+}
+.eval-table .cell-main {
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.eval-grid > .card:first-child {
+  min-width: 0;
 }

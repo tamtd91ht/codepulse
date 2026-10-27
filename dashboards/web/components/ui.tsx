@@ -175,7 +175,8 @@ export function Kpi({
 }: {
   label: string;
   value: Num | number | undefined;
-  change?: number | null;
+  /** false: the page compares with nothing, so no delta row at all. */
+  change?: number | null | false;
   higherIsBetter?: boolean;
   digits?: number;
   unit?: string;
@@ -183,7 +184,7 @@ export function Kpi({
   /** Where the number comes from: the tile links there. */
   href?: string;
 }) {
-  const has = change !== null && change !== undefined && change !== 0;
+  const has = typeof change === "number" && change !== 0;
   const good = has && change > 0 === higherIsBetter;
   const bad = has && !good;
   const trend: IconName = !has ? "minus" : change > 0 ? "trendUp" : "trendDown";
@@ -194,6 +195,7 @@ export function Kpi({
         {num(value ?? null, digits)}
         {unit && <span className="unit">{unit}</span>}
       </div>
+      {change !== false && (
       <div className={`delta ${good ? "up" : bad ? "down" : ""}`}>
         {change === null || change === undefined ? (
           <span className="muted">Chưa có kỳ trước</span>
@@ -208,6 +210,7 @@ export function Kpi({
           </>
         )}
       </div>
+      )}
       {hint && <div className="muted small">{hint}</div>}
     </>
   );

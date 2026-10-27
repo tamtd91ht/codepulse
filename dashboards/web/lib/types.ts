@@ -971,3 +971,69 @@ export interface KnowledgeStats {
   /** Done reviews in the window. */
   reviews: number;
 }
+
+/* ---- per-member evaluation (app/scoring/evaluation.py) ---- */
+
+export interface EvaluationBucket {
+  reviews: number;
+  mrs: number;
+  commits: number;
+  loc: number;
+  repos: number;
+  /** LOC-weighted average of the reviews' scores. */
+  avg_score: number | null;
+  min_score: number | null;
+  last_review_at: string | null;
+  verdicts: Record<Verdict, number>;
+  /** % approve among judged reviews. */
+  pass_rate: number | null;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  info: number;
+  findings: number;
+  findings_per_100_loc: number | null;
+  /** Findings a lead accepted as false positive. */
+  disputed: number;
+  /** Findings the verification refuted. */
+  rejected: number;
+  /** Any critical, or an average below 65. */
+  needs_attention: boolean;
+}
+
+export interface MemberEvaluationRow extends EvaluationBucket {
+  user_id: number;
+  user: Person;
+  teams: string[];
+  /** Average per week of `weeks`, oldest first. */
+  trend: (number | null)[];
+}
+
+export interface MembersEvaluation {
+  from: string;
+  to: string;
+  /** [lo, hi) instants of finished_at (REPORT_TZ), for Critical Board links. */
+  range: [string, string];
+  weeks: string[];
+  totals: EvaluationBucket & { members: number };
+  members: MemberEvaluationRow[];
+}
+
+export interface RepoEvaluationRow extends EvaluationBucket {
+  project_id: number | null;
+  path: string | null;
+}
+
+export interface MemberEvaluationDetail {
+  user: Person;
+  from: string;
+  to: string;
+  range: [string, string];
+  summary: EvaluationBucket;
+  by_repo: RepoEvaluationRow[];
+  categories: { category: string; count: number }[];
+  weeks: string[];
+  trend: (number | null)[];
+  trend_reviews: number[];
+}
