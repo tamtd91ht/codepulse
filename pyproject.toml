@@ -47,6 +47,8 @@ include = ["app*"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Vendored Claude Code skills (their own style and tests), not CodePulse code.
+extend-exclude = [".claude"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
