@@ -147,6 +147,41 @@ def test_untracked_repo_and_old_endings_are_left_out(
     assert body["running"] == [] and body["queued"] == [] and body["recent"] == []
 
 
+def test_a_knowledge_build_shows_for_everyone_and_never_breaks_the_panel(
+    client: TestClient, world: World, as_user: Any, live: Any
+) -> None:
+    """docs/specs/19: the knowledge job writes a progress record of kind "knowledge" with a
+    negative id; the panel must list it (for any signed-in user) instead of failing to render."""
+    progress, _ = live
+    progress.start(
+        -world.project.id,
+        {
+            "kind": "knowledge",
+            "project_id": world.project.id,
+            "project": "demo/p",
+            "ref": "main",
+            "sha": "",
+            "title": "Rà soát lại dự án",
+            "author_user_id": None,
+            "author": None,
+            "requested_by": "Lead",
+            "trigger": "manual",
+            "round": 1,
+            "started_at": "2026-10-27T09:02:00+00:00",
+        },
+    )
+    progress.stage(-world.project.id, "compile", "biên dịch tài liệu")
+    body = client.get("/api/v1/activity/reviews", headers=as_user(world.an)).json()
+    build = next(r for r in body["running"] if r["kind"] == "knowledge")
+    assert (build["review_id"], build["stage"], build["ref"]) == (
+        -world.project.id,
+        "compile",
+        "main",
+    )
+    assert build["web_url"] == "https://gitlab.example.com/demo/p/-/tree/main"
+    assert [r["review_id"] for r in body["running"] if r["kind"] != "knowledge"] == [900]
+
+
 def test_nothing_running(client: TestClient, world: World, as_user: Any, live: Any) -> None:
     progress, backlog = live
     progress.items.clear()

@@ -713,7 +713,7 @@ export interface LlmLogin {
 export interface ActivityItem {
   state: "running" | "queued" | "ended";
   review_id: number | null;
-  kind: "mr" | "commit";
+  kind: "mr" | "commit" | "knowledge";
   project_id: number;
   project: string;
   ref: string;

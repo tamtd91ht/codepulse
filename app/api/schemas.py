@@ -631,10 +631,11 @@ class Leaderboard(BaseModel):
 class ActivityItem(BaseModel):
     state: Literal["running", "queued", "ended"]
     review_id: int | None = None  # running only; the page exists once the review ends
-    kind: Literal["mr", "commit"]
+    # "knowledge": a review-knowledge build of the repo (docs/specs/19), shown in the same panel
+    kind: Literal["mr", "commit", "knowledge"]
     project_id: int
     project: str
-    ref: str  # MR iid or commit sha
+    ref: str  # MR iid, commit sha, or the branch the knowledge was built from
     sha: str
     title: str
     author: str | None = None
@@ -644,7 +645,9 @@ class ActivityItem(BaseModel):
     round: int = 1
     started_at: datetime | None = None
     enqueued_at: datetime | None = None
-    stage: str | None = None  # start | diff | llm | deep | profile | save
+    stage: str | None = (
+        None  # start | diff | checkout | llm | agent | verify | save; knowledge: docs | compile | probe | save
+    )
     detail: str = ""
     stage_at: datetime | None = None
     loc: int | None = None

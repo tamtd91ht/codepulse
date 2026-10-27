@@ -66,7 +66,7 @@ def review_activity(
     running: list[ActivityItem] = []
     for item in running_raw:
         project = projects.get(int(item.get("project_id") or 0))
-        if project is None or not principal.may_review_author(item.get("author_user_id")):
+        if project is None or not _may_see_record(principal, item):
             hidden += 1
             continue
         running.append(_from_record("running", item, project))
@@ -74,7 +74,7 @@ def review_activity(
     recent: list[ActivityItem] = []
     for item in recent_raw:
         project = projects.get(int(item.get("project_id") or 0))
-        if project is not None and principal.may_review_author(item.get("author_user_id")):
+        if project is not None and _may_see_record(principal, item):
             recent.append(_from_record("ended", item, project))
 
     queued: list[ActivityItem] = []
@@ -134,6 +134,14 @@ def live_review(
     if not principal.may_review_author(author):
         raise HTTPException(404, "review not found")
     return LiveReviewOut(review_id=review_id, running=running, events=progress.live(review_id))
+
+
+def _may_see_record(principal: Principal, item: dict[str, Any]) -> bool:
+    """A knowledge build is about the repo, not a person: visible to everyone signed in, like
+    the repo's knowledge page (docs/specs/19 §3.5). Reviews follow their author."""
+    if item.get("kind") == "knowledge":
+        return True
+    return principal.may_review_author(item.get("author_user_id"))
 
 
 def _may_see_queued(principal: Principal, item: dict[str, Any]) -> bool:
@@ -196,7 +204,12 @@ def _projects(session: Session, ids: set[int]) -> dict[int, ProjectRow]:
 def _web_url(project: ProjectRow, kind: str, ref: str) -> str | None:
     if not project[1]:
         return None
-    path = f"/-/merge_requests/{ref}" if kind == "mr" else f"/-/commit/{ref}"
+    if kind == "knowledge":
+        path = f"/-/tree/{ref}" if ref else ""
+    elif kind == "mr":
+        path = f"/-/merge_requests/{ref}"
+    else:
+        path = f"/-/commit/{ref}"
     return f"{project[1]}/{project[0].path_with_namespace}{path}"
 
 

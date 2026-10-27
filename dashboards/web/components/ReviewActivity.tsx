@@ -14,6 +14,12 @@ import type { ActivityItem, ActivityOut } from "@/lib/types";
 const BUSY_MS = 4000;
 const IDLE_MS = 20000;
 
+const KNOWLEDGE_STAGES: { id: string; label: string }[] = [
+  { id: "docs", label: "Đọc tài liệu" },
+  { id: "compile", label: "Biên dịch" },
+  { id: "probe", label: "Thăm dò mã" },
+  { id: "save", label: "Lưu" },
+];
 const STAGES: { id: string; label: string }[] = [
   { id: "diff", label: "Lấy diff" },
   { id: "checkout", label: "Tải mã nguồn" },
@@ -31,6 +37,9 @@ const STAGE_LABEL: Record<string, string> = {
   profile: "Dựng hồ sơ dự án",
   deep: "Review sâu",
   save: "Chấm điểm và lưu",
+  docs: "Đọc tài liệu và .claude của repo",
+  compile: "Biên dịch thành tri thức review",
+  probe: "Agent thăm dò mã nguồn",
 };
 const OUTCOME: Record<string, { label: string; ok: boolean }> = {
   done: { label: "xong", ok: true },
@@ -38,7 +47,11 @@ const OUTCOME: Record<string, { label: string; ok: boolean }> = {
   failed: { label: "lỗi", ok: false },
 };
 
-const targetLabel = (i: ActivityItem) => (i.kind === "mr" ? `MR !${i.ref}` : `commit ${i.ref.slice(0, 8)}`);
+const targetLabel = (i: ActivityItem) =>
+  i.kind === "knowledge" ? `tiền đề (${i.ref || "nhánh mặc định"})` : i.kind === "mr" ? `MR !${i.ref}` : `commit ${i.ref.slice(0, 8)}`;
+/** Where an ended item leads: the review page, or the repo's knowledge page for a build. */
+const resultHref = (i: ActivityItem) =>
+  i.kind === "knowledge" ? `/projects/${i.project_id}/knowledge` : i.review_id !== null ? `/reviews/${i.review_id}` : null;
 const repoName = (path: string) => path.split("/").pop() ?? path;
 const itemKey = (i: ActivityItem) => `${i.state}:${i.review_id ?? ""}:${i.kind}:${i.project_id}:${i.ref}`;
 
@@ -106,7 +119,9 @@ export function ReviewActivity() {
 
   const first = running[0];
   const summary = first
-    ? `Đang review ${repoName(first.project)} ${targetLabel(first)}`
+    ? first.kind === "knowledge"
+      ? `Đang rà soát ${repoName(first.project)}`
+      : `Đang review ${repoName(first.project)} ${targetLabel(first)}`
     : queuedTotal
       ? `${queuedTotal} review đang chờ`
       : `${recent.length} review vừa kết thúc`;
@@ -156,7 +171,7 @@ export function ReviewActivity() {
                   {running.map((r) => (
                     <li key={itemKey(r)} className="activity-item">
                       <ItemHead item={r} />
-                      <Stages stage={r.stage} />
+                      <Stages stage={r.stage} steps={r.kind === "knowledge" ? KNOWLEDGE_STAGES : STAGES} />
                       <div className="small">
                         <span className="spinner inline" aria-hidden="true" /> {STAGE_LABEL[r.stage ?? "start"] ?? r.stage}
                         {r.detail ? ` · ${r.detail}` : ""}
@@ -209,7 +224,7 @@ export function ReviewActivity() {
                     return (
                       <li key={itemKey(f)}>
                         <Icon name={outcome?.ok ? "check" : "alert"} size={14} />{" "}
-                        {f.review_id !== null && f.status ? <Link href={`/reviews/${f.review_id}`}>{label}</Link> : label}
+                        {f.status && resultHref(f) ? <Link href={resultHref(f)!}>{label}</Link> : label}
                         <span className="muted small">
                           {" "}
                           · {outcome ? outcome.label : "lỗi giữa chừng, sẽ thử lại"}
@@ -232,11 +247,11 @@ export function ReviewActivity() {
   );
 }
 
-function Stages({ stage }: { stage: string | null }) {
-  const current = stageIndex(stage);
+function Stages({ stage, steps = STAGES }: { stage: string | null; steps?: { id: string; label: string }[] }) {
+  const current = steps === STAGES ? stageIndex(stage) : steps.findIndex((s) => s.id === (stage ?? steps[0].id));
   return (
     <ol className="stages" aria-label="Các bước">
-      {STAGES.map((s, idx) => {
+      {steps.map((s, idx) => {
         const state = idx < current ? "done" : idx === current ? "now" : "todo";
         return (
           <li key={s.id} className={state} aria-current={state === "now" ? "step" : undefined}>
