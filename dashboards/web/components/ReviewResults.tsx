@@ -34,10 +34,13 @@ const STATUSES: Record<StatusFilter, string[]> = {
 export function ReviewResults({
   businessProjectId,
   repos,
+  person,
 }: {
   businessProjectId?: number;
-  /** The dự án's repos, for the repo filter. */
+  /** The repos offered by the repo filter (shown when there is more than one). */
   repos?: { id: number; path_with_namespace: string }[];
+  /** One person's results (the member page): no member filter, no member column. */
+  person?: number;
 }) {
   const [range, setRange] = useRange("30");
   const [userId, setUserId] = useState("");
@@ -47,7 +50,7 @@ export function ReviewResults({
   const [verdict, setVerdict] = useState<"" | Verdict>("");
   const [status, setStatus] = useState<StatusFilter>("results");
   // Everyone whose reviews the viewer may see (developer: themselves; lead: the team; admin: all).
-  const { data: people } = useApi<Person[]>("/people");
+  const { data: people } = useApi<Person[]>(person === undefined ? "/people" : null);
 
   const base =
     range && range.from && range.to
@@ -56,7 +59,7 @@ export function ReviewResults({
           to: range.to,
           business_project_id: businessProjectId,
           project_id: repoId,
-          user_id: userId,
+          user_id: person ?? userId,
           verdict,
           limit: PAGE,
         })}${STATUSES[status].map((s) => `&status=${s}`).join("")}`
@@ -74,7 +77,8 @@ export function ReviewResults({
   const last = pages.data?.at(-1);
   const loadingMore = pages.isValidating && pages.size > (pages.data?.length ?? 0);
   const filtered = !!(userId || repoId || verdict || status !== "results");
-  const onlySelf = people?.length === 1;
+  // Nobody else to pick: the member page, or a developer who only sees themselves.
+  const onlySelf = person !== undefined || people?.length === 1;
 
   const nameOf = (p: { id: number; full_name: string | null; primary_email: string | null }) =>
     p.full_name ?? p.primary_email ?? `#${p.id}`;
@@ -92,7 +96,7 @@ export function ReviewResults({
     <Card
       id="review-results"
       title="Kết quả review"
-      subtitle="Review tạo sau đứng trước. Lọc theo thời gian hoàn tất, thành viên, repo, kết luận và trạng thái."
+      subtitle={`Review tạo sau đứng trước. Lọc theo thời gian hoàn tất, ${person === undefined ? "thành viên, " : ""}repo, kết luận và trạng thái.`}
       actions={<RangePicker value={range} onChange={setRange} />}
       flush
     >
@@ -179,7 +183,7 @@ export function ReviewResults({
               <thead>
                 <tr>
                   <th>Thay đổi</th>
-                  <th>Thành viên</th>
+                  {person === undefined && <th>Thành viên</th>}
                   <th>Repo</th>
                   <th>Kết luận</th>
                   <th className="num">Điểm</th>
@@ -200,6 +204,7 @@ export function ReviewResults({
                         <Link href={`/reviews/${r.id}`}>{r.target}</Link>
                         {r.round > 1 && <span className="muted small"> · vòng {r.round}</span>}
                       </td>
+                      {person === undefined && (
                       <td>
                         {r.author ? (
                           <button
@@ -220,6 +225,7 @@ export function ReviewResults({
                           <span className="muted">Chưa gắn người</span>
                         )}
                       </td>
+                      )}
                       <td className="muted">{r.project ?? "—"}</td>
                       <td>{r.verdict ? <span className={`verdict ${r.verdict}`}>{VERDICT_LABEL[r.verdict]}</span> : <span className="muted">—</span>}</td>
                       <td className="num">

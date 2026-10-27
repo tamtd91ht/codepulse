@@ -6,9 +6,10 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, X
 
 import { IconButton } from "@/components/icons";
 import { MemberEvaluation } from "@/components/MemberEvaluation";
-import { Alert, Avatar, Card, ChartTip, EmptyState, ExternalLink, Kpi, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
+import { ReviewResults } from "@/components/ReviewResults";
+import { Alert, Avatar, Card, ChartTip, EmptyState, Kpi, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
-import { CATEGORY_LABEL, date, num, ratio, weekLabel } from "@/lib/format";
+import { CATEGORY_LABEL, ratio, weekLabel } from "@/lib/format";
 import type {
   BoardFinding,
   CategoryWeek,
@@ -16,7 +17,7 @@ import type {
   MetricsSeries,
   Page,
   Person,
-  ReviewListItem,
+  Repo,
   TelegramAccount,
   TelegramLinkCode,
 } from "@/lib/types";
@@ -180,21 +181,13 @@ function TelegramCard() {
   );
 }
 
-const REVIEW_STATUS: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "info" }> = {
-  done: { label: "Xong", tone: "good" },
-  failed: { label: "Lỗi", tone: "bad" },
-  skipped: { label: "Bỏ qua", tone: "warn" },
-  pending: { label: "Đang chờ", tone: "info" },
-  running: { label: "Đang chạy", tone: "info" },
-};
-
 export default function MemberDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: person, error } = useApi<Person>(`/people/${id}`);
   const { data: me } = useApi<Me>("/auth/me");
   const { data: series, error: seriesError } = useApi<MetricsSeries>(`/metrics/users/${id}${qs({ period: "week" })}`);
   const { data: heat, error: heatError } = useApi<CategoryWeek[]>(`/metrics/users/${id}/categories?weeks=12`);
-  const { data: reviews, error: reviewsError } = useApi<Page<ReviewListItem>>(`/reviews${qs({ user_id: id, limit: 15 })}`);
+  const { data: repos } = useApi<Repo[]>("/repos");
   const { data: open, error: openError } = useApi<Page<BoardFinding>>(`/findings${qs({ user_id: id, limit: 50 })}`);
 
   if (!person) return <Loading error={error} rows={4} />;
@@ -267,78 +260,34 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
         {heat ? <Heatmap cells={heat} /> : <Loading error={heatError} rows={4} />}
       </Card>
 
-      <div className="grid two">
-        <Card title="MR / commit gần đây" flush>
-          {reviews ? (
-            reviews.items.length === 0 ? (
-              <EmptyState title="Chưa có review nào">Review xuất hiện khi MR hoặc commit được thu thập và chấm.</EmptyState>
-            ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Thay đổi</th>
-                      <th>Repo</th>
-                      <th className="num">Điểm</th>
-                      <th>Ngày</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reviews.items.map((r) => {
-                      const st = REVIEW_STATUS[r.status];
-                      return (
-                        <tr key={r.id}>
-                          <td>
-                            <Link href={`/reviews/${r.id}`}>{r.target}</Link>
-                          </td>
-                          <td className="muted">{r.project}</td>
-                          <td className="num">
-                            {r.status === "done" ? <strong>{num(r.score, 0)}</strong> : <Pill tone={st?.tone}>{st?.label ?? r.status}</Pill>}
-                          </td>
-                          <td className="muted">{date(r.finished_at)}</td>
-                          <td>{r.web_url && <ExternalLink href={r.web_url}>GitLab</ExternalLink>}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )
-          ) : (
-            <div style={{ padding: "0 18px 16px" }}>
-              <Loading error={reviewsError} rows={4} />
-            </div>
-          )}
-        </Card>
+      <ReviewResults person={person.id} repos={repos} />
 
-        <Card title="Finding đang mở" subtitle="Critical và high xếp trước">
-          {open ? (
-            findings.length ? (
-              <ul className="finding-list">
-                {findings.map((f) => (
-                  <li key={f.id}>
-                    <SeverityBadge severity={f.severity} />
-                    <div className="body">
-                      <Link href={`/reviews/${f.review_id}`}>{f.title}</Link>
-                      <div className="meta">
-                        <code>
-                          {f.file_path}:{f.line_start}
-                        </code>{" "}
-                        · {f.age_days} ngày
-                      </div>
+      <Card title="Finding đang mở" subtitle="Critical và high xếp trước">
+        {open ? (
+          findings.length ? (
+            <ul className="finding-list">
+              {findings.map((f) => (
+                <li key={f.id}>
+                  <SeverityBadge severity={f.severity} />
+                  <div className="body">
+                    <Link href={`/reviews/${f.review_id}`}>{f.title}</Link>
+                    <div className="meta">
+                      <code>
+                        {f.file_path}:{f.line_start}
+                      </code>{" "}
+                      · {f.age_days} ngày
                     </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <EmptyState icon="checkCircle" tone="good" title="Không có finding đang mở" />
-            )
+                  </div>
+                </li>
+              ))}
+            </ul>
           ) : (
-            <Loading error={openError} rows={4} />
-          )}
-        </Card>
-      </div>
+            <EmptyState icon="checkCircle" tone="good" title="Không có finding đang mở" />
+          )
+        ) : (
+          <Loading error={openError} rows={4} />
+        )}
+      </Card>
       {me?.id === person.id && <TelegramCard />}
       <p className="muted small" style={{ marginTop: 12 }}>
         Fix rate {ratio(latest?.fix_rate ?? null)} = tỉ lệ lỗi critical/high đã sửa ở lần review sau.
