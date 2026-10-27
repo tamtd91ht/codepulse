@@ -1108,6 +1108,30 @@ form.toolbar {
   align-items: center;
   gap: 8px;
 }
+.card-head .card-title.fold {
+  cursor: pointer;
+  flex: 1;
+  user-select: none;
+}
+.card-head .card-title.fold:hover h2 {
+  color: var(--primary);
+}
+.card.collapsed {
+  padding-bottom: 12px;
+}
+.card.collapsed > .card-head {
+  margin-bottom: 0;
+}
+.card.flush.collapsed > .card-head {
+  padding-bottom: 12px;
+}
+.page-head .fold-all {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 4px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
 .card > p.muted:first-of-type {
   margin-top: -6px;
 }

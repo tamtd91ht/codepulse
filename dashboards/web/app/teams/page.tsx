@@ -21,7 +21,7 @@ export default function TeamsPage() {
   const byId = new Map(teams.map((t) => [t.id, t]));
   return (
     <>
-      <PageHeader title="Teams" subtitle="Chọn một team để xem chỉ số tuần/tháng và bảng thành viên." />
+      <PageHeader title="Teams" subtitle="Chọn một team để xem chỉ số tuần/tháng và bảng thành viên." foldable={false} />
       {teams.length === 0 ? (
         <div className="card">
           <EmptyState icon="members" title="Bạn chưa thuộc team nào">

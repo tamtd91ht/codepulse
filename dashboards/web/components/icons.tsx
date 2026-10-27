@@ -126,6 +126,9 @@ const PATHS = {
   chevronLeft: <path d="M15 18l-6-6 6-6" />,
   chevronRight: <path d="M9 18l6-6-6-6" />,
   chevronDown: <path d="M6 9l6 6 6-6" />,
+  chevronUp: <path d="M18 15l-6-6-6 6" />,
+  chevronsUp: <path d="M17 11l-5-5-5 5M17 18l-5-5-5 5" />,
+  chevronsDown: <path d="M7 13l5 5 5-5M7 6l5 5 5-5" />,
   panelLeft: (
     <>
       <rect x="3" y="3" width="18" height="18" rx="2" />

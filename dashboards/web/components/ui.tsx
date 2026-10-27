@@ -10,18 +10,50 @@ import type { Num, Severity } from "@/lib/types";
 
 /* ---------- Page & card chrome ---------- */
 
+/* Every card with a title folds with a chevron; the page header folds or opens them all at
+   once. A card remembers its own state per browser (localStorage), so a long page stays the way
+   the reader left it. */
+const CARDS_EVENT = "cp:cards";
+const CARD_STORE = "cp:card:";
+
+function readFold(key: string | null): boolean | null {
+  if (!key) return null;
+  try {
+    const v = window.localStorage.getItem(CARD_STORE + key);
+    return v === "1" ? true : v === "0" ? false : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeFold(key: string | null, collapsed: boolean) {
+  if (!key) return;
+  try {
+    window.localStorage.setItem(CARD_STORE + key, collapsed ? "1" : "0");
+  } catch {
+    /* private mode or blocked storage: the state just does not persist */
+  }
+}
+
+function foldAll(collapsed: boolean) {
+  window.dispatchEvent(new CustomEvent(CARDS_EVENT, { detail: { collapsed } }));
+}
+
 export function PageHeader({
   title,
   eyebrow,
   subtitle,
   avatar,
   actions,
+  foldable = true,
 }: {
   title: ReactNode;
   eyebrow?: ReactNode;
   subtitle?: ReactNode;
   avatar?: ReactNode;
   actions?: ReactNode;
+  /** Show the fold-all / open-all chevrons (off on pages without cards). */
+  foldable?: boolean;
 }) {
   return (
     <div className="page-head">
@@ -33,7 +65,17 @@ export function PageHeader({
           {subtitle && <div className="sub">{subtitle}</div>}
         </div>
       </div>
-      {actions && <div className="actions">{actions}</div>}
+      {(actions || foldable) && (
+        <div className="actions">
+          {actions}
+          {foldable && (
+            <span className="fold-all">
+              <IconButton icon="chevronsUp" label="Thu gọn tất cả" onClick={() => foldAll(true)} />
+              <IconButton icon="chevronsDown" label="Mở rộng tất cả" onClick={() => foldAll(false)} />
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -44,6 +86,9 @@ export function Card({
   actions,
   flush,
   className,
+  id,
+  collapsible,
+  defaultCollapsed = false,
   children,
 }: {
   title?: ReactNode;
@@ -51,20 +96,67 @@ export function Card({
   actions?: ReactNode;
   flush?: boolean;
   className?: string;
+  /** Key the fold state is remembered under; a string title is used when absent. */
+  id?: string;
+  /** Default: any card with a title folds. */
+  collapsible?: boolean;
+  defaultCollapsed?: boolean;
   children: ReactNode;
 }) {
+  const key = id ?? (typeof title === "string" ? title : null);
+  const canFold = collapsible ?? Boolean(title);
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  useEffect(() => {
+    if (!canFold) return;
+    const stored = readFold(key);
+    if (stored !== null) setCollapsed(stored);
+  }, [key, canFold]);
+  useEffect(() => {
+    if (!canFold) return;
+    const onAll = (e: Event) => {
+      const next = Boolean((e as CustomEvent<{ collapsed: boolean }>).detail?.collapsed);
+      setCollapsed(next);
+      writeFold(key, next);
+    };
+    window.addEventListener(CARDS_EVENT, onAll);
+    return () => window.removeEventListener(CARDS_EVENT, onAll);
+  }, [key, canFold]);
+  const toggle = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    writeFold(key, next);
+  };
+  const folded = canFold && collapsed;
   return (
-    <section className={`card${flush ? " flush" : ""}${className ? ` ${className}` : ""}`}>
-      {(title || actions) && (
+    <section
+      className={`card${flush ? " flush" : ""}${folded ? " collapsed" : ""}${className ? ` ${className}` : ""}`}
+    >
+      {(title || actions || canFold) && (
         <div className="card-head">
-          <div style={{ minWidth: 0 }}>
+          <div
+            className={canFold ? "card-title fold" : "card-title"}
+            style={{ minWidth: 0 }}
+            onClick={canFold ? toggle : undefined}
+          >
             {title && <h2>{title}</h2>}
-            {subtitle && <div className="sub">{subtitle}</div>}
+            {subtitle && !folded && <div className="sub">{subtitle}</div>}
           </div>
-          {actions && <div className="actions">{actions}</div>}
+          {(actions || canFold) && (
+            <div className="actions" onClick={(e) => e.stopPropagation()}>
+              {!folded && actions}
+              {canFold && (
+                <IconButton
+                  icon={folded ? "chevronDown" : "chevronUp"}
+                  label={folded ? "Mở rộng" : "Thu gọn"}
+                  aria-expanded={!folded}
+                  onClick={toggle}
+                />
+              )}
+            </div>
+          )}
         </div>
       )}
-      {children}
+      {!folded && children}
     </section>
   );
 }
