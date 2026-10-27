@@ -485,3 +485,45 @@ def test_check_without_triggers_is_never_selected() -> None:
     k = Knowledge.model_validate({"checks": [check(1)]})
     assert isinstance(k.checks[0], Check) and k.checks[0].triggers.empty
     assert select_checks(k, ["anything"], {"endpoint"}, "anything") == []
+
+
+def test_select_sources_keeps_rules_and_skills_and_only_review_agents_and_commands() -> None:
+    from app.review.claude_kit import KitFile
+    from app.review.knowledge import select_sources
+
+    def kit(kind: str, name: str, description: str = "") -> KitFile:
+        return KitFile(
+            path=f".claude/{kind}s/{name}.md",
+            rel=f"{kind}s/{name}.md",
+            source="repo",
+            kind=kind,
+            name=name,
+            description=description,
+            globs=[],
+            text="x",
+            chars=1,
+        )
+
+    files = [
+        kit("rules", "critical/tenant-isolation"),
+        kit("skill", "deploy-helm", "how to ship a release"),
+        kit("instructions", "CLAUDE.md"),
+        kit("command", "/review-mr-dev", "review a merge request like a lead"),
+        kit("command", "/new-feature", "scaffold a feature"),
+        kit("agent", "backend-reviewer", "reviews services and APIs"),
+        kit("agent", "frontend-builder", "builds screens"),
+        kit("agent", "sec-scan", "Security audit of a change"),
+    ]
+    kept, omitted = select_sources(files)
+    assert [f.name for f in kept] == [
+        "critical/tenant-isolation",
+        "deploy-helm",
+        "CLAUDE.md",
+        "/review-mr-dev",
+        "backend-reviewer",
+        "sec-scan",
+    ]
+    assert [(o.path, o.reason) for o in omitted] == [
+        (".claude/commands//new-feature.md", "not_review"),
+        (".claude/agents/frontend-builder.md", "not_review"),
+    ]

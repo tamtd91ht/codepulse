@@ -34,12 +34,14 @@ from app.review.claude_kit import scan
 from app.review.claude_repo import SharedConfig, load_shared_config
 from app.review.discover import Doc, discover
 from app.review.knowledge import (
+    MAX_OMITTED,
     SCHEMA_VERSION,
     Knowledge,
     KnowledgeBudgetError,
     claude_tree_sha,
     compile_documents,
     merge,
+    select_sources,
 )
 from app.review.knowledge_probe import merge_probe, probe_code
 from app.review.progress import ProgressSink, RedisProgress, progress_redis
@@ -350,11 +352,12 @@ def _shared_knowledge(
         if row is not None and str((row.sources or {}).get("shared_sha") or "")[:12] == sha[:12]:
             return Knowledge.model_validate(row.data), sha, 0.0
     ledger = CostLedger()
+    shared_kept, shared_left_out = select_sources(shared.files)
     try:
         knowledge, usage = compile_documents(
             provider,
             shared.docs,
-            [Doc(f.path, f.text) for f in shared.files],
+            [Doc(f.path, f.text) for f in shared_kept],
             target.business_name or str(shared.info.get("repo") or "shared"),
             max_cost_usd=max_cost_usd,
             on_call=ledger.add,
@@ -374,6 +377,7 @@ def _shared_knowledge(
         raise
     knowledge.meta.built_at = datetime.now(UTC).isoformat()
     knowledge.meta.sources = {"shared_sha": sha, "shared_ref": shared.info.get("ref")}
+    knowledge.omitted = (shared_left_out + knowledge.omitted)[:MAX_OMITTED]
     with session.begin():
         store_knowledge(
             session,
@@ -571,7 +575,9 @@ def _build(
             sensitive_paths=settings.sensitive_paths,
         ) as (root, stats):
             docs = discover(root)
-            kit = scan(root / ".claude", ".claude", "repo", settings.claude_file_chars)
+            kit, left_out = select_sources(
+                scan(root / ".claude", ".claude", "repo", settings.claude_file_chars)
+            )
             extra = [Doc(f.path, f.text) for f in kit]
             shared = load_shared_config(
                 client, business, connection.id, sensitive_paths=settings.sensitive_paths
@@ -590,6 +596,7 @@ def _build(
                 max_cost_usd=(cap - shared_cost) if cap > 0 else None,
                 on_call=ledger.add,
             )
+            repo_knowledge.omitted = (left_out + repo_knowledge.omitted)[:MAX_OMITTED]
             spent = shared_cost + usage.cost_usd
             if agent is None:
                 _stage(sink, pid, "probe", "bỏ qua (không có agent)")

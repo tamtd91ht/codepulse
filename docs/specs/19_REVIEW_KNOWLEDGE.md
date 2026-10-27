@@ -71,7 +71,9 @@ severity_rules > procedure > code_conventions), không bao giờ cắt ngang m�
 Hai tầng, cùng một job, cùng checkout sandbox của spec 18:
 
 1. **Tầng tài liệu** (đọc trọn, deterministic chọn file): `.claude/**` của repo tại default branch
-   (CLAUDE.md, rules, skills, agents, commands), repo `.claude` dùng chung của dự án, README,
+   (CLAUDE.md, rules, skills luôn; agents và commands **chỉ khi** tên/mô tả có review, audit,
+   security, vì phần còn lại là quy trình cho agent viết code; hooks trong `settings.json` không
+   bao giờ đọc; file bị loại ghi `omitted[]` với lý do `not_review`; người dùng 2026-10-27), repo `.claude` dùng chung của dự án, README,
    CONTRIBUTING, SECURITY, `docs/*security*|*architecture*|specs/*`, AGENTS.md/.cursorrules/
    copilot-instructions, manifest. Che secret, bỏ file nhạy cảm, mỗi file ≤ 60k ký tự. Một lời gọi
    LLM **không tool** với schema §3.1 và prompt biên dịch (§3.3). Tài liệu quá tổng (> 400k ký tự)

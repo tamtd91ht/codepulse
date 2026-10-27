@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.models import Project, ReviewKnowledge, ReviewKnowledgeEdit
+from app.review.claude_kit import KitFile
 from app.review.discover import Doc, ProjectDocs
 from app.review.prepare import CHARS_PER_TOKEN, redact
 from app.review.providers.base import LLMProvider, ReviewPrompt, ReviewResult
@@ -828,6 +829,40 @@ def _sum(results: Sequence[ReviewResult]) -> ReviewResult:
         cost_usd=round(sum(r.cost_usd for r in results), 4),
         raw={"calls": len(results)},
     )
+
+
+# Which .claude files feed the compiler (user 2026-10-27: "chỉ load rules, skills, cân nhắc
+# agents, không cần commands"). Rules, skills and CLAUDE.md always: they state what must hold.
+# An agent or command only when it is about reviewing (review / audit / security): the rest
+# are workflows for the coding agent (/deploy, /new-feature, a frontend builder) and would only
+# add noise and compile cost. Hooks are shell commands in settings.json: never read.
+ALWAYS_KINDS = frozenset({"rules", "skill", "instructions"})
+REVIEW_ONLY_KINDS = frozenset({"agent", "command"})
+REVIEW_WORDS = re.compile(r"review|audit|secur", re.I)
+
+
+def select_sources(files: Sequence[KitFile]) -> tuple[list[KitFile], list[Omitted]]:
+    """The .claude files worth compiling, and the ones left out with the reason (shown on the
+    knowledge page under "Đã bỏ")."""
+    kept: list[KitFile] = []
+    omitted: list[Omitted] = []
+    for f in files:
+        if f.kind in ALWAYS_KINDS or (
+            f.kind in REVIEW_ONLY_KINDS
+            and REVIEW_WORDS.search(f"{f.name} {f.description} {f.path}")
+        ):
+            kept.append(f)
+        elif f.kind in REVIEW_ONLY_KINDS:
+            omitted.append(
+                Omitted(
+                    path=f.path,
+                    reason="not_review",
+                    note=f"{f.kind} không thuộc review (quy trình cho agent viết code)",
+                )
+            )
+        else:
+            kept.append(f)
+    return kept, omitted
 
 
 def compile_documents(
