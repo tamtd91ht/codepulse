@@ -5,6 +5,7 @@ import { use, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { IconButton } from "@/components/icons";
+import { useRange } from "@/components/Evaluation";
 import { MemberEvaluation } from "@/components/MemberEvaluation";
 import { ReviewResults } from "@/components/ReviewResults";
 import { Alert, Avatar, Card, ChartTip, EmptyState, Kpi, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
@@ -188,6 +189,8 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
   const { data: series, error: seriesError } = useApi<MetricsSeries>(`/metrics/users/${id}${qs({ period: "week" })}`);
   const { data: heat, error: heatError } = useApi<CategoryWeek[]>(`/metrics/users/${id}/categories?weeks=12`);
   const { data: repos } = useApi<Repo[]>("/repos");
+  // One period for the evaluation and the review results: changing either card moves both.
+  const range = useRange("30");
   const { data: open, error: openError } = useApi<Page<BoardFinding>>(`/findings${qs({ user_id: id, limit: 50 })}`);
 
   if (!person) return <Loading error={error} rows={4} />;
@@ -254,13 +257,13 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
         </>
       )}
 
-      <MemberEvaluation person={person} />
+      <MemberEvaluation person={person} range={range} />
 
       <Card title="Loại lỗi theo tuần" subtitle="Số finding của mỗi loại, 12 tuần gần nhất">
         {heat ? <Heatmap cells={heat} /> : <Loading error={heatError} rows={4} />}
       </Card>
 
-      <ReviewResults person={person.id} repos={repos} />
+      <ReviewResults person={person.id} repos={repos} range={range} />
 
       <Card title="Finding đang mở" subtitle="Critical và high xếp trước">
         {open ? (

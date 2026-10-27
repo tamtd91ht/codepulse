@@ -37,6 +37,15 @@ export function useRange(initial: Exclude<Preset, "custom"> = "30"): [Range | nu
   return [range, setRange];
 }
 
+/** A range and its setter, shared by several cards of one page so they move together. */
+export type SharedRange = [Range | null, (r: Range) => void];
+
+/** The page's shared range when given, otherwise the card's own (last 30 days). */
+export function useCardRange(shared?: SharedRange): SharedRange {
+  const own = useRange("30");
+  return shared ?? own;
+}
+
 /** The label of the range a response covers (its own from/to, not the picker's draft). */
 export function rangeLabel(from: string, to: string): string {
   return `${from} → ${to}`;

@@ -2,7 +2,7 @@
 
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { AttentionBadge, RangePicker, Score, SeverityRow, Stat, VerdictMix, rangeLabel, useRange } from "@/components/Evaluation";
+import { AttentionBadge, RangePicker, Score, SeverityRow, Stat, VerdictMix, rangeLabel, type SharedRange, useCardRange } from "@/components/Evaluation";
 import { Alert, Card, ChartTip, CountLink, EmptyState, Loading } from "@/components/ui";
 import { boardLink, qs, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, num, relative, weekLabel } from "@/lib/format";
@@ -13,8 +13,8 @@ import type { MemberEvaluationDetail, Person } from "@/lib/types";
  * repos, which kinds of findings, over a range the reader picks (the Thành viên page uses the
  * same numbers for everyone at once).
  */
-export function MemberEvaluation({ person }: { person: Person }) {
-  const [range, setRange] = useRange("30");
+export function MemberEvaluation({ person, range: shared }: { person: Person; range?: SharedRange }) {
+  const [range, setRange] = useCardRange(shared);
   const path = range && range.from && range.to ? `/members/${person.id}/evaluation${qs({ from: range.from, to: range.to })}` : null;
   const { data, error, isLoading } = useApi<MemberEvaluationDetail>(path, { keepPreviousData: true });
   const s = data?.summary;

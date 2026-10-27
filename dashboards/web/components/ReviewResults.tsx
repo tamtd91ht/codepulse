@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import useSWRInfinite from "swr/infinite";
 
-import { RangePicker, useRange } from "@/components/Evaluation";
+import { RangePicker, type SharedRange, useCardRange } from "@/components/Evaluation";
 import { Alert, Avatar, Card, EmptyState, ExternalLink, Loading, Pill } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
 import { VERDICT_LABEL, dateTime, num } from "@/lib/format";
@@ -35,14 +35,17 @@ export function ReviewResults({
   businessProjectId,
   repos,
   person,
+  range: shared,
 }: {
   businessProjectId?: number;
   /** The repos offered by the repo filter (shown when there is more than one). */
   repos?: { id: number; path_with_namespace: string }[];
   /** One person's results (the member page): no member filter, no member column. */
   person?: number;
+  /** The page's range, when other cards follow the same one. */
+  range?: SharedRange;
 }) {
-  const [range, setRange] = useRange("30");
+  const [range, setRange] = useCardRange(shared);
   const [userId, setUserId] = useState("");
   // Picked by clicking a name: may be someone /people leaves out (deactivated since).
   const [picked, setPicked] = useState<{ id: string; name: string } | null>(null);
