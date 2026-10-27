@@ -108,19 +108,18 @@ class TestPaletteSelection(unittest.TestCase):
         self.assertEqual(_select_palette_for_mode([], "dark"), {})
 
     def test_category_identity_wins_over_unrelated_dark_palette(self):
-        chosen = _select_palette_for_mode(
-            [LIGHT_PALETTE, DARK_PALETTE], "dark", "SaaS")
+        chosen = _select_palette_for_mode([LIGHT_PALETTE, DARK_PALETTE], "dark", "SaaS")
         self.assertEqual("SaaS", chosen["Product Type"])
         self.assertEqual("derived-dark", chosen["_mode_derivation"])
         self.assertTrue(_palette_is_dark(chosen))
-        self.assertGreaterEqual(
-            _contrast_ratio(chosen["Ring"], chosen["Background"]), 3.0)
+        self.assertGreaterEqual(_contrast_ratio(chosen["Ring"], chosen["Background"]), 3.0)
 
 
 class TestAntiPatternGating(unittest.TestCase):
     def test_dark_clause_dropped_others_kept(self):
         result = _filter_anti_patterns_for_mode(
-            "Excessive animation + Dark mode by default", "dark")
+            "Excessive animation + Dark mode by default", "dark"
+        )
         self.assertEqual(result, "Excessive animation")
 
     def test_light_mode_is_a_no_op(self):

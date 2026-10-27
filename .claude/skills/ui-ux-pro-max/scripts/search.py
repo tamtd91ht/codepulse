@@ -33,10 +33,10 @@ from core import CSV_CONFIG, AVAILABLE_STACKS, MAX_RESULTS, UNTRUNCATED_COLS, se
 from design_system import generate_design_system
 
 # Force UTF-8 for stdout/stderr to handle emojis on Windows (cp1252 default)
-if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-if sys.stderr.encoding and sys.stderr.encoding.lower() != 'utf-8':
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
 TRUNCATE_AT = 300
 
@@ -52,7 +52,7 @@ def format_output(result, full=False):
         output.append(f"**Stack:** {result['stack']} | **Query:** {result['query']}")
     else:
         output.append("## UI Pro Max Search Results")
-        domain_note = result['domain']
+        domain_note = result["domain"]
         if result.get("auto_detected"):
             domain_note += " (auto-detected"
             if result.get("runner_up_domain"):
@@ -61,7 +61,7 @@ def format_output(result, full=False):
         output.append(f"**Domain:** {domain_note} | **Query:** {result['query']}")
     output.append(f"**Source:** {result['file']} | **Found:** {result['count']} results\n")
 
-    if result['count'] == 0:
+    if result["count"] == 0:
         redirect = result.get("redirect")
         if redirect:
             output.append(
@@ -81,7 +81,7 @@ def format_output(result, full=False):
             output.append(f"**Closest known terms:** {', '.join(suggestions)}")
         return "\n".join(output)
 
-    for i, row in enumerate(result['results'], 1):
+    for i, row in enumerate(result["results"], 1):
         output.append(f"### Result {i}")
         for key, value in row.items():
             value_str = str(value)
@@ -97,24 +97,88 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="UI Pro Max Search")
     parser.add_argument("query", help="Search query")
     parser.add_argument("--domain", "-d", choices=list(CSV_CONFIG.keys()), help="Search domain")
-    parser.add_argument("--stack", "-s", choices=AVAILABLE_STACKS, help=f"Stack-specific search. Available: {', '.join(AVAILABLE_STACKS)}")
-    parser.add_argument("--max-results", "-n", type=int, choices=range(1, 21), default=MAX_RESULTS,
-                        metavar="1-20", help="Max results (default: 3)")
+    parser.add_argument(
+        "--stack",
+        "-s",
+        choices=AVAILABLE_STACKS,
+        help=f"Stack-specific search. Available: {', '.join(AVAILABLE_STACKS)}",
+    )
+    parser.add_argument(
+        "--max-results",
+        "-n",
+        type=int,
+        choices=range(1, 21),
+        default=MAX_RESULTS,
+        metavar="1-20",
+        help="Max results (default: 3)",
+    )
     parser.add_argument("--json", action="store_true", help="Output as JSON")
-    parser.add_argument("--full", action="store_true", help="Do not truncate long field values in text output")
+    parser.add_argument(
+        "--full", action="store_true", help="Do not truncate long field values in text output"
+    )
     # Design system generation
-    parser.add_argument("--design-system", "-ds", action="store_true", help="Generate complete design system recommendation")
-    parser.add_argument("--project-name", "-p", type=str, default=None, help="Project name for design system output")
-    parser.add_argument("--format", "-f", choices=["ascii", "markdown"], default="ascii", help="Output format for design system (ignored if --json)")
+    parser.add_argument(
+        "--design-system",
+        "-ds",
+        action="store_true",
+        help="Generate complete design system recommendation",
+    )
+    parser.add_argument(
+        "--project-name", "-p", type=str, default=None, help="Project name for design system output"
+    )
+    parser.add_argument(
+        "--format",
+        "-f",
+        choices=["ascii", "markdown"],
+        default="ascii",
+        help="Output format for design system (ignored if --json)",
+    )
     # Persistence (Master + Overrides pattern)
-    parser.add_argument("--persist", action="store_true", help="Save design system to design-system/<project-slug>/MASTER.md (creates hierarchical structure)")
-    parser.add_argument("--page", type=str, default=None, help="Create page-specific override file in design-system/<project-slug>/pages/")
-    parser.add_argument("--output-dir", "-o", type=str, default=None, help="Output directory for persisted files (default: current directory -- pass this explicitly, pointed at the project root)")
-    parser.add_argument("--force", action="store_true", help="Overwrite an existing MASTER.md when persisting (default: skip if it already exists)")
+    parser.add_argument(
+        "--persist",
+        action="store_true",
+        help="Save design system to design-system/<project-slug>/MASTER.md (creates hierarchical structure)",
+    )
+    parser.add_argument(
+        "--page",
+        type=str,
+        default=None,
+        help="Create page-specific override file in design-system/<project-slug>/pages/",
+    )
+    parser.add_argument(
+        "--output-dir",
+        "-o",
+        type=str,
+        default=None,
+        help="Output directory for persisted files (default: current directory -- pass this explicitly, pointed at the project root)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing MASTER.md when persisting (default: skip if it already exists)",
+    )
     # Design dials (1-10), only applied with --design-system
-    parser.add_argument("--variance", type=int, choices=range(1, 11), metavar="1-10", help="DESIGN_VARIANCE dial: 1=centered/minimal, 10=bold/asymmetric (only with --design-system)")
-    parser.add_argument("--motion", type=int, choices=range(1, 11), metavar="1-10", help="MOTION_INTENSITY dial: 1=subtle, 10=complex; pulls a matching GSAP snippet from motion.csv (only with --design-system)")
-    parser.add_argument("--density", type=int, choices=range(1, 11), metavar="1-10", help="VISUAL_DENSITY dial: 1=spacious, 10=dense/dashboard; overrides the spacing scale (only with --design-system)")
+    parser.add_argument(
+        "--variance",
+        type=int,
+        choices=range(1, 11),
+        metavar="1-10",
+        help="DESIGN_VARIANCE dial: 1=centered/minimal, 10=bold/asymmetric (only with --design-system)",
+    )
+    parser.add_argument(
+        "--motion",
+        type=int,
+        choices=range(1, 11),
+        metavar="1-10",
+        help="MOTION_INTENSITY dial: 1=subtle, 10=complex; pulls a matching GSAP snippet from motion.csv (only with --design-system)",
+    )
+    parser.add_argument(
+        "--density",
+        type=int,
+        choices=range(1, 11),
+        metavar="1-10",
+        help="VISUAL_DENSITY dial: 1=spacious, 10=dense/dashboard; overrides the spacing scale (only with --design-system)",
+    )
 
     args = parser.parse_args()
 
@@ -134,10 +198,16 @@ if __name__ == "__main__":
         )
 
         if args.json:
-            print(json_module.dumps(
-                {"design_system": result["design_system"], "persistence": result["persistence"]},
-                indent=2, ensure_ascii=False,
-            ))
+            print(
+                json_module.dumps(
+                    {
+                        "design_system": result["design_system"],
+                        "persistence": result["persistence"],
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
         else:
             print(result["text"])
 
@@ -145,7 +215,9 @@ if __name__ == "__main__":
                 persistence = result["persistence"] or {}
                 print("\n" + "=" * 60)
                 if persistence.get("status") == "skipped_exists":
-                    print(f"⚠️  {persistence.get('message', 'MASTER.md already exists; not overwritten.')}")
+                    print(
+                        f"⚠️  {persistence.get('message', 'MASTER.md already exists; not overwritten.')}"
+                    )
                 else:
                     ds_dir = persistence.get("design_system_dir", "design-system/<project>")
                     print(f"✅ Design system persisted to {ds_dir}/")
@@ -153,7 +225,9 @@ if __name__ == "__main__":
                         print(f"   📄 {f}")
                     print("")
                     print(f"📖 Usage: When building a page, check {ds_dir}/pages/[page].md first.")
-                    print("   If it exists, its rules override MASTER.md. Otherwise, use MASTER.md.")
+                    print(
+                        "   If it exists, its rules override MASTER.md. Otherwise, use MASTER.md."
+                    )
                 print("=" * 60)
     # Stack search
     elif args.stack:

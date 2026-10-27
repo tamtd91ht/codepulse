@@ -6,8 +6,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-ROOT = next(parent for parent in Path(__file__).resolve().parents
-            if (parent / "scripts/evaluate-relevance.py").exists())
+ROOT = next(
+    parent
+    for parent in Path(__file__).resolve().parents
+    if (parent / "scripts/evaluate-relevance.py").exists()
+)
 MODULE_PATH = ROOT / "scripts/evaluate-relevance.py"
 SPEC = importlib.util.spec_from_file_location("evaluate_relevance", MODULE_PATH)
 evaluator = importlib.util.module_from_spec(SPEC)
@@ -100,10 +103,12 @@ class TestThresholdGate(unittest.TestCase):
             selected = Path(tmp) / "cases.json"
             selected.write_bytes(canonical.read_bytes())
             self.assertEqual(
-                evaluator.oracle_fingerprint(selected), evaluator.oracle_fingerprint(canonical))
+                evaluator.oracle_fingerprint(selected), evaluator.oracle_fingerprint(canonical)
+            )
             selected.write_bytes(canonical.read_bytes() + b" ")
             self.assertNotEqual(
-                evaluator.oracle_fingerprint(selected), evaluator.oracle_fingerprint(canonical))
+                evaluator.oracle_fingerprint(selected), evaluator.oracle_fingerprint(canonical)
+            )
 
     def test_metric_sample_and_locked_case_failures_are_actionable(self):
         report = {
@@ -116,10 +121,14 @@ class TestThresholdGate(unittest.TestCase):
             "sampleMinimums": {"retrieval": 2},
             "lockedCases": {"locked": {"withinTop": 1, "minimumGrade": 2}},
         }
-        manifest["splits"] = {"calibration": {"metrics": {}, "sampleMinimums": {}},
-                              "held_out": {"metrics": {}, "sampleMinimums": {}}}
-        report["splits"] = {"calibration": {"metrics": {}, "samples": {}},
-                            "held_out": {"metrics": {}, "samples": {}}}
+        manifest["splits"] = {
+            "calibration": {"metrics": {}, "sampleMinimums": {}},
+            "held_out": {"metrics": {}, "sampleMinimums": {}},
+        }
+        report["splits"] = {
+            "calibration": {"metrics": {}, "samples": {}},
+            "held_out": {"metrics": {}, "samples": {}},
+        }
         failures = evaluator.check_thresholds(report, manifest)
         self.assertEqual(len(failures), 3)
         self.assertTrue(any("Wrong" in failure for failure in failures))
@@ -146,7 +155,8 @@ class TestThresholdGate(unittest.TestCase):
                 split: {
                     "metrics": {name: {"floor": 0.0} for name in evaluator.REQUIRED_METRICS},
                     "sampleMinimums": {"cases": 1},
-                } for split in ("calibration", "held_out")
+                }
+                for split in ("calibration", "held_out")
             },
         }
         errors = evaluator.validate_manifest(manifest, "fingerprint", "oracle")
@@ -170,7 +180,8 @@ class TestThresholdGate(unittest.TestCase):
                 split: {
                     "metrics": {name: {"floor": 0.0} for name in evaluator.REQUIRED_METRICS},
                     "sampleMinimums": {"cases": 1},
-                } for split in ("calibration", "held_out")
+                }
+                for split in ("calibration", "held_out")
             },
         }
         errors = evaluator.validate_manifest(manifest, "runtime", "expected")

@@ -33,7 +33,8 @@ def split_values(value, delimiter):
 
 def style_identities(row):
     return [
-        row["Style ID"], row["Style Category"],
+        row["Style ID"],
+        row["Style Category"],
         *split_values(row["Aliases"], "|"),
     ]
 
@@ -67,8 +68,7 @@ class TestStyleIdentityContract(unittest.TestCase):
         lookup = {}
         for row in self.styles:
             lookup.update(
-                (identity.casefold(), row["Style ID"])
-                for identity in style_identities(row)
+                (identity.casefold(), row["Style ID"]) for identity in style_identities(row)
             )
 
         references = []
@@ -77,10 +77,9 @@ class TestStyleIdentityContract(unittest.TestCase):
             references.extend(split_values(row["Secondary Styles"], ","))
         for row in read_rows("ui-reasoning.csv"):
             references.extend(split_values(row["Style_Priority"], "+"))
-        unresolved = sorted({
-            reference for reference in references
-            if reference.casefold() not in lookup
-        })
+        unresolved = sorted(
+            {reference for reference in references if reference.casefold() not in lookup}
+        )
         self.assertEqual([], unresolved)
 
 
@@ -89,8 +88,7 @@ class TestReasoningContract(unittest.TestCase):
         product_rows = read_rows("products.csv")
         color_rows = read_rows("colors.csv")
         reasoning_rows = read_rows("ui-reasoning.csv")
-        self.assertEqual([192, 192, 192], [
-            len(product_rows), len(color_rows), len(reasoning_rows)])
+        self.assertEqual([192, 192, 192], [len(product_rows), len(color_rows), len(reasoning_rows)])
         products = {row["Product Type"] for row in product_rows}
         colors = {row["Product Type"] for row in color_rows}
         reasoning = {row["UI_Category"] for row in reasoning_rows}
@@ -119,12 +117,12 @@ class TestReasoningContract(unittest.TestCase):
     def test_must_have_and_explicit_signals_are_applied_and_reported(self):
         rules = parse_decision_rules(
             '{"must_have":["constraint:keyboard-navigation"],'
-            '"if_mobile":["constraint:optimize-touch-targets"]}')
+            '"if_mobile":["constraint:optimize-touch-targets"]}'
+        )
         desktop = apply_decision_rules(rules, "accessible government portal")
         mobile = apply_decision_rules(rules, "accessible mobile government portal")
         self.assertEqual(desktop["constraints"], ["keyboard-navigation"])
-        self.assertEqual(
-            mobile["constraints"], ["keyboard-navigation", "optimize-touch-targets"])
+        self.assertEqual(mobile["constraints"], ["keyboard-navigation", "optimize-touch-targets"])
         self.assertEqual(
             [item["condition"] for item in mobile["activated"]],
             ["must_have", "if_mobile"],
@@ -200,7 +198,8 @@ class TestReasoningContract(unittest.TestCase):
         }
         with patch("design_system.search", side_effect=capture):
             generator._multi_domain_search(
-                "public portal", "Government Portal", reasoning, ["Minimalism"])
+                "public portal", "Government Portal", reasoning, ["Minimalism"]
+            )
         queried = {domain: query for domain, query in calls}
         for domain in ("style", "color", "typography", "landing"):
             with self.subTest(domain=domain):
@@ -218,13 +217,15 @@ class TestReasoningContract(unittest.TestCase):
     def test_duplicate_semantic_reasoning_labels_fail_validation(self):
         product = {"Product Type": "Duplicate"}
         color = {"Product Type": "Duplicate"}
-        reasoning = {
-            "UI_Category": "Duplicate", "Decision_Rules": "{}", "Confidence": ""
-        }
+        reasoning = {"UI_Category": "Duplicate", "Decision_Rules": "{}", "Confidence": ""}
         problems = []
         _check_reasoning_contract(
-            [product, dict(product)], [color, dict(color)],
-            [reasoning, dict(reasoning)], set(), set(), problems,
+            [product, dict(product)],
+            [color, dict(color)],
+            [reasoning, dict(reasoning)],
+            set(),
+            set(),
+            problems,
         )
         self.assertTrue(any("duplicate" in problem.lower() for problem in problems))
 
@@ -272,25 +273,30 @@ class TestLandingAndStackContract(unittest.TestCase):
             path = DATA_DIR / STACK_CONFIG[stack]["file"]
             with path.open(encoding="utf-8", newline="") as handle:
                 reader = csv.DictReader(handle)
-                self.assertTrue({"Applies To", "Status", "Verified At"} <= set(reader.fieldnames or []))
+                self.assertTrue(
+                    {"Applies To", "Status", "Verified At"} <= set(reader.fieldnames or [])
+                )
                 for row in reader:
-                    self.assertIn(row["Status"], {"active", "supplemental", "deprecated", "unverified"})
+                    self.assertIn(
+                        row["Status"], {"active", "supplemental", "deprecated", "unverified"}
+                    )
 
     def test_provenance_sidecar_has_stable_shape(self):
         payload = json.loads((DATA_DIR / "data-provenance.json").read_text(encoding="utf-8"))
         self.assertEqual(payload["schemaVersion"], 1)
         self.assertIsInstance(payload["records"], list)
         for record in payload["records"]:
-            self.assertTrue({"entityKind", "entityId", "sourceFile", "status", "verifiedAt", "sources"} <= set(record))
+            self.assertTrue(
+                {"entityKind", "entityId", "sourceFile", "status", "verifiedAt", "sources"}
+                <= set(record)
+            )
             self.assertIsInstance(record["sources"], list)
             source_types = {source.get("type") for source in record["sources"]}
             if source_types <= {"derived"}:
                 self.assertEqual("needs-review", record["sla"])
 
     def test_provenance_rejects_bad_shapes_enums_and_hosts_without_crashing(self):
-        canonical = json.loads(
-            (DATA_DIR / "data-provenance.json").read_text(encoding="utf-8")
-        )
+        canonical = json.loads((DATA_DIR / "data-provenance.json").read_text(encoding="utf-8"))
         cases = [[], None, "invalid"]
         malformed_record = copy.deepcopy(canonical)
         malformed_record["records"].append(None)
@@ -300,12 +306,11 @@ class TestLandingAndStackContract(unittest.TestCase):
         cases.append(malformed_source)
         unapproved_source = copy.deepcopy(canonical)
         official = next(
-            record for record in unapproved_source["records"]
+            record
+            for record in unapproved_source["records"]
             if any(source.get("type") == "official" for source in record["sources"])
         )
-        official["sources"] = [
-            {"type": "official", "ref": "https://evil.example/fake"}
-        ]
+        official["sources"] = [{"type": "official", "ref": "https://evil.example/fake"}]
         cases.append(unapproved_source)
         invalid_enums = copy.deepcopy(canonical)
         invalid_enums["records"][0].update(
@@ -317,9 +322,7 @@ class TestLandingAndStackContract(unittest.TestCase):
         for index, payload in enumerate(cases):
             with self.subTest(case=index), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                (root / "data-provenance.json").write_text(
-                    json.dumps(payload), encoding="utf-8"
-                )
+                (root / "data-provenance.json").write_text(json.dumps(payload), encoding="utf-8")
                 problems = []
                 with patch.object(validate_data, "DATA_DIR", root):
                     validate_data._check_provenance(reasoning, styles, problems)
@@ -328,16 +331,22 @@ class TestLandingAndStackContract(unittest.TestCase):
     def test_dataset_provenance_scope_binds_real_rows_and_fields(self):
         problems = []
         valid = validate_data._valid_dataset_source_key(
-            "colors.csv", {"Scope": "No 1-192; Notes field"},
-            ("dataset-contract", "valid"), problems,
+            "colors.csv",
+            {"Scope": "No 1-192; Notes field"},
+            ("dataset-contract", "valid"),
+            problems,
         )
         self.assertTrue(valid)
         self.assertEqual([], problems)
         stack_problems = []
-        self.assertTrue(validate_data._valid_dataset_source_key(
-            "stacks/html-tailwind.csv", {"Scope": "No 57-59; Guideline field"},
-            ("dataset-contract", "valid-stack"), stack_problems,
-        ))
+        self.assertTrue(
+            validate_data._valid_dataset_source_key(
+                "stacks/html-tailwind.csv",
+                {"Scope": "No 57-59; Guideline field"},
+                ("dataset-contract", "valid-stack"),
+                stack_problems,
+            )
+        )
         self.assertEqual([], stack_problems)
         for source_file, source_key in (
             ("unknown.csv", {"Scope": "No 1; Notes field"}),
@@ -346,9 +355,11 @@ class TestLandingAndStackContract(unittest.TestCase):
         ):
             with self.subTest(source_file=source_file, source_key=source_key):
                 problems = []
-                self.assertFalse(validate_data._valid_dataset_source_key(
-                    source_file, source_key, ("dataset-contract", "bad"), problems
-                ))
+                self.assertFalse(
+                    validate_data._valid_dataset_source_key(
+                        source_file, source_key, ("dataset-contract", "bad"), problems
+                    )
+                )
                 self.assertTrue(problems)
 
 
@@ -365,9 +376,7 @@ class TestGeneratedCatalogContract(unittest.TestCase):
         licenses = self.load_json("google-font-licenses.json")
         licenses["families"][0]["license"] = "UNKNOWN"
         problems = []
-        validate_data._check_font_catalog(
-            fonts, licenses, read_rows("typography.csv"), problems
-        )
+        validate_data._check_font_catalog(fonts, licenses, read_rows("typography.csv"), problems)
         self.assertTrue(any("invalid active family" in problem for problem in problems))
 
         missing_font = copy.deepcopy(read_rows("typography.csv"))
@@ -398,9 +407,7 @@ class TestGeneratedCatalogContract(unittest.TestCase):
 
     def test_curated_icon_and_summary_drift_fail_closed(self):
         manifest = self.load_json("phosphor-icons-upstream.json")
-        manifest["icons"][0]["clientImport"] = (
-            'import { Wrong } from "@phosphor-icons/react"'
-        )
+        manifest["icons"][0]["clientImport"] = 'import { Wrong } from "@phosphor-icons/react"'
         problems = []
         validate_data._check_phosphor_catalog(read_rows("icons.csv"), manifest, problems)
         self.assertTrue(any("invalid identity or imports" in problem for problem in problems))

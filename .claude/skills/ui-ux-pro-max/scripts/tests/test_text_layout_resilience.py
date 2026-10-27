@@ -57,8 +57,10 @@ class TestTextLayoutRetrieval(unittest.TestCase):
 
     def test_tailwind_query_returns_compact_label_layout_first(self):
         result = search_stack(
-            "chip badge overflow nowrap", "html-tailwind",
-            max_results=3, diagnostics=True,
+            "chip badge overflow nowrap",
+            "html-tailwind",
+            max_results=3,
+            diagnostics=True,
         )
         actual = [row.get("Guideline") for row in result["results"]]
         self.assertTrue(actual, result.get("diagnostics"))

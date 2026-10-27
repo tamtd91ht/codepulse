@@ -11,13 +11,22 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from core import (DATA_DIR, STACK_CONFIG, STACK_CURRENT_APPLICABILITY,
-                  search_stack)  # noqa: E402
+from core import DATA_DIR, STACK_CONFIG, STACK_CURRENT_APPLICABILITY, search_stack  # noqa: E402
 from validate_data import STACK_OFFICIAL_HOSTS  # noqa: E402
 
 STACKS = {
-    "react-native", "flutter", "swiftui", "jetpack-compose", "avalonia",
-    "uwp", "winui", "wpf", "uno", "javafx", "threejs", "laravel",
+    "react-native",
+    "flutter",
+    "swiftui",
+    "jetpack-compose",
+    "avalonia",
+    "uwp",
+    "winui",
+    "wpf",
+    "uno",
+    "javafx",
+    "threejs",
+    "laravel",
 }
 
 
@@ -34,8 +43,9 @@ class TestNativeDesktopStackFreshness(unittest.TestCase):
                 with self.subTest(stack=stack, row=row["No"]):
                     expected = "deprecated" if stack == "uwp" else "active"
                     self.assertEqual(row["Status"], expected)
-                    self.assertTrue(row["Applies To"].startswith(
-                        STACK_CURRENT_APPLICABILITY[stack]))
+                    self.assertTrue(
+                        row["Applies To"].startswith(STACK_CURRENT_APPLICABILITY[stack])
+                    )
                     self.assertRegex(row["Verified At"], r"^\d{4}-\d{2}-\d{2}$")
                     self.assertEqual("legacy" in row["Applies To"], stack == "uwp")
 
@@ -61,8 +71,7 @@ class TestNativeDesktopStackFreshness(unittest.TestCase):
                 result = search_stack(query, stack, max_results=1)
                 self.assertEqual(result["count"], 1)
                 recommended = " ".join(
-                    result["results"][0][field]
-                    for field in ("Guideline", "Do", "Code Good")
+                    result["results"][0][field] for field in ("Guideline", "Do", "Code Good")
                 ).casefold()
                 self.assertIn(expected, recommended)
 
@@ -73,11 +82,13 @@ class TestNativeDesktopStackFreshness(unittest.TestCase):
         self.assertGreater(legacy["count"], 0)
         self.assertEqual({row["Status"] for row in current["results"]}, {"active"})
         self.assertEqual({row["Status"] for row in legacy["results"]}, {"deprecated"})
-        self.assertTrue(any("winui" in " ".join(row.values()).casefold()
-                            for row in legacy["results"]))
+        self.assertTrue(
+            any("winui" in " ".join(row.values()).casefold() for row in legacy["results"])
+        )
         successor = search_stack(
             "which Windows UI framework should a brand new app choose instead of legacy UWP",
-            "uwp", max_results=1,
+            "uwp",
+            max_results=1,
         )
         self.assertEqual("Prefer WinUI 3 for new projects", successor["results"][0]["Guideline"])
 
@@ -142,8 +153,7 @@ class TestNativeDesktopStackFreshness(unittest.TestCase):
                 result = search_stack(query, "threejs", max_results=1)
                 self.assertEqual(result["count"], 1)
                 recommended = " ".join(
-                    result["results"][0][field]
-                    for field in ("Guideline", "Do", "Code Good")
+                    result["results"][0][field] for field in ("Guideline", "Do", "Code Good")
                 ).casefold()
                 self.assertIn(expected, recommended)
 
@@ -156,8 +166,11 @@ class TestNativeDesktopStackFreshness(unittest.TestCase):
             "uno": ("system.windows", 'requestedtheme="default"'),
             "javafx": ("fxpermission", "javadoc/21"),
             "threejs": (
-                "r128", "three.orbitcontrols", "outputencoding",
-                "three.srgbencoding", "examples/js/controls",
+                "r128",
+                "three.orbitcontrols",
+                "outputencoding",
+                "three.srgbencoding",
+                "examples/js/controls",
             ),
         }
         for stack, tokens in forbidden.items():

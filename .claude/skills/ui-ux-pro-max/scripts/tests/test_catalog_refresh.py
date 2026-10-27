@@ -11,10 +11,15 @@ import unittest
 from pathlib import Path
 
 REPO = next(
-    parent for parent in Path(__file__).resolve().parents
-    if all((parent / "scripts" / script).is_file() for script in (
-        "refresh-google-fonts.py", "refresh-icon-catalog.py",
-    ))
+    parent
+    for parent in Path(__file__).resolve().parents
+    if all(
+        (parent / "scripts" / script).is_file()
+        for script in (
+            "refresh-google-fonts.py",
+            "refresh-icon-catalog.py",
+        )
+    )
 )
 FIXTURES = Path(__file__).parent / "fixtures" / "catalogs"
 FONT_SCRIPT = REPO / "scripts" / "refresh-google-fonts.py"
@@ -32,18 +37,29 @@ class CatalogRefreshTest(unittest.TestCase):
             check=False,
         )
 
-    def font_args(self, directory, api=None, metadata=None, approve=True, existing=None, overrides=None):
+    def font_args(
+        self, directory, api=None, metadata=None, approve=True, existing=None, overrides=None
+    ):
         args = [
             FONT_SCRIPT,
-            "--api-input", api or FIXTURES / "google-api.json",
-            "--metadata-input", metadata or FIXTURES / "google-metadata.json",
-            "--existing-csv", existing or FIXTURES / "google-existing.csv",
-            "--overrides", overrides or FIXTURES / "google-overrides.json",
-            "--output-csv", directory / "google-fonts.csv",
-            "--license-output", directory / "google-font-licenses.json",
-            "--verified-at", "2026-08-13",
-            "--metadata-revision", "fixture-catalogs-v1",
-            "--expected-count", "2",
+            "--api-input",
+            api or FIXTURES / "google-api.json",
+            "--metadata-input",
+            metadata or FIXTURES / "google-metadata.json",
+            "--existing-csv",
+            existing or FIXTURES / "google-existing.csv",
+            "--overrides",
+            overrides or FIXTURES / "google-overrides.json",
+            "--output-csv",
+            directory / "google-fonts.csv",
+            "--license-output",
+            directory / "google-font-licenses.json",
+            "--verified-at",
+            "2026-08-13",
+            "--metadata-revision",
+            "fixture-catalogs-v1",
+            "--expected-count",
+            "2",
         ]
         if approve:
             args.append("--approve-changes")
@@ -52,14 +68,22 @@ class CatalogRefreshTest(unittest.TestCase):
     def icon_args(self, directory, source=None, curated=None, package=None, react_exports=None):
         return [
             ICON_SCRIPT,
-            "--input", source or FIXTURES / "phosphor-core.json",
-            "--package-json", package or FIXTURES / "phosphor-package.json",
-            "--react-package-json", FIXTURES / "phosphor-react-package.json",
-            "--react-exports-input", react_exports or FIXTURES / "phosphor-react-exports.json",
-            "--curated-csv", curated or FIXTURES / "icons-curated.csv",
-            "--output", directory / "phosphor-icons-upstream.json",
-            "--verified-at", "2026-08-13",
-            "--expected-count", "2",
+            "--input",
+            source or FIXTURES / "phosphor-core.json",
+            "--package-json",
+            package or FIXTURES / "phosphor-package.json",
+            "--react-package-json",
+            FIXTURES / "phosphor-react-package.json",
+            "--react-exports-input",
+            react_exports or FIXTURES / "phosphor-react-exports.json",
+            "--curated-csv",
+            curated or FIXTURES / "icons-curated.csv",
+            "--output",
+            directory / "phosphor-icons-upstream.json",
+            "--verified-at",
+            "2026-08-13",
+            "--expected-count",
+            "2",
         ]
 
     def test_live_font_refresh_requires_environment_key(self):
@@ -98,7 +122,9 @@ class CatalogRefreshTest(unittest.TestCase):
         self.assertEqual("400 | 400i | 500", rows[0]["Styles"])
         self.assertEqual("wght: 100..900", rows[0]["Variable Axes"])
         self.assertEqual(["OFL", "APACHE2"], [item["license"] for item in licenses["families"]])
-        self.assertEqual(["Alpha Sans", "Zeta Serif"], [item["name"] for item in licenses["families"]])
+        self.assertEqual(
+            ["Alpha Sans", "Zeta Serif"], [item["name"] for item in licenses["families"]]
+        )
         self.assertEqual("fixture-catalogs-v1", licenses["source"]["revision"])
         self.assertTrue(all(item["status"] == "active" for item in licenses["families"]))
         self.assertTrue(all(item["verifiedAt"] == "2026-08-13" for item in licenses["families"]))
@@ -106,12 +132,11 @@ class CatalogRefreshTest(unittest.TestCase):
             reused = Path(raw)
             metadata_path = reused / "metadata.json"
             metadata_path.write_bytes(license_bytes)
-            result = self.run_command(*self.font_args(
-                reused, metadata=metadata_path
-            ))
+            result = self.run_command(*self.font_args(reused, metadata=metadata_path))
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertEqual(
-                csv_bytes, (reused / "google-fonts.csv").read_bytes(),
+                csv_bytes,
+                (reused / "google-fonts.csv").read_bytes(),
             )
 
     def test_font_refresh_rejects_schema_size_dates_and_licenses(self):
@@ -134,7 +159,10 @@ class CatalogRefreshTest(unittest.TestCase):
             bad_license["families"][0]["license"] = "UNKNOWN"
             cases.append((api, bad_license, "invalid or missing official license"))
             for index, (api_value, metadata_value, error) in enumerate(cases):
-                api_path, metadata_path = directory / f"api-{index}.json", directory / f"metadata-{index}.json"
+                api_path, metadata_path = (
+                    directory / f"api-{index}.json",
+                    directory / f"metadata-{index}.json",
+                )
                 api_path.write_text(json.dumps(api_value))
                 metadata_path.write_text(json.dumps(metadata_value))
                 result = self.run_command(*self.font_args(directory, api_path, metadata_path))
@@ -185,7 +213,7 @@ class CatalogRefreshTest(unittest.TestCase):
             )
             args = self.font_args(directory)
             metadata_index = args.index("--metadata-input")
-            args[metadata_index:metadata_index + 2] = ["--metadata-root", metadata_root]
+            args[metadata_index : metadata_index + 2] = ["--metadata-root", metadata_root]
             result = self.run_command(*args)
         self.assertEqual(2, result.returncode)
         self.assertIn("fewer than 90%", result.stderr)
@@ -208,11 +236,13 @@ class CatalogRefreshTest(unittest.TestCase):
                 )
             args = self.font_args(directory)
             metadata_index = args.index("--metadata-input")
-            args[metadata_index:metadata_index + 2] = ["--metadata-root", metadata_root]
+            args[metadata_index : metadata_index + 2] = ["--metadata-root", metadata_root]
             result = self.run_command(*args)
             licenses = json.loads((directory / "google-font-licenses.json").read_text())
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertEqual(["Alpha Sans", "Zeta Serif"], [item["name"] for item in licenses["families"]])
+        self.assertEqual(
+            ["Alpha Sans", "Zeta Serif"], [item["name"] for item in licenses["families"]]
+        )
 
     def test_catalog_rejects_bool_rank_duplicate_axis_and_unreviewed_addition(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -236,7 +266,9 @@ class CatalogRefreshTest(unittest.TestCase):
             existing = directory / "existing.csv"
             lines = (FIXTURES / "google-existing.csv").read_text().splitlines()
             existing.write_text("\n".join(lines[:2]) + "\n")
-            approval_result = self.run_command(*self.font_args(directory, approve=False, existing=existing))
+            approval_result = self.run_command(
+                *self.font_args(directory, approve=False, existing=existing)
+            )
             bad_overrides = directory / "overrides.json"
             bad_overrides.write_text('{"families":{"Unknown Font":{"Keywords":"bad"}}}')
             override_result = self.run_command(*self.font_args(directory, overrides=bad_overrides))
@@ -252,10 +284,13 @@ class CatalogRefreshTest(unittest.TestCase):
             directory = Path(raw)
             metadata = json.loads((FIXTURES / "google-metadata.json").read_text())
             metadata["families"] = metadata["families"][:1]
-            metadata["excludedFamilies"] = [{
-                "name": "Alpha Sans", "reason": "No matching official METADATA.pb",
-                "source": "https://github.com/google/fonts",
-            }]
+            metadata["excludedFamilies"] = [
+                {
+                    "name": "Alpha Sans",
+                    "reason": "No matching official METADATA.pb",
+                    "source": "https://github.com/google/fonts",
+                }
+            ]
             metadata_path = directory / "metadata.json"
             metadata_path.write_text(json.dumps(metadata))
             result = self.run_command(*self.font_args(directory, metadata=metadata_path))
@@ -285,11 +320,13 @@ class CatalogRefreshTest(unittest.TestCase):
                 directory = Path(raw)
                 candidate = json.loads(json.dumps(metadata))
                 candidate["families"] = candidate["families"][1:]
-                candidate["excludedFamilies"] = [{
-                    "name": "Zeta Serif",
-                    "reason": "No matching official METADATA.pb",
-                    "source": source,
-                }]
+                candidate["excludedFamilies"] = [
+                    {
+                        "name": "Zeta Serif",
+                        "reason": "No matching official METADATA.pb",
+                        "source": source,
+                    }
+                ]
                 metadata_path = directory / f"metadata-{index}.json"
                 metadata_path.write_text(json.dumps(candidate))
                 result = self.run_command(*self.font_args(directory, metadata=metadata_path))
@@ -305,7 +342,9 @@ class CatalogRefreshTest(unittest.TestCase):
             manifest = json.loads(output.read_text())
         self.assertEqual("2.1.1", manifest["source"]["version"])
         self.assertEqual(("active", "2026-08-13"), (manifest["status"], manifest["verifiedAt"]))
-        self.assertEqual(["thin", "light", "regular", "bold", "fill", "duotone"], manifest["weights"])
+        self.assertEqual(
+            ["thin", "light", "regular", "bold", "fill", "duotone"], manifest["weights"]
+        )
         self.assertEqual(["acorn", "arrow-left"], [icon["name"] for icon in manifest["icons"]])
         arrow = manifest["icons"][1]
         self.assertEqual(["arrows", "navigation"], arrow["categories"])
@@ -341,7 +380,9 @@ class CatalogRefreshTest(unittest.TestCase):
             exports["ssr"].remove("Acorn")
             exports_path = directory / "exports.json"
             exports_path.write_text(json.dumps(exports))
-            exports_result = self.run_command(*self.icon_args(directory, react_exports=exports_path))
+            exports_result = self.run_command(
+                *self.icon_args(directory, react_exports=exports_path)
+            )
         self.assertIn("invalid official IconEntry schema", schema_result.stderr)
         self.assertIn("expected 3 icons", size_result.stderr)
         self.assertIn("import component does not match", import_result.stderr)

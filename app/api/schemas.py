@@ -645,9 +645,9 @@ class ActivityItem(BaseModel):
     round: int = 1
     started_at: datetime | None = None
     enqueued_at: datetime | None = None
-    stage: str | None = (
-        None  # start | diff | checkout | llm | agent | verify | save; knowledge: docs | compile | probe | save
-    )
+    # review: start | diff | checkout | llm | agent | verify | save
+    # knowledge build: docs | compile | probe | save
+    stage: str | None = None
     detail: str = ""
     stage_at: datetime | None = None
     loc: int | None = None

@@ -91,22 +91,22 @@ class TestBm25CoreBehavior(unittest.TestCase):
             original_get_bm25 = core._get_bm25
             replaced = False
 
-            def replace_after_read(filepath, search_cols, data, signature=None,
-                                   cache_variant=""):
+            def replace_after_read(filepath, search_cols, data, signature=None, cache_variant=""):
                 nonlocal replaced
                 if not replaced:
                     path.write_text("Name,Keywords\nBeta,beta token\n", encoding="utf-8")
                     replaced = True
-                return original_get_bm25(
-                    filepath, search_cols, data, signature, cache_variant)
+                return original_get_bm25(filepath, search_cols, data, signature, cache_variant)
 
             with patch.object(core, "_get_bm25", side_effect=replace_after_read):
                 results, _, _ = core._search_csv_detailed(
-                    path, ["Name", "Keywords"], ["Name"], "alpha", 1)
+                    path, ["Name", "Keywords"], ["Name"], "alpha", 1
+                )
             self.assertEqual(results[0]["Name"], "Alpha")
 
             results, _, _ = core._search_csv_detailed(
-                path, ["Name", "Keywords"], ["Name"], "beta", 1)
+                path, ["Name", "Keywords"], ["Name"], "beta", 1
+            )
             self.assertEqual(results[0]["Name"], "Beta")
 
 
@@ -124,7 +124,9 @@ class TestSearchDomains(unittest.TestCase):
 
     def test_ui_is_searchable_in_style_domain(self):
         result = search("ui minimalism", domain="style", max_results=1)
-        self.assertGreater(result["count"], 0, "literal 'ui' token must be searchable, not filtered by tokenizer")
+        self.assertGreater(
+            result["count"], 0, "literal 'ui' token must be searchable, not filtered by tokenizer"
+        )
 
     def test_accessibility_query_hits_ux(self):
         result = search("accessibility contrast wcag keyboard", domain="ux", max_results=3)
@@ -150,7 +152,9 @@ class TestSearchDomains(unittest.TestCase):
         second = search("testimonal", domain="landing", max_results=3)
         self.assertEqual(first["count"], 0)
         self.assertEqual(first.get("suggestions"), second.get("suggestions"))
-        self.assertTrue(first["suggestions"], "typo path should return at least one deterministic suggestion")
+        self.assertTrue(
+            first["suggestions"], "typo path should return at least one deterministic suggestion"
+        )
 
         retry = search(first["suggestions"][0], domain="landing", max_results=3)
         self.assertGreater(retry["count"], 0)
@@ -161,9 +165,7 @@ class TestSearchDomains(unittest.TestCase):
 
         minimal = search("minimal", domain="style", max_results=3)
         self.assertEqual(1, minimal["count"])
-        self.assertEqual(
-            "minimalism-and-swiss-style", minimal["results"][0]["Style ID"]
-        )
+        self.assertEqual("minimalism-and-swiss-style", minimal["results"][0]["Style ID"])
 
     def test_unknown_programmatic_domain_keeps_legacy_style_fallback(self):
         result = search("minimalism", domain="unknown", max_results=1)
@@ -181,7 +183,9 @@ class TestSearchDomains(unittest.TestCase):
         for domain, config in CSV_CONFIG.items():
             with self.subTest(domain=domain):
                 result = search("design", domain=domain, max_results=1)
-                self.assertNotIn("error", result, f"domain '{domain}' failed: {result.get('error')}")
+                self.assertNotIn(
+                    "error", result, f"domain '{domain}' failed: {result.get('error')}"
+                )
 
     def test_chart_output_keeps_legacy_grade_during_risk_migration(self):
         result = search("time series chart", domain="chart", max_results=1)
@@ -253,12 +257,26 @@ class TestPersistence(unittest.TestCase):
     def test_concurrent_non_force_persist_has_one_writer(self):
         with tempfile.TemporaryDirectory() as tmp:
             search_script = SCRIPTS_DIR / "search.py"
-            processes = [subprocess.Popen(
-                [sys.executable, str(search_script), f"saas dashboard {index}",
-                 "--design-system", "--persist", "--project-name", "Race Probe",
-                 "--output-dir", tmp, "--json"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            ) for index in range(8)]
+            processes = [
+                subprocess.Popen(
+                    [
+                        sys.executable,
+                        str(search_script),
+                        f"saas dashboard {index}",
+                        "--design-system",
+                        "--persist",
+                        "--project-name",
+                        "Race Probe",
+                        "--output-dir",
+                        tmp,
+                        "--json",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                for index in range(8)
+            ]
             statuses = []
             for process in processes:
                 stdout, stderr = process.communicate(timeout=30)
@@ -270,14 +288,18 @@ class TestPersistence(unittest.TestCase):
 
     def test_persist_then_skip_then_force(self):
         with tempfile.TemporaryDirectory() as tmp:
-            result = generate_design_system("saas dashboard", "Test Project", persist=True, output_dir=tmp)
+            result = generate_design_system(
+                "saas dashboard", "Test Project", persist=True, output_dir=tmp
+            )
             self.assertEqual(result["persistence"]["status"], "success")
             master = Path(result["persistence"]["master_file"])
             self.assertTrue(master.exists())
             original_content = master.read_text(encoding="utf-8")
 
             # Second persist without force must not overwrite.
-            result2 = generate_design_system("saas dashboard", "Test Project", persist=True, output_dir=tmp)
+            result2 = generate_design_system(
+                "saas dashboard", "Test Project", persist=True, output_dir=tmp
+            )
             self.assertEqual(result2["persistence"]["status"], "skipped_exists")
             self.assertEqual(master.read_text(encoding="utf-8"), original_content)
 
@@ -300,7 +322,9 @@ class TestPersistence(unittest.TestCase):
             self.assertEqual(page_file.read_text(encoding="utf-8"), page_content)
 
             # With force=True it must overwrite.
-            result3 = generate_design_system("ecommerce luxury", "Test Project", persist=True, output_dir=tmp, force=True)
+            result3 = generate_design_system(
+                "ecommerce luxury", "Test Project", persist=True, output_dir=tmp, force=True
+            )
             self.assertEqual(result3["persistence"]["status"], "success")
 
     def test_persist_writes_only_under_output_dir(self):
@@ -314,7 +338,9 @@ class TestReasoningMatch(unittest.TestCase):
     def test_known_category_matches_exactly(self):
         gen = DesignSystemGenerator()
         rule = gen._find_reasoning_rule("SaaS (General)")
-        self.assertTrue(rule, "exact-match category lookup should not fall through to fuzzy matching")
+        self.assertTrue(
+            rule, "exact-match category lookup should not fall through to fuzzy matching"
+        )
 
     def test_unknown_category_falls_back_gracefully(self):
         gen = DesignSystemGenerator()

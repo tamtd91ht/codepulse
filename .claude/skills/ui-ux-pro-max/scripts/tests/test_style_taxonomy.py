@@ -32,9 +32,7 @@ class TestStyleTaxonomy(unittest.TestCase):
             status: sum(row["Status"] == status for row in self.styles)
             for status in ("active", "supplemental", "deprecated")
         }
-        self.assertEqual(
-            {"active": 50, "supplemental": 29, "deprecated": 9}, counts
-        )
+        self.assertEqual({"active": 50, "supplemental": 29, "deprecated": 9}, counts)
 
     def test_every_style_name_and_alias_has_a_deterministic_destination(self):
         for row in self.styles:
@@ -43,8 +41,7 @@ class TestStyleTaxonomy(unittest.TestCase):
             for query in queries:
                 with self.subTest(style=row["Style ID"], query=query):
                     result = search(query, max_results=1)
-                    if (row["Status"] == "deprecated"
-                            and row["Replacement Domain"] == "landing"):
+                    if row["Status"] == "deprecated" and row["Replacement Domain"] == "landing":
                         self.assertEqual(0, result["count"])
                         self.assertEqual(
                             {
@@ -65,9 +62,7 @@ class TestStyleTaxonomy(unittest.TestCase):
         for query in ("modern interface", "marketing page", "trust design"):
             with self.subTest(query=query):
                 result = search(query, domain="style", max_results=20)
-                self.assertLessEqual(
-                    {row["Status"] for row in result["results"]}, {"active"}
-                )
+                self.assertLessEqual({row["Status"] for row in result["results"]}, {"active"})
 
     def test_style_arbitration_does_not_steal_product_intent(self):
         result = search("design a financial dashboard for my bank", max_results=1)
@@ -88,9 +83,7 @@ class TestStyleTaxonomy(unittest.TestCase):
                 self.assertIn(row["Status"], {"supplemental", "deprecated"})
 
         self.assertEqual("style", self.by_id["bento-grids"]["Replacement Domain"])
-        self.assertEqual(
-            "bento-box-grid", self.by_id["bento-grids"]["Replacement ID"]
-        )
+        self.assertEqual("bento-box-grid", self.by_id["bento-grids"]["Replacement ID"])
 
         self.assertEqual(
             "neumorphism-mobile",
@@ -137,9 +130,7 @@ class TestStyleTaxonomy(unittest.TestCase):
                 self.assertNotRegex(row["Framework Compatibility"], r"\d+/10")
 
         self.assertTrue(_style_is_dark_primary(self.by_id["dark-mode-oled"]))
-        self.assertFalse(
-            _style_is_dark_primary(self.by_id["minimalism-and-swiss-style"])
-        )
+        self.assertFalse(_style_is_dark_primary(self.by_id["minimalism-and-swiss-style"]))
 
     def test_searchable_prompt_lengths_are_balanced(self):
         lengths_by_type = {}
@@ -152,9 +143,7 @@ class TestStyleTaxonomy(unittest.TestCase):
         self.assertLessEqual(mobile_median, general_median * 1.6)
 
     def test_new_rows_have_first_party_provenance(self):
-        payload = json.loads(
-            (DATA_DIR / "data-provenance.json").read_text(encoding="utf-8")
-        )
+        payload = json.loads((DATA_DIR / "data-provenance.json").read_text(encoding="utf-8"))
         records = {
             record["entityId"]: record
             for record in payload["records"]
@@ -166,9 +155,7 @@ class TestStyleTaxonomy(unittest.TestCase):
             with self.subTest(style=row["Style ID"]):
                 record = records[row["Style ID"]]
                 self.assertTrue(record["sources"])
-                self.assertTrue(
-                    any(source["type"] == "official" for source in record["sources"])
-                )
+                self.assertTrue(any(source["type"] == "official" for source in record["sources"]))
 
 
 if __name__ == "__main__":
