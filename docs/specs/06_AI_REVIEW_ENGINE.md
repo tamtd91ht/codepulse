@@ -6,6 +6,8 @@
 - Bỏ qua nếu: không còn file sau khi lọc `IGNORE_PATHS`, hoặc diff > `MAX_REVIEW_LOC` (mặc định 1500) → status `skipped` + lý do "MR quá lớn" (vẫn ghi nhận vào metric PR Size).
 
 ## Chia nhỏ diff (chunking)
+> **Thay bởi spec 19 (2026-10-27):** chỉ chunk khi diff vượt `REVIEW_CHUNK_TOKENS` (60.000 token); repo được checkout một lần và ngữ cảnh ±30 dòng đọc từ đĩa thay vì gọi `file_raw` từng file. Xem 19 §4.1–4.2.
+
 - [ ] Nhóm theo file; mỗi chunk ≤ `MAX_TOKENS_PER_CHUNK` (vd 12k token).
 - [ ] Mỗi chunk kèm ngữ cảnh: tiêu đề + mô tả MR, ngôn ngữ, ±30 dòng quanh hunk (lấy qua `GET /projects/:id/repository/files/:path/raw?ref=`).
 - [ ] Gộp kết quả các chunk → 1 review; dedupe finding theo `fingerprint`.
@@ -63,6 +65,8 @@ Context:\n{context}
 ```
 
 ## Hậu xử lý
+> **Thay bởi spec 19 (2026-10-27):** mỗi finding bắt buộc có `rule_id` và đi qua bước kiểm chứng độc lập cho ra `verified` (`confirmed`/`downgraded`/`rejected`/`unverified`/`skipped`); điểm chỉ tính finding `confirmed`, `downgraded`, `skipped` và `unverified` có confidence ≥ 0.7. Xem 19 §4.3–4.4.
+
 - [ ] Kiểm tra `file_path`/`line` có nằm trong diff; nếu không → hạ thành `info` hoặc loại bỏ.
 - [ ] Loại finding `confidence < MIN_CONFIDENCE` (mặc định 0.4 từ rubric v3, trước đó 0.5).
 - [ ] **Không dùng `score` của LLM làm điểm cuối** – điểm cuối tính bằng công thức ở `08` (LLM score chỉ tham khảo, lưu ở `score_breakdown`).

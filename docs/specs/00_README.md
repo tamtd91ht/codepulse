@@ -24,6 +24,8 @@ Tự động thu thập commit/MR từ GitLab, cho AI review từng thay đổi,
 | 12 | `12_TESTING_QA.md` | Chiến lược test, dữ liệu mẫu | [ ] |
 | 13 | `13_DEPLOYMENT_OPS.md` | Docker, cấu hình, vận hành | [ ] |
 | 14 | `14_TASKS_CHECKLIST.md` | **Checklist tổng theo phase – agent tick khi xong** | [ ] |
+| 15–18 | `15_TELEGRAM_BOT.md`, `16_NOTIFICATION_WEBHOOKS.md`, `17_TECHLEAD_REVIEW.md`, `18_DEEP_REVIEW.md` | Mở rộng theo yêu cầu người dùng (10/2026) | [ ] |
+| 19 | `19_REVIEW_KNOWLEDGE.md` | **Tri thức review theo dự án (biên dịch `.claude`) + luồng review v2** – thay các mục tương ứng của 06/08/17/18 | [ ] |
 
 ## Cách dùng với AI agent
 1. Copy toàn bộ thư mục này vào `docs/specs/` của repo mới.

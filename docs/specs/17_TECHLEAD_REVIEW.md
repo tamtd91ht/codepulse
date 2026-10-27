@@ -3,6 +3,8 @@
 > Ngoài spec gốc, theo yêu cầu người dùng (2026-10-25), lấy ý từ quy trình `/review-mr-dev` của dự án omicx: reviewer đọc diff như techlead duyệt merge của member, đối chiếu quy tắc của chính dự án, kết luận rõ merge được hay không, và nói MR làm gì, đúng hướng không.
 
 ## 1. Quy tắc review theo dự án / repo
+> **Thay bởi spec 19 (2026-10-27):** team rules của Admin giữ nguyên (tổng ≤ 20.000 ký tự); file `.claude` (của repo và repo dùng chung) không còn được trích vào prompt mà được biên dịch thành tri thức review (RK). Xem 19 §3.
+
 - `business_projects.review_rules` (markdown ≤ 12.000 ký tự) và `projects.review_rules` (riêng cho repo) sửa ở Admin → Dự án & Repo → ngăn chi tiết dự án → **Quy tắc review**.
 - `projects.review_rules_paths`: danh sách file **trong repo** (cách nhau dấu phẩy, ≤ 10 file, không `..`), đọc ở **default branch** của repo (`GET repository/files/:path/raw?ref=<default_branch>`), mỗi file cắt ở 6.000 ký tự. Không đọc tại commit đang review: tác giả có thể sửa file quy tắc trong cùng MR để "tự duyệt"; file quy tắc nằm trong diff thì bị bỏ qua và prompt ghi chú điều đó. Ví dụ omicx: `.claude/rules/critical/tenant-isolation.md, .claude/rules/critical/money-safety.md`.
 - Ghép theo thứ tự dự án → repo → file, mỗi phần giữ tiêu đề (`## Quy tắc dự án X`, `## Quy tắc repo Y`, `## <path>`), tổng ≤ 20.000 ký tự, đưa vào khối "Team rules" của prompt. Prompt vẫn coi khối này là dữ liệu không tin cậy (không đổi được format output).
@@ -17,6 +19,8 @@
 - Output thêm `intent` (không chấm điểm): `summary`, `matches_intent` (đúng với mô tả MR không), `altitude` (over / right / under), `concerns` (≤ 5 quan ngại thiết kế không vi phạm rule). Nhiều chunk → gộp: summary đầu tiên, concerns hợp nhất, matches_intent = AND, altitude lấy mức xấu nhất. Lưu `reviews.intent` (JSONB), hiện trên trang review, comment MR và payload webhook.
 
 ## 3. Verdict và risk score
+> **Thay bởi spec 19 (2026-10-27):** thêm verdict `needs_human` (critical/high chưa kiểm chứng, không có mục `confirmed` tương ứng); `block`/`fix_required` và `risk_score` chỉ tính trên finding `confirmed` (risk thêm `downgraded`). Xem 19 §4.4.
+
 - `reviews.verdict` ∈ `approve | fix_required | block`, `reviews.risk_score = critical×10 + high×3 + medium×1`, tính từ finding không bị lead kết luận false positive. Có critical → BLOCK; có high → FIX REQUIRED; còn lại APPROVE. Cùng thang với quy trình thủ công của techlead; điểm 0–100 (spec 08) vẫn là chỉ số so sánh theo thời gian.
 - Tính khi review `done`; tính lại khi duyệt khiếu nại (finding thành false_positive) và khi `metrics recompute`. Migration `a7c3e9b1d2f4` backfill cho review cũ.
 - Hiện ở: trang review (KPI "Kết luận merge"), trang dự án và tổng quan (KPI "Tỉ lệ APPROVE" + số approve/fix/block, tính trực tiếp từ `reviews`), comment MR, kết quả Telegram, payload webhook (`review.verdict`, `review.risk_score`, `review.intent`), bộ lọc `GET /reviews?verdict=`.

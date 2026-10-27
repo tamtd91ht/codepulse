@@ -3,6 +3,8 @@
 > Ngoài spec gốc, theo yêu cầu người dùng (2026-10-25): "cần chất lượng; agent phải detect được dự án là gì, chức năng gì, bảo mật ra sao, mở `.claude` (hoặc Codex, Cursor…) trong repo nếu có và review toàn diện". Lấy ý từ quy trình `/review-mr-dev` của omicx, nhưng giữ các rào an toàn của CodePulse.
 
 ## Hai lượt review
+> **Thay bởi spec 19 (2026-10-27):** luồng v2 thay hai lượt bằng một lượt review chính agentic (lượt nhanh không tool chỉ là dự phòng) cộng bước kiểm chứng độc lập với ngữ cảnh mới; bằng chứng drop/downgrade có thể là dòng không đổi trong file thuộc diff (không được là dòng `+`). Xem 19 §4.
+
 1. **Lượt nhanh** (như trước): chỉ diff + 30 dòng ngữ cảnh + quy tắc; CLI không có tool. Kết quả là *danh sách ứng viên*.
 2. **Lượt sâu** (mới, mặc định bật): cùng job worker, ngay sau lượt nhanh.
    - Tải bản sao repo tại đúng sha qua API archive của GitLab (token sẵn có, không git, không token trong URL) vào thư mục tạm; giải nén phòng thủ: bỏ đường dẫn tuyệt đối/`..`, symlink, `.git`, `node_modules`/`vendor`/`dist`…, file > 2 MB, và mọi đường dẫn khớp `SENSITIVE_PATHS` ở **bất kỳ tầng thư mục nào, không phân biệt hoa thường** (`deploy/.env.production`, `certs/Server.PEM` đều bị loại); dừng và bỏ lượt sâu khi vượt 1 GiB giải nén hoặc 50.000 file (chống gzip bomb); xoá sạch khi xong. Archive quá `DEEP_REVIEW_MAX_ARCHIVE_MB` (300) → bỏ lượt sâu.
@@ -14,6 +16,8 @@
    - **Mọi sự cố của lượt sâu không làm hỏng review**: archive lớn, GitLab lỗi, CLI timeout, JSON sai → giữ kết quả lượt nhanh, `mode = fast`, `deep = {"error": …}`; log warning.
 
 ## Chọn file .claude theo commit (người dùng 2026-10-25)
+> **Thay bởi spec 19 (2026-10-27):** không chọn file `.claude` theo commit nữa; `.claude` được biên dịch một lần thành tri thức review có schema, phiên bản và nguồn gốc, nạp ≤ 12.000 token mỗi review. Xem 19 §3.
+
 > "khi check nếu project có nạp .claude thì load hết rules, skills liên quan đến nội dung commit; xem trong commands có lệnh dạng /review-mr, /review… để biết cách dự án review" và "review là hành động có chủ đích nên khi cần thì đọc vào rules, skills; khác code là phải nạp sẵn từ đầu phiên".
 
 Nạp theo thứ tự cố định trong 40.000 ký tự làm rơi đúng những file quan trọng (lệnh review, skill bảo mật). Thay bằng `app/review/claude_kit.py`, áp dụng cho `.claude` của repo được review và repo dùng chung:

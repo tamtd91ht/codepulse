@@ -1,6 +1,8 @@
 # 08 – Scoring & Aggregation
 
 ## 1. Điểm của một review (0–100)
+> **Thay bởi spec 19 (2026-10-27):** từ rubric v4 chỉ tính finding đã kiểm chứng (`confirmed`, `downgraded` theo severity mới, `skipped`, `unverified` có confidence ≥ 0.7) và cap critical ≤ 50 / high ≤ 80 chỉ áp cho `confirmed`; review rubric < v4 giữ cách cũ khi recompute. Xem 19 §4.4.
+
 ```
 penalty      = Σ weight[severity] × confidence   (finding status ≠ false_positive)
 weight       = {critical: 25, high: 10, medium: 4, low: 1, info: 0}
