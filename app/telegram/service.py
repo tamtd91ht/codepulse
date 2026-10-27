@@ -67,11 +67,11 @@ from app.telegram.picker import (
     repo_pages,
 )
 from app.telegram.resolve import NoResolver, Resolver
-from app.webhook.jobs import REVIEW_JOB_TIMEOUT, REVIEW_RETRY
+from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
 
 log = logging.getLogger(__name__)
 
-VERDICT_ICON = {"approve": "✅", "fix_required": "⚠️", "block": "❌"}
+VERDICT_ICON = {"approve": "✅", "needs_human": "⚠️", "fix_required": "⚠️", "block": "❌"}
 TELEGRAM_KIND = "telegram"
 LINK_CODE_TTL_S = 15 * 60
 LINK_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/I
@@ -1075,7 +1075,7 @@ class BotService:
                     expected_round=t.round if t.force else None,
                     job_id=f"review-mr-{t.project_id}-{t.ref}-{t.sha[:12]}"
                     + (f"-again-{t.round}" if t.force else ""),
-                    job_timeout=REVIEW_JOB_TIMEOUT,
+                    job_timeout=review_job_timeout(self._settings),
                     retry=REVIEW_RETRY,
                     at_front=True,
                 )
@@ -1089,7 +1089,7 @@ class BotService:
                     force=t.force,
                     expected_round=t.round if t.force else None,
                     job_id=f"review-commit-{t.sha[:12]}" + (f"-again-{t.round}" if t.force else ""),
-                    job_timeout=REVIEW_JOB_TIMEOUT,
+                    job_timeout=review_job_timeout(self._settings),
                     retry=REVIEW_RETRY,
                     at_front=True,
                 )

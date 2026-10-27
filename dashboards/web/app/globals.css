@@ -2743,3 +2743,44 @@ textarea.rules {
   gap: 4px;
   align-items: center;
 }
+
+/* ---------- Review knowledge (docs/specs/19) ---------- */
+
+.knowledge-tile .toolbar {
+  margin-top: 2px;
+}
+.knowledge-table td .statement {
+  overflow-wrap: anywhere;
+}
+.knowledge-table tr.struck td .statement,
+.knowledge-table tr.struck td .sev {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+.knowledge-check {
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.knowledge-check > summary {
+  cursor: pointer;
+}
+.knowledge-check .facts {
+  margin-top: 8px;
+}
+.knowledge-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  margin: 0;
+}
+.knowledge-facts dt {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 13px;
+}
+.knowledge-facts dd {
+  margin: 0;
+  color: var(--text-2);
+}

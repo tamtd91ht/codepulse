@@ -29,10 +29,13 @@ from app.models import (
 )
 from app.review.status import SEVERE
 from app.scoring.formula import (
+    MIN_CONFIDENCE_UNVERIFIED,
     SEVERITIES,
     ScoredFinding,
+    counts_for_score,
     quality_index,
     review_score,
+    rule_for,
     weights_for,
 )
 from app.scoring.process import process_metrics
@@ -76,7 +79,8 @@ class ReviewFacts:
     score: float | None
     loc: int
     rubric_version: str | None
-    findings: list[tuple[str, float, str]] = field(default_factory=list)  # severity, conf, status
+    # severity, confidence, status, verified (docs/specs/19 §4.3)
+    findings: list[tuple[str, float, str, str]] = field(default_factory=list)
     mr_id: int | None = None
     # Critical/high fingerprints over every review of the MR, and those still in this one.
     severe_all: set[str] = field(default_factory=set)
@@ -118,7 +122,12 @@ def load_period(session: Session, start: datetime, end: datetime) -> PeriodData:
             if finding.review_id is None:
                 continue
             reviews[finding.review_id].findings.append(
-                (finding.severity, float(finding.confidence or 1), finding.status or "open")
+                (
+                    finding.severity,
+                    float(finding.confidence or 1),
+                    finding.status or "open",
+                    finding.verified or "skipped",
+                )
             )
 
     _load_fixes(session, reviews)
@@ -204,15 +213,21 @@ def compute(
     pipelines: list[Pipeline],
     weights_override: Mapping[str, float] | None = None,
     min_sample: int = 3,
+    min_confidence_unverified: float = MIN_CONFIDENCE_UNVERIFIED,
 ) -> dict[str, Any]:
-    """One metrics row (any owner) from the reviews and MRs attributed to that owner."""
+    """One metrics row (any owner) from the reviews and MRs attributed to that owner. A finding
+    counts here exactly when it counted in the review's score (formula.counts_for_score): never
+    a disputed or rejected one, and from rubric v4 no unverified one below the confidence
+    threshold (docs/specs/19 §4.4)."""
     counts = dict.fromkeys(SEVERITIES, 0)
     penalty = 0.0
     weighted_score = weight_total = 0.0
     for review in reviews:
         weights = weights_for(review.rubric_version, weights_override)
-        for severity, confidence, status in review.findings:
-            if status == "false_positive":
+        rule = rule_for(review.rubric_version)
+        for severity, confidence, status, verified in review.findings:
+            scored = ScoredFinding(severity, confidence, status, verified)
+            if not counts_for_score(scored, rule, min_confidence_unverified):
                 continue
             counts[severity] += 1
             penalty += weights.get(severity, 0) * confidence
@@ -282,6 +297,7 @@ def recompute_job(first_day: str, last_day: str) -> dict[str, int]:
             settings.scoring_weights,
             settings.min_sample,
             rescore=False,
+            min_confidence_unverified=settings.verify_min_confidence_unverified,
         )
     return {"periods": len(result.periods)}
 
@@ -299,7 +315,13 @@ def aggregate_job(period_type: PeriodType, period_start: str | None = None) -> d
         start = previous_period(period_start_of(datetime.now(tz).date(), period_type), period_type)
     with get_sessionmaker()() as session, session.begin():
         result = aggregate(
-            session, period_type, start, tz, settings.scoring_weights, settings.min_sample
+            session,
+            period_type,
+            start,
+            tz,
+            settings.scoring_weights,
+            settings.min_sample,
+            min_confidence_unverified=settings.verify_min_confidence_unverified,
         )
     return {"users": result.users, "teams": result.teams}
 
@@ -311,6 +333,7 @@ def aggregate(
     tz: ZoneInfo,
     weights_override: Mapping[str, float] | None = None,
     min_sample: int = 3,
+    min_confidence_unverified: float = MIN_CONFIDENCE_UNVERIFIED,
 ) -> AggregateResult:
     period_start = period_start_of(period_start, period_type)
     start, end = period_bounds(period_start, period_type, tz)
@@ -344,14 +367,24 @@ def aggregate(
     for user_id in users:
         mrs = by_user_mrs[user_id]
         row = compute(
-            by_user_reviews[user_id], mrs, pipelines_for(mrs), weights_override, min_sample
+            by_user_reviews[user_id],
+            mrs,
+            pipelines_for(mrs),
+            weights_override,
+            min_sample,
+            min_confidence_unverified,
         )
         session.add(MetricsUserPeriod(user_id=user_id, **key, **row))
     teams = set(by_team_reviews) | set(by_team_mrs)
     for team_id in teams:
         mrs = by_team_mrs[team_id]
         row = compute(
-            by_team_reviews[team_id], mrs, pipelines_for(mrs), weights_override, min_sample
+            by_team_reviews[team_id],
+            mrs,
+            pipelines_for(mrs),
+            weights_override,
+            min_sample,
+            min_confidence_unverified,
         )
         session.add(MetricsTeamPeriod(team_id=team_id, **key, **row))
     session.flush()
@@ -372,8 +405,10 @@ def recompute_scores(
     start: datetime,
     end: datetime,
     weights_override: Mapping[str, float] | None = None,
+    min_confidence_unverified: float = MIN_CONFIDENCE_UNVERIFIED,
 ) -> int:
-    """Re-score finished reviews from their findings (after a dispute or a weight change)."""
+    """Re-score finished reviews from their findings (after a dispute or a weight change), with
+    the same VERIFY_MIN_CONFIDENCE_UNVERIFIED the review path uses."""
     changed = 0
     for review in session.scalars(
         select(Review).where(
@@ -383,16 +418,26 @@ def recompute_scores(
         )
     ):
         findings = [
-            ScoredFinding(f.severity, float(f.confidence or 1), f.status or "open")
+            ScoredFinding(
+                f.severity, float(f.confidence or 1), f.status or "open", f.verified or "skipped"
+            )
             for f in session.scalars(
                 select(ReviewFinding).where(ReviewFinding.review_id == review.id)
             )
         ]
         weights = weights_for(review.rubric_version, weights_override)
         score = Decimal(
-            str(review_score(findings, review.loc_reviewed or 0, weights, review.rubric_version))
+            str(
+                review_score(
+                    findings,
+                    review.loc_reviewed or 0,
+                    weights,
+                    review.rubric_version,
+                    min_confidence_unverified,
+                )
+            )
         )
-        verdict, risk = assess((f.severity, f.status) for f in findings)
+        verdict, risk = assess((f.severity, f.status, f.verified) for f in findings)
         if review.score != score or review.verdict != verdict or review.risk_score != risk:
             review.score, review.verdict, review.risk_score = score, verdict, risk
             changed += 1
@@ -414,18 +459,31 @@ def recompute(
     weights_override: Mapping[str, float] | None = None,
     min_sample: int = 3,
     rescore: bool = True,
+    min_confidence_unverified: float = MIN_CONFIDENCE_UNVERIFIED,
 ) -> RecomputeResult:
     """docs/specs/08 §5 `codepulse metrics recompute --from --to`: scores, then every week and
     month that overlaps [first_day, last_day]. rescore=False only re-aggregates."""
     start = datetime.combine(first_day, time.min, tz)
     end = datetime.combine(last_day + timedelta(days=1), time.min, tz)
-    rescored = recompute_scores(session, start, end, weights_override) if rescore else 0
+    rescored = (
+        recompute_scores(session, start, end, weights_override, min_confidence_unverified)
+        if rescore
+        else 0
+    )
     periods: list[tuple[str, date]] = []
     period_type: PeriodType
     for period_type in ("week", "month"):
         current = period_start_of(first_day, period_type)
         while current <= last_day:
-            aggregate(session, period_type, current, tz, weights_override, min_sample)
+            aggregate(
+                session,
+                period_type,
+                current,
+                tz,
+                weights_override,
+                min_sample,
+                min_confidence_unverified,
+            )
             periods.append((period_type, current))
             current = next_period(current, period_type)
     return RecomputeResult(rescored, periods)

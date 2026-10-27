@@ -20,6 +20,8 @@ from app.api.routers import (
     claude_repo,
     commits,
     disputes,
+    knowledge,
+    knowledge_stats,
     llm,
     members,
     metrics,
@@ -71,6 +73,8 @@ for api_router in (
     claude_repo.router,
     purge.router,
     members.router,
+    knowledge.router,
+    knowledge_stats.router,
 ):
     app.include_router(api_router, prefix="/api/v1")
 # docs/specs/11: CORS for the dashboard origin only; cookies need credentials.

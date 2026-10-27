@@ -1,4 +1,5 @@
-"""Review score 0-100 (docs/specs/08 §1). The LLM's own score is never used as the result."""
+"""Review score 0-100 (docs/specs/08 §1; docs/specs/19 §4.4 from rubric v4). The LLM's own score
+is never used as the result."""
 
 import math
 from collections.abc import Iterable, Mapping
@@ -26,8 +27,13 @@ WEIGHTS_BY_RUBRIC: Mapping[str, Mapping[str, float]] = {
     "v1": DEFAULT_WEIGHTS,
     "v2": DEFAULT_WEIGHTS,
     "v3": WEIGHTS_V3,
+    "v4": WEIGHTS_V3,
 }
 SEVERITIES = frozenset(DEFAULT_WEIGHTS)
+# Statuses that never count: a dispute the lead accepted, a finding the verification refuted.
+NOT_COUNTED = frozenset({"false_positive", "rejected"})
+# docs/specs/19 §4.4: from v4 an unverified finding counts only from this confidence.
+MIN_CONFIDENCE_UNVERIFIED = 0.7
 
 # Phase 0 decision: any critical finding caps the review at 50, however large the MR is.
 CRITICAL_SCORE_CAP = 50.0
@@ -42,13 +48,24 @@ class SizeRule:
 
     sqrt_size: bool  # v3: sqrt(loc / 200); before: loc / 200, which forgave large changes
     high_cap: float | None
+    # v4: only verified findings count (confirmed, downgraded, skipped, and unverified ones
+    # that are confident enough); the caps apply to settled findings only (see SETTLED).
+    verified_only: bool = False
 
 
 SIZE_RULES: Mapping[str, SizeRule] = {
     "v1": SizeRule(sqrt_size=False, high_cap=None),
     "v2": SizeRule(sqrt_size=False, high_cap=None),
     "v3": SizeRule(sqrt_size=True, high_cap=HIGH_SCORE_CAP),
+    "v4": SizeRule(sqrt_size=True, high_cap=HIGH_SCORE_CAP, verified_only=True),
 }
+
+
+# Findings whose severity stands as reported: confirmed by the verification, or never put to
+# it (`skipped`: low/info, reviews before v4, and reviews run without [2] configured, where the
+# pre-v4 semantics apply). The critical/high caps of v4 need one of these; `unverified` and
+# `downgraded` never cap (docs/specs/19 §4.4).
+SETTLED = frozenset({"confirmed", "skipped"})
 
 
 @dataclass(frozen=True)
@@ -56,6 +73,12 @@ class ScoredFinding:
     severity: str
     confidence: float
     status: str = "open"
+    verified: str = "skipped"  # docs/specs/19 §4.3; "skipped" for reviews before v4
+
+
+def rule_for(rubric_version: str | None) -> SizeRule:
+    """The size / verification rule a review was scored under (None or unknown: v1)."""
+    return SIZE_RULES.get(rubric_version or "v1", SIZE_RULES["v1"])
 
 
 def weights_for(
@@ -74,8 +97,21 @@ def weights_for(
 
 def penalty(findings: Iterable[ScoredFinding], weights: Mapping[str, float]) -> float:
     return sum(
-        weights.get(f.severity, 0) * f.confidence for f in findings if f.status != "false_positive"
+        weights.get(f.severity, 0) * f.confidence for f in findings if f.status not in NOT_COUNTED
     )
+
+
+def counts_for_score(f: ScoredFinding, rule: SizeRule, min_confidence_unverified: float) -> bool:
+    """Whether a finding takes part in the score (and in the period metrics built from the
+    same findings, app/scoring/aggregate.py): never a disputed or rejected one; from v4 only
+    verified ones and the unverified ones confident enough."""
+    if f.status in NOT_COUNTED:
+        return False
+    if not rule.verified_only:
+        return True
+    if f.verified in ("confirmed", "downgraded", "skipped"):
+        return True
+    return f.verified == "unverified" and f.confidence >= min_confidence_unverified
 
 
 def review_score(
@@ -83,16 +119,19 @@ def review_score(
     loc_reviewed: int,
     weights: Mapping[str, float] = DEFAULT_WEIGHTS,
     rubric_version: str | None = None,
+    min_confidence_unverified: float = MIN_CONFIDENCE_UNVERIFIED,
 ) -> float:
-    """`rubric_version` picks the size rule the review was scored under (None: v1)."""
-    rule = SIZE_RULES.get(rubric_version or "v1", SIZE_RULES["v1"])
-    counted = [f for f in findings if f.status != "false_positive"]
+    """`rubric_version` picks the size rule the review was scored under (None: v1). From v4 only
+    verified findings count and the critical/high caps need a confirmed finding."""
+    rule = rule_for(rubric_version)
+    counted = [f for f in findings if counts_for_score(f, rule, min_confidence_unverified)]
     units = loc_reviewed / LOC_PER_SIZE_UNIT
     size_factor = max(1.0, math.sqrt(units) if rule.sqrt_size else units)
     score = min(100.0, max(0.0, 100.0 - penalty(counted, weights) / size_factor))
-    if any(f.severity == "critical" for f in counted):
+    capping = [f for f in counted if f.verified in SETTLED] if rule.verified_only else counted
+    if any(f.severity == "critical" for f in capping):
         score = min(score, CRITICAL_SCORE_CAP)
-    if rule.high_cap is not None and any(f.severity == "high" for f in counted):
+    if rule.high_cap is not None and any(f.severity == "high" for f in capping):
         score = min(score, rule.high_cap)
     return round(score, 2)
 

@@ -1,19 +1,29 @@
-"""Review one MR or one direct commit end to end (docs/specs/06, task 3.5).
+"""Review one MR or one direct commit end to end (docs/specs/06, task 3.5; docs/specs/19 §4).
 
-fetch diff -> prepare -> chunks -> LLM -> post-process -> score -> store. Diffs are never stored;
-findings keep a short excerpt.
+fetch diff -> prepare -> checkout once -> [1] agentic pass (or [1'] the no-tool pass as
+fallback / below REVIEW_AGENT_MIN_LOC) -> post-process -> [2] independent verification ->
+score, verdict -> store. Diffs are never stored; findings keep a short excerpt.
+
+Transactions (docs/specs/19 §4.6): with `short_transactions` the service commits three times,
+after the claim (the FOR UPDATE lock on the review row is released at once), after the
+preparation (nothing stays open while the model works, minutes long) and after the save; the
+MR comment is posted after that last commit. Without it, the default, the caller owns one
+transaction around the whole review, which is what the integration tests do with their
+rolled-back session.
 """
 
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.collector.gitlab.client import ArchiveTooLarge, GitLabClient, GitLabError
 from app.models import (
@@ -26,7 +36,13 @@ from app.models import (
     ReviewFinding,
     User,
 )
-from app.review import claude_kit, comment
+from app.review import claude_kit, comment, knowledge
+from app.review.agent import (
+    agent_findings,
+    build_agent_prompt,
+    context_reader,
+    review_chunk_in_repo,
+)
 from app.review.checklists import select_checklists
 from app.review.checkout import CheckoutError, checkout
 from app.review.claude_repo import (
@@ -35,23 +51,10 @@ from app.review.claude_repo import (
     load_shared_config,
     pack_instructions,
 )
-from app.review.deep import (
-    TOOLS,
-    DeepOutcome,
-    build_deep_prompt,
-    merge,
-    parse_deep,
-)
-from app.review.discover import CLIPPED, Doc, discover
 from app.review.live import LiveTracker, describe
 from app.review.postprocess import Finding, postprocess
-from app.review.prepare import PreparedDiff, chunk, prepare, redact
-from app.review.profile import (
-    MIN_CACHED_CONFIDENCE,
-    build_profile,
-    profile_is_fresh,
-    render_profile,
-)
+from app.review.prepare import ContextFetcher, PreparedDiff, chunk, prepare, redact
+from app.review.profile import render_profile
 from app.review.progress import NullProgress, ProgressSink
 from app.review.prompt import (
     ReviewParseError,
@@ -59,21 +62,29 @@ from app.review.prompt import (
     build_prompt,
     languages,
     review_chunk,
+    target_header,
 )
 from app.review.providers.base import AgenticProvider, LLMError, LLMProvider, ReviewResult
 from app.review.rubric import RUBRIC_LENS, RUBRIC_VERSION
 from app.review.rules import collect_rules
-from app.review.schema import Intent, LLMFinding
+from app.review.schema import AgentFinding, Intent, LLMFinding
+from app.review.signals import detect_signals
 from app.review.status import mark_fixed_findings, supersede_mr_reviews
+from app.review.verify import skipped_status, verify
 from app.scoring.formula import ScoredFinding, review_score, weights_for
 from app.scoring.verdict import assess
 
 log = logging.getLogger(__name__)
 
 FINISHED = ("done", "skipped", "superseded")
-# A "running" review older than this was left by a crashed worker and may be taken over.
-# Must exceed the worker job timeout (REVIEW_JOB_TIMEOUT), or a killed job's row is never freed.
-STALE_RUNNING = timedelta(minutes=50)
+VERIFY_TIMEOUT_S = 120.0  # docs/specs/19 §4.3: one verification call
+# A "running" review older than this was left by a killed worker and may be taken over. It must
+# exceed the RQ job timeout (app.workers.review_jobs.review_job_timeout: 3 x REVIEW_TIMEOUT_S +
+# VERIFY_MAX_FINDINGS x 120 s + 10 min, 58 min with the defaults) by 5 min; the worker derives
+# `ReviewSettings.stale_running` from its settings, this is the default-settings value.
+STALE_RUNNING = timedelta(minutes=63)
+# The PROFILE block of a prompt when the compiled knowledge carries the domain already.
+KNOWLEDGE_DOMAIN_NOTE = "(see the DOMAIN section of PROJECT KNOWLEDGE below)"
 
 
 @dataclass
@@ -89,13 +100,38 @@ class ReviewSettings:
     fast_guidance_chars: int = 120_000
     deep_instructions_chars: int = 300_000
     scoring_weights: Mapping[str, float] | None = None
-    # docs/specs/18
-    deep_review: bool = False
-    deep_max_turns: int = 40
-    deep_timeout_s: float = 600.0
-    deep_max_archive_bytes: int = 300 * 1024 * 1024
-    deep_min_loc: int = 0
-    profile_ttl: timedelta = timedelta(days=7)
+    # docs/specs/19 §4.2, §8: [1] the agentic main pass (needs an AgenticProvider).
+    agent_review: bool = True
+    agent_min_loc: int = 20  # below: [1'] the no-tool pass, then [2]
+    agent_max_turns: int = 40
+    agent_timeout_s: float = 480.0
+    agent_max_archive_bytes: int = 300 * 1024 * 1024
+    chunk_tokens: int = 60_000  # [1] chunks only above this; [1'] uses max_tokens_per_chunk
+    # docs/specs/19 §4.3: [2] independent verification.
+    verify: bool = True
+    verify_max_findings: int = 12
+    verify_max_turns: int = 15
+    verify_timeout_s: float = VERIFY_TIMEOUT_S
+    verify_min_confidence_unverified: float = 0.7
+    knowledge_tokens: int = 12_000  # docs/specs/19 §3.1: RK budget in the prompt
+    stale_running: timedelta = STALE_RUNNING  # see STALE_RUNNING
+
+
+@dataclass
+class PassOutcome:
+    """What the main pass ([1] agentic or [1'] no-tool) produced, before verification."""
+
+    mode: str  # agent | fast
+    findings: list[Finding] = field(default_factory=list)
+    summary: str = ""
+    intent: dict[str, Any] | None = None
+    applied_rules: list[dict[str, Any]] = field(default_factory=list)
+    project_fit: list[str] = field(default_factory=list)
+    dropped: dict[str, int] = field(default_factory=dict)
+    chunks: int = 0
+    turns: int = 0
+    cost_usd: float = 0.0
+    failed: str | None = None  # the no-tool pass failed too: the review fails with this error
 
 
 def _paths(entries: list[dict[str, Any]]) -> set[str]:
@@ -118,10 +154,10 @@ def merge_intents(intents: list[Intent]) -> dict[str, Any] | None:
         (a for a in ("under", "over") if a in altitudes), altitudes[0] if altitudes else None
     )
     return {
-        "summary": next((i.summary for i in intents if i.summary), "")[:1500],
+        "summary": redact(next((i.summary for i in intents if i.summary), ""))[:1500],
         "matches_intent": (all(matches) if matches else None),
         "altitude": altitude,
-        "concerns": concerns[:5],
+        "concerns": [redact(c) for c in concerns[:5]],
     }
 
 
@@ -135,7 +171,12 @@ class ReviewService:
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         agent: AgenticProvider | None = None,
         progress: ProgressSink | None = None,
+        short_transactions: bool = False,
     ) -> None:
+        """`short_transactions` (docs/specs/19 §4.6, the workers): the service commits after
+        the claim, the preparation and the save, so no lock or transaction outlives a step
+        while the model works. Off by default: the caller then owns one transaction around
+        the review (the integration tests pass a session whose work is rolled back)."""
         self._session = session
         self._progress: ProgressSink = progress or NullProgress()
         self._pending_basis: dict[int, dict[str, Any]] = {}
@@ -143,7 +184,8 @@ class ReviewService:
         self._provider = provider
         self._settings = settings
         self._clock = clock
-        self._agent = agent  # deep review provider; None = fast reviews only
+        self._agent = agent  # tools in a checkout ([1], [2]); None = no-tool reviews only
+        self._short = short_transactions
 
     # -- entry points --------------------------------------------------------------------------
 
@@ -176,8 +218,10 @@ class ReviewService:
             expected_round=expected_round,
         )
         if review is None:
+            self._commit_step("claim")  # nothing claimed: release the row (and the sync's rows)
             return None
         self._begin(review, project, "mr", str(mr.iid), mr.title or "", head_sha)
+        self._commit_step("claim")
         return self._tracked(review, lambda: self._mr_claimed(review, project, mr, head_sha))
 
     def _mr_claimed(
@@ -190,7 +234,9 @@ class ReviewService:
             description = info.get("description") or ""
             entries = self._client.mr_diffs(project.external_id, mr.iid)
         except GitLabError as exc:
-            return self._fail(review, f"gitlab: {exc}")
+            self._fail(review, f"gitlab: {exc}")
+            self._commit_step("save")
+            return review
         target = ReviewTarget(
             project.path_with_namespace,
             mr.title or "",
@@ -198,19 +244,24 @@ class ReviewService:
             conventions=self._rules(review, project, _paths(entries)),
         )
         result = self._run(review, project, target, entries, head_sha)
-        if result is not None and result.status == "done":
+        post = result.status == "done" and bool(project.post_mr_comment)
+        findings: list[ReviewFinding] = []
+        if result.status == "done":
             supersede_mr_reviews(self._session, project, mr.iid, head_sha)
             # A re-judgment of the same head is not a fix: only a new push can fix findings.
             if review.round == 1:
                 mark_fixed_findings(self._session, mr.id, result.id)
-            if project.post_mr_comment:
+            if post:
                 findings = list(
                     self._session.scalars(
                         select(ReviewFinding).where(ReviewFinding.review_id == result.id)
                     )
                 )
-                body = comment.render(result, findings)
-                comment.post_or_update(self._client, project.external_id, mr.iid, body)
+        self._commit_step("save")
+        if post:
+            # After the save: the comment points at a review that is already there.
+            body = comment.render(result, findings)
+            comment.post_or_update(self._client, project.external_id, mr.iid, body)
         return result
 
     def review_commit(
@@ -236,10 +287,12 @@ class ReviewService:
             expected_round=expected_round,
         )
         if review is None:
+            self._commit_step("claim")
             return None
         first_line = (commit.message or "").strip().splitlines()[:1]
         title = first_line[0] if first_line else commit.sha
         self._begin(review, project, "commit", commit.sha, title, commit.sha)
+        self._commit_step("claim")
         return self._tracked(review, lambda: self._commit_claimed(review, project, commit, title))
 
     def _commit_claimed(
@@ -249,26 +302,54 @@ class ReviewService:
         try:
             entries = self._client.commit_diff(project.external_id, commit.sha)
         except GitLabError as exc:
-            return self._fail(review, f"gitlab: {exc}")
+            self._fail(review, f"gitlab: {exc}")
+            self._commit_step("save")
+            return review
         target = ReviewTarget(
             project.path_with_namespace,
             title,
             kind="Commit",
             conventions=self._rules(review, project, _paths(entries)),
         )
-        return self._run(review, project, target, entries, commit.sha)
+        result = self._run(review, project, target, entries, commit.sha)
+        self._commit_step("save")
+        return result
 
     # -- steps ---------------------------------------------------------------------------------
+
+    def _commit_step(self, step: str) -> None:
+        """docs/specs/19 §4.6: end one of the three short transactions (claim, prepare, save).
+        Without `short_transactions` the caller owns the single transaction: no-op."""
+        if not self._short:
+            return
+        self._session.commit()
+        log.debug("review transaction committed", extra={"step": step})
 
     def _tracked(self, review: Review, work: Callable[[], Review]) -> Review:
         """Run a claimed review and tell the live view how it ended (None: it crashed)."""
         try:
             result = work()
-        except BaseException:
+        except BaseException as exc:
             self._progress.end(review.id, None)
+            self._crashed(review, exc)
             raise
         self._progress.end(review.id, result.status)
         return result
+
+    def _crashed(self, review: Review, exc: BaseException) -> None:
+        """With short transactions the claim is committed already, so an unexpected error (or
+        RQ's job timeout, a BaseException) would leave the row `running` until
+        `stale_running` frees it: mark it failed in a short transaction of its own, so it can
+        be rerun at once. A worker killed outright still relies on the takeover. In
+        single-transaction mode the caller's rollback undoes the claim: nothing to do."""
+        if not self._short:
+            return
+        try:
+            self._session.rollback()
+            self._fail(review, f"crash: {exc.__class__.__name__}: {str(exc)[:200]}")
+            self._session.commit()
+        except Exception:
+            log.exception("crashed review not marked failed", extra={"review_id": review.id})
 
     def _step(self, review_id: int, stage: str, detail: str = "", **extra: Any) -> None:
         """A stage of a running review: a log line (so `docker compose logs worker` shows a
@@ -277,7 +358,7 @@ class ReviewService:
         self._progress.stage(review_id, stage, detail, **extra)
 
     def _live(self, review_id: int, tracker: LiveTracker, event: dict[str, Any]) -> None:
-        """One stream-json event of the deep pass: into the live view, and the latest action
+        """One stream-json event of the agentic pass: into the live view, and the latest action
         into the running review's stage line."""
         entries = tracker.entries(event)
         if not entries:
@@ -286,8 +367,8 @@ class ReviewService:
         last = entries[-1]
         self._progress.stage(
             review_id,
-            "deep",
-            f"lượt {tracker.turns}/{self._settings.deep_max_turns} · {describe(last)}",
+            "agent",
+            f"lượt {tracker.turns}/{self._settings.agent_max_turns} · {describe(last)}",
             turns=tracker.turns,
             files_read=len(tracker.reads),
         )
@@ -412,7 +493,7 @@ class ReviewService:
         stale = (
             review.status == "running"
             and review.started_at is not None
-            and review.started_at < self._clock() - STALE_RUNNING
+            and review.started_at < self._clock() - self._settings.stale_running
         )
         if force and review.status == "done":
             if review.superseded_by is not None or (
@@ -439,6 +520,8 @@ class ReviewService:
             return None
         review.status, review.error = "running", None
         review.basis = None  # a failed/skipped row taken over: its old basis is not this run's
+        review.deep, review.mode = None, "fast"
+        review.prompt_tokens, review.completion_tokens, review.cost_usd = 0, 0, Decimal(0)
         review.started_at = self._clock()
         # A failed/skipped/stale row taken over records what asked for this run.
         review.trigger, review.requested_by_user_id = trigger, requested_by
@@ -448,6 +531,11 @@ class ReviewService:
     def _finish(self, review: Review, status: str, error: str | None = None) -> Review:
         review.status, review.error = status, error
         review.finished_at = self._clock()
+        # `deep` and `basis` are filled in place while the review runs (and the profile step
+        # flushes in between): tell the session they changed, or the last keys are lost.
+        for column in ("deep", "basis"):
+            if getattr(review, column) is not None:
+                flag_modified(review, column)
         if status == "done" and review.round > 1:
             # The new round replaces the one it was forced from, only now that it has a result.
             self._session.execute(
@@ -487,53 +575,310 @@ class ReviewService:
             # "failed", not "skipped": the review can be re-run once the budget allows it.
             return self._fail(review, "monthly LLM budget reached")
 
-        def fetch_context(path: str) -> str | None:
+        # What the project is and how its team reviews: the compiled review knowledge
+        # (docs/specs/19; its DOMAIN is the profile) or, while a project has none, the cached
+        # profile and the .claude files this change needs (docs/specs/17/18, kept as the
+        # fallback of lộ trình step 1).
+        target.knowledge, knowledge_info, has_domain = self._knowledge_block(project, prepared)
+        target.profile, profile_source = self._profile_block(project, has_domain)
+        guidance: list[dict[str, Any]] = []
+        if not target.knowledge:
+            target.guidance, guidance = self._guidance(review, project, target, prepared, sha)
+        review.basis = self._pending_basis.pop(review.id, None)
+        if review.basis is not None:
+            review.basis["checklists"] = select_checklists(
+                [f.path for f in prepared.files], self._languages(prepared)
+            )
+            review.basis["fast_guidance"] = guidance[:40]
+            review.basis["fast_profile"] = bool(target.profile)
+            review.basis["profile_source"] = profile_source
+            if profile_source == "cached" and project.profile is not None:
+                review.basis["profile"] = {
+                    "sha": (project.profile_sha or "")[:12],
+                    "built_at": project.profile_at.isoformat() if project.profile_at else None,
+                    "confidence": project.profile.get("confidence"),
+                }
+            if knowledge_info:
+                review.basis["knowledge"] = knowledge_info
+
+        review.deep = {}
+        agent_on = self._agent is not None and settings.agent_review and project.deep_review
+        agent_pass = agent_on and prepared.loc >= settings.agent_min_loc
+        if agent_on and not agent_pass:
+            review.deep["skipped"] = f"diff dưới {settings.agent_min_loc} LOC"
+        # Everything the passes need from the database is loaded: end the transaction so none
+        # stays open while the model works (docs/specs/19 §4.6).
+        self._commit_step("prepare")
+        outcome: PassOutcome | None = None
+        if self._agent is not None and (agent_pass or self._verify_on()):
+            # One checkout for the whole review: the agentic pass, the ±30 lines of context and
+            # the verification all read from it (docs/specs/19 §4.1).
+            self._step(review.id, "checkout", "tải mã nguồn")
+            try:
+                with checkout(
+                    self._client,
+                    project.external_id,
+                    sha,
+                    max_archive_bytes=settings.agent_max_archive_bytes,
+                    sensitive_paths=settings.sensitive_paths,
+                ) as (root, stats):
+                    review.deep["files_seen"] = stats.files
+                    outcome = self._passes(review, project, target, prepared, sha, root, agent_pass)
+            except (ArchiveTooLarge, CheckoutError) as exc:
+                review.deep["error"] = "checkout"
+                review.deep["detail"] = str(exc)[:200]
+                log.warning("checkout failed; no-tool review", extra={"review_id": review.id})
+        if outcome is None:
+            outcome = self._passes(review, project, target, prepared, sha, None, False)
+        if outcome.failed is not None:
+            return self._fail(review, outcome.failed)
+        return self._store(review, prepared, outcome)
+
+    @staticmethod
+    def _languages(prepared: PreparedDiff) -> set[str]:
+        return {lang for piece in chunk(prepared, 10**9) for lang in languages(piece).split(", ")}
+
+    def _profile_block(self, project: Project, has_domain: bool) -> tuple[str, str]:
+        """The PROFILE block of the prompt and where it came from (`knowledge`, `cached`,
+        `none`). The knowledge's DOMAIN section is the profile of a review; the cached
+        `project.profile` is the fallback while a repo has no knowledge or its knowledge has
+        no domain. The review path never builds a profile: `refresh_profile_job` (the Admin
+        button, from the default branch) is its only writer, because the reviewed sha is the
+        author's and must not become the premise it is judged by."""
+        if has_domain:
+            return KNOWLEDGE_DOMAIN_NOTE, "knowledge"
+        if project.profile:
+            return render_profile(project.profile), "cached"
+        return "", "none"
+
+    def _knowledge_block(
+        self, project: Project, prepared: PreparedDiff
+    ) -> tuple[str, dict[str, Any], bool]:
+        """The compiled review knowledge for the prompt (docs/specs/19 §3), the basis entry
+        describing it, and whether it carries a DOMAIN section (then it is the profile too).
+        Empty when the repo has no RK yet: then the .claude guidance path of docs/specs/17/18
+        is used (the review job builds the first RK before the review)."""
+        ref = project.default_branch or "HEAD"
+        try:
+            claude_sha = knowledge.claude_tree_sha(self._client, project.external_id, ref)
+        except Exception:  # staleness is informational; never block a review on it
+            claude_sha = None
+        loaded = knowledge.load_for_review(
+            self._session,
+            project,
+            claude_sha,
+            None,  # shared sha: unknown here, so the shared part never counts as stale
+            max_tokens=self._settings.knowledge_tokens,
+        )
+        if loaded is None:
+            return "", {}, False
+        signals = detect_signals(prepared.files)
+        diff_text = "\n".join(f.render() for f in prepared.files)[:200_000]
+        checks = knowledge.select_checks(
+            loaded.knowledge, [f.path for f in prepared.files], signals, diff_text
+        )
+        text = knowledge.render_for_review(loaded.knowledge, checks)
+        info = knowledge.basis_for(loaded.knowledge, checks, loaded.stale, loaded.approved)
+        info["signals"] = sorted(signals)
+        if loaded.orphans:
+            info["orphan_edits"] = loaded.orphans[:20]
+        return text, info, bool(text) and not loaded.knowledge.domain.empty
+
+    def _api_context(self, project: Project, sha: str) -> ContextFetcher:
+        """Without a checkout the ±30 lines of context come from GitLab, one file at a time."""
+
+        def fetch(path: str) -> str | None:
             try:
                 return self._client.file_raw(project.external_id, path, sha)
             except GitLabError:
                 return None  # context is a bonus; the diff alone is reviewable
 
-        chunks = chunk(prepared, settings.max_tokens_per_chunk, fetch_context)
-        # What the project is and how its team reviews, before the first pass: the cached
-        # profile (the deep pass refreshes it) and the shared .claude files this change needs.
-        target.profile = render_profile(project.profile) if project.profile else ""
-        target.guidance, guidance = self._guidance(review, project, target, prepared, sha)
-        review.basis = self._pending_basis.pop(review.id, None)
-        if review.basis is not None:
-            review.basis["checklists"] = select_checklists(
-                [f.path for f in prepared.files],
-                {lang for piece in chunks for lang in languages(piece).split(", ")},
-            )
-            review.basis["fast_guidance"] = guidance[:40]
-            review.basis["fast_profile"] = bool(target.profile)
-        self._step(
-            review.id, "llm", f"{len(chunks)} phần", loc=prepared.loc, files=len(prepared.files)
+        return fetch
+
+    def _passes(
+        self,
+        review: Review,
+        project: Project,
+        target: ReviewTarget,
+        prepared: PreparedDiff,
+        sha: str,
+        root: Path | None,
+        agent_pass: bool,
+    ) -> PassOutcome:
+        """[1] with the repository open when asked and possible, else (or on its failure) [1']
+        the no-tool pass; then [2] the verification when there is a checkout to verify in."""
+        settings = self._settings
+        fetch_context = (
+            context_reader(root) if root is not None else self._api_context(project, sha)
         )
+        outcome: PassOutcome | None = None
+        assert review.deep is not None  # noqa: S101 - _run() set it
+        if agent_pass and root is not None and self._agent is not None:
+            try:
+                outcome = self._agent_pass(
+                    review, project, target, prepared, sha, root, fetch_context
+                )
+            except (LLMError, ReviewParseError, GitLabError) as exc:
+                review.deep["fallback"] = {
+                    "from": "agentic",
+                    "error": f"{exc.__class__.__name__}: {str(exc)[:200]}",
+                }
+                log.warning(
+                    "agentic pass failed; no-tool pass instead",
+                    extra={"review_id": review.id, "error": exc.__class__.__name__},
+                )
+            except Exception as exc:  # the no-tool pass always survives the agentic one
+                review.deep["fallback"] = {"from": "agentic", "error": exc.__class__.__name__}
+                log.exception(
+                    "agentic pass crashed; no-tool pass instead", extra={"review_id": review.id}
+                )
+        if outcome is None:
+            outcome = self._fast_pass(review, target, prepared, fetch_context)
+            if outcome.failed is not None:
+                return outcome
+        review.mode = outcome.mode
+        if root is not None and self._agent is not None and self._verify_on():
+            self._step(review.id, "verify", "kiểm chứng finding")
+            verified, report = verify(
+                outcome.findings,
+                agent=self._agent,
+                root=root,
+                diff_files={f.path: f for f in prepared.files},
+                project=target.project,
+                target=target_header(target),
+                knowledge=target.knowledge,
+                max_findings=settings.verify_max_findings,
+                max_turns=settings.verify_max_turns,
+                timeout_s=settings.verify_timeout_s,
+                on_result=lambda result: self._add_usage(review, result),
+                on_batch=lambda n, total: self._step(review.id, "verify", f"lời gọi {n}/{total}"),
+            )
+            outcome.findings = verified
+            review.deep["verification"] = report.as_dict()
+        else:
+            # Not a failure of [2]: it was not configured to run, so the findings stand as
+            # reported (`skipped`, pre-v4 semantics) instead of waiting for a person.
+            outcome.findings = skipped_status(outcome.findings)
+            review.deep["verification"] = {"skipped": self._verify_skip_reason()}
+        return outcome
+
+    def _verify_on(self) -> bool:
+        return self._settings.verify and self._settings.verify_max_findings > 0
+
+    def _verify_skip_reason(self) -> str:
+        """Why [2] did not run, when it did not (the checkout is the only run-time reason)."""
+        settings = self._settings
+        if not settings.verify:
+            return "tắt"
+        if self._agent is None:
+            return "không có provider có tool"
+        if settings.verify_max_findings <= 0:
+            return "VERIFY_MAX_FINDINGS=0"
+        return "không có bản sao mã nguồn"
+
+    def _agent_pass(
+        self,
+        review: Review,
+        project: Project,
+        target: ReviewTarget,
+        prepared: PreparedDiff,
+        sha: str,
+        root: Path,
+        fetch_context: ContextFetcher,
+    ) -> PassOutcome:
+        """[1] docs/specs/19 §4.2: the lean prompt over the whole diff (chunked only above
+        REVIEW_CHUNK_TOKENS), Read/Grep/Glob in the checkout. Raises on CLI, timeout or an
+        answer that does not validate after one repair; the caller falls back to [1']."""
+        settings, agent = self._settings, self._agent
+        assert agent is not None  # noqa: S101 - checked by the caller
+        pieces = chunk(prepared, settings.chunk_tokens, fetch_context)
+        self._step(review.id, "agent", f"{len(pieces)} phần, agent đang đọc code", loc=prepared.loc)
+        outcome = PassOutcome("agent", chunks=len(pieces))
+        raw: list[AgentFinding] = []
+        summaries: list[str] = []
+        intents: list[Intent] = []
+        for number, piece in enumerate(pieces, 1):
+            if len(pieces) > 1:
+                self._step(review.id, "agent", f"phần {number}/{len(pieces)}")
+            tracker = LiveTracker(str(root))
+            result = review_chunk_in_repo(
+                agent,
+                self._provider,
+                build_agent_prompt(target, piece),
+                str(root),
+                max_turns=settings.agent_max_turns,
+                timeout_s=settings.agent_timeout_s,
+                on_event=lambda event, t=tracker: self._live(review.id, t, event),
+            )
+            for call in result.calls:
+                self._add_usage(review, call)
+                outcome.cost_usd += call.cost_usd
+            review.model = result.calls[0].model
+            outcome.turns += int((result.calls[0].raw or {}).get("num_turns") or tracker.turns)
+            raw += result.review.findings
+            summaries.append(result.review.summary.strip())
+            if result.review.intent is not None:
+                intents.append(result.review.intent)
+            outcome.applied_rules += [r.model_dump() for r in result.review.applied_rules]
+            outcome.project_fit += [
+                n for n in result.review.project_fit if n not in outcome.project_fit
+            ]
+        processed = agent_findings(
+            raw, {f.path: f for f in prepared.files}, root, settings.min_confidence
+        )
+        outcome.findings = processed.findings
+        outcome.dropped = dict(processed.dropped)
+        outcome.summary = "\n\n".join(s for s in summaries if s)
+        outcome.intent = merge_intents(intents)
+        outcome.project_fit = outcome.project_fit[:6]
+        return outcome
+
+    def _fast_pass(
+        self,
+        review: Review,
+        target: ReviewTarget,
+        prepared: PreparedDiff,
+        fetch_context: ContextFetcher,
+    ) -> PassOutcome:
+        """[1'] the no-tool pass of docs/specs/06: the same prompt (minus the repository), the
+        diff in chunks of MAX_TOKENS_PER_CHUNK. Never raises: `failed` carries the error."""
+        settings = self._settings
+        pieces = chunk(prepared, settings.max_tokens_per_chunk, fetch_context)
+        self._step(
+            review.id, "llm", f"{len(pieces)} phần", loc=prepared.loc, files=len(prepared.files)
+        )
+        outcome = PassOutcome("fast", chunks=len(pieces))
         calls: list[ReviewResult] = []
-        raw_findings: list[LLMFinding] = []
+        raw: list[LLMFinding] = []
         summaries: list[str] = []
         intents: list[Intent] = []
         try:
-            for number, piece in enumerate(chunks, 1):
-                if len(chunks) > 1:
-                    self._step(review.id, "llm", f"phần {number}/{len(chunks)}")
+            for number, piece in enumerate(pieces, 1):
+                if len(pieces) > 1:
+                    self._step(review.id, "llm", f"phần {number}/{len(pieces)}")
                 result = review_chunk(self._provider, build_prompt(target, piece))
                 calls += result.calls
-                raw_findings += result.review.findings
+                raw += result.review.findings
                 summaries.append(result.review.summary.strip())
                 if result.review.intent is not None:
                     intents.append(result.review.intent)
         except (LLMError, ReviewParseError) as exc:
             self._record_usage(review, calls)
-            return self._fail(review, f"llm: {exc}")
+            outcome.failed = f"llm: {exc}"
+            return outcome
         self._record_usage(review, calls)
+        outcome.cost_usd = sum(c.cost_usd for c in calls)
+        processed = postprocess(raw, {f.path: f for f in prepared.files}, settings.min_confidence)
+        outcome.findings = processed.findings
+        outcome.dropped = dict(processed.dropped)
+        outcome.summary = "\n\n".join(s for s in summaries if s)
+        outcome.intent = merge_intents(intents)
+        return outcome
 
-        processed = postprocess(
-            raw_findings, {f.path: f for f in prepared.files}, settings.min_confidence
-        )
-        outcome = self._deep(review, project, target, prepared, processed.findings, sha)
+    def _store(self, review: Review, prepared: PreparedDiff, outcome: PassOutcome) -> Review:
+        settings = self._settings
         self._step(review.id, "save")
-        final: list[Finding] = outcome.findings if outcome else processed.findings
+        final = outcome.findings
         for f in final:
             self._session.add(
                 ReviewFinding(
@@ -551,33 +896,51 @@ class ReviewService:
                     confidence=Decimal(str(f.confidence)),
                     fingerprint=f.fingerprint,
                     rule_id=f.rule_id,
+                    status=f.status,
+                    verified=f.verified,
+                    verification=f.verification,
                 )
             )
-        review.verdict, review.risk_score = assess((f.severity, "open") for f in final)
-        review.intent = (
-            outcome.intent.model_dump() if outcome and outcome.intent else merge_intents(intents)
+        review.verdict, review.risk_score = assess(
+            (f.severity, f.status, f.verified) for f in final
         )
+        review.intent = outcome.intent
         review.score = Decimal(
             str(
                 review_score(
-                    [ScoredFinding(f.severity, f.confidence) for f in final],
+                    [ScoredFinding(f.severity, f.confidence, f.status, f.verified) for f in final],
                     prepared.loc,
                     weights_for(RUBRIC_VERSION, settings.scoring_weights),
                     RUBRIC_VERSION,
+                    settings.verify_min_confidence_unverified,
                 )
             )
         )
-        summary = "\n\n".join(s for s in summaries if s)
-        if outcome and outcome.summary:
-            summary = outcome.summary
-        review.summary = redact(summary)[:4000]
+        review.summary = redact(outcome.summary)[:4000]
+        review.deep = {
+            **(review.deep or {}),
+            "mode": outcome.mode,
+            "chunks": outcome.chunks,
+            "turns": outcome.turns,
+            "cost_usd": round(outcome.cost_usd, 4),
+            "dropped": outcome.dropped,
+            "applied_rules": outcome.applied_rules[:100],
+            "project_fit": outcome.project_fit,
+        }
+        if review.basis is not None:
+            # docs/specs/19 §4.6: which rules the agent said apply, for the basis card.
+            review.basis["applied_rules"] = [
+                {"rule_id": r["rule_id"], "applies": r["applies"], "where": r["where"]}
+                for r in outcome.applied_rules[:60]
+            ]
         log.info(
             "review postprocessed",
             extra={
                 "review_id": review.id,
                 "kept": len(final),
-                "dropped": dict(processed.dropped),
+                "dropped": outcome.dropped,
                 "mode": review.mode,
+                "verdict": review.verdict,
             },
         )
         return self._finish(review, "done")
@@ -590,7 +953,8 @@ class ReviewService:
         prepared: PreparedDiff,
         sha: str,
     ) -> tuple[str, list[dict[str, Any]]]:
-        """The .claude files for the first pass: the dự án's shared repo and the reviewed repo's
+        """Fallback while a project has no compiled knowledge (docs/specs/19 lộ trình step 1):
+        the .claude files for the prompt, from the dự án's shared repo and the reviewed repo's
         own `.claude`, chosen by what the change touches (review procedure first, then
         CLAUDE.md, rules and skills that match), and a record per file for the basis. Empty
         when neither exists or can be read."""
@@ -649,280 +1013,16 @@ class ReviewService:
             record["why"] = why.get(record["path"], [])
         return packed.text, packed.records
 
-    # -- deep review (docs/specs/18) -----------------------------------------------------------
-
-    def _deep(
-        self,
-        review: Review,
-        project: Project,
-        target: ReviewTarget,
-        prepared: PreparedDiff,
-        candidates: list[Finding],
-        sha: str,
-    ) -> DeepOutcome | None:
-        """Second pass with the repository open. Never raises: on any trouble the first pass
-        stands and `review.deep` says why."""
-        settings = self._settings
-        review.mode = "fast"
-        agent = self._agent
-        if agent is None or not settings.deep_review or not project.deep_review:
-            return None
-        if prepared.loc < settings.deep_min_loc:
-            review.deep = {"skipped": f"diff dưới {settings.deep_min_loc} LOC"}
-            return None
-        if not self._within_budget():
-            review.deep = {"skipped": "hết ngân sách LLM tháng"}
-            return None
-        self._step(review.id, "deep", "tải mã nguồn")
-        try:
-            with checkout(
-                self._client,
-                project.external_id,
-                sha,
-                max_archive_bytes=settings.deep_max_archive_bytes,
-                sensitive_paths=settings.sensitive_paths,
-            ) as (root, stats):
-                business = self._business(project)
-                extra = include_globs(business.claude_repo_include if business else None)
-                docs = discover(root, extra)
-                if business is not None and business.claude_repo_path:
-                    self._step(review.id, "deep", f"đọc repo .claude {business.claude_repo_path}")
-                shared = load_shared_config(
-                    self._client,
-                    business,
-                    project.connection_id,
-                    sensitive_paths=settings.sensitive_paths,
-                    mount_into=root,
-                    file_chars=settings.claude_file_chars,
-                )
-                shared_repo = shared.info["repo"] if shared else ""
-                # Claude files of both sources, chosen by what this change touches; a repo
-                # file the change itself edits is not used (the author could have written it).
-                # Excluded files (too large, ignored, binary) were changed all the same.
-                in_diff = {f.path for f in prepared.files} | set(prepared.excluded)
-                shared_files = shared.files if shared else []
-                repo_files = [
-                    f
-                    for f in claude_kit.scan(
-                        root / ".claude", ".claude", "repo", settings.claude_file_chars
-                    )
-                    if f.path not in in_diff
-                ]
-                # Of two equal files select() keeps the first: the shared one when the agent can
-                # Read it (mounted), else the repo's own copy.
-                mounted = bool(shared and shared.info.get("mounted"))
-                kit = [*shared_files, *repo_files] if mounted else [*repo_files, *shared_files]
-                chosen = claude_kit.select(
-                    kit, prepared.files, target.title, target.description, extra
-                )
-                ranked = {(f.source, f.path): f for f in chosen.ranked}
-                packed = pack_instructions(
-                    [
-                        (
-                            "shared",
-                            f"Cấu hình Claude dùng chung của dự án (repo {shared_repo})",
-                            "",
-                            [f.doc() for f in chosen.ranked if f.source == "shared"],
-                        ),
-                        (
-                            "repo",
-                            f"Của repo {project.path_with_namespace}",
-                            "",
-                            # AGENTS.md, Cursor/Copilot files, docs: as discover() found them.
-                            [d for d in docs.instructions if not d.path.startswith(".claude/")]
-                            + [f.doc() for f in chosen.ranked if f.source == "repo"],
-                        ),
-                    ],
-                    settings.deep_instructions_chars,
-                )
-                for record in packed.records:
-                    picked = ranked.get((record["source"], record["path"]))
-                    if picked is not None:
-                        record["why"], record["kind"] = picked.why, picked.kind
-                # What was not quoted is listed for the agent: ranked files that did not fit
-                # first, then the rest.
-                cut = {r["path"] for r in packed.records if r["status"] == "cut"}
-                unquoted = [f for f in chosen.ranked if f.path in cut] + chosen.catalog
-                # Files the agent saw only part of, with their real size: it weighs whether the
-                # rest matters for this change and Reads it, rather than the budget deciding.
-                sizes = {f.path: f.chars for f in [*chosen.procedure, *chosen.ranked]}
-                incomplete = [
-                    (f.path, len(f.text) - len(CLIPPED), f.chars)
-                    for f in chosen.procedure
-                    if f.text.endswith(CLIPPED)
-                ] + [
-                    (r["path"], r["quoted"], sizes.get(r["path"]))
-                    for r in packed.records
-                    if r["status"] in ("partial", "cut")
-                ]
-                origin = {"shared": f"dùng chung {shared_repo}", "repo": "của repo"}
-                # The shared CLAUDE.md usually says what the dự án is: the profile reads it too,
-                # after the repository's own documents, named after the shared repo.
-                profile_docs = (
-                    replace(
-                        docs,
-                        instructions=[
-                            *docs.instructions,
-                            *(
-                                Doc(f"{shared_repo}:{d.path}", d.text)
-                                for d in shared.docs.instructions
-                            ),
-                        ],
-                    )
-                    if shared and shared.docs
-                    else docs
-                )
-                profile = self._profile(project, profile_docs, sha, review)
-                self._step(review.id, "deep", "agent đang đọc code", files=stats.files)
-                prompt = build_deep_prompt(
-                    target,
-                    render_profile(profile) if profile else "",
-                    packed.text,
-                    target.conventions,
-                    prepared,
-                    candidates,
-                    claude_kit.render_procedure(chosen.procedure),
-                    claude_kit.render_catalog(unquoted, origin),
-                    shared_mounted=mounted,
-                    incomplete_text=claude_kit.render_incomplete(incomplete),
-                )
-                tracker = LiveTracker(str(root))
-                result = agent.review_in_repo(
-                    prompt,
-                    str(root),
-                    tools=TOOLS,
-                    max_turns=settings.deep_max_turns,
-                    timeout_s=settings.deep_timeout_s,
-                    on_event=lambda event: self._live(review.id, tracker, event),
-                )
-                self._add_usage(review, result)
-                deep = parse_deep(result.output)
-                outcome = merge(
-                    candidates,
-                    deep,
-                    root,
-                    {f.path: f for f in prepared.files},
-                    settings.min_confidence,
-                )
-        except (ArchiveTooLarge, CheckoutError) as exc:
-            review.deep = {"error": "checkout", "detail": str(exc)[:200]}
-            log.warning("deep review skipped: checkout", extra={"review_id": review.id})
-            return None
-        except (GitLabError, LLMError, ValueError) as exc:
-            review.deep = {"error": exc.__class__.__name__, "detail": str(exc)[:200]}
-            log.warning(
-                "deep review failed; first pass kept",
-                extra={"review_id": review.id, "error": exc.__class__.__name__},
-            )
-            return None
-        except Exception as exc:  # the spec promises the fast pass always survives
-            review.deep = {"error": exc.__class__.__name__}
-            log.exception("deep review crashed; first pass kept", extra={"review_id": review.id})
-            return None
-        review.mode = "deep"
-        # Opening a copy of a file reads the same text as opening the file itself.
-        opened = set(tracker.reads) | {
-            first.path for copy, first in chosen.duplicates if copy.path in tracker.reads
-        }
-        review.basis = {
-            **(review.basis or {}),
-            # What the model was given (source, kind, whether it fit) and what it was not; for a
-            # file it saw only part of, `read`: whether the agent opened the file.
-            "instructions": [
-                {
-                    "path": f.path,
-                    "kind": f.kind,
-                    "source": f.source,
-                    "status": "partial" if f.text.endswith(CLIPPED) else "used",
-                    "procedure": True,
-                    "why": f.why,
-                    **({"read": f.path in opened} if f.text.endswith(CLIPPED) else {}),
-                }
-                for f in chosen.procedure
-            ]
-            + [
-                {**r, "read": r["path"] in opened} if r["status"] in ("partial", "cut") else r
-                for r in packed.records[:80]
-            ],
-            # Not quoted: the agent saw them listed and could Read them; `read` says whether it did.
-            # A copy of a file already chosen (same content) is not quoted twice.
-            "instructions_not_loaded": [
-                {
-                    "path": f.path,
-                    "source": f.source,
-                    "kind": f.kind,
-                    "reason": "catalog",
-                    "read": f.path in opened,
-                    **({"why": f.why} if f.why else {}),
-                }
-                for f in unquoted
-            ][:120]
-            + [
-                {
-                    "path": copy.path,
-                    "source": copy.source,
-                    "kind": copy.kind,
-                    "reason": "duplicate",
-                    "same_as": first.path,
-                }
-                for copy, first in chosen.duplicates
-            ][:40],
-            "claude_repo": shared.info if shared else None,
-            "profile": (
-                {
-                    "sha": (project.profile_sha or "")[:12] or None,
-                    "built_at": project.profile_at.isoformat() if project.profile_at else None,
-                    "confidence": profile.get("confidence"),
-                }
-                if profile
-                else None
-            ),
-        }
-        review.deep = {
-            **outcome.report(),
-            "files_seen": stats.files,
-            "turns": (result.raw or {}).get("num_turns"),
-            "cost_usd": round(result.cost_usd, 4),
-            "instruction_sources": docs.instruction_paths[:20],
-        }
-        return outcome
-
-    def _profile(
-        self, project: Project, docs: Any, sha: str, review: Review
-    ) -> dict[str, Any] | None:
-        """The cached project profile, rebuilt when stale (one plain LLM call, billed to the
-        review that needed it so the monthly budget sees it)."""
-        if profile_is_fresh(project, self._settings.profile_ttl, self._clock()):
-            return project.profile
-        self._step(review.id, "profile", "dựng hồ sơ dự án")
-        try:
-            profile, usage = build_profile(self._provider, docs, project.path_with_namespace)
-        except (LLMError, ValueError) as exc:
-            log.warning("project profile not built", extra={"error": exc.__class__.__name__})
-            return project.profile
-        self._add_usage(review, usage)
-        if float(profile.get("confidence") or 0) < MIN_CACHED_CONFIDENCE:
-            # Thin documents: use it for this review, but ask again next time.
-            return profile
-        project.profile, project.profile_sha, project.profile_at = profile, sha, self._clock()
-        project.profile["cost_usd"] = round(usage.cost_usd, 4)
-        self._session.flush()
-        return project.profile
-
     def _add_usage(self, review: Review, call: ReviewResult) -> None:
         review.prompt_tokens = (review.prompt_tokens or 0) + call.prompt_tokens
         review.completion_tokens = (review.completion_tokens or 0) + call.completion_tokens
         review.cost_usd = Decimal(str(round(float(review.cost_usd or 0) + call.cost_usd, 4)))
 
     def month_spend_usd(self) -> float:
-        now = self._clock()
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        spent = self._session.scalar(
-            select(func.coalesce(func.sum(Review.cost_usd), 0)).where(
-                Review.started_at >= month_start
-            )
-        )
-        return float(spent or 0)
+        """Reviews plus knowledge builds this month (docs/specs/19 §6: one budget)."""
+        from app.workers.knowledge_jobs import month_spend_usd  # lazy: the worker imports us
+
+        return month_spend_usd(self._session, self._clock())
 
     def _within_budget(self) -> bool:
         """docs/specs/06: pause over MONTHLY_LLM_BUDGET_USD; 13: alert from 80%."""
@@ -946,6 +1046,5 @@ class ReviewService:
         if not calls:
             return
         review.model = calls[-1].model
-        review.prompt_tokens = sum(c.prompt_tokens for c in calls)
-        review.completion_tokens = sum(c.completion_tokens for c in calls)
-        review.cost_usd = Decimal(str(round(sum(c.cost_usd for c in calls), 4)))
+        for call in calls:
+            self._add_usage(review, call)

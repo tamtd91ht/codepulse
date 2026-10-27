@@ -19,6 +19,7 @@ from app.models import Commit, Connection, MergeRequest, Project, Review
 from app.notifications.jobs import enqueue_review_notifications
 from app.review.checkout import checkout
 from app.review.discover import discover
+from app.review.knowledge import active_knowledge
 from app.review.profile import build_profile
 from app.review.progress import ProgressSink, RedisProgress, progress_redis
 from app.review.providers import (
@@ -27,12 +28,23 @@ from app.review.providers import (
     build_agentic_provider,
     build_provider,
 )
-from app.review.service import ReviewService, ReviewSettings
+from app.review.service import VERIFY_TIMEOUT_S, ReviewService, ReviewSettings
 
 log = logging.getLogger(__name__)
 
-# Fast pass + profile + deep pass (DEEP_REVIEW_TIMEOUT_S) must fit; STALE_RUNNING is longer.
-REVIEW_JOB_TIMEOUT = 45 * 60
+# How long a killed job's row stays `running` past the job timeout before a claim takes it over.
+STALE_GRACE_S = 5 * 60
+
+
+def review_job_timeout(settings: Settings) -> int:
+    """RQ `job_timeout` of a review job, from the settings: the agentic pass may take up to
+    three chunks of REVIEW_TIMEOUT_S (the chunk count is unknown when the job is queued), the
+    verification up to VERIFY_MAX_FINDINGS calls of 120 s, plus ten minutes for the sync, the
+    checkout and the no-tool fallback. `ReviewSettings.stale_running` is this plus
+    STALE_GRACE_S, so a review the worker was killed in is always taken over."""
+    return int(
+        settings.review_timeout_s * 3 + settings.verify_max_findings * VERIFY_TIMEOUT_S + 600
+    )
 
 
 class NotSyncedYet(Exception):
@@ -55,12 +67,18 @@ def review_settings(settings: Settings, session: Session | None = None) -> Revie
             edited.get("deep_instructions_chars", settings.deep_instructions_chars)
         ),
         scoring_weights=settings.scoring_weights,
-        deep_review=settings.deep_review,
-        deep_max_turns=settings.deep_review_max_turns,
-        deep_timeout_s=float(settings.deep_review_timeout_s),
-        deep_max_archive_bytes=settings.deep_review_max_archive_mb * 1024 * 1024,
-        deep_min_loc=settings.deep_review_min_loc,
-        profile_ttl=timedelta(days=settings.profile_ttl_days),
+        agent_review=settings.review_agent,
+        agent_min_loc=settings.review_agent_min_loc,
+        agent_max_turns=settings.review_max_turns,
+        agent_timeout_s=float(settings.review_timeout_s),
+        agent_max_archive_bytes=settings.deep_review_max_archive_mb * 1024 * 1024,
+        chunk_tokens=settings.review_chunk_tokens,
+        verify=settings.verify,
+        verify_max_findings=settings.verify_max_findings,
+        verify_max_turns=settings.verify_max_turns,
+        verify_min_confidence_unverified=settings.verify_min_confidence_unverified,
+        knowledge_tokens=settings.knowledge_tokens,
+        stale_running=timedelta(seconds=review_job_timeout(settings) + STALE_GRACE_S),
     )
 
 
@@ -95,7 +113,14 @@ def run_mr_review(
     expected_round: int | None = None,
     progress: ProgressSink | None = None,
 ) -> str:
-    """Review one MR; `after` sees the finished review (notifications run once it is committed)."""
+    """Review one MR; `after` sees the finished review (notifications run once it is committed).
+
+    Transactions (docs/specs/19 §4.6): given a session with no transaction open, the review
+    runs in short ones of its own (the sync's rows are committed first, then the claim, the
+    preparation and the save), so no lock outlives a step. Given a session already in a
+    transaction (the integration tests, or a caller that wants one unit of work) everything
+    stays in that single transaction and the caller commits or rolls back."""
+    short = not session.in_transaction()
     project = session.get(Project, project_id)
     if project is None:
         return "project not found"
@@ -112,6 +137,8 @@ def run_mr_review(
     mr = load()
     if mr is None or mr.head_sha != head_sha:
         _ensure_synced(session, project, make_client, settings)
+        if short:
+            session.commit()  # the sync's rows (and its advisory lock) do not wait for the review
         mr = load()
     if mr is None:
         return "merge request not found after sync"
@@ -126,6 +153,7 @@ def run_mr_review(
             review_settings(settings, session),
             agent=agent,
             progress=progress,
+            short_transactions=short,
         )
         review = service.review_mr(
             project,
@@ -156,6 +184,8 @@ def run_commit_review(
     expected_round: int | None = None,
     progress: ProgressSink | None = None,
 ) -> str:
+    """Review one commit; transactions as in `run_mr_review`."""
+    short = not session.in_transaction()
     project = session.get(Project, project_id)
     if project is None:
         return "project not found"
@@ -167,6 +197,8 @@ def run_commit_review(
         # not block the review of a commit picked on another branch. (The RQ job prefetches it
         # in a separate transaction; this covers direct callers.)
         _prefetch_commit(session, project.id, sha, make_client, settings)
+        if short:
+            session.commit()
         commit = session.get(Commit, sha)
     if commit is None:
         return "commit not found on GitLab"
@@ -181,6 +213,7 @@ def run_commit_review(
             review_settings(settings, session),
             agent=agent,
             progress=progress,
+            short_transactions=short,
         )
         review = service.review_commit(
             project,
@@ -223,6 +256,40 @@ def _notify(finished: list[Review]) -> None:
             enqueue_review_notifications(session, queue, review)
 
 
+def _ensure_knowledge(project_id: int, settings: Settings) -> None:
+    """docs/specs/19 §3.4: a repo without review knowledge gets its first RK built before its
+    first review (own sessions, own cost row). Not more than once an hour per repo, and not
+    while the repo's build job is queued or running (`first_build_allowed`: a failed build
+    leaves a row and that row counts). Any failure leaves the review to the .claude guidance
+    fallback; it never blocks the review."""
+    if not settings.review_agent:
+        return
+    from app.workers.knowledge_jobs import build_knowledge_job, first_build_allowed
+
+    try:
+        with get_sessionmaker()() as session:
+            project = session.get(Project, project_id)
+            if project is None or not project.tracked or project.allow_external_llm is False:
+                return
+            row, _stale = active_knowledge(session, project)
+            if row is not None:
+                return
+            redis = get_redis()
+            if not first_build_allowed(
+                session, project_id, redis=redis, queue=Queue("default", connection=redis)
+            ):
+                log.info("first review knowledge build held off", extra={"project_id": project_id})
+                return
+    except Exception:  # Redis or the database not answering: no build, the review still runs
+        log.exception("first review knowledge not decided", extra={"project_id": project_id})
+        return
+    try:
+        result = build_knowledge_job(project_id, built_by="first_review")
+        log.info("first review knowledge built", extra={"project_id": project_id, **result})
+    except Exception:  # the review itself must still run
+        log.exception("first review knowledge not built", extra={"project_id": project_id})
+
+
 def review_mr_job(
     project_id: int,
     iid: int,
@@ -237,10 +304,12 @@ def review_mr_job(
     dashboard, telegram, backfill or rerun, and which person, when one did. `force` reviews a
     finished head again as a new round."""
     settings = get_settings()
+    _ensure_knowledge(project_id, settings)
     finished: list[Review] = []
-    with get_sessionmaker()() as session, session.begin():
+    with get_sessionmaker()() as session:
         # The model an admin picked on the Admin screen, if any (app/admin_settings).
         tuned = with_overrides(session, settings)
+        session.commit()  # end that read: the review runs in short transactions of its own
         status = run_mr_review(
             session,
             project_id,
@@ -275,10 +344,12 @@ def review_commit_job(
     # project's sync lock is not held through the (minutes long) review below.
     with get_sessionmaker()() as session, session.begin():
         _prefetch_commit(session, project_id, sha, client_factory(secret_box()), settings)
+    _ensure_knowledge(project_id, settings)
     finished: list[Review] = []
-    with get_sessionmaker()() as session, session.begin():
+    with get_sessionmaker()() as session:
         # The model an admin picked on the Admin screen, if any (app/admin_settings).
         tuned = with_overrides(session, settings)
+        session.commit()  # end that read: the review runs in short transactions of its own
         status = run_commit_review(
             session,
             project_id,

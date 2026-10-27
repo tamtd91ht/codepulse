@@ -18,7 +18,14 @@ from app.models import (
     TeamMember,
     User,
 )
-from app.scoring.aggregate import aggregate, period_bounds, period_start_of, previous_period
+from app.scoring.aggregate import (
+    ReviewFacts,
+    aggregate,
+    compute,
+    period_bounds,
+    period_start_of,
+    previous_period,
+)
 from tests.collector.test_collect import make_project
 
 VN = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -39,6 +46,40 @@ def test_period_helpers() -> None:
 
 def at(day: int, hour: int = 10) -> datetime:
     return datetime(2026, 10, day, hour, tzinfo=UTC)
+
+
+def test_compute_counts_what_the_review_score_counted() -> None:
+    """docs/specs/19 §4.4: a rejected finding and an unverified one below the confidence
+    threshold are left out of the period metrics as they were left out of the score; the
+    threshold is the same setting, and reviews before rubric v4 keep their old counting."""
+    v4 = ReviewFacts(
+        user_id=1,
+        finished_at=at(6),
+        score=50.0,
+        loc=100,
+        rubric_version="v4",
+        findings=[
+            ("critical", 0.9, "open", "confirmed"),
+            ("high", 0.6, "open", "unverified"),  # below 0.7: not counted
+            ("medium", 0.9, "rejected", "rejected"),
+            ("low", 0.5, "open", "skipped"),
+        ],
+    )
+    row = compute([v4], [], [])
+    assert (row["critical"], row["high"], row["medium"], row["low"]) == (1, 0, 0, 1)
+    assert row["weighted_penalty"] == Decimal("27.75")  # 30 * 0.9 + 1.5 * 0.5
+    lenient = compute([v4], [], [], min_confidence_unverified=0.5)
+    assert (lenient["high"], lenient["weighted_penalty"]) == (1, Decimal("36.75"))
+    v3 = ReviewFacts(
+        user_id=1,
+        finished_at=at(6),
+        score=50.0,
+        loc=100,
+        rubric_version="v3",
+        findings=[("high", 0.6, "open", "unverified"), ("medium", 0.9, "rejected", "rejected")],
+    )
+    old = compute([v3], [], [])
+    assert (old["high"], old["medium"], old["weighted_penalty"]) == (1, 0, Decimal("9.00"))
 
 
 @pytest.mark.integration

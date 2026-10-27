@@ -17,10 +17,15 @@ log = logging.getLogger(__name__)
 MARKER = "<!-- codepulse-review -->"
 TOP_FINDINGS = 5
 SEVERITY_ICONS = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}
-VERDICT_ICONS = {"approve": "✅", "fix_required": "⚠️", "block": "❌"}
+VERDICT_ICONS = {"approve": "✅", "needs_human": "⚠️", "fix_required": "⚠️", "block": "❌"}
+VERIFIED_MARK = {"confirmed": "✔", "downgraded": "↓", "unverified": "?"}
 
 
 def render(review: Review, findings: list[ReviewFinding]) -> str:
+    # A finding the verification refuted (docs/specs/19 §4.3) keeps its row but is not shown as
+    # a problem: only counted at the end.
+    rejected = [f for f in findings if f.status == "rejected"]
+    findings = [f for f in findings if f.status != "rejected"]
     counts = Counter(f.severity for f in findings)
     score = f"{float(review.score):.0f}/100" if review.score is not None else "—"
     verdict = ""
@@ -28,6 +33,8 @@ def render(review: Review, findings: list[ReviewFinding]) -> str:
         label = VERDICT_LABEL.get(review.verdict, review.verdict)
         icon = VERDICT_ICONS.get(review.verdict, "")
         verdict = f" · {icon} **{label}** (risk {review.risk_score or 0})"
+        if review.verdict == "needs_human":
+            verdict = f" · ⚠️ **cần người xem** (risk {review.risk_score or 0})"
     lines = [
         MARKER,
         f"### CodePulse review: {score}{verdict}",
@@ -54,11 +61,27 @@ def render(review: Review, findings: list[ReviewFinding]) -> str:
         for f in top[:TOP_FINDINGS]:
             where = f"`{f.file_path}:{f.line_start}`"
             title = (f.title or "").replace("|", "\\|")
-            lines.append(f"| {SEVERITY_ICONS[f.severity]} {f.severity} | {where} | {title} |")
+            mark = VERIFIED_MARK.get(f.verified or "", "")
+            lines.append(
+                f"| {SEVERITY_ICONS[f.severity]} {f.severity}{' ' + mark if mark else ''} "
+                f"| {where} | {title} |"
+            )
         if len(top) > TOP_FINDINGS:
             lines.append(f"\n… và {len(top) - TOP_FINDINGS} vấn đề khác trên dashboard.")
     else:
         lines.append("Không phát hiện vấn đề nào.")
+    unverified = [
+        f for f in top if f.verified == "unverified" and f.severity in ("critical", "high")
+    ]
+    if review.verdict == "needs_human" and unverified:
+        lines += ["", "⚠️ **Cần người xem** — chưa kiểm chứng được:"]
+        lines += [
+            f"- {SEVERITY_ICONS[f.severity]} `{f.file_path}:{f.line_start}` — "
+            f"{(f.title or '')[:120]}"
+            for f in unverified[:TOP_FINDINGS]
+        ]
+    if rejected:
+        lines += ["", f"<sub>{len(rejected)} finding bị bác khi kiểm chứng độc lập.</sub>"]
     lines += [
         "",
         f"<sub>Commit `{review.reviewed_sha[:8]}` · rubric {review.rubric_version} · "

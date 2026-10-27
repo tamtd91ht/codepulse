@@ -1,6 +1,8 @@
+import Link from "next/link";
+
 import { Card, Pill } from "@/components/ui";
 import { date } from "@/lib/format";
-import type { BasisRule, Finding, ReviewBasis, ReviewRound } from "@/lib/types";
+import type { BasisKnowledge, BasisRule, Finding, ReviewBasis, ReviewRound } from "@/lib/types";
 
 const RULE_KIND: Record<string, string> = {
   business_project: "Dự án",
@@ -38,6 +40,7 @@ export function basisSummary(basis: ReviewBasis | null): string {
   const shared = docs.filter((d) => d.source === "shared").length;
   return [
     basis.rubric ? `rubric ${basis.rubric.version}` : null,
+    basis.knowledge ? `tiền đề v${basis.knowledge.version}` : null,
     `${rules} quy tắc`,
     docs.length - shared ? `${docs.length - shared} tài liệu repo` : null,
     shared ? `${shared} file .claude dùng chung` : null,
@@ -76,14 +79,17 @@ export function BasisCard({
   deepError,
   history,
   reviewId,
+  projectId,
 }: {
   basis: ReviewBasis | null;
   findings: Finding[];
-  mode: "fast" | "deep";
+  mode: "fast" | "deep" | "agent";
   /** The deep pass was tried and failed (the review fell back to the first pass). */
   deepError?: boolean;
   history: ReviewRound[];
   reviewId: number;
+  /** The repo (GitLab project) reviewed: links the knowledge line to its page. */
+  projectId?: number | null;
 }) {
   if (!basis) {
     return (
@@ -122,6 +128,7 @@ export function BasisCard({
   return (
     <Card title="Căn cứ review" subtitle="Những gì AI đã đối chiếu trong lần review này">
       <div className="basis">
+        {basis.knowledge && <KnowledgeSection knowledge={basis.knowledge} projectId={projectId} />}
         {basis.rubric && (
           <section>
             <h4>Rubric {basis.rubric.version}</h4>
@@ -310,6 +317,45 @@ export function BasisCard({
         </section>
       </div>
     </Card>
+  );
+}
+
+/** The review knowledge the deep pass ran against (docs/specs/19 §4.1): version, state, what was loaded. */
+function KnowledgeSection({ knowledge, projectId }: { knowledge: BasisKnowledge; projectId?: number | null }) {
+  const rules = knowledge.applied_rules ?? [];
+  const ruleLabel = (r: NonNullable<BasisKnowledge["applied_rules"]>[number]) =>
+    typeof r === "string" ? r : [r.id ?? r.rule_id, r.effect].filter(Boolean).join(" → ") || r.reason || "?";
+  return (
+    <section>
+      <h4>
+        Tiền đề review v{knowledge.version}
+        {projectId ? (
+          <>
+            {" "}
+            <Link href={`/projects/${projectId}/knowledge`} className="small">
+              xem tiền đề
+            </Link>
+          </>
+        ) : null}
+      </h4>
+      <div className="chips" style={{ margin: "0 0 6px" }}>
+        {knowledge.approved ? <Pill tone="good">đã được lead duyệt</Pill> : <Pill tone="warn">tiền đề chưa được lead duyệt</Pill>}
+        {knowledge.stale && <Pill tone="warn">đã cũ so với .claude hiện tại</Pill>}
+        <span className="chip small">{knowledge.invariants} bất biến</span>
+        <span className="chip small">{knowledge.checks_loaded.length} check nạp</span>
+        <span className="chip small">{rules.length} quy tắc severity áp dụng</span>
+      </div>
+      {knowledge.checks_loaded.length > 0 && (
+        <p className="small" style={{ margin: "0 0 4px" }}>
+          <span className="muted">Check khớp diff:</span> {knowledge.checks_loaded.join(" · ")}
+        </p>
+      )}
+      {rules.length > 0 && (
+        <p className="small" style={{ margin: 0 }}>
+          <span className="muted">Quy tắc severity áp dụng:</span> {rules.map(ruleLabel).join(" · ")}
+        </p>
+      )}
+    </section>
   );
 }
 

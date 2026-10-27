@@ -34,7 +34,7 @@ from app.models import (
     TeamMember,
     User,
 )
-from app.webhook.jobs import REVIEW_JOB_TIMEOUT, REVIEW_RETRY
+from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
 
 router = APIRouter(tags=["reviews"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -82,7 +82,7 @@ def list_reviews(
     user_id: int | None = None,
     project_id: int | None = None,
     severity: str | None = None,
-    verdict: Literal["approve", "fix_required", "block"] | None = None,
+    verdict: Literal["approve", "needs_human", "fix_required", "block"] | None = None,
     trigger: str | None = None,
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
@@ -252,7 +252,7 @@ def rerun_review(
         force=force,
         expected_round=review.round if force else None,
         job_id=f"{job_id}-rerun-{review.id}-{review.round + 1 if force else review.round}",
-        job_timeout=REVIEW_JOB_TIMEOUT,
+        job_timeout=review_job_timeout(get_settings()),
         retry=REVIEW_RETRY,
         at_front=True,
     )

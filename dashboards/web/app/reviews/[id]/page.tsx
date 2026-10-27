@@ -7,7 +7,7 @@ import { BasisCard, basisSummary, changedRules, previousRun } from "@/components
 import { Alert, Card, EmptyState, ExternalLink, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, TRIGGER_LABEL, VERDICT_LABEL, date, num } from "@/lib/format";
-import type { Finding, Me, ReviewDetail } from "@/lib/types";
+import type { Finding, Me, Repo, ReviewDetail } from "@/lib/types";
 
 const STATUS_LABEL: Record<string, string> = {
   open: "Đang mở",
@@ -15,6 +15,13 @@ const STATUS_LABEL: Record<string, string> = {
   disputed: "Đang khiếu nại",
   accepted_risk: "Chấp nhận rủi ro",
   false_positive: "Không phải lỗi (đã duyệt)",
+  rejected: "Kiểm chứng bác bỏ (không chấm điểm)",
+};
+const VERIFIED_LABEL: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "info" }> = {
+  confirmed: { label: "✔ đã kiểm chứng", tone: "good" },
+  downgraded: { label: "↓ hạ mức sau kiểm chứng", tone: "info" },
+  rejected: { label: "✘ bác bỏ", tone: "good" },
+  unverified: { label: "? chưa kiểm chứng được", tone: "warn" },
 };
 const FINDING_TONE: Record<string, "good" | "bad" | "warn" | "info" | undefined> = {
   open: undefined,
@@ -22,6 +29,7 @@ const FINDING_TONE: Record<string, "good" | "bad" | "warn" | "info" | undefined>
   disputed: "warn",
   accepted_risk: "info",
   false_positive: "good",
+  rejected: "good",
 };
 const REVIEW_STATUS: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "info" }> = {
   done: { label: "Đã review", tone: "good" },
@@ -158,6 +166,33 @@ function RerunBar({
   );
 }
 
+function VerificationCard({ review }: { review: ReviewDetail }) {
+  const v = review.deep?.verification ?? {};
+  if (v.skipped || v.error) {
+    return (
+      <Alert tone="info">
+        Chưa kiểm chứng độc lập: {v.skipped ?? v.error}. Finding critical/high chưa kiểm chứng chỉ được chấm điểm khi
+        độ tin cậy ≥ 0,7 và verdict là &quot;cần người xem&quot;.
+      </Alert>
+    );
+  }
+  return (
+    <Card
+      title="Kiểm chứng độc lập"
+      subtitle="Mỗi finding critical/high/medium được một lượt gọi mới, không thấy lý luận của lượt review, cố chứng minh nó sai trong mã nguồn (docs/specs/19 §4.3)"
+    >
+      <div className="chips">
+        <Pill tone="good" icon="checkCircle">{v.confirmed ?? 0} xác nhận</Pill>
+        <Pill tone={v.downgraded ? "info" : undefined}>{v.downgraded ?? 0} hạ mức</Pill>
+        <Pill tone={v.rejected ? "good" : undefined}>{v.rejected ?? 0} bác bỏ</Pill>
+        <Pill tone={v.unverified ? "warn" : undefined}>{v.unverified ?? 0} chưa kiểm chứng được</Pill>
+        {!!v.ignored_evidence && <Pill tone="warn" icon="alert">{v.ignored_evidence} bằng chứng không hợp lệ</Pill>}
+        <Pill>{v.calls ?? 0} lượt gọi{v.failed_calls ? ` (${v.failed_calls} lỗi)` : ""}</Pill>
+      </div>
+    </Card>
+  );
+}
+
 function DeepCard({ review }: { review: ReviewDetail }) {
   const d = review.deep ?? {};
   if (review.mode !== "deep") {
@@ -270,6 +305,9 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
     refreshInterval: rerun?.pending ? RERUN_POLL_MS : 0,
   });
   const { data: me } = useApi<Me>("/auth/me");
+  // The knowledge line links to the repo's knowledge page; the detail only names the repo, so look its id up.
+  const repos = useApi<Repo[]>(review?.basis?.knowledge ? "/repos" : null);
+  const repoId = repos.data?.find((r) => r.path_with_namespace === review?.project)?.id ?? null;
   // Stop polling once the worker took the rerun: a forced one supersedes this round, a plain
   // one leaves queued/running; give up after RERUN_POLL_MAX_MS either way.
   useEffect(() => {
@@ -336,6 +374,18 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
               <Pill tone="primary" icon="search">
                 Review sâu
               </Pill>
+            )}
+            {review.mode === "agent" && (
+              <Pill tone="primary" icon="search">
+                Review trong repo
+              </Pill>
+            )}
+            {review.deep?.fallback && (
+              <span title={review.deep.fallback.error}>
+                <Pill tone="warn" icon="alert">
+                  Lượt agent lỗi, dùng lượt không tool
+                </Pill>
+              </span>
             )}
             {review.round > 1 && <Pill tone="info">lần {review.round}</Pill>}
             {review.web_url && <ExternalLink href={review.web_url}>Mở trên GitLab</ExternalLink>}
@@ -434,9 +484,8 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
         </Card>
       )}
 
-      {review.status === "done" && (review.mode === "deep" || review.deep?.error || review.deep?.skipped) && (
-        <DeepCard review={review} />
-      )}
+      {review.status === "done" && review.deep?.verification && <VerificationCard review={review} />}
+      {review.status === "done" && review.mode === "deep" && <DeepCard review={review} />}
 
       {(review.status === "done" || review.status === "superseded") && (
         <BasisCard
@@ -446,6 +495,7 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
           deepError={!!review.deep?.error}
           history={review.history}
           reviewId={review.id}
+          projectId={repoId}
         />
       )}
 
@@ -525,6 +575,11 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
                 <SeverityBadge severity={f.severity} />
                 <strong>{f.title}</strong>
                 {status !== "open" && <Pill tone={FINDING_TONE[status]}>{STATUS_LABEL[status] ?? status}</Pill>}
+                {f.verified && VERIFIED_LABEL[f.verified] && (
+                  <span title={f.verification?.reason ?? undefined}>
+                    <Pill tone={VERIFIED_LABEL[f.verified].tone}>{VERIFIED_LABEL[f.verified].label}</Pill>
+                  </span>
+                )}
               </div>
               <div className="finding-meta">
                 <span>{CATEGORY_LABEL[f.category] ?? f.category}</span>

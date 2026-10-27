@@ -23,7 +23,12 @@ from app.models import (
 from app.review.progress import MemoryProgress
 from app.review.providers import FakeLLMProvider, LLMError, ReviewPrompt
 from app.review.rubric import RUBRIC_VERSION
-from app.review.service import ReviewService, ReviewSettings, merge_intents
+from app.review.service import (
+    KNOWLEDGE_DOMAIN_NOTE,
+    ReviewService,
+    ReviewSettings,
+    merge_intents,
+)
 from tests.collector.fake_gitlab import API, BASE, fixture, mount
 from tests.collector.test_collect import make_project
 
@@ -101,7 +106,10 @@ def test_reviews_scores_and_stores_findings(
 
     assert review.status == "done"
     assert review.loc_reviewed == 31  # yarn.lock ignored
-    assert float(review.score) == 50.0  # 100 - 22.5 = 77.5, capped by the critical
+    # No agentic provider, so no verification was configured: the critical stands as reported
+    # (`skipped`, the pre-v4 semantics): 100 - 30 * 0.9 = 73, capped at 50, and it blocks.
+    assert float(review.score) == 50.0
+    assert (review.verdict, review.risk_score) == ("block", 10)
     assert (review.model, float(review.cost_usd)) == ("fake-model", 0.03)
     assert review.summary == "Parser added."
     findings = db_session.scalars(
@@ -109,6 +117,9 @@ def test_reviews_scores_and_stores_findings(
     ).all()
     assert [(x.severity, x.title) for x in findings] == [("critical", "SQL injection")]
     assert findings[0].code_excerpt == "+new line 4\n+new line 5"
+    assert (findings[0].verified, findings[0].status) == ("skipped", "open")
+    assert review.deep is not None and review.deep["mode"] == "fast"
+    assert review.deep["verification"] == {"skipped": "không có provider có tool"}
     assert "yarn.lock" not in provider.prompts[0].user
     assert "Adds the parser" in provider.prompts[0].user
     db_session.refresh(older)
@@ -276,6 +287,7 @@ def test_rules_reach_the_prompt_and_verdict_intent_rule_id_are_stored(
     assert "## Quy tắc dự án OmiCRM\n- tenantId on every query" in user_prompt
     assert "## .claude/rules/money.md\n# Money safety" in user_prompt
     assert "Team rules" in user_prompt and "rule_id" in user_prompt
+    # No verification configured: the high stands as reported and needs a fix (19 §4.4).
     assert (review.verdict, review.risk_score) == ("fix_required", 3)
     assert review.intent == {
         "summary": "Thêm parser cho review.",
@@ -350,7 +362,7 @@ def test_rules_files_touched_by_the_diff_are_not_used(db_session: Session) -> No
     assert "content of other.md" in text
 
 
-# -- deep review (docs/specs/18) -------------------------------------------------------------------
+# -- review flow v2 (docs/specs/19 §4): one checkout, agentic pass, verification -------------------
 
 
 def archive_bytes(files: dict[str, str]) -> bytes:
@@ -364,8 +376,13 @@ def archive_bytes(files: dict[str, str]) -> bytes:
     return buf.getvalue()
 
 
-DEEP_SETTINGS = ReviewSettings(
-    **{**SETTINGS.__dict__, "deep_review": True, "deep_max_archive_bytes": 10_000_000}
+AGENT_SETTINGS = ReviewSettings(
+    **{
+        **SETTINGS.__dict__,
+        "agent_review": True,
+        "agent_min_loc": 20,
+        "agent_max_archive_bytes": 10_000_000,
+    }
 )
 REPO_FILES = {
     "README.md": "# demo\nMột dịch vụ thu phí.",
@@ -389,7 +406,29 @@ def profile_answer() -> dict[str, Any]:
     }
 
 
-def deep_answer(prompt: ReviewPrompt) -> dict[str, Any]:
+def agent_answer(prompt: ReviewPrompt) -> dict[str, Any]:
+    """The agentic pass ([1]) and the verification ([2]) share one fake provider: the system
+    prompt says which one is asking."""
+    if "independent reviewer" in prompt.system:
+        return {
+            "verdicts": [
+                {
+                    "index": 0,
+                    "verdict": "confirmed",
+                    "reason": "chuỗi nối thẳng",
+                    "confidence": 0.9,
+                },
+                {
+                    "index": 1,
+                    "verdict": "downgraded",
+                    "severity": "medium",
+                    "reason": "guard() chặn ở caller",
+                    "evidence_file": "app/guard.py",
+                    "evidence_lines": "1-2",
+                    "confidence": 0.8,
+                },
+            ]
+        }
     return {
         "summary": "Parser mới; đã đối chứng.",
         "intent": {
@@ -398,18 +437,24 @@ def deep_answer(prompt: ReviewPrompt) -> dict[str, Any]:
             "altitude": "right",
             "concerns": [],
         },
-        "verifications": [
-            {
-                "index": 0,
-                "decision": "downgrade",
-                "severity": "medium",
-                "reason": "guard() chặn ở caller",
-                "evidence_file": "app/guard.py",
-                "evidence_lines": "1-2",
-            }
+        "applied_rules": [
+            {"rule_id": "rk:inv-sql", "applies": True, "where": "app/review/parser.py:5"},
+            {"rule_id": "rk:chk-migrations", "applies": False, "why": "không đổi migration"},
         ],
         "findings": [
             {
+                "severity": "critical",
+                "category": "security",
+                "file_path": "app/review/parser.py",
+                "line_start": 5,
+                "line_end": 6,
+                "title": "SQL injection",
+                "message": "Input concatenated into SQL.",
+                "confidence": 0.9,
+                "rule_id": "rk:inv-sql",
+                "evidence": "app/review/parser.py:5",
+            },
+            {  # no evidence: confidence capped at 0.6, no rule: rubric:4
                 "severity": "high",
                 "category": "bug",
                 "file_path": "app/review/parser.py",
@@ -418,15 +463,25 @@ def deep_answer(prompt: ReviewPrompt) -> dict[str, Any]:
                 "title": "Parser bỏ qua lỗi",
                 "message": "m",
                 "confidence": 0.8,
-                "evidence": "app/review/parser.py:6",
-            }
+            },
+            {  # outside the diff: informational for the author, never scored
+                "severity": "high",
+                "category": "security",
+                "file_path": "app/guard.py",
+                "line_start": 1,
+                "line_end": 2,
+                "title": "guard() không kiểm tra role",
+                "message": "m",
+                "confidence": 0.9,
+                "evidence": "app/guard.py:2",
+            },
         ],
         "project_fit": ["Đúng kiến trúc; nên đặt parser cạnh app/billing"],
     }
 
 
 class ProfileOrChunk:
-    """The plain provider: the profile call (by its system prompt) or the first-pass chunk."""
+    """The plain provider: the profile call (by its system prompt) or the no-tool pass."""
 
     name = "fake"
 
@@ -440,7 +495,7 @@ class ProfileOrChunk:
         return self._chunk.review(prompt)
 
 
-def mount_deep(router: respx.MockRouter, iid: int = 1) -> None:
+def mount_repo(router: respx.MockRouter, iid: int = 1) -> None:
     mount(router)
     router.get(f"{API}/projects/1001/merge_requests/{iid}").respond(
         json=fixture("merge_requests.json")[0]
@@ -450,117 +505,320 @@ def mount_deep(router: respx.MockRouter, iid: int = 1) -> None:
     )
 
 
-def test_deep_review_verifies_candidates_adds_findings_and_caches_the_profile(
+def test_agentic_pass_then_verification_scores_only_what_survived(
     db_session: Session, mr: tuple[Project, MergeRequest]
 ) -> None:
     project, merge_request = mr
-    agent = FakeLLMProvider(deep_answer)
+    # A profile the Admin button built from the default branch: the fallback while the repo has
+    # no compiled knowledge. The review never builds one from the sha it judges.
+    project.profile = {**profile_answer(), "version": 1}
+    project.profile_sha, project.profile_at = "e" * 40, datetime.now(UTC) - timedelta(days=60)
+    agent = FakeLLMProvider(agent_answer)
+    fast = FakeLLMProvider(sqli)
+    plain = ProfileOrChunk(fast)
     with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
-        mount_deep(router)
-        service = ReviewService(
-            db_session, client, ProfileOrChunk(FakeLLMProvider(sqli)), DEEP_SETTINGS, agent=agent
-        )
+        mount_repo(router)
+        service = ReviewService(db_session, client, plain, AGENT_SETTINGS, agent=agent)
         review = service.review_mr(project, merge_request, HEAD)
 
-    assert review is not None and review.status == "done" and review.mode == "deep"
+    assert review is not None and review.status == "done" and review.mode == "agent"
+    assert fast.prompts == []  # the no-tool pass is a fallback only
     findings = db_session.scalars(
         select(ReviewFinding).where(ReviewFinding.review_id == review.id)
     ).all()
-    assert sorted((f.title, f.severity) for f in findings) == [
-        ("Parser bỏ qua lỗi", "high"),
-        ("SQL injection", "medium"),  # downgraded with evidence
+    assert sorted((f.title, f.severity, f.verified, f.status) for f in findings) == [
+        ("Parser bỏ qua lỗi", "medium", "downgraded", "open"),
+        ("SQL injection", "critical", "confirmed", "open"),
+        ("guard() không kiểm tra role", "info", "skipped", "open"),
     ]
-    assert (review.verdict, review.risk_score) == ("fix_required", 4)
-    assert review.deep is not None and review.deep["kept"] == 1 and review.deep["added"] == 1
-    assert review.deep["downgraded"][0]["evidence"] == "app/guard.py:1-2"
+    by_title = {f.title: f for f in findings}
+    sql, capped, note = (
+        by_title["SQL injection"],
+        by_title["Parser bỏ qua lỗi"],
+        by_title["guard() không kiểm tra role"],
+    )
+    assert sql.rule_id == "rk:inv-sql" and sql.verification is not None
+    assert sql.verification["verdict"] == "confirmed"
+    assert "Bằng chứng: app/review/parser.py:5" in (sql.message or "")
+    assert float(capped.confidence or 0) == 0.6 and capped.rule_id == "rubric:4"
+    assert capped.verification is not None
+    assert capped.verification["evidence"] == "app/guard.py:1-2"
+    assert capped.verification["from_severity"] == "high"
+    assert (note.message or "").startswith("[ngoài phần thay đổi]")
+    # block on the confirmed critical; risk on confirmed + downgraded (10 + 1).
+    assert (review.verdict, review.risk_score) == ("block", 11)
+    # 100 - (30*0.9 + 5*0.6) = 70, then the cap of a confirmed critical.
+    assert float(review.score or 0) == 50.0
+    assert review.deep is not None
+    assert review.deep["verification"]["confirmed"] == 1
+    assert review.deep["verification"]["downgraded"] == 1
+    assert review.deep["verification"]["calls"] == 1  # same file: one batch
+    assert review.deep["applied_rules"][0]["rule_id"] == "rk:inv-sql"
     assert review.deep["project_fit"] == ["Đúng kiến trúc; nên đặt parser cạnh app/billing"]
-    assert review.deep["instruction_sources"] == ["CLAUDE.md", ".claude/rules/critical/money.md"]
-    assert review.basis is not None and review.basis["instructions"] == [
-        {
-            "path": "CLAUDE.md",
-            "kind": "instructions",
-            "source": "repo",
-            "status": "used",
-            "quoted": 36,
-        },
+    assert review.deep["files_seen"] == len(REPO_FILES)
+    assert review.basis is not None and review.basis["applied_rules"] == [
+        {"rule_id": "rk:inv-sql", "applies": True, "where": "app/review/parser.py:5"},
+        {"rule_id": "rk:chk-migrations", "applies": False, "where": ""},
     ]
-    # Nothing in the change is about money: the rule is in the index, for the agent to Read.
-    assert review.basis["claude_repo"] is None and review.basis["instructions_not_loaded"] == [
-        {
-            "path": ".claude/rules/critical/money.md",
-            "source": "repo",
-            "kind": "rules",
-            "reason": "catalog",
-            "read": False,
-        }
-    ]
-    assert review.basis["rubric"]["version"] == RUBRIC_VERSION and review.basis["profile"]
+    assert review.basis["rubric"]["version"] == RUBRIC_VERSION == "v4"
+    assert review.basis["profile_source"] == "cached"
+    assert review.basis["profile"]["sha"] == "e" * 12
     assert review.summary == "Parser mới; đã đối chứng."
     assert review.intent is not None and review.intent["summary"] == "Thêm parser"
-    (call,) = agent.repo_calls
-    assert call["tools"] == ["Read", "Grep", "Glob"] and call["max_turns"] == 40
-    assert "Kind: backend-service · Domain: payments" in call["prompt"].user
-    assert "### CLAUDE.md" in call["prompt"].user
-    assert "- .claude/rules/critical/money.md (rules critical/money, của repo)" in (
-        call["prompt"].user
-    )
-    assert "[0] critical security" in call["prompt"].user
-    assert not Path(call["workdir"]).exists()  # the checkout is gone
-    assert project.profile is not None and project.profile["domain"] == "payments"
-    assert project.profile_sha == HEAD and project.profile_at is not None
-    assert float(review.cost_usd or 0) == pytest.approx(0.03)  # chunk + profile + deep
+    main, verification = agent.repo_calls
+    assert main["tools"] == ["Read", "Grep", "Glob"] and main["max_turns"] == 40
+    assert "PROJECT KNOWLEDGE" in main["prompt"].user and "applied_rules" in main["prompt"].system
+    assert "### Context: app/review/parser.py" in main["prompt"].user  # read from the checkout
+    assert "Kind: backend-service · Domain: payments" in main["prompt"].user
+    # The verification is a fresh prompt: the finding, never the main pass's reasoning.
+    assert verification["max_turns"] == 15
+    assert "[0] critical security app/review/parser.py:5-6" in verification["prompt"].user
+    assert "Parser mới; đã đối chứng." not in verification["prompt"].user
+    assert "applied_rules" not in verification["prompt"].user
+    assert not Path(main["workdir"]).exists()  # the checkout is gone
+    # The cached profile was read, never rebuilt or rewritten from the reviewed sha.
+    assert plain._profile.prompts == []
+    assert (project.profile_sha, project.profile["domain"]) == ("e" * 40, "payments")
+    # agent pass + verification
+    assert float(review.cost_usd or 0) == pytest.approx(0.02)
 
 
-def test_deep_review_failure_keeps_the_first_pass(
+def test_agentic_failure_falls_back_to_the_no_tool_pass(
     db_session: Session, mr: tuple[Project, MergeRequest]
 ) -> None:
     project, merge_request = mr
 
     def broken(prompt: ReviewPrompt) -> Any:
-        raise LLMError("deep timeout")
+        raise LLMError("agent timeout")
 
     agent = FakeLLMProvider(broken)
     with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
-        mount_deep(router)
+        mount_repo(router)
         service = ReviewService(
-            db_session, client, ProfileOrChunk(FakeLLMProvider(sqli)), DEEP_SETTINGS, agent=agent
+            db_session, client, ProfileOrChunk(FakeLLMProvider(sqli)), AGENT_SETTINGS, agent=agent
         )
         review = service.review_mr(project, merge_request, HEAD)
     assert review is not None and (review.status, review.mode) == ("done", "fast")
-    assert review.deep == {"error": "LLMError", "detail": "deep timeout"}
-    assert review.verdict == "block"  # the first pass's critical stands
+    assert review.deep is not None
+    assert review.deep["fallback"] == {"from": "agentic", "error": "LLMError: agent timeout"}
+    # The verification call failed too: the critical stays unverified -> a person decides.
+    assert review.deep["verification"]["failed_calls"] == 1
+    finding = db_session.scalars(
+        select(ReviewFinding).where(ReviewFinding.review_id == review.id)
+    ).one()
+    assert (finding.severity, finding.verified) == ("critical", "unverified")
+    assert (review.verdict, review.risk_score) == ("needs_human", 0)
+    assert float(review.score or 0) == 73.0  # unverified at 0.9 counts; no confirmed critical cap
 
-    # Archive too large: skipped before any model call, first pass stands.
-    other = MergeRequest(project_id=project.id, iid=2, title="Other", head_sha="e" * 40)
-    db_session.add(other)
-    db_session.flush()
-    small = ReviewSettings(**{**DEEP_SETTINGS.__dict__, "deep_max_archive_bytes": 100})
-    agent = FakeLLMProvider(deep_answer)
+
+def test_unparseable_agent_answer_is_repaired_once_then_falls_back(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    agent = FakeLLMProvider(lambda p: "no json at all")
+    # The plain provider answers the repair with garbage too, then runs the no-tool pass.
+    fast = FakeLLMProvider(lambda p: "still no json" if "did not match" in p.user else sqli(p))
     with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
-        mount_deep(router, iid=2)
+        mount_repo(router)
+        service = ReviewService(
+            db_session, client, ProfileOrChunk(fast), AGENT_SETTINGS, agent=agent
+        )
+        review = service.review_mr(project, merge_request, HEAD)
+    assert review is not None and review.mode == "fast"
+    assert review.deep is not None and review.deep["fallback"]["error"].startswith(
+        "ReviewParseError: invalid after repair"
+    )
+    # The repair went to the plain provider (no tools); then the no-tool pass ran there too.
+    assert [("did not match the schema" in p.user) for p in fast.prompts] == [True, False]
+
+
+def test_a_small_diff_skips_the_agentic_pass_but_is_still_verified(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    agent = FakeLLMProvider(agent_answer)
+    big_min = ReviewSettings(**{**AGENT_SETTINGS.__dict__, "agent_min_loc": 100})
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount_repo(router)
+        service = ReviewService(db_session, client, FakeLLMProvider(sqli), big_min, agent=agent)
+        review = service.review_mr(project, merge_request, HEAD)
+    assert review is not None and review.mode == "fast"
+    assert review.deep is not None and review.deep["skipped"] == "diff dưới 100 LOC"
+    (verification,) = agent.repo_calls
+    assert "independent reviewer" in verification["prompt"].system
+    finding = db_session.scalars(
+        select(ReviewFinding).where(ReviewFinding.review_id == review.id)
+    ).one()
+    assert (finding.severity, finding.verified) == ("critical", "confirmed")
+    assert review.verdict == "block" and float(review.score or 0) == 50.0
+
+
+def test_checkout_failure_runs_the_no_tool_pass_with_findings_as_reported(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    small = ReviewSettings(**{**AGENT_SETTINGS.__dict__, "agent_max_archive_bytes": 100})
+    agent = FakeLLMProvider(agent_answer)
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount_repo(router)
         router.get(f"{API}/projects/1001/repository/archive.tar.gz").mock(
             return_value=httpx.Response(200, content=b"x" * 5000)
         )
-        service = ReviewService(
-            db_session, client, ProfileOrChunk(FakeLLMProvider()), small, agent=agent
-        )
-        review2 = service.review_mr(project, other, "e" * 40)
-    assert review2 is not None and review2.mode == "fast"
-    assert review2.deep is not None and review2.deep["error"] == "checkout"
+        service = ReviewService(db_session, client, FakeLLMProvider(sqli), small, agent=agent)
+        review = service.review_mr(project, merge_request, HEAD)
+    assert review is not None and review.mode == "fast"
+    assert review.deep is not None and review.deep["error"] == "checkout"
+    assert review.deep["verification"] == {"skipped": "không có bản sao mã nguồn"}
     assert agent.repo_calls == []
+    # [2] could not run at all, so nothing is "unverified": the critical blocks as reported.
+    finding = db_session.scalars(
+        select(ReviewFinding).where(ReviewFinding.review_id == review.id)
+    ).one()
+    assert finding.verified == "skipped"
+    assert (review.verdict, float(review.score or 0)) == ("block", 50.0)
 
 
-def test_deep_review_respects_the_repo_switch(
+def test_verification_off_keeps_the_findings_as_reported(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    """VERIFY=false is not a failed verification: a critical blocks, as before rubric v4."""
+    project, merge_request = mr
+    review = run(db_session, FakeLLMProvider(sqli), project, merge_request, verify=False)
+    assert review.status == "done"
+    assert review.deep["verification"] == {"skipped": "tắt"}
+    finding = db_session.scalars(
+        select(ReviewFinding).where(ReviewFinding.review_id == review.id)
+    ).one()
+    assert (finding.severity, finding.verified) == ("critical", "skipped")
+    assert (review.verdict, review.risk_score, float(review.score)) == ("block", 10, 50.0)
+
+
+def test_verify_max_findings_zero_skips_the_verification(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    agent = FakeLLMProvider(agent_answer)
+    none = ReviewSettings(**{**AGENT_SETTINGS.__dict__, "verify_max_findings": 0})
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount_repo(router)
+        service = ReviewService(
+            db_session, client, ProfileOrChunk(FakeLLMProvider(sqli)), none, agent=agent
+        )
+        review = service.review_mr(project, merge_request, HEAD)
+    assert review is not None and review.mode == "agent"
+    assert len(agent.repo_calls) == 1  # the main pass only
+    assert review.deep is not None
+    assert review.deep["verification"] == {"skipped": "VERIFY_MAX_FINDINGS=0"}
+    verified = {
+        f.title: f.verified
+        for f in db_session.scalars(
+            select(ReviewFinding).where(ReviewFinding.review_id == review.id)
+        )
+    }
+    assert set(verified.values()) == {"skipped"}
+    assert review.verdict == "block"
+
+
+def test_secrets_in_the_models_text_never_reach_the_database(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    token = "sk-ant-api03-" + "k" * 40
+
+    def leaky(prompt: ReviewPrompt) -> dict[str, Any]:
+        answer = sqli(prompt)
+        answer["findings"][0]["message"] = f"Dùng token {token} thẳng trong SQL."
+        answer["findings"][0]["suggestion"] = f"Bỏ {token}."
+        answer["intent"] = {"summary": f"Thêm {token}", "concerns": [f"lộ {token}"]}
+        return answer
+
+    review = run(db_session, FakeLLMProvider(leaky), project, merge_request)
+    assert review.status == "done"
+    finding = db_session.scalars(
+        select(ReviewFinding).where(ReviewFinding.review_id == review.id)
+    ).one()
+    assert token not in (finding.message or "") and "***REDACTED***" in (finding.message or "")
+    assert token not in (finding.suggestion or "")
+    assert review.intent is not None and token not in str(review.intent)
+
+
+# -- docs/specs/19 §4.6: three short transactions -----------------------------------------------
+
+
+def test_short_transactions_release_the_claim_while_the_model_works(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    """The worker's mode: the claim is committed before the model is called (the FOR UPDATE
+    lock is gone), the passes run with no transaction open, the result is committed after
+    the save. The test session's savepoints make the commits real for the service."""
+    project, merge_request = mr
+    db_session.expire_on_commit = False  # as the worker's sessionmaker (app/db.py)
+    seen: list[tuple[bool, str | None]] = []
+
+    def answer(prompt: ReviewPrompt) -> dict[str, Any]:
+        row = db_session.scalar(select(Review.status).where(Review.reviewed_sha == HEAD))
+        seen.append((db_session.in_transaction(), row))
+        db_session.commit()  # the read above opened one; leave it as the service does
+        return sqli(prompt)
+
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount(router)
+        router.get(f"{API}/projects/1001/merge_requests/1").respond(
+            json=fixture("merge_requests.json")[0]
+        )
+        service = ReviewService(
+            db_session, client, FakeLLMProvider(answer), SETTINGS, short_transactions=True
+        )
+        review = service.review_mr(project, merge_request, HEAD)
+    assert review is not None and review.status == "done"
+    # The model was called with nothing open, and the claimed row was already committed.
+    assert seen == [(False, "running")]
+    assert not db_session.in_transaction()  # the save was committed too
+    db_session.refresh(review)
+    assert review.verdict == "block" and review.finished_at is not None
+
+
+def test_a_crash_in_short_transactions_marks_the_review_failed(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    """The claim is committed, so a crash must not leave the row `running` until the stale
+    takeover: it is marked failed (and can be rerun) before the error propagates."""
+    project, merge_request = mr
+
+    def boom(prompt: ReviewPrompt) -> Any:
+        raise RuntimeError("worker lost its mind")
+
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount(router)
+        router.get(f"{API}/projects/1001/merge_requests/1").respond(
+            json=fixture("merge_requests.json")[0]
+        )
+        service = ReviewService(
+            db_session, client, FakeLLMProvider(boom), SETTINGS, short_transactions=True
+        )
+        with pytest.raises(RuntimeError, match="worker lost its mind"):
+            service.review_mr(project, merge_request, HEAD)
+    review = db_session.scalars(select(Review).where(Review.reviewed_sha == HEAD)).one()
+    assert review.status == "failed"
+    assert (review.error or "").startswith("crash: RuntimeError: worker lost its mind")
+    # And a rerun takes the failed row over as usual.
+    again = run(db_session, FakeLLMProvider(sqli), project, merge_request)
+    assert again.id == review.id and again.status == "done"
+
+
+def test_the_repo_switch_disables_the_agentic_pass_only(
     db_session: Session, mr: tuple[Project, MergeRequest]
 ) -> None:
     project, merge_request = mr
     project.deep_review = False
-    agent = FakeLLMProvider(deep_answer)
+    agent = FakeLLMProvider(agent_answer)
     with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
-        mount_deep(router)
-        service = ReviewService(db_session, client, FakeLLMProvider(), DEEP_SETTINGS, agent=agent)
+        mount_repo(router)
+        service = ReviewService(db_session, client, FakeLLMProvider(), AGENT_SETTINGS, agent=agent)
         review = service.review_mr(project, merge_request, HEAD)
-    assert review is not None and review.mode == "fast" and review.deep is None
+    assert review is not None and review.mode == "fast"
+    assert review.deep is not None and "skipped" not in review.deep
+    assert review.deep["verification"]["selected"] == 0  # nothing to verify
     assert agent.repo_calls == []
 
 
@@ -661,6 +919,27 @@ def test_a_review_reports_its_stages_to_the_live_view(
     assert recorder.events[-1] == ("end", (review.id, "done"))
 
 
+def test_the_v2_flow_reports_checkout_agent_and_verify_stages(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    recorder = Recorder()
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount_repo(router)
+        service = ReviewService(
+            db_session,
+            client,
+            ProfileOrChunk(FakeLLMProvider(sqli)),
+            AGENT_SETTINGS,
+            agent=FakeLLMProvider(agent_answer),
+            progress=recorder,
+        )
+        review = service.review_mr(project, merge_request, HEAD)
+    assert review is not None and review.mode == "agent"
+    stages = [e[1] for e in recorder.events if e[0] == "stage"]
+    assert stages == ["diff", "checkout", "agent", "verify", "verify", "save"]
+
+
 def test_the_live_view_is_cleared_when_a_review_fails(
     db_session: Session, mr: tuple[Project, MergeRequest]
 ) -> None:
@@ -693,7 +972,7 @@ def test_a_review_skipped_before_the_llm_records_no_basis(
     assert review.status == "skipped" and review.basis is None
 
 
-def test_deep_review_streams_its_actions_to_the_live_view(
+def test_the_agentic_pass_streams_its_actions_to_the_live_view(
     db_session: Session, mr: tuple[Project, MergeRequest]
 ) -> None:
     project, merge_request = mr
@@ -708,21 +987,21 @@ def test_deep_review_streams_its_actions_to_the_live_view(
         {"type": "user", "message": {"content": [{"type": "tool_result", "content": "SECRET"}]}},
         {"type": "result", "subtype": "success", "is_error": False, "num_turns": 1},
     ]
-    agent = FakeLLMProvider(deep_answer, events=events)
+    agent = FakeLLMProvider(agent_answer, events=events)
     progress = MemoryProgress()
     with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
-        mount_deep(router)
+        mount_repo(router)
         service = ReviewService(
             db_session,
             client,
             ProfileOrChunk(FakeLLMProvider(sqli)),
-            DEEP_SETTINGS,
+            AGENT_SETTINGS,
             agent=agent,
             progress=progress,
         )
         review = service.review_mr(project, merge_request, HEAD)
 
-    assert review is not None and review.mode == "deep"
+    assert review is not None and review.mode == "agent"
     entries = progress.live(review.id)
     assert [(e["kind"], e.get("target")) for e in entries] == [
         ("start", None),
@@ -743,9 +1022,11 @@ SHARED_FILES = {
 }
 
 
-def test_deep_review_reads_the_shared_claude_repo_of_the_dự_án(
+def test_without_knowledge_the_shared_claude_repo_is_quoted_as_guidance(
     db_session: Session, mr: tuple[Project, MergeRequest]
 ) -> None:
+    """docs/specs/19 lộ trình step 1: while a project has no compiled knowledge, the .claude
+    guidance of docs/specs/17/18 reaches both the agentic and the no-tool prompt."""
     project, merge_request = mr
     business = BusinessProject(
         name="Thu phí",
@@ -757,180 +1038,72 @@ def test_deep_review_reads_the_shared_claude_repo_of_the_dự_án(
     db_session.add(business)
     db_session.flush()
     project.business_project_id = business.id
-    agent = FakeLLMProvider(deep_answer)
-    fast = FakeLLMProvider(sqli)
-    plain = ProfileOrChunk(fast)
+    agent = FakeLLMProvider(agent_answer)
     with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
-        mount_deep(router)
+        mount_repo(router)
         router.get(f"{API}/projects/2002").respond(json={"id": 2002, "default_branch": "main"})
         router.get(f"{API}/projects/2002/repository/commits/main").respond(json={"id": "c" * 40})
         router.get(f"{API}/projects/2002/repository/archive.tar.gz").mock(
             return_value=httpx.Response(200, content=archive_bytes(SHARED_FILES))
         )
-        service = ReviewService(db_session, client, plain, DEEP_SETTINGS, agent=agent)
+        service = ReviewService(
+            db_session, client, ProfileOrChunk(FakeLLMProvider(sqli)), AGENT_SETTINGS, agent=agent
+        )
         review = service.review_mr(project, merge_request, HEAD)
 
-    # The first pass already gets the shared configuration this change needs, and the profile
-    # reads the shared CLAUDE.md under the shared repo's name.
-    (first,) = fast.prompts
-    assert "Áp dụng skill deploy-checklist" in first.user  # the review procedure
-    assert "Dự án: mọi service dùng tenantId từ JWT." in first.user
-    assert "Không liên quan review." not in first.user
+    assert review is not None and review.mode == "agent" and review.basis is not None
+    user = agent.repo_calls[0]["prompt"].user
+    assert "PROJECT KNOWLEDGE (compiled review knowledge; cite rk:<id>):\n(none yet)" in user
+    assert "Áp dụng skill deploy-checklist" in user  # the review procedure
+    assert "Dự án: mọi service dùng tenantId từ JWT." in user
+    assert "Không liên quan review." not in user
     guided = {g["path"]: g["status"] for g in review.basis["fast_guidance"]}
     assert guided["demo/claude-config:.claude/commands/review-mr.md"] == "used"
-    assert "### General" in first.user and review.basis["checklists"][0] == "General"
-    (profile_call,) = plain._profile.prompts
-    assert "### demo/claude-config:.claude/CLAUDE.md\nDự án: mọi service" in profile_call.user
-
-    assert review is not None and review.mode == "deep" and review.basis is not None
-    assert review.basis["claude_repo"] == {
-        "repo": "demo/claude-config",
-        "ref": "main",
-        "include": ["skills/java-conventions/SKILL.md"],
-        "sha": "c" * 12,
-        "files": 6,
-        "status": "used",
-        "mounted": True,
-    }
-    mount = ".codepulse/claude-shared"
-    shared = [
-        (i["path"], i["kind"], i["status"], bool(i.get("procedure")))
-        for i in review.basis["instructions"]
-        if i["source"] == "shared"
-    ]
-    assert shared[:3] == [
-        (f"{mount}/commands/review-mr.md", "command", "used", True),  # the review procedure
-        (f"{mount}/skills/java-conventions/SKILL.md", "skill", "used", False),  # pinned
-        (f"{mount}/CLAUDE.md", "instructions", "used", False),
-    ]
-    # Named for review: worth quoting, after those (their order follows the score).
-    assert sorted(shared[3:]) == [
-        (f"{mount}/agents/security-reviewer.md", "agent", "used", False),
-        (f"{mount}/skills/code-review/SKILL.md", "skill", "used", False),
-    ]
-    (deploy,) = [
-        (d["source"], d["kind"], d["reason"], d["read"])
-        for d in review.basis["instructions_not_loaded"]
-        if d["path"] == f"{mount}/skills/deploy/SKILL.md"
-    ]
-    assert deploy == ("shared", "skill", "catalog", False)
-    call = agent.repo_calls[0]
-    user = call["prompt"].user
-    # The procedure first; shared files sit where the agent can Read them, and before the repo's.
-    assert user.index("Áp dụng skill deploy-checklist") < user.index(f"### {mount}/CLAUDE.md")
-    assert user.index(f"### {mount}/CLAUDE.md") < user.index("### CLAUDE.md")
-    assert "Kiểm tra idempotency" in user and f"### {mount}/skills/deploy/SKILL.md" not in user
-    assert f"- {mount}/skills/deploy/SKILL.md (skill deploy" in user  # indexed, not quoted
+    assert "### General" in user and review.basis["checklists"][0] == "General"
 
 
-class ReadingAgent(FakeLLMProvider):
-    """A deep-review agent that Reads `paths` (relative to the checkout) before answering."""
-
-    def __init__(self, paths: list[str]) -> None:
-        super().__init__(deep_answer)
-        self._paths = paths
-
-    def review_in_repo(self, prompt: ReviewPrompt, workdir: str, **kwargs: Any) -> Any:
-        reads = [
-            {"type": "tool_use", "name": "Read", "input": {"file_path": f"{workdir}/{p}"}}
-            for p in self._paths
-        ]
-        self._events = [{"type": "assistant", "message": {"content": reads}}]
-        return super().review_in_repo(prompt, workdir, **kwargs)
-
-
-def test_deep_review_names_incomplete_quotes_and_quotes_a_copy_once(
+def test_with_knowledge_the_claude_files_are_not_quoted(
     db_session: Session, mr: tuple[Project, MergeRequest]
 ) -> None:
     project, merge_request = mr
-    long_skill = "Đo p99 của mọi endpoint dưới 200ms.\n" * 300
-    business = BusinessProject(
-        name="Thu phí",
-        claude_repo_connection_id=project.connection_id,
-        claude_repo_external_id=2002,
-        claude_repo_path="demo/claude-config",
-        claude_repo_include="skills/perf/SKILL.md",
-    )
-    db_session.add(business)
-    db_session.flush()
-    project.business_project_id = business.id
-    mount_path = ".codepulse/claude-shared"
-    perf = f"{mount_path}/skills/perf/SKILL.md"
-    agent = ReadingAgent([perf])
-    # The repo carries a copy of a shared skill.
-    repo_files = {
-        **REPO_FILES,
-        ".claude/skills/code-review/SKILL.md": SHARED_FILES["skills/code-review/SKILL.md"],
-    }
+    agent = FakeLLMProvider(agent_answer)
+
+    class Knowing(ReviewService):
+        def _knowledge_block(
+            self, project: Project, prepared: Any
+        ) -> tuple[str, dict[str, Any], bool]:
+            text = "## Invariants\n- rk:inv-sql: no string SQL\n## DOMAIN\nDịch vụ thu phí."
+            return text, {"version": 3, "stale": False}, True
+
     with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
-        mount(router)
-        router.get(f"{API}/projects/1001/merge_requests/1").respond(
-            json=fixture("merge_requests.json")[0]
+        mount_repo(router)
+        own = router.get(
+            f"{API}/projects/1001/repository/archive.tar.gz", params={"path": ".claude"}
         )
-        router.get(f"{API}/projects/1001/repository/archive.tar.gz").mock(
-            return_value=httpx.Response(200, content=archive_bytes(repo_files))
-        )
-        router.get(f"{API}/projects/2002").respond(json={"id": 2002, "default_branch": "main"})
-        router.get(f"{API}/projects/2002/repository/commits/main").respond(json={"id": "c" * 40})
-        router.get(f"{API}/projects/2002/repository/archive.tar.gz").mock(
+        own.mock(
             return_value=httpx.Response(
-                200,
-                content=archive_bytes({**SHARED_FILES, "skills/perf/SKILL.md": long_skill}),
+                200, content=archive_bytes({".claude/CLAUDE.md": "Repo: luôn kiểm tra tenantId."})
             )
         )
-        # A small per-file limit (Admin: CLAUDE_FILE_CHARS), so the long skill is clipped.
-        clipped = ReviewSettings(**{**DEEP_SETTINGS.__dict__, "claude_file_chars": 8_000})
-        service = ReviewService(
-            db_session, client, ProfileOrChunk(FakeLLMProvider(sqli)), clipped, agent=agent
+        service = Knowing(
+            db_session, client, ProfileOrChunk(FakeLLMProvider(sqli)), AGENT_SETTINGS, agent=agent
         )
         review = service.review_mr(project, merge_request, HEAD)
-
-    assert review is not None and review.mode == "deep" and review.basis is not None
+    assert review is not None and review.mode == "agent" and review.basis is not None
     user = agent.repo_calls[0]["prompt"].user
-    # The agent is told the long skill is incomplete, with its real size.
-    assert f"- {perf}: only the first ~8000 of {len(long_skill)} characters are quoted" in user
-    # The repo's copy of a shared skill is quoted once, and reported as a duplicate.
-    assert user.count("Kiểm tra idempotency") == 1
-    (copy,) = [d for d in review.basis["instructions_not_loaded"] if d["reason"] == "duplicate"]
-    assert copy["path"] == ".claude/skills/code-review/SKILL.md"
-    assert copy["same_as"] == f"{mount_path}/skills/code-review/SKILL.md"
-    # The basis says the agent opened the whole skill.
-    (record,) = [i for i in review.basis["instructions"] if i["path"] == perf]
-    assert (record["status"], record["quoted"], record["read"]) == ("partial", 8000, True)
+    assert "rk:inv-sql: no string SQL" in user
+    assert "(none: see PROJECT KNOWLEDGE)" in user and "luôn kiểm tra tenantId" not in user
+    assert not own.called  # the repo's .claude is not fetched at all
+    assert review.basis["knowledge"] == {"version": 3, "stale": False}
+    assert review.basis["fast_guidance"] == []
+    # The knowledge's DOMAIN is the profile: no cached profile, nothing built from the sha.
+    assert KNOWLEDGE_DOMAIN_NOTE in user and review.basis["profile_source"] == "knowledge"
+    assert "profile" not in review.basis and project.profile is None
+    # The verification gets the knowledge too, in short form.
+    assert "rk:inv-sql: no string SQL" in agent.repo_calls[1]["prompt"].user
 
 
-def test_an_unreadable_shared_repo_does_not_stop_the_deep_review(
-    db_session: Session, mr: tuple[Project, MergeRequest]
-) -> None:
-    project, merge_request = mr
-    business = BusinessProject(
-        name="Thu phí",
-        claude_repo_connection_id=project.connection_id,
-        claude_repo_external_id=2002,
-        claude_repo_path="demo/claude-config",
-        claude_repo_ref="main",
-    )
-    db_session.add(business)
-    db_session.flush()
-    project.business_project_id = business.id
-    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
-        mount_deep(router)
-        router.get(f"{API}/projects/2002/repository/commits/main").respond(404)
-        service = ReviewService(
-            db_session,
-            client,
-            ProfileOrChunk(FakeLLMProvider(sqli)),
-            DEEP_SETTINGS,
-            agent=FakeLLMProvider(deep_answer),
-        )
-        review = service.review_mr(project, merge_request, HEAD)
-
-    assert review is not None and review.mode == "deep" and review.basis is not None
-    assert review.basis["claude_repo"]["status"] == "error"
-    assert {i["source"] for i in review.basis["instructions"]} == {"repo"}
-
-
-def test_the_first_pass_reads_the_reviewed_repos_own_claude_folder(
+def test_the_no_tool_pass_reads_the_reviewed_repos_own_claude_folder(
     db_session: Session, mr: tuple[Project, MergeRequest]
 ) -> None:
     project, merge_request = mr  # no dự án, so no shared repo: only the repo's own .claude
@@ -954,7 +1127,7 @@ def test_the_first_pass_reads_the_reviewed_repos_own_claude_folder(
         )
     assert own.calls.last.request.url.params["sha"] == HEAD
     assert "Repo: luôn kiểm tra tenantId." in provider.prompts[0].user
-    assert review.basis is not None
+    assert review is not None and review.basis is not None
     (guided,) = review.basis["fast_guidance"]
     assert (guided["path"], guided["source"], guided["status"]) == (
         ".claude/CLAUDE.md",

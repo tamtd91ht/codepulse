@@ -4,8 +4,9 @@ import hashlib
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from typing import Any
 
-from app.review.prepare import DiffFile
+from app.review.prepare import DiffFile, redact
 from app.review.schema import LLMFinding
 
 MAX_EXCERPT_LINES = 40  # docs/specs/AGENTS.md: store at most 40 lines of the diff hunk
@@ -27,6 +28,10 @@ class Finding:
     code_excerpt: str
     fingerprint: str
     rule_id: str | None = None
+    # docs/specs/19 §4.3: what the independent verification said (app/review/verify.py).
+    verified: str = "skipped"  # confirmed|downgraded|rejected|unverified|skipped
+    verification: dict[str, Any] | None = None
+    status: str = "open"  # open; rejected when the verification refuted it
 
 
 @dataclass
@@ -57,6 +62,9 @@ def fingerprint(file_path: str, category: str, code: str, title: str) -> str:
 def postprocess(
     raw: list[LLMFinding], files: dict[str, DiffFile], min_confidence: float
 ) -> PostprocessResult:
+    """Both passes ([1] agentic, [1'] no-tool) come through here. The model's text may quote
+    the repository, so title, message and suggestion are redacted before anything is stored
+    (the excerpt comes from the diff, redacted by app/review/prepare.py already)."""
     result = PostprocessResult(findings=[])
     best: dict[str, Finding] = {}
     for f in raw:
@@ -87,9 +95,9 @@ def postprocess(
             file_path=file.path,
             line_start=f.line_start,
             line_end=f.line_end,
-            title=f.title,
-            message=f.message,
-            suggestion=f.suggestion,
+            title=redact(f.title),
+            message=redact(f.message),
+            suggestion=redact(f.suggestion),
             confidence=round(f.confidence, 2),
             code_excerpt=_excerpt(file, f.line_start, f.line_end),
             fingerprint=fingerprint(file.path, f.category, code, f.title),

@@ -10,6 +10,7 @@ Thresholds (docs/specs/12): precision(critical+high) >= 0.8, recall(critical+hig
 """
 
 import argparse
+import importlib
 import json
 import re
 import sys
@@ -175,9 +176,13 @@ class Report:
         }
 
 
-def run_case(provider: LLMProvider, case: Case, min_confidence: float = 0.5) -> CaseResult:
+def run_case(
+    provider: LLMProvider, case: Case, min_confidence: float = 0.5, knowledge: str = ""
+) -> CaseResult:
+    """`knowledge` is the rendered review knowledge shown to the reviewer (docs/specs/19): the
+    per-project eval passes its invariants, the common eval nothing."""
     prepared = prepare(patch_to_entries(case.patch), ignore_paths=[], sensitive_paths=[])
-    target = ReviewTarget(project="codepulse/eval", title=case.description)
+    target = ReviewTarget(project="codepulse/eval", title=case.description, knowledge=knowledge)
     raw, cost = [], 0.0
     try:
         for piece in chunk(prepared, max_tokens=12000):
@@ -217,6 +222,66 @@ def oracle_provider(cases: list[Case]) -> LLMProvider:
     return FakeLLMProvider(respond)
 
 
+def load_project_knowledge(project_id: str) -> dict[str, Any]:
+    """The project's active review knowledge (docs/specs/19), via the lazily imported loader so
+    the common eval still runs where the knowledge module or a database is absent."""
+    try:
+        load_active_dict = importlib.import_module("app.review.knowledge").load_active_dict
+    except (ImportError, AttributeError) as exc:
+        raise SystemExit(
+            "--project needs app.review.knowledge.load_active_dict (docs/specs/19 §3.2), "
+            f"which is not available: {exc}"
+        ) from exc
+    from app.db import get_sessionmaker
+
+    with get_sessionmaker()() as session:
+        knowledge: dict[str, Any] = load_active_dict(session, project_id)
+    if not knowledge.get("invariants"):
+        raise SystemExit(f"project {project_id} has no active knowledge with invariants")
+    return knowledge
+
+
+def main_project(args: argparse.Namespace) -> int:
+    """`--project <id>`: the auto-generated per-project eval (app/review/eval_knowledge.py)."""
+    from app.review import eval_knowledge as ek
+
+    knowledge: ek.KnowledgeDict
+    if args.knowledge:
+        knowledge = json.loads(args.knowledge.read_text(encoding="utf-8"))
+    else:
+        knowledge = load_project_knowledge(args.project)  # type: ignore[assignment]
+
+    provider: LLMProvider
+    generator: ek.Generator | None = None
+    if args.fake:
+        cases, _ = ek.generate_cases(knowledge, args.project, ek.template_generator)
+        provider, generator = ek.oracle_provider(cases), ek.template_generator
+    else:
+        from app.config import get_settings
+        from app.review.providers import build_provider
+
+        provider = build_provider(get_settings())
+
+    def show(r: ek.InvariantResult) -> None:
+        status = r.error or (
+            f"{'hit' if r.recalled else 'MISS':<4} by {r.matched_by or '-':<7} "
+            f"clean-fp {r.clean_false_positives}"
+        )
+        print(f"{r.invariant_id:<34} {status}  ${r.cost_usd:.3f}", flush=True)
+
+    report = ek.run_knowledge_eval(
+        provider, knowledge, args.project, generator=generator, on_result=show
+    )
+    print(
+        f"\nrecall(per invariant) {report.recall:.2f} (target {RECALL_TARGET})  "
+        f"precision(critical+high) {report.precision:.2f} (target {PRECISION_TARGET})  "
+        f"generated {report.generated}  {'PASS' if report.passed else 'FAIL'}"
+    )
+    out = ek.write_report(report, args.out.parent if args.out else ek.RESULTS_DIR)
+    print(f"report: {out}")
+    return 0 if report.passed else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.review.eval")
     parser.add_argument(
@@ -225,7 +290,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only", nargs="*")
     parser.add_argument("--cases", type=Path, default=CASES_DIR)
     parser.add_argument("--out", type=Path, help="write the JSON report here")
+    parser.add_argument("--project", help="per-project eval from the active review knowledge")
+    parser.add_argument(
+        "--knowledge", type=Path, help="with --project: read the knowledge JSON from this file"
+    )
+    parser.add_argument(
+        "--fake", action="store_true", help="with --project: template cases + oracle, no LLM"
+    )
     args = parser.parse_args(argv)
+    if args.project:
+        return main_project(args)
 
     cases = load_cases(args.cases, args.only)
     provider: LLMProvider

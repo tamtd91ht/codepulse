@@ -92,7 +92,7 @@ export interface CategoryWeek {
 
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
-export type Verdict = "approve" | "fix_required" | "block";
+export type Verdict = "approve" | "needs_human" | "fix_required" | "block";
 
 /** Design & intent notes from the reviewer (docs/specs/17): advisory, never scored. */
 export interface Intent {
@@ -117,7 +117,12 @@ export interface Finding {
   code_excerpt: string | null;
   confidence: Num;
   status: string | null;
+  /** docs/specs/19 §4.3: confirmed | downgraded | rejected | unverified | skipped (low/info). */
+  verified?: Verified | null;
+  verification?: { verdict?: string; reason?: string; evidence?: string | null; confidence?: number } | null;
 }
+
+export type Verified = "confirmed" | "downgraded" | "rejected" | "unverified" | "skipped";
 
 export interface BoardFinding extends Finding {
   project: string;
@@ -147,7 +152,7 @@ export interface Review {
   intent: Intent | null;
   trigger: string;
   requested_by_user_id: number | null;
-  mode: "fast" | "deep";
+  mode: "fast" | "deep" | "agent";
   deep: DeepReport | null;
   round: number;
   superseded_by: number | null;
@@ -162,7 +167,7 @@ export interface ReviewRound {
   status: string;
   score: Num;
   verdict: Verdict | null;
-  mode: "fast" | "deep";
+  mode: "fast" | "deep" | "agent";
   trigger: string;
   finished_at: string | null;
   basis: ReviewBasis | null;
@@ -223,6 +228,20 @@ export interface ReviewBasis {
     detail?: string;
   } | null;
   profile?: { sha: string | null; built_at: string | null; confidence: number | null } | null;
+  /** Review knowledge the review ran against (docs/specs/19 §3.4): version and what was loaded. */
+  knowledge?: BasisKnowledge | null;
+}
+
+export interface BasisKnowledge {
+  version: number;
+  stale: boolean;
+  approved: boolean;
+  /** How many invariants were loaded. */
+  invariants: number;
+  /** Names of the checks whose triggers matched the diff. */
+  checks_loaded: string[];
+  /** Severity rules that applied; a rule id or a short record, whichever the worker recorded. */
+  applied_rules?: (string | { id?: string; rule_id?: string; effect?: string; reason?: string })[];
 }
 
 /** What the deep pass did with the first pass's findings (docs/specs/18). */
@@ -250,6 +269,22 @@ export interface DeepReport {
   error?: string;
   detail?: string;
   skipped?: string;
+  /** Flow v2 (docs/specs/19 §4): the agentic pass fell back to the no-tool pass. */
+  fallback?: { from: string; error?: string };
+  /** docs/specs/19 §4.3: the independent verification report. */
+  verification?: {
+    selected?: number;
+    calls?: number;
+    failed_calls?: number;
+    cost_usd?: number;
+    ignored_evidence?: number;
+    confirmed?: number;
+    downgraded?: number;
+    rejected?: number;
+    unverified?: number;
+    skipped?: string;
+    error?: string;
+  };
 }
 
 /** The project profile built from the repository's own documents (docs/specs/18). */
@@ -418,6 +453,8 @@ export interface Project {
   review_rules: string | null;
   review_rules_paths: string | null;
   deep_review: boolean;
+  /** Rebuild the review knowledge when a push to the default branch touches .claude/ (docs/specs/19 §3.4). */
+  knowledge_auto_refresh: boolean;
   profile_at: string | null;
 }
 
@@ -431,6 +468,8 @@ export interface Repo {
   business_project_id: number | null;
   business_project: string | null;
   review_enabled: boolean;
+  /** Not every listing carries it; source links on the knowledge page need it. */
+  web_url?: string | null;
 }
 
 export interface Branch {
@@ -749,4 +788,182 @@ export interface GitLabMembersImported {
   linked: number;
   skipped: number;
   emails_linked: number;
+}
+
+/* ---- review knowledge (docs/specs/19) ---- */
+
+export type KnowledgeAuthority = "repo" | "shared";
+
+export interface KnowledgeSource {
+  path: string;
+  lines: string | null;
+}
+
+export interface KnowledgeInvariant {
+  id: string;
+  statement: string;
+  severity: Severity;
+  signals: string[];
+  source: KnowledgeSource;
+  confidence: number;
+  authority: KnowledgeAuthority;
+}
+
+export interface KnowledgeDomain {
+  summary: string;
+  actors: string[];
+  tenancy: string;
+  money_flows: string[];
+  critical_modules: { path: string; why: string }[];
+  glossary: { term: string; meaning: string }[];
+  stack: string[];
+}
+
+export interface KnowledgeSeverityRule {
+  id: string;
+  when: { globs: string[]; signals: string[] };
+  effect: { raise_to?: Severity; lower_to?: Severity; min_confidence?: number };
+  reason: string;
+  source: KnowledgeSource;
+}
+
+export interface KnowledgeProcedure {
+  steps: string[];
+  severity_map: Record<string, string>;
+  source: KnowledgeSource;
+}
+
+export interface KnowledgeCheck {
+  id: string;
+  name: string;
+  triggers: { globs: string[]; signals: string[]; keywords: string[] };
+  items: string[];
+  source: KnowledgeSource;
+  confidence: number;
+}
+
+export interface KnowledgeIndexEntry {
+  path: string;
+  source: "repo" | "shared" | "code";
+  kind: string;
+  purpose: string;
+  used_for: string[];
+}
+
+export interface KnowledgeConvention {
+  statement: string;
+  evidence: string;
+  confidence: number;
+}
+
+export interface KnowledgeMeta {
+  sources: Record<string, string | null>;
+  built_at: string;
+  model: string;
+  cost_usd: number;
+  turns: number;
+  files_read: number;
+  confidence: number;
+  code_probe?: unknown;
+}
+
+/** `review_knowledge.data` (docs/specs/19 §3.1). Arrays may be missing on a thin build. */
+export interface Knowledge {
+  invariants?: KnowledgeInvariant[];
+  domain?: KnowledgeDomain | null;
+  severity_rules?: KnowledgeSeverityRule[];
+  procedure?: KnowledgeProcedure | null;
+  checks?: KnowledgeCheck[];
+  index?: KnowledgeIndexEntry[];
+  omitted?: { path: string; reason: string }[];
+  conflicts?: { a: string; b: string; chosen: string; why: string }[];
+  code_conventions?: KnowledgeConvention[];
+  meta?: KnowledgeMeta;
+}
+
+export interface KnowledgeCounts {
+  invariants: number;
+  checks: number;
+  severity_rules: number;
+  code_conventions: number;
+  omitted: number;
+  conflicts: number;
+}
+
+export type KnowledgeBuiltBy = "manual" | "auto" | "first_review";
+
+/** One compiled version of a repo's review knowledge. */
+export interface KnowledgeVersion {
+  id: number;
+  version: number;
+  schema_version: number;
+  status: "active" | "superseded" | string;
+  approved_by: { id: number; full_name: string | null } | null;
+  approved_at: string | null;
+  built_by: KnowledgeBuiltBy;
+  created_at: string;
+  sources: { claude_sha?: string | null; shared_sha?: string | null; default_branch_sha?: string | null };
+  data: Knowledge;
+  /** The .claude tree or the shared repo moved since this was built. */
+  stale: boolean;
+  counts: KnowledgeCounts;
+}
+
+export interface KnowledgeVersionRow {
+  id: number;
+  version: number;
+  created_at: string;
+  built_by: KnowledgeBuiltBy;
+  approved_at: string | null;
+  counts: KnowledgeCounts;
+}
+
+export type KnowledgeEditAction = "disable" | "set_severity" | "reword" | "add_invariant";
+
+/**
+ * A manual change kept across versions (docs/specs/19 §3.4). Payload by action:
+ * disable {}, set_severity {severity}, reword {statement}, add_invariant {statement, severity, signals}.
+ */
+export interface KnowledgeEdit {
+  id: number;
+  item_id: string;
+  action: KnowledgeEditAction;
+  payload: { severity?: Severity; statement?: string; signals?: string[] };
+  user: { id: number; full_name: string | null };
+  created_at: string;
+}
+
+export interface KnowledgeResponse {
+  project_id: number;
+  active: KnowledgeVersion | null;
+  edits: KnowledgeEdit[];
+  /** Reserved; the per-rule numbers come from GET …/knowledge/stats (KnowledgeStats). */
+  stats: Record<string, unknown> | null;
+  building: boolean;
+}
+
+/** One rule of the knowledge over a window (docs/specs/19 §5). */
+export interface KnowledgeRuleStat {
+  rule_id: string;
+  /** Findings citing the rule in done reviews of the window. */
+  fired: number;
+  confirmed: number;
+  downgraded: number;
+  rejected: number;
+  unverified: number;
+  /** Findings whose dispute was accepted. */
+  disputes_accepted: number;
+  /** Reviews where the agent said the rule applies but reported nothing for it. */
+  applied_not_fired: number;
+  /** dead: applied but never fired (meaningful over 90 days); noisy: rejected + disputes >= 50% of fired. */
+  label: "dead" | "noisy" | null;
+}
+
+export interface KnowledgeStats {
+  project_id: number;
+  days: number;
+  since: string;
+  rules: KnowledgeRuleStat[];
+  /** Done reviews in the window. */
+  reviews: number;
 }

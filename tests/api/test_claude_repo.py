@@ -162,7 +162,8 @@ def test_a_pasted_claude_folder_link_sets_the_branch(
 
         def put(link: str) -> httpx.Response:
             body = {"connection_id": world.project.connection_id, "path": link}
-            return client.put(path, headers=admin, json=body)
+            response: httpx.Response = client.put(path, headers=admin, json=body)
+            return response
 
         assert put(f"{web}/dev/.claude?ref_type=heads").status_code == 204
         db_session.refresh(business)

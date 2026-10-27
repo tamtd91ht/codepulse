@@ -4,7 +4,7 @@ import os
 from functools import lru_cache
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, PostgresDsn, RedisDsn, SecretStr, field_validator
+from pydantic import AliasChoices, Field, PostgresDsn, RedisDsn, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 CommaList = Annotated[list[str], NoDecode]
@@ -79,14 +79,45 @@ class Settings(BaseSettings):
     # Commits one "today" / "open" command may queue (LLM budget guard).
     telegram_max_targets: int = Field(default=20, ge=1, le=200)
 
-    # Deep review (docs/specs/18): a second pass with read-only tools inside a copy of the repo.
-    deep_review: bool = True
-    # 60: the agent also Reads the skills and rules the change needs (claude_kit).
-    deep_review_max_turns: int = Field(default=60, ge=5, le=200)
-    deep_review_timeout_s: int = Field(default=600, ge=60, le=3600)
+    # Review flow v2 (docs/specs/19 §4, §8): the main pass runs with read-only tools inside a
+    # copy of the repository (REVIEW_AGENT); below REVIEW_AGENT_MIN_LOC only the no-tool pass
+    # runs. The DEEP_REVIEW* names of docs/specs/18 still work as aliases.
+    review_agent: bool = Field(
+        default=True, validation_alias=AliasChoices("REVIEW_AGENT", "DEEP_REVIEW")
+    )
+    review_agent_min_loc: int = Field(
+        default=20,
+        ge=0,
+        validation_alias=AliasChoices("REVIEW_AGENT_MIN_LOC", "DEEP_REVIEW_MIN_LOC"),
+    )
+    review_max_turns: int = Field(
+        default=40,
+        ge=5,
+        le=200,
+        validation_alias=AliasChoices("REVIEW_MAX_TURNS", "DEEP_REVIEW_MAX_TURNS"),
+    )
+    review_timeout_s: int = Field(
+        default=480,
+        ge=60,
+        le=3600,
+        validation_alias=AliasChoices("REVIEW_TIMEOUT_S", "DEEP_REVIEW_TIMEOUT_S"),
+    )
+    review_chunk_tokens: int = Field(default=60_000, ge=4_000)  # chunk only above this
     deep_review_max_archive_mb: int = Field(default=300, ge=10, le=5000)
-    deep_review_min_loc: int = Field(default=0, ge=0)  # 0 = every review gets the second pass
+    # [2] Independent verification of findings (docs/specs/19 §4.3).
+    verify: bool = True
+    verify_max_findings: int = Field(default=12, ge=0, le=100)
+    verify_max_turns: int = Field(default=15, ge=1, le=100)
+    # An unverified finding is scored only from this confidence (docs/specs/19 §4.4).
+    verify_min_confidence_unverified: float = Field(default=0.7, ge=0, le=1)
     profile_ttl_days: int = Field(default=7, ge=1, le=90)
+
+    # Review knowledge (docs/specs/19 §8): the code probe's turns and timeout, the cost cap of
+    # one build, and how many tokens of the compiled premises one review prompt may hold.
+    knowledge_max_turns: int = Field(default=40, ge=5, le=200)
+    knowledge_timeout_s: int = Field(default=300, ge=30, le=3600)
+    knowledge_max_cost_usd: float = Field(default=5.0, ge=0)
+    knowledge_tokens: int = Field(default=12000, ge=1000, le=100_000)
 
     # Dashboard "Yêu cầu review": commits listed per request, and queued per request.
     review_commits_list_max: int = Field(default=200, ge=20, le=500)

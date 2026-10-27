@@ -67,9 +67,12 @@ class Review(TimestampMixin, Base):
     requested_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
-    # docs/specs/18: fast = diff only; deep = verified in a copy of the repository.
+    # docs/specs/19 §4: agent = the main pass ran with the repository open; fast = the no-tool
+    # pass (fallback, or below REVIEW_AGENT_MIN_LOC). Before spec 19: fast | deep.
     mode: Mapped[str] = mapped_column(server_default="fast")
-    deep: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # verification report / error
+    # Report of the agentic pass and of the verification step (key "verification"), or why
+    # they did not run ("fallback", "error", "skipped").
+    deep: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     # docs/specs/17 §Căn cứ review: rubric, team rules (name/path + hash), repo instructions,
     # agents and skills the deep pass read. Names and hashes only, never the text.
     basis: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
@@ -103,8 +106,13 @@ class ReviewFinding(TimestampMixin, Base):
     code_excerpt: Mapped[str | None]
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(3, 2))
     fingerprint: Mapped[str | None]
-    # open|fixed|disputed|accepted_risk|false_positive
+    # open|fixed|disputed|accepted_risk|false_positive|rejected (refuted by the verification)
     status: Mapped[str | None] = mapped_column(server_default="open")
+    # docs/specs/19 §4.3: what the independent verification said and its evidence.
+    verified: Mapped[str] = mapped_column(
+        server_default="skipped"
+    )  # confirmed|downgraded|rejected|unverified|skipped
+    verification: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 
 class FindingDispute(TimestampMixin, Base):

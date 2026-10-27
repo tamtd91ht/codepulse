@@ -1,0 +1,14 @@
+diff --git a/app/orders/service.py b/app/orders/service.py
+index 3f1c2a9..8b7d4e1 100644
+--- a/app/orders/service.py
++++ b/app/orders/service.py
+@@ -4,5 +4,8 @@ from app.models import Order
+ def ship_order(session: Session, order_id: int) -> str:
+     order = session.get(Order, order_id)
+     if order is None:
+         raise OrderNotFound(order_id)
+-    return order.tracking_code
++    address = order.shipping_address.formatted()
++    carrier = pick_carrier(address.country)
++    order.tracking_code = carrier.create_shipment(address)
++    return order.tracking_code

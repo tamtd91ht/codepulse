@@ -72,7 +72,7 @@ from app.models import (
     User,
 )
 from app.models.source import ALL_BRANCHES
-from app.webhook.jobs import REVIEW_JOB_TIMEOUT, REVIEW_RETRY
+from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["admin"])
@@ -751,7 +751,7 @@ def backfill_reviews(
             trigger="backfill",
             requested_by=principal.user_id,
             job_id=f"review-mr-{project.id}-{mr.iid}-{mr.head_sha[:12]}",
-            job_timeout=REVIEW_JOB_TIMEOUT,
+            job_timeout=review_job_timeout(settings),
             retry=REVIEW_RETRY,
         )
     audit(

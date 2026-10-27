@@ -1,0 +1,14 @@
+diff --git a/app/reports/query.py b/app/reports/query.py
+index 9a0b1c2..d3e4f56 100644
+--- a/app/reports/query.py
++++ b/app/reports/query.py
+@@ -6,5 +6,7 @@ ALLOWED_SORT = {"created_at", "total", "status"}
+ def list_invoices(conn: Connection, sort: str, limit: int) -> list[Row]:
+     if sort not in ALLOWED_SORT:
+         raise ValueError(f"unsupported sort column: {sort}")
+-    rows = conn.execute(text("SELECT * FROM invoices ORDER BY created_at LIMIT :limit"), {"limit": limit})
+-    return rows.fetchall()
++    # `sort` is one of the literals in ALLOWED_SORT; only the limit comes from the caller, as a bind.
++    statement = text(f"SELECT * FROM invoices ORDER BY {sort} LIMIT :limit")
++    rows = conn.execute(statement, {"limit": min(limit, 500)})
++    return rows.fetchall()

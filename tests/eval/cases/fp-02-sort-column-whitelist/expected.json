@@ -1,0 +1,4 @@
+{
+  "description": "ORDER BY column interpolated after the unchanged whitelist check above it",
+  "findings": []
+}

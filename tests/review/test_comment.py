@@ -12,7 +12,13 @@ from tests.collector.fake_gitlab import API, BASE
 NOTES = f"{API}/projects/7/merge_requests/3/notes"
 
 
-def finding(severity: str, title: str, confidence: float = 0.9) -> ReviewFinding:
+def finding(
+    severity: str,
+    title: str,
+    confidence: float = 0.9,
+    verified: str = "skipped",
+    status: str = "open",
+) -> ReviewFinding:
     return ReviewFinding(
         severity=severity,
         category="bug",
@@ -20,6 +26,8 @@ def finding(severity: str, title: str, confidence: float = 0.9) -> ReviewFinding
         line_start=10,
         title=title,
         confidence=Decimal(str(confidence)),
+        verified=verified,
+        status=status,
     )
 
 
@@ -44,6 +52,24 @@ def test_render_lists_counts_and_top_five() -> None:
 
 def test_render_without_findings() -> None:
     assert "Không phát hiện vấn đề nào." in render(review(), [])
+
+
+def test_render_needs_human_lists_unverified_findings_and_hides_rejected_ones() -> None:
+    r = review()
+    r.verdict, r.risk_score = "needs_human", 0
+    findings = [
+        finding("critical", "SQL injection", verified="unverified"),
+        finding("high", "Race", verified="confirmed"),
+        finding("high", "Ghost", verified="rejected", status="rejected"),
+        finding("low", "Naming"),
+    ]
+    body = render(r, findings)
+    assert "⚠️ **cần người xem**" in body and "CẦN NGƯỜI XEM" not in body
+    assert "⚠️ **Cần người xem** — chưa kiểm chứng được:" in body
+    assert "- 🔴 `app/x.py:10` — SQL injection" in body
+    assert "| 🔴 critical ? |" in body and "| 🟠 high ✔ |" in body
+    assert "Ghost" not in body and "high: 1" in body
+    assert "1 finding bị bác khi kiểm chứng độc lập" in body
 
 
 @respx.mock

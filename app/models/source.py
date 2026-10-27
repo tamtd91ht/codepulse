@@ -77,6 +77,9 @@ class Project(TimestampMixin, Base):
     profile: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     profile_sha: Mapped[str | None]
     profile_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # docs/specs/19 §3.4: a push to the default branch touching `.claude/` queues a rebuild of
+    # the review knowledge (default off: the premises only get flagged as stale).
+    knowledge_auto_refresh: Mapped[bool] = mapped_column(server_default="false")
 
 
 class RawGitlab(TimestampMixin, Base):

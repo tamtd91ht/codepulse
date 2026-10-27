@@ -1,10 +1,11 @@
 """`codepulse` command line (docs/specs/13 "Cài đặt lần đầu", task 2.7)."""
 
 import argparse
+import json
 import secrets
 import sys
 from collections.abc import Callable, Sequence
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 from zoneinfo import ZoneInfo
@@ -19,6 +20,7 @@ from app.crypto import SecretBox, secret_box
 from app.identity.autolink import unmapped_accounts
 from app.identity.csv_import import CsvImportError, import_identity
 from app.models import Connection, Project
+from app.reporting import review_metrics
 from app.scoring.aggregate import recompute
 
 
@@ -182,6 +184,49 @@ def identity_unmapped(session: Session, out: TextIO) -> None:
         )
 
 
+def review_metrics_collect(
+    session: Session,
+    out: TextIO,
+    since: date,
+    until: date | None,
+    project_id: int | None,
+    out_file: Path | None,
+    markdown: bool,
+) -> None:
+    """docs/specs/19 §5 "Số liệu trước/sau": numbers per mode/rubric for a window of days."""
+    start = datetime.combine(since, datetime.min.time(), tzinfo=UTC)
+    end = datetime.combine(until or date.today(), datetime.min.time(), tzinfo=UTC)
+    if until is None:
+        end += timedelta(days=1)  # today included
+    if end <= start:
+        raise CliError("--until must be after --since")
+    if project_id is not None:
+        _project(session, project_id)
+    report = review_metrics.collect(session, start, end, project_id)
+    if out_file is not None:
+        out_file.write_text(review_metrics.dumps(report), encoding="utf-8")
+        out.write(f"{report['reviews']} reviews, {len(report['groups'])} group(s) -> {out_file}\n")
+    if markdown:
+        out.write(review_metrics.render_markdown(report))
+    elif out_file is None:
+        out.write(review_metrics.dumps(report) + "\n")
+
+
+def review_metrics_compare(out: TextIO, before: Path, after: Path, markdown: bool) -> None:
+    try:
+        before_data = json.loads(before.read_text(encoding="utf-8"))
+        after_data = json.loads(after.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise CliError(f"cannot read report: {exc}") from exc
+    if not isinstance(before_data, dict) or not isinstance(after_data, dict):
+        raise CliError("a report file must hold the JSON object written by review-metrics")
+    comparison = review_metrics.compare(before_data, after_data)
+    if markdown:
+        out.write(review_metrics.render_markdown(comparison))
+    else:
+        out.write(review_metrics.dumps(comparison) + "\n")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="codepulse")
     sub = parser.add_subparsers(dest="group", required=True)
@@ -232,6 +277,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     recompute.add_argument("--from", dest="date_from", type=date.fromisoformat, required=True)
     recompute.add_argument("--to", dest="date_to", type=date.fromisoformat, required=True)
+
+    rm = sub.add_parser(
+        "review-metrics",
+        help="cost / duration / turns / disputes / score drift per mode and rubric (spec 19 §5)",
+    )
+    rm.add_argument("--since", type=date.fromisoformat, required=True, help="YYYY-MM-DD")
+    rm.add_argument("--until", type=date.fromisoformat, help="exclusive; default: tomorrow")
+    rm.add_argument("--project", type=int, help="CodePulse project id; default: all")
+    rm.add_argument("--out", type=Path, help="write the JSON report here (for compare)")
+    rm.add_argument("--md", action="store_true", help="print a Markdown table")
+    rmc = sub.add_parser(
+        "review-metrics-compare", help="deltas between two review-metrics JSON reports"
+    )
+    rmc.add_argument("before", type=Path)
+    rmc.add_argument("after", type=Path)
+    rmc.add_argument("--md", action="store_true", help="print a Markdown table")
     return parser
 
 
@@ -245,7 +306,13 @@ def run(
 ) -> bool:
     """Execute one command inside the caller's transaction; False means roll back."""
     settings = get_settings()
-    match (args.group, args.command):
+    match (args.group, getattr(args, "command", None)):
+        case ("review-metrics", None):
+            review_metrics_collect(
+                session, out, args.since, args.until, args.project, args.out, args.md
+            )
+        case ("review-metrics-compare", None):
+            review_metrics_compare(out, args.before, args.after, args.md)
         case ("connections", "add"):
             connections_add(session, box, out, args.name, args.url, args.token, args.webhook_secret)
         case ("connections", "list"):
@@ -308,6 +375,7 @@ def run(
                 ZoneInfo(settings.report_tz),
                 settings.scoring_weights,
                 settings.min_sample,
+                min_confidence_unverified=settings.verify_min_confidence_unverified,
             )
             out.write(
                 f"rescored {recomputed.reviews_rescored} reviews; "

@@ -81,6 +81,24 @@ def test_excerpt_is_capped() -> None:
     assert len(f.code_excerpt.splitlines()) == MAX_EXCERPT_LINES
 
 
+def test_secrets_in_the_models_text_are_redacted() -> None:
+    token = "sk-ant-api03-" + "x" * 40
+    (f,) = postprocess(
+        [
+            finding(
+                title=f"Token {token} lộ",
+                message=f"Thấy {token} nối vào SQL; password = 'hunter22'",
+                suggestion=f"Xoá {token}",
+            )
+        ],
+        FILES,
+        0.5,
+    ).findings
+    for text in (f.title, f.message, f.suggestion):
+        assert token not in text and "***REDACTED***" in text
+    assert "hunter22" not in f.message
+
+
 def test_findings_sorted_by_severity() -> None:
     result = postprocess(
         [

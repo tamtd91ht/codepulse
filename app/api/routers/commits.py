@@ -38,7 +38,7 @@ from app.config import Settings, get_settings
 from app.crypto import SecretBox
 from app.models import Account, BusinessProject, Connection, Project, Review, User
 from app.review.rubric import RUBRIC_VERSION
-from app.webhook.jobs import REVIEW_JOB_TIMEOUT, REVIEW_RETRY
+from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["review-requests"])
@@ -156,7 +156,7 @@ def refresh_profile(
         "app.workers.review_jobs.refresh_profile_job",
         project.id,
         job_id=f"profile-{project.id}",
-        job_timeout=REVIEW_JOB_TIMEOUT,
+        job_timeout=review_job_timeout(get_settings()),
     )
     audit(session, principal.user_id, "project.profile_refresh", f"project:{project.id}")
     session.commit()
@@ -410,7 +410,7 @@ def review_commits(
                 trigger="dashboard",
                 requested_by=principal.user_id,
                 job_id=f"review-commit-{commit.sha[:12]}",
-                job_timeout=REVIEW_JOB_TIMEOUT,
+                job_timeout=review_job_timeout(settings),
                 retry=REVIEW_RETRY,
                 at_front=True,
             )

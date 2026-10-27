@@ -1,0 +1,17 @@
+diff --git a/app/files/storage.py b/app/files/storage.py
+index 1122334..5566778 100644
+--- a/app/files/storage.py
++++ b/app/files/storage.py
+@@ -12,8 +12,10 @@ def _safe_path(name: str) -> Path:
+     candidate = (UPLOAD_ROOT / name).resolve()
+     if not candidate.is_relative_to(UPLOAD_ROOT):
+         raise PermissionError("path escapes the upload root")
+     return candidate
+ 
+ 
+-def read_upload(name: str) -> bytes:
+-    return _safe_path(name).read_bytes()
++def read_upload(name: str) -> bytes:
++    path = _safe_path(name)
++    with open(path, "rb") as handle:
++        return handle.read()

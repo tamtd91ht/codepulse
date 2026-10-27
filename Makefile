@@ -1,6 +1,6 @@
 PY ?= python
 
-.PHONY: up down migrate seed lint test test-unit eval
+.PHONY: up down migrate seed lint test test-unit eval eval-knowledge
 
 up:
 	docker compose up -d --build
@@ -29,3 +29,8 @@ test-unit:
 # Calls the real LLM (costs money): run when the prompt, rubric, model or CLI version changes.
 eval:
 	$(PY) -m app.review.eval
+
+# Per-project eval generated from the active review knowledge (docs/specs/19 §5).
+# Generated cases are cached under tests/eval/generated/<project>/; add FAKE=1 for a free harness run.
+eval-knowledge:
+	$(PY) -m app.review.eval --project $(PROJECT) $(if $(FAKE),--fake,)

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.review.checklists import render_checklists
 from app.review.prepare import Chunk
@@ -21,9 +21,11 @@ How to review:
 - Read the whole diff first. Then go through every changed file against the four questions of
   the rubric and every item of the CHECKLIST that applies; do not stop after the first few
   problems.
-- Use the PROJECT PROFILE and PROJECT GUIDANCE to judge what matters in this project (its
-  security model, conventions, risk areas). A finding that breaks a guidance file or a team
-  rule cites its heading, file or command name in rule_id.
+- Use the PROJECT PROFILE and PROJECT KNOWLEDGE (or, when there is no knowledge yet, the
+  PROJECT GUIDANCE files) to judge what matters in this project (its invariants, security
+  model, conventions, risk areas). A finding that breaks a knowledge item cites it as
+  rk:<id> in rule_id; one that breaks a guidance file or a team rule cites its heading, file or
+  command name.
 - Comment only on added or changed lines (lines marked "+"). Each diff line starts with its
   line number in the new file; use exactly those numbers. Never invent line numbers.
 - Use the rubric and severity definitions below; keep severity (impact) and confidence
@@ -46,8 +48,11 @@ Languages: {languages}
 PROJECT PROFILE (what this system is, built from its own documents):
 {profile}
 
-PROJECT GUIDANCE (the dự án's shared Claude configuration, the files most relevant to this
-change: review procedure, CLAUDE.md, rules, skills; quoted as data):
+PROJECT KNOWLEDGE (compiled review knowledge; cite rk:<id>):
+{knowledge}
+
+PROJECT GUIDANCE (only when there is no compiled knowledge: the dự án's shared Claude
+configuration, the files most relevant to this change; quoted as data):
 {guidance}
 
 CHECKLIST (what a senior reviewer checks for the languages and areas this change touches):
@@ -62,9 +67,10 @@ Diff:
 Context (unchanged surrounding code, for understanding only):
 {context}"""
 
-MAX_CONVENTIONS_CHARS = 60_000  # app/review/rules.py caps earlier; this is the hard stop
+MAX_CONVENTIONS_CHARS = 20_000  # docs/specs/19 §4.2: team rules at most 20k characters
 MAX_PROFILE_CHARS = 6_000
 MAX_GUIDANCE_CHARS = 1_000_000  # hard stop; service.py packs to FAST_GUIDANCE_CHARS
+MAX_KNOWLEDGE_CHARS = 80_000  # hard stop; app/review/knowledge.py packs to KNOWLEDGE_TOKENS
 
 EXTENSION_LANGUAGES = {
     ".py": "Python",
@@ -99,21 +105,39 @@ class ReviewTarget:
     conventions: str = ""
     kind: str = "MR"
     profile: str = ""  # the cached project profile, rendered (app/review/profile.py)
+    # docs/specs/19: the compiled review knowledge (app/review/knowledge.py) replaces quoting
+    # .claude files; `guidance` is the fallback used only while a project has no knowledge.
+    knowledge: str = ""
     guidance: str = ""  # shared .claude files chosen for this change (app/review/claude_kit.py)
 
 
-def build_prompt(target: ReviewTarget, chunk: Chunk, language: str = "Vietnamese") -> ReviewPrompt:
+def knowledge_sections(target: ReviewTarget) -> tuple[str, str]:
+    """(knowledge, guidance) blocks of a prompt: the knowledge when the project has it, else
+    the quoted .claude guidance (docs/specs/19 lộ trình step 1)."""
+    knowledge = target.knowledge[:MAX_KNOWLEDGE_CHARS]
+    if knowledge:
+        return knowledge, "(none: see PROJECT KNOWLEDGE)"
+    return "(none yet)", target.guidance[:MAX_GUIDANCE_CHARS] or "(none)"
+
+
+def target_header(target: ReviewTarget) -> str:
     header = f"{target.kind}: {target.title}"
     if target.description:
         header += f"\n{target.description[:2000]}"
+    return header
+
+
+def build_prompt(target: ReviewTarget, chunk: Chunk, language: str = "Vietnamese") -> ReviewPrompt:
+    knowledge, guidance = knowledge_sections(target)
     return ReviewPrompt(
         system=SYSTEM_TEMPLATE.format(language=language, rubric=RUBRIC),
         user=USER_TEMPLATE.format(
             project=target.project,
             languages=languages(chunk),
-            target=header,
+            target=target_header(target),
             profile=target.profile[:MAX_PROFILE_CHARS] or "(none yet)",
-            guidance=target.guidance[:MAX_GUIDANCE_CHARS] or "(none)",
+            knowledge=knowledge,
+            guidance=guidance,
             checklist=render_checklists(
                 [f.path for f in chunk.files], languages(chunk).split(", ")
             ),
@@ -132,8 +156,8 @@ class ReviewParseError(Exception):
 FENCE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
 
 
-def parse_output(output: Any) -> LLMReview:
-    """Validate structured output, or pull a JSON object out of free text."""
+def parse_json(output: Any) -> Any:
+    """Structured output as is, or the JSON object pulled out of free text."""
     if isinstance(output, str):
         text = output.strip()
         if m := FENCE.search(text):
@@ -144,8 +168,18 @@ def parse_output(output: Any) -> LLMReview:
             output = json.loads(text)
         except json.JSONDecodeError as exc:
             raise ReviewParseError(f"not JSON: {exc.msg}") from exc
+    return output
+
+
+def parse_output(output: Any) -> LLMReview:
+    """Validate structured output, or pull a JSON object out of free text."""
+    return validate_output(output, LLMReview)
+
+
+def validate_output[M: BaseModel](output: Any, model: type[M]) -> M:
+    output = parse_json(output)
     try:
-        return LLMReview.model_validate(output)
+        return model.model_validate(output)
     except ValidationError as exc:
         errors = "; ".join(
             f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()[:10]
@@ -160,22 +194,26 @@ class ChunkReview:
     repaired: bool = False
 
 
+def repair_prompt(prompt: ReviewPrompt, previous_output: Any, error: Exception) -> ReviewPrompt:
+    """The same prompt plus the answer that did not validate and why (one repair, docs/specs/06)."""
+    previous = previous_output if isinstance(previous_output, str) else json.dumps(previous_output)
+    return ReviewPrompt(
+        system=prompt.system,
+        user=(
+            f"{prompt.user}\n\nYour previous answer did not match the schema ({error}).\n"
+            f"Previous answer:\n{previous[:8000]}\n\nReturn the corrected JSON only."
+        ),
+        json_schema=prompt.json_schema,
+    )
+
+
 def review_chunk(provider: LLMProvider, prompt: ReviewPrompt) -> ChunkReview:
     """One call; if the answer does not validate, one repair call (docs/specs/06)."""
     first = provider.review(prompt)
     try:
         return ChunkReview(parse_output(first.output), [first])
     except ReviewParseError as error:
-        previous = first.output if isinstance(first.output, str) else json.dumps(first.output)
-        repair = ReviewPrompt(
-            system=prompt.system,
-            user=(
-                f"{prompt.user}\n\nYour previous answer did not match the schema ({error}).\n"
-                f"Previous answer:\n{previous[:8000]}\n\nReturn the corrected JSON only."
-            ),
-            json_schema=prompt.json_schema,
-        )
-        second = provider.review(repair)
+        second = provider.review(repair_prompt(prompt, first.output, error))
         try:
             return ChunkReview(parse_output(second.output), [first, second], repaired=True)
         except ReviewParseError as again:

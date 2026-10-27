@@ -45,6 +45,18 @@ def test_prompt_contains_rubric_schema_and_numbered_diff() -> None:
     assert prompt.json_schema["title"] == "LLMReview"
 
 
+def test_knowledge_replaces_the_quoted_guidance() -> None:
+    target = ReviewTarget(project="demo/p", title="Login", guidance="### CLAUDE.md\nquoted")
+    without = build_prompt(target, a_chunk()).user
+    assert "PROJECT KNOWLEDGE (compiled review knowledge; cite rk:<id>):\n(none yet)" in without
+    assert "### CLAUDE.md\nquoted" in without
+    target.knowledge = "## Invariants\n- rk:inv-1: tenantId"
+    with_knowledge = build_prompt(target, a_chunk()).user
+    assert "rk:inv-1: tenantId" in with_knowledge
+    assert "(none: see PROJECT KNOWLEDGE)" in with_knowledge
+    assert "### CLAUDE.md\nquoted" not in with_knowledge
+
+
 def test_parse_accepts_structured_output_and_orders_lines() -> None:
     review = parse_output(VALID)
     assert (review.findings[0].line_start, review.findings[0].line_end) == (11, 12)

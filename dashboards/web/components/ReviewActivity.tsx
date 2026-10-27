@@ -16,14 +16,18 @@ const IDLE_MS = 20000;
 
 const STAGES: { id: string; label: string }[] = [
   { id: "diff", label: "Lấy diff" },
-  { id: "llm", label: "Review AI" },
-  { id: "deep", label: "Review sâu" },
+  { id: "checkout", label: "Tải mã nguồn" },
+  { id: "agent", label: "Review AI" },
+  { id: "verify", label: "Kiểm chứng" },
   { id: "save", label: "Chấm điểm" },
 ];
 const STAGE_LABEL: Record<string, string> = {
   start: "Chuẩn bị",
   diff: "Lấy diff từ GitLab",
-  llm: "AI đang review",
+  checkout: "Tải bản sao repo",
+  llm: "AI đang review (không tool)",
+  agent: "AI đang review trong repo",
+  verify: "Kiểm chứng độc lập từng finding",
   profile: "Dựng hồ sơ dự án",
   deep: "Review sâu",
   save: "Chấm điểm và lưu",
@@ -49,7 +53,12 @@ function elapsed(from: string | null, now: number): string {
 
 /** "profile" happens inside the deep pass; "start" before the diff. */
 function stageIndex(stage: string | null): number {
-  const id = stage === "profile" ? "deep" : !stage || stage === "start" ? "diff" : stage;
+  const id =
+    stage === "profile" || stage === "deep" || stage === "llm"
+      ? "agent"
+      : !stage || stage === "start"
+        ? "diff"
+        : stage;
   return STAGES.findIndex((s) => s.id === id);
 }
 
@@ -155,7 +164,7 @@ export function ReviewActivity() {
                           {" "}
                           · đã chạy <Elapsed from={r.started_at} />
                         </span>
-                        {r.review_id !== null && (r.stage === "deep" || r.stage === "profile") && (
+                        {r.review_id !== null && (r.stage === "deep" || r.stage === "profile" || r.stage === "agent" || r.stage === "verify") && (
                           <>
                             {" "}
                             <button

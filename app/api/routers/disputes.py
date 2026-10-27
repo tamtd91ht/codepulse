@@ -108,10 +108,17 @@ def _recompute_for(session: Session, review: Review, settings: Settings) -> None
     tz = ZoneInfo(settings.report_tz)
     moment = review.finished_at
     # [moment, moment + 1µs): exactly this review's finish time.
-    recompute_scores(session, moment, moment + timedelta(microseconds=1), settings.scoring_weights)
+    threshold = settings.verify_min_confidence_unverified
+    recompute_scores(
+        session,
+        moment,
+        moment + timedelta(microseconds=1),
+        settings.scoring_weights,
+        threshold,
+    )
     day = moment.astimezone(tz).date()
-    aggregate(session, "week", day, tz, settings.scoring_weights, settings.min_sample)
-    aggregate(session, "month", day, tz, settings.scoring_weights, settings.min_sample)
+    aggregate(session, "week", day, tz, settings.scoring_weights, settings.min_sample, threshold)
+    aggregate(session, "month", day, tz, settings.scoring_weights, settings.min_sample, threshold)
 
 
 @router.post("/disputes/{dispute_id}/decide", response_model=DisputeOut)
@@ -145,11 +152,11 @@ def decide(
     review = session.get(Review, finding.review_id) if finding.review_id else None
     if review is not None:
         siblings = session.execute(
-            select(ReviewFinding.severity, ReviewFinding.status).where(
+            select(ReviewFinding.severity, ReviewFinding.status, ReviewFinding.verified).where(
                 ReviewFinding.review_id == review.id
             )
         ).all()
-        review.verdict, review.risk_score = assess((str(s), st) for s, st in siblings)
+        review.verdict, review.risk_score = assess((str(s), st, v) for s, st, v in siblings)
     session.flush()
     _recompute_for(session, _review_of(session, finding), settings)
     audit(

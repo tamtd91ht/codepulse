@@ -107,6 +107,7 @@ class ProjectOut(ORM):
     review_rules: str | None = None
     review_rules_paths: str | None = None
     deep_review: bool = True
+    knowledge_auto_refresh: bool = False  # docs/specs/19 §3.4
     review_branch: str | None = None  # NULL: default branch; "*": every branch
     profile_at: datetime | None = None
 
@@ -182,6 +183,7 @@ class ProjectPatch(BaseModel):
     # Comma/newline separated paths inside the repo, read on the default branch (max 10).
     review_rules_paths: str | None = Field(default=None, max_length=2000)
     deep_review: bool | None = None  # docs/specs/18
+    knowledge_auto_refresh: bool | None = None  # docs/specs/19 §3.4
     # docs/specs/17 §Nhánh review: "" clears (default branch), "*" every branch.
     review_branch: str | None = Field(default=None, max_length=255)
 
@@ -418,6 +420,9 @@ class FindingOut(ORM):
     code_excerpt: str | None
     confidence: Decimal | None
     status: str | None
+    # docs/specs/19 §4.3: the independent verification's verdict on this finding.
+    verified: str | None = None
+    verification: dict[str, Any] | None = None
 
 
 class BoardFindingOut(FindingOut):

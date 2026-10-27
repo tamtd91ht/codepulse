@@ -29,9 +29,10 @@ import {
   SortTh,
   useSort,
 } from "@/components/ui";
+import { KnowledgeTile } from "@/components/Knowledge";
 import { type BoardScope, boardLink, qs, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, VERDICT_LABEL, date, num, periodLabel, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
-import type { ProjectDetail, ProjectRepoRow, RepoProfile } from "@/lib/types";
+import type { Me, ProjectDetail, ProjectRepoRow, RepoProfile } from "@/lib/types";
 
 type Period = "week" | "month";
 
@@ -56,102 +57,15 @@ const repoCell = (r: ProjectRepoRow, key: string): number | string | null => {
   }
 };
 
-const KIND_LABEL: Record<string, string> = {
-  "backend-service": "Backend / API",
-  frontend: "Frontend",
-  mobile: "Mobile",
-  library: "Thư viện",
-  infrastructure: "Hạ tầng",
-  "data-pipeline": "Data pipeline",
-  monorepo: "Monorepo",
-  other: "Khác",
-};
-
-/** What each repo is, from its own documents (docs/specs/18): the reviewer reads this first. */
-function ProfileCards({ data, error }: { data: RepoProfile[] | undefined; error: Error | undefined }) {
-  if (!data) return <Loading error={error} rows={2} />;
-  const withProfile = data.filter((r) => r.profile);
-  if (withProfile.length === 0)
-    return (
-      <EmptyState icon="book" title="Chưa có hồ sơ repo">
-        Hồ sơ được dựng từ README, CLAUDE.md, AGENTS.md và tài liệu trong repo ở lần review sâu đầu tiên. Repo tắt cờ Sâu:
-        admin bấm <strong>Làm mới hồ sơ</strong> trong Admin → Dự án &amp; Repo.
-      </EmptyState>
-    );
+/** Each repo's review knowledge (docs/specs/19): the reviewer's premises before it reads a diff. */
+function KnowledgeCards({ repos, error, me }: { repos: RepoProfile[] | undefined; error: Error | undefined; me: Me | undefined }) {
+  if (!repos) return <Loading error={error} rows={2} />;
+  if (repos.length === 0) return <EmptyState icon="folder" title="Dự án chưa có repo đang theo dõi" />;
   return (
     <div className="grid two">
-      {withProfile.map((r) => {
-        const p = r.profile ?? {};
-        const st = p.stack ?? {};
-        const sec = p.security ?? {};
-        const stack = [...(st.languages ?? []), ...(st.frameworks ?? []), ...(st.datastores ?? []), ...(st.messaging ?? [])].slice(0, 10);
-        const riskAreas = p.risk_areas ?? [];
-        const focus = p.review_focus ?? [];
-        return (
-          <article key={r.id} className="profile-card">
-            <div className="head">
-              <div style={{ minWidth: 0 }}>
-                <div className="name">{r.path_with_namespace}</div>
-                <div className="small muted">
-                  {KIND_LABEL[p.kind ?? "other"] ?? p.kind}
-                  {p.domain ? ` · ${p.domain}` : ""} · độ tin cậy {Math.round((p.confidence ?? 0) * 100)}%
-                </div>
-              </div>
-              {!r.deep_review && <Pill tone="warn">không review sâu</Pill>}
-            </div>
-            {p.summary && <p className="summary">{p.summary}</p>}
-            {stack.length > 0 && (
-              <div className="chips">
-                {stack.map((s) => (
-                  <span key={s} className="chip small">{s}</span>
-                ))}
-              </div>
-            )}
-            <dl className="facts">
-              {sec.authentication && (
-                <>
-                  <dt>Xác thực</dt>
-                  <dd>{sec.authentication}</dd>
-                </>
-              )}
-              {sec.authorization && (
-                <>
-                  <dt>Phân quyền</dt>
-                  <dd>{sec.authorization}</dd>
-                </>
-              )}
-              {sec.tenancy && (
-                <>
-                  <dt>Tenant</dt>
-                  <dd>{sec.tenancy}</dd>
-                </>
-              )}
-              {sec.sensitive_data && (
-                <>
-                  <dt>Dữ liệu nhạy cảm</dt>
-                  <dd>{sec.sensitive_data}</dd>
-                </>
-              )}
-              {riskAreas.length > 0 && (
-                <>
-                  <dt>Vùng rủi ro</dt>
-                  <dd>{riskAreas.join(" · ")}</dd>
-                </>
-              )}
-              {focus.length > 0 && (
-                <>
-                  <dt>Luôn kiểm tra</dt>
-                  <dd>{focus.join(" · ")}</dd>
-                </>
-              )}
-            </dl>
-            <div className="small muted">
-              Từ {p.instruction_sources?.length ? p.instruction_sources.slice(0, 4).join(", ") : "README và manifest"} · cập nhật{" "}
-              {date(r.profile_at)}
-            </div>
-          </article>
-        );
-      })}
+      {repos.map((r) => (
+        <KnowledgeTile key={r.id} repo={r} me={me} />
+      ))}
     </div>
   );
 }
@@ -235,8 +149,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   };
   const step = (by: number) => setCursor((c) => (c === null ? c : period === "week" ? shiftWeeks(c, by) : shiftMonths(c, by)));
   const { data, error } = useApi<ProjectDetail>(start && `/metrics/projects/${id}${qs({ period, start })}`, { keepPreviousData: true });
-  // Independent of the period: starts together with the detail request, not after it.
-  const profiles = useApi<RepoProfile[]>(`/repos/profiles${qs({ business_project_id: id })}`);
+  // Independent of the period: starts together with the detail request, not after it. The
+  // profiles listing is the project's tracked repos; each tile loads its own knowledge.
+  const repos = useApi<RepoProfile[]>(`/repos/profiles${qs({ business_project_id: id })}`);
+  const { data: me } = useApi<Me>("/auth/me");
 
   const header = (
     <PageHeader
@@ -347,8 +263,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         <RepoTable repos={data.repos} scope={scope} />
       </Card>
 
-      <Card title="Hồ sơ repo" subtitle="Reviewer đọc hồ sơ này trước khi đọc diff: dự án là gì, stack, mô hình bảo mật, chỗ nào dễ gây hại">
-        <ProfileCards data={profiles.data} error={profiles.error} />
+      <Card
+        title="Tiền đề review"
+        subtitle="Reviewer đọc tiền đề này trước khi đọc diff: nghiệp vụ, bất biến, check và quy tắc severity biên dịch từ .claude, tài liệu và mã nguồn của từng repo"
+      >
+        <KnowledgeCards repos={repos.data} error={repos.error} me={me} />
       </Card>
 
       <Card title="Review gần đây" subtitle="Những review bạn được xem trong dự án này" flush>

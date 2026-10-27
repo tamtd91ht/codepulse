@@ -1,5 +1,7 @@
 import useSWR, { type SWRResponse } from "swr";
 
+import type { KnowledgeEdit, KnowledgeEditAction, KnowledgeResponse, KnowledgeStats, KnowledgeVersion, KnowledgeVersionRow, Me } from "./types";
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -77,6 +79,38 @@ export function useApi<T>(
     // A 4xx is an answer (not allowed, not found), not a transient failure: do not retry it.
     shouldRetryOnError: (err: ApiError) => !err.status || err.status >= 500,
   });
+}
+
+/* ---- review knowledge (docs/specs/19 §3.5) ---- */
+
+/** Where a repo's knowledge lives; the hook paths and the write calls share it. */
+export const knowledgePath = (projectId: number | string) => `/projects/${projectId}/knowledge`;
+
+export const knowledgeApi = {
+  get: (projectId: number | string) => api.get<KnowledgeResponse>(knowledgePath(projectId)),
+  versions: (projectId: number | string) => api.get<KnowledgeVersionRow[]>(`${knowledgePath(projectId)}/versions`),
+  version: (projectId: number | string, version: number) =>
+    api.get<KnowledgeVersion>(`${knowledgePath(projectId)}/versions/${version}`),
+  /** 202 {job_id}; 409 while a build is already running. */
+  refresh: (projectId: number | string) => api.post<{ job_id: string }>(`${knowledgePath(projectId)}/refresh`),
+  approve: (projectId: number | string) => api.post<KnowledgeVersion>(`${knowledgePath(projectId)}/approve`),
+  addEdit: (projectId: number | string, body: { item_id: string; action: KnowledgeEditAction; payload: KnowledgeEdit["payload"] }) =>
+    api.post<KnowledgeEdit>(`${knowledgePath(projectId)}/edits`, body),
+  removeEdit: (projectId: number | string, editId: number) => api.delete<void>(`${knowledgePath(projectId)}/edits/${editId}`),
+  /** Per-rule counters over the last `days` days (docs/specs/19 §5); the hook path is `knowledgeStatsPath`. */
+  stats: (projectId: number | string, days: 30 | 90 = 30) => api.get<KnowledgeStats>(knowledgeStatsPath(projectId, days)),
+};
+
+export const knowledgeStatsPath = (projectId: number | string, days: 30 | 90 = 30) => `${knowledgePath(projectId)}/stats?days=${days}`;
+
+/** Lead or admin: who may rebuild, approve and hand-edit knowledge (same gate as the profile refresh). */
+export function canEditKnowledge(me: Me | undefined): boolean {
+  return !!me && (me.is_admin || me.lead_teams.length > 0);
+}
+
+/** Poll every 5 s while the worker is building, otherwise not at all. */
+export function knowledgePoll(latest?: KnowledgeResponse): number {
+  return latest?.building ? 5000 : 0;
 }
 
 export function qs(params: Record<string, string | number | null | undefined>): string {

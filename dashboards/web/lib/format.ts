@@ -22,12 +22,19 @@ export const CATEGORY_LABEL: Record<string, string> = {
 
 export const VERDICT_LABEL: Record<string, string> = {
   approve: "APPROVE",
+  needs_human: "CẦN NGƯỜI XEM",
   fix_required: "FIX REQUIRED",
   block: "BLOCK",
 };
 
 export function verdictTone(verdict: string | null | undefined): "good" | "warn" | "bad" | undefined {
-  return verdict === "approve" ? "good" : verdict === "fix_required" ? "warn" : verdict === "block" ? "bad" : undefined;
+  return verdict === "approve"
+    ? "good"
+    : verdict === "needs_human" || verdict === "fix_required"
+      ? "warn"
+      : verdict === "block"
+        ? "bad"
+        : undefined;
 }
 
 export const TRIGGER_LABEL: Record<string, string> = {

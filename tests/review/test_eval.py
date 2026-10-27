@@ -9,8 +9,8 @@ CASES = load_cases()
 
 def test_case_set_matches_the_spec_minimum() -> None:
     kinds = Counter(case.id.split("-")[0] for case in CASES)
-    assert kinds == {"sec": 5, "bug": 5, "perf": 3, "maint": 3, "clean": 4}
-    assert all(not c.expected for c in CASES if c.id.startswith("clean"))
+    assert kinds == {"sec": 5, "bug": 5, "perf": 3, "maint": 3, "clean": 4, "fp": 3}
+    assert all(not c.expected for c in CASES if c.id.startswith(("clean", "fp")))
 
 
 def test_expected_lines_are_added_lines_of_the_diff() -> None:

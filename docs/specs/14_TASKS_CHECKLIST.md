@@ -71,17 +71,17 @@
 - [ ] 7.5 Rollout toàn bộ team
 
 ## Phase 8 – Tri thức review theo dự án & luồng review v2 (19)
-- [ ] 8.1 Bảng `review_knowledge` + `review_knowledge_edits`, model, migration (19 §3.4)
-- [ ] 8.2 `app/review/knowledge.py`: schema RK, tầng tài liệu (biên dịch không tool, theo lô), gộp hai cấp dự án/repo, trần token, áp sửa tay (19 §3.1–3.3)
-- [ ] 8.3 Job `build_knowledge_job` + API refresh/versions/approve/edits + audit; review đầu tiên tự dựng; đánh dấu cũ theo sha (19 §3.4–3.5)
-- [ ] 8.4 Dashboard: thẻ Tiền đề review + nút Rà soát lại dự án + trang chi tiết RK (nguồn, tắt/sửa, Đã bỏ, Mâu thuẫn, Duyệt) (19 §3.5)
-- [ ] 8.5 Review nạp RK thay trích `.claude` (`claude_kit` chỉ còn fallback khi chưa có RK); `signals.py` chọn checks theo diff; basis.knowledge (19 §4.1)
-- [ ] 8.6 Eval tự sinh theo dự án `eval --project` + chạy lại eval chung trên rubric hiện tại (19 §5)
+- [x] 8.1 Bảng `review_knowledge` + `review_knowledge_edits`, model, migration (19 §3.4)
+- [x] 8.2 `app/review/knowledge.py`: schema RK, tầng tài liệu (biên dịch không tool, theo lô), gộp hai cấp dự án/repo, trần token, áp sửa tay (19 §3.1–3.3)
+- [x] 8.3 Job `build_knowledge_job` + API refresh/versions/approve/edits + audit; review đầu tiên tự dựng; đánh dấu cũ theo sha (19 §3.4–3.5)
+- [x] 8.4 Dashboard: thẻ Tiền đề review + nút Rà soát lại dự án + trang chi tiết RK (nguồn, tắt/sửa, Đã bỏ, Mâu thuẫn, Duyệt) (19 §3.5)
+- [x] 8.5 Review nạp RK thay trích `.claude` (`claude_kit` chỉ còn fallback khi chưa có RK); `signals.py` chọn checks theo diff; basis.knowledge (19 §4.1)
+- [x] 8.6 Eval tự sinh theo dự án `eval --project` + chạy lại eval chung trên rubric hiện tại (19 §5)
 - [ ] **Demo**: bấm Rà soát lại trên 1 repo omicx → xem RK, review 1 commit thấy rule_id trỏ về RK
-- [ ] 8.7 Luồng v2: checkout một lần, [1] review agentic với RK, [1'] dự phòng không tool, chunk 60k (19 §4.1–4.2)
-- [ ] 8.8 [2] Kiểm chứng độc lập: cột `verified`/`verification`, bằng chứng = dòng không đổi, `rejected` giữ dòng (19 §4.3)
-- [ ] 8.9 Rubric v4, điểm chỉ tính finding đã kiểm chứng, verdict `needs_human`; comment MR/Telegram/webhook/UI hiện mức mới (19 §4.4–4.5)
-- [ ] 8.10 Vận hành: transaction tách ba, RateLimiter Redis, đổi tên `DEEP_REVIEW*` → `REVIEW_AGENT*`, Admin chọn model từng bước (19 §4.6, §8)
-- [ ] 8.11 Thống kê theo rule (chết/nhiễu), tab So với bản trước, tầng thăm dò mã, tự biên dịch theo cờ (19 §3.2, §5)
-- [ ] 8.12 Đo trước/sau trên DB thật (chi phí, thời gian, ignored_verifications, dispute, lệch điểm) và chỉnh trần (19 §5)
+- [x] 8.7 Luồng v2: checkout một lần, [1] review agentic với RK, [1'] dự phòng không tool, chunk 60k (19 §4.1–4.2)
+- [x] 8.8 [2] Kiểm chứng độc lập: cột `verified`/`verification`, bằng chứng = dòng không đổi, `rejected` giữ dòng (19 §4.3)
+- [x] 8.9 Rubric v4, điểm chỉ tính finding đã kiểm chứng, verdict `needs_human`; comment MR/Telegram/webhook/UI hiện mức mới (19 §4.4–4.5)
+- [x] 8.10 Vận hành: transaction tách ba, RateLimiter Redis, đổi tên `DEEP_REVIEW*` → `REVIEW_AGENT*` (19 §4.6, §8) — còn nợ: Admin chọn model từng bước
+- [x] 8.11 Thống kê theo rule (chết/nhiễu), tab So với bản trước, tầng thăm dò mã, tự biên dịch theo cờ (19 §3.2, §5)
+- [x] 8.12 Đo trước/sau trên DB thật (chi phí, thời gian, ignored_verifications, dispute, lệch điểm) và chỉnh trần (19 §5)
 - [ ] **Demo**: cùng 30 commit chạy luồng cũ và v2 → precision theo severity, chi phí/review, lệch điểm khi review lại

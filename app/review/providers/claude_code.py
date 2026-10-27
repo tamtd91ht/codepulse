@@ -15,10 +15,14 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from app.ratelimit import RateLimiter
+from app.ratelimit import Limiter, RateLimiter
 from app.review.providers.base import LLMError, ReviewPrompt, ReviewResult
 
 log = logging.getLogger(__name__)
+
+# Calls per minute to the CLI, across every worker when the limiter is the shared one
+# (docs/specs/19 §4.6; app/ratelimit.py).
+LLM_MAX_PER_MINUTE = 30
 
 # What the CLI subprocess call looks like; injected in tests.
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -136,11 +140,15 @@ class ClaudeCodeProvider:
         auth_token: str = "",
         timeout_s: float = 120.0,
         max_retries: int = 3,
-        max_per_minute: float = 30.0,
+        max_per_minute: float = LLM_MAX_PER_MINUTE,
         runner: Runner = subprocess.run,
         streamer: Callable[..., tuple[int, str]] = stream_lines,
         sleep: Callable[[float], None] = time.sleep,
+        limiter: Limiter | None = None,
     ) -> None:
+        """`limiter` paces the calls; by default this process alone (`RateLimiter` at
+        `max_per_minute`), in the workers the Redis-backed one every worker shares
+        (app.review.providers.build_provider)."""
         self._binary = binary
         self._model = model
         self._auth_token = auth_token
@@ -149,7 +157,11 @@ class ClaudeCodeProvider:
         self._runner = runner
         self._streamer = streamer
         self._sleep = sleep
-        self._limiter = RateLimiter(max_per_minute / 60.0, sleep=sleep)
+        self._limiter: Limiter = limiter or RateLimiter(max_per_minute / 60.0, sleep=sleep)
+
+    @property
+    def limiter(self) -> Limiter:
+        return self._limiter
 
     def command(self, prompt: ReviewPrompt) -> list[str]:
         cmd = [

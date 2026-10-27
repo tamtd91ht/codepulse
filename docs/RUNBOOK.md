@@ -103,8 +103,16 @@ Lệnh này chấm lại điểm review từ finding hiện tại rồi tổng h
 
 Chạy khi đổi prompt, rubric, model hoặc nâng phiên bản Claude Code CLI (`CLAUDE_CODE_VERSION` trong Dockerfile):
 ```sh
-make eval      # ~ $2 cho 20 case; ngưỡng precision ≥ 0.8, recall ≥ 0.7 cho critical+high
+make eval      # ~ $2 cho 23 case (3 case fp-* đo precision khi bằng chứng nằm ở dòng ngữ cảnh); ngưỡng precision ≥ 0.8, recall ≥ 0.7 cho critical+high
 ```
+
+Eval tự sinh theo dự án (spec 19 §5): mỗi invariant của tri thức review đang hoạt động được sinh một diff vi phạm và một diff sạch (cache ở `tests/eval/generated/<project>/<invariant>-<sha8>/`, chỉ sinh lại khi statement đổi), rồi review với bộ rule trong prompt. Báo cáo recall theo invariant và precision trên critical+high ghi vào `tests/eval/results/knowledge-<project>-<thời điểm>.json`:
+```sh
+make eval-knowledge PROJECT=7          # gọi LLM thật: sinh case (lần đầu) + review
+make eval-knowledge PROJECT=7 FAKE=1   # kiểm tra harness, không tốn tiền
+python -m app.review.eval --project 7 --knowledge knowledge.json   # tri thức từ file thay vì DB
+```
+Chạy lại khi đổi rubric, prompt, model hoặc tri thức review; xoá thư mục case trong `tests/eval/generated/` để sinh lại.
 
 ## 9. Lưu trữ dữ liệu
 
@@ -144,3 +152,21 @@ Khác với webhook GitLab (GitLab gọi CodePulse khi có MR/commit mới), web
 - Tắt: cờ **Sâu** ở Admin → Dự án & Repo (theo repo) hoặc `DEEP_REVIEW=false` (toàn hệ thống). `DEEP_REVIEW_MIN_LOC=50` để chỉ review sâu các diff đáng kể.
 - Hồ sơ dự án: xem ở trang dự án; sai hoặc cũ → Admin → ngăn chi tiết dự án → **Làm mới hồ sơ** (job `profile-<id>`). Hồ sơ dựng từ tài liệu của repo; repo không có README/CLAUDE.md sẽ có hồ sơ mỏng (`confidence` thấp) — thêm tài liệu vào repo là cách cải thiện đúng nhất.
 - Sự cố: `reviews.deep.error = checkout` (archive quá lớn / GitLab lỗi), `LLMError` (CLI timeout, lỗi API), `ValueError` (output không đúng schema). Review vẫn `done` với kết quả lượt nhanh; xem cột *mode* để biết.
+
+## 14. Đo trước/sau khi đổi luồng review (spec 19 §5)
+
+Lấy số liệu trên DB thật trước khi đổi luồng (mốc), rồi so lại sau 2 tuần pilot. Hai lệnh:
+```sh
+codepulse review-metrics --since 2026-10-01 --until 2026-10-15 --out before.json        # --project <id> để giới hạn một repo; --md in bảng Markdown
+codepulse review-metrics-compare before.json after.json --md                           # delta từng metric, theo nhóm mode/rubric
+```
+Review được gom theo `mode/rubric_version` (ví dụ `fast/v2`, `deep/v2`, `agent/v3`), chỉ tính review `done`/`superseded` có `finished_at` trong khoảng (`--until` loại trừ; bỏ trống = đến hết hôm nay). Ý nghĩa từng metric:
+
+- `cost_usd`, `duration_s`, `loc_reviewed`: p50/p95 chi phí một review, thời gian chạy (`finished_at − started_at`), số dòng đã review.
+- `turns`: p50/p95 số lượt tool của lượt có tool (`deep.turns`); nhóm `fast` không có.
+- `ignored_verifications.sum` / `.share_gt0`: tổng số kiểm chứng bị bỏ qua và tỉ lệ review có ít nhất một (`deep.ignored_verifications`).
+- `findings_per_review.<severity>`: số finding trung bình mỗi review theo severity; `verified.<nhãn>`: phân phối `confirmed/downgraded/rejected/unverified/skipped` (trống nếu DB chưa có cột).
+- `dispute_acceptance.<severity>.rate`: tỉ lệ khiếu nại được chấp nhận trên số khiếu nại đã quyết (cao = reviewer nhiễu ở severity đó).
+- `drift.mean_abs_score_diff`, `drift.verdict_change_rate`: cùng sha review ≥ 2 vòng, lệch điểm tuyệt đối trung bình và tỉ lệ đổi verdict giữa hai vòng liên tiếp (đo độ ổn định; nhóm là của vòng sau).
+
+Quy trình A/B: chọn 30 commit/MR tiêu biểu (đủ repo, đủ cỡ diff). Chạy luồng cũ (mode `fast`/`deep`) rồi chạy v2 trên **cùng sha** bằng nút *Review lại* (force) ở dashboard; mỗi lần chạy là một vòng mới nên `drift` đo thẳng được chênh lệch cũ–mới. Lấy `review-metrics` cho khoảng ngày chạy luồng cũ (`before.json`) và khoảng chạy v2 (`after.json`), so bằng `review-metrics-compare`, rồi chỉnh trần (`REVIEW_AGENT_MIN_LOC`, số lượt, ngân sách) theo kết quả; eval chạy lại như mục 8.

@@ -11,9 +11,16 @@ is told to keep severity (impact) apart from confidence (certainty) instead of l
 when unsure, to go through every file against the rubric and the built-in checklists
 (app/review/checklists.py), and the score uses the v3 weights and size rule
 (app/scoring/formula.py).
+
+v4 (2026-10-28, docs/specs/19): the project's compiled review knowledge is the premise of the
+review ("Tiền đề của dự án"): invariants are the project's law and score by their own severity,
+every finding names the rule it comes from, and the reviewer declares which rules it applied
+before listing findings. Findings are then verified independently (app/review/verify.py); the
+score and verdict count only what survived (app/scoring/formula.py, verdict.py). Weights and
+size rule are those of v3.
 """
 
-RUBRIC_VERSION = "v3"
+RUBRIC_VERSION = "v4"
 # The four questions of the rubric, in order (shown as the review's "basis").
 RUBRIC_LENS = ("Bảo mật", "Đúng dữ liệu", "Chịu tải", "Dễ bảo trì")
 
@@ -72,4 +79,17 @@ When unsure, lower the confidence, never the severity: a possible SQL injection 
 finding with confidence 0.6, not a medium one.
 Report every real problem you find, low ones included; do not stop after the first few. A change
 with no problems gets no findings: never invent one to look thorough.
+
+Tiền đề của dự án (the project's premise; PROJECT KNOWLEDGE in the prompt, when present):
+- Its invariants are the project's own law: a change that breaks one is a finding whose severity
+  is the invariant's `severity`, whatever the rubric alone would say. Its `severity_rules` are
+  applied after the rubric and adjust severity where they match.
+- Every finding names its origin in `rule_id`: "rk:<id>" for a knowledge item (invariant, check,
+  domain rule), "rubric:<1-4>" for one of the four questions above, "checklist:<language>" for
+  a checklist item, or the heading of a team rule. A finding without a rule is "rubric:4".
+- Before listing findings, declare `applied_rules`: one entry per invariant and per check you
+  were given, with `applies` (does it concern this change) and where/why in one short line.
+  A rule that applies and is respected is still declared; it simply yields no finding.
+- A critical or high finding carries `evidence`: the file and lines (file:lines) that show the
+  problem, in the diff or in the repository.
 """

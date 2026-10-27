@@ -6,13 +6,17 @@ import pytest
 from pydantic import SecretStr
 
 from app.config import Settings
+from app.ratelimit import RateLimiter, RedisRateLimiter
 from app.review.providers import (
     ClaudeCodeProvider,
     FakeLLMProvider,
     LLMError,
     ReviewPrompt,
+    build_agentic_provider,
     build_provider,
+    default_redis,
 )
+from tests.test_ratelimit import StubRedis
 
 PROMPT = ReviewPrompt(system="sys", user="diff --git a/x", json_schema={"type": "object"})
 
@@ -127,6 +131,42 @@ def test_token_set_from_the_dashboard_wins_over_the_environment() -> None:
     provider = build_provider(settings, stored_token=lambda: "sk-ant-oat01-stored")
     assert isinstance(provider, ClaudeCodeProvider)
     assert provider._env()["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-stored"
+
+
+def test_the_workers_share_one_rate_limiter_through_redis() -> None:
+    """docs/specs/19 §4.6: with a Redis client the limiter is the cross-worker one; without
+    one (and always under pytest) the provider paces this process alone."""
+    settings = Settings(llm_api_key=SecretStr("sk-ant-api03-key"))
+    redis = StubRedis([1000.0])
+    shared = build_provider(settings, stored_token=lambda: "", redis=redis)
+    assert isinstance(shared, ClaudeCodeProvider)
+    assert isinstance(shared.limiter, RedisRateLimiter)
+    agentic = build_agentic_provider(settings, stored_token=lambda: "", redis=redis)
+    assert isinstance(agentic, ClaudeCodeProvider)
+    assert isinstance(agentic.limiter, RedisRateLimiter)
+    shared.limiter.acquire()
+    agentic.limiter.acquire()
+    assert redis.values["cp:llm:rate"] == 2  # both providers count in the same window
+    local = build_provider(settings, stored_token=lambda: "", redis=None)
+    assert isinstance(local, ClaudeCodeProvider) and isinstance(local.limiter, RateLimiter)
+    assert default_redis() is None  # under pytest: never a live Redis
+    by_default = build_provider(settings, stored_token=lambda: "")
+    assert isinstance(by_default, ClaudeCodeProvider)
+    assert isinstance(by_default.limiter, RateLimiter)
+
+
+def test_an_injected_limiter_paces_every_call() -> None:
+    class Counting:
+        def __init__(self) -> None:
+            self.acquired = 0
+
+        def acquire(self) -> None:
+            self.acquired += 1
+
+    limiter = Counting()
+    runner = FakeRunner((1, "", "busy"), (0, json.dumps(SUCCESS), ""))
+    ClaudeCodeProvider(runner=runner, sleep=lambda s: None, limiter=limiter).review(PROMPT)
+    assert limiter.acquired == 2  # one per attempt
 
 
 def test_fake_provider_records_prompts() -> None:

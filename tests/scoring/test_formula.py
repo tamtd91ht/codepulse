@@ -3,8 +3,10 @@ import pytest
 from app.scoring.formula import ScoredFinding, review_score
 
 
-def f(severity: str, confidence: float = 1.0, status: str = "open") -> ScoredFinding:
-    return ScoredFinding(severity, confidence, status)
+def f(
+    severity: str, confidence: float = 1.0, status: str = "open", verified: str = "skipped"
+) -> ScoredFinding:
+    return ScoredFinding(severity, confidence, status, verified)
 
 
 @pytest.mark.parametrize(
@@ -93,3 +95,49 @@ def test_v3_keeps_the_critical_cap_and_ignores_false_positives() -> None:
     assert review_score([critical], 10_000, weights_for("v3"), "v3") == 50.0
     disputed = ScoredFinding("high", 0.9, "false_positive")
     assert review_score([disputed], 100, weights_for("v3"), "v3") == 100.0
+
+
+V4 = [
+    # docs/specs/19 §4.4: only confirmed / downgraded / skipped / confident unverified count
+    ([f("critical", 0.9, verified="confirmed")], 100, 50.0),  # 73, capped: confirmed critical
+    ([f("critical", 0.9, verified="unverified")], 100, 73.0),  # counted, but no cap
+    ([f("critical", 0.6, verified="unverified")], 100, 100.0),  # below 0.7: not counted
+    ([f("high", 0.8, verified="confirmed")], 100, 80.0),  # 88, capped: confirmed high
+    ([f("high", 0.8, verified="unverified")], 100, 88.0),
+    ([f("medium", 0.8, verified="downgraded")], 100, 96.0),
+    ([f("low", 0.5, verified="skipped")], 100, 99.25),
+    # Verification not configured (docs/specs/19 §4.3 "skipped"): as reported, so capped.
+    ([f("critical", 0.9, verified="skipped")], 100, 50.0),
+    ([f("high", 0.8, verified="skipped")], 100, 80.0),
+    ([f("critical", 0.9, verified="downgraded")], 100, 73.0),  # a downgrade never caps
+    ([f("critical", 0.9, status="rejected", verified="rejected")], 100, 100.0),
+    ([f("critical", 0.9, status="false_positive", verified="confirmed")], 100, 100.0),
+    ([f("high", 0.8, verified="confirmed"), f("critical", 0.9, verified="unverified")], 100, 61.0),
+]
+
+
+@pytest.mark.parametrize(("findings", "loc", "expected"), V4)
+def test_v4_scores_only_verified_findings(
+    findings: list[ScoredFinding], loc: int, expected: float
+) -> None:
+    from app.scoring.formula import weights_for
+
+    assert weights_for("v4") == weights_for("v3")
+    assert review_score(findings, loc, weights_for("v4"), "v4") == expected
+
+
+def test_v4_threshold_for_unverified_findings_is_configurable() -> None:
+    from app.scoring.formula import weights_for
+
+    unsure = [f("critical", 0.6, verified="unverified")]
+    assert review_score(unsure, 100, weights_for("v4"), "v4", min_confidence_unverified=0.5) == 82.0
+
+
+def test_older_rubrics_ignore_the_verification_column() -> None:
+    from app.scoring.formula import weights_for
+
+    unverified = [f("critical", 0.5, verified="unverified")]
+    assert review_score(unverified, 10_000, weights_for("v3"), "v3") == 50.0
+    assert review_score(unverified, 100, weights_for("v1"), "v1") == 50.0
+    rejected = [f("high", 0.9, status="rejected", verified="rejected")]
+    assert review_score(rejected, 100, weights_for("v3"), "v3") == 100.0

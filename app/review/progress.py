@@ -32,7 +32,8 @@ RECENT_KEY = "cp:reviews:recent"
 LIVE_KEY = "cp:review:live:{}"
 LIVE_MAX = 300  # entries kept per review (the newest)
 LIVE_TTL_S = 60 * 60
-# Longer than REVIEW_JOB_TIMEOUT (45 min): a live review always refreshes before expiry.
+# Every stage() update re-arms this TTL, so it only has to outlast the longest gap between
+# updates (one agentic chunk, REVIEW_TIMEOUT_S), not the whole job (review_job_timeout).
 TTL_S = 50 * 60
 MAX_ACTIVE = 50
 RECENT_MAX = 30
@@ -41,7 +42,7 @@ RECENT_TTL_S = 60 * 60
 SOCKET_TIMEOUT_S = 2.0
 
 # Stage ids the worker reports, in order (the web maps them to labels).
-STAGES = ("start", "diff", "llm", "deep", "profile", "save")
+STAGES = ("start", "diff", "checkout", "llm", "agent", "verify", "deep", "profile", "save")
 # Fields of a running record kept in the "recent" list (people and target, no stage details).
 RECENT_FIELDS = (
     "review_id",
