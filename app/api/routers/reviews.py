@@ -1,7 +1,8 @@
 """Reviews and findings (docs/specs/09), scoped by role (developer: own; lead: team; admin: all)."""
 
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Annotated, Any, Literal, cast
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import Date, Select, exists, func, or_, select
@@ -18,6 +19,7 @@ from app.api.schemas import (
     ReviewDetail,
     ReviewListItem,
     ReviewOut,
+    UserOut,
     decode_cursor,
     encode_cursor,
 )
@@ -39,6 +41,7 @@ from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
 router = APIRouter(tags=["reviews"])
 SessionDep = Annotated[Session, Depends(get_session)]
 Limit = Annotated[int, Query(ge=1, le=200)]
+ReviewStatus = Literal["queued", "running", "done", "failed", "skipped", "superseded"]
 
 
 def scoped[Q: Select[Any] | Select[Any, Any, Any]](query: Q, principal: Principal) -> Q:
@@ -47,12 +50,17 @@ def scoped[Q: Select[Any] | Select[Any, Any, Any]](query: Q, principal: Principa
 
 
 def _range(
-    query: Select[Any], column: Any, date_from: date | None, date_to: date | None
+    query: Select[Any],
+    column: Any,
+    date_from: date | None,
+    date_to: date | None,
+    tz: tzinfo = UTC,
 ) -> Select[Any]:
+    """Whole days [from, to] in `tz` (the list of reviews passes REPORT_TZ)."""
     if date_from:
-        query = query.where(column >= datetime.combine(date_from, time.min, UTC))
+        query = query.where(column >= datetime.combine(date_from, time.min, tz))
     if date_to:
-        query = query.where(column <= datetime.combine(date_to, time.max, UTC))
+        query = query.where(column < datetime.combine(date_to + timedelta(days=1), time.min, tz))
     return query
 
 
@@ -79,11 +87,14 @@ def _target(session: Session, review: Review) -> tuple[Project | None, str | Non
 def list_reviews(
     principal: CurrentPrincipal,
     session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
     user_id: int | None = None,
     project_id: int | None = None,
+    business_project_id: int | None = None,
     severity: str | None = None,
     verdict: Literal["approve", "needs_human", "fix_required", "block"] | None = None,
     trigger: str | None = None,
+    status: Annotated[list[ReviewStatus] | None, Query()] = None,
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
     cursor: str | None = None,
@@ -98,14 +109,21 @@ def list_reviews(
         query = query.where(Review.verdict == verdict)
     if trigger is not None:
         query = query.where(Review.trigger == trigger)
+    if status:
+        query = query.where(Review.status.in_(status))
     if project_id is not None:
         mr_ids = select(MergeRequest.id).where(MergeRequest.project_id == project_id)
         shas = select(Commit.sha).where(Commit.project_id == project_id)
         query = query.where(Review.mr_id.in_(mr_ids) | Review.commit_sha.in_(shas))
+    if business_project_id is not None:
+        repos = select(Project.id).where(Project.business_project_id == business_project_id)
+        mr_ids = select(MergeRequest.id).where(MergeRequest.project_id.in_(repos))
+        shas = select(Commit.sha).where(Commit.project_id.in_(repos))
+        query = query.where(Review.mr_id.in_(mr_ids) | Review.commit_sha.in_(shas))
     if severity:
         with_severity = select(ReviewFinding.review_id).where(ReviewFinding.severity == severity)
         query = query.where(Review.id.in_(with_severity))
-    query = _range(query, Review.finished_at, date_from, date_to)
+    query = _range(query, Review.finished_at, date_from, date_to, ZoneInfo(settings.report_tz))
     if (after := decode_cursor(cursor)) is not None:
         query = query.where(Review.id < after)
     rows = list(session.scalars(query.order_by(Review.id.desc()).limit(limit + 1)))
@@ -113,15 +131,24 @@ def list_reviews(
         audit(session, principal.user_id, "reviews.read", f"user:{user_id}")
         session.commit()
     more = len(rows) > limit
+    # Authors in one query: the list shows who each review was about.
+    author_ids = {r.author_user_id for r in rows[:limit] if r.author_user_id is not None}
+    authors = (
+        {u.id: u for u in session.scalars(select(User).where(User.id.in_(author_ids)))}
+        if author_ids
+        else {}
+    )
     items = []
     for review in rows[:limit]:
         project, url, label = _target(session, review)
+        author = authors.get(review.author_user_id) if review.author_user_id else None
         items.append(
             {
                 **ReviewOut.model_validate(review).model_dump(),
                 "target": label,
                 "project": project.path_with_namespace if project else None,
                 "web_url": url,
+                "author": UserOut.model_validate(author) if author else None,
             }
         )
     return Page(items=items, next_cursor=encode_cursor(rows[limit - 1].id) if more else None)

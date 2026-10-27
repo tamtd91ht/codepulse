@@ -321,6 +321,8 @@ export interface ReviewListItem extends Review {
   target: string;
   project: string | null;
   web_url: string | null;
+  /** Whose change was reviewed (absent on older API responses). */
+  author?: Person | null;
 }
 
 export interface ReviewDetail extends Review {

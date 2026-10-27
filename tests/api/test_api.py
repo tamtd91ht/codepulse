@@ -234,6 +234,47 @@ def test_review_list_pagination(client: TestClient, world: World, as_user: Any) 
     assert first["items"][0]["id"] != second["items"][0]["id"]
 
 
+def test_review_list_filters_by_time_member_project_and_status(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    from app.models import BusinessProject
+
+    bp = BusinessProject(name="OmiCRM")
+    db_session.add(bp)
+    db_session.flush()
+    world.project.business_project_id = bp.id
+    db_session.flush()
+    headers = as_user(world.lead)
+
+    def ids(query: str) -> set[int]:
+        res = client.get(f"/api/v1/reviews?{query}", headers=headers)
+        assert res.status_code == 200, res.text
+        return {r["id"] for r in res.json()["items"]}
+
+    both = {world.an_review.id, world.binh_review.id}
+    # Days are REPORT_TZ days: 2026-10-05 18:00 UTC is already 2026-10-06 01:00 in
+    # Asia/Ho_Chi_Minh, so it belongs to the 6th, not to the 5th (as it would in UTC).
+    world.binh_review.finished_at = datetime(2026, 10, 5, 18, tzinfo=UTC)
+    db_session.flush()
+    assert ids("from=2026-10-06&to=2026-10-06") == both
+    assert ids("to=2026-10-05") == set()
+    assert ids("from=2026-10-07") == set()
+    assert ids(f"user_id={world.an.id}") == {world.an_review.id}
+    assert ids(f"business_project_id={bp.id}") == both
+    assert ids(f"business_project_id={bp.id + 1000}") == set()
+    assert ids("status=done") == {world.an_review.id}
+    assert ids("status=done&status=failed") == both
+    item = client.get(f"/api/v1/reviews?user_id={world.an.id}", headers=headers).json()["items"][0]
+    assert item["author"]["primary_email"] == "an@x.vn"
+    assert client.get("/api/v1/reviews?status=nope", headers=headers).status_code == 422
+    # The filters only narrow what the viewer may see: a developer stays on their own reviews.
+    mine = client.get(
+        f"/api/v1/reviews?business_project_id={bp.id}&status=done&status=failed",
+        headers=as_user(world.an),
+    ).json()["items"]
+    assert [r["id"] for r in mine] == [world.an_review.id]
+
+
 def test_critical_board(client: TestClient, world: World, as_user: Any) -> None:
     board = client.get(
         "/api/v1/findings?severity=critical&severity=high", headers=as_user(world.lead)

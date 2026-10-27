@@ -468,6 +468,7 @@ class ReviewListItem(ReviewOut):
     target: str  # "MR !12" or "commit abc12345"
     project: str | None
     web_url: str | None
+    author: "UserOut | None" = None  # whose change was reviewed
 
 
 class ReviewRound(BaseModel):

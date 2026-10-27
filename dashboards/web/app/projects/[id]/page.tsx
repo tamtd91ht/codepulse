@@ -19,19 +19,18 @@ import {
   ChartTip,
   CountLink,
   EmptyState,
-  ExternalLink,
   Kpi,
   Loading,
   PageHeader,
   Pager,
-  Pill,
   Segmented,
   SortTh,
   useSort,
 } from "@/components/ui";
 import { KnowledgeTile } from "@/components/Knowledge";
+import { ReviewResults } from "@/components/ReviewResults";
 import { type BoardScope, boardLink, qs, useApi } from "@/lib/api";
-import { CATEGORY_LABEL, VERDICT_LABEL, date, num, periodLabel, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
+import { CATEGORY_LABEL, date, num, periodLabel, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
 import type { Me, ProjectDetail, ProjectRepoRow, RepoProfile } from "@/lib/types";
 
 type Period = "week" | "month";
@@ -270,40 +269,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         <KnowledgeCards repos={repos.data} error={repos.error} me={me} />
       </Card>
 
-      <Card title="Review gần đây" subtitle="Những review bạn được xem trong dự án này" flush>
-        {data.recent.length === 0 ? (
-          <EmptyState title="Chưa có review nào bạn được xem" />
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Thay đổi</th>
-                  <th>Repo</th>
-                  <th>Kết luận</th>
-                  <th className="num">Điểm</th>
-                  <th>Ngày</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {data.recent.map((r) => (
-                  <tr key={r.id}>
-                    <td>
-                      <Link href={`/reviews/${r.id}`}>{r.target}</Link>
-                    </td>
-                    <td className="muted">{r.project}</td>
-                    <td>{r.verdict ? <span className={`verdict ${r.verdict}`}>{VERDICT_LABEL[r.verdict]}</span> : <span className="muted">—</span>}</td>
-                    <td className="num">{r.status === "done" ? <strong>{num(r.score, 0)}</strong> : <Pill tone={r.status === "failed" ? "bad" : "warn"}>{r.status}</Pill>}</td>
-                    <td className="muted">{date(r.finished_at)}</td>
-                    <td>{r.web_url && <ExternalLink href={r.web_url}>GitLab</ExternalLink>}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      <ReviewResults businessProjectId={data.project.id} repos={data.repos} />
     </>
   );
 }

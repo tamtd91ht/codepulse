@@ -3120,3 +3120,59 @@ tr.attention > td:first-child {
 .eval-grid > .card:first-child {
   min-width: 0;
 }
+
+/* ---------- Review results list (dự án page) ---------- */
+
+.card.flush .results-filters {
+  padding: 0 18px;
+  margin-bottom: 12px;
+}
+.results-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 18px 14px;
+}
+/* A table cell that filters by its value: reads as a link, behaves as a button. */
+button.link-btn {
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  font-weight: 400;
+  white-space: normal;
+  justify-content: flex-start;
+  text-align: left;
+  color: var(--primary-text);
+}
+button.link-btn:hover:not(:disabled) {
+  background: none;
+}
+button.link-btn:active:not(:disabled) {
+  transform: none;
+}
+/* Only the avatar and the name are the target, not the whole cell. */
+button.link-btn.cell-main {
+  display: inline-flex;
+}
+.results-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 0 18px 12px;
+}
+.results-error .alert {
+  margin: 0;
+  flex: 1 1 260px;
+}
+button.link-btn:hover:not(:disabled) span {
+  text-decoration: underline;
+}
+button.link-btn:disabled {
+  color: inherit;
+  cursor: default;
+  opacity: 1;
+}
