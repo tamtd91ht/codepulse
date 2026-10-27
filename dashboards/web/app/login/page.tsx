@@ -9,7 +9,7 @@ export default function LoginPage() {
     <div className="login-wrap">
       <div className="card login-card">
         <span className="brand-mark">
-          <img src="/logo.svg" alt="" width={40} height={40} />
+          <img src="/icon.svg" alt="" width={40} height={40} />
         </span>
         <h1>CodePulse</h1>
         <p className="lead">Chất lượng code theo team và từng thành viên. Đăng nhập bằng tài khoản GitLab của công ty.</p>

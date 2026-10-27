@@ -123,7 +123,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Link href="/" className="brand" aria-label="CodePulse, trang chính">
             <span className="brand-mark">
               {/* The project logo (also the browser tab icon, app/icon.svg). */}
-              <img src="/logo.svg" alt="" width={30} height={30} />
+              <img src="/icon.svg" alt="" width={30} height={30} />
             </span>
             <span className="brand-text">CodePulse</span>
           </Link>
@@ -206,7 +206,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Link href="/" className="brand">
             <span className="brand-mark">
               {/* The project logo (also the browser tab icon, app/icon.svg). */}
-              <img src="/logo.svg" alt="" width={30} height={30} />
+              <img src="/icon.svg" alt="" width={30} height={30} />
             </span>
             <span className="brand-text">CodePulse</span>
           </Link>

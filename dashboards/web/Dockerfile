@@ -13,6 +13,8 @@ ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
 WORKDIR /web
 COPY --from=build /web/.next/standalone ./
 COPY --from=build /web/.next/static ./.next/static
+# Static files (logo) are not part of the standalone bundle.
+COPY --from=build /web/public ./public
 USER node
 EXPOSE 3000
 CMD ["node", "server.js"]
