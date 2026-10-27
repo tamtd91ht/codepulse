@@ -437,6 +437,15 @@ def run_build(
                 "monthly LLM budget reached, knowledge build refused",
                 extra={"spent_usd": spent, "budget_usd": budget, "project_id": project_id},
             )
+            record_failure(
+                session,
+                scope="project",
+                project_id=project_id,
+                business_project_id=None,
+                cost_usd=0.0,
+                error=f"monthly LLM budget reached: {spent:.2f} / {budget:.2f} USD",
+                built_by=built_by,
+            )
             return _refused("monthly LLM budget reached")
         connection = session.get(Connection, target.connection_id)
         if connection is None:
@@ -450,7 +459,9 @@ def run_build(
         requester_name = requester.full_name if requester else None
         tuned = with_overrides(session, settings)
         session.expunge_all()
-    provider = provider or build_provider(tuned)
+    provider = provider or build_provider(
+        tuned, timeout_s=float(settings.knowledge_compile_timeout_s), max_retries=1
+    )
     if agent is None and probe:
         agent = build_agentic_provider(tuned)
     make_client = make_client or client_factory(secret_box())
@@ -475,6 +486,7 @@ def run_build(
             },
         )
     status: str | None = None
+    why: str | None = None
     ledger = CostLedger()
 
     def failed(reason: str, exc: BaseException) -> dict[str, Any]:
@@ -512,26 +524,27 @@ def run_build(
             ledger=ledger,
         )
         status = "done" if result.get("built") else "skipped"
+        why = None if result.get("built") else str(result.get("reason") or "")
         return result
     except (GitLabError, ArchiveTooLarge, CheckoutError) as exc:
         log.warning("knowledge build: repository not read", extra={"error": exc.__class__.__name__})
-        status = "failed"
+        status, why = "failed", f"không đọc được repo: {exc.__class__.__name__}: {str(exc)[:160]}"
         return failed(f"repository not read: {exc.__class__.__name__}", exc)
     except (LLMError, ValueError) as exc:
         log.warning("knowledge build: unusable answer", extra={"error": str(exc)[:160]})
-        status = "failed"
+        status, why = "failed", f"LLM: {exc.__class__.__name__}: {str(exc)[:160]}"
         return failed("unusable answer", exc)
     except KnowledgeBudgetError as exc:
         log.warning("knowledge build: cost cap", extra={"error": str(exc)[:160]})
-        status = "failed"
+        status, why = "failed", f"vượt trần chi phí một lần rà soát: {str(exc)[:120]}"
         return failed("cost cap reached", exc)
     except Exception as exc:
-        status = "failed"
+        status, why = "failed", f"{exc.__class__.__name__}: {str(exc)[:160]}"
         failed("error", exc)
         raise
     finally:
         if sink is not None:
-            sink.end(pid, status)
+            sink.end(pid, status, why)
 
 
 def _stage(sink: ProgressSink | None, pid: int, stage: str, detail: str = "") -> None:

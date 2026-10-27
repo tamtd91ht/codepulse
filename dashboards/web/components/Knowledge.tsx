@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { IconButton } from "@/components/icons";
-import { EmptyState, ExternalLink, Loading, Message, Pill } from "@/components/ui";
+import { Alert, EmptyState, ExternalLink, Loading, Message, Pill } from "@/components/ui";
 import { ApiError, canEditKnowledge, knowledgeApi, knowledgePath, knowledgePoll, useApi } from "@/lib/api";
 import { date, dateTime } from "@/lib/format";
 import type { KnowledgeResponse, KnowledgeSource, KnowledgeVersion, Me } from "@/lib/types";
@@ -195,6 +195,13 @@ export function KnowledgeTile({ repo, me }: { repo: { id: number; path_with_name
           </div>
         )}
       </div>
+      {data?.last_failure && (
+        <Alert tone="error">
+          Lần rà soát {dateTime(data.last_failure.created_at)} ({BUILT_BY_LABEL[data.last_failure.built_by] ?? data.last_failure.built_by}) lỗi:{" "}
+          <code>{data.last_failure.error ?? "không rõ"}</code>
+          {data.last_failure.cost_usd ? <> · đã tốn ${data.last_failure.cost_usd.toFixed(2)}</> : null}
+        </Alert>
+      )}
       {!data ? (
         <Loading error={error} rows={2} />
       ) : !data.active ? (

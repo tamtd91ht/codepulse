@@ -64,7 +64,7 @@ RECENT_FIELDS = (
 class ProgressSink(Protocol):
     def start(self, review_id: int, info: dict[str, Any]) -> None: ...
     def stage(self, review_id: int, stage: str, detail: str = "", **extra: Any) -> None: ...
-    def end(self, review_id: int, status: str | None = None) -> None: ...
+    def end(self, review_id: int, status: str | None = None, error: str | None = None) -> None: ...
     def event(self, review_id: int, entries: list[dict[str, Any]]) -> None: ...
 
 
@@ -81,18 +81,20 @@ class NullProgress:
     def stage(self, review_id: int, stage: str, detail: str = "", **extra: Any) -> None:
         return None
 
-    def end(self, review_id: int, status: str | None = None) -> None:
+    def end(self, review_id: int, status: str | None = None, error: str | None = None) -> None:
         return None
 
     def event(self, review_id: int, entries: list[dict[str, Any]]) -> None:
         return None
 
 
-def _ended(record: dict[str, Any], status: str | None) -> dict[str, Any]:
-    """`status` None: the job crashed (its transaction rolled back; RQ may retry it)."""
+def _ended(record: dict[str, Any], status: str | None, error: str | None = None) -> dict[str, Any]:
+    """`status` None: the job crashed (its transaction rolled back; RQ may retry it).
+    `error`: why it failed or was skipped, one short line, so the panel can say it."""
     return {
         **{k: record.get(k) for k in RECENT_FIELDS},
         "status": status,
+        "error": (error or "")[:300] or None,
         "ended_at": _now_iso(),
     }
 
@@ -112,10 +114,10 @@ class MemoryProgress:
         if review_id in self.items:
             self.items[review_id].update(stage=stage, detail=detail, **extra)
 
-    def end(self, review_id: int, status: str | None = None) -> None:
+    def end(self, review_id: int, status: str | None = None, error: str | None = None) -> None:
         record = self.items.pop(review_id, None)
         if record is not None:
-            self.ended.insert(0, _ended(record, status))
+            self.ended.insert(0, _ended(record, status, error))
 
     def active(self) -> list[dict[str, Any]]:
         return sorted(self.items.values(), key=lambda i: i.get("started_at") or "")
@@ -161,7 +163,7 @@ class RedisProgress:
         except (RedisError, ValueError) as exc:
             log.warning("review progress not updated", extra={"error": exc.__class__.__name__})
 
-    def end(self, review_id: int, status: str | None = None) -> None:
+    def end(self, review_id: int, status: str | None = None, error: str | None = None) -> None:
         key = ITEM_KEY.format(review_id)
         try:
             raw = self._redis.get(key)
@@ -169,7 +171,9 @@ class RedisProgress:
             pipe.delete(key)
             pipe.zrem(INDEX_KEY, str(review_id))
             if raw:
-                pipe.lpush(RECENT_KEY, json.dumps(_ended(json.loads(raw), status), default=str))
+                pipe.lpush(
+                    RECENT_KEY, json.dumps(_ended(json.loads(raw), status, error), default=str)
+                )
                 pipe.ltrim(RECENT_KEY, 0, RECENT_MAX - 1)
                 pipe.expire(RECENT_KEY, RECENT_TTL_S)
             pipe.execute()

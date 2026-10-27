@@ -654,6 +654,7 @@ class ActivityItem(BaseModel):
     files: int | None = None
     web_url: str | None = None
     status: str | None = None  # ended: done | failed | skipped; None = the job crashed
+    error: str | None = None  # ended: why it failed or was skipped, one line
     ended_at: datetime | None = None
 
 

@@ -172,6 +172,34 @@ def get_knowledge(
         "edits": [edit_dict(e) for e in edits_for(session, project)],
         "stats": None,
         "building": job_active(queue, job_id_for(project.id)),
+        # The newest failed build when it is newer than the active one (or there is
+        # none): the page must say why a build failed, not only that it did.
+        "last_failure": _last_failure(session, project, row),
+    }
+
+
+def _last_failure(
+    session: Session, project: Project, active: ReviewKnowledge | None
+) -> dict[str, Any] | None:
+    failed = session.scalars(
+        select(ReviewKnowledge)
+        .where(
+            ReviewKnowledge.scope == "project",
+            ReviewKnowledge.project_id == project.id,
+            ReviewKnowledge.status == "failed",
+        )
+        .order_by(ReviewKnowledge.created_at.desc(), ReviewKnowledge.id.desc())
+        .limit(1)
+    ).first()
+    if failed is None or (active is not None and failed.created_at <= active.created_at):
+        return None
+    meta = (failed.data or {}).get("meta") or {}
+    return {
+        "id": failed.id,
+        "created_at": failed.created_at,
+        "built_by": failed.built_by,
+        "error": meta.get("error"),
+        "cost_usd": meta.get("cost_usd"),
     }
 
 

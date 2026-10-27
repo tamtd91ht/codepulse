@@ -176,6 +176,7 @@ def _from_record(
         loc=item.get("loc"),
         files=item.get("files"),
         status=None if live else item.get("status"),
+        error=None if live else item.get("error"),
         ended_at=None if live else item.get("ended_at"),
         web_url=_web_url(project, item["kind"], ref),
     )

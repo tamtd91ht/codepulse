@@ -333,7 +333,7 @@ class ReviewService:
             self._progress.end(review.id, None)
             self._crashed(review, exc)
             raise
-        self._progress.end(review.id, result.status)
+        self._progress.end(review.id, result.status, result.error)
         return result
 
     def _crashed(self, review: Review, exc: BaseException) -> None:

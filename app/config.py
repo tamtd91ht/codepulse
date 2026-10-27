@@ -116,6 +116,9 @@ class Settings(BaseSettings):
     # one build, and how many tokens of the compiled premises one review prompt may hold.
     knowledge_max_turns: int = Field(default=40, ge=5, le=200)
     knowledge_timeout_s: int = Field(default=300, ge=30, le=3600)
+    # One compile call reads up to 400k chars and writes a large JSON: far longer than a
+    # review call. Retried once (a compile is paid work).
+    knowledge_compile_timeout_s: int = Field(default=900, ge=60, le=3600)
     knowledge_max_cost_usd: float = Field(default=5.0, ge=0)
     knowledge_tokens: int = Field(default=12000, ge=1000, le=100_000)
 

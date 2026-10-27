@@ -228,6 +228,7 @@ export function ReviewActivity() {
                         <span className="muted small">
                           {" "}
                           · {outcome ? outcome.label : "lỗi giữa chừng, sẽ thử lại"}
+                          {f.error && <> · {f.error}</>}
                         </span>
                       </li>
                     );

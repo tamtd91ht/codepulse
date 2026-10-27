@@ -734,6 +734,8 @@ export interface ActivityItem {
   web_url: string | null;
   /** ended: done | failed | skipped; null when the job crashed (RQ may retry it). */
   status: string | null;
+  /** Ended: why it failed or was skipped, one line. */
+  error?: string | null;
   ended_at: string | null;
 }
 
@@ -940,6 +942,8 @@ export interface KnowledgeResponse {
   /** Reserved; the per-rule numbers come from GET …/knowledge/stats (KnowledgeStats). */
   stats: Record<string, unknown> | null;
   building: boolean;
+  /** The newest failed build when it is newer than the active one: why it failed. */
+  last_failure: { id: number; created_at: string; built_by: string; error: string | null; cost_usd: number | null } | null;
 }
 
 /** One rule of the knowledge over a window (docs/specs/19 §5). */

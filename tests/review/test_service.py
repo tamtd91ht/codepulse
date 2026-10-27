@@ -889,7 +889,7 @@ class Recorder:
     def stage(self, review_id: int, stage: str, detail: str = "", **extra: Any) -> None:
         self.events.append(("stage", stage))
 
-    def end(self, review_id: int, status: str | None = None) -> None:
+    def end(self, review_id: int, status: str | None = None, error: str | None = None) -> None:
         self.events.append(("end", (review_id, status)))
 
     def event(self, review_id: int, entries: list[dict[str, Any]]) -> None:
