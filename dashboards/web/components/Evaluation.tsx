@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import { Icon } from "@/components/icons";
 import { Segmented } from "@/components/ui";
@@ -39,6 +39,49 @@ export function useRange(initial: Exclude<Preset, "custom"> = "30"): [Range | nu
 
 /** A range and its setter, shared by several cards of one page so they move together. */
 export type SharedRange = [Range | null, (r: Range) => void];
+
+/* The range in the URL: ?range=7|30|90 (rolling, ends today) or ?from=…&to=…. It survives a
+   reload and the back button, and links between the Thành viên page and a member's page carry
+   it, so both show the same period. */
+
+const PRESETS = ["7", "30", "90"] as const;
+
+/** The query string of a range, for links to another page that reads it ("" for none). */
+export function rangeSearch(range: Range | null): string {
+  if (!range) return "";
+  return range.preset === "custom" ? `?from=${range.from}&to=${range.to}` : `?range=${range.preset}`;
+}
+
+function readUrlRange(fallback: Exclude<Preset, "custom">): Range {
+  const p = new URLSearchParams(window.location.search);
+  const preset = PRESETS.find((x) => x === p.get("range"));
+  if (preset) return { preset, ...presetRange(preset) };
+  const from = p.get("from") ?? "";
+  const to = p.get("to") ?? "";
+  if (!rangeProblem(from, to)) return { preset: "custom", from, to };
+  return { preset: fallback, ...presetRange(fallback) };
+}
+
+/** A page-wide range kept in the URL (read once on arrival, rewritten on every change). */
+export function useUrlRange(fallback: Exclude<Preset, "custom"> = "30"): SharedRange {
+  const [range, setRange] = useState<Range | null>(null);
+  useEffect(() => {
+    setRange(readUrlRange(fallback));
+  }, [fallback]);
+  const update = useCallback((next: Range) => {
+    setRange(next);
+    const url = new URL(window.location.href);
+    for (const key of ["range", "from", "to"]) url.searchParams.delete(key);
+    if (next.preset === "custom") {
+      url.searchParams.set("from", next.from);
+      url.searchParams.set("to", next.to);
+    } else {
+      url.searchParams.set("range", next.preset);
+    }
+    window.history.replaceState(null, "", url);
+  }, []);
+  return [range, update];
+}
 
 /** The page's shared range when given, otherwise the card's own (last 30 days). */
 export function useCardRange(shared?: SharedRange): SharedRange {

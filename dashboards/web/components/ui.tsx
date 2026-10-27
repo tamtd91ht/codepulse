@@ -507,12 +507,23 @@ export function ChartTip({
 }
 
 /** Link to a person's page with avatar and name. */
-export function PersonLink({ id, name, email }: { id: number; name: string | null; email?: string | null }) {
+export function PersonLink({
+  id,
+  name,
+  email,
+  search = "",
+}: {
+  id: number;
+  name: string | null;
+  email?: string | null;
+  /** Query string carried to the person's page (e.g. the period being looked at). */
+  search?: string;
+}) {
   return (
     <div className="cell-main">
       <Avatar name={name} email={email} size="sm" />
       <div className="who">
-        <Link href={`/members/${id}`}>{name ?? email ?? `#${id}`}</Link>
+        <Link href={`/members/${id}${search}`}>{name ?? email ?? `#${id}`}</Link>
       </div>
     </div>
   );

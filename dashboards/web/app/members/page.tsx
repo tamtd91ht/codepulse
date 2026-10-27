@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Bar, BarChart, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { AttentionBadge, RangePicker, Score, VerdictMix, rangeLabel, scoreTone, useRange } from "@/components/Evaluation";
+import { AttentionBadge, RangePicker, Score, VerdictMix, rangeLabel, rangeSearch, scoreTone, useUrlRange } from "@/components/Evaluation";
 import { Icon } from "@/components/icons";
 import { Alert, Card, ChartTip, CountLink, EmptyState, Kpi, Loading, PageHeader, PersonLink, Sparkline, SortTh, useSort } from "@/components/ui";
 import { boardLink, qs, useApi } from "@/lib/api";
@@ -37,7 +37,16 @@ const cell = (m: MemberEvaluationRow, key: string): number | string | null => {
   }
 };
 
-function MembersTable({ rows, link }: { rows: MemberEvaluationRow[]; link: (severity: "critical" | "high", m: MemberEvaluationRow) => string }) {
+function MembersTable({
+  rows,
+  link,
+  search,
+}: {
+  rows: MemberEvaluationRow[];
+  link: (severity: "critical" | "high", m: MemberEvaluationRow) => string;
+  /** The period, carried to each person's page. */
+  search: string;
+}) {
   const { sorted, sort, toggle } = useSort(rows, { key: "score", dir: "asc" }, cell);
   return (
     <div className="table-wrap">
@@ -79,7 +88,7 @@ function MembersTable({ rows, link }: { rows: MemberEvaluationRow[]; link: (seve
             <tr key={m.user_id} className={m.needs_attention ? "attention" : undefined}>
               <td>
                 <div className="cell-main">
-                  <PersonLink id={m.user_id} name={m.user.full_name} email={m.user.primary_email} />
+                  <PersonLink id={m.user_id} name={m.user.full_name} email={m.user.primary_email} search={search} />
                   <AttentionBadge b={m} />
                 </div>
                 {m.teams.length > 0 && <div className="sub muted small">{m.teams.join(" · ")}</div>}
@@ -177,7 +186,8 @@ function ScoreChart({ rows }: { rows: MemberEvaluationRow[] }) {
 }
 
 export default function MembersEvaluationPage() {
-  const [range, setRange] = useRange("30");
+  // In the URL: a person's page opened from the table shows the same period.
+  const [range, setRange] = useUrlRange("30");
   const [teamId, setTeamId] = useState("");
   const [bpId, setBpId] = useState("");
   const [repoId, setRepoId] = useState("");
@@ -337,7 +347,7 @@ export default function MembersEvaluationPage() {
             flush
           >
             {rows.length ? (
-              <MembersTable rows={rows} link={link} />
+              <MembersTable rows={rows} link={link} search={rangeSearch(range)} />
             ) : (
               <EmptyState icon="members" title="Không có ai khớp bộ lọc">
                 {data.members.length === 0
