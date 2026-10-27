@@ -36,6 +36,7 @@ export function ReviewResults({
   repos,
   person,
   range: shared,
+  period,
 }: {
   businessProjectId?: number;
   /** The repos offered by the repo filter (shown when there is more than one). */
@@ -44,8 +45,11 @@ export function ReviewResults({
   person?: number;
   /** The page's range, when other cards follow the same one. */
   range?: SharedRange;
+  /** A fixed period chosen elsewhere on the page (the dự án page's week / month): no picker. */
+  period?: { from: string; to: string; label: string };
 }) {
-  const [range, setRange] = useCardRange(shared);
+  const [own, setRange] = useCardRange(shared);
+  const range = period ? { preset: "custom" as const, from: period.from, to: period.to } : own;
   const [userId, setUserId] = useState("");
   // Picked by clicking a name: may be someone /people leaves out (deactivated since).
   const [picked, setPicked] = useState<{ id: string; name: string } | null>(null);
@@ -99,8 +103,12 @@ export function ReviewResults({
     <Card
       id="review-results"
       title="Kết quả review"
-      subtitle={`Review tạo sau đứng trước. Lọc theo thời gian hoàn tất, ${person === undefined ? "thành viên, " : ""}repo, kết luận và trạng thái.`}
-      actions={<RangePicker value={range} onChange={setRange} />}
+      subtitle={
+        period
+          ? `Review hoàn tất trong kỳ đang xem (đổi kỳ ở đầu trang). Lọc theo ${person === undefined ? "thành viên, " : ""}repo, kết luận và trạng thái.`
+          : `Review tạo sau đứng trước. Lọc theo thời gian hoàn tất, ${person === undefined ? "thành viên, " : ""}repo, kết luận và trạng thái.`
+      }
+      actions={period ? <span className="pill">{period.label}</span> : <RangePicker value={range} onChange={setRange} />}
       flush
     >
       <div className="toolbar filters results-filters">

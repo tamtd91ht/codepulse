@@ -30,7 +30,7 @@ import {
 import { KnowledgeTile } from "@/components/Knowledge";
 import { ReviewResults } from "@/components/ReviewResults";
 import { type BoardScope, boardLink, qs, useApi } from "@/lib/api";
-import { CATEGORY_LABEL, date, num, periodLabel, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
+import { CATEGORY_LABEL, date, num, periodLabel, shiftDays, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
 import type { Me, ProjectDetail, ProjectRepoRow, RepoProfile } from "@/lib/types";
 
 type Period = "week" | "month";
@@ -269,7 +269,16 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         <KnowledgeCards repos={repos.data} error={repos.error} me={me} />
       </Card>
 
-      <ReviewResults businessProjectId={data.project.id} repos={data.repos} />
+      <ReviewResults
+        businessProjectId={data.project.id}
+        repos={data.repos}
+        period={{
+          from: data.period_start,
+          // The period's last day: the day before the next one starts.
+          to: shiftDays(data.next_period_start, -1),
+          label: periodLabel(data.period_type, data.period_start),
+        }}
+      />
     </>
   );
 }

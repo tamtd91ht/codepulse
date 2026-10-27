@@ -107,6 +107,13 @@ export function shiftWeeks(week: string, by: number): string {
 }
 
 /** Today's local calendar date as YYYY-MM-DD (toISOString would give the UTC date). */
+/** A YYYY-MM-DD day moved by `by` days (calendar days, no timezone shift). */
+export function shiftDays(day: string, by: number): string {
+  const d = new Date(`${day}T00:00:00`);
+  d.setDate(d.getDate() + by);
+  return localDay(d);
+}
+
 export function localDay(d = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
