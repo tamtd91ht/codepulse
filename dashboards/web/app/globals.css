@@ -1233,8 +1233,34 @@ td {
   text-align: left;
   padding: 9px 12px;
   border-bottom: 1px solid var(--border);
-  white-space: nowrap;
   vertical-align: middle;
+}
+/* Text wraps inside the cell, so a table fits the screen instead of growing sideways; a long
+   path or identifier may break anywhere. Only headers, numbers, dates, pills and action
+   cells stay on one line (they are short and read worse when split). */
+td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 48ch;
+}
+td code,
+td .mono {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+thead th,
+td.num,
+td.nowrap,
+td:has(> .pill:only-child),
+td:has(> time:only-child),
+td:has(> .icon-btn),
+td:has(> .btn),
+td:has(> button:only-child) {
+  white-space: nowrap;
+}
+.pill,
+.chip {
+  white-space: nowrap;
 }
 thead th {
   background: var(--surface);
@@ -1243,6 +1269,31 @@ thead th {
   font-size: 12px;
   letter-spacing: 0.01em;
   border-bottom: 1px solid var(--border-strong);
+}
+/* When a wide table still has to scroll, the first column (the name) stays in view. */
+.table-wrap table th:first-child,
+.table-wrap table td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+tbody tr:hover > td:first-child {
+  background: var(--surface-2);
+}
+tr.group-row td:first-child,
+tr.group-row:hover > td:first-child {
+  background: var(--bg-elevated);
+}
+@media (max-width: 700px) {
+  th,
+  td {
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+  td {
+    max-width: 36ch;
+  }
 }
 tbody tr:last-child td {
   border-bottom: 0;
