@@ -20,7 +20,7 @@ import { Card, ChartTip, EmptyState, Loading, PageHeader, Pager, Segmented, Spli
 import { scoreTone } from "@/components/Evaluation";
 import { type BoardScope, boardLink, qs, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, periodLabel, shiftDays, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
-import type { Me, ProjectDetail } from "@/lib/types";
+import type { ProjectDetail } from "@/lib/types";
 
 type Period = "week" | "month";
 
@@ -39,7 +39,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   };
   const step = (by: number) => setCursor((c) => (c === null ? c : period === "week" ? shiftWeeks(c, by) : shiftMonths(c, by)));
   const { data, error } = useApi<ProjectDetail>(start && `/metrics/projects/${id}${qs({ period, start })}`, { keepPreviousData: true });
-  const { data: me } = useApi<Me>("/auth/me");
 
   const header = (
     <PageHeader
@@ -166,7 +165,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </Card>
       </div>
 
-      <ProjectRepos repos={data.repos} businessProjectId={data.project.id} scope={scope} me={me} period={days} />
+      <ProjectRepos repos={data.repos} businessProjectId={data.project.id} scope={scope} period={days} />
 
       <ReviewResults businessProjectId={data.project.id} repos={data.repos} period={days} id="review-results-project" defaultCollapsed />
     </>

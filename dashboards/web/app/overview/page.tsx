@@ -15,70 +15,118 @@ import {
   YAxis,
 } from "recharts";
 
+import { Score, scoreTone } from "@/components/Evaluation";
 import { Icon } from "@/components/icons";
-import { Card, ChartTip, CountLink, EmptyState, Kpi, Loading, PageHeader, Pager, Pill, Segmented, Sparkline } from "@/components/ui";
-import { boardLink, qs, useApi } from "@/lib/api";
-import { num, periodLabel, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
+import { Card, ChartTip, CountLink, EmptyState, Loading, PageHeader, Pager, Segmented, Sparkline, SplitBar, StatStrip, StripStat } from "@/components/ui";
+import { type BoardScope, boardLink, qs, useApi } from "@/lib/api";
+import { delta, num, periodLabel, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
 import type { ProjectEntry, ProjectsOverview } from "@/lib/types";
 
 type Period = "week" | "month";
+type View = "grid" | "table";
 const COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)", "var(--chart-6)"];
+const VIEW_STORE = "cp:project-view";
 
-function scoreTone(score: number | null): "good" | "warn" | "bad" | undefined {
-  if (score === null) return undefined;
-  return score >= 80 ? "good" : score >= 65 ? "warn" : "bad";
+const health = (p: ProjectEntry) => (p.open_critical ? "critical" : p.open_high ? "high" : p.reviews ? "ok" : "idle");
+
+/** Critical / high as two small chips (zeros fade); each opens its findings when it has any. */
+function SevPair({ critical, high, hrefC, hrefH, what }: { critical: number; high: number; hrefC?: string | null; hrefH?: string | null; what: string }) {
+  const label = `${critical} critical, ${high} high ${what}`;
+  return (
+    <span className="sev-row" title={label}>
+      <span className={`sev-count critical${critical ? "" : " zero"}`}>
+        <CountLink n={critical} href={hrefC ?? null} />
+      </span>
+      <span className={`sev-count high${high ? "" : " zero"}`}>
+        <CountLink n={high} href={hrefH ?? null} />
+      </span>
+      <span className="visually-hidden">{label}</span>
+    </span>
+  );
 }
 
-function ProjectCard({ p }: { p: ProjectEntry }) {
+/** One dự án at a glance: score and its change, the trend, open critical / high; opens the dự án. */
+function ProjectTile({ p }: { p: ProjectEntry }) {
+  const change = p.delta.avg_score;
   const body = (
     <>
-      <div className="head">
-        <div style={{ minWidth: 0 }}>
-          <div className="name">{p.name}</div>
-          <div className="small muted">
-            {p.repos} repo · {p.reviews} review
-          </div>
-        </div>
-        {p.id !== null && (
-          <span className="faint">
-            <Icon name="chevronRight" size={16} />
+      <span className="p-name">{p.name}</span>
+      <span className="p-meta">
+        {p.repos} repo · {p.reviews} review
+      </span>
+      <span className="p-score">
+        {p.avg_score === null ? <span className="faint">—</span> : <span className={`score ${scoreTone(p.avg_score) ?? ""}`}>{num(p.avg_score, 1)}</span>}
+        {change !== null && change !== 0 && (
+          <span className={`kstat-delta ${change > 0 ? "up" : "down"}`} title="Điểm TB so với kỳ trước">
+            <Icon name={change > 0 ? "trendUp" : "trendDown"} size={11} />
+            {delta(change, 1)}
           </span>
         )}
-      </div>
-      <div className="big">
-        {p.avg_score === null ? "—" : num(p.avg_score, 1)}
-        <span className="unit">điểm TB</span>
-        {p.delta.avg_score !== null && (
-          <span className={`pill ${p.delta.avg_score >= 0 ? "good" : "bad"}`} style={{ marginLeft: 6 }}>
-            {p.delta.avg_score > 0 ? "+" : ""}
-            {num(p.delta.avg_score, 1)}
-          </span>
-        )}
-      </div>
-      <div className="spark">
+      </span>
+      <span className="p-spark">
         <Sparkline values={p.trend.map((v) => (v === null ? null : String(v)))} />
-      </div>
-      <div className="stats">
-        {p.pass_rate !== null && <Pill tone={p.pass_rate >= 80 ? "good" : p.pass_rate >= 50 ? "warn" : "bad"}>{num(p.pass_rate, 0)}% approve</Pill>}
-        <Pill tone={p.critical ? "bad" : "good"}>{p.critical} critical mới</Pill>
-        <Pill tone={p.high ? "warn" : "good"}>{p.high} high mới</Pill>
-        <Pill tone={p.open_critical ? "bad" : undefined}>{p.open_critical} critical đang mở</Pill>
-        <Pill tone={p.open_high ? "warn" : undefined}>{p.open_high} high đang mở</Pill>
-        {p.delta.reviews !== 0 && (
-          <Pill>
-            {p.delta.reviews > 0 ? "+" : ""}
-            {p.delta.reviews} review
-          </Pill>
-        )}
-      </div>
+      </span>
+      <span className="p-sev">
+        <SevPair critical={p.open_critical} high={p.open_high} what="đang mở" />
+      </span>
     </>
   );
   return p.id === null ? (
-    <div className="card project-card">{body}</div>
+    <div className={`proj-tile h-${health(p)}`} title="Repo chưa gom vào dự án nào">
+      {body}
+    </div>
   ) : (
-    <Link href={`/projects/${p.id}`} className="card project-card">
+    <Link href={`/projects/${p.id}`} className={`proj-tile h-${health(p)}`}>
       {body}
     </Link>
+  );
+}
+
+function ProjectTable({ projects, inPeriod }: { projects: ProjectEntry[]; inPeriod: BoardScope["period"] }) {
+  const link = (severity: "critical" | "high", p: ProjectEntry, period: boolean) =>
+    p.id === null ? null : boardLink(severity, { project: { id: p.id, name: p.name }, period: period ? inPeriod : undefined });
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Dự án</th>
+            <th className="num">Repo</th>
+            <th className="num">Review</th>
+            <th className="num">Điểm TB</th>
+            <th>Mới C/H</th>
+            <th>Mở C/H</th>
+            <th className="num">Medium</th>
+            <th className="num">Low</th>
+            <th className="num">LOC</th>
+          </tr>
+        </thead>
+        <tbody>
+          {projects.map((p) => (
+            <tr key={p.id ?? "none"}>
+              <td>
+                <span className={`health-dot h-${health(p)}`} aria-hidden="true" />{" "}
+                {p.id === null ? <span className="muted">{p.name}</span> : <Link href={`/projects/${p.id}`}>{p.name}</Link>}
+              </td>
+              <td className="num">{p.repos}</td>
+              <td className="num">{p.reviews}</td>
+              <td className="num">
+                <Score value={p.avg_score} strong />
+              </td>
+              <td className="nowrap">
+                <SevPair critical={p.critical} high={p.high} what="mới trong kỳ" hrefC={link("critical", p, true)} hrefH={link("high", p, true)} />
+              </td>
+              <td className="nowrap">
+                <SevPair critical={p.open_critical} high={p.open_high} what="đang mở" hrefC={link("critical", p, false)} hrefH={link("high", p, false)} />
+              </td>
+              <td className="num">{p.medium || <span className="faint">0</span>}</td>
+              <td className="num">{p.low || <span className="faint">0</span>}</td>
+              <td className="num muted">{p.loc.toLocaleString("vi-VN")}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -97,12 +145,28 @@ export default function OverviewPage() {
   const step = (by: number) => setCursor((c) => (c === null ? c : period === "week" ? shiftWeeks(c, by) : shiftMonths(c, by)));
 
   const { data, error } = useApi<ProjectsOverview>(start && `/metrics/projects${qs({ period, start })}`, { keepPreviousData: true });
+  const [view, setView] = useState<View>("grid");
+  useEffect(() => {
+    try {
+      const v = window.localStorage.getItem(VIEW_STORE);
+      if (v === "grid" || v === "table") setView(v);
+    } catch {
+      /* blocked storage: keep the default */
+    }
+  }, []);
+  const changeView = (v: View) => {
+    setView(v);
+    try {
+      window.localStorage.setItem(VIEW_STORE, v);
+    } catch {
+      /* blocked storage: the choice just does not persist */
+    }
+  };
 
   const header = (
     <PageHeader
       eyebrow="Tổng quan"
       title="Chất lượng code theo dự án"
-      subtitle="Số liệu tổng hợp của mọi dự án trong kỳ, so với kỳ trước."
       actions={
         <>
           <Segmented<Period>
@@ -151,16 +215,30 @@ export default function OverviewPage() {
   return (
     <>
       {header}
-      <div className="grid kpis">
-        <Kpi label="Reviews trong kỳ" value={t.reviews} digits={0} change={t.delta.reviews} />
-        <Kpi label="Điểm trung bình" value={t.avg_score} change={t.delta.avg_score} hint="Trung bình điểm review (0–100) của mọi dự án" />
-        <Kpi label="Critical mới" value={t.critical} digits={0} change={t.delta.critical} higherIsBetter={false} href={boardLink("critical", { period: inPeriod })} />
-        <Kpi label="High mới" value={t.high} digits={0} change={t.delta.high} higherIsBetter={false} href={boardLink("high", { period: inPeriod })} />
-        <Kpi label="Critical đang mở" value={t.open_critical} digits={0} hint="Chưa xử lý, mọi thời kỳ" href={boardLink("critical")} />
-        <Kpi label="High đang mở" value={t.open_high} digits={0} hint="Chưa xử lý, mọi thời kỳ" href={boardLink("high")} />
-        <Kpi label="Tỉ lệ APPROVE" value={t.pass_rate} unit="%" hint={`${t.approve} approve · ${t.fix_required} fix · ${t.block} block`} />
-        <Kpi label="Dự án · Repo" value={t.projects} digits={0} unit={`· ${t.repos} repo`} />
-      </div>
+      <StatStrip label="Kết quả của mọi dự án trong kỳ">
+        <StripStat label="Review" value={t.reviews} change={t.delta.reviews} />
+        <StripStat label="Điểm TB" title="Trung bình điểm review (0–100) của mọi dự án" value={t.avg_score} digits={1} change={t.delta.avg_score} tone={scoreTone(t.avg_score) ?? undefined} />
+        <StripStat label="Critical mới" value={t.critical} change={t.delta.critical} higherIsBetter={false} tone={t.critical ? "bad" : undefined} href={boardLink("critical", { period: inPeriod })} />
+        <StripStat label="High mới" value={t.high} change={t.delta.high} higherIsBetter={false} tone={t.high ? "warn" : undefined} href={boardLink("high", { period: inPeriod })} />
+        <StripStat label="Critical mở" title="Chưa xử lý, mọi thời kỳ" value={t.open_critical} tone={t.open_critical ? "bad" : undefined} href={boardLink("critical")} />
+        <StripStat label="High mở" title="Chưa xử lý, mọi thời kỳ" value={t.open_high} tone={t.open_high ? "warn" : undefined} href={boardLink("high")} />
+        <StripStat
+          label="Tỉ lệ APPROVE"
+          value={t.pass_rate}
+          unit="%"
+          sub={
+            <SplitBar
+              label="Kết luận"
+              parts={[
+                { name: "Approve", value: t.approve, color: "var(--good)" },
+                { name: "Fix required", value: t.fix_required, color: "var(--sev-high)" },
+                { name: "Block", value: t.block, color: "var(--sev-critical)" },
+              ]}
+            />
+          }
+        />
+        <StripStat label="Dự án" value={t.projects} sub={`${t.repos} repo`} />
+      </StatStrip>
 
       {data.projects.length === 0 ? (
         <Card>
@@ -170,14 +248,37 @@ export default function OverviewPage() {
         </Card>
       ) : (
         <>
-          <div className="grid three">
-            {data.projects.map((p) => (
-              <ProjectCard key={p.id ?? "none"} p={p} />
-            ))}
-          </div>
+          <Card
+            id="overview-projects"
+            title={`Dự án · ${named.length}`}
+            actions={
+              <Segmented<View>
+                label="Kiểu xem"
+                value={view}
+                onChange={changeView}
+                options={[
+                  { value: "grid", label: "Lưới" },
+                  { value: "table", label: "Bảng" },
+                ]}
+              />
+            }
+            flush
+          >
+            {view === "grid" ? (
+              <ul className="proj-grid">
+                {data.projects.map((p) => (
+                  <li key={p.id ?? "none"}>
+                    <ProjectTile p={p} />
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <ProjectTable projects={data.projects} inPeriod={inPeriod} />
+            )}
+          </Card>
 
           <div className="grid two">
-            <Card title="Reviews và lỗi nghiêm trọng theo dự án" subtitle="Trong kỳ đang xem">
+            <Card title="Review và lỗi theo dự án" actions={<span className="muted small">trong kỳ</span>}>
               <div className="chart-box">
                 <ResponsiveContainer>
                   <BarChart data={bars} margin={{ top: 8, right: 8, bottom: 0, left: -16 }} barCategoryGap="30%">
@@ -193,14 +294,14 @@ export default function OverviewPage() {
                     <YAxis allowDecimals={false} tickLine={false} axisLine={false} fontSize={12} />
                     <Tooltip content={<ChartTip digits={0} />} cursor={{ fill: "var(--surface-2)" }} />
                     <Legend iconType="circle" iconSize={8} />
-                    <Bar dataKey="reviews" name="Reviews" fill="var(--chart-1)" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                    <Bar dataKey="reviews" name="Review" fill="var(--chart-1)" radius={[4, 4, 0, 0]} maxBarSize={40} />
                     <Bar dataKey="critical" name="Critical mới" fill="var(--sev-critical)" radius={[4, 4, 0, 0]} maxBarSize={40} />
                     <Bar dataKey="high" name="High mới" fill="var(--sev-high)" radius={[4, 4, 0, 0]} maxBarSize={40} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </Card>
-            <Card title="Điểm trung bình theo kỳ" subtitle={`${data.trend_starts.length} kỳ gần nhất, tối đa 6 dự án`}>
+            <Card title="Điểm TB theo kỳ" actions={<span className="muted small" title="Tối đa 6 dự án">{data.trend_starts.length} kỳ</span>}>
               <div className="chart-box">
                 <ResponsiveContainer>
                   <LineChart data={trendRows} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
@@ -218,54 +319,6 @@ export default function OverviewPage() {
             </Card>
           </div>
 
-          <Card title="Bảng dự án" flush>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Dự án</th>
-                    <th className="num">Repo</th>
-                    <th className="num">Reviews</th>
-                    <th className="num">Điểm TB</th>
-                    <th className="num">Critical</th>
-                    <th className="num">High</th>
-                    <th className="num">Medium</th>
-                    <th className="num">Low</th>
-                    <th className="num">Critical đang mở</th>
-                    <th className="num">High đang mở</th>
-                    <th className="num">LOC</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.projects.map((p) => (
-                    <tr key={p.id ?? "none"}>
-                      <td>{p.id === null ? <span className="muted">{p.name}</span> : <Link href={`/projects/${p.id}`}>{p.name}</Link>}</td>
-                      <td className="num">{p.repos}</td>
-                      <td className="num">{p.reviews}</td>
-                      <td className="num">
-                        {p.avg_score === null ? <span className="faint">—</span> : <Pill tone={scoreTone(p.avg_score)}>{num(p.avg_score, 1)}</Pill>}
-                      </td>
-                      <td className={`num${p.critical ? " bad" : ""}`}>
-                        <CountLink n={p.critical} href={p.id === null ? null : boardLink("critical", { project: { id: p.id, name: p.name }, period: inPeriod })} />
-                      </td>
-                      <td className="num">
-                        <CountLink n={p.high} href={p.id === null ? null : boardLink("high", { project: { id: p.id, name: p.name }, period: inPeriod })} />
-                      </td>
-                      <td className="num">{p.medium}</td>
-                      <td className="num">{p.low}</td>
-                      <td className={`num${p.open_critical ? " bad" : ""}`}>
-                        <CountLink n={p.open_critical} href={p.id === null ? null : boardLink("critical", { project: { id: p.id, name: p.name } })} />
-                      </td>
-                      <td className="num">
-                        <CountLink n={p.open_high} href={p.id === null ? null : boardLink("high", { project: { id: p.id, name: p.name } })} />
-                      </td>
-                      <td className="num muted">{p.loc.toLocaleString("vi-VN")}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
         </>
       )}
     </>

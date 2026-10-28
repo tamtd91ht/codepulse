@@ -10,7 +10,7 @@ import { ReviewResults } from "@/components/ReviewResults";
 import { Card, Drawer, EmptyState, Pager, Pill, Segmented, SortTh, StatStrip, StripStat, useSort } from "@/components/ui";
 import { type BoardScope, boardLink, qs, useApi } from "@/lib/api";
 import { date, num, relative } from "@/lib/format";
-import type { KnowledgeSummary, Me, ProjectRepoRow } from "@/lib/types";
+import type { KnowledgeSummary, ProjectRepoRow } from "@/lib/types";
 
 /*
  * The repos of a dự án, built for 1 to 100+ of them: a map that shows the structure (grouped by
@@ -305,14 +305,12 @@ function RepoList({ rows, scope, onOpen }: { rows: Row[]; scope: BoardScope; onO
 function RepoDrawer({
   row,
   scope,
-  me,
   period,
   businessProjectId,
   onClose,
 }: {
   row: Row;
   scope: BoardScope;
-  me: Me | undefined;
   period: { from: string; to: string; label: string };
   businessProjectId: number;
   onClose: () => void;
@@ -347,7 +345,7 @@ function RepoDrawer({
       </StatStrip>
       {row.tracked ? (
         <div className="drawer-block">
-          <KnowledgeTile repo={row} me={me} />
+          <KnowledgeTile repo={row} />
         </div>
       ) : (
         <p className="muted small">Repo đã bỏ theo dõi: không còn tiền đề review.</p>
@@ -365,13 +363,11 @@ export function ProjectRepos({
   repos,
   businessProjectId,
   scope,
-  me,
   period,
 }: {
   repos: ProjectRepoRow[];
   businessProjectId: number;
   scope: BoardScope;
-  me: Me | undefined;
   period: { from: string; to: string; label: string };
 }) {
   const summary = useApi<KnowledgeSummary[]>(`/knowledge/summary${qs({ business_project_id: businessProjectId })}`, {
@@ -491,7 +487,7 @@ export function ProjectRepos({
           </>
         )}
       </Card>
-      {open && <RepoDrawer row={open} scope={scope} me={me} period={period} businessProjectId={businessProjectId} onClose={() => setOpenId(null)} />}
+      {open && <RepoDrawer row={open} scope={scope} period={period} businessProjectId={businessProjectId} onClose={() => setOpenId(null)} />}
     </>
   );
 }

@@ -2,8 +2,8 @@
 
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { AttentionBadge, RangePicker, Score, SeverityRow, Stat, VerdictMix, rangeLabel, type SharedRange, useCardRange } from "@/components/Evaluation";
-import { Alert, Card, ChartTip, CountLink, EmptyState, Loading } from "@/components/ui";
+import { AttentionBadge, RangePicker, Score, SeverityRow, VerdictMix, rangeLabel, scoreTone, type SharedRange, useCardRange } from "@/components/Evaluation";
+import { Alert, Card, ChartTip, EmptyState, Expander, Loading, StatStrip, StripStat } from "@/components/ui";
 import { boardLink, qs, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, num, relative, weekLabel } from "@/lib/format";
 import type { MemberEvaluationDetail, Person } from "@/lib/types";
@@ -20,13 +20,12 @@ export function MemberEvaluation({ person, range: shared }: { person: Person; ra
   const s = data?.summary;
   const name = person.full_name ?? person.primary_email ?? "";
   const period = data ? { range: data.range, label: rangeLabel(data.from, data.to), counted: false as const } : undefined;
-  const link = (severity: "critical" | "high", n: number) => (n && period ? boardLink(severity, { user: { id: person.id, name }, period }) : null);
+  const link = (severity: "critical" | "high", n: number) => (n && period ? boardLink(severity, { user: { id: person.id, name }, period }) : undefined);
 
   return (
     <Card
       id="member-evaluation"
       title="Đánh giá trong kỳ"
-      subtitle="Review hoàn tất, điểm theo LOC, kết luận và loại lỗi; theo repo và theo tuần."
       actions={<RangePicker value={range} onChange={setRange} />}
     >
       {!data && <Loading error={error} rows={3} />}
@@ -37,37 +36,24 @@ export function MemberEvaluation({ person, range: shared }: { person: Person; ra
       )}
       {data && s && (
         <div className={isLoading ? "eval-dim" : undefined}>
-          <div className="stats-strip">
-            <Stat label="Review">
-              {s.reviews}
-              {s.reviews > 0 && (
-                <span className="muted small">
-                  {" "}
-                  · {s.mrs} MR · {s.commits} commit
-                </span>
-              )}
-            </Stat>
-            <Stat label="Điểm TB (theo LOC)" hint="Review lớn nặng hơn review nhỏ">
-              <Score value={s.avg_score} strong />
-              {s.min_score !== null && s.reviews > 1 && <span className="muted small"> · thấp nhất {num(s.min_score, 0)}</span>}
-            </Stat>
-            <Stat label="Tỉ lệ approve">{s.pass_rate === null ? "—" : `${num(s.pass_rate, 0)}%`}</Stat>
-            <Stat label="Critical / High">
-              <span className={s.critical ? "bad" : undefined}>
-                <CountLink n={s.critical} href={link("critical", s.critical)} />
-              </span>
-              {" / "}
-              <span className={s.high ? "warn" : undefined}>
-                <CountLink n={s.high} href={link("high", s.high)} />
-              </span>
-            </Stat>
-            <Stat label="Lỗi / 100 LOC">{s.findings_per_100_loc === null ? "—" : num(s.findings_per_100_loc, 2)}</Stat>
-            <Stat label="Repo">{s.repos}</Stat>
-            <Stat label="Review gần nhất">{s.last_review_at ? relative(s.last_review_at) : "—"}</Stat>
-          </div>
+          <StatStrip label="Đánh giá trong kỳ" inline>
+            <StripStat label="Review" value={s.reviews} sub={s.reviews ? `${s.mrs} MR · ${s.commits} commit` : undefined} />
+            <StripStat
+              label="Điểm TB"
+              title={`Theo LOC: review lớn nặng hơn review nhỏ${s.min_score !== null && s.reviews > 1 ? ` · thấp nhất ${num(s.min_score, 0)}` : ""}`}
+              value={s.avg_score}
+              digits={1}
+              tone={scoreTone(s.avg_score)}
+            />
+            <StripStat label="Tỉ lệ approve" unit="%" value={s.pass_rate} />
+            <StripStat label="Critical" value={s.critical} tone={s.critical ? "bad" : undefined} href={link("critical", s.critical)} />
+            <StripStat label="High" value={s.high} tone={s.high ? "warn" : undefined} href={link("high", s.high)} />
+            <StripStat label="Lỗi/100 LOC" value={s.findings_per_100_loc} digits={2} />
+            <StripStat label="Repo" value={s.repos} sub={s.last_review_at ? relative(s.last_review_at) : undefined} title="Review gần nhất" />
+          </StatStrip>
           {s.needs_attention && (
             <p className="small" style={{ margin: "0 0 12px" }}>
-              <AttentionBadge b={s} /> <span className="muted">Có critical hoặc điểm TB dưới 65 trong kỳ: nên xem cùng nhau các finding bên dưới.</span>
+              <AttentionBadge b={s} />
             </p>
           )}
 
@@ -134,51 +120,52 @@ export function MemberEvaluation({ person, range: shared }: { person: Person; ra
                 </ResponsiveContainer>
               </div>
 
-              <h3 className="muted">Theo repo</h3>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Repo</th>
-                      <th className="num">Review</th>
-                      <th className="num">Điểm TB</th>
-                      <th>Kết luận</th>
-                      <th>Finding</th>
-                      <th className="num">Lỗi / 100 LOC</th>
-                      <th>Gần nhất</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.by_repo.map((r) => (
-                      <tr key={r.project_id ?? "none"} className={r.needs_attention ? "attention" : undefined}>
-                        <td>
-                          <div className="cell-main">
-                            {r.path ? <code>{r.path}</code> : <span className="muted">Repo đã gỡ</span>}
-                            <AttentionBadge b={r} />
-                          </div>
-                        </td>
-                        <td className="num">
-                          {r.reviews}
-                          <div className="sub muted small nowrap">
-                            {r.mrs} MR · {r.commits} commit
-                          </div>
-                        </td>
-                        <td className="num">
-                          <Score value={r.avg_score} strong />
-                        </td>
-                        <td>
-                          <VerdictMix verdicts={r.verdicts} compact />
-                        </td>
-                        <td>
-                          <SeverityRow b={r} />
-                        </td>
-                        <td className="num">{r.findings_per_100_loc === null ? "—" : num(r.findings_per_100_loc, 2)}</td>
-                        <td className="muted nowrap">{r.last_review_at ? relative(r.last_review_at) : "—"}</td>
+              <Expander summary={`Theo repo · ${data.by_repo.length}`}>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Repo</th>
+                        <th className="num">Review</th>
+                        <th className="num">Điểm TB</th>
+                        <th>Kết luận</th>
+                        <th>Finding</th>
+                        <th className="num">Lỗi / 100 LOC</th>
+                        <th>Gần nhất</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {data.by_repo.map((r) => (
+                        <tr key={r.project_id ?? "none"} className={r.needs_attention ? "attention" : undefined}>
+                          <td>
+                            <div className="cell-main">
+                              {r.path ? <code>{r.path}</code> : <span className="muted">Repo đã gỡ</span>}
+                              <AttentionBadge b={r} />
+                            </div>
+                          </td>
+                          <td className="num">
+                            {r.reviews}
+                            <div className="sub muted small nowrap">
+                              {r.mrs} MR · {r.commits} commit
+                            </div>
+                          </td>
+                          <td className="num">
+                            <Score value={r.avg_score} strong />
+                          </td>
+                          <td>
+                            <VerdictMix verdicts={r.verdicts} compact />
+                          </td>
+                          <td>
+                            <SeverityRow b={r} />
+                          </td>
+                          <td className="num">{r.findings_per_100_loc === null ? "—" : num(r.findings_per_100_loc, 2)}</td>
+                          <td className="muted nowrap">{r.last_review_at ? relative(r.last_review_at) : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Expander>
             </>
           )}
         </div>

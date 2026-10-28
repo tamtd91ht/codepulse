@@ -291,11 +291,24 @@ export function StripStat({
 }
 
 /** A row of numbers in one card, divided by hairlines: the page's results in one glance. */
-export function StatStrip({ children, label }: { children: ReactNode; label: string }) {
+export function StatStrip({ children, label, inline }: { children: ReactNode; label: string; inline?: boolean }) {
   return (
-    <section className="card stat-strip" aria-label={label}>
+    <section className={inline ? "stat-strip inline" : "card stat-strip"} aria-label={label}>
       {children}
     </section>
+  );
+}
+
+/** Details kept one click away: a summary line that opens the rest (native, keyboard ready). */
+export function Expander({ summary, children, open }: { summary: ReactNode; children: ReactNode; open?: boolean }) {
+  return (
+    <details className="expander" open={open}>
+      <summary>
+        <Icon name="chevronRight" size={14} />
+        {summary}
+      </summary>
+      <div className="expander-body">{children}</div>
+    </details>
   );
 }
 

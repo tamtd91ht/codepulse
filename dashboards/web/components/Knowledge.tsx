@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { IconButton } from "@/components/icons";
-import { Alert, EmptyState, ExternalLink, Loading, Message, Pill } from "@/components/ui";
+import { ExternalLink, Loading, Message, Pill } from "@/components/ui";
 import { ApiError, canEditKnowledge, knowledgeApi, knowledgePath, knowledgePoll, useApi } from "@/lib/api";
 import { date, dateTime } from "@/lib/format";
 import type { KnowledgeResponse, KnowledgeSource, KnowledgeStaleReason, KnowledgeVersion, Me } from "@/lib/types";
@@ -181,78 +181,63 @@ function ConfirmRefresh({
   );
 }
 
-/** One repo's knowledge summary on the dự án page (docs/specs/19 §3.5). */
-export function KnowledgeTile({ repo, me }: { repo: { id: number; path_with_namespace: string }; me: Me | undefined }) {
-  const { data, error, mutate } = useApi<KnowledgeResponse>(knowledgePath(repo.id), { refreshInterval: knowledgePoll });
-  const detail = `/projects/${repo.id}/knowledge`;
-  const button = data ? (
-    <RefreshKnowledgeButton projectId={repo.id} repoName={repo.path_with_namespace} building={data.building} me={me} onQueued={mutate} size="sm" />
-  ) : null;
-
+/**
+ * One repo's knowledge in a few lines (docs/specs/19 §3.5): version and state as chips, what
+ * the repo does in two lines, the item counts in one, and one way in: "Xem chi tiết" opens the
+ * knowledge page, where the premises are read, edited, approved and rebuilt.
+ */
+export function KnowledgeTile({ repo }: { repo: { id: number; path_with_namespace: string } }) {
+  const { data, error } = useApi<KnowledgeResponse>(knowledgePath(repo.id), { refreshInterval: knowledgePoll });
+  const active = data?.active;
+  const counts = active
+    ? `${active.counts.invariants} bất biến · ${active.counts.checks} check · ${active.counts.severity_rules} quy tắc severity · ${active.counts.code_conventions} convention`
+    : null;
   return (
-    <article className="profile-card knowledge-tile">
-      <div className="head">
-        <div style={{ minWidth: 0 }}>
-          <div className="name">{repo.path_with_namespace}</div>
-          {data?.active && (
-            <div className="small muted">
-              Bản v{data.active.version} · dựng {dateTime(data.active.created_at)} · {BUILT_BY_LABEL[data.active.built_by] ?? data.active.built_by}
-            </div>
-          )}
-        </div>
-        {data && (
-          <div className="chips" style={{ margin: 0, justifyContent: "flex-end" }}>
-            {data.building && (
-              <Pill tone="info">
-                <span className="spinner" aria-hidden="true" /> Đang rà soát…
-              </Pill>
-            )}
-            {data.active?.stale && <StalePill reasons={data.active.stale_reasons} />}
-            {data.active && <ApprovalPill active={data.active} />}
-          </div>
+    <article className="knowledge-tile compact">
+      <div className="kt-head">
+        <h3>Tiền đề review</h3>
+        {active && (
+          <span
+            className="muted small"
+            title={`Dựng ${dateTime(active.created_at)} · ${BUILT_BY_LABEL[active.built_by] ?? active.built_by}`}
+          >
+            v{active.version} · {date(active.created_at)}
+          </span>
         )}
+        <span className="chips" style={{ margin: 0 }}>
+          {data?.building && (
+            <Pill tone="info">
+              <span className="spinner" aria-hidden="true" /> Đang rà soát
+            </Pill>
+          )}
+          {data?.last_failure && (
+            <Pill
+              tone="bad"
+              icon="alertCircle"
+              title={`Lần rà soát ${dateTime(data.last_failure.created_at)} lỗi: ${data.last_failure.error ?? "không rõ"}`}
+            >
+              Lần dựng gần nhất lỗi
+            </Pill>
+          )}
+          {active?.stale && <StalePill reasons={active.stale_reasons} />}
+          {active && <ApprovalPill active={active} />}
+        </span>
+        <Link href={`/projects/${repo.id}/knowledge`} className="button sm kt-open">
+          Xem chi tiết
+        </Link>
       </div>
-      {data?.last_failure && (
-        <Alert tone="error">
-          Lần rà soát {dateTime(data.last_failure.created_at)} ({BUILT_BY_LABEL[data.last_failure.built_by] ?? data.last_failure.built_by}) lỗi:{" "}
-          <code>{data.last_failure.error ?? "không rõ"}</code>
-          {data.last_failure.cost_usd ? <> · đã tốn ${data.last_failure.cost_usd.toFixed(2)}</> : null}
-        </Alert>
-      )}
       {!data ? (
         <Loading error={error} rows={2} />
-      ) : !data.active ? (
-        <>
-          <EmptyState icon="book" title="Chưa có tiền đề review">
-            Lần review sâu đầu tiên của repo sẽ tự dựng tiền đề (đọc <code>.claude</code>, tài liệu và mã nguồn), tính vào chi
-            phí review đó. Lead có thể dựng ngay bằng nút bên dưới.
-          </EmptyState>
-          {button && <div className="toolbar" style={{ margin: 0 }}>{button}</div>}
-        </>
+      ) : !active ? (
+        <p className="muted small kt-line">Chưa có: lần review sâu đầu tiên sẽ tự dựng, hoặc dựng ngay ở trang chi tiết.</p>
       ) : (
         <>
-          {data.active.data.domain?.summary && <p className="summary">{data.active.data.domain.summary}</p>}
-          <dl className="kn-counts">
-            {(
-              [
-                ["Bất biến", data.active.counts.invariants],
-                ["Check", data.active.counts.checks],
-                ["Quy tắc severity", data.active.counts.severity_rules],
-                ["Convention", data.active.counts.code_conventions],
-              ] as const
-            ).map(([label, n]) => (
-              <div key={label}>
-                <dd>{n}</dd>
-                <dt>{label}</dt>
-              </div>
-            ))}
-          </dl>
-          <div className="toolbar" style={{ margin: 0 }}>
-            <Link href={detail} className="button">
-              Xem chi tiết
-            </Link>
-            {button}
-          </div>
+          {active.data.domain?.summary && (
+            <p className="kt-summary" title={active.data.domain.summary}>
+              {active.data.domain.summary}
+            </p>
+          )}
+          <p className="muted small kt-line">{counts}</p>
         </>
       )}
     </article>

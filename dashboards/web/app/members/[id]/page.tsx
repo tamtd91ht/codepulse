@@ -5,12 +5,12 @@ import { use, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { IconButton } from "@/components/icons";
-import { useUrlRange } from "@/components/Evaluation";
+import { scoreTone, useUrlRange } from "@/components/Evaluation";
 import { MemberEvaluation } from "@/components/MemberEvaluation";
 import { ReviewResults } from "@/components/ReviewResults";
-import { Alert, Avatar, Card, ChartTip, EmptyState, Kpi, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
+import { Alert, Avatar, Card, ChartTip, EmptyState, Expander, Loading, PageHeader, Pill, SeverityBadge, StatStrip, StripStat } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
-import { CATEGORY_LABEL, ratio, weekLabel } from "@/lib/format";
+import { CATEGORY_LABEL, weekLabel } from "@/lib/format";
 import type {
   BoardFinding,
   CategoryWeek,
@@ -22,6 +22,25 @@ import type {
   TelegramAccount,
   TelegramLinkCode,
 } from "@/lib/types";
+
+const TOP = 6;
+
+function FindingItem({ f }: { f: BoardFinding }) {
+  return (
+    <li>
+      <SeverityBadge severity={f.severity} />
+      <div className="body">
+        <Link href={`/reviews/${f.review_id}`}>{f.title}</Link>
+        <div className="meta">
+          <code>
+            {f.file_path}:{f.line_start}
+          </code>{" "}
+          · {f.age_days} ngày
+        </div>
+      </div>
+    </li>
+  );
+}
 
 function Heatmap({ cells }: { cells: CategoryWeek[] }) {
   const weeks = [...new Set(cells.map((c) => c.week))].sort();
@@ -113,7 +132,7 @@ function TelegramCard() {
   }
 
   return (
-    <Card title="Telegram" subtitle="Liên kết để gửi lệnh review cho bot của dự án (ví dụ /review mr 123, /review today).">
+    <Card title="Telegram" actions={<span className="muted small" title="Ví dụ /review mr 123, /review today">gửi lệnh review cho bot</span>}>
       {error && <Alert tone="error">Lỗi: {error}</Alert>}
       {accounts.error && <Alert tone="error">Không tải được liên kết: {accounts.error.message}</Alert>}
       {!accounts.data && !accounts.error && <Loading rows={1} />}
@@ -203,7 +222,7 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
   return (
     <>
       <PageHeader
-        eyebrow="Member detail"
+        eyebrow="Thành viên"
         title={name}
         subtitle={person.primary_email}
         avatar={<Avatar name={person.full_name} email={person.primary_email} size="lg" />}
@@ -211,20 +230,36 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
 
       {!series && <Loading error={seriesError} rows={3} />}
       {series && (
-        <>
-          <div className="grid kpis">
-            <Kpi label="Quality Index (tuần gần nhất)" value={latest?.quality_index} change={series.delta.quality_index} />
-            <Kpi label="Điểm TB" value={latest?.avg_score} change={series.delta.avg_score} />
-            <Kpi
-              label="Fix rate"
-              unit="%"
-              value={latest?.fix_rate === null || !latest ? null : Number(latest.fix_rate) * 100}
-              digits={0}
-              hint="Tỉ lệ lỗi critical/high đã sửa ở lần review sau"
-            />
-            <Kpi label="QI trung bình team" value={series.team_quality_index} />
-          </div>
-          <Card title="12 tuần gần nhất" subtitle="Điểm trung bình và Quality Index theo tuần">
+        <StatStrip label="Tuần gần nhất">
+          <StripStat
+            label="Quality Index"
+            title="Tuần gần nhất"
+            value={latest?.quality_index}
+            digits={1}
+            change={series.delta.quality_index ?? null}
+            tone={scoreTone(latest?.quality_index == null ? null : Number(latest.quality_index))}
+          />
+          <StripStat label="Điểm TB" title="Tuần gần nhất" value={latest?.avg_score} digits={1} change={series.delta.avg_score ?? null} />
+          <StripStat
+            label="Fix rate"
+            title="Tỉ lệ lỗi critical/high đã sửa ở lần review sau"
+            unit="%"
+            value={latest?.fix_rate == null ? null : Number(latest.fix_rate) * 100}
+          />
+          <StripStat label="QI TB team" value={series.team_quality_index} digits={1} />
+          <StripStat
+            label="Finding mở"
+            title="Chưa xử lý, mọi thời kỳ"
+            value={open ? findings.length : undefined}
+            unit={open?.next_cursor ? "+" : undefined}
+            tone={findings.some((f) => f.severity === "critical") ? "bad" : findings.length ? "warn" : undefined}
+          />
+        </StatStrip>
+      )}
+
+      <div className="grid wide-left">
+        <Card title="Xu hướng" actions={<span className="muted small">12 tuần</span>}>
+          {series ? (
             <div className="chart-box">
               <ResponsiveContainer>
                 <LineChart
@@ -254,48 +289,47 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
                 </LineChart>
               </ResponsiveContainer>
             </div>
-          </Card>
-        </>
-      )}
+          ) : (
+            <Loading error={seriesError} rows={4} />
+          )}
+        </Card>
+        <Card title={open ? `Finding đang mở · ${findings.length}${open.next_cursor ? "+" : ""}` : "Finding đang mở"} actions={<span className="muted small">nặng nhất trước</span>}>
+          {open ? (
+            findings.length ? (
+              <>
+                <ul className="finding-list">
+                  {findings.slice(0, TOP).map((f) => (
+                    <FindingItem key={f.id} f={f} />
+                  ))}
+                </ul>
+                {findings.length > TOP && (
+                  <Expander summary={`${findings.length - TOP} finding khác`}>
+                    <ul className="finding-list">
+                      {findings.slice(TOP).map((f) => (
+                        <FindingItem key={f.id} f={f} />
+                      ))}
+                    </ul>
+                  </Expander>
+                )}
+              </>
+            ) : (
+              <EmptyState icon="checkCircle" tone="good" title="Không có finding đang mở" />
+            )
+          ) : (
+            <Loading error={openError} rows={4} />
+          )}
+        </Card>
+      </div>
 
       <MemberEvaluation person={person} range={range} />
 
-      <Card title="Loại lỗi theo tuần" subtitle="Số finding của mỗi loại, 12 tuần gần nhất">
+      <Card id="member-heatmap" title="Loại lỗi theo tuần" actions={<span className="muted small">12 tuần</span>} defaultCollapsed>
         {heat ? <Heatmap cells={heat} /> : <Loading error={heatError} rows={4} />}
       </Card>
 
-      <ReviewResults person={person.id} repos={repos} range={range} />
+      <ReviewResults person={person.id} repos={repos} range={range} id="review-results-member" defaultCollapsed />
 
-      <Card title="Finding đang mở" subtitle="Critical và high xếp trước">
-        {open ? (
-          findings.length ? (
-            <ul className="finding-list">
-              {findings.map((f) => (
-                <li key={f.id}>
-                  <SeverityBadge severity={f.severity} />
-                  <div className="body">
-                    <Link href={`/reviews/${f.review_id}`}>{f.title}</Link>
-                    <div className="meta">
-                      <code>
-                        {f.file_path}:{f.line_start}
-                      </code>{" "}
-                      · {f.age_days} ngày
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <EmptyState icon="checkCircle" tone="good" title="Không có finding đang mở" />
-          )
-        ) : (
-          <Loading error={openError} rows={4} />
-        )}
-      </Card>
       {me?.id === person.id && <TelegramCard />}
-      <p className="muted small" style={{ marginTop: 12 }}>
-        Fix rate {ratio(latest?.fix_rate ?? null)} = tỉ lệ lỗi critical/high đã sửa ở lần review sau.
-      </p>
     </>
   );
 }

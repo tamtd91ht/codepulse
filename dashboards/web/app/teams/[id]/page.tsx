@@ -3,12 +3,12 @@
 import { use, useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { Score, scoreTone } from "@/components/Evaluation";
 import {
   Card,
   ChartTip,
   CountLink,
   EmptyState,
-  Kpi,
   Loading,
   PageHeader,
   Pager,
@@ -16,6 +16,8 @@ import {
   Segmented,
   SortTh,
   Sparkline,
+  StatStrip,
+  StripStat,
   useSort,
 } from "@/components/ui";
 import { type BoardScope, boardLink, qs, useApi } from "@/lib/api";
@@ -116,7 +118,7 @@ function MembersTable({ members, scope }: { members: LeaderboardRow[]; scope: Bo
               Fix rate
             </SortTh>
             <SortTh id="qi" sort={sort} onSort={toggle} num>
-              Quality Index
+              <span title="Chỉ hiện khi đủ số review tối thiểu">Quality Index</span>
             </SortTh>
             <th>8 tuần</th>
           </tr>
@@ -128,7 +130,9 @@ function MembersTable({ members, scope }: { members: LeaderboardRow[]; scope: Bo
                 <PersonLink id={m.user.id} name={m.user.full_name} email={m.user.primary_email} />
               </td>
               <td className="num">{m.reviews_count ?? 0}</td>
-              <td className="num">{num(m.avg_score)}</td>
+              <td className="num">
+                <Score value={m.avg_score === null ? null : Number(m.avg_score)} />
+              </td>
               <td className={`num${m.critical ? " bad" : ""}`}>
                 <CountLink n={m.critical ?? 0} href={link("critical", m)} />
               </td>
@@ -184,9 +188,8 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
 
   const header = (
     <PageHeader
-      eyebrow="Team overview"
+      eyebrow="Team"
       title={team?.name ?? "Team"}
-      subtitle="Chỉ số của kỳ so với kỳ trước, finding theo mức độ, điểm nóng và bảng thành viên."
       actions={
         <>
           <Segmented<Period>
@@ -243,30 +246,51 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
     <>
       {header}
 
-      <div className="grid kpis">
-        <Kpi label="Quality Index" value={current?.quality_index} change={d.quality_index} hint="50% điểm TB + 20% mật độ lỗi thấp + 15% build + 15% fix rate" />
-        <Kpi
+      <StatStrip label="Chỉ số của team trong kỳ">
+        <StripStat
+          label="Quality Index"
+          title="50% điểm TB + 20% mật độ lỗi thấp + 15% build + 15% fix rate"
+          value={current?.quality_index}
+          digits={1}
+          change={d.quality_index ?? null}
+          tone={scoreTone(current?.quality_index == null ? null : Number(current.quality_index))}
+        />
+        <StripStat
           label="Critical"
           value={current?.critical ?? 0}
-          digits={0}
           change={d.critical ?? null}
           higherIsBetter={false}
+          tone={current?.critical ? "bad" : undefined}
           href={teamScope ? boardLink("critical", teamScope) : undefined}
         />
-        <Kpi
+        <StripStat
           label="High"
           value={current?.high ?? 0}
-          digits={0}
           change={d.high ?? null}
           higherIsBetter={false}
+          tone={current?.high ? "warn" : undefined}
           href={teamScope ? boardLink("high", teamScope) : undefined}
         />
-        <Kpi label="Mật độ lỗi" unit="/ 100 LOC" value={current?.defect_density} change={d.defect_density} higherIsBetter={false} digits={2} />
-        <Kpi label="Build success" unit="%" value={current?.build_success_rate} change={d.build_success_rate} digits={0} />
-      </div>
+        <StripStat
+          label="Mật độ lỗi"
+          title="Finding trên 100 LOC"
+          unit="/100 LOC"
+          value={current?.defect_density}
+          digits={2}
+          change={d.defect_density ?? null}
+          higherIsBetter={false}
+        />
+        <StripStat
+          label="Build success"
+          unit="%"
+          value={current?.build_success_rate}
+          change={d.build_success_rate ?? null}
+        />
+        <StripStat label="Thành viên" value={board?.members?.length} />
+      </StatStrip>
 
       <div className="grid two">
-        <Card title="Finding theo mức độ" subtitle={period === "week" ? "12 tuần gần nhất" : "Các tháng gần nhất"}>
+        <Card title="Finding theo mức độ" actions={<span className="muted small">{period === "week" ? "12 tuần" : "các tháng gần nhất"}</span>}>
           <div className="chart-box">
             <ResponsiveContainer>
               <BarChart data={chart} margin={{ top: 8, right: 8, bottom: 0, left: -16 }} barCategoryGap="28%">
@@ -291,7 +315,7 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
           </div>
         </Card>
 
-        <Card title="Điểm nóng của kỳ" subtitle="Loại lỗi và file / module có nhiều finding nhất">
+        <Card title="Điểm nóng" actions={<span className="muted small">trong kỳ</span>}>
           {hot ? (
             <div className="grid hotspots" style={{ gap: 20 }}>
               <div>
@@ -313,16 +337,12 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
         </Card>
       </div>
 
-      <Card
-        title="Thành viên"
-        subtitle="Bấm tiêu đề cột để sắp xếp. Quality Index chỉ hiện khi đủ số review tối thiểu."
-        flush
-      >
+      <Card title={board?.members ? `Thành viên · ${board.members.length}` : "Thành viên"} flush>
         {board?.members ? (
           <MembersTable members={board.members} scope={scope} />
         ) : board || boardError?.status === 403 ? (
           <EmptyState icon="user" title="Điểm từng người chỉ hiển thị cho lead của team">
-            Quyết định Phase 0: manager xem số liệu tổng hợp, không xem điểm cá nhân.
+            Manager xem số liệu tổng hợp, không xem điểm cá nhân.
           </EmptyState>
         ) : (
           <div style={{ padding: "0 18px 16px" }}>

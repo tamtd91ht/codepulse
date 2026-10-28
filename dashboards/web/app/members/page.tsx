@@ -5,7 +5,7 @@ import { Bar, BarChart, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YA
 
 import { AttentionBadge, RangePicker, Score, VerdictMix, rangeLabel, rangeSearch, scoreTone, useUrlRange } from "@/components/Evaluation";
 import { Icon } from "@/components/icons";
-import { Alert, Card, ChartTip, CountLink, EmptyState, Kpi, Loading, PageHeader, PersonLink, Sparkline, SortTh, useSort } from "@/components/ui";
+import { Alert, Card, ChartTip, CountLink, EmptyState, Loading, PageHeader, PersonLink, Sparkline, SortTh, StatStrip, StripStat, useSort } from "@/components/ui";
 import { boardLink, qs, useApi } from "@/lib/api";
 import { num, relative } from "@/lib/format";
 import type { Me, MemberEvaluationRow, MembersEvaluation, Repo, Team } from "@/lib/types";
@@ -93,23 +93,11 @@ function MembersTable({
                 </div>
                 {m.teams.length > 0 && <div className="sub muted small">{m.teams.join(" · ")}</div>}
               </td>
-              <td className="num">
-                {m.reviews ? (
-                  <>
-                    <strong>{m.reviews}</strong>
-                    <div className="sub muted small nowrap">
-                      {m.mrs} MR · {m.commits} commit
-                    </div>
-                  </>
-                ) : (
-                  <span className="faint">0</span>
-                )}
+              <td className="num" title={m.reviews ? `${m.mrs} MR · ${m.commits} commit` : undefined}>
+                {m.reviews ? <strong>{m.reviews}</strong> : <span className="faint">0</span>}
               </td>
-              <td className="num">
+              <td className="num" title={m.min_score !== null && m.reviews > 1 ? `Thấp nhất ${num(m.min_score, 0)}` : undefined}>
                 <Score value={m.avg_score} strong />
-                {m.min_score !== null && m.reviews > 1 && (
-                  <div className="sub muted small nowrap">thấp nhất {num(m.min_score, 0)}</div>
-                )}
               </td>
               <td>
                 <VerdictMix verdicts={m.verdicts} compact />
@@ -235,7 +223,6 @@ export default function MembersEvaluationPage() {
       <PageHeader
         eyebrow="Đánh giá"
         title="Thành viên"
-        subtitle="Mỗi người đã được review bao nhiêu lần, điểm ra sao và lỗi gì, trong khoảng thời gian và phạm vi đã chọn. Bấm tên để xem chi tiết."
         actions={<RangePicker value={range} onChange={setRange} />}
       />
 
@@ -303,20 +290,37 @@ export default function MembersEvaluationPage() {
       )}
       {data && t && (
         <>
-          <div className={`grid kpis${isLoading ? " eval-dim" : ""}`}>
-            <Kpi label="Người có review" value={reviewed} digits={0} change={false} hint={`trên ${data.members.length} người trong phạm vi`} />
-            <Kpi label="Review hoàn tất" value={t.reviews} digits={0} change={false} hint={`${t.mrs} MR · ${t.commits} commit · ${t.loc.toLocaleString("vi")} LOC`} />
-            <Kpi label="Điểm TB (theo LOC)" value={t.avg_score} change={false} hint="Review lớn nặng hơn review nhỏ" />
-            <Kpi label="Tỉ lệ approve" unit="%" value={t.pass_rate} digits={0} change={false} hint={`${t.verdicts.needs_human} cần người xem · ${t.verdicts.block} block`} />
-            <Kpi label="Critical" value={t.critical} digits={0} change={false} higherIsBetter={false} href={t.critical && period ? boardLink("critical", { period }) : undefined} />
-            <Kpi label="High" value={t.high} digits={0} change={false} higherIsBetter={false} href={t.high && period ? boardLink("high", { period }) : undefined} />
+          <div className={isLoading ? "eval-dim" : undefined}>
+            <StatStrip label="Kết quả của nhóm trong khoảng đã chọn">
+              <StripStat label="Người có review" value={reviewed} unit={`/${data.members.length}`} title="Số người có ít nhất một review, trên số người trong phạm vi" />
+              <StripStat label="Review" value={t.reviews} sub={`${t.mrs} MR · ${t.commits} commit`} title={`${t.loc.toLocaleString("vi")} LOC`} />
+              <StripStat label="Điểm TB" title="Theo LOC: review lớn nặng hơn review nhỏ" value={t.avg_score} digits={1} tone={scoreTone(t.avg_score)} />
+              <StripStat
+                label="Tỉ lệ approve"
+                unit="%"
+                value={t.pass_rate}
+                sub={<VerdictMix verdicts={t.verdicts} compact />}
+              />
+              <StripStat label="Critical" value={t.critical} tone={t.critical ? "bad" : undefined} href={t.critical && period ? boardLink("critical", { period }) : undefined} />
+              <StripStat label="High" value={t.high} tone={t.high ? "warn" : undefined} href={t.high && period ? boardLink("high", { period }) : undefined} />
+              <StripStat label="Cần hỗ trợ" title="Có critical hoặc điểm TB dưới 65" value={attention} tone={attention ? "bad" : undefined} />
+            </StatStrip>
           </div>
 
           <div className="grid two eval-grid">
-            <Card title="Điểm trung bình theo người" subtitle="Thấp nhất ở trên. Xanh ≥ 80, vàng 65–79, đỏ < 65.">
+            <Card
+              title="Điểm TB theo người"
+              actions={
+                <span className="score-legend small muted" title="Thấp nhất ở trên">
+                  <span><i className="dot good" />≥ 80</span>
+                  <span><i className="dot warn" />65–79</span>
+                  <span><i className="dot bad" />&lt; 65</span>
+                </span>
+              }
+            >
               <ScoreChart rows={rows} />
             </Card>
-            <Card title="Kết luận review của cả nhóm" subtitle="Tỉ lệ approve / cần người xem / fix required / block">
+            <Card title="Kết luận review">
               <VerdictMix verdicts={t.verdicts} />
               <dl className="eval-facts">
                 <div>
@@ -341,11 +345,7 @@ export default function MembersEvaluationPage() {
             </Card>
           </div>
 
-          <Card
-            title={`Bảng thành viên (${rows.length})`}
-            subtitle="Bấm tiêu đề cột để sắp xếp. Dòng đỏ: có critical hoặc điểm TB dưới 65. Số critical / high mở danh sách finding."
-            flush
-          >
+          <Card title={`Thành viên · ${rows.length}`} flush>
             {rows.length ? (
               <MembersTable rows={rows} link={link} search={rangeSearch(range)} />
             ) : (
