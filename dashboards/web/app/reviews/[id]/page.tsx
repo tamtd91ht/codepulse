@@ -371,7 +371,6 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
     }
   }
   const isAuthor = me?.id === review.author_user_id;
-  const isLead = !!me && (me.is_admin || me.lead_teams.length > 0);
   const st = REVIEW_STATUS[review.status] ?? { label: review.status };
   const newer = review.history.find((h) => h.id === review.superseded_by);
   const bySeverity = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
@@ -431,7 +430,8 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
         </Alert>
       )}
 
-      {isLead && (review.can_rerun || rerun) && <RerunBar review={review} state={rerun} onRun={startRerun} />}
+      {/* can_rerun already says whether this person manages the review's dự án. */}
+      {(review.can_rerun || rerun) && <RerunBar review={review} state={rerun} onRun={startRerun} />}
 
       <div className="grid kpis">
         {review.status === "done" && (

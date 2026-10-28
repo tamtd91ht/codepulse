@@ -223,4 +223,6 @@ def me(
         "lead_teams": sorted(principal.lead_teams),
         "managed_teams": sorted(principal.managed_teams),
         "teams": sorted(principal.own_teams),
+        # dự án id -> "view" | "manage" (empty for admins, who see and manage every dự án).
+        "projects": {str(bp): role for bp, role in sorted(principal.project_roles.items())},
     }

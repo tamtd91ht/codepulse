@@ -6,13 +6,14 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.api.access import review_repo, review_scope
 from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.schemas import ORM
-from app.api.security import CurrentPrincipal
+from app.api.security import CurrentPrincipal, Principal
 from app.config import Settings, get_settings
 from app.models import FindingDispute, Review, ReviewFinding, User
 from app.scoring.aggregate import aggregate, recompute_scores
@@ -54,6 +55,16 @@ def _review_of(session: Session, finding: ReviewFinding) -> Review:
     return review
 
 
+def _sees(session: Session, principal: Principal, dispute: FindingDispute) -> bool:
+    """A lead sees a member's dispute only in a dự án they are granted (docs/specs/09)."""
+    if principal.is_admin or dispute.raised_by == principal.user_id:
+        return True
+    finding = session.get(ReviewFinding, dispute.finding_id) if dispute.finding_id else None
+    review = session.get(Review, finding.review_id) if finding and finding.review_id else None
+    repo = review_repo(session, review) if review else None
+    return principal.can_see_work(dispute.raised_by, repo.business_project_id if repo else None)
+
+
 @router.post("/findings/{finding_id}/dispute", response_model=DisputeOut, status_code=201)
 def raise_dispute(
     finding_id: int, body: DisputeIn, principal: CurrentPrincipal, session: SessionDep
@@ -85,6 +96,13 @@ def list_disputes(
     visible = principal.visible_users()
     if visible is not None:
         query = query.where(FindingDispute.raised_by.in_(visible))
+    # In SQL, before the limit: only disputes on reviews of dự án this person sees.
+    if (allowed := review_scope(principal)) is not None:
+        query = (
+            query.outerjoin(ReviewFinding, ReviewFinding.id == FindingDispute.finding_id)
+            .outerjoin(Review, Review.id == ReviewFinding.review_id)
+            .where(or_(FindingDispute.raised_by == principal.user_id, allowed))
+        )
     items = []
     for dispute in session.scalars(query.limit(200)):
         finding = session.get(ReviewFinding, dispute.finding_id) if dispute.finding_id else None
@@ -140,6 +158,8 @@ def decide(
         principal.is_admin or dispute.raised_by in principal.lead_members
     ):
         raise HTTPException(403, "only the developer's lead or an admin can decide")
+    if not _sees(session, principal, dispute):
+        raise HTTPException(403, "this dispute is in a dự án you are not granted")
     finding = session.get(ReviewFinding, dispute.finding_id) if dispute.finding_id else None
     if finding is None:
         raise HTTPException(404, "finding not found")

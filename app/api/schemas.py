@@ -128,11 +128,31 @@ class BusinessProjectOut(ORM):
     description: str | None
     review_rules: str | None = None
     repos: int = 0  # tracked repos assigned to it
+    grants: int = 0  # people granted it (docs/specs/09 "Phân quyền theo dự án")
     # Optional shared .claude repo (see app/review/claude_repo.py).
     claude_repo_connection_id: int | None = None
     claude_repo_path: str | None = None
     claude_repo_ref: str | None = None
     claude_repo_include: str | None = None
+
+
+class ProjectGrantIn(BaseModel):
+    user_id: int
+    role: Literal["view", "manage"]
+
+
+class ProjectGrantsIn(BaseModel):
+    """The whole list of people granted a dự án; whoever is left out loses access."""
+
+    grants: list[ProjectGrantIn] = Field(max_length=2000)
+
+
+class ProjectGrantOut(BaseModel):
+    user_id: int
+    full_name: str | None
+    email: str | None
+    active: bool
+    role: Literal["view", "manage"]
 
 
 class RepoAssignment(BaseModel):

@@ -20,7 +20,7 @@ from app.review.rubric import RUBRIC_VERSION
 from app.telegram.picker import MemoryPickerStore
 from app.telegram.poller import poll_bot
 from app.telegram.service import AllowAll, MemoryLinkCodes
-from tests.api.conftest import FakeQueue, World
+from tests.api.conftest import FakeQueue, World, grant
 from tests.api.test_telegram import FakeGitLab, FakeTelegram, link, no_gitlab
 
 NOW = datetime(2026, 10, 24, 9, tzinfo=UTC)
@@ -327,6 +327,8 @@ def test_again_lets_the_owner_tick_a_reviewed_commit_as_a_new_round(
     seed_commits(db_session, world)
     world.project.default_branch = "main"
     link(db_session, world.lead, 777)
+    # A new round spends budget: managers of the dự án only (docs/specs/09).
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
     db_session.commit()
     tg = FakeTelegram()
     store = MemoryPickerStore()
@@ -358,7 +360,7 @@ def test_a_member_cannot_review_their_own_work_again(
     tg.updates = [message_update(1, "/review type=commit repo=demo/p")]
     run(db_session, bot, settings, queue, tg, store)
     kb = buttons(tg.sent[0]["markup"])
-    assert "↻ Cho chọn mục đã review" not in kb  # re-rolling one's own score is a lead's call
+    assert "↻ Cho chọn mục đã review" not in kb  # re-rolling a score is a manager's call
     token = kb["☐ 1"].split("|")[1]
     tg.updates = [tap(2, f"pk|{token}|again")]
     run(db_session, bot, settings, queue, tg, store)

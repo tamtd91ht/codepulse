@@ -1,10 +1,11 @@
 """Review on request from the dashboard (docs/specs/17 §Yêu cầu review).
 
 Pick a repo and a branch, optionally people and a time window, see the recent commits with
-their review state, and queue reviews for the ones you choose. Same permissions as Telegram:
-your own work, the work of people you lead, admins anyone; commits whose author is not mapped
-to a person need a lead or admin. Reviews go through the normal worker, so scores, findings and
-verdicts land in the same tables as webhook reviews.
+their review state, and queue reviews for the ones you choose. Only repos of a dự án you are
+granted (docs/specs/09 "Phân quyền theo dự án"); there, as on Telegram: your own work, the work
+of people you lead, a manager of the dự án or an admin anyone's; commits whose author is not
+mapped to a person need a lead, a manager or an admin. Reviews go through the normal worker,
+so scores, findings and verdicts land in the same tables as webhook reviews.
 """
 
 import logging
@@ -13,10 +14,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from app.api.access import visible_repo
 from app.api.audit import audit
 from app.api.deps import get_queue, get_secret_box, get_session
 from app.api.schemas import (
@@ -36,7 +38,7 @@ from app.collector.gitlab.extract import _commit as gl_commit
 from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
-from app.models import Account, BusinessProject, Connection, Project, Review, User
+from app.models import Account, BusinessProject, Connection, Project, ProjectGrant, Review, User
 from app.review.rubric import RUBRIC_VERSION
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
 
@@ -95,13 +97,18 @@ def _gitlab_error(exc: GitLabError, what: str) -> HTTPException:
 
 @router.get("/repos", response_model=list[RepoOut])
 def list_repos(principal: CurrentPrincipal, session: SessionDep) -> list[RepoOut]:
-    """Tracked repos with their dự án; what anyone may ask a review for depends on authors."""
-    rows = session.execute(
+    """Tracked repos of the dự án this person sees, with their dự án; what anyone may ask a
+    review for depends on authors."""
+    query = (
         select(Project, BusinessProject.name)
         .outerjoin(BusinessProject, BusinessProject.id == Project.business_project_id)
         .where(Project.tracked)
         .order_by(Project.path_with_namespace)
-    ).all()
+    )
+    visible = principal.visible_projects()
+    if visible is not None:
+        query = query.where(Project.business_project_id.in_(visible))
+    rows = session.execute(query).all()
     return [
         RepoOut(
             id=p.id,
@@ -123,8 +130,11 @@ def repo_profiles(
     business_project_id: int | None = None,
 ) -> list[RepoProfileOut]:
     """Project profiles (docs/specs/18): what each repo is, its stack and security model.
-    Built from the repository's own documents, so anyone signed in may read them."""
+    Built from the repository's own documents, so anyone who sees the dự án may read them."""
     query = select(Project).where(Project.tracked).order_by(Project.path_with_namespace)
+    visible = principal.visible_projects()
+    if visible is not None:
+        query = query.where(Project.business_project_id.in_(visible))
     if business_project_id is not None:
         query = query.where(Project.business_project_id == business_project_id)
     return [
@@ -165,11 +175,18 @@ def refresh_profile(
 
 @router.get("/people", response_model=list[UserOut])
 def list_people(principal: CurrentPrincipal, session: SessionDep) -> list[User]:
-    """People whose work this person may ask a review for (admin: everyone active)."""
+    """People whose work this person may ask a review for (admin: everyone active; a manager
+    of a dự án also the people granted it)."""
     query = select(User).where(User.active.is_not(False)).order_by(User.full_name, User.id)
     visible = principal.visible_users()
     if visible is not None:
-        query = query.where(User.id.in_(visible))
+        allowed: ColumnElement[bool] = User.id.in_(visible)
+        if managed := principal.managed_projects():
+            granted = select(ProjectGrant.user_id).where(
+                ProjectGrant.business_project_id.in_(managed)
+            )
+            allowed = or_(allowed, User.id.in_(granted))
+        query = query.where(allowed)
     return list(session.scalars(query))
 
 
@@ -181,7 +198,7 @@ def list_branches(
     box: BoxDep,
     search: Annotated[str | None, Query(max_length=100)] = None,
 ) -> list[BranchOut]:
-    project = _tracked_project(session, project_id)
+    project = visible_repo(session, principal, project_id)
     connection = _connection(session, project)
     try:
         with _client(box, connection) as client:
@@ -240,8 +257,11 @@ def _row(
     author: tuple[int | None, str | None],
     review: Review | None,
     principal: Principal,
+    project: Project,
 ) -> CommitRowOut:
     user_id, user_name = author
+    # Its state shows (it blocks a second request); the result only to whoever may see it.
+    seen = review if principal.can_see_work(user_id, project.business_project_id) else None
     is_merge = len(raw.get("parent_ids") or []) > 1
     stats = raw.get("stats") or {}
     title = raw.get("title") if isinstance(raw.get("title"), str) else ""
@@ -257,7 +277,7 @@ def _row(
             "done": "đã review",
             "skipped": "đã bỏ qua (quá lớn hoặc không có file review được)",
         }.get(review.status, "đang trong hàng đợi")
-    elif not principal.may_review_author(user_id):
+    elif not principal.may_review_work(user_id, project.business_project_id):
         reason = "không thuộc quyền review của bạn"
     return CommitRowOut(
         sha=str(raw["id"]),
@@ -272,10 +292,10 @@ def _row(
         is_merge=is_merge,
         additions=stats.get("additions"),
         deletions=stats.get("deletions"),
-        review_id=review.id if review else None,
+        review_id=seen.id if seen else None,
         review_status=review.status if review else None,
-        score=float(review.score) if review and review.score is not None else None,
-        verdict=review.verdict if review else None,
+        score=float(seen.score) if seen and seen.score is not None else None,
+        verdict=seen.verdict if seen else None,
         reviewable=reason is None,
         reason=reason,
     )
@@ -296,7 +316,7 @@ def list_commits(
 ) -> CommitListOut:
     """Recent commits of a branch, straight from GitLab, with who wrote them and whether a
     review exists. People outside your scope are left out (and counted in `hidden`)."""
-    project = _tracked_project(session, project_id)
+    project = visible_repo(session, principal, project_id)
     connection = _connection(session, project)
     limit = min(limit, settings.review_commits_list_max)
     since, until = _aware(since), _aware(until)
@@ -322,10 +342,10 @@ def list_commits(
         if wanted is not None and uid not in wanted:
             continue
         # Strangers' commits are not even listed for members; leads/admins see the unmapped.
-        if not principal.may_review_author(uid):
+        if not principal.may_review_work(uid, project.business_project_id):
             hidden += 1
             continue
-        rows.append(_row(c, author, reviews.get(str(c["id"])), principal))
+        rows.append(_row(c, author, reviews.get(str(c["id"])), principal, project))
     return CommitListOut(
         ref=ref,
         commits=rows,
@@ -346,7 +366,7 @@ def review_commits(
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> ReviewCommitsOut:
     """Queue a review for each chosen commit (costs LLM budget per commit)."""
-    project = _tracked_project(session, project_id)
+    project = visible_repo(session, principal, project_id)
     if not project.review_enabled:
         raise HTTPException(409, "review is switched off for this repo")
     if len(body.shas) > settings.review_batch_max:
@@ -377,7 +397,7 @@ def review_commits(
                 continue
             account_id = converter.email_account(commit.author_email, commit.author_name)
             author_user = session.get(Account, account_id).user_id if account_id else None  # type: ignore[union-attr]
-            if not principal.may_review_author(author_user):
+            if not principal.may_review_work(author_user, project.business_project_id):
                 skipped.append({"sha": commit.sha, "reason": "không thuộc quyền review của bạn"})
                 continue
             existing = _latest_reviews(session, [commit.sha]).get(commit.sha)

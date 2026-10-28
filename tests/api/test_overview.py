@@ -18,10 +18,10 @@ WEEK = "2026-10-05"  # Monday of the week that holds the world's reviews (2026-1
 
 @pytest.fixture
 def omicrm(db_session: Session, world: World) -> BusinessProject:
-    bp = BusinessProject(name="OmiCRM", description="CRM")
-    db_session.add(bp)
-    db_session.flush()
-    world.project.business_project_id = bp.id
+    # The world's dự án, renamed: everyone in the world keeps their "view" grant on it.
+    bp = db_session.get(BusinessProject, world.project.business_project_id)
+    assert bp is not None
+    bp.name, bp.description = "OmiCRM", "CRM"
     # A second repo, unassigned, with a review the week before (previous period).
     other = Project(
         connection_id=world.project.connection_id, external_id=1002, path_with_namespace="demo/q"
@@ -50,9 +50,9 @@ def omicrm(db_session: Session, world: World) -> BusinessProject:
 def test_overview_groups_reviews_by_project(
     client: TestClient, world: World, omicrm: BusinessProject, as_user: Any
 ) -> None:
-    # Anonymous aggregates: a developer may read them too.
+    # Every dự án and the repos outside one: an admin's view (docs/specs/09 "Phân quyền").
     res = client.get(
-        f"/api/v1/metrics/projects?period=week&start={WEEK}", headers=as_user(world.an)
+        f"/api/v1/metrics/projects?period=week&start={WEEK}", headers=as_user(world.admin)
     )
     assert res.status_code == 200, res.text
     body = res.json()
@@ -77,6 +77,18 @@ def test_overview_groups_reviews_by_project(
     assert (totals["delta"]["critical"], totals["delta"]["high"]) == (1, -1)
     assert (omi["open_critical"], omi["open_high"]) == (1, 0)
     assert (unassigned["open_critical"], unassigned["open_high"]) == (0, 1)
+
+    # Anonymous aggregates: a developer granted the dự án reads them too, but only for the dự án
+    # they are granted; the repos outside every dự án (demo/q) are the admins'.
+    res = client.get(
+        f"/api/v1/metrics/projects?period=week&start={WEEK}", headers=as_user(world.an)
+    )
+    assert res.status_code == 200, res.text
+    mine = res.json()
+    assert [p["name"] for p in mine["projects"]] == ["OmiCRM"]
+    assert mine["totals"]["reviews"] == 1 and mine["totals"]["projects"] == 1
+    assert mine["totals"]["delta"]["reviews"] == 1  # demo/q's review last week is not counted
+    assert (mine["totals"]["open_critical"], mine["totals"]["open_high"]) == (1, 0)
 
 
 def test_dashboard_counts_link_to_the_same_findings(

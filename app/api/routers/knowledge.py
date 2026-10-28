@@ -1,8 +1,8 @@
 """Review knowledge of a repo (docs/specs/19 §3.5): the active build and its versions, the
 "Rà soát lại dự án" button, approval and manual edits.
 
-Reading is open to anyone signed in (like repo profiles: it is built from the repository's own
-documents); refreshing, approving and editing need a lead or an admin, and are audited.
+Reading is open to anyone who sees the repo's dự án (docs/specs/09 "Phân quyền theo dự án");
+refreshing, approving and editing need a manager of the dự án or an admin, and are audited.
 """
 
 import json
@@ -16,9 +16,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.access import require_manage, visible_repo
 from app.api.audit import audit
 from app.api.deps import get_queue, get_secret_box, get_session
-from app.api.security import CurrentPrincipal, LeadPrincipal
+from app.api.security import CurrentPrincipal
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.sync import Enqueuer
 from app.crypto import SecretBox
@@ -60,13 +61,6 @@ class KnowledgeEditIn(BaseModel):
     item_id: str = Field(default="", max_length=120)
     action: Literal["disable", "set_severity", "reword", "add_invariant"]
     payload: dict[str, Any] = Field(default_factory=dict)
-
-
-def _tracked_project(session: Session, project_id: int) -> Project:
-    project = session.get(Project, project_id)
-    if project is None or not project.tracked:
-        raise HTTPException(404, "repo not found")
-    return project
 
 
 def _manual_id(taken: set[str]) -> str:
@@ -163,7 +157,7 @@ def get_knowledge(
     project_id: int, principal: CurrentPrincipal, session: SessionDep, box: BoxDep, queue: QueueDep
 ) -> dict[str, Any]:
     """The active build with its manual edits; `stats` arrives with task 8.11."""
-    project = _tracked_project(session, project_id)
+    project = visible_repo(session, principal, project_id)
     row, _ = active_knowledge(session, project)
     active: dict[str, Any] | None = None
     if row is not None:
@@ -189,7 +183,9 @@ def knowledge_summary(
     whether a build is queued and whether the newest one failed. One query per kind of row and
     no GitLab call, so the dự án page can list a hundred repos; staleness needs GitLab and is
     shown per repo (GET …/knowledge)."""
-    if session.get(BusinessProject, business_project_id) is None:
+    if session.get(BusinessProject, business_project_id) is None or not principal.can_view_project(
+        business_project_id
+    ):
         raise HTTPException(404, "dự án not found")
     projects = list(
         session.scalars(
@@ -282,7 +278,7 @@ def _last_failure(
 def list_versions(
     project_id: int, principal: CurrentPrincipal, session: SessionDep
 ) -> list[dict[str, Any]]:
-    project = _tracked_project(session, project_id)
+    project = visible_repo(session, principal, project_id)
     rows = session.scalars(
         select(ReviewKnowledge)
         .where(ReviewKnowledge.scope == "project", ReviewKnowledge.project_id == project.id)
@@ -299,7 +295,7 @@ def get_version(
     session: SessionDep,
     box: BoxDep,
 ) -> dict[str, Any]:
-    project = _tracked_project(session, project_id)
+    project = visible_repo(session, principal, project_id)
     row = session.scalars(
         select(ReviewKnowledge).where(
             ReviewKnowledge.scope == "project",
@@ -315,10 +311,11 @@ def get_version(
 
 @router.post("/projects/{project_id}/knowledge/refresh", status_code=202)
 def refresh_knowledge(
-    project_id: int, principal: LeadPrincipal, session: SessionDep, queue: QueueDep
+    project_id: int, principal: CurrentPrincipal, session: SessionDep, queue: QueueDep
 ) -> dict[str, str]:
     """ "Rà soát lại dự án": rebuild the premises from the default branch in the worker."""
-    project = _tracked_project(session, project_id)
+    project = visible_repo(session, principal, project_id)
+    require_manage(principal, project.business_project_id)
     if project.allow_external_llm is False:
         raise HTTPException(409, "this repo does not allow sending code to an external LLM")
     job_id = job_id_for(project.id)
@@ -339,9 +336,10 @@ def refresh_knowledge(
 
 @router.post("/projects/{project_id}/knowledge/approve")
 def approve_knowledge(
-    project_id: int, principal: LeadPrincipal, session: SessionDep, box: BoxDep
+    project_id: int, principal: CurrentPrincipal, session: SessionDep, box: BoxDep
 ) -> dict[str, Any]:
-    project = _tracked_project(session, project_id)
+    project = visible_repo(session, principal, project_id)
+    require_manage(principal, project.business_project_id)
     row, _ = active_knowledge(session, project)
     if row is None:
         raise HTTPException(404, "this repo has no review knowledge yet")
@@ -362,11 +360,12 @@ def approve_knowledge(
 
 @router.post("/projects/{project_id}/knowledge/edits", status_code=201)
 def add_edit(
-    project_id: int, body: KnowledgeEditIn, principal: LeadPrincipal, session: SessionDep
+    project_id: int, body: KnowledgeEditIn, principal: CurrentPrincipal, session: SessionDep
 ) -> dict[str, Any]:
     """A manual change kept across builds (docs/specs/19 §3.4, §7): disable, set_severity,
     reword an existing item, or add_invariant (at most MAX_MANUAL_INVARIANTS)."""
-    project = _tracked_project(session, project_id)
+    project = visible_repo(session, principal, project_id)
+    require_manage(principal, project.business_project_id)
     if body.action not in EDIT_ACTIONS:  # pragma: no cover - Literal already refuses
         raise HTTPException(422, "unknown action")
     if len(json.dumps(body.payload, ensure_ascii=False).encode("utf-8")) > MAX_EDIT_PAYLOAD_BYTES:
@@ -429,9 +428,10 @@ def add_edit(
 
 @router.delete("/projects/{project_id}/knowledge/edits/{edit_id}", status_code=204)
 def delete_edit(
-    project_id: int, edit_id: int, principal: LeadPrincipal, session: SessionDep
+    project_id: int, edit_id: int, principal: CurrentPrincipal, session: SessionDep
 ) -> None:
-    project = _tracked_project(session, project_id)
+    project = visible_repo(session, principal, project_id)
+    require_manage(principal, project.business_project_id)
     edit = session.get(ReviewKnowledgeEdit, edit_id)
     if edit is None or edit.scope != "project" or edit.project_id != project.id:
         raise HTTPException(404, "edit not found")

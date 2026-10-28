@@ -31,7 +31,7 @@ from app.models import (
     User,
 )
 from app.scoring.aggregate import aggregate
-from tests.api.conftest import BOX, WEEK, FakeQueue, World
+from tests.api.conftest import BOX, WEEK, FakeQueue, World, grant
 
 pytestmark = pytest.mark.integration
 
@@ -243,7 +243,7 @@ def test_review_list_filters_by_time_member_project_and_status(
     db_session.add(bp)
     db_session.flush()
     world.project.business_project_id = bp.id
-    db_session.flush()
+    grant(db_session, world.lead, bp.id)  # the lead sees the dự án the repo moved to
     headers = as_user(world.lead)
 
     def ids(query: str) -> set[int]:
@@ -290,8 +290,10 @@ def test_critical_board(client: TestClient, world: World, as_user: Any) -> None:
 
 
 def test_rerun_only_failed_or_skipped(
-    client: TestClient, world: World, as_user: Any, queue: FakeQueue
+    client: TestClient, world: World, as_user: Any, queue: FakeQueue, db_session: Session
 ) -> None:
+    # A re-run spends LLM budget: managers of the dự án (and admins) only.
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
     done = client.post(f"/api/v1/reviews/{world.an_review.id}/rerun", headers=as_user(world.lead))
     assert done.status_code == 409
     failed = client.post(
@@ -308,6 +310,7 @@ def test_rerun_only_failed_or_skipped(
 def test_rerun_past_the_loc_limit_is_passed_to_the_job_and_audited(
     client: TestClient, world: World, as_user: Any, queue: FakeQueue, db_session: Session
 ) -> None:
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
     url = f"/api/v1/reviews/{world.binh_review.id}/rerun"
     body = {"ignore_loc_limit": True}
     # Only a review skipped as too large may go past the limit; this one failed.
@@ -331,6 +334,7 @@ def test_forced_rerun_makes_a_new_round_only_for_an_open_mr_at_its_head(
     queue: FakeQueue,
     db_session: Session,
 ) -> None:
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
     url = f"/api/v1/reviews/{world.an_review.id}/rerun"
     lead = as_user(world.lead)
     detail = client.get(f"/api/v1/reviews/{world.an_review.id}", headers=lead).json()
@@ -379,6 +383,7 @@ def test_forced_rerun_of_an_old_commit(
     client: TestClient, world: World, as_user: Any, queue: FakeQueue, db_session: Session
 ) -> None:
     world.binh_review.status = "done"
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
     db_session.commit()
     url = f"/api/v1/reviews/{world.binh_review.id}/rerun"
     ok = client.post(url, json={"force": True}, headers=as_user(world.lead))
@@ -556,8 +561,12 @@ def test_business_projects_group_repos_and_survive_deletion(
         json={"project_ids": [world.project.id], "business_project_id": bp_id},
     )
     assert assigned.status_code == 204
-    (listed,) = client.get("/api/v1/business-projects", headers=admin).json()
-    assert (listed["name"], listed["repos"]) == ("OmiCRM", 1)
+    listed = {
+        bp["name"]: bp for bp in client.get("/api/v1/business-projects", headers=admin).json()
+    }
+    assert set(listed) == {"Demo", "OmiCRM"}  # the world's repo came from "Demo"
+    assert (listed["OmiCRM"]["repos"], listed["OmiCRM"]["grants"]) == (1, 0)
+    assert (listed["Demo"]["repos"], listed["Demo"]["grants"]) == (0, 5)
     repo = client.get("/api/v1/projects", headers=admin).json()[0]
     assert repo["business_project_id"] == bp_id
 

@@ -31,6 +31,8 @@ from app.api.schemas import (
     GroupImportOut,
     MemberIn,
     MemberOut,
+    ProjectGrantOut,
+    ProjectGrantsIn,
     ProjectIn,
     ProjectOut,
     ProjectPatch,
@@ -65,6 +67,7 @@ from app.models import (
     MergeRequest,
     MetricsUserPeriod,
     Project,
+    ProjectGrant,
     Review,
     Team,
     TeamMember,
@@ -205,9 +208,15 @@ def list_business_projects(
         .group_by(Project.business_project_id)
         .subquery()
     )
+    grants = (
+        select(ProjectGrant.business_project_id, func.count().label("n"))
+        .group_by(ProjectGrant.business_project_id)
+        .subquery()
+    )
     rows = session.execute(
-        select(BusinessProject, func.coalesce(repos.c.n, 0))
+        select(BusinessProject, func.coalesce(repos.c.n, 0), func.coalesce(grants.c.n, 0))
         .outerjoin(repos, repos.c.business_project_id == BusinessProject.id)
+        .outerjoin(grants, grants.c.business_project_id == BusinessProject.id)
         .order_by(BusinessProject.name)
     ).all()
     return [
@@ -216,12 +225,13 @@ def list_business_projects(
             name=bp.name,
             description=bp.description,
             repos=int(n),
+            grants=int(g),
             claude_repo_connection_id=bp.claude_repo_connection_id,
             claude_repo_path=bp.claude_repo_path,
             claude_repo_ref=bp.claude_repo_ref,
             claude_repo_include=bp.claude_repo_include,
         )
-        for bp, n in rows
+        for bp, n, g in rows
     ]
 
 
@@ -279,6 +289,92 @@ def delete_business_project(bp_id: int, principal: AdminPrincipal, session: Sess
     session.delete(bp)
     audit(session, principal.user_id, "business_project.delete", f"business_project:{bp_id}")
     session.commit()
+
+
+@router.get("/business-projects/{bp_id}/grants", response_model=list[ProjectGrantOut])
+def list_grants(
+    bp_id: int, principal: AdminPrincipal, session: SessionDep
+) -> list[ProjectGrantOut]:
+    """Who may see (view) or also act on (manage) this dự án; ADMIN_EMAILS admins need no
+    grant (docs/specs/09 "Phân quyền theo dự án")."""
+    bp = _get(session, BusinessProject, bp_id, "dự án")
+    rows = session.execute(
+        select(ProjectGrant, User)
+        .join(User, User.id == ProjectGrant.user_id)
+        .where(ProjectGrant.business_project_id == bp.id)
+        .order_by(User.full_name, User.id)
+    ).tuples()
+    return [
+        ProjectGrantOut(
+            user_id=user.id,
+            full_name=user.full_name,
+            email=user.primary_email,
+            active=user.active is not False,
+            role=grant.role,
+        )
+        for grant, user in rows
+    ]
+
+
+@router.put("/business-projects/{bp_id}/grants", response_model=list[ProjectGrantOut])
+def set_grants(
+    bp_id: int, body: ProjectGrantsIn, principal: AdminPrincipal, session: SessionDep
+) -> list[ProjectGrantOut]:
+    """Replace the whole list: people left out lose access, the rest get the role given."""
+    # The row lock serialises two admins saving the same dự án (no duplicate-key 500).
+    bp = session.get(BusinessProject, bp_id, with_for_update=True)
+    if bp is None:
+        raise HTTPException(404, "dự án not found")
+    wanted = {g.user_id: g.role for g in body.grants}
+    if len(wanted) != len(body.grants):
+        raise HTTPException(422, "a person is listed twice")
+    if wanted:
+        known = set(session.scalars(select(User.id).where(User.id.in_(wanted))))
+        if missing := sorted(set(wanted) - known):
+            raise HTTPException(422, f"unknown user ids: {missing[:20]}")
+    current = {
+        g.user_id: g
+        for g in session.scalars(
+            select(ProjectGrant).where(ProjectGrant.business_project_id == bp.id)
+        )
+    }
+    added = 0
+    changed: dict[int, list[str]] = {}
+    for user_id, role in wanted.items():
+        grant = current.get(user_id)
+        if grant is None:
+            session.add(
+                ProjectGrant(
+                    business_project_id=bp.id,
+                    user_id=user_id,
+                    role=role,
+                    granted_by_user_id=principal.user_id,
+                )
+            )
+            added += 1
+        elif grant.role != role:
+            changed[user_id] = [grant.role, role]
+            grant.role, grant.granted_by_user_id = role, principal.user_id
+    removed = [user_id for user_id in current if user_id not in wanted]
+    if removed:
+        session.execute(
+            delete(ProjectGrant).where(
+                ProjectGrant.business_project_id == bp.id, ProjectGrant.user_id.in_(removed)
+            )
+        )
+    audit(
+        session,
+        principal.user_id,
+        "business_project.grants",
+        f"business_project:{bp.id}",
+        added=added,
+        changed={str(u): roles for u, roles in sorted(changed.items())},
+        removed=sorted(removed),
+        manage=sorted(u for u, r in wanted.items() if r == "manage"),
+        view=sorted(u for u, r in wanted.items() if r == "view"),
+    )
+    session.commit()
+    return list_grants(bp.id, principal, session)
 
 
 @router.put("/projects/business-project", status_code=204)
@@ -687,6 +783,11 @@ def sync_project_now(
     session: SessionDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> dict[str, str]:
+    # A lead of a dự án they are granted; a repo they cannot see is "not found", one they see
+    # but no longer tracked still says so (409).
+    project = _get(session, Project, project_id, "project")
+    if not principal.can_view_project(project.business_project_id):
+        raise HTTPException(404, "project not found")
     _tracked(session, project_id)
     queue.enqueue(
         "app.collector.sync.sync_project_job",

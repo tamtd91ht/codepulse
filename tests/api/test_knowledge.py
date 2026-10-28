@@ -21,7 +21,7 @@ from app.review.knowledge import load_for_review
 from app.review.progress import MemoryProgress
 from app.review.providers.base import ReviewPrompt, ReviewResult
 from app.workers.knowledge_jobs import first_build_allowed, month_spend_usd, progress_id, run_build
-from tests.api.conftest import FakeQueue, World
+from tests.api.conftest import FakeQueue, World, grant
 from tests.collector.fake_gitlab import API
 
 pytestmark = pytest.mark.integration
@@ -165,6 +165,7 @@ def test_summary_lists_each_repo_of_the_du_an_without_gitlab(
     db_session.add(bp)
     db_session.flush()
     world.project.business_project_id = bp.id
+    grant(db_session, world.an, bp.id)  # An sees the dự án the repo moved to
     knowledge_row(db_session, world, version=1, status="superseded")
     row = knowledge_row(db_session, world, version=2, approved_by_user_id=world.lead.id)
     path = f"/api/v1/knowledge/summary?business_project_id={bp.id}"
@@ -227,11 +228,14 @@ class StatusQueue(FakeQueue):
         return Job()
 
 
-def test_refresh_needs_lead_queues_once_and_is_audited(
+def test_refresh_needs_a_manager_queues_once_and_is_audited(
     client: TestClient, world: World, as_user: Any, db_session: Session, queue: FakeQueue
 ) -> None:
     path = f"/api/v1/projects/{world.project.id}/knowledge/refresh"
     assert client.post(path, headers=as_user(world.an)).status_code == 403
+    # Leading a team is not enough: the dự án's "manage" grant is (docs/specs/09).
+    assert client.post(path, headers=as_user(world.lead)).status_code == 403
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
     response = client.post(path, headers=as_user(world.lead))
     assert response.status_code == 202
     job_id = f"knowledge-{world.project.id}"
@@ -258,6 +262,7 @@ def test_refresh_refuses_while_a_build_is_queued(
     from app.api.deps import get_queue
     from app.api.main import app
 
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
     busy = StatusQueue({f"knowledge-{world.project.id}"})
     app.dependency_overrides[get_queue] = lambda: busy
     path = f"/api/v1/projects/{world.project.id}/knowledge"
@@ -270,6 +275,7 @@ def test_approve_sets_approver_and_audits(
     client: TestClient, world: World, as_user: Any, db_session: Session
 ) -> None:
     path = f"/api/v1/projects/{world.project.id}/knowledge/approve"
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
     assert client.post(path, headers=as_user(world.lead)).status_code == 404  # nothing yet
     row = knowledge_row(db_session, world)
     assert client.post(path, headers=as_user(world.an)).status_code == 403
@@ -289,6 +295,7 @@ def test_edits_are_validated_against_the_active_build_and_deletable(
     client: TestClient, world: World, as_user: Any, db_session: Session
 ) -> None:
     path = f"/api/v1/projects/{world.project.id}/knowledge/edits"
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
     lead = as_user(world.lead)
     manual = {"item_id": "m1", "action": "add_invariant", "payload": {"statement": "Thêm"}}
     assert client.post(path, json=manual, headers=as_user(world.an)).status_code == 403

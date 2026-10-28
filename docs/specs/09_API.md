@@ -31,6 +31,19 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | manager | Các team cấp dưới |
 | admin | Tất cả + cấu hình |
 
+### Phân quyền theo dự án (bổ sung ngoài spec, người dùng yêu cầu 2026-10-28)
+- Admin = email nằm trong `ADMIN_EMAILS` (`.env`): toàn quyền, không cần cấp quyền dự án.
+- Người khác chỉ thấy các dự án (`business_projects`) được admin cấp quyền trong bảng `project_grants`; dự án không được cấp coi như không tồn tại (404), repo chưa gán dự án chỉ admin thấy.
+- Hai mức trong một dự án:
+
+| Mức | Được làm |
+|---|---|
+| `view` (Xem) | Số liệu dự án; review/finding theo luật role ở trên **và** thuộc dự án (dev: của mình; lead: người trong team mình); yêu cầu review việc của mình / người mình lead |
+| `manage` (Quản lý) | Như `view` + review/finding của mọi người trong dự án (cả tác giả chưa gắn người); yêu cầu review cho bất kỳ ai; chạy lại review; làm mới, duyệt, sửa Tiền đề review |
+
+- Review của chính mình luôn xem được. Bot Telegram phục vụ một dự án: người dùng phải được cấp quyền dự án đó.
+- API (admin): `GET`/`PUT /business-projects/{id}/grants` (PUT thay cả danh sách, audit `business_project.grants`); `GET /auth/me` trả `projects: {id: role}`.
+
 ## Checklist
 - [ ] Pagination cursor-based, filter theo ngày dùng ISO-8601
 - [ ] Mọi endpoint có test quyền (403 khi sai role)

@@ -3740,3 +3740,26 @@ a.proj-tile:focus-visible {
 .score-legend .dot.bad {
   background: var(--sev-critical);
 }
+
+/* Dự án grants (Admin → Dự án & Repo → dự án → Quyền truy cập). */
+.grant-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.grant-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.grant-name {
+  flex: 1 1 220px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

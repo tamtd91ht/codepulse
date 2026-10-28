@@ -2,7 +2,8 @@
 
 Aggregates over `reviews` grouped by the repo's dự án for one period (week or month, REPORT_TZ),
 with the previous period for deltas and a short trend. These are anonymous aggregates like team
-numbers (docs/specs/11): any signed-in person may read them; per-person data stays scoped.
+numbers (docs/specs/11): anyone granted the dự án may read them (admins: every dự án and the
+repos outside one, docs/specs/09 "Phân quyền theo dự án"); per-person data stays scoped.
 """
 
 from collections import defaultdict
@@ -95,7 +96,11 @@ Row = tuple[int, int | None, int, float | None, int | None, datetime | None, str
 
 
 def _done_reviews(
-    session: Session, lo: datetime, hi: datetime, project_ids: list[int] | None = None
+    session: Session,
+    lo: datetime,
+    hi: datetime,
+    project_ids: list[int] | None = None,
+    bp_ids: set[int] | None = None,
 ) -> list[Row]:
     """(project_id, business_project_id, review_id, score, loc, finished_at, verdict), [lo, hi)."""
     rp = _review_project()
@@ -115,6 +120,8 @@ def _done_reviews(
     )
     if project_ids is not None:
         query = query.where(Project.id.in_(project_ids))
+    if bp_ids is not None:  # the viewer's dự án (repos outside one are left out too)
+        query = query.where(Project.business_project_id.in_(bp_ids))
     return [
         (int(p), bp, int(r), float(s) if s is not None else None, loc, fin, v)
         for p, bp, r, s, loc, fin, v in session.execute(query).all()
@@ -155,10 +162,10 @@ class Open:
         return {"open_severe": self.severe, "open_critical": self.critical, "open_high": self.high}
 
 
-def _open_severe(session: Session) -> dict[int, Open]:
-    """Open critical and high findings per project (any period)."""
+def _open_severe(session: Session, bp_ids: set[int] | None = None) -> dict[int, Open]:
+    """Open critical and high findings per project (any period), in the dự án `bp_ids`."""
     rp = _review_project()
-    rows = session.execute(
+    query = (
         select(Project.id, ReviewFinding.severity, func.count())
         .select_from(ReviewFinding)
         .join(Review, Review.id == ReviewFinding.review_id)
@@ -170,7 +177,10 @@ def _open_severe(session: Session) -> dict[int, Open]:
             ReviewFinding.severity.in_(SEVERE),
         )
         .group_by(Project.id, ReviewFinding.severity)
-    ).all()
+    )
+    if bp_ids is not None:
+        query = query.where(Project.business_project_id.in_(bp_ids))
+    rows = session.execute(query).all()
     out: dict[int, Open] = defaultdict(Open)
     for p, severity, n in rows:
         setattr(out[int(p)], str(severity), int(n))
@@ -247,7 +257,12 @@ def projects_overview(
     trend_starts = _trend_starts(period_start, period, TREND_PERIODS)
     trend_lo = period_bounds(trend_starts[0], period, tz)[0]
 
-    rows = _done_reviews(session, trend_lo, hi)
+    visible = principal.visible_projects()  # None: every dự án and the unassigned repos
+
+    def shown(bp_id: int | None) -> bool:
+        return visible is None or bp_id in visible
+
+    rows = _done_reviews(session, trend_lo, hi, bp_ids=visible)
     sev = _severities(session, [r[2] for r in rows])
     by_bp = lambda p, bp, fin: bp  # noqa: E731 - small keyed aggregations below
     current = _bucket([r for r in rows if r[5] is not None and lo <= r[5] < hi], sev, by_bp)
@@ -263,23 +278,33 @@ def projects_overview(
         sev,
         lambda p, bp, fin: (bp, bucket_period(fin)),
     )
-    open_by_project = _open_severe(session)
-
-    projects = list(
-        session.execute(
+    projects = [
+        (project_id, bp_id)
+        for project_id, bp_id in session.execute(
             select(Project.id, Project.business_project_id).where(Project.tracked)
-        ).all()
-    )
+        ).tuples()
+        if shown(bp_id)
+    ]
+    all_repos = [
+        (project_id, bp_id)
+        for project_id, bp_id in session.execute(
+            select(Project.id, Project.business_project_id)
+        ).tuples()
+        if shown(bp_id)
+    ]
+    open_by_project = _open_severe(session, visible)
     repos_by_bp: dict[int | None, int] = defaultdict(int)
     for _project_id, bp_id in projects:
         repos_by_bp[bp_id] += 1
     # Open findings of every repo, tracked or not: the dự án's detail page and the findings
     # list its count links to include repos no longer tracked too.
     open_by_bp: dict[int | None, Open] = defaultdict(Open)
-    for project_id, bp_id in session.execute(select(Project.id, Project.business_project_id)):
+    for project_id, bp_id in all_repos:
         open_by_bp[bp_id].add(open_by_project.get(int(project_id), Open()))
     names = {
-        bp.id: bp for bp in session.scalars(select(BusinessProject).order_by(BusinessProject.name))
+        bp.id: bp
+        for bp in session.scalars(select(BusinessProject).order_by(BusinessProject.name))
+        if shown(bp.id)
     }
 
     def entry(bp_id: int | None) -> dict[str, Any]:
@@ -349,7 +374,7 @@ def project_detail(
 ) -> dict[str, Any]:
     """One dự án: per-repo numbers, a 12-period series, finding categories, recent reviews."""
     bp = session.get(BusinessProject, bp_id)
-    if bp is None:
+    if bp is None or not principal.can_view_project(bp.id):
         raise HTTPException(404, "dự án not found")
     period_start, tz = _resolve_period(period, start, settings)
     lo, hi = period_bounds(period_start, period, tz)

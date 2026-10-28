@@ -10,7 +10,7 @@ from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.audit import audit
@@ -70,6 +70,7 @@ def _load(
     lo: datetime,
     hi: datetime,
     *,
+    viewer: Principal,
     business_project_id: int | None = None,
     project_id: int | None = None,
 ) -> list[ReviewFacts]:
@@ -108,6 +109,14 @@ def _load(
     )
     if users is not None:
         reviews = reviews.where(Review.author_user_id.in_(users))
+    # Only work in the dự án the viewer is granted, besides their own (docs/specs/09).
+    if (granted := viewer.visible_projects()) is not None:
+        reviews = reviews.where(
+            or_(
+                Review.author_user_id == viewer.user_id,
+                Project.business_project_id.in_(granted),
+            )
+        )
     if project_id is not None:
         reviews = reviews.where(Project.id == project_id)
     if business_project_id is not None:
@@ -206,13 +215,25 @@ def members_evaluation(
     tz = ZoneInfo(settings.report_tz)
     start, end, lo, hi = _range(tz, date_from, date_to)
     visible = _scope(principal, team_id)
+    if business_project_id is not None and not principal.can_view_project(business_project_id):
+        raise HTTPException(404, "dự án not found")
+    if project_id is not None:
+        repo = session.get(Project, project_id)
+        if repo is None or not principal.can_view_project(repo.business_project_id):
+            raise HTTPException(404, "repo not found")
     if team_id is not None:
         if session.get(Team, team_id) is None:
             raise HTTPException(404, "team not found")
         members = _team_members(session, team_id, start, end)
         visible = members if visible is None else visible & members
     reviews = _load(
-        session, visible, lo, hi, business_project_id=business_project_id, project_id=project_id
+        session,
+        visible,
+        lo,
+        hi,
+        viewer=principal,
+        business_project_id=business_project_id,
+        project_id=project_id,
     )
     result = evaluate_members(reviews, start, end, tz)
     listed = {m["user_id"] for m in result["members"]}
@@ -294,7 +315,7 @@ def member_evaluation(
         raise HTTPException(404, "person not found")
     tz = ZoneInfo(settings.report_tz)
     start, end, lo, hi = _range(tz, date_from, date_to)
-    result = evaluate_member(_load(session, {user_id}, lo, hi), start, end, tz)
+    result = evaluate_member(_load(session, {user_id}, lo, hi, viewer=principal), start, end, tz)
     if user_id != principal.user_id:
         audit(
             session,

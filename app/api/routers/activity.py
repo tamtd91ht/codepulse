@@ -3,9 +3,10 @@ what waits in the queue and what just ended, for the dashboard's live indicator.
 
 Running and ended reviews come from the worker's Redis progress records (the review row itself
 is not committed until the review ends); waiting ones from the RQ queue's job ids. Each person
-sees the work they may review (themself, people they lead; admins everything; an unmapped
-author needs a lead or admin) and only a count of the rest. Work whose author is not known yet
-(not synced) is shown to admins only.
+sees the work they may review in the dự án they are granted (themself, people they lead; a
+manager of the dự án or an admin everything; an unmapped author needs a lead, manager or admin)
+and only a count of the rest. Work whose author is not known yet
+(not synced) is shown to managers of the dự án and admins only.
 """
 
 from collections.abc import Callable
@@ -16,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select, tuple_
 from sqlalchemy.orm import Session
 
+from app.api.access import review_repo
 from app.api.deps import get_queue, get_session
 from app.api.schemas import ActivityItem, ActivityOut, LiveReviewOut
 from app.api.security import CurrentPrincipal, Principal
@@ -66,7 +68,7 @@ def review_activity(
     running: list[ActivityItem] = []
     for item in running_raw:
         project = projects.get(int(item.get("project_id") or 0))
-        if project is None or not _may_see_record(principal, item):
+        if project is None or not _may_see_record(principal, item, project[0]):
             hidden += 1
             continue
         running.append(_from_record("running", item, project))
@@ -74,14 +76,14 @@ def review_activity(
     recent: list[ActivityItem] = []
     for item in recent_raw:
         project = projects.get(int(item.get("project_id") or 0))
-        if project is not None and _may_see_record(principal, item):
+        if project is not None and _may_see_record(principal, item, project[0]):
             recent.append(_from_record("ended", item, project))
 
     queued: list[ActivityItem] = []
     visible_queued = 0
     for item in queued_raw:
         project = projects.get(item["project_id"])
-        if project is None or not _may_see_queued(principal, item):
+        if project is None or not _may_see_queued(principal, item, project[0]):
             hidden += 1
             continue
         visible_queued += 1
@@ -126,28 +128,34 @@ def live_review(
     )
     if record is not None:
         author, running = record.get("author_user_id"), "stage" in record
+        repo = session.get(Project, int(record.get("project_id") or 0))
     else:
         review = session.get(Review, review_id)  # ended more than a few minutes ago
         if review is None:
             raise HTTPException(404, "review not found")
         author, running = review.author_user_id, False
-    if not principal.may_review_author(author):
+        repo = review_repo(session, review)
+    # Whoever may queue it may follow it (leads: unmapped authors too); your own anywhere.
+    bp_id = repo.business_project_id if repo else None
+    if repo is None or not (
+        principal.can_see_work(author, bp_id) or principal.may_review_work(author, bp_id)
+    ):
         raise HTTPException(404, "review not found")
     return LiveReviewOut(review_id=review_id, running=running, events=progress.live(review_id))
 
 
-def _may_see_record(principal: Principal, item: dict[str, Any]) -> bool:
-    """A knowledge build is about the repo, not a person: visible to everyone signed in, like
-    the repo's knowledge page (docs/specs/19 §3.5). Reviews follow their author."""
+def _may_see_record(principal: Principal, item: dict[str, Any], project: Project) -> bool:
+    """A knowledge build is about the repo, not a person: visible to everyone who sees the
+    dự án, like the repo's knowledge page (docs/specs/19 §3.5). Reviews follow their author."""
     if item.get("kind") == "knowledge":
-        return True
-    return principal.may_review_author(item.get("author_user_id"))
+        return principal.can_view_project(project.business_project_id)
+    return principal.may_review_work(item.get("author_user_id"), project.business_project_id)
 
 
-def _may_see_queued(principal: Principal, item: dict[str, Any]) -> bool:
+def _may_see_queued(principal: Principal, item: dict[str, Any], project: Project) -> bool:
     if not item["found"]:  # not synced yet: its author is unknown, not "unmapped"
-        return principal.is_admin
-    return principal.may_review_author(item["author_user_id"])
+        return principal.can_manage_project(project.business_project_id)
+    return principal.may_review_work(item["author_user_id"], project.business_project_id)
 
 
 def _from_record(

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -43,6 +43,26 @@ class BusinessProject(TimestampMixin, Base):
     claude_repo_path: Mapped[str | None]
     claude_repo_ref: Mapped[str | None] = mapped_column(String(255))
     claude_repo_include: Mapped[str | None]
+
+
+class ProjectGrant(TimestampMixin, Base):
+    """A person's access to a dự án (outside the spec, requested by the user 2026-10-28; see
+    docs/specs/09 "Phân quyền"): "view" shows it, "manage" also lets them request and re-run
+    reviews and edit its review premises. ADMIN_EMAILS admins need no grant."""
+
+    __tablename__ = "project_grants"
+    __table_args__ = (CheckConstraint("role IN ('view','manage')", name="role"),)
+
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    role: Mapped[str]
+    granted_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
 
 
 class Project(TimestampMixin, Base):

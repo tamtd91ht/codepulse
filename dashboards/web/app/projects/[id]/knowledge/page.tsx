@@ -933,7 +933,7 @@ export default function KnowledgePage({ params }: { params: Promise<{ id: string
   const viewing = selected ?? activeVersion;
   const other = useApi<KnowledgeVersion>(viewing !== null && viewing !== activeVersion ? `${knowledgePath(id)}/versions/${viewing}` : null);
   const shown: KnowledgeVersion | undefined = viewing === activeVersion ? (data?.active ?? undefined) : other.data;
-  const canEdit = canEditKnowledge(me);
+  const canEdit = canEditKnowledge(me, repo?.business_project_id);
   const edits = data?.edits ?? [];
   const previousRow = useMemo(() => {
     if (!shown || !versions.data) return null;
@@ -1022,7 +1022,7 @@ export default function KnowledgePage({ params }: { params: Promise<{ id: string
               </button>
             )}
             {repo && (
-              <RefreshKnowledgeButton projectId={repo.id} repoName={repo.path_with_namespace} building={data.building} me={me} onQueued={mutate} />
+              <RefreshKnowledgeButton projectId={repo.id} businessProjectId={repo.business_project_id} repoName={repo.path_with_namespace} building={data.building} me={me} onQueued={mutate} />
             )}
           </>
         )

@@ -83,10 +83,12 @@ export function RefreshKnowledgeButton({
   repoName,
   building,
   me,
+  businessProjectId,
   onQueued,
   size,
 }: {
   projectId: number;
+  businessProjectId: number | null;
   repoName: string;
   building: boolean;
   me: Me | undefined;
@@ -96,7 +98,7 @@ export function RefreshKnowledgeButton({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  if (!canEditKnowledge(me)) return null;
+  if (!canEditKnowledge(me, businessProjectId)) return null;
 
   async function confirm(): Promise<void> {
     setBusy(true);

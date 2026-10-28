@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_session
 from app.config import Settings, get_settings
-from app.models import Team, TeamMember, User
+from app.models import ProjectGrant, Team, TeamMember, User
 
 SESSION_COOKIE = "codepulse_session"
 ALGORITHM = "HS256"
@@ -58,6 +58,8 @@ class Principal:
     managed_teams: set[int] = field(default_factory=set)  # includes sub-teams
     own_teams: set[int] = field(default_factory=set)
     lead_members: set[int] = field(default_factory=set)  # users in the teams this person leads
+    # dự án id -> "view" | "manage" (project_grants); admins need none.
+    project_roles: dict[int, str] = field(default_factory=dict)
 
     @property
     def is_lead(self) -> bool:
@@ -85,6 +87,43 @@ class Principal:
         if author_user_id is None:
             return self.is_admin or self.is_lead
         return self.can_see_user(author_user_id)
+
+    # -- dự án grants (docs/specs/09 "Phân quyền theo dự án") -----------------------------------
+    # A dự án you hold no grant on does not exist for you; repos outside every dự án are the
+    # admins'. Inside a dự án you see, the team rules above still hold ("view"); "manage" covers
+    # everyone's work there. Your own work stays yours wherever it is.
+
+    def visible_projects(self) -> set[int] | None:
+        """None means every dự án (admin)."""
+        return None if self.is_admin else set(self.project_roles)
+
+    def managed_projects(self) -> set[int] | None:
+        """None means every dự án (admin)."""
+        if self.is_admin:
+            return None
+        return {bp for bp, role in self.project_roles.items() if role == "manage"}
+
+    def can_view_project(self, bp_id: int | None) -> bool:
+        return self.is_admin or (bp_id is not None and bp_id in self.project_roles)
+
+    def can_manage_project(self, bp_id: int | None) -> bool:
+        return self.is_admin or (bp_id is not None and self.project_roles.get(bp_id) == "manage")
+
+    def can_see_work(self, author_user_id: int | None, bp_id: int | None) -> bool:
+        """A review, its findings or a commit, in a repo of dự án `bp_id`."""
+        if self.is_admin or (author_user_id is not None and author_user_id == self.user_id):
+            return True
+        if not self.can_view_project(bp_id):
+            return False
+        if self.can_manage_project(bp_id):
+            return True
+        return author_user_id is not None and author_user_id in self.lead_members
+
+    def may_review_work(self, author_user_id: int | None, bp_id: int | None) -> bool:
+        """Asking for a review of a commit in a repo of dự án `bp_id`."""
+        if not self.can_view_project(bp_id):
+            return False
+        return self.can_manage_project(bp_id) or self.may_review_author(author_user_id)
 
 
 def _descendants(teams: Iterable[Team], roots: set[int]) -> set[int]:
@@ -123,14 +162,26 @@ def load_principal(
             if m.joined_at <= day and (m.left_at is None or m.left_at > day)
         }
     admins = {e.lower() for e in settings.admin_emails}
+    is_admin = bool(user.primary_email and user.primary_email.lower() in admins)
+    roles: dict[int, str] = {}
+    if not is_admin:
+        roles = {
+            int(bp): str(role)
+            for bp, role in session.execute(
+                select(ProjectGrant.business_project_id, ProjectGrant.role).where(
+                    ProjectGrant.user_id == user_id
+                )
+            ).tuples()
+        }
     return Principal(
         user_id=user.id,
         email=user.primary_email,
-        is_admin=bool(user.primary_email and user.primary_email.lower() in admins),
+        is_admin=is_admin,
         lead_teams=lead,
         managed_teams=managed,
         own_teams={m.team_id for m in memberships},
         lead_members=lead_members,
+        project_roles=roles,
     )
 
 

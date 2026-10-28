@@ -20,7 +20,7 @@ import { Icon } from "@/components/icons";
 import { Card, ChartTip, CountLink, EmptyState, Loading, PageHeader, Pager, Segmented, Sparkline, SplitBar, StatStrip, StripStat } from "@/components/ui";
 import { type BoardScope, boardLink, qs, useApi } from "@/lib/api";
 import { delta, num, periodLabel, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
-import type { ProjectEntry, ProjectsOverview } from "@/lib/types";
+import type { Me, ProjectEntry, ProjectsOverview } from "@/lib/types";
 
 type Period = "week" | "month";
 type View = "grid" | "table";
@@ -145,6 +145,7 @@ export default function OverviewPage() {
   const step = (by: number) => setCursor((c) => (c === null ? c : period === "week" ? shiftWeeks(c, by) : shiftMonths(c, by)));
 
   const { data, error } = useApi<ProjectsOverview>(start && `/metrics/projects${qs({ period, start })}`, { keepPreviousData: true });
+  const { data: me } = useApi<Me>("/auth/me");
   const [view, setView] = useState<View>("grid");
   useEffect(() => {
     try {
@@ -242,9 +243,15 @@ export default function OverviewPage() {
 
       {data.projects.length === 0 ? (
         <Card>
-          <EmptyState icon="folder" title="Chưa có dự án hay repo nào">
-            Admin thêm repo và gom vào dự án ở Admin → Dự án &amp; Repo.
-          </EmptyState>
+          {me && !me.is_admin ? (
+            <EmptyState icon="members" title="Bạn chưa được cấp quyền vào dự án nào">
+              Liên hệ admin để được cấp quyền Xem hoặc Quản lý dự án (Admin → Dự án &amp; Repo → chọn dự án → Quyền truy cập).
+            </EmptyState>
+          ) : (
+            <EmptyState icon="folder" title="Chưa có dự án hay repo nào">
+              Admin thêm repo và gom vào dự án ở Admin → Dự án &amp; Repo.
+            </EmptyState>
+          )}
         </Card>
       ) : (
         <>

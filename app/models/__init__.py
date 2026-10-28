@@ -7,7 +7,7 @@ from app.models.metrics import MetricsTeamPeriod, MetricsUserPeriod
 from app.models.notifications import NotificationWebhook
 from app.models.review import FindingDispute, Review, ReviewFinding
 from app.models.secrets import AppSetting, StoredSecret
-from app.models.source import BusinessProject, Connection, Project, RawGitlab
+from app.models.source import BusinessProject, Connection, Project, ProjectGrant, RawGitlab
 from app.models.telegram import TelegramBot, TelegramRequest
 
 __all__ = [
@@ -27,6 +27,7 @@ __all__ = [
     "NotificationWebhook",
     "Pipeline",
     "Project",
+    "ProjectGrant",
     "RawGitlab",
     "Review",
     "ReviewFinding",

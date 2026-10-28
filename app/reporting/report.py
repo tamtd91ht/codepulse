@@ -19,6 +19,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoes
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.access import reviews_in_projects
 from app.models import (
     MetricsTeamPeriod,
     MetricsUserPeriod,
@@ -118,7 +119,10 @@ def build_team_report(
     tz: ZoneInfo,
     audience: Audience = "lead",
     now: datetime | None = None,
+    projects: set[int] | None = None,
 ) -> TeamReport:
+    """`projects`: the dự án whose findings may be named (the reader's grants, docs/specs/09
+    "Phân quyền theo dự án"); None for every dự án."""
     team = session.get(Team, team_id)
     if team is None:
         raise ValueError(f"team {team_id} not found")
@@ -162,6 +166,7 @@ def build_team_report(
             Review.author_user_id.in_(names),
             ReviewFinding.status == "open",
             ReviewFinding.severity.in_(("critical", "high")),
+            *([] if projects is None else [reviews_in_projects(projects)]),
         )
         .order_by(Review.finished_at)
         .limit(20)
@@ -189,6 +194,7 @@ def build_team_report(
                 Review.finished_at < hi,
                 ReviewFinding.status != "false_positive",
                 ReviewFinding.severity != "info",
+                *([] if projects is None else [reviews_in_projects(projects)]),
             )
         )
     )

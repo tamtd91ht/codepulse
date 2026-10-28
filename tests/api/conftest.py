@@ -23,6 +23,7 @@ from app.models import (
     MetricsTeamPeriod,
     MetricsUserPeriod,
     Project,
+    ProjectGrant,
     Review,
     ReviewFinding,
     Team,
@@ -112,9 +113,21 @@ def world(db_session: Session) -> World:
     )
     s.add(connection)
     s.flush()
-    project = Project(connection_id=connection.id, external_id=1001, path_with_namespace="demo/p")
+    # The repo belongs to a dự án everyone here may see, so the team rules decide as before
+    # (docs/specs/09 "Phân quyền theo dự án"); tests about grants change them.
+    demo = BusinessProject(name="Demo")
+    s.add(demo)
+    s.flush()
+    project = Project(
+        connection_id=connection.id,
+        external_id=1001,
+        path_with_namespace="demo/p",
+        business_project_id=demo.id,
+    )
     s.add(project)
     s.flush()
+    for name in ("lead", "manager", "an", "binh", "outsider"):
+        s.add(ProjectGrant(business_project_id=demo.id, user_id=users[name].id, role="view"))
     mr = MergeRequest(project_id=project.id, iid=7, head_sha="a" * 40)
     s.add_all([mr, Commit(sha="b" * 40, project_id=project.id)])
     s.flush()
@@ -185,6 +198,17 @@ def world(db_session: Session) -> World:
     )
 
 
+def grant(session: Session, user: User, bp_id: int | None, role: str = "view") -> None:
+    """Set `user`'s grant on dự án `bp_id` (docs/specs/09 "Phân quyền theo dự án")."""
+    assert bp_id is not None
+    row = session.get(ProjectGrant, (bp_id, user.id))
+    if row is None:
+        session.add(ProjectGrant(business_project_id=bp_id, user_id=user.id, role=role))
+    else:
+        row.role = role
+    session.flush()
+
+
 @pytest.fixture
 def queue() -> FakeQueue:
     return FakeQueue()
@@ -214,10 +238,11 @@ def as_user(settings: Settings) -> Any:
 
 @pytest.fixture
 def bot(db_session: Session, world: World) -> TelegramBot:
-    bp = BusinessProject(name="OmiCRM")
-    db_session.add(bp)
+    # The bot serves the world's dự án (renamed), so everyone keeps their grant on it.
+    bp = db_session.get(BusinessProject, world.project.business_project_id)
+    assert bp is not None
+    bp.name = "OmiCRM"
     db_session.flush()
-    world.project.business_project_id = bp.id
     bot = TelegramBot(
         name="OmiCRM bot",
         bot_username="CodePulseBot",

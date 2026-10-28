@@ -103,9 +103,17 @@ export const knowledgeApi = {
 
 export const knowledgeStatsPath = (projectId: number | string, days: 30 | 90 = 30) => `${knowledgePath(projectId)}/stats?days=${days}`;
 
-/** Lead or admin: who may rebuild, approve and hand-edit knowledge (same gate as the profile refresh). */
-export function canEditKnowledge(me: Me | undefined): boolean {
-  return !!me && (me.is_admin || me.lead_teams.length > 0);
+/** Admin, or the "manage" grant on dự án `bpId` (docs/specs/09 "Phân quyền theo dự án"): who may
+ * request and re-run reviews, rebuild, approve and hand-edit knowledge there. */
+export function canManageProject(me: Me | undefined, bpId: number | null | undefined): boolean {
+  if (!me) return false;
+  if (me.is_admin) return true;
+  return bpId != null && me.projects?.[String(bpId)] === "manage";
+}
+
+/** Who may rebuild, approve and hand-edit a repo's knowledge: a manager of its dự án or an admin. */
+export function canEditKnowledge(me: Me | undefined, bpId: number | null | undefined): boolean {
+  return canManageProject(me, bpId);
 }
 
 /** Poll every 5 s while the worker is building, otherwise not at all. */

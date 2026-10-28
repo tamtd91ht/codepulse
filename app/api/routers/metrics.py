@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.access import reviews_in_projects
 from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.schemas import (
@@ -228,7 +229,7 @@ def team_hotspots(
     period_start = period_start_of(start or datetime.now(tz).date(), period)
     lo, hi = period_bounds(period_start, period, tz)
     members = _team_member_ids(session, team_id, period_start, next_period(period_start, period))
-    base = (
+    query = (
         select(ReviewFinding)
         .join(Review, Review.id == ReviewFinding.review_id)
         .where(
@@ -238,8 +239,11 @@ def team_hotspots(
             Review.finished_at < hi,
             ReviewFinding.status != "false_positive",
         )
-        .subquery()
     )
+    # File paths name repos: only those of the dự án this person is granted (docs/specs/09).
+    if (visible := principal.visible_projects()) is not None:
+        query = query.where(reviews_in_projects(visible))
+    base = query.subquery()
     count = func.count().label("count")
     categories = session.execute(
         select(base.c.category, count).group_by(base.c.category).order_by(count.desc()).limit(5)
@@ -278,6 +282,13 @@ def user_category_heatmap(
             Review.author_user_id == user_id,
             Review.finished_at >= period_bounds(first, "week", tz)[0],
             ReviewFinding.status != "false_positive",
+            # Someone else's work: only in the dự án the viewer is granted (docs/specs/09).
+            *(
+                [reviews_in_projects(granted)]
+                if user_id != principal.user_id
+                and (granted := principal.visible_projects()) is not None
+                else []
+            ),
         )
     ).tuples()
     counts: Counter[tuple[date, str]] = Counter()
@@ -335,6 +346,7 @@ def report(
         period_start_of(start, period),
         ZoneInfo(settings.report_tz),
         audience,
+        projects=principal.visible_projects(),
     )
     media = "text/markdown" if format == "md" else "text/html"
     return Response(render(built, format), media_type=f"{media}; charset=utf-8")

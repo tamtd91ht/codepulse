@@ -71,7 +71,7 @@ class PickerState:
     branch: str = ""  # commits: the branch asked for ("*" every branch), "" = the review branch
     days: int = 7  # commits: the window of the list
     again: bool = False  # finished items may be ticked (each becomes a new review round)
-    may_force: bool = False  # lead/admin: a member cannot re-roll the score of their own work
+    may_force: bool = False  # manager of the dự án/admin: nobody else re-rolls a score
     selected: list[int] = field(default_factory=list)
     page: int = 0
     raw: str = ""  # the command, for the audit log

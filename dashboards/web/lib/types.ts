@@ -10,6 +10,19 @@ export interface Me {
   lead_teams: number[];
   managed_teams: number[];
   teams: number[];
+  /** dự án id -> role (docs/specs/09 "Phân quyền theo dự án"); empty for admins, who have every dự án. */
+  projects: Record<string, ProjectRole>;
+}
+
+export type ProjectRole = "view" | "manage";
+
+/** One person's access to a dự án (admin: GET/PUT /business-projects/{id}/grants). */
+export interface ProjectGrant {
+  user_id: number;
+  full_name: string | null;
+  email: string | null;
+  active: boolean;
+  role: ProjectRole;
 }
 
 export interface Team {
@@ -402,6 +415,8 @@ export interface BusinessProject {
   name: string;
   description: string | null;
   repos: number;
+  /** People granted the dự án. */
+  grants: number;
   review_rules: string | null;
   /** Optional shared .claude repo read by the deep review of every repo of the dự án. */
   claude_repo_connection_id: number | null;

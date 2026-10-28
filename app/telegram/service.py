@@ -73,6 +73,8 @@ log = logging.getLogger(__name__)
 
 VERDICT_ICON = {"approve": "✅", "needs_human": "⚠️", "fix_required": "⚠️", "block": "❌"}
 TELEGRAM_KIND = "telegram"
+# docs/specs/09 "Phân quyền theo dự án": a bot serves one dự án, so its users need a grant on it.
+NOT_GRANTED = "Bạn chưa được cấp quyền vào dự án của bot này; liên hệ admin."
 LINK_CODE_TTL_S = 15 * 60
 LINK_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/I
 FINISHED = ("done", "failed", "skipped", "superseded")
@@ -400,6 +402,8 @@ class BotService:
         if user is None or user.active is False:
             return "Tài khoản của bạn đang tắt trong CodePulse; liên hệ admin."
         principal = load_principal(self._s, user.id, self._settings)
+        if not principal.can_view_project(self._bot.business_project_id):
+            return NOT_GRANTED
         try:
             return self._dispatch(command, msg, account, principal)
         except Denied as exc:
@@ -596,10 +600,10 @@ class BotService:
                 raise Denied(
                     f"Không tìm thấy người '{esc(hint)}'. Dùng @username GitLab, email hoặc tên."
                 )
-            if not me.can_see_user(user.id):
+            if not (me.can_see_user(user.id) or self._manages(me)):
                 raise Denied(
                     f"Bạn không review được việc của {esc(user.full_name or hint)}:"
-                    " chỉ lead của người đó hoặc admin."
+                    " chỉ lead của người đó, người quản lý dự án hoặc admin."
                 )
             users[user.id] = user
         return list(users.values())
@@ -706,14 +710,16 @@ class BotService:
             return None
         return self._s.scalar(query.order_by(Review.id.desc()).limit(1))
 
+    def _manages(self, me: Principal) -> bool:
+        """A manager of the bot's dự án acts on everyone's work there (docs/specs/09)."""
+        return me.can_manage_project(self._bot.business_project_id)
+
     def _may_review_author(self, author_user_id: int | None, me: Principal, what: str) -> None:
-        if author_user_id is not None and me.can_see_user(author_user_id):
-            return
-        if author_user_id is None and (me.is_admin or me.is_lead):
+        if me.may_review_work(author_user_id, self._bot.business_project_id):
             return
         raise Denied(
             f"Bạn chỉ review được {what} của mình hoặc của người mình lead"
-            " (tác giả chưa gắn người thì cần lead/admin)."
+            " (tác giả chưa gắn người thì cần lead, người quản lý dự án hoặc admin)."
         )
 
     # -- review commands -----------------------------------------------------------------------
@@ -938,8 +944,8 @@ class BotService:
         return self._cap(targets, notes)
 
     def _target_open(self, args: ReviewArgs, me: Principal) -> tuple[list[Target], list[str]]:
-        if not (me.is_admin or me.is_lead):
-            raise Denied("/review open dành cho lead hoặc admin.")
+        if not (me.is_admin or me.is_lead or self._manages(me)):
+            raise Denied("/review open dành cho lead, người quản lý dự án hoặc admin.")
         repos = self._pick_repos(args.repo_hint, one=False)
         reviewed = select(Review.mr_id).where(Review.mr_id.is_not(None), Review.status.in_(TAKEN))
         query = select(MergeRequest).where(
@@ -948,7 +954,7 @@ class BotService:
             MergeRequest.head_sha.is_not(None),
             MergeRequest.id.not_in(reviewed),
         )
-        visible = me.visible_users()
+        visible = None if self._manages(me) else me.visible_users()
         if visible is not None:
             # A lead sees their own team: MRs by people they lead, plus unmapped authors.
             mine = select(Account.id).where(Account.user_id.in_(visible))
@@ -1174,7 +1180,7 @@ class BotService:
             person_id=people[0].id if len(people) == 1 else None,
             branch=args.branch or "",
             days=args.days,
-            may_force=me.is_admin or me.is_lead,
+            may_force=me.can_manage_project(self._bot.business_project_id),
         )
 
     def _state_of(self, kind: str, project_id: int, ref: str, sha: str) -> tuple[str, str]:
@@ -1366,7 +1372,9 @@ class BotService:
         me: Principal,
     ) -> Item:
         state, result = self._state_of(kind, project.id, ref, sha) if sha else ("open", "")
-        if state in ("open", "failed") and not me.may_review_author(author_user_id):
+        if state in ("open", "failed") and not me.may_review_work(
+            author_user_id, self._bot.business_project_id
+        ):
             state = "blocked"
         short = ref[:8] if kind == "commit" else f"!{ref}"
         return Item(
@@ -1402,6 +1410,8 @@ class BotService:
         if user is None or user.active is False:
             return CallbackOutcome(answer="Tài khoản của bạn đang tắt.", alert=True)
         me = load_principal(self._s, user.id, self._settings)
+        if not me.can_view_project(self._bot.business_project_id):
+            return CallbackOutcome(answer=NOT_GRANTED, alert=True)
         try:
             if action.kind == "menu":
                 page = int(action.arg) if action.arg.isdigit() else 0
@@ -1681,7 +1691,7 @@ class BotService:
                 round=self._latest_round(it) if it.state == "done" else None,
             )
             for it in chosen
-            if me.may_review_author(it.author_user_id)
+            if me.may_review_work(it.author_user_id, self._bot.business_project_id)
         ]
         if not targets:
             return CallbackOutcome(
@@ -1762,7 +1772,7 @@ class BotService:
                 Review.mr_id.in_(mr_ids) | Review.commit_sha.in_(shas),
             )
         )
-        visible = me.visible_users()
+        visible = None if self._manages(me) else me.visible_users()
         if visible is not None:
             query = query.where(Review.author_user_id.in_(visible))
         counts = dict(
@@ -1834,8 +1844,8 @@ class BotService:
         )
 
     def _sync(self, me: Principal, repo_hint: str | None) -> str:
-        if not (me.is_admin or me.is_lead):
-            raise Denied("/sync dành cho lead hoặc admin.")
+        if not (me.is_admin or me.is_lead or self._manages(me)):
+            raise Denied("/sync dành cho lead, người quản lý dự án hoặc admin.")
         if not self._limiter.allow(f"user:{me.user_id}"):
             return "Bạn gửi quá nhiều lệnh trong 10 phút; thử lại sau ít phút."
         repos = self._pick_repos(repo_hint, one=False)

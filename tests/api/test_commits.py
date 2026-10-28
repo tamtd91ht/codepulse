@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Account, AuditLog, BusinessProject, Commit, Review
-from tests.api.conftest import FakeQueue, World
+from tests.api.conftest import FakeQueue, World, grant
 from tests.collector.fake_gitlab import API, fixture, mount
 
 A = "a" * 40  # an.nguyen@company.vn, plain commit
@@ -70,7 +70,7 @@ def test_repos_people_and_branches_follow_the_callers_scope(
     db_session.add(bp)
     db_session.flush()
     world.project.business_project_id = bp.id
-    db_session.flush()
+    grant(db_session, world.an, bp.id)  # An sees the dự án the repo moved to
     repos = client.get("/api/v1/repos", headers=as_user(world.an)).json()
     assert [(r["path_with_namespace"], r["business_project"]) for r in repos] == [
         ("demo/p", "OmiCRM")

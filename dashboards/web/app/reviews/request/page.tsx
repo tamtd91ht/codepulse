@@ -191,14 +191,16 @@ export default function RequestReviewPage() {
       <PageHeader
         eyebrow="Review"
         title="Yêu cầu review"
-        subtitle="Chọn repo, branch, người và khoảng thời gian; review chạy trong nền và lưu vào dashboard như review tự động. Bạn review được việc của mình, lead thêm người mình lead, admin mọi người."
+        subtitle="Chọn repo, branch, người và khoảng thời gian; review chạy trong nền và lưu vào dashboard như review tự động. Chỉ repo thuộc dự án bạn được cấp quyền; trong đó bạn review được việc của mình, lead thêm người mình lead, người quản lý dự án và admin mọi người."
       />
 
       <Card title="Phạm vi">
         {!repos.data || !people.data ? (
           <Loading error={repos.error ?? people.error} />
         ) : repos.data.length === 0 ? (
-          <EmptyState icon="folder" title="Chưa có repo nào đang theo dõi" />
+          <EmptyState icon="folder" title="Chưa có repo nào bạn được yêu cầu review">
+            Chỉ repo thuộc dự án bạn được cấp quyền mới hiện ở đây; liên hệ admin nếu thiếu.
+          </EmptyState>
         ) : (
           <form onSubmit={submit} className="request-form" style={{ display: "grid", gap: 14 }}>
             <div className="toolbar" style={{ margin: 0 }}>

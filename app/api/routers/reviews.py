@@ -1,4 +1,5 @@
-"""Reviews and findings (docs/specs/09), scoped by role (developer: own; lead: team; admin: all)."""
+"""Reviews and findings (docs/specs/09), scoped by role (developer: own; lead: team; admin: all)
+and by dự án grant (app/api/access.py)."""
 
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Annotated, Any, Literal, cast
@@ -9,6 +10,7 @@ from sqlalchemy import Date, Select, exists, func, or_, select
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.orm import Session
 
+from app.api.access import require_manage, review_repo, review_scope
 from app.api.audit import audit
 from app.api.deps import get_queue, get_session
 from app.api.schemas import (
@@ -23,7 +25,7 @@ from app.api.schemas import (
     decode_cursor,
     encode_cursor,
 )
-from app.api.security import CurrentPrincipal, LeadPrincipal, Principal
+from app.api.security import CurrentPrincipal, Principal
 from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.models import (
@@ -46,8 +48,14 @@ ReviewStatus = Literal["queued", "running", "done", "failed", "skipped", "supers
 
 
 def scoped[Q: Select[Any] | Select[Any, Any, Any]](query: Q, principal: Principal) -> Q:
-    visible = principal.visible_users()
-    return query if visible is None else cast(Q, query.where(Review.author_user_id.in_(visible)))
+    allowed = review_scope(principal)
+    return query if allowed is None else cast(Q, query.where(allowed))
+
+
+def _may_filter_by(principal: Principal, user_id: int) -> bool:
+    """A person filter: someone you see everywhere, or anyone when you manage a dự án (the
+    scope then keeps the reviews of the dự án you manage)."""
+    return principal.can_see_user(user_id) or bool(principal.managed_projects())
 
 
 def _range(
@@ -67,13 +75,11 @@ def _range(
 
 def _target(session: Session, review: Review) -> tuple[Project | None, str | None, str]:
     """Project, GitLab web URL and a short label for a review's MR or commit."""
+    project = review_repo(session, review)
     if review.mr_id is not None:
         mr = session.get(MergeRequest, review.mr_id)
-        project = session.get(Project, mr.project_id) if mr else None
         label, path = (f"MR !{mr.iid}", f"/-/merge_requests/{mr.iid}") if mr else ("MR", None)
     else:
-        commit = session.get(Commit, review.commit_sha) if review.commit_sha else None
-        project = session.get(Project, commit.project_id) if commit and commit.project_id else None
         sha = review.commit_sha or ""
         label, path = f"commit {sha[:8]}", f"/-/commit/{sha}"
     url = None
@@ -101,7 +107,7 @@ def list_reviews(
     cursor: str | None = None,
     limit: Limit = 50,
 ) -> Page[Any]:
-    if user_id is not None and not principal.can_see_user(user_id):
+    if user_id is not None and not _may_filter_by(principal, user_id):
         raise HTTPException(403, "not allowed to see this person's reviews")
     query = scoped(select(Review), principal)
     if user_id is not None:
@@ -159,10 +165,12 @@ def _visible_review(session: Session, principal: Principal, review_id: int) -> R
     review = session.get(Review, review_id)
     if review is None:
         raise HTTPException(404, "review not found")
-    if review.author_user_id is None:
-        if not principal.is_admin:
-            raise HTTPException(403, "not allowed to see this review")
-    elif not principal.can_see_user(review.author_user_id):
+    project = review_repo(session, review)
+    bp_id = project.business_project_id if project else None
+    if not principal.can_see_work(review.author_user_id, bp_id):
+        # A dự án you are not granted does not exist for you (docs/specs/09).
+        if not principal.can_view_project(bp_id):
+            raise HTTPException(404, "review not found")
         raise HTTPException(403, "not allowed to see this review")
     return review
 
@@ -187,7 +195,8 @@ def get_review(review_id: int, principal: CurrentPrincipal, session: SessionDep)
         "project": project.path_with_namespace if project else None,
         "web_url": url,
         "history": _history(session, review),
-        "can_rerun": _can_rerun(session, review, project),
+        "can_rerun": _can_rerun(session, review, project)
+        and principal.can_manage_project(project.business_project_id if project else None),
     }
 
 
@@ -235,15 +244,18 @@ def _can_rerun(session: Session, review: Review, project: Project | None) -> boo
 @router.post("/reviews/{review_id}/rerun", status_code=202)
 def rerun_review(
     review_id: int,
-    principal: LeadPrincipal,
+    principal: CurrentPrincipal,
     session: SessionDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
     body: RerunIn | None = None,
 ) -> dict[str, str]:
     """Re-run a failed or skipped review; with `force` also a finished one, as a new round
     (docs/specs/17 §Lịch sử): the old round is kept and marked superseded. An MR can only be
-    reviewed again while it is open and only at its current head."""
+    reviewed again while it is open and only at its current head. Managers of the dự án
+    and admins only: a re-run spends LLM budget."""
     review = _visible_review(session, principal, review_id)
+    repo = review_repo(session, review)
+    require_manage(principal, repo.business_project_id if repo else None)
     force = bool(body and body.force)
     ignore_loc_limit = bool(body and body.ignore_loc_limit)
     if review.status not in ("failed", "skipped") and not (force and review.status == "done"):
@@ -333,7 +345,7 @@ def list_findings(
     false positive, an active author, and `team_id` = the team the author was in that day).
     Those metrics are a snapshot of their last aggregation; this list is live, so a change
     since (a user deactivated, membership edited, a review rerun) shows here first."""
-    if user_id is not None and not principal.can_see_user(user_id):
+    if user_id is not None and not _may_filter_by(principal, user_id):
         raise HTTPException(403, "not allowed to see this person's findings")
     if status == "counted" and (found_from is None or found_to is None):
         # Only a period's metrics count this way; without one it matches no number shown.
