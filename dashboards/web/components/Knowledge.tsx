@@ -232,21 +232,21 @@ export function KnowledgeTile({ repo, me }: { repo: { id: number; path_with_name
       ) : (
         <>
           {data.active.data.domain?.summary && <p className="summary">{data.active.data.domain.summary}</p>}
-          <dl className="facts">
-            <dt>Bất biến</dt>
-            <dd>{data.active.counts.invariants}</dd>
-            <dt>Check</dt>
-            <dd>{data.active.counts.checks}</dd>
-            <dt>Quy tắc severity</dt>
-            <dd>{data.active.counts.severity_rules}</dd>
-            <dt>Convention</dt>
-            <dd>{data.active.counts.code_conventions}</dd>
+          <dl className="kn-counts">
+            {(
+              [
+                ["Bất biến", data.active.counts.invariants],
+                ["Check", data.active.counts.checks],
+                ["Quy tắc severity", data.active.counts.severity_rules],
+                ["Convention", data.active.counts.code_conventions],
+              ] as const
+            ).map(([label, n]) => (
+              <div key={label}>
+                <dd>{n}</dd>
+                <dt>{label}</dt>
+              </div>
+            ))}
           </dl>
-          {data.active.stale && (
-            <p className="small muted" style={{ margin: 0 }}>
-              <code>.claude</code> hoặc repo dùng chung đã đổi sau khi dựng; review vẫn dùng bản này cho tới khi rà soát lại.
-            </p>
-          )}
           <div className="toolbar" style={{ margin: 0 }}>
             <Link href={detail} className="button">
               Xem chi tiết

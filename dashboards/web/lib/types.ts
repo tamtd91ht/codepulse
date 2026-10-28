@@ -945,6 +945,18 @@ export interface KnowledgeEdit {
   created_at: string;
 }
 
+/** One repo's knowledge at a glance (GET /knowledge/summary): no staleness, that needs GitLab. */
+export interface KnowledgeSummary {
+  project_id: number;
+  version: number | null;
+  created_at: string | null;
+  approved: boolean;
+  counts: KnowledgeCounts | null;
+  building: boolean;
+  /** The newest build failed (newer than the active one, or there is none). */
+  failed: boolean;
+}
+
 export interface KnowledgeResponse {
   project_id: number;
   active: KnowledgeVersion | null;

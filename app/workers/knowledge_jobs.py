@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from rq.job import Job
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -85,6 +86,31 @@ def job_active(queue: Any, job_id: str) -> bool:
         log.warning("knowledge job status not readable", extra={"error": exc.__class__.__name__})
         return False
     return str(getattr(status, "value", status)) in ACTIVE_JOB_STATES
+
+
+def _status(status: object) -> str:
+    return str(getattr(status, "value", status))
+
+
+def jobs_active(queue: Any, job_ids: list[str]) -> set[str]:
+    """`job_active` for many ids in one Redis round trip (RQ's `Job.fetch_many` pipelines the
+    reads and, unlike `Queue.fetch_job`, writes nothing for a missing job). Empty when the queue
+    cannot say; a queue without a Redis connection (tests) is asked one id at a time."""
+    if not job_ids:
+        return set()
+    connection = getattr(queue, "connection", None)
+    if connection is None:
+        return {j for j in job_ids if job_active(queue, j)}
+    try:
+        jobs = Job.fetch_many(job_ids, connection=connection)
+        return {
+            job.id
+            for job in jobs
+            if job is not None and _status(job.get_status(refresh=False)) in ACTIVE_JOB_STATES
+        }
+    except Exception as exc:  # the queue is a bonus here, never an error
+        log.warning("knowledge job status not readable", extra={"error": exc.__class__.__name__})
+        return set()
 
 
 @dataclass

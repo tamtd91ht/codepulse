@@ -224,6 +224,95 @@ export function Kpi({
   );
 }
 
+/**
+ * One number of a stat strip: a short label, the value with its change against the previous
+ * period as a small chip (the wording lives in the chip's tooltip, not on screen) and an
+ * optional line or picture under it. With `href` the whole cell opens the list behind it.
+ */
+export function StripStat({
+  label,
+  value,
+  digits = 0,
+  unit,
+  change,
+  higherIsBetter = true,
+  tone,
+  sub,
+  title,
+  href,
+}: {
+  label: string;
+  value: Num | number | undefined;
+  digits?: number;
+  unit?: string;
+  change?: number | null;
+  higherIsBetter?: boolean;
+  /** Colours the value: "bad" for a count that should be zero, and is not. */
+  tone?: "bad" | "warn" | "good";
+  sub?: ReactNode;
+  /** What the number means, on hover. */
+  title?: string;
+  href?: string;
+}) {
+  const has = typeof change === "number" && change !== 0;
+  const good = has && change > 0 === higherIsBetter;
+  const body = (
+    <>
+      <span className="kstat-label">{label}</span>
+      <span className="kstat-value">
+        <span className={tone ? `tone-${tone}` : undefined}>{num(value ?? null, digits)}</span>
+        {unit && <span className="unit">{unit}</span>}
+        {typeof change === "number" && (
+          <span
+            className={`kstat-delta${has ? (good ? " up" : " down") : ""}`}
+            title={`So với kỳ trước: ${change === 0 ? "không đổi" : delta(change, digits)}`}
+          >
+            <Icon name={!has ? "minus" : change > 0 ? "trendUp" : "trendDown"} size={11} />
+            {change === 0 ? "0" : delta(change, digits)}
+            <span className="visually-hidden">
+              {" "}
+              so với kỳ trước{has ? (good ? ", tốt hơn" : ", kém hơn") : ""}
+            </span>
+          </span>
+        )}
+      </span>
+      {sub && <span className="kstat-sub">{sub}</span>}
+    </>
+  );
+  return href ? (
+    <Link href={href} className="kstat link" title={title}>
+      {body}
+    </Link>
+  ) : (
+    <div className="kstat" title={title}>
+      {body}
+    </div>
+  );
+}
+
+/** A row of numbers in one card, divided by hairlines: the page's results in one glance. */
+export function StatStrip({ children, label }: { children: ReactNode; label: string }) {
+  return (
+    <section className="card stat-strip" aria-label={label}>
+      {children}
+    </section>
+  );
+}
+
+/** A thin bar split by share, e.g. APPROVE / FIX REQUIRED / BLOCK; labelled for screen readers. */
+export function SplitBar({ parts, label }: { parts: { value: number; color: string; name: string }[]; label: string }) {
+  const total = parts.reduce((s, p) => s + p.value, 0);
+  if (total === 0) return null;
+  const text = parts.map((p) => `${p.name} ${p.value}`).join(" · ");
+  return (
+    <span className="split-bar" role="img" aria-label={`${label}: ${text}`} title={text}>
+      {parts.map((p) =>
+        p.value ? <span key={p.name} style={{ flexGrow: p.value, background: p.color }} /> : null,
+      )}
+    </span>
+  );
+}
+
 /** A count that opens the findings it counts (nothing to open at 0, or without `href`). */
 export function CountLink({ n, href }: { n: number; href: string | null }) {
   return n && href ? <Link href={href}>{n}</Link> : <>{n}</>;

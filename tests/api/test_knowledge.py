@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import AuditLog, ReviewKnowledge, ReviewKnowledgeEdit
+from app.models import AuditLog, BusinessProject, ReviewKnowledge, ReviewKnowledgeEdit
 from app.review.knowledge import load_for_review
 from app.review.progress import MemoryProgress
 from app.review.providers.base import ReviewPrompt, ReviewResult
@@ -91,6 +91,7 @@ def test_get_knowledge_shows_active_build_edits_and_staleness(
             "edits": [],
             "stats": None,
             "building": False,
+            "last_failure": None,
         }
         knowledge_row(db_session, world, version=1, status="superseded")
         row = knowledge_row(db_session, world, version=2)
@@ -155,6 +156,57 @@ def test_versions_list_and_detail(
         assert detail["version"] == 1 and detail["status"] == "superseded"
         assert detail["data"]["domain"]["summary"] == "CRM"
         assert client.get(f"{base}/7", headers=as_user(world.an)).status_code == 404
+
+
+def test_summary_lists_each_repo_of_the_du_an_without_gitlab(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    bp = BusinessProject(name="OmiCRM")
+    db_session.add(bp)
+    db_session.flush()
+    world.project.business_project_id = bp.id
+    knowledge_row(db_session, world, version=1, status="superseded")
+    row = knowledge_row(db_session, world, version=2, approved_by_user_id=world.lead.id)
+    path = f"/api/v1/knowledge/summary?business_project_id={bp.id}"
+    with respx.mock(assert_all_called=False) as router:
+        router.route(host="testserver").pass_through()  # any GitLab call would fail the test
+        summary = client.get(path, headers=as_user(world.an)).json()
+    assert summary == [
+        {
+            "project_id": world.project.id,
+            "version": 2,
+            "created_at": summary[0]["created_at"],
+            "approved": True,
+            "counts": {
+                "invariants": 1,
+                "checks": 1,
+                "severity_rules": 0,
+                "code_conventions": 0,
+                "omitted": 1,
+                "conflicts": 0,
+            },
+            "building": False,
+            "failed": False,
+        }
+    ]
+    db_session.add(
+        ReviewKnowledge(
+            scope="project",
+            project_id=world.project.id,
+            version=3,
+            schema_version=1,
+            data={},
+            status="failed",
+            built_by="auto",
+            created_at=datetime(2099, 1, 1, tzinfo=UTC),
+        )
+    )
+    db_session.flush()
+    again = client.get(path, headers=as_user(world.an)).json()[0]
+    assert again["version"] == row.version and again["failed"] is True
+    other = "/api/v1/knowledge/summary?business_project_id=9999"
+    assert client.get(other, headers=as_user(world.an)).status_code == 404
+    assert client.get(path).status_code == 401
 
 
 class StatusQueue(FakeQueue):

@@ -13,7 +13,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.audit import audit
@@ -41,7 +41,7 @@ from app.review.knowledge import (
     edits_for,
     stale_reasons,
 )
-from app.workers.knowledge_jobs import KNOWLEDGE_JOB_TIMEOUT, job_active, job_id_for
+from app.workers.knowledge_jobs import KNOWLEDGE_JOB_TIMEOUT, job_active, job_id_for, jobs_active
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["knowledge"])
@@ -179,6 +179,78 @@ def get_knowledge(
         # none): the page must say why a build failed, not only that it did.
         "last_failure": _last_failure(session, project, row),
     }
+
+
+@router.get("/knowledge/summary")
+def knowledge_summary(
+    business_project_id: int, principal: CurrentPrincipal, session: SessionDep, queue: QueueDep
+) -> list[dict[str, Any]]:
+    """One line per tracked repo of a dự án: the active build's version, approval and counts,
+    whether a build is queued and whether the newest one failed. One query per kind of row and
+    no GitLab call, so the dự án page can list a hundred repos; staleness needs GitLab and is
+    shown per repo (GET …/knowledge)."""
+    if session.get(BusinessProject, business_project_id) is None:
+        raise HTTPException(404, "dự án not found")
+    projects = list(
+        session.scalars(
+            select(Project)
+            .where(Project.tracked, Project.business_project_id == business_project_id)
+            .order_by(Project.path_with_namespace)
+        )
+    )
+    ids = [p.id for p in projects]
+    # At most one active row per repo (a partial unique index); failed rows are kept forever
+    # for spend accounting, so only the newest failure's time is read, not the rows.
+    active: dict[int, ReviewKnowledge] = (
+        {
+            row.project_id: row
+            for row in session.scalars(
+                select(ReviewKnowledge).where(
+                    ReviewKnowledge.scope == "project",
+                    ReviewKnowledge.project_id.in_(ids),
+                    ReviewKnowledge.status == "active",
+                )
+            )
+            if row.project_id is not None
+        }
+        if ids
+        else {}
+    )
+    last_failed: dict[int, datetime] = (
+        {
+            project_id: created
+            for project_id, created in session.execute(
+                select(ReviewKnowledge.project_id, func.max(ReviewKnowledge.created_at))
+                .where(
+                    ReviewKnowledge.scope == "project",
+                    ReviewKnowledge.project_id.in_(ids),
+                    ReviewKnowledge.status == "failed",
+                )
+                .group_by(ReviewKnowledge.project_id)
+            ).tuples()
+            if project_id is not None
+        }
+        if ids
+        else {}
+    )
+    building = jobs_active(queue, [job_id_for(i) for i in ids])
+    out: list[dict[str, Any]] = []
+    for project in projects:
+        built = active.get(project.id)
+        failed_at = last_failed.get(project.id)
+        out.append(
+            {
+                "project_id": project.id,
+                "version": built.version if built else None,
+                "created_at": built.created_at if built else None,
+                "approved": bool(built and built.approved_by_user_id is not None),
+                "counts": Knowledge.model_validate(built.data or {}).counts() if built else None,
+                "building": job_id_for(project.id) in building,
+                # Same rule as `_last_failure`: only a failure newer than the active build.
+                "failed": failed_at is not None and (built is None or failed_at > built.created_at),
+            }
+        )
+    return out
 
 
 def _last_failure(

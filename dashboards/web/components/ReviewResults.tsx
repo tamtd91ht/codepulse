@@ -34,11 +34,19 @@ const STATUSES: Record<StatusFilter, string[]> = {
 export function ReviewResults({
   businessProjectId,
   repos,
+  repo,
   person,
   range: shared,
   period,
+  id = "review-results",
+  defaultCollapsed,
 }: {
   businessProjectId?: number;
+  /** One repo's results (the repo drawer of the dự án page): no repo filter, no repo column. */
+  repo?: number;
+  /** Key the card's fold state is remembered under (pages that fold it by default use their own). */
+  id?: string;
+  defaultCollapsed?: boolean;
   /** The repos offered by the repo filter (shown when there is more than one). */
   repos?: { id: number; path_with_namespace: string }[];
   /** One person's results (the member page): no member filter, no member column. */
@@ -65,7 +73,7 @@ export function ReviewResults({
           from: range.from,
           to: range.to,
           business_project_id: businessProjectId,
-          project_id: repoId,
+          project_id: repo ?? repoId,
           user_id: person ?? userId,
           verdict,
           limit: PAGE,
@@ -101,14 +109,19 @@ export function ReviewResults({
 
   return (
     <Card
-      id="review-results"
+      id={id}
       title="Kết quả review"
-      subtitle={
-        period
-          ? `Review hoàn tất trong kỳ đang xem (đổi kỳ ở đầu trang). Lọc theo ${person === undefined ? "thành viên, " : ""}repo, kết luận và trạng thái.`
-          : `Review tạo sau đứng trước. Lọc theo thời gian hoàn tất, ${person === undefined ? "thành viên, " : ""}repo, kết luận và trạng thái.`
+      subtitle={period ? undefined : "Mới nhất trước, lọc theo thời gian hoàn tất"}
+      actions={
+        period ? (
+          <span className="pill" title="Review hoàn tất trong kỳ đang xem; đổi kỳ ở đầu trang">
+            {period.label}
+          </span>
+        ) : (
+          <RangePicker value={range} onChange={setRange} />
+        )
       }
-      actions={period ? <span className="pill">{period.label}</span> : <RangePicker value={range} onChange={setRange} />}
+      defaultCollapsed={defaultCollapsed}
       flush
     >
       <div className="toolbar filters results-filters">
@@ -126,7 +139,7 @@ export function ReviewResults({
             </select>
           </label>
         )}
-        {repos && repos.length > 1 && (
+        {repo === undefined && repos && repos.length > 1 && (
           <label className="filter">
             <span className="small muted">Repo</span>
             <select value={repoId} onChange={(e) => setRepoId(e.target.value)} aria-label="Lọc theo repo">
@@ -195,7 +208,7 @@ export function ReviewResults({
                 <tr>
                   <th>Thay đổi</th>
                   {person === undefined && <th>Thành viên</th>}
-                  <th>Repo</th>
+                  {repo === undefined && <th>Repo</th>}
                   <th>Kết luận</th>
                   <th className="num">Điểm</th>
                   <th>Hoàn tất</th>
@@ -237,7 +250,7 @@ export function ReviewResults({
                         )}
                       </td>
                       )}
-                      <td className="muted">{r.project ?? "—"}</td>
+                      {repo === undefined && <td className="muted">{r.project ?? "—"}</td>}
                       <td>{r.verdict ? <span className={`verdict ${r.verdict}`}>{VERDICT_LABEL[r.verdict]}</span> : <span className="muted">—</span>}</td>
                       <td className="num">
                         {r.status === "done" ? <strong>{num(r.score, 0)}</strong> : <Pill tone={st?.tone}>{st?.label ?? r.status}</Pill>}
