@@ -86,6 +86,22 @@ export default function RequestReviewPage() {
     for (const r of repos.data ?? []) seen.set(String(r.business_project_id ?? "none"), r.business_project ?? "Chưa gán dự án");
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [repos.data]);
+  // Opened from a repo elsewhere (the dự án page's repo drawer): ?project=&repo= are read once,
+  // when the repo list arrives, and prefill dự án, repo and its review branch; the rest is the
+  // reader's. A repo that is gone or not reviewable leaves only its dự án picked.
+  const [arrived, setArrived] = useState(false);
+  useEffect(() => {
+    if (arrived || !repos.data) return;
+    setArrived(true);
+    const params = new URL(window.location.href).searchParams;
+    const wanted = (repos.data ?? []).find((r) => String(r.id) === params.get("repo"));
+    const project = params.get("project") ?? (wanted ? String(wanted.business_project_id ?? "none") : null);
+    if (project && (repos.data ?? []).some((r) => String(r.business_project_id ?? "none") === project)) setBp(project);
+    if (wanted?.review_enabled && (!project || String(wanted.business_project_id ?? "none") === project)) {
+      setRepoId(wanted.id);
+      setBranch(wanted.review_branch ?? wanted.default_branch ?? "");
+    }
+  }, [arrived, repos.data]);
   const visibleRepos = (repos.data ?? []).filter((r) => bp === ALL || String(r.business_project_id ?? "none") === bp);
   const repo = (repos.data ?? []).find((r) => r.id === repoId) ?? null;
 

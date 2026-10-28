@@ -332,6 +332,15 @@ function RepoDrawer({
           <span className="pill" title="Số liệu của kỳ đang xem">
             {period.label}
           </span>
+          {row.tracked && (
+            <Link
+              href={`/reviews/request${qs({ project: businessProjectId, repo: row.id })}`}
+              className="button sm primary"
+              title="Mở Yêu cầu review với dự án và repo này đã chọn sẵn"
+            >
+              Yêu cầu review
+            </Link>
+          )}
         </>
       }
     >
