@@ -87,6 +87,10 @@ STALE_RUNNING = timedelta(minutes=63)
 KNOWLEDGE_DOMAIN_NOTE = "(see the DOMAIN section of PROJECT KNOWLEDGE below)"
 
 
+# The skip reason of a diff over MAX_REVIEW_LOC; a lead's rerun may go past it (rerun API).
+TOO_LARGE = "MR quá lớn"
+
+
 @dataclass
 class ReviewSettings:
     ignore_paths: list[str]
@@ -95,6 +99,8 @@ class ReviewSettings:
     max_tokens_per_chunk: int
     min_confidence: float
     monthly_budget_usd: float = 0.0  # 0 = unlimited
+    # A lead's rerun past "MR quá lớn": the size check is skipped for that one run.
+    ignore_loc_limit: bool = False
     # .claude files quoted to the model: per file, first pass total, deep pass total.
     claude_file_chars: int = claude_kit.MAX_FILE_CHARS
     fast_guidance_chars: int = 120_000
@@ -569,8 +575,9 @@ class ReviewService:
         review.loc_reviewed = prepared.loc
         if not prepared.files:
             return self._finish(review, "skipped", "no reviewable files")
-        if prepared.loc > settings.max_review_loc:
-            return self._finish(review, "skipped", f"MR quá lớn: {prepared.loc} LOC")
+        over_limit = prepared.loc > settings.max_review_loc
+        if over_limit and not settings.ignore_loc_limit:
+            return self._finish(review, "skipped", f"{TOO_LARGE}: {prepared.loc} LOC")
         if not self._within_budget():
             # "failed", not "skipped": the review can be re-run once the budget allows it.
             return self._fail(review, "monthly LLM budget reached")
@@ -585,6 +592,9 @@ class ReviewService:
         if not target.knowledge:
             target.guidance, guidance = self._guidance(review, project, target, prepared, sha)
         review.basis = self._pending_basis.pop(review.id, None)
+        if review.basis is not None and over_limit:
+            # Reviewed past MAX_REVIEW_LOC on a lead's request: say so where the run is described.
+            review.basis["loc_limit"] = {"loc": prepared.loc, "max": settings.max_review_loc}
         if review.basis is not None:
             review.basis["checklists"] = select_checklists(
                 [f.path for f in prepared.files], self._languages(prepared)

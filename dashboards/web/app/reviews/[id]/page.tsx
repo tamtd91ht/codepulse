@@ -127,11 +127,21 @@ function RerunBar({
 }: {
   review: ReviewDetail;
   state: RerunState | null;
-  onRun: (force: boolean) => Promise<void>;
+  onRun: (force: boolean, ignoreLocLimit?: boolean) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const finished = review.status === "done";
   const blocked = busy || !!state?.pending || !review.can_rerun;
+  // Skipped as "MR quá lớn: N LOC": a lead may run it anyway, past MAX_REVIEW_LOC, this once.
+  const tooLarge = review.status === "skipped" && /^MR quá lớn/.test(review.error ?? "");
+  const run = async (force: boolean, ignoreLocLimit?: boolean) => {
+    setBusy(true);
+    try {
+      await onRun(force, ignoreLocLimit);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div className="toolbar rerun-bar" style={{ marginBottom: 12 }}>
       <span className="muted small">
@@ -141,22 +151,35 @@ function RerunBar({
             ? review.target_type === "mr"
               ? "MR còn mở ở đúng head này: có thể review lại thành lần mới; lần hiện tại được giữ làm lịch sử."
               : "Có thể review lại commit này thành lần mới; lần hiện tại được giữ làm lịch sử."
-            : "Lần review này lỗi hoặc bị bỏ qua: chạy lại được."}
+            : tooLarge
+              ? `${review.error}, vượt giới hạn LOC nên bị bỏ qua. Có thể chạy lại bỏ qua giới hạn này cho riêng lần review này.`
+              : "Lần review này lỗi hoặc bị bỏ qua: chạy lại được."}
       </span>
       <span className="spacer" />
+      {review.can_rerun && tooLarge && (
+        <button
+          type="button"
+          className="primary"
+          disabled={blocked}
+          title="Chỉ áp dụng cho lần chạy này; giới hạn LOC chung không đổi"
+          onClick={async () => {
+            const ok = window.confirm(
+              `${review.error}. Chạy lại bỏ qua giới hạn LOC sẽ review toàn bộ thay đổi này: tốn nhiều token LLM hơn và chạy lâu hơn bình thường. Tiếp tục?`,
+            );
+            if (ok) await run(false, true);
+          }}
+        >
+          {busy ? "Đang gửi…" : state?.pending ? "Đang chờ worker…" : "Chạy lại, bỏ qua giới hạn LOC"}
+        </button>
+      )}
       {review.can_rerun && (
         <button
           type="button"
-          className={finished ? undefined : "primary"}
+          className={finished || tooLarge ? undefined : "primary"}
           disabled={blocked}
           onClick={async () => {
             if (finished && !window.confirm("Review lại sẽ tốn ngân sách LLM và tạo lần review mới. Tiếp tục?")) return;
-            setBusy(true);
-            try {
-              await onRun(finished);
-            } finally {
-              setBusy(false);
-            }
+            await run(finished);
           }}
         >
           {busy ? "Đang gửi…" : state?.pending ? "Đang chờ worker…" : finished ? "↻ Review lại" : "Chạy lại"}
@@ -328,9 +351,9 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
   }, [rerun, review]);
   if (!review) return <Loading error={error} rows={4} />;
 
-  async function startRerun(force: boolean): Promise<void> {
+  async function startRerun(force: boolean, ignoreLocLimit = false): Promise<void> {
     try {
-      await api.post(`/reviews/${id}/rerun`, { force });
+      await api.post(`/reviews/${id}/rerun`, { force, ignore_loc_limit: ignoreLocLimit });
       setRerun({
         force,
         pending: true,

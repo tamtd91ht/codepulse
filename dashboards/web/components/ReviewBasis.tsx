@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { Card, Pill } from "@/components/ui";
+import { Alert, Card, Pill } from "@/components/ui";
 import { date } from "@/lib/format";
 import type { BasisKnowledge, BasisRule, Finding, ReviewBasis, ReviewRound } from "@/lib/types";
 
@@ -41,6 +41,7 @@ export function basisSummary(basis: ReviewBasis | null): string {
   return [
     basis.rubric ? `rubric ${basis.rubric.version}` : null,
     basis.knowledge ? `tiền đề v${basis.knowledge.version}` : null,
+    basis.loc_limit ? "bỏ qua giới hạn LOC" : null,
     `${rules} quy tắc`,
     docs.length - shared ? `${docs.length - shared} tài liệu repo` : null,
     shared ? `${shared} file .claude dùng chung` : null,
@@ -128,6 +129,12 @@ export function BasisCard({
   return (
     <Card title="Căn cứ review" subtitle="Những gì AI đã đối chiếu trong lần review này">
       <div className="basis">
+        {basis.loc_limit && (
+          <Alert tone="warning">
+            Review chạy lại bỏ qua giới hạn LOC: {basis.loc_limit.loc.toLocaleString("vi-VN")} LOC, vượt ngưỡng{" "}
+            {basis.loc_limit.max.toLocaleString("vi-VN")}.
+          </Alert>
+        )}
         {basis.knowledge && <KnowledgeSection knowledge={basis.knowledge} projectId={projectId} />}
         {basis.rubric && (
           <section>

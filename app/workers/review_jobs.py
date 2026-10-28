@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -112,6 +113,7 @@ def run_mr_review(
     force: bool = False,
     expected_round: int | None = None,
     progress: ProgressSink | None = None,
+    ignore_loc_limit: bool = False,
 ) -> str:
     """Review one MR; `after` sees the finished review (notifications run once it is committed).
 
@@ -150,7 +152,7 @@ def run_mr_review(
             session,
             client,
             provider,
-            review_settings(settings, session),
+            replace(review_settings(settings, session), ignore_loc_limit=ignore_loc_limit),
             agent=agent,
             progress=progress,
             short_transactions=short,
@@ -183,6 +185,7 @@ def run_commit_review(
     force: bool = False,
     expected_round: int | None = None,
     progress: ProgressSink | None = None,
+    ignore_loc_limit: bool = False,
 ) -> str:
     """Review one commit; transactions as in `run_mr_review`."""
     short = not session.in_transaction()
@@ -210,7 +213,7 @@ def run_commit_review(
             session,
             client,
             provider,
-            review_settings(settings, session),
+            replace(review_settings(settings, session), ignore_loc_limit=ignore_loc_limit),
             agent=agent,
             progress=progress,
             short_transactions=short,
@@ -299,10 +302,12 @@ def review_mr_job(
     requested_by: int | None = None,
     force: bool = False,
     expected_round: int | None = None,
+    ignore_loc_limit: bool = False,
 ) -> str:
     """`trigger` / `requested_by` (docs/specs/17) say what asked for the review: webhook,
     dashboard, telegram, backfill or rerun, and which person, when one did. `force` reviews a
-    finished head again as a new round."""
+    finished head again as a new round; `ignore_loc_limit` reviews it even past MAX_REVIEW_LOC
+    (a lead's rerun of an "MR quá lớn")."""
     settings = get_settings()
     _ensure_knowledge(project_id, settings)
     finished: list[Review] = []
@@ -325,6 +330,7 @@ def review_mr_job(
             force=force,
             expected_round=expected_round,
             progress=RedisProgress(progress_redis(str(settings.redis_url))),
+            ignore_loc_limit=ignore_loc_limit,
         )
     _notify(finished)
     return status
@@ -338,6 +344,7 @@ def review_commit_job(
     requested_by: int | None = None,
     force: bool = False,
     expected_round: int | None = None,
+    ignore_loc_limit: bool = False,
 ) -> str:
     settings = get_settings()
     # A commit the last sync has not seen is fetched in its own short transaction, so the
@@ -364,6 +371,7 @@ def review_commit_job(
             force=force,
             expected_round=expected_round,
             progress=RedisProgress(progress_redis(str(settings.redis_url))),
+            ignore_loc_limit=ignore_loc_limit,
         )
     _notify(finished)
     return status

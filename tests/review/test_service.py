@@ -153,6 +153,18 @@ def test_skips_oversized_changes(db_session: Session, mr: tuple[Project, MergeRe
     assert provider.prompts == []
 
 
+def test_a_rerun_past_the_loc_limit_reviews_and_says_so(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    project, merge_request = mr
+    provider = FakeLLMProvider()
+    review = run(
+        db_session, provider, project, merge_request, max_review_loc=10, ignore_loc_limit=True
+    )
+    assert review.status == "done" and len(provider.prompts) == 1
+    assert review.basis is not None and review.basis["loc_limit"] == {"loc": 31, "max": 10}
+
+
 def test_llm_failure_marks_failed_and_can_be_retried(
     db_session: Session, mr: tuple[Project, MergeRequest]
 ) -> None:

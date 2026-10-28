@@ -36,6 +36,7 @@ from app.models import (
     TeamMember,
     User,
 )
+from app.review.service import TOO_LARGE
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
 
 router = APIRouter(tags=["reviews"])
@@ -244,12 +245,18 @@ def rerun_review(
     reviewed again while it is open and only at its current head."""
     review = _visible_review(session, principal, review_id)
     force = bool(body and body.force)
+    ignore_loc_limit = bool(body and body.ignore_loc_limit)
     if review.status not in ("failed", "skipped") and not (force and review.status == "done"):
         raise HTTPException(
             409, f"review is {review.status}; only failed or skipped can be re-run (force for done)"
         )
     if review.superseded_by is not None:
         raise HTTPException(409, "a newer round of this review exists already")
+    if ignore_loc_limit and not (
+        review.status == "skipped" and (review.error or "").startswith(TOO_LARGE)
+    ):
+        raise HTTPException(422, "ignore_loc_limit is only for a review skipped as too large")
+    loc = review.loc_reviewed
     project, _, _ = _target(session, review)
     if project is None:
         raise HTTPException(409, "review target is no longer known")
@@ -278,12 +285,23 @@ def rerun_review(
         requested_by=principal.user_id,
         force=force,
         expected_round=review.round if force else None,
-        job_id=f"{job_id}-rerun-{review.id}-{review.round + 1 if force else review.round}",
+        ignore_loc_limit=ignore_loc_limit,
+        job_id=f"{job_id}-rerun-{review.id}-{review.round + 1 if force else review.round}"
+        + ("-nolimit" if ignore_loc_limit else ""),
         job_timeout=review_job_timeout(get_settings()),
-        retry=REVIEW_RETRY,
+        # A run past the LOC limit is paid in full each time: only a person repeats it.
+        retry=None if ignore_loc_limit else REVIEW_RETRY,
         at_front=True,
     )
-    audit(session, principal.user_id, "review.rerun", f"review:{review.id}", force=force)
+    audit(
+        session,
+        principal.user_id,
+        "review.rerun",
+        f"review:{review.id}",
+        force=force,
+        ignore_loc_limit=ignore_loc_limit or None,
+        loc=loc if ignore_loc_limit else None,
+    )
     session.commit()
     return {"status": "queued"}
 

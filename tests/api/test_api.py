@@ -298,10 +298,30 @@ def test_rerun_only_failed_or_skipped(
         f"/api/v1/reviews/{world.binh_review.id}/rerun", headers=as_user(world.lead)
     )
     assert failed.status_code == 202
-    ((func, args, _),) = queue.jobs
+    ((func, args, kwargs),) = queue.jobs
     assert func.endswith("review_commit_job") and args[1] == "b" * 40
+    assert kwargs["ignore_loc_limit"] is False
     dev = client.post(f"/api/v1/reviews/{world.binh_review.id}/rerun", headers=as_user(world.an))
     assert dev.status_code == 403
+
+
+def test_rerun_past_the_loc_limit_is_passed_to_the_job_and_audited(
+    client: TestClient, world: World, as_user: Any, queue: FakeQueue, db_session: Session
+) -> None:
+    url = f"/api/v1/reviews/{world.binh_review.id}/rerun"
+    body = {"ignore_loc_limit": True}
+    # Only a review skipped as too large may go past the limit; this one failed.
+    assert client.post(url, json=body, headers=as_user(world.lead)).status_code == 422
+    world.binh_review.status, world.binh_review.error = "skipped", "MR quá lớn: 26758 LOC"
+    world.binh_review.loc_reviewed = 26758
+    db_session.flush()
+    sent = client.post(url, json=body, headers=as_user(world.lead))
+    assert sent.status_code == 202
+    ((_, _, kwargs),) = queue.jobs
+    assert kwargs["ignore_loc_limit"] is True and kwargs["job_id"].endswith("-nolimit")
+    assert kwargs["retry"] is None  # a paid oversized run is repeated only by a person
+    logged = db_session.scalars(select(AuditLog).where(AuditLog.action == "review.rerun")).one()
+    assert logged.details == {"force": False, "ignore_loc_limit": True, "loc": 26758}
 
 
 def test_forced_rerun_makes_a_new_round_only_for_an_open_mr_at_its_head(

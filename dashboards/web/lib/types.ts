@@ -230,6 +230,8 @@ export interface ReviewBasis {
   profile?: { sha: string | null; built_at: string | null; confidence: number | null } | null;
   /** Review knowledge the review ran against (docs/specs/19 §3.4): version and what was loaded. */
   knowledge?: BasisKnowledge | null;
+  /** Reviewed past MAX_REVIEW_LOC on a lead's rerun: the change's LOC and the limit then. */
+  loc_limit?: { loc: number; max: number } | null;
 }
 
 export interface BasisKnowledge {

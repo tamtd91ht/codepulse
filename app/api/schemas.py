@@ -497,6 +497,8 @@ class ReviewDetail(ReviewOut):
 class RerunIn(BaseModel):
     # force: review a finished head again as a new round (the old one is kept, superseded)
     force: bool = False
+    # Review even when the diff is over MAX_REVIEW_LOC ("MR quá lớn"), for this run only.
+    ignore_loc_limit: bool = False
 
 
 # -- review on request (docs/specs/17) ------------------------------------------------------------
