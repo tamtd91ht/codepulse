@@ -1060,7 +1060,7 @@ export default function KnowledgePage({ params }: { params: Promise<{ id: string
       ) : (
         <>
           <div className="chips" style={{ marginBottom: 12 }}>
-            {shown.stale && <StalePill />}
+            {shown.stale && <StalePill reasons={shown.stale_reasons} />}
             <ApprovalPill active={shown} />
             {shown.status !== "active" && <Pill tone="info">bản cũ (đang dùng v{activeVersion})</Pill>}
             <span className="muted small">

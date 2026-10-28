@@ -108,7 +108,8 @@ def test_get_knowledge_shows_active_build_edits_and_staleness(
         body = client.get(path, headers=as_user(world.an)).json()  # any signed-in user
     active = body["active"]
     assert active["id"] == row.id and active["version"] == 2 and active["status"] == "active"
-    assert active["stale"] is False and active["approved_by"] is None
+    assert active["stale"] is False and active["stale_reasons"] == []
+    assert active["approved_by"] is None
     assert active["counts"] == {
         "invariants": 1,
         "checks": 1,
@@ -122,7 +123,9 @@ def test_get_knowledge_shows_active_build_edits_and_staleness(
 
     with respx.mock(assert_all_called=False) as router:
         gitlab(router, tree_sha="2" * 40)  # .claude moved since the build
-        assert client.get(path, headers=as_user(world.an)).json()["active"]["stale"] is True
+        moved = client.get(path, headers=as_user(world.an)).json()["active"]
+    assert moved["stale"] is True
+    assert moved["stale_reasons"] == [{"source": "claude", "built": "1" * 12, "current": "2" * 12}]
 
     assert client.get(path, headers=as_user(world.an)).status_code == 200  # GitLab down: not stale
     assert (

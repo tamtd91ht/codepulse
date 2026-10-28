@@ -236,14 +236,16 @@ export function SeverityBadge({ severity }: { severity: Severity }) {
 export function Pill({
   tone,
   icon,
+  title,
   children,
 }: {
   tone?: "good" | "bad" | "warn" | "info" | "primary";
   icon?: IconName;
+  title?: string;
   children: ReactNode;
 }) {
   return (
-    <span className={`pill${tone ? ` ${tone}` : ""}`}>
+    <span className={`pill${tone ? ` ${tone}` : ""}`} title={title}>
       {icon && <Icon name={icon} size={12} />}
       {children}
     </span>

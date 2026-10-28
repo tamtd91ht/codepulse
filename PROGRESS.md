@@ -121,3 +121,4 @@
 - Đồng bộ thời gian trang dự án (người dùng 2026-10-27): thẻ Kết quả review đi theo kỳ tuần/tháng ở đầu trang (prop `period`, from = đầu kỳ, to = ngày cuối kỳ, cùng ranh giới REPORT_TZ với số liệu của trang), bỏ bộ chọn ngày riêng của thẻ; đầu thẻ hiện nhãn kỳ.
 - Đồng bộ thời gian trang Thành viên (người dùng 2026-10-27): khoảng thời gian nằm trong URL (`?range=7|30|90` cuộn tới hôm nay, hoặc `?from=&to=`; `useUrlRange`/`rangeSearch` ở `components/Evaluation.tsx`), giữ khi tải lại hay bấm Back; bấm tên trong bảng Thành viên mở trang member với cùng khoảng, và trang member (hai thẻ dùng chung) cũng ghi khoảng vào URL.
 
+- Tooltip "Đã cũ" của tiền đề review (người dùng 2026-10-28): API knowledge trả thêm `stale_reasons` (nguồn nào đổi — `.claude` của repo hay repo dùng chung — với sha lúc dựng → hiện tại, `stale_reasons` ở `app/review/knowledge.py`); nhãn hiện các lý do đó khi hover. Cách xác định "đã cũ" không đổi.

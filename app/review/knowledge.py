@@ -1331,10 +1331,25 @@ def active_knowledge(
 def is_stale(row: ReviewKnowledge, claude_sha: str | None, shared_sha: str | None) -> bool:
     """Stale when the repo's `.claude` tree or the shared repo moved since the build. An
     unknown current sha (None) is not evidence of anything."""
+    return bool(stale_reasons(row, claude_sha, shared_sha))
+
+
+def stale_reasons(
+    row: ReviewKnowledge, claude_sha: str | None, shared_sha: str | None
+) -> list[dict[str, str | None]]:
+    """What moved since the build, one entry per source: `source` ("claude" for the repo's
+    `.claude` tree, "shared" for the dự án's shared repo) with the `built` and `current` short
+    shas (`built` None when the build saw no such source)."""
     sources = row.sources or {}
-    if claude_sha is not None and _short(sources.get("claude_tree_sha")) != _short(claude_sha):
-        return True
-    return shared_sha is not None and _short(sources.get("shared_sha")) != _short(shared_sha)
+    reasons: list[dict[str, str | None]] = []
+    for source, key, current in (
+        ("claude", "claude_tree_sha", claude_sha),
+        ("shared", "shared_sha", shared_sha),
+    ):
+        if current is not None and _short(sources.get(key)) != _short(current):
+            built = _short(sources.get(key)) or None
+            reasons.append({"source": source, "built": built, "current": _short(current)})
+    return reasons
 
 
 def _short(sha: object) -> str:

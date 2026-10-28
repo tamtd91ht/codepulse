@@ -39,7 +39,7 @@ from app.review.knowledge import (
     claude_tree_sha,
     edit_dict,
     edits_for,
-    is_stale,
+    stale_reasons,
 )
 from app.workers.knowledge_jobs import KNOWLEDGE_JOB_TIMEOUT, job_active, job_id_for
 
@@ -121,7 +121,9 @@ def _user_name(session: Session, user_id: int | None) -> str | None:
     return user.full_name if user else None
 
 
-def knowledge_out(session: Session, row: ReviewKnowledge, stale: bool) -> dict[str, Any]:
+def knowledge_out(
+    session: Session, row: ReviewKnowledge, reasons: list[dict[str, str | None]]
+) -> dict[str, Any]:
     knowledge = Knowledge.model_validate(row.data or {})
     return {
         "id": row.id,
@@ -135,7 +137,8 @@ def knowledge_out(session: Session, row: ReviewKnowledge, stale: bool) -> dict[s
         "created_at": row.created_at,
         "sources": row.sources or {},
         "data": row.data,
-        "stale": stale,
+        "stale": bool(reasons),
+        "stale_reasons": reasons,
         "counts": knowledge.counts(),
     }
 
@@ -165,7 +168,7 @@ def get_knowledge(
     active: dict[str, Any] | None = None
     if row is not None:
         claude_sha, shared_sha = current_shas(session, box, project)
-        active = knowledge_out(session, row, is_stale(row, claude_sha, shared_sha))
+        active = knowledge_out(session, row, stale_reasons(row, claude_sha, shared_sha))
     return {
         "project_id": project.id,
         "active": active,
@@ -235,7 +238,7 @@ def get_version(
     if row is None:
         raise HTTPException(404, "version not found")
     claude_sha, shared_sha = current_shas(session, box, project)
-    return knowledge_out(session, row, is_stale(row, claude_sha, shared_sha))
+    return knowledge_out(session, row, stale_reasons(row, claude_sha, shared_sha))
 
 
 @router.post("/projects/{project_id}/knowledge/refresh", status_code=202)
@@ -282,7 +285,7 @@ def approve_knowledge(
     )
     session.commit()
     claude_sha, shared_sha = current_shas(session, box, project)
-    return knowledge_out(session, row, is_stale(row, claude_sha, shared_sha))
+    return knowledge_out(session, row, stale_reasons(row, claude_sha, shared_sha))
 
 
 @router.post("/projects/{project_id}/knowledge/edits", status_code=201)

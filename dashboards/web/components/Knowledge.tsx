@@ -7,7 +7,7 @@ import { IconButton } from "@/components/icons";
 import { Alert, EmptyState, ExternalLink, Loading, Message, Pill } from "@/components/ui";
 import { ApiError, canEditKnowledge, knowledgeApi, knowledgePath, knowledgePoll, useApi } from "@/lib/api";
 import { date, dateTime } from "@/lib/format";
-import type { KnowledgeResponse, KnowledgeSource, KnowledgeVersion, Me } from "@/lib/types";
+import type { KnowledgeResponse, KnowledgeSource, KnowledgeStaleReason, KnowledgeVersion, Me } from "@/lib/types";
 
 export const BUILT_BY_LABEL: Record<string, string> = {
   manual: "rà soát thủ công",
@@ -27,9 +27,26 @@ export function ApprovalPill({ active }: { active: Pick<KnowledgeVersion, "appro
   );
 }
 
-export function StalePill() {
+const STALE_SOURCE_LABEL: Record<KnowledgeStaleReason["source"], string> = {
+  claude: "Thư mục .claude ở default branch",
+  shared: "Repo .claude dùng chung của dự án",
+};
+
+/** The hover text of "Đã cũ": which source moved since the build, from which sha to which. */
+export function staleTitle(reasons: KnowledgeStaleReason[] | undefined): string {
+  const lines = (reasons ?? []).map(
+    (r) => `• ${STALE_SOURCE_LABEL[r.source]} đã đổi: ${r.built ?? "chưa có lúc dựng"} → ${r.current}`,
+  );
+  return [
+    "Nguồn tiền đề đã thay đổi sau khi dựng bản này:",
+    ...(lines.length ? lines : ["• .claude ở default branch hoặc repo dùng chung đã đổi"]),
+    "Review vẫn dùng bản này cho tới khi Rà soát lại dự án.",
+  ].join("\n");
+}
+
+export function StalePill({ reasons }: { reasons?: KnowledgeStaleReason[] }) {
   return (
-    <Pill tone="warn" icon="alert">
+    <Pill tone="warn" icon="alert" title={staleTitle(reasons)}>
       Đã cũ
     </Pill>
   );
@@ -190,7 +207,7 @@ export function KnowledgeTile({ repo, me }: { repo: { id: number; path_with_name
                 <span className="spinner" aria-hidden="true" /> Đang rà soát…
               </Pill>
             )}
-            {data.active?.stale && <StalePill />}
+            {data.active?.stale && <StalePill reasons={data.active.stale_reasons} />}
             {data.active && <ApprovalPill active={data.active} />}
           </div>
         )}

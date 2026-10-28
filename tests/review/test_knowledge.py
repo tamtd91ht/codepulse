@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from app.models import ReviewKnowledge
 from app.review.discover import Doc, ProjectDocs
 from app.review.knowledge import (
     BATCH_CHARS,
@@ -25,6 +26,7 @@ from app.review.knowledge import (
     parse_knowledge,
     render_for_review,
     select_checks,
+    stale_reasons,
 )
 from app.review.providers.base import ReviewPrompt, ReviewResult
 
@@ -335,6 +337,20 @@ def test_basis_for_summarises_what_the_review_ran_with() -> None:
     assert basis["version"] == 3 and basis["stale"] is True and basis["approved"] is False
     assert basis["invariants"] == 2 and basis["checks_loaded"] == ["chk-1", "chk-2"]
     assert basis["sources"] == {"claude_tree_sha": "abc"} and basis["tokens"] > 0
+
+
+def test_stale_reasons_name_each_moved_source() -> None:
+    row = ReviewKnowledge(sources={"claude_tree_sha": "a" * 40, "shared_sha": "b" * 40})
+    assert stale_reasons(row, "a" * 40, "b" * 40) == []
+    assert stale_reasons(row, None, None) == []  # unknown is not evidence
+    assert stale_reasons(row, "c" * 40, "d" * 40) == [
+        {"source": "claude", "built": "a" * 12, "current": "c" * 12},
+        {"source": "shared", "built": "b" * 12, "current": "d" * 12},
+    ]
+    first = ReviewKnowledge(sources={})  # built before the repo had a .claude folder
+    assert stale_reasons(first, "c" * 40, None) == [
+        {"source": "claude", "built": None, "current": "c" * 12}
+    ]
 
 
 # -- compiling -------------------------------------------------------------------------------------

@@ -897,6 +897,12 @@ export interface KnowledgeCounts {
 export type KnowledgeBuiltBy = "manual" | "auto" | "first_review";
 
 /** One compiled version of a repo's review knowledge. */
+export interface KnowledgeStaleReason {
+  source: "claude" | "shared";
+  built: string | null;
+  current: string;
+}
+
 export interface KnowledgeVersion {
   id: number;
   version: number;
@@ -910,6 +916,8 @@ export interface KnowledgeVersion {
   data: Knowledge;
   /** The .claude tree or the shared repo moved since this was built. */
   stale: boolean;
+  /** One entry per moved source, with the short shas at build time and now. */
+  stale_reasons?: KnowledgeStaleReason[];
   counts: KnowledgeCounts;
 }
 
