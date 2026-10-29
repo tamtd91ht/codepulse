@@ -31,6 +31,7 @@ log = logging.getLogger(__name__)
 
 URL_TIMEOUT_S = 20.0
 TOKEN_TIMEOUT_S = 25.0
+ENTER_DELAY_S = 0.5
 LOGIN_TTL_S = 600.0  # an abandoned login is killed after this
 
 # CSI (colours, cursor moves), OSC (titles, hyperlinks) and other two-byte escapes that Ink emits.
@@ -165,7 +166,8 @@ class PtySetupToken:
                 if self._proc.poll() is not None and not self._reader.is_alive():
                     break
                 if remaining <= 0:
-                    raise LoginError(f"the CLI showed no {what} within {timeout_s:g}s")
+                    tail = scrub_secrets(clean(self._buffer).strip())[-300:]
+                    raise LoginError(f"the CLI showed no {what} within {timeout_s:g}s: {tail}")
                 self._changed.wait(min(remaining, 0.5))
         tail = scrub_secrets(clean(self._buffer).strip())[-300:]
         raise LoginError(f"the CLI exited {self._proc.returncode} without a {what}: {tail}")
@@ -176,7 +178,11 @@ class PtySetupToken:
     def submit(self, code: str, timeout_s: float) -> str:
         with self._changed:
             self._buffer = ""  # the code is echoed back; the token comes after it
-        os.write(self._master, code.encode() + b"\r")
+        # Ink reads a multi-byte chunk as a paste, so "code\r" in one write never presses Enter:
+        # the CLI would sit on the prompt until the timeout. Enter goes on its own, after a pause.
+        os.write(self._master, code.encode())
+        time.sleep(ENTER_DELAY_S)
+        os.write(self._master, b"\r")
         return self._wait(find_token, timeout_s, "token", fail=find_error)
 
     def close(self) -> None:
