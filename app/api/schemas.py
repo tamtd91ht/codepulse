@@ -42,6 +42,20 @@ def decode_cursor(cursor: str | None) -> int | None:
         return None
 
 
+def encode_cursor_text(value: str) -> str:
+    """A cursor that is not a bare id (e.g. a sort key and an id)."""
+    return base64.urlsafe_b64encode(value.encode()).decode()
+
+
+def decode_cursor_text(cursor: str | None) -> str | None:
+    if not cursor:
+        return None
+    try:
+        return base64.urlsafe_b64decode(cursor.encode()).decode()
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
 def clean_branch(value: str) -> str:
     """A git branch name as GitLab accepts it, "" (default branch) or "*" (every branch)."""
     value = value.strip()
@@ -489,6 +503,9 @@ class ReviewListItem(ReviewOut):
     project: str | None
     web_url: str | None
     author: "UserOut | None" = None  # whose change was reviewed
+    # When the change was made (commit time; MR creation for an MR); the list sorts by it.
+    changed_at: datetime | None = None
+    can_rerun: bool = False  # the viewer manages it and a new run is possible (as ReviewDetail)
 
 
 class ReviewRound(BaseModel):
@@ -519,6 +536,22 @@ class RerunIn(BaseModel):
     force: bool = False
     # Review even when the diff is over MAX_REVIEW_LOC ("MR quá lớn"), for this run only.
     ignore_loc_limit: bool = False
+
+
+class RerunManyIn(BaseModel):
+    """Review several results again: done ones as a new round, failed/skipped ones in place."""
+
+    ids: list[int] = Field(min_length=1, max_length=100)
+
+
+class RerunFailure(BaseModel):
+    id: int
+    error: str
+
+
+class RerunManyOut(BaseModel):
+    queued: list[int]
+    failed: list[RerunFailure]
 
 
 # -- review on request (docs/specs/17) ------------------------------------------------------------

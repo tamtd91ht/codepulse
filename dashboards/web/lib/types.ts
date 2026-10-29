@@ -338,6 +338,16 @@ export interface ReviewListItem extends Review {
   web_url: string | null;
   /** Whose change was reviewed (absent on older API responses). */
   author?: Person | null;
+  /** When the change was made: the commit's time, or when the MR was opened. The list sorts by it. */
+  changed_at?: string | null;
+  /** The viewer manages it and it may run again (as ReviewDetail.can_rerun). */
+  can_rerun?: boolean;
+}
+
+/** POST /reviews/rerun: which ones were queued, and why the others were not. */
+export interface RerunManyOut {
+  queued: number[];
+  failed: { id: number; error: string }[];
 }
 
 export interface ReviewDetail extends Review {

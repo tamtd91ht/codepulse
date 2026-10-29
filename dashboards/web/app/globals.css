@@ -3763,3 +3763,9 @@ a.proj-tile:focus-visible {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+/* Kết quả review: the column of checkboxes for "Review lại" on several rows. */
+th.check-col,
+td.check-col {
+  width: 1%;
+  padding-right: 0;
+}

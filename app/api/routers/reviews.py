@@ -1,14 +1,15 @@
 """Reviews and findings (docs/specs/09), scoped by role (developer: own; lead: team; admin: all)
 and by dự án grant (app/api/access.py)."""
 
+import logging
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Annotated, Any, Literal, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Date, Select, exists, func, or_, select
+from sqlalchemy import Date, DateTime, Select, exists, func, literal, or_, select, tuple_
 from sqlalchemy import cast as sql_cast
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.api.access import require_manage, review_repo, review_scope
 from app.api.audit import audit
@@ -18,12 +19,16 @@ from app.api.schemas import (
     FindingOut,
     Page,
     RerunIn,
+    RerunManyIn,
+    RerunManyOut,
     ReviewDetail,
     ReviewListItem,
     ReviewOut,
     UserOut,
     decode_cursor,
+    decode_cursor_text,
     encode_cursor,
+    encode_cursor_text,
 )
 from app.api.security import CurrentPrincipal, Principal
 from app.collector.sync import Enqueuer
@@ -38,9 +43,11 @@ from app.models import (
     TeamMember,
     User,
 )
+from app.review.rubric import RUBRIC_VERSION
 from app.review.service import TOO_LARGE
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
 
+log = logging.getLogger(__name__)
 router = APIRouter(tags=["reviews"])
 SessionDep = Annotated[Session, Depends(get_session)]
 Limit = Annotated[int, Query(ge=1, le=200)]
@@ -56,6 +63,34 @@ def _may_filter_by(principal: Principal, user_id: int) -> bool:
     """A person filter: someone you see everywhere, or anyone when you manage a dự án (the
     scope then keeps the reviews of the dự án you manage)."""
     return principal.can_see_user(user_id) or bool(principal.managed_projects())
+
+
+# When the reviewed change was made: the commit's time, or the MR's creation for an MR review.
+# The list is sorted by it, newest first; a review whose change has no known time sorts last.
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+# Aliases: the repo filters below use subqueries over commits / merge_requests, which would
+# otherwise correlate to these joins.
+_ChangedCommit = aliased(Commit)
+_ChangedMr = aliased(MergeRequest)
+CHANGED_AT = func.coalesce(
+    _ChangedCommit.authored_at, _ChangedMr.created_at_src, literal(_EPOCH, DateTime(timezone=True))
+)
+
+
+def _encode_changed_cursor(changed_at: datetime, review_id: int) -> str:
+    return encode_cursor_text(f"{changed_at.isoformat()}|{review_id}")
+
+
+def _decode_changed_cursor(cursor: str | None) -> tuple[datetime, int] | None:
+    """(change time, review id) of the last row shown; None for a missing or foreign cursor."""
+    text = decode_cursor_text(cursor)
+    if text is None or "|" not in text:
+        return None
+    when, _, review_id = text.rpartition("|")
+    try:
+        return datetime.fromisoformat(when), int(review_id)
+    except ValueError:
+        return None
 
 
 def _range(
@@ -109,7 +144,12 @@ def list_reviews(
 ) -> Page[Any]:
     if user_id is not None and not _may_filter_by(principal, user_id):
         raise HTTPException(403, "not allowed to see this person's reviews")
-    query = scoped(select(Review), principal)
+    joined = (
+        select(Review, CHANGED_AT.label("changed_at"))
+        .outerjoin(_ChangedCommit, _ChangedCommit.sha == Review.commit_sha)
+        .outerjoin(_ChangedMr, _ChangedMr.id == Review.mr_id)
+    )
+    query = scoped(cast(Select[Any], joined), principal)
     if user_id is not None:
         query = query.where(Review.author_user_id == user_id)
     if verdict is not None:
@@ -131,22 +171,27 @@ def list_reviews(
         with_severity = select(ReviewFinding.review_id).where(ReviewFinding.severity == severity)
         query = query.where(Review.id.in_(with_severity))
     query = _range(query, Review.finished_at, date_from, date_to, ZoneInfo(settings.report_tz))
-    if (after := decode_cursor(cursor)) is not None:
-        query = query.where(Review.id < after)
-    rows = list(session.scalars(query.order_by(Review.id.desc()).limit(limit + 1)))
+    if (after := _decode_changed_cursor(cursor)) is not None:
+        query = query.where(tuple_(CHANGED_AT, Review.id) < tuple_(*after))
+    rows: list[tuple[Review, datetime]] = [
+        (review, changed_at)
+        for review, changed_at in session.execute(
+            query.order_by(CHANGED_AT.desc(), Review.id.desc()).limit(limit + 1)
+        )
+    ]
     if user_id is not None and user_id != principal.user_id:
         audit(session, principal.user_id, "reviews.read", f"user:{user_id}")
         session.commit()
     more = len(rows) > limit
     # Authors in one query: the list shows who each review was about.
-    author_ids = {r.author_user_id for r in rows[:limit] if r.author_user_id is not None}
+    author_ids = {r.author_user_id for r, _ in rows[:limit] if r.author_user_id is not None}
     authors = (
         {u.id: u for u in session.scalars(select(User).where(User.id.in_(author_ids)))}
         if author_ids
         else {}
     )
     items = []
-    for review in rows[:limit]:
+    for review, changed_at in rows[:limit]:
         project, url, label = _target(session, review)
         author = authors.get(review.author_user_id) if review.author_user_id else None
         items.append(
@@ -156,9 +201,15 @@ def list_reviews(
                 "project": project.path_with_namespace if project else None,
                 "web_url": url,
                 "author": UserOut.model_validate(author) if author else None,
+                "changed_at": None if changed_at == _EPOCH else changed_at,
+                "can_rerun": _can_rerun(session, review, project)
+                and principal.can_manage_project(project.business_project_id if project else None),
             }
         )
-    return Page(items=items, next_cursor=encode_cursor(rows[limit - 1].id) if more else None)
+    next_cursor = (
+        _encode_changed_cursor(rows[limit - 1][1], rows[limit - 1][0].id) if more else None
+    )
+    return Page(items=items, next_cursor=next_cursor)
 
 
 def _visible_review(session: Session, principal: Principal, review_id: int) -> Review:
@@ -230,10 +281,13 @@ def _history(session: Session, review: Review) -> list[dict[str, Any]]:
 
 def _can_rerun(session: Session, review: Review, project: Project | None) -> bool:
     """A finished commit review may always run again; an MR review only while the MR is open
-    and this review is of its current head (older heads are history)."""
-    if project is None or not project.tracked or review.status not in ("done", "failed", "skipped"):
+    and this review is of its current head (older heads are history). Never on a repo whose
+    review is turned off: the worker skips those."""
+    if project is None or not (project.tracked and project.review_enabled):
         return False
-    if review.superseded_by is not None:
+    if review.status not in ("done", "failed", "skipped"):
+        return False
+    if review.superseded_by is not None or review.rubric_version != RUBRIC_VERSION:
         return False
     if review.mr_id is None:
         return True
@@ -254,16 +308,76 @@ def rerun_review(
     reviewed again while it is open and only at its current head. Managers of the dự án
     and admins only: a re-run spends LLM budget."""
     review = _visible_review(session, principal, review_id)
+    _queue_rerun(
+        session,
+        principal,
+        queue,
+        review,
+        force=bool(body and body.force),
+        ignore_loc_limit=bool(body and body.ignore_loc_limit),
+    )
+    session.commit()
+    return {"status": "queued"}
+
+
+@router.post("/reviews/rerun", status_code=202, response_model=RerunManyOut)
+def rerun_reviews(
+    body: RerunManyIn,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    queue: Annotated[Enqueuer, Depends(get_queue)],
+) -> dict[str, Any]:
+    """Review several results again (the checkboxes of "Kết quả review"): a finished one as a
+    new round, a failed or skipped one in place, each under the rules of the single re-run.
+    One that cannot run is reported with its reason and does not stop the others."""
+    queued: list[int] = []
+    failed: list[dict[str, Any]] = []
+    for review_id in dict.fromkeys(body.ids):
+        try:
+            review = _visible_review(session, principal, review_id)
+            _queue_rerun(
+                session,
+                principal,
+                queue,
+                review,
+                force=review.status == "done",
+                ignore_loc_limit=False,
+            )
+        except HTTPException as exc:
+            failed.append({"id": review_id, "error": str(exc.detail)})
+        else:
+            queued.append(review_id)
+    session.commit()
+    return {"queued": queued, "failed": failed}
+
+
+def _queue_rerun(
+    session: Session,
+    principal: Principal,
+    queue: Enqueuer,
+    review: Review,
+    *,
+    force: bool,
+    ignore_loc_limit: bool,
+) -> None:
+    """Checks and enqueues one re-run (HTTPException when it may not run); the caller commits.
+    Nothing is changed before every check passed, so a refused one leaves the review as it was."""
     repo = review_repo(session, review)
     require_manage(principal, repo.business_project_id if repo else None)
-    force = bool(body and body.force)
-    ignore_loc_limit = bool(body and body.ignore_loc_limit)
     if review.status not in ("failed", "skipped") and not (force and review.status == "done"):
         raise HTTPException(
             409, f"review is {review.status}; only failed or skipped can be re-run (force for done)"
         )
     if review.superseded_by is not None:
         raise HTTPException(409, "a newer round of this review exists already")
+    if review.rubric_version != RUBRIC_VERSION:
+        # The worker reviews under the current rubric into a row of its own: this one would be
+        # left queued for good. A fresh review is asked for from "Yêu cầu review" instead.
+        raise HTTPException(
+            409,
+            f"reviewed under rubric {review.rubric_version}, now {RUBRIC_VERSION}; "
+            "request a new review of this change instead",
+        )
     if ignore_loc_limit and not (
         review.status == "skipped" and (review.error or "").startswith(TOO_LARGE)
     ):
@@ -274,8 +388,9 @@ def rerun_review(
         raise HTTPException(409, "review target is no longer known")
     if not project.tracked:
         raise HTTPException(409, "repo is not tracked; resume tracking first")
-    if review.status != "done":
-        review.status, review.error = "queued", None
+    if not project.review_enabled:
+        # The worker would skip it without a word and the page would wait for nothing.
+        raise HTTPException(409, "review is turned off for this repo; turn it on first")
     if review.mr_id is not None:
         mr = session.get(MergeRequest, review.mr_id)
         if mr is None:
@@ -290,21 +405,33 @@ def rerun_review(
     else:
         args = (project.id, review.reviewed_sha)
         func, job_id = "review_commit_job", f"review-commit-{review.reviewed_sha[:12]}"
-    queue.enqueue(
-        f"app.workers.review_jobs.{func}",
-        *args,
-        trigger="rerun",
-        requested_by=principal.user_id,
-        force=force,
-        expected_round=review.round if force else None,
-        ignore_loc_limit=ignore_loc_limit,
-        job_id=f"{job_id}-rerun-{review.id}-{review.round + 1 if force else review.round}"
-        + ("-nolimit" if ignore_loc_limit else ""),
-        job_timeout=review_job_timeout(get_settings()),
-        # A run past the LOC limit is paid in full each time: only a person repeats it.
-        retry=None if ignore_loc_limit else REVIEW_RETRY,
-        at_front=True,
-    )
+    previous = review.status, review.error
+    if review.status != "done":
+        review.status, review.error = "queued", None
+    # The row stays locked until this request commits: the worker's claim (SELECT … FOR UPDATE)
+    # waits for it instead of being overwritten by this "queued".
+    session.flush()
+    try:
+        queue.enqueue(
+            f"app.workers.review_jobs.{func}",
+            *args,
+            trigger="rerun",
+            requested_by=principal.user_id,
+            force=force,
+            expected_round=review.round if force else None,
+            ignore_loc_limit=ignore_loc_limit,
+            job_id=f"{job_id}-rerun-{review.id}-{review.round + 1 if force else review.round}"
+            + ("-nolimit" if ignore_loc_limit else ""),
+            job_timeout=review_job_timeout(get_settings()),
+            # A run past the LOC limit is paid in full each time: only a person repeats it.
+            retry=None if ignore_loc_limit else REVIEW_RETRY,
+            at_front=True,
+        )
+    except Exception:
+        # Redis not answering: this one did not start; earlier ones of a batch did and are kept.
+        log.exception("review rerun not queued", extra={"review_id": review.id})
+        review.status, review.error = previous
+        raise HTTPException(503, "job queue unavailable; try again") from None
     audit(
         session,
         principal.user_id,
@@ -314,8 +441,6 @@ def rerun_review(
         ignore_loc_limit=ignore_loc_limit or None,
         loc=loc if ignore_loc_limit else None,
     )
-    session.commit()
-    return {"status": "queued"}
 
 
 @router.get("/findings", response_model=Page[BoardFindingOut])

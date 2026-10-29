@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { use, useEffect, useRef, useState } from "react";
+import { mutate as mutateAll } from "swr";
 
 import { BasisCard, basisSummary, changedRules, previousRun } from "@/components/ReviewBasis";
 import { Alert, Card, EmptyState, ExternalLink, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
@@ -113,6 +114,7 @@ interface RerunState {
   force: boolean;
   pending: boolean;
   message: string;
+  tone: "info" | "success" | "warning" | "error";
   startedAt: number;
 }
 
@@ -143,11 +145,12 @@ function RerunBar({
     }
   };
   return (
-    <div className="toolbar rerun-bar" style={{ marginBottom: 12 }}>
+    <>
+      {/* What the button did, shown where it is seen; the hint below stays as it was. */}
+      {state && <Alert tone={state.tone}>{state.message}</Alert>}
+      <div className="toolbar rerun-bar" style={{ marginBottom: 12 }}>
       <span className="muted small">
-        {state
-          ? state.message
-          : finished
+        {finished
             ? review.target_type === "mr"
               ? "MR còn mở ở đúng head này: có thể review lại thành lần mới; lần hiện tại được giữ làm lịch sử."
               : "Có thể review lại commit này thành lần mới; lần hiện tại được giữ làm lịch sử."
@@ -185,7 +188,8 @@ function RerunBar({
           {busy ? "Đang gửi…" : state?.pending ? "Đang chờ worker…" : finished ? "↻ Review lại" : "Chạy lại"}
         </button>
       )}
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -341,6 +345,7 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
       setRerun({
         ...rerun,
         pending: false,
+        tone: taken ? "success" : "warning",
         message: taken
           ? rerun.force
             ? "Lần review mới đã bắt đầu; xem trong bảng Lịch sử review."
@@ -358,15 +363,18 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
         force,
         pending: true,
         startedAt: Date.now(),
-        message: "Đã đưa vào hàng đợi; trang này tự cập nhật khi worker nhận việc.",
+        tone: "info",
+        message: "Đã đưa vào hàng đợi; tiến trình hiện ở góc phải màn hình, trang này tự cập nhật khi worker nhận việc.",
       });
-      await mutate();
+      // The corner pill polls slowly while idle: ask it now so the queued run shows at once.
+      await Promise.all([mutate(), mutateAll("/activity/reviews")]);
     } catch (e) {
       setRerun({
         force,
         pending: false,
         startedAt: Date.now(),
-        message: `Lỗi: ${e instanceof ApiError ? e.message : String(e)}`,
+        tone: "error",
+        message: `Không chạy lại được: ${e instanceof ApiError ? e.message : String(e)}`,
       });
     }
   }

@@ -2,15 +2,18 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { mutate as mutateAll } from "swr";
 import useSWRInfinite from "swr/infinite";
 
 import { RangePicker, type SharedRange, useCardRange } from "@/components/Evaluation";
 import { Alert, Avatar, Card, EmptyState, ExternalLink, Loading, Pill } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
 import { VERDICT_LABEL, dateTime, num } from "@/lib/format";
-import type { Page, Person, ReviewListItem, Verdict } from "@/lib/types";
+import type { Page, Person, RerunManyOut, ReviewListItem, Verdict } from "@/lib/types";
 
 const PAGE = 25;
+/** The corner pill (ReviewActivity): refreshed right away so a queued re-run shows there. */
+const ACTIVITY = "/activity/reviews";
 
 const STATUS: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "info" }> = {
   failed: { label: "Lỗi", tone: "bad" },
@@ -64,6 +67,10 @@ export function ReviewResults({
   const [repoId, setRepoId] = useState("");
   const [verdict, setVerdict] = useState<"" | Verdict>("");
   const [status, setStatus] = useState<StatusFilter>("results");
+  // Re-run several at once: only rows the API marks can_rerun (the viewer manages them).
+  const [chosen, setChosen] = useState<Set<number>>(() => new Set());
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState<{ tone: "success" | "warning" | "error"; text: string } | null>(null);
   // Everyone whose reviews the viewer may see (developer: themselves; lead: the team; admin: all).
   const { data: people } = useApi<Person[]>(person === undefined ? "/people" : null);
 
@@ -100,6 +107,46 @@ export function ReviewResults({
   const listed = !userId || (people ?? []).some((p) => String(p.id) === userId);
   // #4: ask for exactly one more page than loaded, also after a failed one.
   const loadMore = () => void pages.setSize((pages.data?.length ?? 0) + 1);
+  const selectable = items.filter((r) => r.can_rerun);
+  // Rows that left the list (filter changed) are no longer chosen.
+  const selected = selectable.filter((r) => chosen.has(r.id));
+  const allSelected = selectable.length > 0 && selected.length === selectable.length;
+  const toggle = (id: number) =>
+    setChosen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const rerun = async () => {
+    const finished = selected.filter((r) => r.status === "done").length;
+    const ok = window.confirm(
+      `Review lại ${selected.length} kết quả? Việc này tốn ngân sách LLM${
+        finished ? `; ${finished} review đã chấm điểm sẽ có lần review mới, lần cũ được giữ làm lịch sử` : ""
+      }.`,
+    );
+    if (!ok) return;
+    setSending(true);
+    setSent(null);
+    try {
+      const out = await api.post<RerunManyOut>("/reviews/rerun", { ids: selected.map((r) => r.id) });
+      const why = out.failed.map((f) => `#${f.id}: ${f.error}`).join("; ");
+      setSent(
+        out.failed.length === 0
+          ? { tone: "success", text: `Đã đưa ${out.queued.length} review vào hàng đợi; theo dõi ở góc phải màn hình.` }
+          : {
+              tone: out.queued.length ? "warning" : "error",
+              text: `Đã đưa ${out.queued.length} review vào hàng đợi, ${out.failed.length} không chạy được (${why}).`,
+            },
+      );
+      setChosen(new Set());
+      await Promise.all([pages.mutate(), mutateAll(ACTIVITY)]);
+    } catch (e) {
+      setSent({ tone: "error", text: `Không gửi được: ${e instanceof ApiError ? e.message : String(e)}` });
+    } finally {
+      setSending(false);
+    }
+  };
   const reset = () => {
     setUserId("");
     setRepoId("");
@@ -111,7 +158,7 @@ export function ReviewResults({
     <Card
       id={id}
       title="Kết quả review"
-      subtitle={period ? undefined : "Mới nhất trước, lọc theo thời gian hoàn tất"}
+      subtitle={period ? undefined : "Commit mới nhất trước; lọc theo thời gian review hoàn tất"}
       actions={
         period ? (
           <span className="pill" title="Review hoàn tất trong kỳ đang xem; đổi kỳ ở đầu trang">
@@ -179,6 +226,26 @@ export function ReviewResults({
         )}
       </div>
 
+      {(selected.length > 0 || sent) && (
+        <div className="results-error">
+          {sent && (
+            <Alert tone={sent.tone} onClose={() => setSent(null)}>
+              {sent.text}
+            </Alert>
+          )}
+          {selected.length > 0 && (
+            <>
+              <span className="small">Đã chọn {selected.length}</span>
+              <button type="button" className="sm primary" onClick={() => void rerun()} disabled={sending}>
+                {sending ? "Đang gửi…" : "↻ Review lại"}
+              </button>
+              <button type="button" className="sm ghost" onClick={() => setChosen(new Set())} disabled={sending}>
+                Bỏ chọn
+              </button>
+            </>
+          )}
+        </div>
+      )}
       {pages.error && (
         <div className="results-error">
           <Alert tone="error">
@@ -206,12 +273,25 @@ export function ReviewResults({
             <table>
               <thead>
                 <tr>
+                  {selectable.length > 0 && (
+                    <th className="check-col">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={() => setChosen(allSelected ? new Set() : new Set(selectable.map((r) => r.id)))}
+                        aria-label="Chọn mọi review chạy lại được"
+                      />
+                    </th>
+                  )}
                   <th>Thay đổi</th>
                   {person === undefined && <th>Thành viên</th>}
                   {repo === undefined && <th>Repo</th>}
                   <th>Kết luận</th>
                   <th className="num">Điểm</th>
-                  <th>Hoàn tất</th>
+                  <th title="Lúc tạo commit; với MR là lúc mở MR. Danh sách xếp theo cột này, mới nhất trước">
+                    Thời gian commit
+                  </th>
+                  <th>Review xong</th>
                   <th>
                     <span className="visually-hidden">Mở trên GitLab</span>
                   </th>
@@ -224,6 +304,18 @@ export function ReviewResults({
                   const active = !!r.author && userId === String(r.author.id);
                   return (
                     <tr key={r.id}>
+                      {selectable.length > 0 && (
+                        <td className="check-col">
+                          {r.can_rerun && (
+                            <input
+                              type="checkbox"
+                              checked={chosen.has(r.id)}
+                              onChange={() => toggle(r.id)}
+                              aria-label={`Chọn ${r.target} để review lại`}
+                            />
+                          )}
+                        </td>
+                      )}
                       <td>
                         <Link href={`/reviews/${r.id}`}>{r.target}</Link>
                         {r.round > 1 && <span className="muted small"> · vòng {r.round}</span>}
@@ -255,6 +347,7 @@ export function ReviewResults({
                       <td className="num">
                         {r.status === "done" ? <strong>{num(r.score, 0)}</strong> : <Pill tone={st?.tone}>{st?.label ?? r.status}</Pill>}
                       </td>
+                      <td className="nowrap">{r.changed_at ? dateTime(r.changed_at) : <span className="muted">—</span>}</td>
                       <td className="muted nowrap">{dateTime(r.finished_at)}</td>
                       <td>{r.web_url && <ExternalLink href={r.web_url}>GitLab</ExternalLink>}</td>
                     </tr>

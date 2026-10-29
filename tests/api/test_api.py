@@ -392,6 +392,104 @@ def test_forced_rerun_of_an_old_commit(
     assert func.endswith("review_commit_job") and args[1] == "b" * 40 and kwargs["force"]
 
 
+def test_no_rerun_on_a_repo_with_review_turned_off(
+    client: TestClient, world: World, as_user: Any, queue: FakeQueue, db_session: Session
+) -> None:
+    # The worker skips such a repo silently: the page would wait for a run that never comes.
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
+    world.project.review_enabled = False
+    db_session.commit()
+    lead = as_user(world.lead)
+    detail = client.get(f"/api/v1/reviews/{world.binh_review.id}", headers=lead).json()
+    assert detail["can_rerun"] is False
+    sent = client.post(f"/api/v1/reviews/{world.binh_review.id}/rerun", headers=lead)
+    assert sent.status_code == 409 and "turned off" in sent.json()["detail"]
+    assert queue.jobs == []
+
+
+def test_rerun_many_keeps_what_was_queued_when_the_queue_fails(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    queue: FakeQueue,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
+    world.an_review.rubric_version = "v0"  # reviewed under an older rubric
+    db_session.commit()
+    lead = as_user(world.lead)
+    ids = [world.an_review.id, world.binh_review.id]
+    # An old-rubric review is refused: the worker would review into a new row and leave it queued.
+    old = client.post("/api/v1/reviews/rerun", json={"ids": ids[:1]}, headers=lead).json()
+    assert old["queued"] == [] and "rubric v0" in old["failed"][0]["error"]
+
+    def down(*args: Any, **kwargs: Any) -> None:
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(queue, "enqueue", down)
+    out = client.post("/api/v1/reviews/rerun", json={"ids": ids[1:]}, headers=lead)
+    assert out.status_code == 202 and out.json()["failed"][0]["error"].startswith("job queue")
+    db_session.refresh(world.binh_review)
+    assert world.binh_review.status == "failed"  # left as it was, not stuck in "queued"
+
+
+def test_reviews_list_newest_change_first(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    # The commit was made before the MR was opened: the MR review comes first, whatever the ids.
+    commit = db_session.get(Commit, "b" * 40)
+    assert commit is not None
+    commit.authored_at = datetime(2026, 10, 1, 8, tzinfo=UTC)
+    world.mr.created_at_src = datetime(2026, 10, 3, 8, tzinfo=UTC)
+    db_session.commit()
+    admin = as_user(world.admin)
+    first = client.get("/api/v1/reviews?limit=1", headers=admin).json()
+    assert [r["id"] for r in first["items"]] == [world.an_review.id]
+    assert first["items"][0]["changed_at"].startswith("2026-10-03")
+    after = client.get(
+        f"/api/v1/reviews?limit=1&cursor={first['next_cursor']}", headers=admin
+    ).json()
+    assert [r["id"] for r in after["items"]] == [world.binh_review.id]
+    assert after["items"][0]["changed_at"].startswith("2026-10-01")
+    assert after["next_cursor"] is None
+
+
+def test_rerun_many_reports_each_review(
+    client: TestClient, world: World, as_user: Any, queue: FakeQueue, db_session: Session
+) -> None:
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
+    lead = as_user(world.lead)
+    listed = client.get("/api/v1/reviews?status=done&status=failed", headers=lead).json()
+    # The MR is closed: its finished review cannot run again; the failed commit can.
+    assert {r["id"]: r["can_rerun"] for r in listed["items"]} == {
+        world.an_review.id: False,
+        world.binh_review.id: True,
+    }
+    ids = [world.an_review.id, world.binh_review.id, world.binh_review.id, 999999]
+    sent = client.post("/api/v1/reviews/rerun", json={"ids": ids}, headers=lead)
+    assert sent.status_code == 202
+    body = sent.json()
+    assert body["queued"] == [world.binh_review.id]
+    assert [f["id"] for f in body["failed"]] == [world.an_review.id, 999999]
+    assert "open MR" in body["failed"][0]["error"]
+    ((func, _, kwargs),) = queue.jobs  # the duplicate id is queued once
+    assert func.endswith("review_commit_job") and kwargs["force"] is False
+    db_session.refresh(world.an_review)
+    assert world.an_review.status == "done"  # a refused one is left as it was
+    # A finished commit goes again as a new round.
+    world.binh_review.status = "done"
+    db_session.commit()
+    again = client.post("/api/v1/reviews/rerun", json={"ids": [world.binh_review.id]}, headers=lead)
+    assert again.json()["queued"] == [world.binh_review.id] and queue.jobs[-1][2]["force"]
+    # Viewers who do not manage the dự án get every id back as refused.
+    dev = client.post(
+        "/api/v1/reviews/rerun", json={"ids": [world.binh_review.id]}, headers=as_user(world.an)
+    )
+    assert dev.json()["queued"] == [] and len(queue.jobs) == 2
+    assert client.post("/api/v1/reviews/rerun", json={"ids": []}, headers=lead).status_code == 422
+
+
 @pytest.mark.parametrize(
     ("method", "path"),
     [
