@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -10,6 +10,7 @@ from sqlalchemy import (
     Index,
     Numeric,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -17,6 +18,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base, TimestampMixin
 
 SEVERITIES = ("critical", "high", "medium", "low", "info")
+# reviews.changed_at of a change whose time is not known: sorts last.
+CHANGE_TIME_UNKNOWN = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 class Review(TimestampMixin, Base):
@@ -36,6 +39,8 @@ class Review(TimestampMixin, Base):
             postgresql_nulls_not_distinct=True,
         ),
         Index("ix_reviews_author_user_id_finished_at", "author_user_id", "finished_at"),
+        # Read backwards for "newest change first" and its (changed_at, id) cursor.
+        Index("ix_reviews_changed_at_id", "changed_at", "id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -56,6 +61,11 @@ class Review(TimestampMixin, Base):
     error: Mapped[str | None]
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When the reviewed change was made: the commit's time, or when the MR was opened
+    # (CHANGE_TIME_UNKNOWN when neither is known). "Kết quả review" is sorted by it.
+    changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("'1970-01-01 00:00:00+00'")
+    )
     # docs/specs/17: merge verdict (approve|fix_required|block) and risk score from the
     # findings; the model's design & intent notes; what asked for the review and who.
     verdict: Mapped[str | None]

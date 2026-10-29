@@ -36,6 +36,7 @@ from app.models import (
     ReviewFinding,
     User,
 )
+from app.models.review import CHANGE_TIME_UNKNOWN
 from app.review import claude_kit, comment, knowledge
 from app.review.agent import (
     agent_findings,
@@ -217,6 +218,7 @@ class ReviewService:
             "mr",
             head_sha,
             mr_id=mr.id,
+            changed_at=mr.created_at_src,
             author=self._user_of(mr.author_account_id),
             trigger=trigger,
             requested_by=requested_by,
@@ -286,6 +288,7 @@ class ReviewService:
             "commit",
             commit.sha,
             commit_sha=commit.sha,
+            changed_at=commit.authored_at,
             author=self._user_of(commit.author_account_id),
             trigger=trigger,
             requested_by=requested_by,
@@ -474,6 +477,7 @@ class ReviewService:
             "mr_id": target.get("mr_id"),
             "commit_sha": target.get("commit_sha"),
             "reviewed_sha": sha,
+            "changed_at": target.get("changed_at") or CHANGE_TIME_UNKNOWN,
             "rubric_version": RUBRIC_VERSION,
             "author_user_id": author,
             "status": "queued",

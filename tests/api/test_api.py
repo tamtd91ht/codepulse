@@ -438,10 +438,8 @@ def test_reviews_list_newest_change_first(
     client: TestClient, world: World, as_user: Any, db_session: Session
 ) -> None:
     # The commit was made before the MR was opened: the MR review comes first, whatever the ids.
-    commit = db_session.get(Commit, "b" * 40)
-    assert commit is not None
-    commit.authored_at = datetime(2026, 10, 1, 8, tzinfo=UTC)
-    world.mr.created_at_src = datetime(2026, 10, 3, 8, tzinfo=UTC)
+    world.binh_review.changed_at = datetime(2026, 10, 1, 8, tzinfo=UTC)
+    world.an_review.changed_at = datetime(2026, 10, 3, 8, tzinfo=UTC)
     db_session.commit()
     admin = as_user(world.admin)
     first = client.get("/api/v1/reviews?limit=1", headers=admin).json()

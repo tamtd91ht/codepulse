@@ -198,7 +198,10 @@ def test_stale_running_review_is_taken_over(
 
 def test_commit_review(db_session: Session) -> None:
     project = make_project(db_session)
-    commit = Commit(sha=HEAD, project_id=project.id, message="fix: handle empty input\n")
+    made = datetime(2026, 10, 2, 9, tzinfo=UTC)
+    commit = Commit(
+        sha=HEAD, project_id=project.id, message="fix: handle empty input\n", authored_at=made
+    )
     db_session.add(commit)
     db_session.flush()
     provider = FakeLLMProvider()
@@ -212,6 +215,7 @@ def test_commit_review(db_session: Session) -> None:
         review = service.review_commit(project, commit)
     assert review is not None
     assert (review.target_type, review.commit_sha, review.status) == ("commit", HEAD, "done")
+    assert review.changed_at == made  # "Kết quả review" is sorted by the commit's time
     assert "Commit: fix: handle empty input" in provider.prompts[0].user
     assert "### Context: app/review/parser.py" in provider.prompts[0].user
 

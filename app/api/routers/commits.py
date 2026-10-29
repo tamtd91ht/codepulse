@@ -39,6 +39,7 @@ from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
 from app.models import Account, BusinessProject, Connection, Project, ProjectGrant, Review, User
+from app.models.review import CHANGE_TIME_UNKNOWN
 from app.review.rubric import RUBRIC_VERSION
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
 
@@ -414,6 +415,7 @@ def review_commits(
                     target_type="commit",
                     commit_sha=commit.sha,
                     reviewed_sha=commit.sha,
+                    changed_at=commit.authored_at or CHANGE_TIME_UNKNOWN,
                     rubric_version=RUBRIC_VERSION,
                     author_user_id=author_user,
                     status="queued",

@@ -7,9 +7,9 @@ from typing import Annotated, Any, Literal, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Date, DateTime, Select, exists, func, literal, or_, select, tuple_
+from sqlalchemy import Date, Select, exists, func, or_, select, tuple_
 from sqlalchemy import cast as sql_cast
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session
 
 from app.api.access import require_manage, review_repo, review_scope
 from app.api.audit import audit
@@ -43,6 +43,7 @@ from app.models import (
     TeamMember,
     User,
 )
+from app.models.review import CHANGE_TIME_UNKNOWN
 from app.review.rubric import RUBRIC_VERSION
 from app.review.service import TOO_LARGE
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
@@ -63,18 +64,6 @@ def _may_filter_by(principal: Principal, user_id: int) -> bool:
     """A person filter: someone you see everywhere, or anyone when you manage a dự án (the
     scope then keeps the reviews of the dự án you manage)."""
     return principal.can_see_user(user_id) or bool(principal.managed_projects())
-
-
-# When the reviewed change was made: the commit's time, or the MR's creation for an MR review.
-# The list is sorted by it, newest first; a review whose change has no known time sorts last.
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
-# Aliases: the repo filters below use subqueries over commits / merge_requests, which would
-# otherwise correlate to these joins.
-_ChangedCommit = aliased(Commit)
-_ChangedMr = aliased(MergeRequest)
-CHANGED_AT = func.coalesce(
-    _ChangedCommit.authored_at, _ChangedMr.created_at_src, literal(_EPOCH, DateTime(timezone=True))
-)
 
 
 def _encode_changed_cursor(changed_at: datetime, review_id: int) -> str:
@@ -144,12 +133,7 @@ def list_reviews(
 ) -> Page[Any]:
     if user_id is not None and not _may_filter_by(principal, user_id):
         raise HTTPException(403, "not allowed to see this person's reviews")
-    joined = (
-        select(Review, CHANGED_AT.label("changed_at"))
-        .outerjoin(_ChangedCommit, _ChangedCommit.sha == Review.commit_sha)
-        .outerjoin(_ChangedMr, _ChangedMr.id == Review.mr_id)
-    )
-    query = scoped(cast(Select[Any], joined), principal)
+    query = scoped(select(Review), principal)
     if user_id is not None:
         query = query.where(Review.author_user_id == user_id)
     if verdict is not None:
@@ -172,26 +156,24 @@ def list_reviews(
         query = query.where(Review.id.in_(with_severity))
     query = _range(query, Review.finished_at, date_from, date_to, ZoneInfo(settings.report_tz))
     if (after := _decode_changed_cursor(cursor)) is not None:
-        query = query.where(tuple_(CHANGED_AT, Review.id) < tuple_(*after))
-    rows: list[tuple[Review, datetime]] = [
-        (review, changed_at)
-        for review, changed_at in session.execute(
-            query.order_by(CHANGED_AT.desc(), Review.id.desc()).limit(limit + 1)
-        )
-    ]
+        query = query.where(tuple_(Review.changed_at, Review.id) < tuple_(*after))
+    # Newest change first: ix_reviews_changed_at_id serves both the order and the cursor.
+    rows = list(
+        session.scalars(query.order_by(Review.changed_at.desc(), Review.id.desc()).limit(limit + 1))
+    )
     if user_id is not None and user_id != principal.user_id:
         audit(session, principal.user_id, "reviews.read", f"user:{user_id}")
         session.commit()
     more = len(rows) > limit
     # Authors in one query: the list shows who each review was about.
-    author_ids = {r.author_user_id for r, _ in rows[:limit] if r.author_user_id is not None}
+    author_ids = {r.author_user_id for r in rows[:limit] if r.author_user_id is not None}
     authors = (
         {u.id: u for u in session.scalars(select(User).where(User.id.in_(author_ids)))}
         if author_ids
         else {}
     )
     items = []
-    for review, changed_at in rows[:limit]:
+    for review in rows[:limit]:
         project, url, label = _target(session, review)
         author = authors.get(review.author_user_id) if review.author_user_id else None
         items.append(
@@ -201,13 +183,15 @@ def list_reviews(
                 "project": project.path_with_namespace if project else None,
                 "web_url": url,
                 "author": UserOut.model_validate(author) if author else None,
-                "changed_at": None if changed_at == _EPOCH else changed_at,
+                "changed_at": None
+                if review.changed_at == CHANGE_TIME_UNKNOWN
+                else review.changed_at,
                 "can_rerun": _can_rerun(session, review, project)
                 and principal.can_manage_project(project.business_project_id if project else None),
             }
         )
     next_cursor = (
-        _encode_changed_cursor(rows[limit - 1][1], rows[limit - 1][0].id) if more else None
+        _encode_changed_cursor(rows[limit - 1].changed_at, rows[limit - 1].id) if more else None
     )
     return Page(items=items, next_cursor=next_cursor)
 
