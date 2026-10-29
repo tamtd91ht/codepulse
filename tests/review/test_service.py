@@ -911,6 +911,11 @@ class Recorder:
     def event(self, review_id: int, entries: list[dict[str, Any]]) -> None:
         self.events.append(("event", entries))
 
+    def note_ended(
+        self, review_id: int, info: dict[str, Any], status: str, error: str | None = None
+    ) -> None:
+        self.events.append(("ended", (review_id, status)))
+
 
 def test_a_review_reports_its_stages_to_the_live_view(
     db_session: Session, mr: tuple[Project, MergeRequest]
@@ -1150,3 +1155,36 @@ def test_the_no_tool_pass_reads_the_reviewed_repos_own_claude_folder(
         "repo",
         "used",
     )
+
+
+def test_an_asked_run_that_does_not_happen_says_why_in_the_live_view(
+    db_session: Session,
+) -> None:
+    """A re-run that finds the change already reviewed would end without a word, and the page
+    that asked would wait for nothing: the live view lists it as skipped, with the reason."""
+    project = make_project(db_session)
+    commit = Commit(sha=HEAD, project_id=project.id, message="fix: x\n")
+    db_session.add(commit)
+    db_session.flush()
+    done = Review(
+        target_type="commit",
+        commit_sha=HEAD,
+        reviewed_sha=HEAD,
+        status="done",
+        rubric_version=RUBRIC_VERSION,
+    )
+    db_session.add(done)
+    db_session.flush()
+    progress = MemoryProgress()
+    with GitLabClient(BASE, "t") as client:
+        service = ReviewService(db_session, client, FakeLLMProvider(), SETTINGS, progress=progress)
+        assert service.review_commit(project, commit, trigger="webhook") is None
+        assert progress.recent() == []  # a webhook duplicate is routine: silent
+        assert service.review_commit(project, commit, trigger="rerun") is None
+        (ended,) = progress.recent()
+        assert (ended["review_id"], ended["status"]) == (done.id, "skipped")
+        assert "đã có kết quả (done" in ended["error"] and ended["trigger"] == "rerun"
+        project.review_enabled = False
+        assert service.review_commit(project, commit, trigger="dashboard") is None
+        assert progress.recent()[0]["error"] == "repo đã tắt review"
+    assert progress.active() == []

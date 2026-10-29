@@ -66,6 +66,11 @@ class ProgressSink(Protocol):
     def stage(self, review_id: int, stage: str, detail: str = "", **extra: Any) -> None: ...
     def end(self, review_id: int, status: str | None = None, error: str | None = None) -> None: ...
     def event(self, review_id: int, entries: list[dict[str, Any]]) -> None: ...
+    # A run that never started (an asked re-run with nothing to do): straight to the recent
+    # list, never through the live record, which another job may own under the same id.
+    def note_ended(
+        self, review_id: int, info: dict[str, Any], status: str, error: str | None = None
+    ) -> None: ...
 
 
 class ProgressReader(Protocol):
@@ -85,6 +90,11 @@ class NullProgress:
         return None
 
     def event(self, review_id: int, entries: list[dict[str, Any]]) -> None:
+        return None
+
+    def note_ended(
+        self, review_id: int, info: dict[str, Any], status: str, error: str | None = None
+    ) -> None:
         return None
 
 
@@ -118,6 +128,11 @@ class MemoryProgress:
         record = self.items.pop(review_id, None)
         if record is not None:
             self.ended.insert(0, _ended(record, status, error))
+
+    def note_ended(
+        self, review_id: int, info: dict[str, Any], status: str, error: str | None = None
+    ) -> None:
+        self.ended.insert(0, _ended({**info, "review_id": review_id}, status, error))
 
     def active(self) -> list[dict[str, Any]]:
         return sorted(self.items.values(), key=lambda i: i.get("started_at") or "")
@@ -179,6 +194,19 @@ class RedisProgress:
             pipe.execute()
         except (RedisError, ValueError) as exc:
             log.warning("review progress not cleared", extra={"error": exc.__class__.__name__})
+
+    def note_ended(
+        self, review_id: int, info: dict[str, Any], status: str, error: str | None = None
+    ) -> None:
+        record = _ended({**info, "review_id": review_id}, status, error)
+        try:
+            pipe = self._redis.pipeline()
+            pipe.lpush(RECENT_KEY, json.dumps(record, default=str))
+            pipe.ltrim(RECENT_KEY, 0, RECENT_MAX - 1)
+            pipe.expire(RECENT_KEY, RECENT_TTL_S)
+            pipe.execute()
+        except RedisError as exc:
+            log.warning("review outcome not recorded", extra={"error": exc.__class__.__name__})
 
     def event(self, review_id: int, entries: list[dict[str, Any]]) -> None:
         """Append live-view entries; kept for an hour after the review so it can be looked at."""

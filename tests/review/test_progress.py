@@ -193,3 +193,17 @@ def test_live_view_survives_a_broken_redis() -> None:
     progress = RedisProgress(BrokenRedis())  # type: ignore[arg-type]
     progress.event(41, [{"kind": "tool"}])
     assert progress.live(41) == []
+
+
+def test_a_run_that_never_started_is_noted_without_touching_a_live_one() -> None:
+    """An asked re-run with nothing to do goes straight to the recent list: a review running
+    under the same id in another job keeps its live record and its own outcome."""
+    progress = RedisProgress(FakeRedis())  # type: ignore[arg-type]
+    progress.start(41, {"kind": "commit", "project_id": 1, "ref": "abc", "started_at": "t0"})
+    progress.note_ended(41, {"kind": "commit", "project_id": 1, "ref": "abc"}, "skipped", "lý do")
+    (live,) = progress.active()
+    assert live["review_id"] == 41
+    (noted,) = progress.recent()
+    assert (noted["review_id"], noted["status"], noted["error"]) == (41, "skipped", "lý do")
+    progress.end(41, "done")
+    assert [r["status"] for r in progress.recent()] == ["done", "skipped"]

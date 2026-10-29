@@ -78,6 +78,28 @@ from app.scoring.verdict import assess
 log = logging.getLogger(__name__)
 
 FINISHED = ("done", "skipped", "superseded")
+
+
+@dataclass(frozen=True)
+class _Target:
+    """What a run was asked for, to name it in the live view when it does not happen."""
+
+    kind: str  # mr | commit
+    ref: str
+    title: str
+    sha: str
+    mr_id: int | None = None
+    commit_sha: str | None = None
+
+
+def _off(project: Project) -> str:
+    # An untracked repo is refused by the API and left out of the live view: only "off" shows.
+    return "repo đã tắt review"
+
+
+# Runs a person asked for (dashboard, Telegram, re-run): when one does not happen, the live view
+# says so. Webhook and backfill duplicates are routine and stay silent.
+ASKED_TRIGGERS = frozenset({"dashboard", "telegram", "rerun"})
 VERIFY_TIMEOUT_S = 120.0  # docs/specs/19 §4.3: one verification call
 # A "running" review older than this was left by a killed worker and may be taken over. It must
 # exceed the RQ job timeout (app.workers.review_jobs.review_job_timeout: 3 x REVIEW_TIMEOUT_S +
@@ -186,6 +208,7 @@ class ReviewService:
         the review (the integration tests pass a session whose work is rolled back)."""
         self._session = session
         self._progress: ProgressSink = progress or NullProgress()
+        self._unclaimed: str | None = None  # why the last _claim took nothing (None: running)
         self._pending_basis: dict[int, dict[str, Any]] = {}
         self._client = client
         self._provider = provider
@@ -207,12 +230,16 @@ class ReviewService:
         force: bool = False,
         expected_round: int | None = None,
     ) -> Review | None:
+        target = _Target("mr", str(mr.iid), mr.title or "", head_sha, mr_id=mr.id)
         if not (project.review_enabled and project.tracked):
+            self._not_run(project, trigger, requested_by, _off(project), target)
             return None
         if force and (mr.state != "opened" or mr.head_sha != head_sha):
             # Checked again at run time: the MR may have been merged or pushed since the
             # request, and an old head is history (docs/specs/17 §Lịch sử).
             log.info("forced review dropped: mr not open at this head", extra={"mr_id": mr.id})
+            reason = "MR không còn mở ở head này (đã merge, đóng hoặc có push mới)"
+            self._not_run(project, trigger, requested_by, reason, target)
             return None
         review = self._claim(
             "mr",
@@ -227,6 +254,8 @@ class ReviewService:
         )
         if review is None:
             self._commit_step("claim")  # nothing claimed: release the row (and the sync's rows)
+            if self._unclaimed:
+                self._not_run(project, trigger, requested_by, self._unclaimed, target)
             return None
         self._begin(review, project, "mr", str(mr.iid), mr.title or "", head_sha)
         self._commit_step("claim")
@@ -282,7 +311,11 @@ class ReviewService:
         force: bool = False,
         expected_round: int | None = None,
     ) -> Review | None:
+        first_line = (commit.message or "").strip().splitlines()[:1]
+        title = first_line[0] if first_line else commit.sha
+        target = _Target("commit", commit.sha, title, commit.sha, commit_sha=commit.sha)
         if not (project.review_enabled and project.tracked):
+            self._not_run(project, trigger, requested_by, _off(project), target)
             return None
         review = self._claim(
             "commit",
@@ -297,9 +330,10 @@ class ReviewService:
         )
         if review is None:
             self._commit_step("claim")
+            if self._unclaimed:
+                reason = self._unclaimed
+                self._not_run(project, trigger, requested_by, reason, target)
             return None
-        first_line = (commit.message or "").strip().splitlines()[:1]
-        title = first_line[0] if first_line else commit.sha
         self._begin(review, project, "commit", commit.sha, title, commit.sha)
         self._commit_step("claim")
         return self._tracked(review, lambda: self._commit_claimed(review, project, commit, title))
@@ -421,6 +455,55 @@ class ReviewService:
             },
         )
 
+    def _not_run(
+        self,
+        project: Project,
+        trigger: str,
+        requested_by: int | None,
+        reason: str,
+        target: "_Target",
+    ) -> None:
+        """A run someone asked for that does not happen: shown in the live view as skipped, with
+        why, under the latest review of the target, so the page that asked does not wait for
+        nothing. A review running elsewhere already shows there and is left alone."""
+        if trigger not in ASKED_TRIGGERS:
+            return
+        review = self._session.scalars(
+            select(Review)
+            .where(
+                Review.target_type == target.kind,
+                Review.mr_id.is_not_distinct_from(target.mr_id),
+                Review.commit_sha.is_not_distinct_from(target.commit_sha),
+                Review.reviewed_sha == target.sha,
+            )
+            .order_by(Review.id.desc())
+            .limit(1)
+        ).first()
+        if review is None or review.status == "running":
+            return  # no row to name it by (accepted), or the live view shows that run
+        log.info("asked review not run", extra={"review_id": review.id, "reason": reason})
+        author = self._session.get(User, review.author_user_id) if review.author_user_id else None
+        requester = self._session.get(User, requested_by) if requested_by else None
+        self._progress.note_ended(
+            review.id,
+            {
+                "kind": target.kind,
+                "project_id": project.id,
+                "project": project.path_with_namespace,
+                "ref": target.ref,
+                "sha": target.sha,
+                "title": target.title[:120],
+                "author_user_id": review.author_user_id,
+                "author": (author.full_name if author else None),
+                "requested_by": (requester.full_name if requester else None),
+                "trigger": trigger,
+                "round": review.round,
+                "started_at": self._clock().isoformat(),
+            },
+            "skipped",
+            reason,
+        )
+
     def _business(self, project: Project) -> BusinessProject | None:
         if project.business_project_id is None:
             return None
@@ -469,7 +552,9 @@ class ReviewService:
         """Get-or-create the review row; a finished or running review of the same sha is final
         unless `force`: then round N+1 starts, and round N is marked superseded once N+1 is
         done (docs/specs/17 §Lịch sử). History is never deleted. `expected_round` is the round
-        the requester saw: a duplicate or concurrent forced job finds a newer one and stops."""
+        the requester saw: a duplicate or concurrent forced job finds a newer one and stops.
+        When it returns None, `_unclaimed` says why (None: running elsewhere)."""
+        self._unclaimed = None
         if requested_by is not None and self._session.get(User, requested_by) is None:
             requested_by = None  # the requester left between enqueue and run
         values = {
@@ -512,6 +597,7 @@ class ReviewService:
                 # Another forced run took this round already (FOR UPDATE re-reads the row but
                 # cannot see the newer one): one paid rerun per request.
                 log.info("forced review already taken", extra={"review_id": review.id})
+                self._unclaimed = "đã có lần review mới hơn cho thay đổi này"
                 return None
             previous = review
             review = Review(**{**values, "round": previous.round + 1})
@@ -526,6 +612,12 @@ class ReviewService:
         elif review.status in FINISHED or (review.status == "running" and not stale):
             log.info(
                 "review already handled", extra={"review_id": review.id, "status": review.status}
+            )
+            self._unclaimed = (
+                None  # running elsewhere: the live view shows that run
+                if review.status == "running"
+                else f"đã có kết quả ({review.status}, lần {review.round}); "
+                "dùng ↻ Review lại để chạy lần mới"
             )
             return None
         review.status, review.error = "running", None
