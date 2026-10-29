@@ -2,18 +2,16 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { mutate as mutateAll } from "swr";
 import useSWRInfinite from "swr/infinite";
 
 import { RangePicker, type SharedRange, useCardRange } from "@/components/Evaluation";
+import { announceReviewQueued } from "@/components/ReviewActivity";
 import { Alert, Avatar, Card, EmptyState, ExternalLink, Loading, Pill } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
 import { VERDICT_LABEL, dateTime, num } from "@/lib/format";
 import type { Page, Person, RerunManyOut, ReviewListItem, Verdict } from "@/lib/types";
 
 const PAGE = 25;
-/** The corner pill (ReviewActivity): refreshed right away so a queued re-run shows there. */
-const ACTIVITY = "/activity/reviews";
 
 const STATUS: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "info" }> = {
   failed: { label: "Lỗi", tone: "bad" },
@@ -140,7 +138,8 @@ export function ReviewResults({
             },
       );
       setChosen(new Set());
-      await Promise.all([pages.mutate(), mutateAll(ACTIVITY)]);
+      if (out.queued.length) announceReviewQueued();
+      await pages.mutate();
     } catch (e) {
       setSent({ tone: "error", text: `Không gửi được: ${e instanceof ApiError ? e.message : String(e)}` });
     } finally {

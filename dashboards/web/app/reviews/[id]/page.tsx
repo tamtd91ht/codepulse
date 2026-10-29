@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { use, useEffect, useRef, useState } from "react";
-import { mutate as mutateAll } from "swr";
 
 import { BasisCard, basisSummary, changedRules, previousRun } from "@/components/ReviewBasis";
+import { announceReviewQueued } from "@/components/ReviewActivity";
 import { Alert, Card, EmptyState, ExternalLink, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, TRIGGER_LABEL, VERDICT_LABEL, date, num } from "@/lib/format";
@@ -366,8 +366,9 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
         tone: "info",
         message: "Đã đưa vào hàng đợi; tiến trình hiện ở góc phải màn hình, trang này tự cập nhật khi worker nhận việc.",
       });
-      // The corner pill polls slowly while idle: ask it now so the queued run shows at once.
-      await Promise.all([mutate(), mutateAll("/activity/reviews")]);
+      // The corner pill polls slowly while idle: it looks now and follows the run closely.
+      announceReviewQueued();
+      await mutate();
     } catch (e) {
       setRerun({
         force,

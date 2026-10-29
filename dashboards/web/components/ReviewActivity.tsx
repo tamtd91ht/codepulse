@@ -13,6 +13,19 @@ import type { ActivityItem, ActivityOut } from "@/lib/types";
 /** Poll fast while something runs, slowly when idle; SWR pauses while the tab is hidden. */
 const BUSY_MS = 4000;
 const IDLE_MS = 20000;
+/** After a page queued a review: poll fast this long, so a short run is seen while it runs. */
+const BOOST_MS = 90_000;
+const QUEUED_EVENT = "codepulse:review-queued";
+
+/** Pages that queue a review (re-run, request, backfill) call this: the pill looks at once and
+ * keeps polling fast for a while instead of waiting for its idle poll. */
+export function announceReviewQueued(): void {
+  window.dispatchEvent(new Event(QUEUED_EVENT));
+}
+
+/** An ended run, not the review: a plain re-run keeps the review's id, and its new outcome
+ * must show even when the earlier one was dismissed. */
+const endedKey = (r: ActivityItem) => `${r.review_id}:${r.ended_at ?? ""}`;
 
 const KNOWLEDGE_STAGES: { id: string; label: string }[] = [
   { id: "docs", label: "Đọc tài liệu" },
@@ -82,11 +95,13 @@ function stageIndex(stage: string | null): number {
  */
 export function ReviewActivity() {
   const [open, setOpen] = useState(false);
-  const { data, error } = useApi<ActivityOut>("/activity/reviews", {
+  const boostUntil = useRef(0);
+  const { data, error, mutate } = useApi<ActivityOut>("/activity/reviews", {
     redirect: false,
-    refreshInterval: (d?: ActivityOut) => (d && d.running.length + d.queued_total > 0 ? BUSY_MS : IDLE_MS),
+    refreshInterval: (d?: ActivityOut) =>
+      (d && d.running.length + d.queued_total > 0) || Date.now() < boostUntil.current ? BUSY_MS : IDLE_MS,
   });
-  const [dismissed, setDismissed] = useState<Set<number>>(() => new Set());
+  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
   const [watching, setWatching] = useState<number | null>(null);
   const pillRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -94,19 +109,28 @@ export function ReviewActivity() {
 
   const running = data?.running ?? [];
   const queuedTotal = data?.queued_total ?? 0;
-  const recent = (data?.recent ?? []).filter((r) => r.review_id === null || !dismissed.has(r.review_id));
+  const recent = (data?.recent ?? []).filter((r) => r.review_id === null || !dismissed.has(endedKey(r)));
   const active = running.length + queuedTotal > 0;
 
   useEffect(() => {
     if (open) panelRef.current?.focus();
   }, [open]);
 
+  useEffect(() => {
+    const onQueued = () => {
+      boostUntil.current = Date.now() + BOOST_MS;
+      void mutate();
+    };
+    window.addEventListener(QUEUED_EVENT, onQueued);
+    return () => window.removeEventListener(QUEUED_EVENT, onQueued);
+  }, [mutate]);
+
   if (!data || (!active && recent.length === 0)) return null;
 
   function close() {
     setOpen(false);
     // Ended reviews the person has now seen leave the pill.
-    setDismissed((prev) => new Set([...prev, ...recent.flatMap((r) => (r.review_id === null ? [] : [r.review_id]))]));
+    setDismissed((prev) => new Set([...prev, ...recent.flatMap((r) => (r.review_id === null ? [] : [endedKey(r)]))]));
     pillRef.current?.focus();
   }
 

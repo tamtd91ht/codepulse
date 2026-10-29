@@ -5,6 +5,7 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import { Icon } from "@/components/icons";
 import { LinkAuthor } from "@/components/LinkAuthor";
+import { announceReviewQueued } from "@/components/ReviewActivity";
 import { Alert, Card, EmptyState, Loading, PageHeader, Pill, Segmented } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
 import { VERDICT_LABEL, dateTime, localDay, relative } from "@/lib/format";
@@ -167,6 +168,7 @@ export default function RequestReviewPage() {
       });
       setResult(out);
       setSelected(new Set());
+      announceReviewQueued();
       await commits.mutate();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
