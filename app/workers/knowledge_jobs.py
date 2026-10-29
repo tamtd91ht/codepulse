@@ -207,6 +207,35 @@ def _refused(reason: str) -> dict[str, Any]:
     return {"built": False, "reason": reason}
 
 
+# Why a build did not start, as the live panel says it (keys: the reasons `_refused` returns).
+# An untracked repo is left out: the panel never lists repos CodePulse does not track.
+REFUSED_LABEL = {
+    "external LLM disabled for this repo": "repo không cho gửi mã ra LLM bên ngoài",
+    "no connection": "repo chưa gắn kết nối GitLab",
+    "monthly LLM budget reached": "đã hết ngân sách LLM của tháng",
+}
+
+
+def _note_refused(
+    progress: ProgressSink | None, project_id: int, reason: str, built_by: str
+) -> None:
+    """A build refused before it starts still ends in the live panel's recent list with why,
+    so "Rà soát lại" never ends in silence. `built_by` tells a click from a webhook or a
+    first review."""
+    if progress is not None and reason in REFUSED_LABEL:
+        progress.note_ended(
+            progress_id(project_id),
+            {
+                "kind": "knowledge",
+                "project_id": project_id,
+                "title": "Rà soát lại dự án",
+                "trigger": built_by,
+            },
+            "skipped",
+            REFUSED_LABEL[reason],
+        )
+
+
 def _load_target(session: Session, project_id: int) -> _Target | dict[str, Any]:
     project = session.get(Project, project_id)
     if project is None or not project.tracked:
@@ -454,6 +483,7 @@ def run_build(
     with session.begin():
         loaded = _load_target(session, project_id)
         if isinstance(loaded, dict):
+            _note_refused(progress, project_id, str(loaded["reason"]), built_by)
             return loaded
         target = loaded
         budget = settings.monthly_llm_budget_usd
@@ -472,9 +502,11 @@ def run_build(
                 error=f"monthly LLM budget reached: {spent:.2f} / {budget:.2f} USD",
                 built_by=built_by,
             )
+            _note_refused(progress, project_id, "monthly LLM budget reached", built_by)
             return _refused("monthly LLM budget reached")
         connection = session.get(Connection, target.connection_id)
         if connection is None:
+            _note_refused(progress, project_id, "no connection", built_by)
             return _refused("no connection")
         business = (
             session.get(BusinessProject, target.business_project_id)

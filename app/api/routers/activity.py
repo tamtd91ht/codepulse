@@ -171,6 +171,8 @@ def _may_see_record(principal: Principal, item: dict[str, Any], project: Project
 
 
 def _may_see_queued(principal: Principal, item: dict[str, Any], project: Project) -> bool:
+    if item["kind"] == "knowledge":
+        return _may_see_record(principal, item, project)
     if not item["found"]:  # not synced yet: its author is unknown, not "unmapped"
         return principal.can_manage_project(project.business_project_id)
     return principal.may_review_work(item["author_user_id"], project.business_project_id)
@@ -273,7 +275,11 @@ def _resolve_queued(session: Session, items: list[dict[str, Any]]) -> list[dict[
                     commits[prefix] = (sha, project_id, title, user_id)
     out: list[dict[str, Any]] = []
     for item in items:
-        if item["kind"] == "mr":
+        if item["kind"] == "knowledge":
+            out.append(
+                {**item, "title": "Rà soát lại dự án", "author_user_id": None, "found": True}
+            )
+        elif item["kind"] == "mr":
             found_mr = mrs.get(("mr", item["project_id"], item["ref"]))
             title, author = found_mr if found_mr else ("", None)
             out.append({**item, "title": title, "author_user_id": author, "found": bool(found_mr)})

@@ -182,6 +182,50 @@ def test_a_knowledge_build_shows_for_everyone_and_never_breaks_the_panel(
     assert [r["review_id"] for r in body["running"] if r["kind"] != "knowledge"] == [900]
 
 
+def test_a_queued_knowledge_build_shows_while_it_waits_for_a_worker(
+    client: TestClient, world: World, as_user: Any, live: Any
+) -> None:
+    """ "Rà soát lại" behind a long review: the build waits in the queue, and the panel says so
+    instead of showing nothing until a worker takes it."""
+    _, backlog = live
+    backlog.clear()
+    backlog.append(
+        {
+            "kind": "knowledge",
+            "project_id": world.project.id,
+            "ref": "",
+            "sha": "",
+            "trigger": "",
+            "wait": "queue",
+        }
+    )
+    body = client.get("/api/v1/activity/reviews", headers=as_user(world.an)).json()
+    (waiting,) = body["queued"]
+    assert (waiting["kind"], waiting["project_id"], waiting["title"]) == (
+        "knowledge",
+        world.project.id,
+        "Rà soát lại dự án",
+    )
+    assert body["queued_total"] == 1
+    outsider = client.get("/api/v1/activity/reviews", headers=as_user(world.outsider)).json()
+    assert outsider["queued"] == [] and outsider["queued_total"] == 0
+
+
+def test_a_refused_knowledge_build_ends_in_the_recent_list_with_why(
+    client: TestClient, world: World, as_user: Any, live: Any
+) -> None:
+    progress, _ = live
+    progress.note_ended(
+        -world.project.id,
+        {"kind": "knowledge", "project_id": world.project.id, "title": "Rà soát lại dự án"},
+        "skipped",
+        "repo chưa gắn kết nối GitLab",
+    )
+    body = client.get("/api/v1/activity/reviews", headers=as_user(world.an)).json()
+    (refused,) = [r for r in body["recent"] if r["kind"] == "knowledge"]
+    assert (refused["status"], refused["error"]) == ("skipped", "repo chưa gắn kết nối GitLab")
+
+
 def test_nothing_running(client: TestClient, world: World, as_user: Any, live: Any) -> None:
     progress, backlog = live
     progress.items.clear()

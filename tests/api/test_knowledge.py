@@ -557,8 +557,19 @@ def test_run_build_refuses_without_budget_or_external_llm(
     world.project.allow_external_llm = False
     db_session.commit()
     project_id = world.project.id
-    refused = run_build(db_session, project_id, settings, provider=FakeProvider())
+    progress = MemoryProgress()
+    refused = run_build(
+        db_session, project_id, settings, provider=FakeProvider(), progress=progress
+    )
     assert refused == {"built": False, "reason": "external LLM disabled for this repo"}
+    # Not silent: the live panel's recent list says why the asked build did not run.
+    (noted,) = progress.ended
+    assert (noted["review_id"], noted["kind"], noted["status"]) == (
+        progress_id(project_id),
+        "knowledge",
+        "skipped",
+    )
+    assert noted["error"] == "repo không cho gửi mã ra LLM bên ngoài"
 
     world.project.allow_external_llm = True
     world.an_review.started_at = datetime.now(UTC)

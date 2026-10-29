@@ -171,6 +171,20 @@ def test_queued_reviews_are_read_from_job_ids_only() -> None:
     ]
 
 
+def test_a_queued_knowledge_build_is_listed_before_a_worker_takes_it() -> None:
+    """ "Rà soát lại" queues `knowledge-<repo>`; behind a long review it waits, and the panel
+    must say so instead of showing nothing until the worker starts it."""
+    queue = SimpleNamespace(get_job_ids=lambda offset, length: ["knowledge-12", "knowledge-x"])
+    (item,) = queued_reviews(queue)
+    assert (item["kind"], item["project_id"], item["ref"], item["sha"], item["wait"]) == (
+        "knowledge",
+        12,
+        "",
+        "",
+        "queue",
+    )
+
+
 def test_queued_reviews_survives_an_unreachable_queue() -> None:
     def down(offset: int, length: int) -> Any:
         raise RedisConnectionError("down")

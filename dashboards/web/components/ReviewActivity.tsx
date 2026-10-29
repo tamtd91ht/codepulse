@@ -66,7 +66,8 @@ const targetLabel = (i: ActivityItem) =>
 const resultHref = (i: ActivityItem) =>
   i.kind === "knowledge" ? `/projects/${i.project_id}/knowledge` : i.review_id !== null ? `/reviews/${i.review_id}` : null;
 const repoName = (path: string) => path.split("/").pop() ?? path;
-const itemKey = (i: ActivityItem) => `${i.state}:${i.review_id ?? ""}:${i.kind}:${i.project_id}:${i.ref}`;
+// Ended runs of one repo build share review_id and ref: their end time tells them apart.
+const itemKey = (i: ActivityItem) => `${i.state}:${i.review_id ?? ""}:${i.kind}:${i.project_id}:${i.ref}:${i.ended_at ?? ""}`;
 
 function elapsed(from: string | null, now: number): string {
   if (!from) return "";
@@ -147,7 +148,7 @@ export function ReviewActivity() {
       ? `Đang rà soát ${repoName(first.project)}`
       : `Đang review ${repoName(first.project)} ${targetLabel(first)}`
     : queuedTotal
-      ? `${queuedTotal} review đang chờ`
+      ? `${queuedTotal} việc đang chờ`
       : `${recent.length} review vừa kết thúc`;
   const more = running.length > 1 ? running.length - 1 : 0;
 
@@ -236,7 +237,7 @@ export function ReviewActivity() {
                   ))}
                 </ul>
                 {queuedTotal > data.queued.length && (
-                  <p className="muted small">và {queuedTotal - data.queued.length} review khác đang chờ.</p>
+                  <p className="muted small">và {queuedTotal - data.queued.length} việc khác đang chờ.</p>
                 )}
               </>
             )}

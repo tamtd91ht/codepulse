@@ -300,6 +300,7 @@ def _now_iso() -> str:
 # backfill), so the queue can be read from the job ids alone: no job payload is unpickled.
 MR_JOB = re.compile(r"review-mr-(\d+)-(\d+)-([0-9a-f]{7,40})(?:-(rerun|again)\b.*)?")
 COMMIT_JOB = re.compile(r"review-commit-([0-9a-f]{7,40})(?:-(rerun|again)\b.*)?")
+KNOWLEDGE_JOB = re.compile(r"knowledge-(\d+)")  # app/workers/knowledge_jobs.py JOB_ID
 TRIGGER_OF_SUFFIX = {"rerun": "rerun", "again": "telegram"}
 
 
@@ -316,10 +317,10 @@ def _job_ids(queue: Any, wait: str, scan: int) -> list[str]:
 
 
 def queued_reviews(queue: Any, scan: int = 200) -> list[dict[str, Any]]:
-    """Review jobs not running yet, parsed from their ids, never from their payload: in the
-    queue (oldest first), waiting to be retried ("scheduled"), or taken by a worker that has not
-    started the review ("started"); `wait` says which. A commit job id has no project:
-    `project_id` is None and the caller looks the sha up."""
+    """Review jobs and knowledge builds not running yet, parsed from their ids, never from their
+    payload: in the queue (oldest first), waiting to be retried ("scheduled"), or taken by a
+    worker that has not started the review ("started"); `wait` says which. A commit job id has
+    no project: `project_id` is None and the caller looks the sha up."""
     out: list[dict[str, Any]] = []
     for wait in ("queue", "scheduled", "started"):
         try:
@@ -353,5 +354,10 @@ def _parse_jobs(ids: list[str]) -> list[dict[str, Any]]:
                     "sha": m[1],
                     "trigger": TRIGGER_OF_SUFFIX.get(m[2] or "", ""),
                 }
+            )
+        elif m := KNOWLEDGE_JOB.fullmatch(job_id):
+            # A repo's premises build ("Rà soát lại", a webhook push or a first review).
+            out.append(
+                {"kind": "knowledge", "project_id": int(m[1]), "ref": "", "sha": "", "trigger": ""}
             )
     return out
