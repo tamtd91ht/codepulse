@@ -85,7 +85,7 @@ function Heatmap({ cells }: { cells: CategoryWeek[] }) {
                   role="cell"
                   aria-label={`${n} finding`}
                   title={`${CATEGORY_LABEL[c] ?? c}, tuần ${weekLabel(w)}: ${n} finding`}
-                  style={n ? { background: `color-mix(in srgb, var(--primary) ${Math.round(alpha * 100)}%, var(--surface-2))` } : undefined}
+                  style={n ? { background: `color-mix(in srgb, var(--chart-1) ${Math.round(alpha * 100)}%, var(--surface-2))` } : undefined}
                 >
                   {n || ""}
                 </span>

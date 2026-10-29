@@ -114,7 +114,7 @@ export function MemberEvaluation({ person, range: shared }: { person: Person; ra
                     <YAxis yAxisId="score" domain={[0, 100]} tickLine={false} axisLine={false} fontSize={12} />
                     <YAxis yAxisId="reviews" orientation="right" allowDecimals={false} hide />
                     <Tooltip content={<ChartTip digits={1} />} cursor={{ fill: "var(--surface-2)" }} />
-                    <Bar yAxisId="reviews" dataKey="reviews" name="Review" fill="var(--primary-soft)" maxBarSize={28} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                    <Bar yAxisId="reviews" dataKey="reviews" name="Review" fill="var(--chart-1)" fillOpacity={0.35} maxBarSize={28} radius={[4, 4, 0, 0]} isAnimationActive={false} />
                     <Line yAxisId="score" dataKey="score" name="Điểm TB" stroke="var(--chart-1)" strokeWidth={2.5} dot={{ r: 3 }} connectNulls isAnimationActive={false} />
                   </ComposedChart>
                 </ResponsiveContainer>

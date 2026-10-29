@@ -14,7 +14,7 @@ export default function LoginPage() {
         <h1>CodePulse</h1>
         <p className="lead">Chất lượng code theo team và từng thành viên. Đăng nhập bằng tài khoản GitLab của công ty.</p>
         {/* A full navigation (not fetch): the API redirects to GitLab and back. */}
-        <a href="/api/v1/auth/login" className="button primary">
+        <a href="/api/v1/auth/login" className="button primary ink">
           <Icon name="gitlab" size={16} />
           Đăng nhập với GitLab
         </a>

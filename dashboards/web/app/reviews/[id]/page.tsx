@@ -162,7 +162,7 @@ function RerunBar({
       {review.can_rerun && tooLarge && (
         <button
           type="button"
-          className="primary"
+          className="primary ink"
           disabled={blocked}
           title="Chỉ áp dụng cho lần chạy này; giới hạn LOC chung không đổi"
           onClick={async () => {
@@ -178,7 +178,7 @@ function RerunBar({
       {review.can_rerun && (
         <button
           type="button"
-          className={finished || tooLarge ? undefined : "primary"}
+          className={finished || tooLarge ? undefined : "primary ink"}
           disabled={blocked}
           onClick={async () => {
             if (finished && !window.confirm("Review lại sẽ tốn ngân sách LLM và tạo lần review mới. Tiếp tục?")) return;

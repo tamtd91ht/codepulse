@@ -156,7 +156,7 @@ export function ClaudeLogin() {
       ) : (
         <div className="toolbar">
           <button
-            className="primary"
+            className="primary ink"
             onClick={start}
             disabled={busy || !s?.login_supported}
             title={s && !s.login_supported ? "Chỉ chạy được khi api chạy trong container Linux; hãy dán token." : undefined}

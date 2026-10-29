@@ -335,7 +335,7 @@ function RepoDrawer({
           {row.tracked && (
             <Link
               href={`/reviews/request${qs({ project: businessProjectId, repo: row.id })}`}
-              className="button sm primary"
+              className="button sm primary ink"
               title="Mở Yêu cầu review với dự án và repo này đã chọn sẵn"
             >
               Yêu cầu review

@@ -235,7 +235,7 @@ export function ReviewResults({
           {selected.length > 0 && (
             <>
               <span className="small">Đã chọn {selected.length}</span>
-              <button type="button" className="sm primary" onClick={() => void rerun()} disabled={sending}>
+              <button type="button" className="sm primary ink" onClick={() => void rerun()} disabled={sending}>
                 {sending ? "Đang gửi…" : "↻ Review lại"}
               </button>
               <button type="button" className="sm ghost" onClick={() => setChosen(new Set())} disabled={sending}>

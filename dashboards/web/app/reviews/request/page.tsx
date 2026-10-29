@@ -319,7 +319,7 @@ export default function RequestReviewPage() {
             </div>
 
             <div className="toolbar" style={{ margin: 0 }}>
-              <button className="primary" type="submit" disabled={!repo || !branch.trim() || commits.isLoading}>
+              <button className="primary ink" type="submit" disabled={!repo || !branch.trim() || commits.isLoading}>
                 {commits.isLoading ? "Đang lấy commit…" : "Xem commit"}
               </button>
               <span className="muted small">Danh sách lấy thẳng từ GitLab, tối đa 200 commit mỗi lần.</span>

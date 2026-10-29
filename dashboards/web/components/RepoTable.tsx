@@ -271,7 +271,7 @@ export function RepoTable({
                               <label>
                                 <input name="include_open" type="checkbox" defaultChecked /> Gồm MR đang mở
                               </label>
-                              <button className="primary" type="submit">
+                              <button className="primary ink" type="submit">
                                 Review
                               </button>
                               <IconButton icon="close" label="Huỷ" onClick={() => setReviewing(null)} />

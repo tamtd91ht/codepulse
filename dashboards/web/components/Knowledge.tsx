@@ -171,7 +171,7 @@ function ConfirmRefresh({
           hiện tại được giữ lại dưới dạng phiên bản cũ; sửa tay của lead vẫn áp lên bản mới.
         </p>
         <div className="toolbar" style={{ margin: 0 }}>
-          <button ref={button} type="button" className="primary" disabled={busy} onClick={onConfirm}>
+          <button ref={button} type="button" className="primary ink" disabled={busy} onClick={onConfirm}>
             {busy ? "Đang gửi…" : "Rà soát lại"}
           </button>
           <button type="button" onClick={onCancel} disabled={busy}>
