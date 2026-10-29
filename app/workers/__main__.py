@@ -12,10 +12,12 @@ QUEUES = ["default"]
 
 
 class JobContextWorker(Worker):
-    def perform_job(self, job: Job, queue: Queue) -> Any:
+    # Pass through whatever RQ hands the work horse: RQ 3 added an `execution` argument, and a
+    # mismatch here is a TypeError that RQ turns into a silent os._exit(1) for every job.
+    def perform_job(self, job: Job, queue: Queue, *args: Any, **kwargs: Any) -> Any:
         token = job_id_var.set(job.id)
         try:
-            return super().perform_job(job, queue)
+            return super().perform_job(job, queue, *args, **kwargs)
         finally:
             job_id_var.reset(token)
 
