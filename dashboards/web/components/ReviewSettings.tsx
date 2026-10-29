@@ -125,7 +125,7 @@ export function ReviewSettings() {
             {model.overridden ? ` · mặc định: ${model.default}.` : " (mặc định)."}
           </p>
           <div className="toolbar">
-            <button className="primary" type="submit" disabled={busy}>
+            <button type="submit" disabled={busy}>
               Lưu model
             </button>
             {model.overridden && (
@@ -163,7 +163,7 @@ export function ReviewSettings() {
             {link.overridden ? `Mặc định: ${link.default}.` : "Đang dùng giá trị trong .env."}
           </p>
           <div className="toolbar">
-            <button className="primary" type="submit" disabled={busy}>
+            <button type="submit" disabled={busy}>
               Lưu địa chỉ
             </button>
             {link.overridden && (
@@ -207,7 +207,7 @@ export function ReviewSettings() {
               {s.overridden ? `Mặc định trong .env: ${s.default}.` : "Đang dùng giá trị trong .env."}
             </p>
             <div className="toolbar">
-              <button className="primary" type="submit" disabled={busy}>
+              <button type="submit" disabled={busy}>
                 Lưu
               </button>
               {s.overridden && (
@@ -246,7 +246,7 @@ export function ReviewSettings() {
             {loc.overridden ? `Mặc định trong .env: ${loc.default}.` : "Đang dùng giá trị trong .env."}
           </p>
           <div className="toolbar">
-            <button className="primary" type="submit" disabled={busy}>
+            <button type="submit" disabled={busy}>
               Lưu
             </button>
             {loc.overridden && (

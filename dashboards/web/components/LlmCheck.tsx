@@ -65,7 +65,7 @@ export function LlmCheck() {
         </div>
       </div>
       <div className="toolbar">
-        <button className="primary ink" onClick={check} disabled={busy}>
+        <button onClick={check} disabled={busy}>
           {busy ? "Đang kiểm tra…" : "Kiểm tra kết nối"}
         </button>
         <span className="muted">Gửi một prompt rất nhỏ (không có code) qua đúng đường review; tốn một ít quota.</span>

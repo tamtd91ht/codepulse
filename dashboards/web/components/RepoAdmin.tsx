@@ -461,25 +461,14 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
                 </button>
               )}
               <span className="spacer" />
-              <div className="tabs compact" role="tablist" aria-label="Nhóm repo">
-                {GROUP_BY_TABS.map((t) => (
-                  <button
-                    key={t.key}
-                    role="tab"
-                    aria-selected={groupBy === t.key}
-                    className={groupBy === t.key ? "active" : undefined}
-                    onClick={() => setGroupBy(t.key)}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-              <button onClick={() => setAll(true)} disabled={filtering}>
-                Mở rộng tất cả
-              </button>
-              <button onClick={() => setAll(false)} disabled={filtering}>
-                Thu gọn tất cả
-              </button>
+              <Segmented
+                value={groupBy}
+                onChange={setGroupBy}
+                options={GROUP_BY_TABS.map((t) => ({ value: t.key, label: t.label }))}
+                label="Nhóm repo"
+              />
+              <IconButton icon="chevronsUp" label="Thu gọn mọi nhóm" onClick={() => setAll(false)} disabled={filtering} />
+              <IconButton icon="chevronsDown" label="Mở rộng mọi nhóm" onClick={() => setAll(true)} disabled={filtering} />
             </div>
 
             {chosen.length > 0 && (
