@@ -22,6 +22,7 @@ from app.scoring.aggregate import (
     ReviewFacts,
     aggregate,
     compute,
+    late_periods,
     period_bounds,
     period_start_of,
     previous_period,
@@ -206,3 +207,32 @@ def test_weekly_user_and_team_metrics(db_session: Session) -> None:
     assert teams[backend.id].reviews_count == 4  # An x3 + Binh's review before the move
     assert teams[mobile.id].reviews_count == 1
     assert teams[mobile.id].low == 1
+
+
+@pytest.mark.integration
+def test_a_review_counts_in_the_period_of_its_change(db_session: Session) -> None:
+    """Scores follow the commit's time (user, 2026-10-29): a commit of the week of Sep 28
+    reviewed on Oct 6 counts in Sep 28, which is then aggregated again."""
+    s = db_session
+    an = User(full_name="An", primary_email="an@x.vn")
+    s.add(an)
+    s.flush()
+    s.add(
+        Review(
+            target_type="commit",
+            reviewed_sha="late",
+            status="done",
+            author_user_id=an.id,
+            score=Decimal(60),
+            loc_reviewed=10,
+            rubric_version="v1",
+            changed_at=datetime(2026, 10, 1, 9, tzinfo=UTC),
+            finished_at=at(6),
+        )
+    )
+    s.flush()
+    assert late_periods(s, "week", WEEK, VN) == [date(2026, 9, 28)]
+    assert aggregate(s, "week", WEEK, VN).users == 0  # not in the week it was reviewed
+    aggregate(s, "week", date(2026, 9, 28), VN)
+    (row,) = s.scalars(select(MetricsUserPeriod))
+    assert (row.period_start, row.reviews_count) == (date(2026, 9, 28), 1)

@@ -49,7 +49,7 @@ def _range(
     tz: ZoneInfo, date_from: date | None, date_to: date | None
 ) -> tuple[date, date, datetime, datetime]:
     """[from, to] as days in REPORT_TZ (default: the last 30 days up to today) and the matching
-    [lo, hi) instants for `finished_at`."""
+    [lo, hi) instants for `Review.counted_at` (when the change was made)."""
     for day in (date_from, date_to):
         if day is not None and not MIN_YEAR <= day.year <= MAX_YEAR:
             raise HTTPException(422, f"dates must fall between {MIN_YEAR} and {MAX_YEAR}")
@@ -89,6 +89,7 @@ def _load(
             Review.id.label("review_id"),
             Review.author_user_id,
             Review.finished_at,
+            Review.counted_at.label("counted_at"),
             Review.score,
             Review.loc_reviewed,
             Review.target_type,
@@ -103,8 +104,8 @@ def _load(
         .where(
             Review.status == "done",
             Review.author_user_id.in_(active),
-            Review.finished_at >= lo,
-            Review.finished_at < hi,
+            Review.counted_at >= lo,
+            Review.counted_at < hi,
         )
     )
     if users is not None:
@@ -136,6 +137,7 @@ def _load(
             rubric_version=row.rubric_version,
             project_id=row.project_id,
             project_path=row.path_with_namespace,
+            counted_at=row.counted_at,
         )
     if facts:
         picked = reviews.subquery()

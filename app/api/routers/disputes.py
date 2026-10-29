@@ -121,11 +121,11 @@ def list_disputes(
 
 def _recompute_for(session: Session, review: Review, settings: Settings) -> None:
     """Re-score the review and re-aggregate the week and month it belongs to."""
-    if review.finished_at is None:
+    moment = review.counted_at
+    if moment is None:
         return
     tz = ZoneInfo(settings.report_tz)
-    moment = review.finished_at
-    # [moment, moment + 1µs): exactly this review's finish time.
+    # [moment, moment + 1µs): exactly this review's moment (its change's time).
     threshold = settings.verify_min_confidence_unverified
     recompute_scores(
         session,
@@ -133,6 +133,7 @@ def _recompute_for(session: Session, review: Review, settings: Settings) -> None
         moment + timedelta(microseconds=1),
         settings.scoring_weights,
         threshold,
+        review_ids=[review.id],
     )
     day = moment.astimezone(tz).date()
     aggregate(session, "week", day, tz, settings.scoring_weights, settings.min_sample, threshold)

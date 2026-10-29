@@ -102,7 +102,8 @@ def _done_reviews(
     project_ids: list[int] | None = None,
     bp_ids: set[int] | None = None,
 ) -> list[Row]:
-    """(project_id, business_project_id, review_id, score, loc, finished_at, verdict), [lo, hi)."""
+    """(project_id, business_project_id, review_id, score, loc, counted_at, verdict), [lo, hi)
+    of Review.counted_at (when the change was made)."""
     rp = _review_project()
     query = (
         select(
@@ -111,12 +112,12 @@ def _done_reviews(
             Review.id,
             Review.score,
             Review.loc_reviewed,
-            Review.finished_at,
+            Review.counted_at,
             Review.verdict,
         )
         .join(rp, rp.c.review_id == Review.id)
         .join(Project, Project.id == rp.c.project_id)
-        .where(Review.status == "done", Review.finished_at >= lo, Review.finished_at < hi)
+        .where(Review.status == "done", Review.counted_at >= lo, Review.counted_at < hi)
     )
     if project_ids is not None:
         query = query.where(Project.id.in_(project_ids))
@@ -196,8 +197,8 @@ def _open_of(open_by_project: dict[int, Open], project_ids: Any) -> Open:
 
 def _bucket(rows: list[Row], sev: dict[int, dict[str, int]], key: Any) -> dict[Any, Bucket]:
     buckets: dict[Any, Bucket] = defaultdict(Bucket)
-    for project_id, bp_id, review_id, score, loc, finished_at, verdict in rows:
-        b = buckets[key(project_id, bp_id, finished_at)]
+    for project_id, bp_id, review_id, score, loc, counted_at, verdict in rows:
+        b = buckets[key(project_id, bp_id, counted_at)]
         b.reviews += 1
         if verdict in b.verdicts:
             b.verdicts[verdict] += 1

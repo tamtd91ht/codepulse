@@ -235,8 +235,8 @@ def team_hotspots(
         .where(
             Review.status == "done",
             Review.author_user_id.in_(members),
-            Review.finished_at >= lo,
-            Review.finished_at < hi,
+            Review.counted_at >= lo,
+            Review.counted_at < hi,
             ReviewFinding.status != "false_positive",
         )
     )
@@ -275,12 +275,12 @@ def user_category_heatmap(
     tz = ZoneInfo(settings.report_tz)
     first = period_start_of(datetime.now(tz).date(), "week") - timedelta(weeks=weeks - 1)
     rows = session.execute(
-        select(Review.finished_at, ReviewFinding.category)
+        select(Review.counted_at, ReviewFinding.category)
         .join(ReviewFinding, ReviewFinding.review_id == Review.id)
         .where(
             Review.status == "done",
             Review.author_user_id == user_id,
-            Review.finished_at >= period_bounds(first, "week", tz)[0],
+            Review.counted_at >= period_bounds(first, "week", tz)[0],
             ReviewFinding.status != "false_positive",
             # Someone else's work: only in the dự án the viewer is granted (docs/specs/09).
             *(
@@ -292,9 +292,9 @@ def user_category_heatmap(
         )
     ).tuples()
     counts: Counter[tuple[date, str]] = Counter()
-    for finished_at, category in rows:
-        if finished_at is not None:
-            counts[(period_start_of(finished_at.astimezone(tz).date(), "week"), category)] += 1
+    for counted_at, category in rows:
+        if counted_at is not None:
+            counts[(period_start_of(counted_at.astimezone(tz).date(), "week"), category)] += 1
     return [
         {"week": week, "category": category, "count": n}
         for (week, category), n in sorted(counts.items())

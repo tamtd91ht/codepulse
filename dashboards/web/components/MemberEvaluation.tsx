@@ -58,7 +58,7 @@ export function MemberEvaluation({ person, range: shared }: { person: Person; ra
           )}
 
           {s.reviews === 0 ? (
-            <EmptyState title="Không có review hoàn tất trong khoảng này">Đổi khoảng thời gian, hoặc yêu cầu review ở trang Yêu cầu review.</EmptyState>
+            <EmptyState title="Không có commit được review trong khoảng này">Đổi khoảng thời gian, hoặc yêu cầu review ở trang Yêu cầu review.</EmptyState>
           ) : (
             <>
               <div className="grid two" style={{ marginTop: 4 }}>

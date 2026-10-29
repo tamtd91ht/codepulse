@@ -144,7 +144,7 @@ function ScoreChart({ rows }: { rows: MemberEvaluationRow[] }) {
       tone: scoreTone(m.avg_score),
     };
   });
-  if (!bars.length) return <EmptyState title="Chưa có điểm trong khoảng này">Điểm xuất hiện khi có review hoàn tất.</EmptyState>;
+  if (!bars.length) return <EmptyState title="Chưa có điểm trong khoảng này">Điểm tính theo thời gian commit, xuất hiện khi commit trong khoảng này đã được review.</EmptyState>;
   const color = (tone?: string) => (tone === "good" ? "var(--chart-2)" : tone === "warn" ? "var(--chart-3)" : "var(--sev-critical)");
   return (
     <div className="chart-box" style={{ height: Math.max(160, 28 * bars.length + 24) }}>

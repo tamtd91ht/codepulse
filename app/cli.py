@@ -277,6 +277,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     recompute.add_argument("--from", dest="date_from", type=date.fromisoformat, required=True)
     recompute.add_argument("--to", dest="date_to", type=date.fromisoformat, required=True)
+    recompute.add_argument(
+        "--no-rescore",
+        action="store_true",
+        help="only re-aggregate the periods (keep every review's score as it is)",
+    )
 
     rm = sub.add_parser(
         "review-metrics",
@@ -375,6 +380,7 @@ def run(
                 ZoneInfo(settings.report_tz),
                 settings.scoring_weights,
                 settings.min_sample,
+                rescore=not args.no_rescore,
                 min_confidence_unverified=settings.verify_min_confidence_unverified,
             )
             out.write(

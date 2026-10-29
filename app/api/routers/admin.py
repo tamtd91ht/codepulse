@@ -923,10 +923,12 @@ def delete_user(
     if user_id == principal.user_id:
         raise HTTPException(409, "you cannot remove yourself")
     user = _get(session, User, user_id, "user")
+    # The periods their reviews count in (the change's time), and those they finished in.
     first, last = session.execute(
-        select(func.min(Review.finished_at), func.max(Review.finished_at)).where(
-            Review.author_user_id == user_id
-        )
+        select(
+            func.least(func.min(Review.counted_at), func.min(Review.finished_at)),
+            func.greatest(func.max(Review.counted_at), func.max(Review.finished_at)),
+        ).where(Review.author_user_id == user_id)
     ).one()
     rows = {
         "reviews": session.execute(

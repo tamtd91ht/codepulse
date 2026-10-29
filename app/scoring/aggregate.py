@@ -79,6 +79,8 @@ class ReviewFacts:
     score: float | None
     loc: int
     rubric_version: str | None
+    # The period's moment (Review.counted_at: the change's time); finished_at when not given.
+    counted_at: datetime | None = None
     # severity, confidence, status, verified (docs/specs/19 §4.3)
     findings: list[tuple[str, float, str, str]] = field(default_factory=list)
     mr_id: int | None = None
@@ -100,8 +102,8 @@ def load_period(session: Session, start: datetime, end: datetime) -> PeriodData:
     for review in session.scalars(
         select(Review).where(
             Review.status == "done",
-            Review.finished_at >= start,
-            Review.finished_at < end,
+            Review.counted_at >= start,
+            Review.counted_at < end,
             Review.author_user_id.in_(active),
         )
     ):
@@ -114,6 +116,7 @@ def load_period(session: Session, start: datetime, end: datetime) -> PeriodData:
             loc=review.loc_reviewed or 0,
             rubric_version=review.rubric_version,
             mr_id=review.mr_id if review.target_type == "mr" else None,
+            counted_at=review.counted_at,
         )
     if reviews:
         for finding in session.scalars(
@@ -323,7 +326,37 @@ def aggregate_job(period_type: PeriodType, period_start: str | None = None) -> d
             settings.min_sample,
             min_confidence_unverified=settings.verify_min_confidence_unverified,
         )
+        for earlier in late_periods(session, period_type, start, tz):
+            aggregate(
+                session,
+                period_type,
+                earlier,
+                tz,
+                settings.scoring_weights,
+                settings.min_sample,
+                min_confidence_unverified=settings.verify_min_confidence_unverified,
+            )
     return {"users": result.users, "teams": result.teams}
+
+
+def late_periods(
+    session: Session, period_type: PeriodType, period_start: date, tz: ZoneInfo
+) -> list[date]:
+    """Earlier periods that gained a review since this one began: a review counts in the period
+    of its change (Review.counted_at), so one that finished now for an older commit changes a
+    period that was already aggregated. No upper bound: a review that finished after this period
+    closed (before the job ran, or while a run was missed) is taken now, not a period later."""
+    start, _ = period_bounds(period_start, period_type, tz)
+    moments = session.scalars(
+        select(Review.counted_at).where(
+            Review.status == "done",
+            Review.finished_at >= start,
+            Review.counted_at < start,
+        )
+    )
+    return sorted(
+        {period_start_of(moment.astimezone(tz).date(), period_type) for moment in moments if moment}
+    )
 
 
 def aggregate(
@@ -350,7 +383,9 @@ def aggregate(
     for review in data.reviews:
         by_user_reviews[review.user_id].append(review)
         for team in _teams_at(
-            memberships, review.user_id, review.finished_at.astimezone(tz).date()
+            memberships,
+            review.user_id,
+            (review.counted_at or review.finished_at).astimezone(tz).date(),
         ):
             by_team_reviews[team].append(review)
     for user_id, mr in data.merged:
@@ -406,17 +441,20 @@ def recompute_scores(
     end: datetime,
     weights_override: Mapping[str, float] | None = None,
     min_confidence_unverified: float = MIN_CONFIDENCE_UNVERIFIED,
+    review_ids: Iterable[int] | None = None,
 ) -> int:
     """Re-score finished reviews from their findings (after a dispute or a weight change), with
-    the same VERIFY_MIN_CONFIDENCE_UNVERIFIED the review path uses."""
+    the same VERIFY_MIN_CONFIDENCE_UNVERIFIED the review path uses. `review_ids` limits it to
+    those (a dispute re-scores its own review, not every review of the same moment)."""
     changed = 0
-    for review in session.scalars(
-        select(Review).where(
-            Review.status.in_(("done", "superseded")),
-            Review.finished_at >= start,
-            Review.finished_at < end,
-        )
-    ):
+    query = select(Review).where(
+        Review.status.in_(("done", "superseded")),
+        Review.counted_at >= start,
+        Review.counted_at < end,
+    )
+    if review_ids is not None:
+        query = query.where(Review.id.in_(list(review_ids)))
+    for review in session.scalars(query):
         findings = [
             ScoredFinding(
                 f.severity, float(f.confidence or 1), f.status or "open", f.verified or "skipped"

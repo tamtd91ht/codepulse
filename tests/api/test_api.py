@@ -185,6 +185,14 @@ def test_team_counts_follow_the_report_day_and_membership(
 
     assert titles(world.backend) == ["x"]
     assert titles(world.mobile) == []
+    # The week is that of the change (commit time), as the cards count it: a commit of the
+    # week before, reviewed this week, belongs to that earlier week and its team.
+    review.changed_at = datetime(2026, 10, 8, 9, tzinfo=UTC)
+    db_session.flush()
+    assert titles(world.backend) == []
+    review.changed_at = datetime(1970, 1, 1, tzinfo=UTC)  # unknown again: the finish counts
+    db_session.flush()
+    assert titles(world.backend) == ["x"]
     # An inactive author is left out, as the metrics leave them out.
     world.outsider.active = False
     db_session.flush()

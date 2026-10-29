@@ -128,10 +128,17 @@ def purge(
     session.execute(select(Project.id).with_for_update())
     result = PurgeResult()
     if scope == "reviews":
-        first, last = session.execute(
+        merged = session.execute(
             select(func.min(MergeRequest.merged_at), func.max(MergeRequest.merged_at))
         ).one()
-        days: list[datetime] = [d for d in (first, last) if d is not None]
+        # Commit reviews have no MR: the periods reviews count in (the change's time) as well.
+        counted = session.execute(
+            select(
+                func.least(func.min(Review.counted_at), func.min(Review.finished_at)),
+                func.greatest(func.max(Review.counted_at), func.max(Review.finished_at)),
+            )
+        ).one()
+        days: list[datetime] = [d for d in (*merged, *counted) if d is not None]
         if days:
             result.first_day = min(days).astimezone(tz).date()
             result.last_day = max(days).astimezone(tz).date()

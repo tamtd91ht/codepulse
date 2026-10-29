@@ -48,6 +48,8 @@ class ReviewFacts:
     rubric_version: str | None
     project_id: int | None = None
     project_path: str | None = None
+    # The week it counts in (Review.counted_at: the change's time); finished_at when not given.
+    counted_at: datetime | None = None
     findings: list[FindingFacts] = field(default_factory=list)
 
 
@@ -161,7 +163,7 @@ def week_starts(start: date, end: date) -> list[date]:
 
 
 def _week_of(review: ReviewFacts, tz: ZoneInfo) -> date:
-    day = review.finished_at.astimezone(tz).date()
+    day = (review.counted_at or review.finished_at).astimezone(tz).date()
     return day - timedelta(days=day.weekday())
 
 

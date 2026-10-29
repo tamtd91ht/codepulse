@@ -155,7 +155,7 @@ def list_reviews(
         with_severity = select(ReviewFinding.review_id).where(ReviewFinding.severity == severity)
         query = query.where(Review.id.in_(with_severity))
     # Days of the change itself (commit time; MR opened), as the list is sorted.
-    query = _range(query, Review.changed_at, date_from, date_to, ZoneInfo(settings.report_tz))
+    query = _range(query, Review.counted_at, date_from, date_to, ZoneInfo(settings.report_tz))
     if (after := _decode_changed_cursor(cursor)) is not None:
         query = query.where(tuple_(Review.changed_at, Review.id) < tuple_(*after))
     # Newest change first: ix_reviews_changed_at_id serves both the order and the cursor.
@@ -474,10 +474,11 @@ def list_findings(
         )
     elif status != "any":
         query = query.where(ReviewFinding.status == status)
+    # The period of the change (Review.counted_at), as the score cards that link here count it.
     if found_from is not None:
-        query = query.where(Review.finished_at >= found_from)
+        query = query.where(Review.counted_at >= found_from)
     if found_to is not None:
-        query = query.where(Review.finished_at < found_to)
+        query = query.where(Review.counted_at < found_to)
     if business_project_id is not None:
         repos = select(Project.id).where(Project.business_project_id == business_project_id)
         mr_ids = select(MergeRequest.id).where(MergeRequest.project_id.in_(repos))
@@ -492,7 +493,7 @@ def list_findings(
             raise HTTPException(403, "not allowed to see this team")
         if status == "counted":
             # Membership on the review's day (REPORT_TZ), as the team's numbers attribute it.
-            day = sql_cast(func.timezone(settings.report_tz, Review.finished_at), Date)
+            day = sql_cast(func.timezone(settings.report_tz, Review.counted_at), Date)
             query = query.where(
                 exists().where(
                     TeamMember.team_id == team_id,

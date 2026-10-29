@@ -190,8 +190,8 @@ def build_team_report(
             .where(
                 Review.status == "done",
                 Review.author_user_id.in_(names),
-                Review.finished_at >= lo,
-                Review.finished_at < hi,
+                Review.counted_at >= lo,
+                Review.counted_at < hi,
                 ReviewFinding.status != "false_positive",
                 ReviewFinding.severity != "info",
                 *([] if projects is None else [reviews_in_projects(projects)]),
@@ -370,8 +370,8 @@ def build_personal_report(
             .where(
                 Review.status == "done",
                 Review.author_user_id == user.id,
-                Review.finished_at >= lo,
-                Review.finished_at < hi,
+                Review.counted_at >= lo,
+                Review.counted_at < hi,
                 ReviewFinding.status != "false_positive",
             )
         )

@@ -723,7 +723,7 @@ class EvaluationTotals(EvaluationBucket):
 class MembersEvaluation(BaseModel):
     from_: date = Field(alias="from")
     to: date
-    range: tuple[datetime, datetime]  # [lo, hi) instants of `finished_at`, for list links
+    range: tuple[datetime, datetime]  # [lo, hi) instants of `Review.counted_at`, for list links
     weeks: list[date]
     totals: EvaluationTotals
     members: list[MemberEvaluationRow]

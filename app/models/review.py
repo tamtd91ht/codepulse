@@ -10,10 +10,13 @@ from sqlalchemy import (
     Index,
     Numeric,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.base import Base, TimestampMixin
 
@@ -66,6 +69,20 @@ class Review(TimestampMixin, Base):
     changed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("'1970-01-01 00:00:00+00'")
     )
+
+    @hybrid_property
+    def counted_at(self) -> datetime | None:
+        """The moment that puts the review in a period for scores, cards and reports (user,
+        2026-10-29): when the change was made; when the review finished if that is unknown."""
+        if self.changed_at is None or self.changed_at == CHANGE_TIME_UNKNOWN:
+            return self.finished_at
+        return self.changed_at
+
+    @counted_at.inplace.expression
+    @classmethod
+    def _counted_at_expression(cls) -> ColumnElement[datetime | None]:
+        return func.coalesce(func.nullif(cls.changed_at, CHANGE_TIME_UNKNOWN), cls.finished_at)
+
     # docs/specs/17: merge verdict (approve|fix_required|block) and risk score from the
     # findings; the model's design & intent notes; what asked for the review and who.
     verdict: Mapped[str | None]

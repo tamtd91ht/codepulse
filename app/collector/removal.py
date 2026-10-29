@@ -89,9 +89,11 @@ def remove_projects(session: Session, project_ids: list[int], tz: ZoneInfo) -> R
         moment
         for row in (
             session.execute(
-                select(func.min(Review.finished_at), func.max(Review.finished_at)).where(
-                    Review.id.in_(reviews)
-                )
+                # The periods the reviews count in (the change's time), and those they finished in.
+                select(
+                    func.least(func.min(Review.counted_at), func.min(Review.finished_at)),
+                    func.greatest(func.max(Review.counted_at), func.max(Review.finished_at)),
+                ).where(Review.id.in_(reviews))
             ).one(),
             session.execute(
                 select(func.min(MergeRequest.merged_at), func.max(MergeRequest.merged_at)).where(
