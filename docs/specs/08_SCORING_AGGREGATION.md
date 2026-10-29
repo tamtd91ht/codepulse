@@ -27,7 +27,7 @@ có critical  → ≤ 50;  có high → ≤ 80
 ## 2. Chỉ số theo người / kỳ (tuần ISO, tháng)
 | Metric | Công thức |
 |---|---|
-| `reviews_count` | số review `done` có `author_user_id` = user, **thời điểm thay đổi** trong kỳ: thời gian commit (review MR: lúc mở MR), không rõ thì `finished_at` (`Review.counted_at`; người dùng đổi 2026-10-29, trước đó là `finished_at`). Review xong muộn cho thay đổi của kỳ trước làm kỳ đó được tổng hợp lại (`late_periods`). |
+| `reviews_count` | số review `done` có `author_user_id` = user, **thời điểm thay đổi** trong kỳ: thời gian commit (review MR: lúc mở MR) nếu nằm trong 30 ngày trước `finished_at`, ngoài khoảng đó hoặc không rõ thì `finished_at` (`Review.counted_at`; người dùng đổi 2026-10-29, trước đó là `finished_at`). Review xong muộn cho thay đổi của kỳ trước làm kỳ đó được tổng hợp lại (`late_periods`). |
 | `avg_score` | trung bình `review_score` **có trọng số theo LOC** |
 | `critical/high/...` | đếm finding theo severity |
 | `defect_density` | `weighted_penalty / (loc_changed / 100)` |

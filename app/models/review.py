@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -10,7 +10,8 @@ from sqlalchemy import (
     Index,
     Numeric,
     UniqueConstraint,
-    func,
+    and_,
+    case,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -23,6 +24,9 @@ from app.models.base import Base, TimestampMixin
 SEVERITIES = ("critical", "high", "medium", "low", "info")
 # reviews.changed_at of a change whose time is not known: sorts last.
 CHANGE_TIME_UNKNOWN = datetime(1970, 1, 1, tzinfo=UTC)
+# A commit's time is set by its author (`git commit --date`): it places a review in a period only
+# when it lies at most this long before the review finished (user, 2026-10-29).
+COMMIT_TIME_MAX_LAG = timedelta(days=30)
 
 
 class Review(TimestampMixin, Base):
@@ -73,15 +77,30 @@ class Review(TimestampMixin, Base):
     @hybrid_property
     def counted_at(self) -> datetime | None:
         """The moment that puts the review in a period for scores, cards and reports (user,
-        2026-10-29): when the change was made; when the review finished if that is unknown."""
-        if self.changed_at is None or self.changed_at == CHANGE_TIME_UNKNOWN:
-            return self.finished_at
-        return self.changed_at
+        2026-10-29): when the change was made, if that is known and lies within
+        COMMIT_TIME_MAX_LAG before the review finished; otherwise when the review finished."""
+        changed, finished = self.changed_at, self.finished_at
+        if changed is None or changed == CHANGE_TIME_UNKNOWN:
+            return finished
+        if finished is None:
+            return changed  # not finished yet: counts nowhere, only the list shows it
+        return changed if finished - COMMIT_TIME_MAX_LAG <= changed <= finished else finished
 
     @counted_at.inplace.expression
     @classmethod
     def _counted_at_expression(cls) -> ColumnElement[datetime | None]:
-        return func.coalesce(func.nullif(cls.changed_at, CHANGE_TIME_UNKNOWN), cls.finished_at)
+        return case(
+            (cls.changed_at == CHANGE_TIME_UNKNOWN, cls.finished_at),
+            (cls.finished_at.is_(None), cls.changed_at),
+            (
+                and_(
+                    cls.changed_at >= cls.finished_at - COMMIT_TIME_MAX_LAG,
+                    cls.changed_at <= cls.finished_at,
+                ),
+                cls.changed_at,
+            ),
+            else_=cls.finished_at,
+        )
 
     # docs/specs/17: merge verdict (approve|fix_required|block) and risk score from the
     # findings; the model's design & intent notes; what asked for the review and who.
