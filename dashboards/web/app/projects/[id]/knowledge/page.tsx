@@ -1016,7 +1016,7 @@ export default function KnowledgePage({ params }: { params: Promise<{ id: string
                 ))}
               </select>
             )}
-            {canEdit && shown && shown.status === "active" && !shown.approved_by && (
+            {canEdit && shown && shown.status === "active" && shown.approved_by_user_id == null && (
               <button type="button" className="primary" disabled={busy} onClick={() => void approve()}>
                 Duyệt bản này
               </button>

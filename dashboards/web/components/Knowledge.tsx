@@ -16,10 +16,14 @@ export const BUILT_BY_LABEL: Record<string, string> = {
 };
 
 /** "Đã duyệt bởi …" or "Chưa duyệt" (docs/specs/19 §7: usable at once, lead approves later). */
-export function ApprovalPill({ active }: { active: Pick<KnowledgeVersion, "approved_by" | "approved_at"> }) {
-  return active.approved_by ? (
+export function ApprovalPill({
+  active,
+}: {
+  active: Pick<KnowledgeVersion, "approved_by" | "approved_by_user_id" | "approved_at">;
+}) {
+  return active.approved_by_user_id != null ? (
     <Pill tone="good" icon="checkCircle">
-      Đã duyệt bởi {active.approved_by.full_name ?? `#${active.approved_by.id}`}
+      Đã duyệt bởi {active.approved_by ?? `#${active.approved_by_user_id}`}
       {active.approved_at ? ` · ${date(active.approved_at)}` : ""}
     </Pill>
   ) : (

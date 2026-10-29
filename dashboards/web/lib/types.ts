@@ -935,7 +935,9 @@ export interface KnowledgeVersion {
   version: number;
   schema_version: number;
   status: "active" | "superseded" | string;
-  approved_by: { id: number; full_name: string | null } | null;
+  /** The approver's full name; null when unapproved or the user has no name. */
+  approved_by: string | null;
+  approved_by_user_id: number | null;
   approved_at: string | null;
   built_by: KnowledgeBuiltBy;
   created_at: string;
