@@ -1,0 +1,159 @@
+/*
+ * OMICX web design tokens, measured 2026-10-29 from the OMICX web app
+ * (Next.js + Tailwind CSS v4 + HeroUI v3 / React Aria). Final cascade values only:
+ * HeroUI defaults are overridden by the OMICX brand layer; this file keeps the winners.
+ * Usage: import once at the app root; toggle theme with `.dark` / `[data-theme=dark]` on <html>.
+ */
+
+:root,
+.light,
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Brand + semantic */
+  --primary: #1e3150;            /* ink navy: headings, active nav, active tab, primary text */
+  --primary-foreground: #fff;
+  --accent: #00b1ff;             /* cyan: focus ring, links, upgrade CTA, info */
+  --accent-foreground: #fff;
+  --success: #56cc6e;            /* green: the "create / confirm" CTA colour (Thêm mới) */
+  --success-foreground: #fff;    /* buttons force white text on success */
+  --danger: #ff5955;
+  --danger-foreground: #fff;
+  --warning: #fea220;
+  --warning-foreground: #fff;
+  --indigo: #6c63ff;
+  --indigo-foreground: #fff;
+  --yellow: #fbbf24;
+  --yellow-foreground: #fff;
+
+  /* Surfaces (back to front) */
+  --background: #f8f8f9;         /* app canvas behind panels */
+  --surface: #fff;               /* panels, cards, table */
+  --surface-secondary: #f5f6fa;
+  --surface-tertiary: #f5f6fa;
+  --surface-quaternary: #f5f6fa; /* idle tab, filter chip, row/card hover */
+  --overlay: #fff;               /* modal, popover, toast */
+  --backdrop: rgb(0 0 0 / 0.5);
+  --sticky-cell-bg: #fff;
+
+  /* Text */
+  --foreground: #1e3150;
+  --muted: #8e9aad;              /* secondary text, table header, hints, icons */
+
+  /* Lines */
+  --border: #e7eaf0;             /* = "tertiary" in utilities */
+  --separator: #e7eaf0;
+  --default: #e7eaf0;            /* neutral button / tag fill */
+  --default-foreground: #1e3150;
+
+  /* Fields */
+  --field-background: #fff;
+  --field-foreground: #1e3150;
+  --field-placeholder: #8e9aad;
+  --focus: #00b1ff;
+
+  /* Scrollbar (visible only while scrolling) */
+  --scrollbar: #e7eaf0;
+  --surface-scrollbar-hover: #1e3150;
+
+  /* Shape */
+  --radius-tiny: 6px;     /* count badge, tag */
+  --radius-small: 8px;
+  --radius-medium: 10px;  /* sm buttons, pill tabs, filter chips, page button */
+  --radius-large: 12px;   /* inputs, md buttons, toast */
+  --radius-extra: 16px;
+  --radius-card: 20px;    /* KPI tile, section card */
+  --radius-dialog: 24px;  /* modal */
+
+  /* Elevation (light mode only; dark mode uses borders) */
+  --shadow-soft: 0 4px 16px rgb(30 49 80 / 0.06);    /* cards */
+  --shadow-common: 0 15px 45px rgb(30 49 80 / 0.08); /* floating panels */
+  --shadow-overlay: 0 2px 8px rgb(0 0 0 / 0.06), 0 -6px 12px rgb(0 0 0 / 0.03), 0 14px 28px rgb(0 0 0 / 0.08);
+  --ring-focus: 0 0 0 2px var(--focus);
+
+  /* Type */
+  --font-sans: Inter, Geist, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Source Code Pro", ui-monospace, monospace;
+
+  /* Motion */
+  --duration-fast: 150ms;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-drawer-in: 250ms;
+  --duration-drawer-out: 200ms;
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.dark,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --primary: #fff;               /* inverted: active nav / tab become white with navy text */
+  --primary-foreground: #1e3150;
+
+  --background: #0c1c35;
+  --surface: #16243c;
+  --surface-secondary: #182b44;
+  --surface-tertiary: #253a55;
+  --surface-quaternary: #152942;
+  --overlay: #16243c;
+  --backdrop: #16243c;
+  --sticky-cell-bg: var(--background);
+
+  --foreground: #fff;
+  --muted: #8e9aad;
+
+  --border: #253a55;
+  --separator: #253a55;
+  --default: #253a55;
+  --default-foreground: #fff;
+
+  --field-background: #16243c;
+  --field-foreground: #fff;
+
+  --scrollbar: #253a55;
+  --surface-scrollbar-hover: #8e9aad;
+
+  --shadow-soft: none;
+  --shadow-common: none;
+}
+
+/* Tailwind v4 mapping — lets components use bg-primary, bg-quaternary, text-secondary,
+   border-tertiary, rounded-medium … exactly as the OMICX codebase does. */
+@theme inline {
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --color-indigo: var(--indigo);
+  --color-yellow: var(--yellow);
+  --color-secondary: var(--muted);
+  --color-muted: var(--muted);
+  --color-tertiary: var(--border);
+  --color-border: var(--border);
+  --color-quaternary: var(--surface-quaternary);
+  --color-default: var(--default);
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-secondary: var(--surface-secondary);
+  --color-overlay: var(--overlay);
+  --color-foreground: var(--foreground);
+  --radius-tiny: 6px;
+  --radius-small: 8px;
+  --radius-medium: 10px;
+  --radius-large: 12px;
+  --radius-extra: 16px;
+  --radius-card: 20px;
+  --radius-dialog: 24px;
+  --shadow-card: var(--shadow-soft);
+  --shadow-float: var(--shadow-common);
+  --shadow-popup: var(--shadow-overlay);
+  --text-title: 22px;
+  --text-title--line-height: 28px;
+  --font-sans: Inter, Geist, ui-sans-serif, system-ui, sans-serif;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

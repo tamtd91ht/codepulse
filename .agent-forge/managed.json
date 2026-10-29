@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "generated_by": "agent-forge 0.5.0",
+  "generated_by": "agent-forge 0.8.0",
   "note": "Managed by Agent Forge. Edit installed files freely; drift is detected, never overwritten.",
   "capabilities": [
     {
@@ -40,11 +40,22 @@
     },
     {
       "capability_id": "forge.agent.frontend-reviewer",
-      "version": "1.0.0",
-      "transaction_id": "tx-20261023-150346-529cba",
+      "version": "1.1.0",
+      "transaction_id": "tx-20261029-065404-207c31",
       "installed_at": "2026-10-23T15:03:46+00:00",
       "files": {
-        ".claude/agents/frontend-reviewer.md": "dc70b97c6221f7ebc5027b45c193de29a547d7532ca85145cdc2e333d60e6ff7"
+        ".claude/agents/frontend-reviewer.md": "fd03ad0ed479afae0623c4cd1134cc4f97f86670e6dbdf0787dc63fe9defcf8e"
+      },
+      "sections": {},
+      "json_merges": {}
+    },
+    {
+      "capability_id": "forge.rule.omicx-ui",
+      "version": "1.0.1",
+      "transaction_id": "tx-20261029-065406-43e3b4",
+      "installed_at": "2026-10-29T06:54:06+00:00",
+      "files": {
+        ".claude/rules/omicx-ui.md": "3d56e09549548239951d2ff39ed26e7dc0facc1f6e208306bfc0e749dff53663"
       },
       "sections": {},
       "json_merges": {}
@@ -61,12 +72,47 @@
       "json_merges": {}
     },
     {
+      "capability_id": "forge.skill.omicx-ui",
+      "version": "1.2.0",
+      "transaction_id": "tx-20261029-065406-43e3b4",
+      "installed_at": "2026-10-29T06:54:06+00:00",
+      "files": {
+        ".claude/skills/omicx-ui/references/components.md": "a862804c94843fa0e46cdadcf2c497d63c4f5943e713b7ef7221eba415b0c487",
+        ".claude/skills/omicx-ui/references/kit/AppShell.tsx": "68bd70e87c05df7af64adfb20470343129fb147b50779388612b95784d916d78",
+        ".claude/skills/omicx-ui/references/kit/Button.tsx": "a4a1867c816f7d558657fb87ff27a5326b72508e19d698f1ee066821f91eae91",
+        ".claude/skills/omicx-ui/references/kit/cx.ts": "d4a5951e3e7650d01dc5db386345ea8832d2df76774c8394f0d1b8f6171a4fbc",
+        ".claude/skills/omicx-ui/references/kit/Dashboard.tsx": "c5482dbc417848ff0dce7ec5f30b7306d8155eafbca0c83b8cbb9e81c7f374ca",
+        ".claude/skills/omicx-ui/references/kit/DetailLayout.tsx": "1da7e2fae41277b84011e3eaf99605f5a2ba1457a50d5a23b7ef840faa364e78",
+        ".claude/skills/omicx-ui/references/kit/ListPage.tsx": "dc045c18c1628f44b34dca29072222a801bf239752c3a004c07196232c3f3fc9",
+        ".claude/skills/omicx-ui/references/kit/QuickCreateModal.tsx": "851cadaa013775b0444b3bdec135a47fdd87e53e247b07030934d6e106b09619",
+        ".claude/skills/omicx-ui/references/kit/README.md": "f47725b000d8223fcd7eaa9e6c1a3d27bc33f252f08034843f647802fa7c61cc",
+        ".claude/skills/omicx-ui/references/kit/States.tsx": "653dbdfbdd842435a0061d936e5debd01818da4d009eae57e46f1d37ca620d57",
+        ".claude/skills/omicx-ui/references/screen-patterns.md": "20af6bd88e2c36c562b4f81bbef80f7e94221b11c723190b7999c9e023a08380",
+        ".claude/skills/omicx-ui/references/stack-mapping.md": "9874973836d7ca947d791f67581b69d9de66dcc828bb7860742c28cd791e89ce",
+        ".claude/skills/omicx-ui/references/tokens.css": "cee55bc18434c6cf0522cb075abcf5dfb10b6b6f4b06c1fa55fcc4c66eeb0a10",
+        ".claude/skills/omicx-ui/SKILL.md": "391556e126b6649fd0093496533fbdb98e34b69c280a92975aeda57839ba60c7"
+      },
+      "sections": {},
+      "json_merges": {}
+    },
+    {
       "capability_id": "forge.skill.view-data-loading",
       "version": "1.0.0",
       "transaction_id": "tx-20261023-150346-529cba",
       "installed_at": "2026-10-23T15:03:46+00:00",
       "files": {
         ".claude/skills/view-data-loading/SKILL.md": "dde04d1acf1f471c14ea5a3102915f921b838be5ad757e44a10f5bc9b786cb33"
+      },
+      "sections": {},
+      "json_merges": {}
+    },
+    {
+      "capability_id": "local.skill.ui-ux-pro-max",
+      "version": "0.0.0",
+      "transaction_id": "tx-20261029-065431-8cfa07",
+      "installed_at": "2026-10-29T06:54:31+00:00",
+      "files": {
+        ".claude/skills/ui-ux-pro-max/SKILL.md": "40a576d468bd72126b10063709baaa11e5d06840b68129000c3e19fdfda7d227"
       },
       "sections": {},
       "json_merges": {}
