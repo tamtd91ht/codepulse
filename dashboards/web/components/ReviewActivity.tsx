@@ -230,6 +230,8 @@ export function ReviewActivity() {
                   {data.queued.map((q) => (
                     <li key={itemKey(q)} className="activity-item">
                       <ItemHead item={q} />
+                      {/* Not in the queue proper: a worker took it, or RQ waits to retry it. */}
+                      {q.detail && <div className="small">{q.detail}</div>}
                     </li>
                   ))}
                 </ul>

@@ -207,3 +207,29 @@ def test_a_run_that_never_started_is_noted_without_touching_a_live_one() -> None
     assert (noted["review_id"], noted["status"], noted["error"]) == (41, "skipped", "lý do")
     progress.end(41, "done")
     assert [r["status"] for r in progress.recent()] == ["done", "skipped"]
+
+
+def test_jobs_waiting_to_retry_or_taken_by_a_worker_are_listed_with_where_they_wait() -> None:
+    """A job that failed before its review started waits in RQ's scheduled registry, and one a
+    worker took sits in the started registry until its review begins: neither is in the queue,
+    yet the review is not done, so the live view lists them too."""
+    sha = "a1b2c3d4e5f6"
+
+    def registry(*ids: str) -> SimpleNamespace:
+        def get_job_ids(start: int, end: int, cleanup: bool = True) -> list[str]:
+            assert cleanup is False  # the page only reads
+            return list(ids)
+
+        return SimpleNamespace(get_job_ids=get_job_ids)
+
+    queue = SimpleNamespace(
+        get_job_ids=lambda offset, length: [f"review-mr-3-7-{sha}"],
+        scheduled_job_registry=registry(f"review-commit-{sha}-rerun-9-1"),
+        started_job_registry=registry("sync-project-3", f"review-commit-{sha}"),
+    )
+    items = queued_reviews(queue)
+    assert [(i["kind"], i["trigger"], i["wait"]) for i in items] == [
+        ("mr", "", "queue"),
+        ("commit", "rerun", "scheduled"),
+        ("commit", "", "started"),
+    ]

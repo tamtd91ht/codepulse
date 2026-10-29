@@ -35,6 +35,13 @@ Key = tuple[str, int, str]  # (kind, project_id, ref)
 ProjectRow = tuple[Project, str | None]
 
 
+# Where a job that is not running yet waits (app/review/progress.py queued_reviews).
+WAIT_LABEL = {
+    "scheduled": "lỗi lần trước, chờ thử lại",
+    "started": "worker đã nhận, đang chuẩn bị",
+}
+
+
 def get_progress() -> ProgressReader:
     return RedisProgress(get_redis())
 
@@ -79,9 +86,19 @@ def review_activity(
         if project is not None and _may_see_record(principal, item, project[0]):
             recent.append(_from_record("ended", item, project))
 
+    # A job a worker took shows as running once its review starts: not twice (hidden or not).
+    started = [
+        (str(r.get("kind")), int(r.get("project_id") or 0), str(r.get("sha") or ""))
+        for r in running_raw
+    ]
     queued: list[ActivityItem] = []
     visible_queued = 0
     for item in queued_raw:
+        if item.get("wait") == "started" and any(
+            kind == item["kind"] and pid == item["project_id"] and sha.startswith(item["sha"])
+            for kind, pid, sha in started
+        ):
+            continue
         project = projects.get(item["project_id"])
         if project is None or not _may_see_queued(principal, item, project[0]):
             hidden += 1
@@ -102,6 +119,7 @@ def review_activity(
                 author=names.get(author_id) if author_id else None,
                 author_user_id=author_id,
                 trigger=item["trigger"],
+                detail=WAIT_LABEL.get(item.get("wait", ""), ""),
                 web_url=_web_url(project, item["kind"], item["ref"]),
             )
         )

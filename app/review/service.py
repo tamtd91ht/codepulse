@@ -78,6 +78,9 @@ from app.scoring.verdict import assess
 log = logging.getLogger(__name__)
 
 FINISHED = ("done", "skipped", "superseded")
+# Added to the exception of a review that crashed after it started: its end is reported
+# already (live view, row "failed"), so the job wrapper does not report it again.
+REVIEW_REPORTED = "codepulse: the review reported its own end"
 
 
 @dataclass(frozen=True)
@@ -375,6 +378,7 @@ class ReviewService:
         except BaseException as exc:
             self._progress.end(review.id, None)
             self._crashed(review, exc)
+            exc.add_note(REVIEW_REPORTED)
             raise
         self._progress.end(review.id, result.status, result.error)
         return result

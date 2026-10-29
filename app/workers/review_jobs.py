@@ -1,12 +1,13 @@
 """RQ entry points for reviews (task 3.5). Enqueued by app.webhook.jobs."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from rq import Queue
+from rq import Queue, get_current_job
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -29,7 +30,14 @@ from app.review.providers import (
     build_agentic_provider,
     build_provider,
 )
-from app.review.service import VERIFY_TIMEOUT_S, ReviewService, ReviewSettings
+from app.review.providers.claude_code import scrub_secrets
+from app.review.service import (
+    ASKED_TRIGGERS,
+    REVIEW_REPORTED,
+    VERIFY_TIMEOUT_S,
+    ReviewService,
+    ReviewSettings,
+)
 
 log = logging.getLogger(__name__)
 
@@ -249,6 +257,126 @@ def _prefetch_commit(
         raise NotSyncedYet(f"project {project.id} is being synced")
 
 
+@contextmanager
+def _noting_failure(
+    settings: Settings,
+    project_id: int,
+    trigger: str,
+    requested_by: int | None,
+    *,
+    sha: str,
+    iid: int | None = None,
+) -> Iterator[None]:
+    try:
+        yield
+    except Exception as exc:
+        _note_failure(settings, project_id, trigger, requested_by, exc, sha=sha, iid=iid)
+        raise
+
+
+def _note_failure(
+    settings: Settings,
+    project_id: int,
+    trigger: str,
+    requested_by: int | None,
+    exc: BaseException,
+    *,
+    sha: str,
+    iid: int | None = None,
+) -> None:
+    """An asked run that broke before its review started (GitLab, the LLM setup, the database).
+    While RQ will still retry it, the live view lists it as waiting to retry. On the last
+    attempt it is given up (`_give_up`): otherwise the row stays "queued" for good, the job sits
+    in RQ's failed registry, which the live view does not read, and the change cannot be asked
+    for again. A review that started reports its own end (REVIEW_REPORTED). Never raises: the
+    original error is what RQ must see."""
+    if REVIEW_REPORTED in getattr(exc, "__notes__", ()) or not _last_attempt():
+        return
+    if isinstance(exc, NotSyncedYet):
+        reason = "dự án vẫn đang đồng bộ sau mọi lần thử lại"
+    elif isinstance(exc, GitLabError):  # "METHOD url -> HTTP n": the token is a header
+        reason = f"lỗi GitLab: {_first_line(exc)}"
+    else:  # other messages may carry URLs or keys: the kind of error only
+        reason = f"lỗi trước khi review: {exc.__class__.__name__}"
+    _give_up(settings, project_id, trigger, requested_by, reason, "failed", sha=sha, iid=iid)
+
+
+NOT_STARTED = {
+    "repo not tracked": "repo không còn được theo dõi",
+    "merge request not found after sync": "không tìm thấy MR trên GitLab sau khi đồng bộ",
+    "commit not found on GitLab": "không tìm thấy commit trên GitLab",
+}
+
+
+def _last_attempt() -> bool:
+    """RQ will not run this job again (no retry configured, or none left)."""
+    job = get_current_job()
+    return job is None or not job.retries_left
+
+
+def _first_line(exc: BaseException) -> str:
+    text = str(exc).strip()
+    return scrub_secrets(text.splitlines()[0])[:200] if text else exc.__class__.__name__
+
+
+def _give_up(
+    settings: Settings,
+    project_id: int,
+    trigger: str,
+    requested_by: int | None,
+    reason: str,
+    status: str,
+    *,
+    sha: str,
+    iid: int | None = None,
+) -> None:
+    """An asked run that will not happen: a row still "queued" (inserted when it was asked for)
+    ends with `status` and the reason, so the change can be asked for again, and the live view
+    lists it as ended with the reason. History is kept: only that queued row changes. A row
+    "running" belongs to another job and is left alone. Never raises."""
+    if trigger not in ASKED_TRIGGERS:
+        return
+    try:
+        with get_sessionmaker()() as session:
+            project = session.get(Project, project_id)
+            if project is None:
+                return
+            query = select(Review).where(Review.reviewed_sha == sha)
+            if iid is not None:
+                mr_ids = select(MergeRequest.id).where(
+                    MergeRequest.project_id == project_id, MergeRequest.iid == iid
+                )
+                query = query.where(Review.target_type == "mr", Review.mr_id.in_(mr_ids))
+            else:
+                query = query.where(Review.target_type == "commit", Review.commit_sha == sha)
+            review = session.scalars(query.order_by(Review.id.desc()).limit(1)).first()
+            if review is None or review.status == "running":
+                return
+            if review.status == "queued":
+                review.status, review.error = status, reason[:500]
+                review.finished_at = datetime.now(UTC)
+                session.commit()
+            log.info("asked review given up", extra={"review_id": review.id, "reason": reason})
+            RedisProgress(progress_redis(str(settings.redis_url))).note_ended(
+                review.id,
+                {
+                    "kind": "mr" if iid is not None else "commit",
+                    "project_id": project.id,
+                    "project": project.path_with_namespace,
+                    "ref": str(iid) if iid is not None else sha,
+                    "sha": sha,
+                    "title": "",
+                    "author_user_id": review.author_user_id,
+                    "trigger": trigger,
+                    "round": review.round,
+                },
+                status,
+                reason[:300],
+            )
+    except Exception:  # a note must never hide the job's own error
+        log.exception("asked review not given up", extra={"project_id": project_id})
+
+
 def _notify(finished: list[Review]) -> None:
     """After the review transaction committed: queue the notification webhooks, if any."""
     if not finished:
@@ -311,7 +439,10 @@ def review_mr_job(
     settings = get_settings()
     _ensure_knowledge(project_id, settings)
     finished: list[Review] = []
-    with get_sessionmaker()() as session:
+    with (
+        _noting_failure(settings, project_id, trigger, requested_by, sha=head_sha, iid=iid),
+        get_sessionmaker()() as session,
+    ):
         # The model an admin picked on the Admin screen, if any (app/admin_settings).
         tuned = with_overrides(session, settings)
         session.commit()  # end that read: the review runs in short transactions of its own
@@ -333,6 +464,10 @@ def review_mr_job(
             ignore_loc_limit=ignore_loc_limit,
         )
     _notify(finished)
+    if reason := NOT_STARTED.get(status):
+        _give_up(
+            settings, project_id, trigger, requested_by, reason, "skipped", sha=head_sha, iid=iid
+        )
     return status
 
 
@@ -347,13 +482,20 @@ def review_commit_job(
     ignore_loc_limit: bool = False,
 ) -> str:
     settings = get_settings()
-    # A commit the last sync has not seen is fetched in its own short transaction, so the
-    # project's sync lock is not held through the (minutes long) review below.
-    with get_sessionmaker()() as session, session.begin():
-        _prefetch_commit(session, project_id, sha, client_factory(secret_box()), settings)
+    try:
+        # A commit the last sync has not seen is fetched in its own short transaction, so the
+        # project's sync lock is not held through the (minutes long) review below.
+        with get_sessionmaker()() as session, session.begin():
+            _prefetch_commit(session, project_id, sha, client_factory(secret_box()), settings)
+    except Exception as exc:
+        _note_failure(settings, project_id, trigger, requested_by, exc, sha=sha)
+        raise
     _ensure_knowledge(project_id, settings)
     finished: list[Review] = []
-    with get_sessionmaker()() as session:
+    with (
+        _noting_failure(settings, project_id, trigger, requested_by, sha=sha),
+        get_sessionmaker()() as session,
+    ):
         # The model an admin picked on the Admin screen, if any (app/admin_settings).
         tuned = with_overrides(session, settings)
         session.commit()  # end that read: the review runs in short transactions of its own
@@ -374,6 +516,8 @@ def review_commit_job(
             ignore_loc_limit=ignore_loc_limit,
         )
     _notify(finished)
+    if reason := NOT_STARTED.get(status):
+        _give_up(settings, project_id, trigger, requested_by, reason, "skipped", sha=sha)
     return status
 
 

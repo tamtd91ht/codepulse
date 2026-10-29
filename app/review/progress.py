@@ -303,14 +303,35 @@ COMMIT_JOB = re.compile(r"review-commit-([0-9a-f]{7,40})(?:-(rerun|again)\b.*)?"
 TRIGGER_OF_SUFFIX = {"rerun": "rerun", "again": "telegram"}
 
 
+def _job_ids(queue: Any, wait: str, scan: int) -> list[str]:
+    """Job ids of one place a review job waits: the queue itself (one LRANGE), the jobs RQ
+    holds to retry after a failure, and those a worker took but whose review has not started
+    (fetching the commit, building the repo's first review knowledge)."""
+    if wait == "queue":
+        raw = queue.get_job_ids(0, scan)
+    else:
+        registry = getattr(queue, f"{wait}_job_registry", None)
+        raw = registry.get_job_ids(0, scan - 1, cleanup=False) if registry is not None else []
+    return [i.decode() if isinstance(i, bytes) else str(i) for i in raw]
+
+
 def queued_reviews(queue: Any, scan: int = 200) -> list[dict[str, Any]]:
-    """Review jobs waiting in the RQ queue (oldest first), parsed from their ids (one LRANGE).
-    A commit job id has no project: `project_id` is None and the caller looks the sha up."""
-    try:
-        ids = [i.decode() if isinstance(i, bytes) else str(i) for i in queue.get_job_ids(0, scan)]
-    except RedisError as exc:
-        log.warning("review queue not readable", extra={"error": exc.__class__.__name__})
-        return []
+    """Review jobs not running yet, parsed from their ids, never from their payload: in the
+    queue (oldest first), waiting to be retried ("scheduled"), or taken by a worker that has not
+    started the review ("started"); `wait` says which. A commit job id has no project:
+    `project_id` is None and the caller looks the sha up."""
+    out: list[dict[str, Any]] = []
+    for wait in ("queue", "scheduled", "started"):
+        try:
+            ids = _job_ids(queue, wait, scan)
+        except RedisError as exc:
+            log.warning("review queue not readable", extra={"error": exc.__class__.__name__})
+            continue
+        out.extend({**item, "wait": wait} for item in _parse_jobs(ids))
+    return out
+
+
+def _parse_jobs(ids: list[str]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for job_id in ids:
         if m := MR_JOB.fullmatch(job_id):
