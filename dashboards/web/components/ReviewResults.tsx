@@ -158,10 +158,10 @@ export function ReviewResults({
     <Card
       id={id}
       title="Kết quả review"
-      subtitle={period ? undefined : "Commit mới nhất trước; lọc theo thời gian review hoàn tất"}
+      subtitle={period ? undefined : "Commit mới nhất trước; lọc theo thời gian commit"}
       actions={
         period ? (
-          <span className="pill" title="Review hoàn tất trong kỳ đang xem; đổi kỳ ở đầu trang">
+          <span className="pill" title="Commit (MR: lúc mở) trong kỳ đang xem; đổi kỳ ở đầu trang">
             {period.label}
           </span>
         ) : (

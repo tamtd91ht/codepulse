@@ -252,9 +252,11 @@ def test_review_list_filters_by_time_member_project_and_status(
         return {r["id"] for r in res.json()["items"]}
 
     both = {world.an_review.id, world.binh_review.id}
-    # Days are REPORT_TZ days: 2026-10-05 18:00 UTC is already 2026-10-06 01:00 in
-    # Asia/Ho_Chi_Minh, so it belongs to the 6th, not to the 5th (as it would in UTC).
-    world.binh_review.finished_at = datetime(2026, 10, 5, 18, tzinfo=UTC)
+    # Days are REPORT_TZ days of the change (commit time; MR opened): 2026-10-05 18:00 UTC is
+    # already 2026-10-06 01:00 in Asia/Ho_Chi_Minh, so it belongs to the 6th, not to the 5th.
+    world.an_review.changed_at = datetime(2026, 10, 6, 9, tzinfo=UTC)
+    world.binh_review.changed_at = datetime(2026, 10, 5, 18, tzinfo=UTC)
+    world.binh_review.finished_at = datetime(2026, 10, 9, 9, tzinfo=UTC)  # not what is filtered
     db_session.flush()
     assert ids("from=2026-10-06&to=2026-10-06") == both
     assert ids("to=2026-10-05") == set()

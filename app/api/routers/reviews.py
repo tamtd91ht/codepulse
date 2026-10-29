@@ -154,7 +154,8 @@ def list_reviews(
     if severity:
         with_severity = select(ReviewFinding.review_id).where(ReviewFinding.severity == severity)
         query = query.where(Review.id.in_(with_severity))
-    query = _range(query, Review.finished_at, date_from, date_to, ZoneInfo(settings.report_tz))
+    # Days of the change itself (commit time; MR opened), as the list is sorted.
+    query = _range(query, Review.changed_at, date_from, date_to, ZoneInfo(settings.report_tz))
     if (after := _decode_changed_cursor(cursor)) is not None:
         query = query.where(tuple_(Review.changed_at, Review.id) < tuple_(*after))
     # Newest change first: ix_reviews_changed_at_id serves both the order and the cursor.
