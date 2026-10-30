@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { Alert, Card, Pill } from "@/components/ui";
 import { date } from "@/lib/format";
-import type { BasisKnowledge, BasisRule, Finding, ReviewBasis, ReviewRound } from "@/lib/types";
+import type { BasisKnowledge, BasisRule, DeepReport, Finding, ReviewBasis, ReviewRound } from "@/lib/types";
 
 const RULE_KIND: Record<string, string> = {
   business_project: "Dự án",
@@ -79,7 +79,7 @@ export function BasisCard({
   mode,
   deepError,
   deepSkipped,
-  filesSeen,
+  deep,
   history,
   reviewId,
   projectId,
@@ -87,12 +87,12 @@ export function BasisCard({
   basis: ReviewBasis | null;
   findings: Finding[];
   mode: "fast" | "deep" | "agent";
-  /** The deep pass was tried and failed (the review fell back to the first pass). */
-  deepError?: boolean;
+  /** Why the deep pass was tried and did not run (the review fell back to the no-tool pass). */
+  deepError?: string;
   /** Why the deep pass did not run ("diff dưới 20 LOC"). */
   deepSkipped?: string;
   /** Files in the copy of the repository the agent worked in. */
-  filesSeen?: number;
+  deep?: DeepReport | null;
   history: ReviewRound[];
   reviewId: number;
   /** The repo (GitLab project) reviewed: links the knowledge line to its page. */
@@ -231,19 +231,21 @@ export function BasisCard({
           )}
           {mode === "agent" ? (
             // Flow v2 (docs/specs/19 §4): the main pass ran inside a copy of the repository.
-            <p className="small" style={{ margin: 0 }}>
-              Review sâu: agent làm việc trong bản sao mã nguồn của repo tại commit này
-              {filesSeen ? ` (${filesSeen.toLocaleString("vi-VN")} file)` : ""} và tự mở file khi cần đối chứng.{" "}
+            <div className="small">
+              <AgentWork deep={deep} />{" "}
               <span className="muted">
                 {basis.knowledge
-                  ? ".claude của repo đã được biên dịch vào Tiền đề review ở trên, nên không liệt kê từng file ở đây."
-                  : "Agent đọc CLAUDE.md, AGENTS.md và .claude có trong bản sao."}
+                  ? // knowledge_sections(): with a Tiền đề the prompt carries it instead of .claude excerpts.
+                    "Prompt dùng Tiền đề review ở trên thay cho trích đoạn .claude, nên không có danh sách file .claude riêng."
+                  : basis.fast_guidance?.length
+                    ? `Prompt kèm trích đoạn .claude chọn theo thay đổi: ${basis.fast_guidance.map((g) => g.path).join(", ")}.`
+                    : "Không có trích đoạn .claude nào đưa vào prompt."}
               </span>
-            </p>
+            </div>
           ) : mode !== "deep" ? (
             <p className="muted small" style={{ margin: 0 }}>
               {deepError
-                ? "Review sâu đã thử mở repo nhưng lỗi (xem thẻ Đối chứng trong mã nguồn); kết quả dựa trên diff và quy tắc ở trên."
+                ? `Review sâu đã thử nhưng không chạy được (${deepError}); kết quả là của review nhanh, chỉ dựa trên diff và quy tắc ở trên.`
                 : `Review nhanh: chỉ đọc diff và quy tắc ở trên, không mở mã nguồn của repo${
                     deepSkipped ? ` (không chạy review sâu: ${deepSkipped})` : ""
                   }.`}
@@ -404,5 +406,60 @@ function DocRef({ doc, sharedRepo }: { doc: BasisDoc; sharedRepo?: string }) {
       {doc.read === false && <span className="muted small"> · agent chưa mở file</span>}
       {doc.why?.length ? <span className="muted small"> ({doc.why.join("; ")})</span> : null}
     </span>
+  );
+}
+
+/**
+ * What the agentic pass did in the copy of the repository (docs/specs/19 §4.2): the proof that a
+ * review ran "deep" and not only on the diff. Older reviews kept only the turn count.
+ */
+function AgentWork({ deep }: { deep?: DeepReport | null }) {
+  const seen = deep?.files_seen ? ` (${deep.files_seen.toLocaleString("vi-VN")} file)` : "";
+  const turns = deep?.turns ?? null;
+  if (!deep?.tool_calls) {
+    return (
+      <>
+        Review sâu: agent chạy trong bản sao mã nguồn của repo tại commit này{seen}
+        {turns !== null ? `, ${turns} lượt` : ""}.{" "}
+        <span className="muted">
+          Lần review này chạy trước khi CodePulse ghi lại agent đã mở file nào
+          {turns !== null && turns <= 1 ? "; 1 lượt thường nghĩa là agent trả lời ngay, không mở file nào" : ""}.
+        </span>
+      </>
+    );
+  }
+  const calls = Object.entries(deep.tool_calls);
+  const total = calls.reduce((n, [, c]) => n + c, 0);
+  const read = deep.files_read ?? [];
+  const readTotal = deep.files_read_total ?? read.length;
+  if (total === 0) {
+    return (
+      <>
+        <Pill tone="warn" icon="alert">
+          Agent không mở file nào
+        </Pill>{" "}
+        Có bản sao repo{seen} nhưng agent trả lời ngay mà không đọc thêm code: kết quả thực chất chỉ dựa trên diff.
+      </>
+    );
+  }
+  return (
+    <>
+      Review sâu: agent chạy trong bản sao mã nguồn của repo tại commit này{seen}
+      {turns !== null ? `, ${turns} lượt` : ""}, gọi {calls.map(([name, n]) => `${name} ${n} lần`).join(", ")}
+      {readTotal ? `, mở ${readTotal} file` : ", không mở file nào (chỉ tìm kiếm)"}.
+      {read.length > 0 && (
+        <details className="small" style={{ marginTop: 4 }}>
+          <summary className="muted">File agent đã mở</summary>
+          <ul className="muted" style={{ margin: "2px 0 0", paddingLeft: 18 }}>
+            {read.map((path) => (
+              <li key={path}>
+                <code>{path}</code>
+              </li>
+            ))}
+            {readTotal > read.length && <li>… và {readTotal - read.length} file khác</li>}
+          </ul>
+        </details>
+      )}
+    </>
   );
 }

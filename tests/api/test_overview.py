@@ -71,6 +71,10 @@ def test_overview_groups_reviews_by_project(
         unassigned["id"] is None and unassigned["reviews"] == 0 and unassigned["open_severe"] == 1
     )
     assert unassigned["delta"]["reviews"] == -1
+    # No review this week: the card points back to the latest one (last week's, by change time).
+    assert unassigned["avg_score"] is None
+    assert unassigned["last_review_at"].startswith("2026-09-30")
+    assert omi["last_review_at"] is not None
     # Critical and high apart, found in the period and open now.
     totals = body["totals"]
     assert (totals["open_critical"], totals["open_high"]) == (1, 1)

@@ -1030,6 +1030,11 @@ def test_the_agentic_pass_streams_its_actions_to_the_live_view(
         ("end", None),
     ]
     assert "SECRET" not in str(entries)
+    # Kept on the review after the live view expires: what the agent did, never contents.
+    assert review.deep is not None
+    assert review.deep["tool_calls"] == {"Grep": 1}
+    assert review.deep["files_read"] == [] and review.deep["files_read_total"] == 0
+    assert "SECRET" not in str(review.deep)
 
 
 SHARED_FILES = {

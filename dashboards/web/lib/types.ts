@@ -199,6 +199,8 @@ export interface BasisRule {
 
 /** What a review was checked against: names and fingerprints only. */
 export interface ReviewBasis {
+  /** .claude excerpts put in the prompt when there is no Tiền đề (app/review/service.py _guidance). */
+  fast_guidance?: { path: string; source?: string; kind?: string }[];
   rubric?: { version: string; lens: string[] };
   rules?: BasisRule[];
   rules_ref?: string;
@@ -280,6 +282,10 @@ export interface DeepReport {
   ignored_verifications?: number;
   project_fit?: string[];
   files_seen?: number;
+  /** Flow v2: tool calls of the agentic pass by name, and the files it opened (paths only). */
+  tool_calls?: Record<string, number>;
+  files_read?: string[];
+  files_read_total?: number;
   turns?: number | null;
   cost_usd?: number;
   instruction_sources?: string[];
@@ -593,6 +599,8 @@ export interface ProjectEntry extends ProjectAgg {
   description: string | null;
   repos: number;
   trend: (number | null)[]; // avg score of the last 8 periods, oldest first
+  /** Latest finished review up to the period's end (by change time): where an empty period points. */
+  last_review_at?: string | null;
 }
 
 export interface ProjectsOverview {

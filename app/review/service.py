@@ -115,6 +115,8 @@ KNOWLEDGE_DOMAIN_NOTE = "(see the DOMAIN section of PROJECT KNOWLEDGE below)"
 
 # The skip reason of a diff over MAX_REVIEW_LOC; a lead's rerun may go past it (rerun API).
 TOO_LARGE = "MR quá lớn"
+# Paths of the files the agentic pass opened, kept on the review (the rest only counted).
+MAX_FILES_READ = 200
 
 
 @dataclass
@@ -907,6 +909,8 @@ class ReviewService:
         raw: list[AgentFinding] = []
         summaries: list[str] = []
         intents: list[Intent] = []
+        files_read: set[str] = set()
+        tool_calls: dict[str, int] = {}
         for number, piece in enumerate(pieces, 1):
             if len(pieces) > 1:
                 self._step(review.id, "agent", f"phần {number}/{len(pieces)}")
@@ -925,6 +929,9 @@ class ReviewService:
                 outcome.cost_usd += call.cost_usd
             review.model = result.calls[0].model
             outcome.turns += int((result.calls[0].raw or {}).get("num_turns") or tracker.turns)
+            files_read |= tracker.reads
+            for name, n in tracker.tools.items():
+                tool_calls[name] = tool_calls.get(name, 0) + n
             raw += result.review.findings
             summaries.append(result.review.summary.strip())
             if result.review.intent is not None:
@@ -941,6 +948,12 @@ class ReviewService:
         outcome.summary = "\n\n".join(s for s in summaries if s)
         outcome.intent = merge_intents(intents)
         outcome.project_fit = outcome.project_fit[:6]
+        # What the agent did in the repository, kept past the hour-long live view: paths and
+        # counts only, never file contents. Set only once the pass succeeded.
+        assert review.deep is not None  # noqa: S101 - _run() set it
+        review.deep["tool_calls"] = tool_calls
+        review.deep["files_read"] = sorted(files_read)[:MAX_FILES_READ]
+        review.deep["files_read_total"] = len(files_read)
         return outcome
 
     def _fast_pass(

@@ -524,9 +524,17 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
           basis={review.basis}
           findings={review.findings}
           mode={review.mode}
-          deepError={!!review.deep?.error || !!review.deep?.fallback}
+          deepError={
+            review.deep?.fallback
+              ? `lượt agent lỗi: ${review.deep.fallback.error ?? "không rõ"}`
+              : review.deep?.error === "checkout"
+                ? "không tải được bản sao repo (quá lớn hoặc GitLab lỗi)"
+                : review.deep?.error
+                  ? `lỗi ${review.deep.error}`
+                  : undefined
+          }
           deepSkipped={review.deep?.skipped}
-          filesSeen={review.deep?.files_seen}
+          deep={review.deep}
           history={review.history}
           reviewId={review.id}
           projectId={repoId}

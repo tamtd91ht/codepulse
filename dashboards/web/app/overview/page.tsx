@@ -19,13 +19,20 @@ import { Score, scoreTone } from "@/components/Evaluation";
 import { Icon } from "@/components/icons";
 import { Card, ChartTip, CountLink, EmptyState, Loading, PageHeader, Pager, Segmented, Sparkline, SplitBar, StatStrip, StripStat } from "@/components/ui";
 import { type BoardScope, boardLink, qs, useApi } from "@/lib/api";
-import { delta, num, periodLabel, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
+import { delta, localDay, num, periodLabel, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
 import type { Me, ProjectEntry, ProjectsOverview } from "@/lib/types";
 
 type Period = "week" | "month";
 type View = "grid" | "table";
 const COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)", "var(--chart-6)"];
 const VIEW_STORE = "cp:project-view";
+
+/** The period (its first day) holding a dự án's latest review, when the shown one has none. */
+const lastPeriod = (p: ProjectEntry, period: Period): string | null => {
+  if (p.reviews > 0 || !p.last_review_at) return null;
+  const day = localDay(new Date(p.last_review_at));
+  return period === "week" ? weekOf(day) : `${day.slice(0, 7)}-01`;
+};
 
 const health = (p: ProjectEntry) => (p.open_critical ? "critical" : p.open_high ? "high" : p.reviews ? "ok" : "idle");
 
@@ -46,16 +53,22 @@ function SevPair({ critical, high, hrefC, hrefH, what }: { critical: number; hig
 }
 
 /** One dự án at a glance: score and its change, the trend, open critical / high; opens the dự án. */
-function ProjectTile({ p }: { p: ProjectEntry }) {
+function ProjectTile({ p, period }: { p: ProjectEntry; period: Period }) {
   const change = p.delta.avg_score;
+  const last = lastPeriod(p, period);
   const body = (
     <>
       <span className="p-name">{p.name}</span>
       <span className="p-meta">
         {p.repos} repo · {p.reviews} review
+        {last && <> · gần nhất: {periodLabel(period, last).toLowerCase()}</>}
       </span>
       <span className="p-score">
-        {p.avg_score === null ? <span className="faint">—</span> : <span className={`score ${scoreTone(p.avg_score) ?? ""}`}>{num(p.avg_score, 1)}</span>}
+        {p.avg_score === null ? (
+          <span className="faint" title={last ? "Chưa có review trong kỳ này; điểm tính theo thời gian commit" : undefined}>
+            —
+          </span>
+        ) : <span className={`score ${scoreTone(p.avg_score) ?? ""}`}>{num(p.avg_score, 1)}</span>}
         {change !== null && change !== 0 && (
           <span className={`kstat-delta ${change > 0 ? "up" : "down"}`} title="Điểm TB so với kỳ trước">
             <Icon name={change > 0 ? "trendUp" : "trendDown"} size={11} />
@@ -82,7 +95,28 @@ function ProjectTile({ p }: { p: ProjectEntry }) {
   );
 }
 
-function ProjectTable({ projects, inPeriod }: { projects: ProjectEntry[]; inPeriod: BoardScope["period"] }) {
+/** "Xem tuần từ 19/10": moves the page to the period of the dự án's latest review. */
+function JumpToLast({ p, period, onJump }: { p: ProjectEntry; period: Period; onJump: (start: string) => void }) {
+  const last = lastPeriod(p, period);
+  if (!last) return null;
+  return (
+    <button type="button" className="link-btn small" onClick={() => onJump(last)} title="Chuyển tới kỳ có review gần nhất">
+      xem {periodLabel(period, last).toLowerCase()}
+    </button>
+  );
+}
+
+function ProjectTable({
+  projects,
+  inPeriod,
+  period,
+  onJump,
+}: {
+  projects: ProjectEntry[];
+  inPeriod: BoardScope["period"];
+  period: Period;
+  onJump: (start: string) => void;
+}) {
   const link = (severity: "critical" | "high", p: ProjectEntry, period: boolean) =>
     p.id === null ? null : boardLink(severity, { project: { id: p.id, name: p.name }, period: period ? inPeriod : undefined });
   return (
@@ -112,6 +146,7 @@ function ProjectTable({ projects, inPeriod }: { projects: ProjectEntry[]; inPeri
               <td className="num">{p.reviews}</td>
               <td className="num">
                 <Score value={p.avg_score} strong />
+                <JumpToLast p={p} period={period} onJump={onJump} />
               </td>
               <td className="nowrap">
                 <SevPair critical={p.critical} high={p.high} what="mới trong kỳ" hrefC={link("critical", p, true)} hrefH={link("high", p, true)} />
@@ -199,6 +234,8 @@ export default function OverviewPage() {
     );
 
   const t = data.totals;
+  // Dự án with reviews, none of them in this period: they show "—", so say where to look.
+  const idle = data.projects.filter((p) => lastPeriod(p, period) !== null);
   const named = data.projects.filter((p) => p.id !== null);
   const bars = data.projects.map((p) => ({
     name: p.name,
@@ -275,12 +312,24 @@ export default function OverviewPage() {
               <ul className="proj-grid">
                 {data.projects.map((p) => (
                   <li key={p.id ?? "none"}>
-                    <ProjectTile p={p} />
+                    <ProjectTile p={p} period={period} />
                   </li>
                 ))}
               </ul>
-            ) : (
-              <ProjectTable projects={data.projects} inPeriod={inPeriod} />
+            ) : null}
+            {view === "grid" && idle.length > 0 && (
+              <p className="small muted" style={{ margin: 0, padding: "0 18px 14px" }}>
+                Chưa có review trong kỳ (điểm tính theo thời gian commit):{" "}
+                {idle.map((p, i) => (
+                  <span key={p.id ?? "none"}>
+                    {i > 0 && " · "}
+                    {p.name} <JumpToLast p={p} period={period} onJump={setCursor} />
+                  </span>
+                ))}
+              </p>
+            )}
+            {view === "grid" ? null : (
+              <ProjectTable projects={data.projects} inPeriod={inPeriod} period={period} onJump={setCursor} />
             )}
           </Card>
 

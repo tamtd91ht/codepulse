@@ -60,6 +60,8 @@ class LiveTracker:
         self._clock = clock
         self.turns = 0
         self.reads: set[str] = set()
+        # Tool calls by name (Read/Grep/Glob): kept on the review as proof the repo was used.
+        self.tools: dict[str, int] = {}
 
     def entries(self, event: dict[str, Any]) -> list[dict[str, Any]]:
         kind = event.get("type")
@@ -76,6 +78,9 @@ class LiveTracker:
                     raw = item.get("input")
                     data: dict[str, Any] = raw if isinstance(raw, dict) else {}
                     entry = _tool(str(item.get("name") or "?"), data, self._workdir)
+                    if entry.get("kind") == "tool":  # not the final answer
+                        name = str(entry["tool"])
+                        self.tools[name] = self.tools.get(name, 0) + 1
                     if entry.get("tool") == "Read" and entry.get("target"):
                         self.reads.add(entry["target"])
                     out.append(entry)

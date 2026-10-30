@@ -195,6 +195,24 @@ def _open_of(open_by_project: dict[int, Open], project_ids: Any) -> Open:
     return total
 
 
+def _last_reviewed(
+    session: Session, hi: datetime, bp_ids: set[int] | None
+) -> dict[int | None, datetime]:
+    """dự án -> when its latest finished review counts (Review.counted_at), before `hi`: what a
+    period without reviews points back to."""
+    rp = _review_project()
+    query = (
+        select(Project.business_project_id, func.max(Review.counted_at))
+        .join(rp, rp.c.review_id == Review.id)
+        .join(Project, Project.id == rp.c.project_id)
+        .where(Review.status == "done", Review.counted_at < hi)
+        .group_by(Project.business_project_id)
+    )
+    if bp_ids is not None:
+        query = query.where(Project.business_project_id.in_(bp_ids))
+    return {bp: when for bp, when in session.execute(query).tuples() if when is not None}
+
+
 def _bucket(rows: list[Row], sev: dict[int, dict[str, int]], key: Any) -> dict[Any, Bucket]:
     buckets: dict[Any, Bucket] = defaultdict(Bucket)
     for project_id, bp_id, review_id, score, loc, counted_at, verdict in rows:
@@ -294,6 +312,7 @@ def projects_overview(
         if shown(bp_id)
     ]
     open_by_project = _open_severe(session, visible)
+    last_reviewed = _last_reviewed(session, hi, visible)
     repos_by_bp: dict[int | None, int] = defaultdict(int)
     for _project_id, bp_id in projects:
         repos_by_bp[bp_id] += 1
@@ -322,6 +341,8 @@ def projects_overview(
             **open_by_bp.get(bp_id, Open()).as_dict(),
             "delta": _delta(cur, prev),
             "trend": [(trend.get((bp_id, s)) or Bucket()).avg_score for s in trend_starts],
+            # Latest review up to this period's end: a period without any links back to it.
+            "last_review_at": when.isoformat() if (when := last_reviewed.get(bp_id)) else None,
         }
 
     ids: list[int | None] = list(names)

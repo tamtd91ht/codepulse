@@ -65,6 +65,7 @@ def test_tracker_keeps_actions_and_drops_contents() -> None:
     assert (grep["path"], grep["glob"], grep["turn"]) == ("app", "*.py", 2)
     assert "hunter2" not in json.dumps(entries)  # neither tool results nor prose
     assert tracker.turns == 5 and tracker.reads == {"app/auth.py", "passwd"}
+    assert tracker.tools == {"Read": 2, "Grep": 1}  # the answer is not a tool call
     assert entries[-1]["ok"] is True and entries[-1]["turns"] == 5
     assert (
         describe(entries[1]) == "Read app/auth.py" and describe(entries[-2]) == "đang trả kết quả"
