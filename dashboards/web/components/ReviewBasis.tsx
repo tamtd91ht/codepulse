@@ -78,6 +78,8 @@ export function BasisCard({
   findings,
   mode,
   deepError,
+  deepSkipped,
+  filesSeen,
   history,
   reviewId,
   projectId,
@@ -87,6 +89,10 @@ export function BasisCard({
   mode: "fast" | "deep" | "agent";
   /** The deep pass was tried and failed (the review fell back to the first pass). */
   deepError?: boolean;
+  /** Why the deep pass did not run ("diff dưới 20 LOC"). */
+  deepSkipped?: string;
+  /** Files in the copy of the repository the agent worked in. */
+  filesSeen?: number;
   history: ReviewRound[];
   reviewId: number;
   /** The repo (GitLab project) reviewed: links the knowledge line to its page. */
@@ -205,7 +211,7 @@ export function BasisCard({
 
         <section>
           <h4>Tài liệu, agent và kỹ năng (.claude)</h4>
-          {mode === "deep" && sharedRepo && (
+          {(mode === "deep" || mode === "agent") && sharedRepo && (
             <p className="small" style={{ margin: "0 0 6px" }}>
               Repo .claude dùng chung của dự án: <code>{sharedRepo.repo}</code>
               {sharedRepo.status === "used" ? (
@@ -223,11 +229,24 @@ export function BasisCard({
               )}
             </p>
           )}
-          {mode !== "deep" ? (
+          {mode === "agent" ? (
+            // Flow v2 (docs/specs/19 §4): the main pass ran inside a copy of the repository.
+            <p className="small" style={{ margin: 0 }}>
+              Review sâu: agent làm việc trong bản sao mã nguồn của repo tại commit này
+              {filesSeen ? ` (${filesSeen.toLocaleString("vi-VN")} file)` : ""} và tự mở file khi cần đối chứng.{" "}
+              <span className="muted">
+                {basis.knowledge
+                  ? ".claude của repo đã được biên dịch vào Tiền đề review ở trên, nên không liệt kê từng file ở đây."
+                  : "Agent đọc CLAUDE.md, AGENTS.md và .claude có trong bản sao."}
+              </span>
+            </p>
+          ) : mode !== "deep" ? (
             <p className="muted small" style={{ margin: 0 }}>
               {deepError
                 ? "Review sâu đã thử mở repo nhưng lỗi (xem thẻ Đối chứng trong mã nguồn); kết quả dựa trên diff và quy tắc ở trên."
-                : "Review nhanh: chỉ đọc diff và quy tắc ở trên, không mở mã nguồn của repo."}
+                : `Review nhanh: chỉ đọc diff và quy tắc ở trên, không mở mã nguồn của repo${
+                    deepSkipped ? ` (không chạy review sâu: ${deepSkipped})` : ""
+                  }.`}
             </p>
           ) : instructions.length === 0 && procedure.length === 0 ? (
             <p className="muted small" style={{ margin: 0 }}>

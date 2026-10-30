@@ -408,7 +408,7 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
             )}
             {review.mode === "agent" && (
               <Pill tone="primary" icon="search">
-                Review trong repo
+                Review sâu (trong repo)
               </Pill>
             )}
             {review.deep?.fallback && (
@@ -524,7 +524,9 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
           basis={review.basis}
           findings={review.findings}
           mode={review.mode}
-          deepError={!!review.deep?.error}
+          deepError={!!review.deep?.error || !!review.deep?.fallback}
+          deepSkipped={review.deep?.skipped}
+          filesSeen={review.deep?.files_seen}
           history={review.history}
           reviewId={review.id}
           projectId={repoId}
@@ -557,7 +559,7 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
                   <tr key={h.id} className={h.id === review.id ? undefined : "muted"}>
                     <td>
                       {h.id === review.id ? <strong>#{h.id} · lần {h.round}</strong> : <Link href={`/reviews/${h.id}`}>#{h.id} · lần {h.round}</Link>}
-                      {h.mode === "deep" ? " · sâu" : ""}
+                      {h.mode === "deep" || h.mode === "agent" ? " · sâu" : ""}
                     </td>
                     <td>
                       <code>{h.reviewed_sha.slice(0, 8)}</code>
