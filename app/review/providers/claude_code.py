@@ -4,10 +4,12 @@ The diff is untrusted input, so the CLI runs with every tool disabled, no settin
 files, and an empty working directory: the model can only answer with JSON.
 """
 
+import contextlib
 import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import tempfile
 import threading
@@ -38,10 +40,14 @@ def stream_lines(
     env: Mapping[str, str],
     timeout_s: float,
     on_line: Callable[[str], None],
+    new_session: bool = False,
 ) -> tuple[int, str]:
     """Run the CLI and hand every stdout line over as it arrives: (exit code, stderr).
 
-    A watchdog kills the process at the deadline (TimeoutExpired is raised afterwards)."""
+    A watchdog kills the process at the deadline (TimeoutExpired is raised afterwards).
+    `new_session`: the CLI leads its own process group and the whole group is killed, so
+    commands its Bash tool started (even in the background) do not outlive it (POSIX only)."""
+    group = new_session and hasattr(os, "killpg")
     proc = subprocess.Popen(  # noqa: S603 - the configured CLI, argv list, no shell
         list(cmd),
         stdin=subprocess.PIPE,
@@ -52,12 +58,20 @@ def stream_lines(
         errors="replace",
         cwd=cwd,
         env=dict(env),
+        start_new_session=group,
     )
     timed_out = threading.Event()
 
+    def hard_kill() -> None:
+        killpg = getattr(os, "killpg", None)  # POSIX only
+        if group and killpg is not None:
+            with contextlib.suppress(OSError):
+                killpg(proc.pid, getattr(signal, "SIGKILL", 9))
+        proc.kill()
+
     def kill() -> None:
         timed_out.set()
-        proc.kill()
+        hard_kill()
 
     watchdog = threading.Timer(timeout_s, kill)
     watchdog.daemon = True
@@ -78,8 +92,8 @@ def stream_lines(
         proc.wait()
     finally:
         watchdog.cancel()
-        if proc.poll() is None:
-            proc.kill()
+        if proc.poll() is None or group:
+            hard_kill()
             proc.wait()
         drain.join(timeout=5)
     if timed_out.is_set():
@@ -120,6 +134,21 @@ ENV_PASSTHROUGH = frozenset(
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
     }
 )
+
+
+def cli_env(auth_token: str) -> dict[str, str]:
+    """A minimal environment: the CLI gets what it needs to run and authenticate, not the
+    worker's DATABASE_URL / secrets (the model's text is stored and posted to GitLab)."""
+    env = {k: v for k, v in os.environ.items() if k.upper() in ENV_PASSTHROUGH}
+    if auth_token:
+        # `claude setup-token` issues sk-ant-oat… tokens; anything else is an API key.
+        key = (
+            "CLAUDE_CODE_OAUTH_TOKEN"
+            if auth_token.startswith("sk-ant-oat")
+            else "ANTHROPIC_API_KEY"
+        )
+        env[key] = auth_token
+    return env
 
 
 def scrub_secrets(text: str, secret: str = "") -> str:
@@ -271,18 +300,7 @@ class ClaudeCodeProvider:
         return self._checked(result)
 
     def _env(self) -> Mapping[str, str]:
-        """A minimal environment: the CLI gets what it needs to run and authenticate, not the
-        worker's DATABASE_URL / secrets (the model's text is stored and posted to GitLab)."""
-        env = {k: v for k, v in os.environ.items() if k.upper() in ENV_PASSTHROUGH}
-        if self._auth_token:
-            # `claude setup-token` issues sk-ant-oat… tokens; anything else is an API key.
-            key = (
-                "CLAUDE_CODE_OAUTH_TOKEN"
-                if self._auth_token.startswith("sk-ant-oat")
-                else "ANTHROPIC_API_KEY"
-            )
-            env[key] = self._auth_token
-        return env
+        return cli_env(self._auth_token)
 
     def _run_once(
         self,

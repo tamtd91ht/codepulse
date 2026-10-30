@@ -1,11 +1,9 @@
-.venv
-.git
-.idea
+# An allowlist: the image is also what every .claude command's container runs
+# (app/commands/gate.py), so nothing goes in but what the app needs. A stray spreadsheet,
+# backup or .env in the folder never reaches it.
+*
+!app/
+!migrations/
+!alembic.ini
+!pyproject.toml
 **/__pycache__
-.pytest_cache
-.mypy_cache
-.ruff_cache
-.env
-codepulse-specs.zip
-dashboards
-.env.local
