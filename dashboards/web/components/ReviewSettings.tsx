@@ -49,6 +49,7 @@ export function ReviewSettings() {
   const agentLoc = find("review_agent_min_loc");
   const model = find("llm_model");
   const link = find("public_url");
+  const budget = find("monthly_llm_budget_usd");
 
   async function save(key: Key, value: number | string | null) {
     setBusy(true);
@@ -132,6 +133,46 @@ export function ReviewSettings() {
             {model.overridden && (
               <button type="button" onClick={() => save("llm_model", null)} disabled={busy}>
                 Về mặc định ({String(model.default)})
+              </button>
+            )}
+          </div>
+        </form>
+      )}
+
+      {budget && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            save("monthly_llm_budget_usd", Number(field(e, "monthly_llm_budget_usd")));
+          }}
+          style={{ display: "grid", gap: 10, padding: "0 18px 14px" }}
+        >
+          <label style={{ display: "grid", gap: 4, maxWidth: 320 }}>
+            <span className="small muted">Ngân sách LLM mỗi tháng, USD ({budget.env})</span>
+            <input
+              key={String(budget.value)}
+              name="monthly_llm_budget_usd"
+              type="number"
+              required
+              min={budget.minimum ?? undefined}
+              max={budget.maximum ?? undefined}
+              step={1}
+              defaultValue={Number(budget.value)}
+            />
+          </label>
+          <p className="muted small">
+            Tổng chi trong tháng (review + dựng review knowledge + chạy lệnh .claude) chạm mức này thì review dừng với
+            lỗi “monthly LLM budget reached”, chạy lại được khi tăng ngân sách hoặc sang tháng mới. Cảnh báo từ 80%. Đặt
+            0 để không giới hạn.{" "}
+            {budget.overridden ? `Mặc định trong .env: ${budget.default}.` : "Đang dùng giá trị trong .env."}
+          </p>
+          <div className="toolbar">
+            <button type="submit" disabled={busy}>
+              Lưu ngân sách
+            </button>
+            {budget.overridden && (
+              <button type="button" onClick={() => save("monthly_llm_budget_usd", null)} disabled={busy}>
+                Về mặc định ({String(budget.default)})
               </button>
             )}
           </div>

@@ -22,7 +22,7 @@ DEFAULT_REVIEW_MODEL = "claude-opus-5-5"
 MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,99}$")
 MAX_URL_CHARS = 300
 
-Value = int | str
+Value = int | float | str
 
 
 @dataclass(frozen=True)
@@ -57,6 +57,9 @@ EDITABLE: dict[str, Editable] = {
     "command_clone_depth": Editable("COMMAND_CLONE_DEPTH", "int", 0, 1_000_000),
     "command_max_output_mb": Editable("COMMAND_MAX_OUTPUT_MB", "int", 1, 4096),
     "command_file_ttl_hours": Editable("COMMAND_FILE_TTL_HOURS", "int", 1, 720),
+    # docs/specs/06: reviews, knowledge builds and command runs stop once the month's LLM
+    # spend reaches it (0 = no limit).
+    "monthly_llm_budget_usd": Editable("MONTHLY_LLM_BUDGET_USD", "int", 0, 1_000_000),
 }
 
 
@@ -76,6 +79,7 @@ def defaults(settings: Settings) -> dict[str, Value]:
         "command_clone_depth": settings.command_clone_depth,
         "command_max_output_mb": settings.command_max_output_mb,
         "command_file_ttl_hours": settings.command_file_ttl_hours,
+        "monthly_llm_budget_usd": settings.monthly_llm_budget_usd,
     }
 
 
@@ -99,8 +103,14 @@ def with_overrides(session: Session, settings: Settings) -> Settings:
             "max_review_loc": int(values["max_review_loc"]),
             "llm_model": str(values["llm_model"]),
             "dashboard_url": str(values["public_url"]),
+            "monthly_llm_budget_usd": float(values["monthly_llm_budget_usd"]),
         }
     )
+
+
+def monthly_budget_usd(session: Session, settings: Settings) -> float:
+    """MONTHLY_LLM_BUDGET_USD, or what an admin set on the Admin screen (0 = no limit)."""
+    return float(effective(session, settings)["monthly_llm_budget_usd"])
 
 
 def link_base(session: Session, settings: Settings) -> str:

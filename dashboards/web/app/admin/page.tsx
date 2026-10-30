@@ -413,7 +413,7 @@ function LlmTab() {
           </div>
         )}
         <p className="muted small" style={{ padding: "10px 18px 14px" }}>
-          Ngân sách tháng đặt bằng MONTHLY_LLM_BUDGET_USD. Rubric v1; trọng số severity đổi qua SCORING_WEIGHTS rồi chạy{" "}
+          Ngân sách tháng: MONTHLY_LLM_BUDGET_USD, sửa được ở “Cài đặt review” bên dưới. Rubric v1; trọng số severity đổi qua SCORING_WEIGHTS rồi chạy{" "}
           <code>codepulse metrics recompute</code>.
         </p>
       </Card>

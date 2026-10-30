@@ -23,7 +23,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.admin_settings import with_overrides
+from app.admin_settings import monthly_budget_usd, with_overrides
 from app.collector.gitlab.client import ArchiveTooLarge, GitLabClient, GitLabError
 from app.collector.sync import client_factory
 from app.config import Settings, get_settings
@@ -158,6 +158,11 @@ def month_spend_usd(session: Session, now: datetime | None = None) -> float:
     """The month's LLM spend: reviews' `cost_usd` plus every knowledge row's `meta.cost_usd`,
     whatever its status (active, superseded, failed: all were paid), plus the .claude command
     runs (app/commands). The one budget figure they all share (docs/specs/19 §6)."""
+    return float(month_spend_breakdown(session, now)["total_usd"])
+
+
+def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict[str, Any]:
+    """month_spend_usd split by source, for the logs that explain a budget stop."""
     now = now or datetime.now(UTC)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     reviews = session.scalar(
@@ -176,7 +181,13 @@ def month_spend_usd(session: Session, now: datetime | None = None) -> float:
             builds += float((data or {}).get("meta", {}).get("cost_usd") or 0)
         except (TypeError, ValueError, AttributeError):
             continue
-    return round(float(reviews or 0) + float(commands or 0) + builds, 4)
+    return {
+        "month_start": month_start.isoformat(),
+        "reviews_usd": round(float(reviews or 0), 4),
+        "commands_usd": round(float(commands or 0), 4),
+        "knowledge_usd": round(builds, 4),
+        "total_usd": round(float(reviews or 0) + float(commands or 0) + builds, 4),
+    }
 
 
 def newest_build_at(session: Session, project_id: int) -> datetime | None:
@@ -499,12 +510,27 @@ def run_build(
             _note_refused(progress, project_id, str(loaded["reason"]), built_by)
             return loaded
         target = loaded
-        budget = settings.monthly_llm_budget_usd
-        spent = month_spend_usd(session)
+        budget = monthly_budget_usd(session, settings)
+        spend = month_spend_breakdown(session)
+        spent = spend["total_usd"]
         if budget > 0 and spent >= budget:
             log.error(
-                "monthly LLM budget reached, knowledge build refused",
-                extra={"spent_usd": spent, "budget_usd": budget, "project_id": project_id},
+                "monthly LLM budget reached, knowledge build refused: %.2f / %.2f USD "
+                "(reviews %.2f, knowledge %.2f, commands %.2f since %s); "
+                "raise MONTHLY_LLM_BUDGET_USD or wait for next month",
+                spent,
+                budget,
+                spend["reviews_usd"],
+                spend["knowledge_usd"],
+                spend["commands_usd"],
+                spend["month_start"],
+                extra={
+                    **spend,
+                    "spent_usd": spent,
+                    "budget_usd": budget,
+                    "project_id": project_id,
+                    "built_by": built_by,
+                },
             )
             record_failure(
                 session,

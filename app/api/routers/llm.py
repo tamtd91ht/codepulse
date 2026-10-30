@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.admin_settings import with_overrides
+from app.admin_settings import monthly_budget_usd, with_overrides
 from app.api.audit import audit
 from app.api.deps import get_secret_box, get_session
 from app.api.schemas import LlmLoginCodeIn, LlmLoginOut, LlmTokenIn, LlmTokenOut
@@ -89,7 +89,8 @@ def llm_check(
         latency_ms=report.status.latency_ms,
     )
     session.commit()
-    return {**report.to_dict(), "usage": month_usage(session, settings.monthly_llm_budget_usd)}
+    usage = month_usage(session, monthly_budget_usd(session, settings))
+    return {**report.to_dict(), "usage": usage}
 
 
 # -- Claude subscription token: "Đăng nhập Claude" or a pasted `claude setup-token` token --------

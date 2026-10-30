@@ -69,7 +69,9 @@ def review_settings(settings: Settings, session: Session | None = None) -> Revie
         max_review_loc=int(edited.get("max_review_loc", settings.max_review_loc)),
         max_tokens_per_chunk=settings.max_tokens_per_chunk,
         min_confidence=settings.min_confidence,
-        monthly_budget_usd=settings.monthly_llm_budget_usd,
+        monthly_budget_usd=float(
+            edited.get("monthly_llm_budget_usd", settings.monthly_llm_budget_usd)
+        ),
         claude_file_chars=int(edited.get("claude_file_chars", settings.claude_file_chars)),
         fast_guidance_chars=int(edited.get("fast_guidance_chars", settings.fast_guidance_chars)),
         deep_instructions_chars=int(

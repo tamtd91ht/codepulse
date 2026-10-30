@@ -34,3 +34,11 @@ def test_model_ids(model: str) -> None:
 def test_bad_model_ids(model: object) -> None:
     with pytest.raises(ValueError):
         clean("llm_model", model)
+
+
+def test_monthly_budget_takes_whole_dollars_and_zero_means_no_limit() -> None:
+    assert clean("monthly_llm_budget_usd", 0) == 0
+    assert clean("monthly_llm_budget_usd", 350) == 350
+    for bad in (-1, 1.5, "200", True):
+        with pytest.raises(ValueError):
+            clean("monthly_llm_budget_usd", bad)

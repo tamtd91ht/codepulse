@@ -239,7 +239,7 @@ def test_monthly_budget_pauses_reviews(
     review = run(db_session, provider, project, merge_request, monthly_budget_usd=10.0)
     assert review.status == status
     if status == "failed":
-        assert review.error == "monthly LLM budget reached"
+        assert review.error == "monthly LLM budget reached: 10.00 / 10.00 USD"
         assert provider.prompts == []
 
 

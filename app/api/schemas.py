@@ -845,8 +845,8 @@ class ReviewSettingOut(BaseModel):
     key: str
     env: str  # the environment variable it overrides
     kind: str  # int | model | url
-    value: int | str  # what reviews use now
-    default: int | str  # from the environment (or the built-in default)
+    value: int | float | str  # what reviews use now
+    default: int | float | str  # from the environment (or the built-in default)
     overridden: bool
     minimum: int | None = None  # int settings only
     maximum: int | None = None
@@ -869,6 +869,7 @@ class ReviewSettingsIn(BaseModel):
     command_clone_depth: Annotated[int, Field(strict=True)] | None = None
     command_max_output_mb: Annotated[int, Field(strict=True)] | None = None
     command_file_ttl_hours: Annotated[int, Field(strict=True)] | None = None
+    monthly_llm_budget_usd: Annotated[int, Field(strict=True)] | None = None
 
 
 class LiveEvent(BaseModel):

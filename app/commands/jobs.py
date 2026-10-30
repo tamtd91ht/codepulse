@@ -158,7 +158,7 @@ def run_command_job(run_id: int, timeout_s: int | None = None) -> None:
             plan = _plan(session, run, settings)
         except RuntimeError as exc:
             error = str(exc)
-        budget = settings.monthly_llm_budget_usd
+        budget = float(limits["monthly_llm_budget_usd"])
         if error is None and budget > 0 and month_spend_usd(session) >= budget:
             error = "đã hết ngân sách LLM của tháng (MONTHLY_LLM_BUDGET_USD)"
         now = _now()

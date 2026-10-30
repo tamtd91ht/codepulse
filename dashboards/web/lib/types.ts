@@ -741,7 +741,8 @@ export interface ReviewSetting {
     | "command_max_budget_usd"
     | "command_clone_depth"
     | "command_max_output_mb"
-    | "command_file_ttl_hours";
+    | "command_file_ttl_hours"
+    | "monthly_llm_budget_usd";
   env: string;
   kind: "int" | "model" | "url";
   value: number | string;

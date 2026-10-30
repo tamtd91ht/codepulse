@@ -680,9 +680,11 @@ class ReviewService:
         over_limit = prepared.loc > settings.max_review_loc
         if over_limit and not settings.ignore_loc_limit:
             return self._finish(review, "skipped", f"{TOO_LARGE}: {prepared.loc} LOC")
-        if not self._within_budget():
+        over_budget = self._over_budget(review, project)
+        if over_budget is not None:
             # "failed", not "skipped": the review can be re-run once the budget allows it.
-            return self._fail(review, "monthly LLM budget reached")
+            # The detail after ":" stays in CodePulse (public_error keeps the kind only).
+            return self._fail(review, f"monthly LLM budget reached: {over_budget}")
 
         # What the project is and how its team reviews: the compiled review knowledge
         # (docs/specs/19; its DOMAIN is the profile) or, while a project has none, the cached
@@ -1147,23 +1149,42 @@ class ReviewService:
 
         return month_spend_usd(self._session, self._clock())
 
-    def _within_budget(self) -> bool:
-        """docs/specs/06: pause over MONTHLY_LLM_BUDGET_USD; 13: alert from 80%."""
+    def _over_budget(self, review: Review, project: Project) -> str | None:
+        """docs/specs/06: pause over MONTHLY_LLM_BUDGET_USD; 13: alert from 80%. None while
+        within budget, else "<spent> / <budget> USD" for the review's error."""
         budget = self._settings.monthly_budget_usd
         if budget <= 0:
-            return True
-        spent = self.month_spend_usd()
+            return None
+        from app.workers.knowledge_jobs import month_spend_breakdown  # lazy: worker imports us
+
+        spend = month_spend_breakdown(self._session, self._clock())
+        spent = spend["total_usd"]
+        context = {
+            **spend,
+            "spent_usd": spent,
+            "budget_usd": budget,
+            "review_id": review.id,
+            "project_id": project.id,
+        }
         if spent >= budget:
             log.error(
-                "monthly LLM budget reached, reviews paused",
-                extra={"spent_usd": spent, "budget_usd": budget},
+                "monthly LLM budget reached, reviews paused: %.2f / %.2f USD "
+                "(reviews %.2f, knowledge %.2f, commands %.2f since %s); "
+                "raise MONTHLY_LLM_BUDGET_USD or wait for next month",
+                spent,
+                budget,
+                spend["reviews_usd"],
+                spend["knowledge_usd"],
+                spend["commands_usd"],
+                spend["month_start"],
+                extra=context,
             )
-            return False
+            return f"{spent:.2f} / {budget:.2f} USD"
         if spent >= 0.8 * budget:
             log.warning(
-                "monthly LLM budget above 80%", extra={"spent_usd": spent, "budget_usd": budget}
+                "monthly LLM budget above 80%%: %.2f / %.2f USD", spent, budget, extra=context
             )
-        return True
+        return None
 
     def _record_usage(self, review: Review, calls: list[ReviewResult]) -> None:
         if not calls:

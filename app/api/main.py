@@ -13,6 +13,7 @@ from redis import Redis
 from sqlalchemy import Engine
 
 from app import health
+from app.admin_settings import monthly_budget_usd
 from app.api import auth
 from app.api.routers import (
     activity,
@@ -36,7 +37,7 @@ from app.api.routers import (
 )
 from app.collector.gitlab.client import GitLabError
 from app.config import get_settings
-from app.db import get_engine, get_redis
+from app.db import get_engine, get_redis, get_sessionmaker
 from app.logging import configure_logging, request_id_var
 from app.monitoring import CodePulseCollector
 from app.webhook.router import router as webhook_router
@@ -144,10 +145,14 @@ def healthz(
     )
 
 
+def _budget_usd() -> float:
+    """MONTHLY_LLM_BUDGET_USD as the Admin screen may have changed it."""
+    with get_sessionmaker()() as session:
+        return monthly_budget_usd(session, get_settings())
+
+
 _registry = CollectorRegistry()
-_registry.register(
-    CodePulseCollector(get_engine, get_redis, lambda: get_settings().monthly_llm_budget_usd)
-)
+_registry.register(CodePulseCollector(get_engine, get_redis, _budget_usd))
 
 
 @app.get("/metrics", include_in_schema=False)

@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.admin_settings import monthly_budget_usd
 from app.api.audit import audit
 from app.api.deps import get_queue, get_secret_box, get_session
 from app.api.schemas import (
@@ -1088,7 +1089,7 @@ def llm_costs(
         .limit(months)
     ).all()
     return {
-        "budget_usd": settings.monthly_llm_budget_usd,
+        "budget_usd": monthly_budget_usd(session, settings),
         "months": [
             {"month": m.date().isoformat()[:7], "cost_usd": float(cost), "reviews": count}
             for m, cost, count in rows
