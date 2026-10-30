@@ -67,6 +67,21 @@ def test_max_review_loc_overrides_the_environment_and_reaches_the_worker(
     assert review_settings(settings, db_session).max_review_loc == settings.max_review_loc
 
 
+def test_review_agent_min_loc_reaches_the_worker(
+    client: TestClient, world: World, as_user: Any, settings: Settings, db_session: Session
+) -> None:
+    admin = as_user(world.admin)
+    url = "/api/v1/admin/review-settings"
+    assert review_settings(settings, db_session).agent_min_loc == settings.review_agent_min_loc
+    # 0 is allowed: every diff of a repo with "Sâu" on gets the deep pass.
+    response = client.put(url, headers=admin, json={"review_agent_min_loc": 0})
+    assert response.status_code == 200
+    assert review_settings(settings, db_session).agent_min_loc == 0
+    assert client.put(url, headers=admin, json={"review_agent_min_loc": -1}).status_code == 422
+    client.put(url, headers=admin, json={"review_agent_min_loc": None})
+    assert review_settings(settings, db_session).agent_min_loc == settings.review_agent_min_loc
+
+
 def test_review_model_defaults_to_opus_and_reaches_the_provider(
     client: TestClient, world: World, as_user: Any, settings: Settings, db_session: Session
 ) -> None:

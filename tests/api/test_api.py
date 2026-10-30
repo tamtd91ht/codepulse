@@ -498,6 +498,38 @@ def test_rerun_many_reports_each_review(
     assert client.post("/api/v1/reviews/rerun", json={"ids": []}, headers=lead).status_code == 422
 
 
+def test_rerunnable_lists_every_match_the_viewer_may_run_again(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "/api/v1/reviews/rerunnable?status=done&status=failed"
+    # Not managing the dự án: nothing to run again, though the reviews are visible.
+    assert client.get(url, headers=as_user(world.lead)).json() == {
+        "ids": [],
+        "done": 0,
+        "truncated": False,
+    }
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
+    lead = as_user(world.lead)
+    # The closed MR's review is left out, as the list's can_rerun says.
+    assert client.get(url, headers=lead).json() == {
+        "ids": [world.binh_review.id],
+        "done": 0,
+        "truncated": False,
+    }
+    only_done = client.get("/api/v1/reviews/rerunnable?status=done", headers=lead)
+    assert only_done.json()["ids"] == []
+    world.binh_review.status = "done"
+    db_session.commit()
+    assert client.get(url, headers=lead).json()["done"] == 1
+    # Past the cap: the newest are returned and the rest reported as left out.
+    monkeypatch.setattr("app.api.routers.reviews.RERUNNABLE_MAX", 0)
+    assert client.get(url, headers=lead).json() == {"ids": [], "done": 0, "truncated": True}
+
+
 @pytest.mark.parametrize(
     ("method", "path"),
     [

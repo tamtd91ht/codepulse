@@ -352,6 +352,15 @@ export interface RerunManyOut {
   failed: { id: number; error: string }[];
 }
 
+/** GET /reviews/rerunnable: every review matching the list's filters that may run again. */
+export interface RerunnableOut {
+  ids: number[];
+  /** How many of them are finished (each gets a new round). */
+  done: number;
+  /** More matched than one batch takes; only the newest are in `ids`. */
+  truncated: boolean;
+}
+
 export interface ReviewDetail extends Review {
   findings: Finding[];
   project: string | null;
@@ -709,6 +718,7 @@ export interface LiveReview {
 export interface ReviewSetting {
   key:
     | "max_review_loc"
+    | "review_agent_min_loc"
     | "llm_model"
     | "public_url"
     | "claude_file_chars"

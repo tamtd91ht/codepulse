@@ -21,6 +21,7 @@ from app.api.schemas import (
     RerunIn,
     RerunManyIn,
     RerunManyOut,
+    RerunnableOut,
     ReviewDetail,
     ReviewListItem,
     ReviewOut,
@@ -53,6 +54,8 @@ router = APIRouter(tags=["reviews"])
 SessionDep = Annotated[Session, Depends(get_session)]
 Limit = Annotated[int, Query(ge=1, le=200)]
 ReviewStatus = Literal["queued", "running", "done", "failed", "skipped", "superseded"]
+# "Chọn tất cả" stops here: a batch past it is more LLM spend than one click should start.
+RERUNNABLE_MAX = 500
 
 
 def scoped[Q: Select[Any] | Select[Any, Any, Any]](query: Q, principal: Principal) -> Q:
@@ -114,23 +117,21 @@ def _target(session: Session, review: Review) -> tuple[Project | None, str | Non
     return project, url, label
 
 
-@router.get("/reviews", response_model=Page[ReviewListItem])
-def list_reviews(
-    principal: CurrentPrincipal,
-    session: SessionDep,
-    settings: Annotated[Settings, Depends(get_settings)],
-    user_id: int | None = None,
-    project_id: int | None = None,
-    business_project_id: int | None = None,
-    severity: str | None = None,
-    verdict: Literal["approve", "needs_human", "fix_required", "block"] | None = None,
-    trigger: str | None = None,
-    status: Annotated[list[ReviewStatus] | None, Query()] = None,
-    date_from: Annotated[date | None, Query(alias="from")] = None,
-    date_to: Annotated[date | None, Query(alias="to")] = None,
-    cursor: str | None = None,
-    limit: Limit = 50,
-) -> Page[Any]:
+def _filtered(
+    principal: Principal,
+    settings: Settings,
+    *,
+    user_id: int | None,
+    project_id: int | None,
+    business_project_id: int | None,
+    severity: str | None,
+    verdict: str | None,
+    trigger: str | None,
+    status: list[ReviewStatus] | None,
+    date_from: date | None,
+    date_to: date | None,
+) -> Select[Any]:
+    """Reviews the viewer may see that match the filters of "Kết quả review"."""
     if user_id is not None and not _may_filter_by(principal, user_id):
         raise HTTPException(403, "not allowed to see this person's reviews")
     query = scoped(select(Review), principal)
@@ -155,7 +156,39 @@ def list_reviews(
         with_severity = select(ReviewFinding.review_id).where(ReviewFinding.severity == severity)
         query = query.where(Review.id.in_(with_severity))
     # Days of the change itself (commit time; MR opened), as the list is sorted.
-    query = _range(query, Review.counted_at, date_from, date_to, ZoneInfo(settings.report_tz))
+    return _range(query, Review.counted_at, date_from, date_to, ZoneInfo(settings.report_tz))
+
+
+@router.get("/reviews", response_model=Page[ReviewListItem])
+def list_reviews(
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+    user_id: int | None = None,
+    project_id: int | None = None,
+    business_project_id: int | None = None,
+    severity: str | None = None,
+    verdict: Literal["approve", "needs_human", "fix_required", "block"] | None = None,
+    trigger: str | None = None,
+    status: Annotated[list[ReviewStatus] | None, Query()] = None,
+    date_from: Annotated[date | None, Query(alias="from")] = None,
+    date_to: Annotated[date | None, Query(alias="to")] = None,
+    cursor: str | None = None,
+    limit: Limit = 50,
+) -> Page[Any]:
+    query = _filtered(
+        principal,
+        settings,
+        user_id=user_id,
+        project_id=project_id,
+        business_project_id=business_project_id,
+        severity=severity,
+        verdict=verdict,
+        trigger=trigger,
+        status=status,
+        date_from=date_from,
+        date_to=date_to,
+    )
     if (after := _decode_changed_cursor(cursor)) is not None:
         query = query.where(tuple_(Review.changed_at, Review.id) < tuple_(*after))
     # Newest change first: ix_reviews_changed_at_id serves both the order and the cursor.
@@ -195,6 +228,81 @@ def list_reviews(
         _encode_changed_cursor(rows[limit - 1].changed_at, rows[limit - 1].id) if more else None
     )
     return Page(items=items, next_cursor=next_cursor)
+
+
+@router.get("/reviews/rerunnable", response_model=RerunnableOut)
+def rerunnable_reviews(
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+    user_id: int | None = None,
+    project_id: int | None = None,
+    business_project_id: int | None = None,
+    severity: str | None = None,
+    verdict: Literal["approve", "needs_human", "fix_required", "block"] | None = None,
+    trigger: str | None = None,
+    status: Annotated[list[ReviewStatus] | None, Query()] = None,
+    date_from: Annotated[date | None, Query(alias="from")] = None,
+    date_to: Annotated[date | None, Query(alias="to")] = None,
+) -> dict[str, Any]:
+    """Every review the list would show (same filters, all pages) that the viewer may run again:
+    "chọn tất cả" of "Kết quả review", newest change first, at most RERUNNABLE_MAX of them."""
+    query = _filtered(
+        principal,
+        settings,
+        user_id=user_id,
+        project_id=project_id,
+        business_project_id=business_project_id,
+        severity=severity,
+        verdict=verdict,
+        trigger=trigger,
+        status=status,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    if user_id is not None and user_id != principal.user_id:
+        audit(session, principal.user_id, "reviews.read", f"user:{user_id}")
+        session.commit()
+    managed = principal.managed_projects()
+    if managed is not None and not managed:
+        return {"ids": [], "done": 0, "truncated": False}
+    # _can_rerun and the manage check in SQL, so the scan stops after RERUNNABLE_MAX + 1 rows.
+    # Keep this a subset of _can_rerun (still checked per row): the list's can_rerun is the rule.
+    repos = select(Project.id).where(Project.tracked, Project.review_enabled.is_(True))
+    if managed is not None:
+        repos = repos.where(Project.business_project_id.in_(managed))
+    open_head = exists().where(
+        MergeRequest.id == Review.mr_id,
+        MergeRequest.project_id.in_(repos),
+        MergeRequest.state == "opened",
+        MergeRequest.head_sha == Review.reviewed_sha,
+    )
+    commit_in_repo = Review.commit_sha.in_(select(Commit.sha).where(Commit.project_id.in_(repos)))
+    query = query.where(
+        Review.status.in_(("done", "failed", "skipped")),
+        Review.superseded_by.is_(None),
+        Review.rubric_version == RUBRIC_VERSION,
+        or_(open_head, Review.mr_id.is_(None) & commit_in_repo),
+    )
+    rows = session.scalars(
+        query.order_by(Review.changed_at.desc(), Review.id.desc()).limit(RERUNNABLE_MAX + 1)
+    ).all()
+    ids: list[int] = []
+    done = 0
+    truncated = False
+    for review in rows:
+        project = review_repo(session, review)
+        if not (
+            _can_rerun(session, review, project)
+            and principal.can_manage_project(project.business_project_id if project else None)
+        ):
+            continue
+        if len(ids) == RERUNNABLE_MAX:
+            truncated = True
+            break
+        ids.append(review.id)
+        done += review.status == "done"
+    return {"ids": ids, "done": done, "truncated": truncated}
 
 
 def _visible_review(session: Session, principal: Principal, review_id: int) -> Review:

@@ -9,9 +9,11 @@ import { announceReviewQueued } from "@/components/ReviewActivity";
 import { Alert, Avatar, Card, EmptyState, ExternalLink, Loading, Pill } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
 import { VERDICT_LABEL, dateTime, num } from "@/lib/format";
-import type { Page, Person, RerunManyOut, ReviewListItem, Verdict } from "@/lib/types";
+import type { Page, Person, RerunManyOut, RerunnableOut, ReviewListItem, Verdict } from "@/lib/types";
 
 const PAGE = 25;
+// POST /reviews/rerun takes this many ids at a time.
+const BATCH = 100;
 
 const STATUS: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "info" }> = {
   failed: { label: "Lỗi", tone: "bad" },
@@ -20,11 +22,13 @@ const STATUS: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "
   running: { label: "Đang chạy", tone: "info" },
 };
 
-type StatusFilter = "results" | "done" | "problems";
+type StatusFilter = "results" | "done" | "failed" | "skipped" | "problems";
 // "Kết quả": what a review ended with (older rounds of the same change are left out).
 const STATUSES: Record<StatusFilter, string[]> = {
   results: ["done", "failed", "skipped"],
   done: ["done"],
+  failed: ["failed"],
+  skipped: ["skipped"],
   problems: ["failed", "skipped"],
 };
 
@@ -67,6 +71,9 @@ export function ReviewResults({
   const [status, setStatus] = useState<StatusFilter>("results");
   // Re-run several at once: only rows the API marks can_rerun (the viewer manages them).
   const [chosen, setChosen] = useState<Set<number>>(() => new Set());
+  // "Chọn tất cả" past the loaded pages: every match of the filters `base` was, from the API.
+  const [everyMatch, setEveryMatch] = useState<(RerunnableOut & { base: string }) | null>(null);
+  const [finding, setFinding] = useState(false);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<{ tone: "success" | "warning" | "error"; text: string } | null>(null);
   // Everyone whose reviews the viewer may see (developer: themselves; lead: the team; admin: all).
@@ -109,6 +116,26 @@ export function ReviewResults({
   // Rows that left the list (filter changed) are no longer chosen.
   const selected = selectable.filter((r) => chosen.has(r.id));
   const allSelected = selectable.length > 0 && selected.length === selectable.length;
+  // Valid only for the filters it was asked under; changing one drops it.
+  const all = everyMatch && everyMatch.base === base ? everyMatch : null;
+  const count = all ? all.ids.length : selected.length;
+  const clear = () => {
+    setChosen(new Set());
+    setEveryMatch(null);
+  };
+  const chooseEveryMatch = async () => {
+    if (!base) return;
+    setFinding(true);
+    setSent(null);
+    try {
+      const out = await api.get<RerunnableOut>(base.replace("/reviews?", "/reviews/rerunnable?"));
+      setEveryMatch({ ...out, base });
+    } catch (e) {
+      setSent({ tone: "error", text: `Không lấy được danh sách: ${e instanceof ApiError ? e.message : String(e)}` });
+    } finally {
+      setFinding(false);
+    }
+  };
   const toggle = (id: number) =>
     setChosen((prev) => {
       const next = new Set(prev);
@@ -117,18 +144,28 @@ export function ReviewResults({
       return next;
     });
   const rerun = async () => {
-    const finished = selected.filter((r) => r.status === "done").length;
+    const ids = all ? all.ids : selected.map((r) => r.id);
+    const finished = all ? all.done : selected.filter((r) => r.status === "done").length;
     const ok = window.confirm(
-      `Review lại ${selected.length} kết quả? Việc này tốn ngân sách LLM${
+      `Review lại ${ids.length} kết quả? Việc này tốn ngân sách LLM${
         finished ? `; ${finished} review đã chấm điểm sẽ có lần review mới, lần cũ được giữ làm lịch sử` : ""
       }.`,
     );
     if (!ok) return;
     setSending(true);
     setSent(null);
+    const out: RerunManyOut = { queued: [], failed: [] };
     try {
-      const out = await api.post<RerunManyOut>("/reviews/rerun", { ids: selected.map((r) => r.id) });
-      const why = out.failed.map((f) => `#${f.id}: ${f.error}`).join("; ");
+      for (let i = 0; i < ids.length; i += BATCH) {
+        const part = await api.post<RerunManyOut>("/reviews/rerun", { ids: ids.slice(i, i + BATCH) });
+        out.queued.push(...part.queued);
+        out.failed.push(...part.failed);
+      }
+      const why =
+        out.failed
+          .slice(0, 5)
+          .map((f) => `#${f.id}: ${f.error}`)
+          .join("; ") + (out.failed.length > 5 ? `; và ${out.failed.length - 5} review khác` : "");
       setSent(
         out.failed.length === 0
           ? { tone: "success", text: `Đã đưa ${out.queued.length} review vào hàng đợi; theo dõi ở góc phải màn hình.` }
@@ -137,11 +174,18 @@ export function ReviewResults({
               text: `Đã đưa ${out.queued.length} review vào hàng đợi, ${out.failed.length} không chạy được (${why}).`,
             },
       );
-      setChosen(new Set());
+      clear();
       if (out.queued.length) announceReviewQueued();
       await pages.mutate();
     } catch (e) {
-      setSent({ tone: "error", text: `Không gửi được: ${e instanceof ApiError ? e.message : String(e)}` });
+      // Earlier batches of a long selection may be queued already: say so, and keep the list fresh.
+      const done = out.queued.length ? `Đã đưa ${out.queued.length} review vào hàng đợi; phần còn lại ` : "";
+      setSent({ tone: "error", text: `${done}Không gửi được: ${e instanceof ApiError ? e.message : String(e)}` });
+      if (out.queued.length) {
+        clear();
+        announceReviewQueued();
+        void pages.mutate();
+      }
     } finally {
       setSending(false);
     }
@@ -214,6 +258,8 @@ export function ReviewResults({
           <select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)} aria-label="Lọc theo trạng thái">
             <option value="results">Mọi kết quả</option>
             <option value="done">Đã chấm điểm</option>
+            <option value="failed">Lỗi</option>
+            <option value="skipped">Bỏ qua</option>
             <option value="problems">Lỗi hoặc bỏ qua</option>
           </select>
         </label>
@@ -225,20 +271,31 @@ export function ReviewResults({
         )}
       </div>
 
-      {(selected.length > 0 || sent) && (
+      {(count > 0 || sent) && (
         <div className="results-error">
           {sent && (
             <Alert tone={sent.tone} onClose={() => setSent(null)}>
               {sent.text}
             </Alert>
           )}
-          {selected.length > 0 && (
+          {count > 0 && (
             <>
-              <span className="small">Đã chọn {selected.length}</span>
-              <button type="button" className="sm primary ink" onClick={() => void rerun()} disabled={sending}>
-                {sending ? "Đang gửi…" : "↻ Review lại"}
+              <span className="small">
+                {all
+                  ? `Đã chọn tất cả ${all.ids.length} review chạy lại được khớp bộ lọc${
+                      all.truncated ? " (mới nhất trước; phần còn lại chọn lại sau lượt này)" : ""
+                    }`
+                  : `Đã chọn ${selected.length}`}
+              </span>
+              {!all && allSelected && last?.next_cursor && (
+                <button type="button" className="sm ghost" onClick={() => void chooseEveryMatch()} disabled={finding || sending}>
+                  {finding ? "Đang tìm…" : "Chọn tất cả khớp bộ lọc (cả trang chưa tải)"}
+                </button>
+              )}
+              <button type="button" className="sm primary ink" onClick={() => void rerun()} disabled={sending || finding}>
+                {sending ? "Đang gửi…" : `↻ Review lại ${count}`}
               </button>
-              <button type="button" className="sm ghost" onClick={() => setChosen(new Set())} disabled={sending}>
+              <button type="button" className="sm ghost" onClick={clear} disabled={sending}>
                 Bỏ chọn
               </button>
             </>
@@ -277,7 +334,10 @@ export function ReviewResults({
                       <input
                         type="checkbox"
                         checked={allSelected}
-                        onChange={() => setChosen(allSelected ? new Set() : new Set(selectable.map((r) => r.id)))}
+                        onChange={() => {
+                          setEveryMatch(null);
+                          setChosen(allSelected ? new Set() : new Set(selectable.map((r) => r.id)));
+                        }}
                         aria-label="Chọn mọi review chạy lại được"
                       />
                     </th>
@@ -308,8 +368,11 @@ export function ReviewResults({
                           {r.can_rerun && (
                             <input
                               type="checkbox"
-                              checked={chosen.has(r.id)}
-                              onChange={() => toggle(r.id)}
+                              checked={chosen.has(r.id) || !!all?.ids.includes(r.id)}
+                              onChange={() => {
+                                setEveryMatch(null);
+                                toggle(r.id);
+                              }}
                               aria-label={`Chọn ${r.target} để review lại`}
                             />
                           )}
@@ -318,6 +381,11 @@ export function ReviewResults({
                       <td>
                         <Link href={`/reviews/${r.id}`}>{r.target}</Link>
                         {r.round > 1 && <span className="muted small"> · vòng {r.round}</span>}
+                        {r.status !== "done" && r.error && (
+                          <div className="muted small" title={r.error}>
+                            {r.error.length > 90 ? `${r.error.slice(0, 90)}…` : r.error}
+                          </div>
+                        )}
                       </td>
                       {person === undefined && (
                       <td>

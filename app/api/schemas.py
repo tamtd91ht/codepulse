@@ -554,6 +554,14 @@ class RerunManyOut(BaseModel):
     failed: list[RerunFailure]
 
 
+class RerunnableOut(BaseModel):
+    """Reviews matching a filter that the viewer may run again ("chọn tất cả")."""
+
+    ids: list[int]
+    done: int  # how many of them are finished (they get a new round)
+    truncated: bool  # more matched than one batch takes
+
+
 # -- review on request (docs/specs/17) ------------------------------------------------------------
 
 
@@ -847,6 +855,7 @@ class ReviewSettingsIn(BaseModel):
 
     # None = back to the environment default; app/admin_settings.clean checks the values.
     max_review_loc: Annotated[int, Field(ge=1, le=1_000_000, strict=True)] | None = None
+    review_agent_min_loc: Annotated[int, Field(strict=True)] | None = None
     llm_model: Annotated[str, Field(min_length=1, max_length=100)] | None = None
     public_url: Annotated[str, Field(min_length=1, max_length=300)] | None = None
     claude_file_chars: Annotated[int, Field(strict=True)] | None = None

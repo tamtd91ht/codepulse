@@ -46,6 +46,7 @@ export function ReviewSettings() {
   const [customModel, setCustomModel] = useState(false);
   const find = (key: Key) => settings.data?.find((s) => s.key === key);
   const loc = find("max_review_loc");
+  const agentLoc = find("review_agent_min_loc");
   const model = find("llm_model");
   const link = find("public_url");
 
@@ -252,6 +253,44 @@ export function ReviewSettings() {
             {loc.overridden && (
               <button type="button" onClick={() => save("max_review_loc", null)} disabled={busy}>
                 Về mặc định ({String(loc.default)})
+              </button>
+            )}
+          </div>
+        </form>
+      )}
+
+      {agentLoc && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            save("review_agent_min_loc", Number(field(e, "review_agent_min_loc")));
+          }}
+          style={{ display: "grid", gap: 10, padding: "0 18px 14px" }}
+        >
+          <label style={{ display: "grid", gap: 4, maxWidth: 320 }}>
+            <span className="small muted">Số dòng thay đổi tối thiểu để review sâu ({agentLoc.env})</span>
+            <input
+              key={String(agentLoc.value)}
+              name="review_agent_min_loc"
+              type="number"
+              required
+              min={agentLoc.minimum ?? undefined}
+              max={agentLoc.maximum ?? undefined}
+              defaultValue={Number(agentLoc.value)}
+            />
+          </label>
+          <p className="muted small">
+            Đếm dòng thêm + dòng xoá của các file được review. Diff nhỏ hơn chỉ review nhanh (đọc diff, không mở mã
+            nguồn); từ ngưỡng này trở lên, repo bật cờ “Sâu” được review sâu (tốn thêm LLM). Đặt 0 để luôn review sâu.{" "}
+            {agentLoc.overridden ? `Mặc định trong .env: ${agentLoc.default}.` : "Đang dùng giá trị trong .env."}
+          </p>
+          <div className="toolbar">
+            <button type="submit" disabled={busy}>
+              Lưu
+            </button>
+            {agentLoc.overridden && (
+              <button type="button" onClick={() => save("review_agent_min_loc", null)} disabled={busy}>
+                Về mặc định ({String(agentLoc.default)})
               </button>
             )}
           </div>

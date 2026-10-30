@@ -13,6 +13,8 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | GET | `/reviews?user_id=&project_id=&from=&to=&severity=` | Danh sách review | theo phạm vi |
 | GET | `/reviews/{id}` | Chi tiết + findings | theo phạm vi |
 | POST | `/reviews/{id}/rerun` | Review lại | lead |
+| POST | `/reviews/rerun` | Review lại nhiều kết quả (tối đa 100 id/lần), báo lý do từng cái không chạy được | lead |
+| GET | `/reviews/rerunnable?` (cùng bộ lọc với `/reviews`) | Mọi review khớp bộ lọc mà người xem được chạy lại ("chọn tất cả", tối đa 500, mới nhất trước) | lead |
 | GET | `/findings?severity=critical&status=open` | Danh sách finding | theo phạm vi |
 | POST | `/findings/{id}/dispute` | Dev khiếu nại | chủ finding |
 | POST | `/disputes/{id}/decide` | Lead duyệt | lead |

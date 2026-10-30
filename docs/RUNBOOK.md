@@ -169,7 +169,7 @@ Review được gom theo `mode/rubric_version` (ví dụ `fast/v2`, `deep/v2`, `
 - `dispute_acceptance.<severity>.rate`: tỉ lệ khiếu nại được chấp nhận trên số khiếu nại đã quyết (cao = reviewer nhiễu ở severity đó).
 - `drift.mean_abs_score_diff`, `drift.verdict_change_rate`: cùng sha review ≥ 2 vòng, lệch điểm tuyệt đối trung bình và tỉ lệ đổi verdict giữa hai vòng liên tiếp (đo độ ổn định; nhóm là của vòng sau).
 
-Quy trình A/B: chọn 30 commit/MR tiêu biểu (đủ repo, đủ cỡ diff). Chạy luồng cũ (mode `fast`/`deep`) rồi chạy v2 trên **cùng sha** bằng nút *Review lại* (force) ở dashboard; mỗi lần chạy là một vòng mới nên `drift` đo thẳng được chênh lệch cũ–mới. Lấy `review-metrics` cho khoảng ngày chạy luồng cũ (`before.json`) và khoảng chạy v2 (`after.json`), so bằng `review-metrics-compare`, rồi chỉnh trần (`REVIEW_AGENT_MIN_LOC`, số lượt, ngân sách) theo kết quả; eval chạy lại như mục 8.
+Quy trình A/B: chọn 30 commit/MR tiêu biểu (đủ repo, đủ cỡ diff). Chạy luồng cũ (mode `fast`/`deep`) rồi chạy v2 trên **cùng sha** bằng nút *Review lại* (force) ở dashboard; mỗi lần chạy là một vòng mới nên `drift` đo thẳng được chênh lệch cũ–mới. Lấy `review-metrics` cho khoảng ngày chạy luồng cũ (`before.json`) và khoảng chạy v2 (`after.json`), so bằng `review-metrics-compare`, rồi chỉnh trần (`REVIEW_AGENT_MIN_LOC` — sửa được ở Admin › Cài đặt review, số lượt, ngân sách) theo kết quả; eval chạy lại như mục 8.
 
 ## 15. Chạy command `.claude` từ dashboard (Admin › Chạy command)
 

@@ -77,7 +77,7 @@ def review_settings(settings: Settings, session: Session | None = None) -> Revie
         ),
         scoring_weights=settings.scoring_weights,
         agent_review=settings.review_agent,
-        agent_min_loc=settings.review_agent_min_loc,
+        agent_min_loc=int(edited.get("review_agent_min_loc", settings.review_agent_min_loc)),
         agent_max_turns=settings.review_max_turns,
         agent_timeout_s=float(settings.review_timeout_s),
         agent_max_archive_bytes=settings.deep_review_max_archive_mb * 1024 * 1024,

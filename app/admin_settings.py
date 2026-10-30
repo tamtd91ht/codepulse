@@ -36,6 +36,8 @@ class Editable:
 EDITABLE: dict[str, Editable] = {
     # docs/specs/06: a larger diff is skipped as "MR quá lớn".
     "max_review_loc": Editable("MAX_REVIEW_LOC", "int", 1, 1_000_000),
+    # docs/specs/19 §8: a smaller diff gets only the no-tool pass (no checkout, no agent).
+    "review_agent_min_loc": Editable("REVIEW_AGENT_MIN_LOC", "int", 0, 1_000_000),
     # The model of every review call (fast pass, deep pass, project profile).
     "llm_model": Editable("LLM_MODEL", "model"),
     # .claude files quoted to the model (app/review/claude_kit.py, claude_repo.py): one file,
@@ -62,6 +64,7 @@ def defaults(settings: Settings) -> dict[str, Value]:
     """What each key is when nobody set it on the Admin screen."""
     return {
         "max_review_loc": settings.max_review_loc,
+        "review_agent_min_loc": settings.review_agent_min_loc,
         "llm_model": settings.llm_model.strip() or DEFAULT_REVIEW_MODEL,
         "public_url": settings.dashboard_url.rstrip("/"),
         "claude_file_chars": settings.claude_file_chars,
