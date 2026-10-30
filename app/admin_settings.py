@@ -46,6 +46,15 @@ EDITABLE: dict[str, Editable] = {
     # Base of the links sent out (Telegram, notification webhooks, report e-mails). Sign-in also
     # accepts it as an origin (app/api/auth.py); CORS keeps DASHBOARD_URL.
     "public_url": Editable("DASHBOARD_URL", "url"),
+    # Running a repo's .claude commands from the dashboard (app/commands): one run's time,
+    # turns and spend, the git history it clones, the files it may hand back, and how long
+    # files nobody downloaded stay on the server.
+    "command_timeout_min": Editable("COMMAND_TIMEOUT_MIN", "int", 1, 720),
+    "command_max_turns": Editable("COMMAND_MAX_TURNS", "int", 1, 1000),
+    "command_max_budget_usd": Editable("COMMAND_MAX_BUDGET_USD", "int", 1, 1000),
+    "command_clone_depth": Editable("COMMAND_CLONE_DEPTH", "int", 0, 1_000_000),
+    "command_max_output_mb": Editable("COMMAND_MAX_OUTPUT_MB", "int", 1, 4096),
+    "command_file_ttl_hours": Editable("COMMAND_FILE_TTL_HOURS", "int", 1, 720),
 }
 
 
@@ -58,6 +67,12 @@ def defaults(settings: Settings) -> dict[str, Value]:
         "claude_file_chars": settings.claude_file_chars,
         "fast_guidance_chars": settings.fast_guidance_chars,
         "deep_instructions_chars": settings.deep_instructions_chars,
+        "command_timeout_min": settings.command_timeout_min,
+        "command_max_turns": settings.command_max_turns,
+        "command_max_budget_usd": settings.command_max_budget_usd,
+        "command_clone_depth": settings.command_clone_depth,
+        "command_max_output_mb": settings.command_max_output_mb,
+        "command_file_ttl_hours": settings.command_file_ttl_hours,
     }
 
 

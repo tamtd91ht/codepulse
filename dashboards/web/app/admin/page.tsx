@@ -3,6 +3,7 @@
 import { type FormEvent, type KeyboardEvent, useEffect, useState } from "react";
 
 import { ClaudeLogin } from "@/components/ClaudeLogin";
+import { CommandRunner } from "@/components/CommandRunner";
 import { GitLabMembers } from "@/components/GitLabMembers";
 import { Icon, type IconName, IconButton } from "@/components/icons";
 import { LlmCheck } from "@/components/LlmCheck";
@@ -14,9 +15,9 @@ import { TelegramAdmin } from "@/components/TelegramAdmin";
 import { Card, EmptyState, Loading, Message, PageHeader } from "@/components/ui";
 import { WebhookAdmin } from "@/components/WebhookAdmin";
 import { ApiError, api, useApi } from "@/lib/api";
-import type { Account, Connection, LlmCosts, Person } from "@/lib/types";
+import type { Account, Connection, LlmCosts, Me, Person } from "@/lib/types";
 
-type Tab = "gitlab" | "repos" | "people" | "telegram" | "webhooks" | "llm" | "data";
+type Tab = "gitlab" | "repos" | "people" | "telegram" | "webhooks" | "llm" | "commands" | "data";
 const TABS: { key: Tab; label: string; icon: IconName; hint: string }[] = [
   { key: "gitlab", label: "Kết nối GitLab", icon: "gitlab", hint: "Token bot và máy chủ GitLab" },
   { key: "repos", label: "Dự án & Repo", icon: "folder", hint: "Dự án, group, repo, review theo repo" },
@@ -24,6 +25,7 @@ const TABS: { key: Tab; label: string; icon: IconName; hint: string }[] = [
   { key: "telegram", label: "Telegram", icon: "pulse", hint: "Bot nhận lệnh review theo dự án" },
   { key: "webhooks", label: "Webhook thông báo", icon: "webhook", hint: "POST kết quả review tới endpoint của bạn" },
   { key: "llm", label: "LLM & Chi phí", icon: "activity", hint: "Kết nối LLM, chi phí theo tháng" },
+  { key: "commands", label: "Chạy command", icon: "code", hint: "Chạy command trong .claude của repo, tải file kết quả" },
   { key: "data", label: "Xoá dữ liệu", icon: "remove", hint: "Làm sạch dữ liệu trên server này" },
 ];
 const isTab = (v: string): v is Tab => TABS.some((t) => t.key === v);
@@ -33,16 +35,23 @@ const KIND: Record<string, string> = { git_email: "Email git", gitlab_user: "Git
 export default function AdminPage() {
   // null until the hash is read, so a deep link never paints (or fetches) the wrong tab first.
   const [tab, setTab] = useState<Tab | null>(null);
+  // The shell already fetched /auth/me; this reads the same cache entry. Chạy command only
+  // shows while COMMAND_RUNS_ENABLED is on (a deep link to it then lands on the first tab).
+  const { data: me, error: meError } = useApi<Me>("/auth/me");
+  const ready = me !== undefined || meError !== undefined;
+  const commands = !!me?.command_runs;
+  const tabs = commands ? TABS : TABS.filter((t) => t.key !== "commands");
 
   useEffect(() => {
+    if (!ready) return;
     const fromHash = () => {
       const key = window.location.hash.replace("#", "");
-      setTab(isTab(key) ? key : "gitlab");
+      setTab(isTab(key) && (key !== "commands" || commands) ? key : "gitlab");
     };
     fromHash();
     window.addEventListener("hashchange", fromHash);
     return () => window.removeEventListener("hashchange", fromHash);
-  }, []);
+  }, [ready, commands]);
 
   // The hash is the source of truth: setting it fires hashchange and keeps Back/Forward working.
   const go = (key: Tab) => {
@@ -50,25 +59,25 @@ export default function AdminPage() {
     window.location.hash = key;
   };
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
-    const index = TABS.findIndex((t) => t.key === tab);
+    const index = tabs.findIndex((t) => t.key === tab);
     const next =
-      e.key === "ArrowRight" ? (index + 1) % TABS.length
-      : e.key === "ArrowLeft" ? (index - 1 + TABS.length) % TABS.length
+      e.key === "ArrowRight" ? (index + 1) % tabs.length
+      : e.key === "ArrowLeft" ? (index - 1 + tabs.length) % tabs.length
       : e.key === "Home" ? 0
-      : e.key === "End" ? TABS.length - 1
+      : e.key === "End" ? tabs.length - 1
       : -1;
     if (next < 0) return;
     e.preventDefault();
-    go(TABS[next].key);
-    document.getElementById(`tab-${TABS[next].key}`)?.focus();
+    go(tabs[next].key);
+    document.getElementById(`tab-${tabs[next].key}`)?.focus();
   };
-  const current = TABS.find((t) => t.key === tab) ?? TABS[0];
+  const current = tabs.find((t) => t.key === tab) ?? tabs[0];
 
   return (
     <>
       <PageHeader eyebrow="Admin" title="Quản trị" subtitle="Mọi thay đổi ở đây được ghi audit log." />
       <div className="tabs admin-tabs" role="tablist" aria-label="Khu vực cấu hình" onKeyDown={onKey}>
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.key}
             type="button"
@@ -94,6 +103,7 @@ export default function AdminPage() {
         {tab === "telegram" && <TelegramAdmin />}
         {tab === "webhooks" && <WebhookAdmin />}
         {tab === "llm" && <LlmTab />}
+        {tab === "commands" && <CommandRunner />}
         {tab === "data" && <PurgeData />}
       </div>
     </>

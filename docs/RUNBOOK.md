@@ -170,3 +170,50 @@ Review được gom theo `mode/rubric_version` (ví dụ `fast/v2`, `deep/v2`, `
 - `drift.mean_abs_score_diff`, `drift.verdict_change_rate`: cùng sha review ≥ 2 vòng, lệch điểm tuyệt đối trung bình và tỉ lệ đổi verdict giữa hai vòng liên tiếp (đo độ ổn định; nhóm là của vòng sau).
 
 Quy trình A/B: chọn 30 commit/MR tiêu biểu (đủ repo, đủ cỡ diff). Chạy luồng cũ (mode `fast`/`deep`) rồi chạy v2 trên **cùng sha** bằng nút *Review lại* (force) ở dashboard; mỗi lần chạy là một vòng mới nên `drift` đo thẳng được chênh lệch cũ–mới. Lấy `review-metrics` cho khoảng ngày chạy luồng cũ (`before.json`) và khoảng chạy v2 (`after.json`), so bằng `review-metrics-compare`, rồi chỉnh trần (`REVIEW_AGENT_MIN_LOC`, số lượt, ngân sách) theo kết quả; eval chạy lại như mục 8.
+
+## 15. Chạy command `.claude` từ dashboard (Admin › Chạy command)
+
+Service `command-worker` (`python -m app.workers commands`) chạy riêng với worker review. Nó và `api` mount chung volume `command-runs` tại `COMMAND_RUNS_DIR` (mặc định `/tmp/codepulse-runs`): worker ghi file, api gửi file cho người tải. Image cần `git` (đã thêm vào Dockerfile).
+
+Mỗi lần chạy: clone nhánh đã chọn (`COMMAND_CLONE_DEPTH` commit, 0 = toàn bộ; token GitLab đi qua header của git, không nằm trong URL hay `.git/config`), chép repo `.claude` dùng chung của dự án vào `.claude/` của repo (file của repo được giữ khi trùng), xoá file khớp `SENSITIVE_PATHS`, bỏ mọi symlink (git clone với `core.symlinks=false`), chỉ giữ `permissions` và `model` trong `.claude/settings*.json` của repo (bỏ `env`, `apiKeyHelper`… để token Claude không bị chuyển hướng), bỏ `.git` trừ khi `allowed-tools` của command cho chạy git (lịch sử git còn chứa file nhạy cảm đã xoá), rồi chạy `claude -p "/<command> <tham số>"` trong thư mục đó. Claude Code tự mở rộng command như ở máy local (`$ARGUMENTS`, `allowed-tools`, `model`, CLAUDE.md, rules, skills). Khác local: chế độ quyền `acceptEdits` (Bash/web chỉ khi `allowed-tools` của command hoặc `.claude/settings.json` cho phép), hooks tắt, không MCP, có trần thời gian/lượt/chi phí. Command dùng chung chạy được không cần repo: khi đó thư mục làm việc là bản clone của repo `.claude` dùng chung.
+
+File trả về = mọi file trong `CODEPULSE_OUTPUT_DIR` + file command tạo/sửa trong bản clone (dưới `workspace/`), tối đa `COMMAND_MAX_OUTPUT_MB`. Bản clone xoá ngay khi chạy xong; file xoá sau lần tải đầu tiên, hoặc sau `COMMAND_FILE_TTL_HOURS` (scheduler xếp job dọn mỗi giờ vào hàng đợi `commands`; job này cũng đánh `failed` lần chạy mà worker chết giữa chừng). DB chỉ giữ ai chạy gì, sha, trạng thái, chi phí, tên file. Chi phí tính vào `MONTHLY_LLM_BUDGET_USD`; hết ngân sách thì lần chạy bị từ chối. Các giới hạn sửa ở tab Chạy command (ghi đè `.env`).
+
+**Container riêng mỗi lần chạy:** worker không bao giờ tự chạy `claude` và cũng không gọi Docker. Nó chuẩn bị bản clone trong thư mục tạm riêng (không nằm trên volume chung), rồi nhờ **`command-gate`** (`app/commands/gate.py`) tạo container. `command-gate` là service duy nhất giữ `/var/run/docker.sock`, chạy `network_mode: none`, và chỉ nhận lệnh qua unix socket trên volume `command-gate`, volume mà ngoài nó chỉ `command-worker` mount.
+
+Gate tự dựng cấu hình container, không nhận cấu hình từ bên gọi:
+- image `codepulse-app:latest`, lệnh `python -m app.commands.inside`, user `codepulse`;
+- env chỉ gồm token Claude và `CODEPULSE_OUTPUT_DIR`;
+- không mount, `CapDrop ALL`, `no-new-privileges`, không privileged;
+- giới hạn RAM (`COMMAND_MEMORY_MB`), CPU (`COMMAND_CPUS`), 512 tiến trình;
+- mạng `codepulse-commands`.
+
+Gate chỉ thao tác (đẩy tar, start, log, wait, kill, lấy file kết quả, xoá) trên container mang nhãn `codepulse.command_run` của nó.
+
+Trong lúc chạy, worker theo dõi container: bấm Huỷ, quá hạn, hoặc ghi quá `COMMAND_DISK_MB` (mặc định 5 GB) thì container bị kill. Sau đó worker lấy ra đúng một file thường trong giới hạn dung lượng (đọc theo luồng), đặt tên do worker chọn, rồi xoá container cùng mọi tiến trình command để lại. Job dọn hằng giờ xoá luôn container của lần chạy đã kết thúc mà worker chết giữa chừng bỏ lại.
+
+**Giới hạn đĩa thật (bắt buộc):** đo dung lượng định kỳ không chặn được việc tạo hàng triệu file rỗng (cạn inode) hay `fallocate` cả ổ trong vài giây. Hai việc đó làm đầy ổ của máy chủ, kéo theo PostgreSQL. Vì vậy gate đặt `StorageOpt size=COMMAND_DISK_MB` cho mỗi container. Docker chỉ hỗ trợ việc này khi data root (`/var/lib/docker`) dùng overlay2 trên **XFS mount với `pquota`**. Cách làm trên VPS: gắn một ổ hoặc phân vùng riêng, `mkfs.xfs`, mount vào `/var/lib/docker` với tuỳ chọn `pquota` (thêm vào `/etc/fstab`), rồi khởi động lại Docker. Lúc khởi động, gate thử tạo một container có quota. Nếu Docker từ chối, gate **từ chối mọi lần chạy** và lý do hiện ở lần chạy trên dashboard. `COMMAND_ALLOW_NO_DISK_QUOTA=1` (đặt cho service `command-gate`) tắt yêu cầu này, chỉ nên dùng khi data root của Docker đã nằm trên một filesystem riêng, tách khỏi OS, PostgreSQL và Redis. Quota XFS chỉ giới hạn dung lượng, không giới hạn số inode, nên kể cả khi có quota vẫn nên đặt `/var/lib/docker` trên ổ riêng, tách khỏi OS, PostgreSQL và Redis: một command tạo hàng chục triệu file rỗng khi đó chỉ ảnh hưởng tới Docker.
+
+**Mạng `codepulse-commands`:** gate tạo mạng này khi khởi động, kiểu bridge với interface `cp-commands`, tắt liên lạc giữa các container. Container ra internet được (tới Anthropic). Để chặn nó vào mạng nội bộ và vào chính máy chủ, chạy một lần trên host và lưu lại bằng `iptables-save`, `netfilter-persistent` hoặc tương đương:
+
+```sh
+for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10; do
+  iptables -I DOCKER-USER -i cp-commands -d "$net" -j DROP
+done
+iptables -I INPUT -i cp-commands -j DROP   # PostgreSQL/Redis/dashboard trên chính host
+```
+
+Nếu DNS của host nằm trong dải nội bộ, thêm `iptables -I DOCKER-USER -i cp-commands -d <dns> -p udp --dport 53 -j ACCEPT` trước các luật DROP. Ngoài ra Redis và PostgreSQL vẫn phải có mật khẩu; `startup_check` cảnh báo khi URL thiếu mật khẩu. Lúc khởi động, gate chạy một container thăm dò thử mở kết nối tới gateway của mạng (chính máy chủ) ở các cổng 22, 80, 443, 3000, 5432, 6379, 8000. Kết nối được cổng nào, kể cả khi bị "connection refused" (vì như vậy là máy chủ có trả lời, tức là thiếu luật DROP), thì gate từ chối mọi lần chạy cho tới khi áp luật iptables rồi khởi động lại gate (`docker compose restart command-gate`; gate tự kiểm tra lại mỗi giờ và sau mỗi lần khởi động; thăm dò không chạy được hoặc không thấy gateway cũng bị coi là chưa cô lập). `COMMAND_ALLOW_OPEN_NETWORK=1` tắt kiểm tra này.
+
+Lưu ý vận hành:
+- Image `codepulse-app:latest` phải có sẵn trên máy (compose build nó). `.dockerignore` là allowlist (`app/`, `migrations/`, `alembic.ini`, `pyproject.toml`), nên không có file lạ nào lọt vào image mà command chạy.
+- Token Claude vẫn nằm trong container, nên command có Bash có thể gửi nó ra ngoài. Theo lựa chọn hiện tại, rủi ro này được chấp nhận.
+- Chi phí do CLI trong container báo về có thể bị chính command giả mạo; trần `COMMAND_MAX_BUDGET_USD` vẫn giới hạn chi tiêu thật.
+- `COMMAND_SANDBOX=local` (chỉ dùng ở máy dev hoặc trong test) cho worker tự chạy CLI; `startup_check` ghi lỗi khi thấy giá trị này.
+
+**Tắt và gỡ bỏ:**
+- Tắt nhanh, không đổi code: đặt `COMMAND_RUNS_ENABLED=false` trong `.env.local` rồi `docker compose up -d api command-worker`. Tab biến mất, mọi route `/admin/command(-run)s` trả 404, lần chạy còn đang chờ bị đánh dấu thất bại khi worker lấy ra. Lần đang chạy dở thì huỷ trên dashboard trước khi tắt, hoặc chờ nó xong. Bật lại: `true` và restart như trên.
+- Gỡ hẳn (revert commit `feat(commands)`), theo đúng thứ tự:
+  1. Khi code cũ còn chạy: `docker compose run --rm api alembic downgrade a7c3e9d1f2b4` (xoá bảng `command_runs`, tức lịch sử chạy command; dữ liệu review không bị đụng). Nếu đã có migration mới chồng lên thì không downgrade được nữa: viết migration mới xoá bảng.
+  2. Deploy code đã revert, `docker compose up -d --remove-orphans` (gỡ `command-gate`, `command-worker`).
+  3. `docker volume rm <project>_command-runs <project>_command-gate`, `docker network rm codepulse-commands`, xoá container sót (`docker ps -aq --filter label=codepulse.command_run | xargs -r docker rm -f`), gỡ các luật iptables của `cp-commands` ở trên.

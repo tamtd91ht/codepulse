@@ -21,6 +21,7 @@ from app.models import (
     AppSetting,
     AuditLog,
     BusinessProject,
+    CommandRun,
     Commit,
     FindingDispute,
     MergeRequest,
@@ -72,6 +73,7 @@ _COLLECTED: list[tuple[str, Any]] = [
     ("raw_gitlab", RawGitlab),
 ]
 _CONFIG: list[tuple[str, Any]] = [
+    ("command_runs", CommandRun),
     ("telegram_bots", TelegramBot),
     ("notification_webhooks", NotificationWebhook),
     ("projects", Project),

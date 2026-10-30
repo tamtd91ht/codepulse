@@ -852,6 +852,12 @@ class ReviewSettingsIn(BaseModel):
     claude_file_chars: Annotated[int, Field(strict=True)] | None = None
     fast_guidance_chars: Annotated[int, Field(strict=True)] | None = None
     deep_instructions_chars: Annotated[int, Field(strict=True)] | None = None
+    command_timeout_min: Annotated[int, Field(strict=True)] | None = None
+    command_max_turns: Annotated[int, Field(strict=True)] | None = None
+    command_max_budget_usd: Annotated[int, Field(strict=True)] | None = None
+    command_clone_depth: Annotated[int, Field(strict=True)] | None = None
+    command_max_output_mb: Annotated[int, Field(strict=True)] | None = None
+    command_file_ttl_hours: Annotated[int, Field(strict=True)] | None = None
 
 
 class LiveEvent(BaseModel):
