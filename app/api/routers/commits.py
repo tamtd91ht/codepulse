@@ -309,6 +309,7 @@ def _row(
     return CommitRowOut(
         sha=str(raw["id"]),
         short_sha=str(raw.get("short_id") or raw["id"][:8]),
+        web_url=raw.get("web_url") if isinstance(raw.get("web_url"), str) else None,
         title=title[:200],
         authored_at=raw.get("authored_date") or raw.get("created_at"),
         author_name=raw.get("author_name"),
@@ -321,6 +322,7 @@ def _row(
         deletions=stats.get("deletions"),
         review_id=seen.id if seen else None,
         review_status=review.status if review else None,
+        review_error=seen.error if seen and seen.status in ("failed", "skipped") else None,
         score=float(seen.score) if seen and seen.score is not None else None,
         verdict=seen.verdict if seen else None,
         reviewable=reason is None,

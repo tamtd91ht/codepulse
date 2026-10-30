@@ -584,6 +584,7 @@ class BranchOut(BaseModel):
 class CommitRowOut(BaseModel):
     sha: str
     short_sha: str
+    web_url: str | None = None  # the commit on GitLab
     title: str
     authored_at: str | None
     author_name: str | None
@@ -595,6 +596,7 @@ class CommitRowOut(BaseModel):
     deletions: int | None
     review_id: int | None
     review_status: str | None
+    review_error: str | None = None  # why it failed or was skipped (whoever may see it)
     score: float | None
     verdict: str | None
     reviewable: bool

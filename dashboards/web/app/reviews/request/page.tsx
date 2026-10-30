@@ -52,8 +52,30 @@ function StatusCell({ c }: { c: CommitRow }) {
     return <Pill tone="info" icon="sync">{c.review_status === "running" ? "Đang review" : "Trong hàng đợi"}</Pill>;
   if (c.review_status === "failed" || c.review_status === "skipped") {
     const pill =
-      c.review_status === "failed" ? <Pill tone="bad">Lỗi, review lại được</Pill> : <Pill tone="warn">Đã bỏ qua</Pill>;
-    return c.review_id ? <Link href={`/reviews/${c.review_id}`}>{pill}</Link> : pill;
+      c.review_status === "failed" ? (
+        <Pill tone="bad" title={c.review_error ?? undefined}>
+          Lỗi, review lại được
+        </Pill>
+      ) : (
+        <Pill tone="warn" title={c.review_error ?? undefined}>
+          Đã bỏ qua
+        </Pill>
+      );
+    if (!c.review_id) return pill;
+    // A skipped commit is not picked here (a batch would skip it again): its review page says
+    // why and runs it again, past the LOC limit when that is the reason.
+    return (
+      <>
+        <Link href={`/reviews/${c.review_id}`}>{pill}</Link>{" "}
+        <Link
+          href={`/reviews/${c.review_id}`}
+          className="small"
+          title={c.review_status === "skipped" ? "Xem lý do và review lại (có tuỳ chọn bỏ qua giới hạn LOC)" : undefined}
+        >
+          Xem chi tiết
+        </Link>
+      </>
+    );
   }
   if (c.is_merge) return <span className="muted">Merge commit</span>;
   if (!c.reviewable) return <span className="muted">{c.reason}</span>;
@@ -186,6 +208,22 @@ export default function RequestReviewPage() {
 
   async function queue() {
     if (!scope || total === 0 || tooMany.length) return;
+    if (againCount > 0) {
+      // Reviewing again spends LLM budget on work that has a result: say how much, by verdict.
+      const byVerdict = new Map<string, number>();
+      for (const c of chosen)
+        for (const r of c.rows.filter((row) => row.again)) {
+          const label = r.verdict ? (VERDICT_LABEL[r.verdict] ?? r.verdict) : "Chưa có kết luận";
+          byVerdict.set(label, (byVerdict.get(label) ?? 0) + 1);
+        }
+      const lines = [...byVerdict].map(([label, n]) => `  • ${label}: ${n}`).join("\n");
+      const ok = window.confirm(
+        `Sẽ review lại ${againCount} commit đã có kết quả:\n${lines}\n` +
+          (total > againCount ? `và review ${total - againCount} commit chưa review.\n` : "") +
+          "\nReview lại tốn thêm ngân sách LLM và tạo lần review mới; kết quả cũ được giữ làm lịch sử. Tiếp tục?",
+      );
+      if (!ok) return;
+    }
     setBusy(true);
     setOutcomes(null);
     try {
@@ -555,6 +593,7 @@ function RepoCommits({
   const reviewed = (list?.commits ?? []).filter((c) => c.review_status === "done").length;
   const chosen = reviewable.filter((c) => selected.has(c.sha));
   const allOn = unreviewed.length > 0 && unreviewed.slice(0, batchMax).every((c) => selected.has(c.sha));
+  const allPicked = reviewable.length > 0 && reviewable.slice(0, batchMax).every((c) => selected.has(c.sha));
   const toggle = (sha: string, on: boolean) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -590,6 +629,21 @@ function RepoCommits({
                 onClick={() => setSelected(() => (allOn ? new Set() : new Set(unreviewed.slice(0, batchMax).map((c) => c.sha))))}
               >
                 {allOn ? "Bỏ chọn hết" : `Chọn ${Math.min(unreviewed.length, batchMax)} chưa review`}
+              </button>
+            )}
+            {reviewable.length > unreviewed.length && (
+              // Reviewed ones too: sending them asks for a confirmation that counts them by verdict.
+              <button
+                type="button"
+                className="sm"
+                title="Gồm cả commit đã có kết quả (review lại thành lần mới); commit bị bỏ qua không được chọn"
+                onClick={() =>
+                  setSelected(() =>
+                    allPicked ? new Set() : new Set(reviewable.slice(0, batchMax).map((c) => c.sha)),
+                  )
+                }
+              >
+                {allPicked ? "Bỏ chọn tất cả" : `Chọn tất cả ${Math.min(reviewable.length, batchMax)} (cả đã review)`}
               </button>
             )}
             {commits.error && <span className="error small">Không làm mới được: {commits.error.message}</span>}
@@ -635,7 +689,14 @@ function RepoCommits({
                         />
                       </td>
                       <td>
-                        <code>{c.short_sha}</code> <span title={c.title}>{c.title}</span>
+                        {c.web_url ? (
+                          <a href={c.web_url} target="_blank" rel="noreferrer" title="Mở commit trên GitLab">
+                            <code>{c.short_sha}</code>
+                          </a>
+                        ) : (
+                          <code>{c.short_sha}</code>
+                        )}{" "}
+                        <span title={c.title}>{c.title}</span>
                       </td>
                       <td>
                         {c.user_id ? (

@@ -521,6 +521,8 @@ export interface Branch {
 export interface CommitRow {
   sha: string;
   short_sha: string;
+  /** The commit on GitLab. */
+  web_url?: string | null;
   title: string;
   authored_at: string | null;
   author_name: string | null;
@@ -533,6 +535,8 @@ export interface CommitRow {
   deletions: number | null;
   review_id: number | null;
   review_status: string | null;
+  /** Why it failed or was skipped ("MR quá lớn: … LOC"…). */
+  review_error?: string | null;
   score: number | null;
   verdict: Verdict | null;
   reviewable: boolean;
