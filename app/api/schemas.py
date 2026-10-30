@@ -591,6 +591,8 @@ class CommitRowOut(BaseModel):
     verdict: str | None
     reviewable: bool
     reason: str | None  # why not reviewable
+    # Reviewed already (done) and still pickable: picking it runs a new round (a manager's call).
+    again: bool = False
 
 
 class CommitListOut(BaseModel):
@@ -606,6 +608,8 @@ class ReviewCommitsIn(BaseModel):
     shas: list[Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{7,40}$")]] = Field(
         min_length=1, max_length=200
     )
+    # Review commits that have a finished review again, as a new round (managers and admins).
+    again: bool = False
 
 
 class ReviewCommitsOut(BaseModel):

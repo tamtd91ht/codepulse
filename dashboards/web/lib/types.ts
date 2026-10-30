@@ -526,6 +526,8 @@ export interface CommitRow {
   verdict: Verdict | null;
   reviewable: boolean;
   reason: string | null;
+  /** Reviewed already but pickable (managers, admins): sending it runs a new round. */
+  again?: boolean;
 }
 
 export interface CommitList {

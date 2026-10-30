@@ -184,6 +184,65 @@ def test_review_commits_queues_dashboard_reviews_and_explains_skips(
     assert again["queued"] == [] and again["skipped"][0]["reason"] == "đã có review (queued)"
 
 
+def test_a_reviewed_commit_can_be_reviewed_again_as_a_new_round(
+    client: TestClient, world: World, as_user: Any, db_session: Session, queue: FakeQueue
+) -> None:
+    link_accounts(db_session, world)
+    world.binh_review.status = "done"
+    db_session.flush()
+    base = f"/api/v1/repos/{world.project.id}"
+    with respx.mock(assert_all_called=False) as router:
+        gitlab(router)
+        as_lead = client.get(f"{base}/commits", params={"ref": "main"}, headers=as_user(world.lead))
+        as_admin = client.get(
+            f"{base}/commits", params={"ref": "main"}, headers=as_user(world.admin)
+        )
+        plain = client.post(
+            f"{base}/review-commits",
+            json={"ref": "main", "shas": [B]},
+            headers=as_user(world.admin),
+        ).json()
+        lead = client.post(
+            f"{base}/review-commits",
+            json={"ref": "main", "shas": [B], "again": True},
+            headers=as_user(world.lead),
+        ).json()
+        admin = client.post(
+            f"{base}/review-commits",
+            json={"ref": "main", "shas": [B], "again": True},
+            headers=as_user(world.admin),
+        ).json()
+        twice = client.post(
+            f"{base}/review-commits",
+            json={"ref": "main", "shas": [B], "again": True},
+            headers=as_user(world.admin),
+        ).json()
+
+    # A lead may not spend a second review; a manager or admin may, with a warning on the page.
+    lead_b = next(c for c in as_lead.json()["commits"] if c["sha"] == B)
+    assert (lead_b["reviewable"], lead_b["again"], lead_b["reason"]) == (False, False, "đã review")
+    admin_b = next(c for c in as_admin.json()["commits"] if c["sha"] == B)
+    assert (admin_b["reviewable"], admin_b["again"], admin_b["reason"]) == (True, True, None)
+
+    assert plain["skipped"] == [{"sha": B, "reason": "đã có review (done)"}]
+    assert lead["skipped"] == [{"sha": B, "reason": "chỉ quản lý dự án hoặc admin được review lại"}]
+    assert admin == {"queued": [B], "skipped": []}
+    # The new round is queued now; the second request finds it and spends nothing.
+    assert twice["skipped"] == [{"sha": B, "reason": "đã có review (queued)"}]
+    rounds = db_session.scalars(
+        select(Review).where(Review.commit_sha == B).order_by(Review.round)
+    ).all()
+    assert [(r.round, r.status) for r in rounds] == [(1, "done"), (2, "queued")]
+    assert rounds[0].superseded_by == rounds[1].id  # superseded once round 2 is done
+    assert (rounds[1].trigger, rounds[1].requested_by_user_id) == ("dashboard", world.admin.id)
+    jobs = [kwargs["job_id"] for func, args, kwargs in queue.jobs]
+    assert jobs == [f"review-commit-{B[:12]}-again-2"]
+    audits = db_session.scalars(
+        select(AuditLog).where(AuditLog.action == "project.review_commits").order_by(AuditLog.id)
+    ).all()
+    assert [(a.details or {}).get("again") for a in audits] == [None, None, [B], None]
+
+
 def test_gitlab_trouble_is_reported_generically(
     client: TestClient, world: World, as_user: Any, db_session: Session
 ) -> None:
