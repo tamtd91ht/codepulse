@@ -7,7 +7,14 @@ import pytest
 import respx
 
 from app.collector.gitlab.client import ArchiveTooLarge, GitLabClient, GitLabError
-from app.review.checkout import MAX_FILE_BYTES, CheckoutError, checkout, extract, safe_relative
+from app.review.checkout import (
+    MAX_FILE_BYTES,
+    CheckoutError,
+    NoSuchPath,
+    checkout,
+    extract,
+    safe_relative,
+)
 
 BASE = "https://gitlab.example.com"
 API = f"{BASE}/api/v4"
@@ -116,3 +123,32 @@ def test_checkout_refuses_large_archives_and_reports_gitlab_errors() -> None:
             checkout(client, 1001, "abc", max_archive_bytes=1000, sensitive_paths=[]),
         ):
             pass
+
+
+@respx.mock
+@pytest.mark.parametrize("body", [b"", make_archive({})])
+def test_a_missing_folder_is_no_such_path_not_a_broken_archive(body: bytes) -> None:
+    # GitLab answers 200 with nothing (or an archive without entries) for a path not there.
+    respx.get(f"{API}/projects/1001/repository/archive.tar.gz").mock(
+        return_value=httpx.Response(200, content=body)
+    )
+    with (
+        GitLabClient(BASE, "t") as client,
+        pytest.raises(NoSuchPath),
+        checkout(client, 1001, "abc", max_archive_bytes=10_000, sensitive_paths=[], path="x/y"),
+    ):
+        pass
+
+
+@respx.mock
+def test_a_broken_archive_for_a_folder_is_still_an_error() -> None:
+    respx.get(f"{API}/projects/1001/repository/archive.tar.gz").mock(
+        return_value=httpx.Response(200, content=b"<html>proxy error</html>")
+    )
+    with (
+        GitLabClient(BASE, "t") as client,
+        pytest.raises(CheckoutError) as caught,
+        checkout(client, 1001, "abc", max_archive_bytes=10_000, sensitive_paths=[], path="x"),
+    ):
+        pass
+    assert not isinstance(caught.value, NoSuchPath)

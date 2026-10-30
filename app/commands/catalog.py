@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from app.collector.gitlab.client import ArchiveTooLarge, GitLabClient, GitLabError
-from app.review.checkout import CheckoutError, checkout
+from app.review.checkout import CheckoutError, NoSuchPath, checkout
 from app.review.claude_kit import _first_paragraph, _frontmatter
 
 log = logging.getLogger(__name__)
@@ -137,6 +137,8 @@ def read_folder(
             if not (root / folder).is_dir():
                 return None
             return scan(root / folder, source, folder)
+    except NoSuchPath:
+        return None
     except GitLabError as exc:
         if exc.status_code == 404:
             return None

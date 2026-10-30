@@ -19,7 +19,7 @@ from typing import Any
 
 from app.collector.gitlab.client import ArchiveTooLarge, GitLabClient, GitLabError
 from app.models import BusinessProject, Project
-from app.review.checkout import CheckoutError, checkout
+from app.review.checkout import CheckoutError, NoSuchPath, checkout
 from app.review.claude_kit import MAX_FILE_CHARS, SHARED_MOUNT, KitFile, mount_shared, scan
 from app.review.discover import CLIPPED, Doc, ProjectDocs, discover, instruction_kind
 from app.review.rules import rule_paths
@@ -163,6 +163,8 @@ def load_repo_claude(
             path=".claude",
         ) as (root, _):
             files = scan(root / ".claude", ".claude", "repo", file_chars)
+    except NoSuchPath:  # no such folder at this commit (GitLab: an empty archive)
+        return [], "none"
     except GitLabError as exc:
         if exc.status_code == 404:  # no such folder at this commit
             return [], "none"

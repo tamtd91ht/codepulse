@@ -6,6 +6,7 @@ MAX_FILE_BYTES, and nothing matching SENSITIVE_PATHS (a committed `.env` must no
 front of the model). Everything is deleted when the context manager exits.
 """
 
+import gzip
 import logging
 import shutil
 import tarfile
@@ -28,6 +29,23 @@ SKIP_DIRS = frozenset({".git", "node_modules", "vendor", "dist", "build", "targe
 
 class CheckoutError(Exception):
     """The repository copy could not be made (too large, bad archive)."""
+
+
+class NoSuchPath(CheckoutError):
+    """The `path` asked for is not in the repository at that commit: GitLab answers 200 with
+    an empty body or an archive without a single entry, not 404."""
+
+
+def is_empty_archive(archive: Path, size: int) -> bool:
+    """No bytes at all, or a gzip whose tar holds nothing (only the zero end-of-archive blocks)."""
+    if size == 0:
+        return True
+    try:
+        with gzip.open(archive, "rb") as raw:
+            head = raw.read(64 * 1024)
+    except (OSError, EOFError):
+        return False  # not a gzip: a real error, let extract() say so
+    return not head.strip(bytes(1))
 
 
 @dataclass
@@ -81,7 +99,7 @@ def extract(
                 tar, root, root_resolved, sensitive_paths, stats, max_total_bytes, max_files
             )
     except (tarfile.TarError, OSError) as exc:
-        raise CheckoutError(f"archive unreadable: {exc.__class__.__name__}") from None
+        raise CheckoutError(f"archive unreadable: {exc.__class__.__name__}: {exc}"[:200]) from None
     return stats
 
 
@@ -144,7 +162,9 @@ def checkout(
     tmp = Path(tempfile.mkdtemp(prefix="codepulse-deep-"))
     try:
         archive = tmp / "repo.tar.gz"
-        client.archive(project_external_id, sha, archive, max_archive_bytes, path)
+        size = client.archive(project_external_id, sha, archive, max_archive_bytes, path)
+        if path and is_empty_archive(archive, size):
+            raise NoSuchPath(path)
         root = tmp / "src"
         root.mkdir()
         stats = extract(archive, root, sensitive_paths)

@@ -1,8 +1,13 @@
 from pathlib import Path, PurePosixPath
 
+import httpx
 import pytest
+import respx
 
+from app.collector.gitlab.client import GitLabClient
+from app.commands import catalog
 from app.commands.catalog import COMMAND_NAME, Command, command_name, merge, parse, scan
+from tests.review.test_checkout import API, BASE, make_archive
 
 
 @pytest.mark.parametrize(
@@ -72,4 +77,23 @@ def test_the_repo_command_replaces_the_shared_one_of_the_same_name() -> None:
         ("audit", "shared", False),
         ("report", "repo", False),
         ("report", "shared", True),
+    ]
+
+
+@respx.mock
+def test_shared_commands_fall_back_to_a_root_commands_folder() -> None:
+    # A shared .claude repo laid out as the .claude folder itself: no `.claude/commands`, so
+    # GitLab hands back an empty archive for it, then the real one for `commands`.
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("path") == "commands":
+            text = "---\ndescription: Báo cáo tuần\n---\nDo it"
+            body = make_archive({"commands/weekly.md": text.encode()})
+            return httpx.Response(200, content=body)
+        return httpx.Response(200, content=b"")
+
+    respx.get(f"{API}/projects/7/repository/archive.tar.gz").mock(side_effect=answer)
+    with GitLabClient(BASE, "t") as client:
+        found = catalog.shared_commands(client, 7, "main", [])
+    assert [(c.name, c.source, c.description) for c in found] == [
+        ("weekly", "shared", "Báo cáo tuần")
     ]
