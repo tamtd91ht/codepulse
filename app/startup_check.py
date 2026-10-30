@@ -56,11 +56,35 @@ def check_redis(url: str) -> bool:
     return True
 
 
+def passwordless(url: str) -> bool:
+    """A URL with no password: anything on the network that reaches the server can use it."""
+    return not make_url(url).password
+
+
+def warn_open_services(database_url: str, redis_url: str) -> list[str]:
+    """Commands run in containers that may still reach the host's network (RUNBOOK §15): a
+    Redis without a password there would let one queue a job in the main worker."""
+    open_ = [
+        name
+        for name, url in (("postgres", database_url), ("redis", redis_url))
+        if passwordless(url)
+    ]
+    for name in open_:
+        log.warning(f"{name} has no password; set one (docs/RUNBOOK.md §15)")
+    return open_
+
+
 def main() -> None:
     configure_logging()
     settings = get_settings()
     check_postgres(str(settings.database_url))
     check_redis(str(settings.redis_url))
+    warn_open_services(str(settings.database_url), str(settings.redis_url))
+    if settings.command_sandbox == "local":
+        log.error(
+            "COMMAND_SANDBOX=local: .claude commands run inside the worker, next to every "
+            "secret; use it on a laptop only (docs/RUNBOOK.md §15)"
+        )
 
 
 if __name__ == "__main__":

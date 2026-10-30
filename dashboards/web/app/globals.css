@@ -3851,3 +3851,61 @@ td.check-col {
   width: 1%;
   padding-right: 0;
 }
+
+/* ---------- Admin > Chạy command (components/CommandRunner.tsx) ---------- */
+
+.command-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.command-list legend {
+  padding: 0 4px;
+}
+.command-list label {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.command-list .pill {
+  margin-left: 4px;
+}
+.command-desc {
+  display: block;
+}
+.command-body {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.command-log {
+  max-height: 360px;
+}
+.command-log .k-text {
+  color: var(--text);
+}
+.command-log .k-stage,
+.command-log .k-start {
+  color: var(--muted);
+}
+.command-log .k-denied,
+.command-log .k-tool_error,
+.command-log .k-warn {
+  color: var(--danger);
+}
+.command-limits {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}

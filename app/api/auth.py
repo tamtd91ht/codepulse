@@ -212,7 +212,9 @@ def logout() -> Response:
 
 @router.get("/me")
 def me(
-    principal: CurrentPrincipal, session: Annotated[Session, Depends(get_session)]
+    principal: CurrentPrincipal,
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict[str, Any]:
     user = session.get(User, principal.user_id)
     if user is None:
@@ -225,4 +227,6 @@ def me(
         "teams": sorted(principal.own_teams),
         # dự án id -> "view" | "manage" (empty for admins, who see and manage every dự án).
         "projects": {str(bp): role for bp, role in sorted(principal.project_roles.items())},
+        # Admin > Chạy command (COMMAND_RUNS_ENABLED); always false for everyone else.
+        "command_runs": principal.is_admin and settings.command_runs_enabled,
     }

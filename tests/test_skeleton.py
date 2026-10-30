@@ -23,7 +23,9 @@ def test_scheduler_enqueues_syncs_on_the_configured_interval() -> None:
         "report-month",
         "retention-purge",
         "telegram-tick",
+        "command-cleanup",
     }
+    assert jobs["command-cleanup"].trigger.interval.total_seconds() == 3600
     assert jobs["enqueue-syncs"].trigger.interval.total_seconds() == 30 * 60
     assert jobs["telegram-tick"].trigger.interval.total_seconds() == 7
     assert str(jobs["aggregate-week"].trigger.timezone) == "Asia/Ho_Chi_Minh"

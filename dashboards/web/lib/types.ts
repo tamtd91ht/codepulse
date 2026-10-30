@@ -12,6 +12,8 @@ export interface Me {
   teams: number[];
   /** dự án id -> role (docs/specs/09 "Phân quyền theo dự án"); empty for admins, who have every dự án. */
   projects: Record<string, ProjectRole>;
+  /** Admin > Chạy command is on (COMMAND_RUNS_ENABLED) and this is an admin. */
+  command_runs: boolean;
 }
 
 export type ProjectRole = "view" | "manage";
@@ -711,7 +713,13 @@ export interface ReviewSetting {
     | "public_url"
     | "claude_file_chars"
     | "fast_guidance_chars"
-    | "deep_instructions_chars";
+    | "deep_instructions_chars"
+    | "command_timeout_min"
+    | "command_max_turns"
+    | "command_max_budget_usd"
+    | "command_clone_depth"
+    | "command_max_output_mb"
+    | "command_file_ttl_hours";
   env: string;
   kind: "int" | "model" | "url";
   value: number | string;
@@ -1089,4 +1097,76 @@ export interface MemberEvaluationDetail {
   weeks: string[];
   trend: (number | null)[];
   trend_reviews: number[];
+}
+
+/** GET /admin/commands: a command of the repo's .claude/commands or of the dự án's shared repo. */
+export interface ClaudeCommand {
+  /** What follows "/", e.g. "report:weekly". */
+  name: string;
+  source: "repo" | "shared";
+  path: string;
+  description: string;
+  argument_hint: string;
+  allowed_tools: string[];
+  model: string;
+  body: string;
+  /** A shared command the repo's own command of the same name replaces. */
+  overridden: boolean;
+}
+
+export interface ClaudeCommandList {
+  ref: string | null;
+  shared_repo: string | null;
+  shared_ref: string | null;
+  commands: ClaudeCommand[];
+  repo_error: string | null;
+  shared_error: string | null;
+}
+
+export type CommandRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+/** /admin/command-runs: one run of a command; its files are kept until the first download. */
+export interface CommandRun {
+  id: number;
+  status: CommandRunStatus;
+  source: "repo" | "shared";
+  command: string;
+  arguments: string;
+  project_id: number | null;
+  repo: string | null;
+  business_project_id: number | null;
+  business_project: string | null;
+  ref: string | null;
+  repo_sha: string | null;
+  shared_ref: string | null;
+  shared_sha: string | null;
+  error: string | null;
+  cost_usd: number | null;
+  num_turns: number | null;
+  files: { name: string; size: number }[];
+  /** The file name the download sends; null when nothing is left to download. */
+  download: string | null;
+  files_deleted: boolean;
+  meta: { replaced?: string[]; recognized?: boolean | null; denied?: string[]; skipped?: string[]; model?: string; sensitive_removed?: number };
+  started_by: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface CommandLogEntry {
+  kind: "stage" | "start" | "warn" | "text" | "tool" | "denied" | "tool_error" | "end";
+  text?: string;
+  tool?: string;
+  model?: string;
+  ok?: boolean;
+  turns?: number;
+  cost_usd?: number;
+  at?: number;
+}
+
+export interface CommandRunDetail extends CommandRun {
+  log: CommandLogEntry[];
+  log_next: number;
+  result: string | null;
 }

@@ -1,5 +1,8 @@
-"""Worker service: consumes the RQ `default` queue with JSON logs tagged by job_id."""
+"""Worker service: consumes the RQ queues named on the command line (default: `default`) with
+JSON logs tagged by job_id. The command worker runs `python -m app.workers commands`
+(app/commands): a long command must not hold up reviews."""
 
+import sys
 from typing import Any
 
 from rq import Queue, Worker
@@ -22,10 +25,11 @@ class JobContextWorker(Worker):
             job_id_var.reset(token)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     configure_logging()
     redis = get_redis()
-    worker = JobContextWorker([Queue(name, connection=redis) for name in QUEUES], connection=redis)
+    names = (sys.argv[1:] if argv is None else argv) or QUEUES
+    worker = JobContextWorker([Queue(name, connection=redis) for name in names], connection=redis)
     # with_scheduler: delayed retries (REVIEW_RETRY waits 60/120/300 s) live in RQ's scheduled
     # registry and only run when a worker also acts as scheduler; without it they never run.
     worker.work(with_scheduler=True)

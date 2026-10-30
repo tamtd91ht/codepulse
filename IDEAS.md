@@ -5,3 +5,6 @@
 - (2026-10-27, từ phân tích luồng review, ngoài spec 19) Inline discussion trên MR chỉ cho finding `confirmed` critical/high, kèm bằng chứng của bước kiểm chứng; dispute nhiều lần trên cùng rule tự gợi ý sửa lời rule trong RK; model nhỏ (Haiku/Sonnet) cho bước chọn checks và biên dịch tầng tài liệu, Opus cho review và kiểm chứng; "convention probe" định kỳ so sánh code mới với `code_conventions` để báo drift không gắn với review nào.
 - (2026-10-27) Khi dự án có nhiều repo cùng RK dùng chung, báo cáo tháng theo dự án: invariant nào bị vi phạm nhiều nhất, ở repo nào, xu hướng theo tuần.
 
+
+- Chạy command `.claude` cần code của nhiều repo cùng lúc (clone thêm repo và `--add-dir`); hiện mỗi lần chạy chỉ một repo hoặc chỉ repo `.claude` dùng chung (người dùng 2026-10-30).
+- Chạy command có MCP server (Jira, Sentry…) trên command worker: hiện `--strict-mcp-config` tắt mọi MCP.

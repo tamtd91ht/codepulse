@@ -66,3 +66,13 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | GET | `/members/evaluation?from&to&team_id&business_project_id&project_id` | Mỗi người trong phạm vi: số review hoàn tất, điểm TB theo LOC, kết luận, finding theo mức, xu hướng tuần (tính trực tiếp từ `reviews`, tối đa 366 ngày, mặc định 30 ngày; bỏ người dùng không hoạt động như số liệu đã lưu; `mrs`/`commits` là số lượt review, MR review nhiều vòng tính nhiều lần) | developer, manager: chỉ dòng của chính mình; lead: team mình; admin: tất cả |
 | GET | `/members/{id}/evaluation?from&to` | Một người: tóm tắt, theo repo, kết luận, loại lỗi, theo tuần | bản thân, lead, admin |
 | GET | `/reviews?…&business_project_id=&status=done&status=failed` | Thêm lọc theo dự án và trạng thái (lặp tham số); `from`/`to` là ngày trọn vẹn theo REPORT_TZ; mỗi dòng có `author` | theo phạm vi |
+
+## Bổ sung (chạy command `.claude`, người dùng 2026-10-30)
+| Method | Path | Mô tả | Quyền |
+|---|---|---|---|
+| GET | `/admin/commands?project_id=&ref=` hoặc `?business_project_id=` | Command trong `.claude/commands` của repo ở nhánh `ref` (mặc định nhánh mặc định) và của repo `.claude` dùng chung của dự án; command dùng chung trùng tên bị đánh dấu `overridden` (bản của repo được chạy) | admin |
+| POST | `/admin/command-runs` `{project_id \| business_project_id, ref, source: repo\|shared, command, arguments}` | Xếp hàng một lần chạy (202) trên hàng đợi `commands`; một lần chạy đang chờ/chạy mỗi repo (409); repo tắt review → 409 (không gửi code ra LLM); audit `command.run` | admin |
+| GET | `/admin/command-runs`, `/admin/command-runs/{id}?after=` | Lịch sử; chi tiết kèm log trực tiếp (từ mục `after`), kết quả cuối, danh sách file | admin |
+| POST | `/admin/command-runs/{id}/cancel` | Huỷ (đang chờ: ngay; đang chạy: ở sự kiện kế tiếp) | admin |
+| — | `COMMAND_RUNS_ENABLED=false` | Mọi route ở bảng này trả 404; `/auth/me` có `command_runs: false` (dashboard ẩn tab) | — |
+| GET | `/admin/command-runs/{id}/download` | File duy nhất hoặc `.zip` của mọi file; tải một lần rồi xoá khỏi server (lần sau 410); audit `command.download` | admin |

@@ -122,6 +122,29 @@ class Settings(BaseSettings):
     knowledge_max_cost_usd: float = Field(default=5.0, ge=0)
     knowledge_tokens: int = Field(default=12000, ge=1000, le=100_000)
 
+    # Running a repo's `.claude/commands` from the dashboard (outside the spec, requested by the
+    # user 2026-10-30; app/commands). The run folders live under COMMAND_RUNS_DIR, a volume the
+    # api and the command worker share. The limits are also editable on Admin > Chạy command.
+    # The off switch: False hides the tab, answers 404 on every /admin/command(-run)s route and
+    # fails runs still queued: an .env change and a restart of api + command-worker, no new code.
+    command_runs_enabled: bool = True
+    command_runs_dir: str = "/tmp/codepulse-runs"  # noqa: S108 - a mounted volume, see compose
+    git_bin: str = "git"
+    # Where the CLI runs a command: "docker" = a throwaway container per run, created by the
+    # command gate (app/commands/container.py, gate.py); "local" = in
+    # the worker itself, only where nothing secret lives next to it (a laptop, tests).
+    command_sandbox: Literal["docker", "local"] = "docker"
+    # The command gate's unix socket (app/commands/gate.py; the image, network and limits of
+    # the containers are the gate's own settings), and what one container may write.
+    command_gate_socket: str = "/run/codepulse-gate/gate.sock"
+    command_disk_mb: int = Field(default=5120, ge=100, le=1_000_000)
+    command_timeout_min: int = Field(default=30, ge=1, le=720)
+    command_max_turns: int = Field(default=100, ge=1, le=1000)
+    command_max_budget_usd: int = Field(default=5, ge=1, le=1000)
+    command_clone_depth: int = Field(default=50, ge=0, le=1_000_000)  # 0 = whole history
+    command_max_output_mb: int = Field(default=200, ge=1, le=4096)
+    command_file_ttl_hours: int = Field(default=24, ge=1, le=720)
+
     # Dashboard "Yêu cầu review": commits listed per request, and queued per request.
     review_commits_list_max: int = Field(default=200, ge=20, le=500)
     review_batch_max: int = Field(default=50, ge=1, le=200)

@@ -29,7 +29,15 @@ from app.collector.sync import client_factory
 from app.config import Settings, get_settings
 from app.crypto import secret_box
 from app.db import get_sessionmaker
-from app.models import BusinessProject, Connection, Project, Review, ReviewKnowledge, User
+from app.models import (
+    BusinessProject,
+    CommandRun,
+    Connection,
+    Project,
+    Review,
+    ReviewKnowledge,
+    User,
+)
 from app.review.checkout import CheckoutError, checkout
 from app.review.claude_kit import scan
 from app.review.claude_repo import SharedConfig, load_shared_config
@@ -148,12 +156,17 @@ class _Target:
 
 def month_spend_usd(session: Session, now: datetime | None = None) -> float:
     """The month's LLM spend: reviews' `cost_usd` plus every knowledge row's `meta.cost_usd`,
-    whatever its status (active, superseded, failed: all were paid). The one budget figure
-    the review service and the build share (docs/specs/19 §6)."""
+    whatever its status (active, superseded, failed: all were paid), plus the .claude command
+    runs (app/commands). The one budget figure they all share (docs/specs/19 §6)."""
     now = now or datetime.now(UTC)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     reviews = session.scalar(
         select(func.coalesce(func.sum(Review.cost_usd), 0)).where(Review.started_at >= month_start)
+    )
+    commands = session.scalar(
+        select(func.coalesce(func.sum(CommandRun.cost_usd), 0)).where(
+            CommandRun.created_at >= month_start
+        )
     )
     builds = 0.0
     for data in session.scalars(
@@ -163,7 +176,7 @@ def month_spend_usd(session: Session, now: datetime | None = None) -> float:
             builds += float((data or {}).get("meta", {}).get("cost_usd") or 0)
         except (TypeError, ValueError, AttributeError):
             continue
-    return round(float(reviews or 0) + builds, 4)
+    return round(float(reviews or 0) + float(commands or 0) + builds, 4)
 
 
 def newest_build_at(session: Session, project_id: int) -> datetime | None:

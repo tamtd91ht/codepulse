@@ -23,6 +23,11 @@ x-app: &app
   network_mode: host
   env_file: [.env.local]
 
+# Command runs (Admin > Chạy command, app/commands): the command worker writes the files, the
+# api sends them; both mount the same folder at COMMAND_RUNS_DIR.
+x-runs: &runs
+  - command-runs:/tmp/codepulse-runs
+
 services:
   api:
     <<: *app
@@ -38,6 +43,7 @@ services:
       interval: 15s
       start_period: 60s  # first start runs every migration
       retries: 5
+    volumes: *runs
 
   worker:
     <<: *app
@@ -47,6 +53,47 @@ services:
       interval: 30s
       start_period: 20s
       retries: 3
+
+  # Runs .claude commands (queue "commands") apart from reviews: one command may take
+  # COMMAND_TIMEOUT_MIN. Scale it for more commands at once (still one per repo at a time).
+  command-worker:
+    <<: *app
+    command: ["python", "-m", "app.workers", "commands"]
+    volumes:
+      - command-runs:/tmp/codepulse-runs
+      - command-gate:/run/codepulse-gate
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.healthcheck"]
+      interval: 30s
+      start_period: 20s
+      retries: 3
+
+  # The only holder of the Docker socket (app/commands/gate.py): it creates each command's
+  # throwaway container from a config of its own, and only touches the containers it labelled.
+  # No network at all: the command worker reaches it through a unix socket on the
+  # `command-gate` volume, which no other service mounts. Runs as root to use docker.sock.
+  command-gate:
+    image: codepulse-app:latest
+    pull_policy: build
+    build: .
+    restart: unless-stopped
+    logging: *logging
+    user: root
+    network_mode: none
+    command: ["python", "-m", "app.commands.gate"]
+    environment:
+      COMMAND_IMAGE: codepulse-app:latest
+      COMMAND_NETWORK: codepulse-commands
+      COMMAND_MEMORY_MB: ${COMMAND_MEMORY_MB:-4096}
+      COMMAND_CPUS: ${COMMAND_CPUS:-2}
+      COMMAND_DISK_MB: ${COMMAND_DISK_MB:-5120}
+      # Off by default: the gate refuses runs without a disk quota or with the host reachable
+      # from the command network (docs/RUNBOOK.md §15).
+      COMMAND_ALLOW_NO_DISK_QUOTA: ${COMMAND_ALLOW_NO_DISK_QUOTA:-0}
+      COMMAND_ALLOW_OPEN_NETWORK: ${COMMAND_ALLOW_OPEN_NETWORK:-0}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - command-gate:/run/codepulse-gate
 
   scheduler:
     <<: *app
@@ -83,3 +130,7 @@ services:
     volumes:
       - ./deploy/backup/backup.sh:/backup.sh:ro
       - ${CODEPULSE_BACKUPS:-/opt/codepulse/backups}:/backups
+
+volumes:
+  command-runs:
+  command-gate:

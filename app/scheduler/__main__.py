@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from app.collector.sync import enqueue_syncs_job
+from app.commands.store import enqueue_cleanup_job
 from app.config import get_settings
 from app.logging import configure_logging
 from app.reporting.jobs import send_reports_job
@@ -76,6 +77,16 @@ def build_scheduler(
     )
     # docs/specs/11: data retention, daily at night.
     scheduler.add_job(purge_job, "cron", hour=3, minute=0, id="retention-purge", **common)
+    # Command runs (app/commands): files nobody downloaded, runs whose worker died. Runs on the
+    # command worker, the one service besides the api that mounts COMMAND_RUNS_DIR.
+    scheduler.add_job(
+        enqueue_cleanup_job,
+        "interval",
+        hours=1,
+        id="command-cleanup",
+        max_instances=1,
+        coalesce=True,
+    )
     # Telegram review bots: short polling; the job returns at once when no bot is enabled.
     scheduler.add_job(
         telegram_tick_job,

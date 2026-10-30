@@ -28,6 +28,8 @@ services:
         required: false
     ports:
       - "8000:8000"
+    volumes:
+      - command-runs:/tmp/codepulse-runs  # shared with command-worker (app/commands)
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"]
       interval: 15s
@@ -50,6 +52,38 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+
+  # Runs .claude commands from Admin > Chay command (queue "commands", app/commands).
+  command-worker:
+    build: .
+    image: codepulse-app:latest  # also the image of each command's container
+    command: ["python", "-m", "app.workers", "commands"]
+    volumes:
+      - command-runs:/tmp/codepulse-runs
+      - command-gate:/run/codepulse-gate
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  # The only holder of the Docker socket, for command-worker (app/commands/gate.py).
+  command-gate:
+    build: .
+    image: codepulse-app:latest
+    user: root
+    network_mode: none
+    command: ["python", "-m", "app.commands.gate"]
+    environment:
+      COMMAND_IMAGE: codepulse-app:latest
+      COMMAND_NETWORK: codepulse-commands
+      # A laptop rarely has XFS quotas or the RUNBOOK §15 firewall; never set these in prod.
+      COMMAND_ALLOW_NO_DISK_QUOTA: "1"
+      COMMAND_ALLOW_OPEN_NETWORK: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - command-gate:/run/codepulse-gate
 
   scheduler:
     build: .
@@ -90,3 +124,5 @@ services:
 
 volumes:
   pgdata:
+  command-runs:
+  command-gate:

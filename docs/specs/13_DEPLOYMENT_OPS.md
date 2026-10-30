@@ -1,7 +1,7 @@
 # 13 – Deployment & Operations
 
 ## Docker Compose services
-`postgres`, `redis`, `api`, `worker` (scale được), `scheduler`, `grafana` (tuỳ chọn), `ollama` (tuỳ chọn).
+`postgres`, `redis`, `api`, `worker` (scale được), `command-worker` (chạy command `.claude`, mount chung volume `command-runs` với `api`; xem RUNBOOK §15), `scheduler`, `grafana` (tuỳ chọn), `ollama` (tuỳ chọn).
 
 ## Biến môi trường (`.env.example`)
 ```dotenv

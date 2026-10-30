@@ -1,5 +1,6 @@
 from app.models.audit import AuditLog
 from app.models.base import Base
+from app.models.commands import CommandRun
 from app.models.domain import Commit, MergeRequest, MrCommit, MrNote, Pipeline
 from app.models.identity import Account, Team, TeamMember, User
 from app.models.knowledge import ReviewKnowledge, ReviewKnowledgeEdit
@@ -16,6 +17,7 @@ __all__ = [
     "AuditLog",
     "Base",
     "BusinessProject",
+    "CommandRun",
     "Commit",
     "Connection",
     "FindingDispute",
