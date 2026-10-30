@@ -10,7 +10,7 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | GET/POST/PATCH | `/projects` | Bật review, đăng comment, external LLM | admin |
 | POST | `/projects/{id}/sync` | Chạy collect thủ công | admin, lead |
 | POST | `/projects/{id}/backfill-reviews?from=&to=` | Review lại lịch sử | admin |
-| GET | `/reviews?user_id=&project_id=&from=&to=&severity=` | Danh sách review | theo phạm vi |
+| GET | `/reviews?user_id=&project_id=&business_project_id=&from=&to=&severity=&status=&mode=fast|deep` | Danh sách review (`mode=deep`: review sâu, gồm `agent` và `deep` cũ) | theo phạm vi |
 | GET | `/reviews/{id}` | Chi tiết + findings | theo phạm vi |
 | POST | `/reviews/{id}/rerun` | Review lại | lead |
 | POST | `/reviews/rerun` | Review lại nhiều kết quả (tối đa 100 id/lần), báo lý do từng cái không chạy được | lead |

@@ -56,6 +56,9 @@ Limit = Annotated[int, Query(ge=1, le=200)]
 ReviewStatus = Literal["queued", "running", "done", "failed", "skipped", "superseded"]
 # "Chọn tất cả" stops here: a batch past it is more LLM spend than one click should start.
 RERUNNABLE_MAX = 500
+# "Sâu": the pass ran with the repository open (agent; "deep" before spec 19).
+ReviewMode = Literal["fast", "deep"]
+MODES: dict[str, tuple[str, ...]] = {"fast": ("fast",), "deep": ("agent", "deep")}
 
 
 def scoped[Q: Select[Any] | Select[Any, Any, Any]](query: Q, principal: Principal) -> Q:
@@ -127,6 +130,7 @@ def _filtered(
     severity: str | None,
     verdict: str | None,
     trigger: str | None,
+    mode: ReviewMode | None,
     status: list[ReviewStatus] | None,
     date_from: date | None,
     date_to: date | None,
@@ -139,6 +143,8 @@ def _filtered(
         query = query.where(Review.author_user_id == user_id)
     if verdict is not None:
         query = query.where(Review.verdict == verdict)
+    if mode is not None:
+        query = query.where(Review.mode.in_(MODES[mode]))
     if trigger is not None:
         query = query.where(Review.trigger == trigger)
     if status:
@@ -170,6 +176,7 @@ def list_reviews(
     severity: str | None = None,
     verdict: Literal["approve", "needs_human", "fix_required", "block"] | None = None,
     trigger: str | None = None,
+    mode: ReviewMode | None = None,
     status: Annotated[list[ReviewStatus] | None, Query()] = None,
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
@@ -185,6 +192,7 @@ def list_reviews(
         severity=severity,
         verdict=verdict,
         trigger=trigger,
+        mode=mode,
         status=status,
         date_from=date_from,
         date_to=date_to,
@@ -241,6 +249,7 @@ def rerunnable_reviews(
     severity: str | None = None,
     verdict: Literal["approve", "needs_human", "fix_required", "block"] | None = None,
     trigger: str | None = None,
+    mode: ReviewMode | None = None,
     status: Annotated[list[ReviewStatus] | None, Query()] = None,
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
@@ -256,6 +265,7 @@ def rerunnable_reviews(
         severity=severity,
         verdict=verdict,
         trigger=trigger,
+        mode=mode,
         status=status,
         date_from=date_from,
         date_to=date_to,

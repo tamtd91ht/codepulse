@@ -77,6 +77,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         // themselves, which the "Của tôi" page already shows).
         ...(isAdmin || me.lead_teams.length > 0 ? [{ href: "/members", label: "Thành viên", icon: "pulse" } as Item] : []),
         { href: `/members/${me.id}`, label: "Của tôi", icon: "user" },
+        { href: "/reviews", label: "Kết quả review", icon: "inbox" },
         { href: "/reviews/request", label: "Yêu cầu review", icon: "review" },
         { href: "/critical", label: "Critical Board", icon: "alert" },
         { href: "/disputes", label: isLead ? "Duyệt khiếu nại" : "Khiếu nại", icon: "scale" },
@@ -100,7 +101,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   const navLink = (item: Item) => {
-    const active = pathname === item.href || (item.href !== "/members" && pathname.startsWith(`${item.href}/`));
+    const under = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
+    // The most specific item wins: /reviews/request is "Yêu cầu review", not "Kết quả review".
+    const active =
+      pathname === item.href ||
+      (item.href !== "/members" &&
+        under(item.href) &&
+        !primary.some((other) => other.href.length > item.href.length && under(other.href)));
     return (
       <Link
         key={item.href}

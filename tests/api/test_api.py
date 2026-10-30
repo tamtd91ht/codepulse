@@ -498,6 +498,20 @@ def test_rerun_many_reports_each_review(
     assert client.post("/api/v1/reviews/rerun", json={"ids": []}, headers=lead).status_code == 422
 
 
+def test_list_filters_by_deep_or_fast_review(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    world.binh_review.mode = "agent"
+    db_session.commit()
+    admin = as_user(world.admin)
+    base = "/api/v1/reviews?status=done&status=failed"
+    deep = client.get(f"{base}&mode=deep", headers=admin).json()["items"]
+    fast = client.get(f"{base}&mode=fast", headers=admin).json()["items"]
+    assert [r["id"] for r in deep] == [world.binh_review.id]
+    assert [r["id"] for r in fast] == [world.an_review.id]
+    assert client.get(f"{base}&mode=agent", headers=admin).status_code == 422
+
+
 def test_rerunnable_lists_every_match_the_viewer_may_run_again(
     client: TestClient,
     world: World,

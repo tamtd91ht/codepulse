@@ -22,15 +22,20 @@ const STATUS: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "
   running: { label: "Đang chạy", tone: "info" },
 };
 
-type StatusFilter = "results" | "done" | "failed" | "skipped" | "problems";
+type StatusFilter = "results" | "all" | "done" | "in_progress" | "failed" | "skipped" | "problems";
 // "Kết quả": what a review ended with (older rounds of the same change are left out).
 const STATUSES: Record<StatusFilter, string[]> = {
   results: ["done", "failed", "skipped"],
+  all: ["done", "failed", "skipped", "queued", "running"],
   done: ["done"],
+  in_progress: ["queued", "running"],
   failed: ["failed"],
   skipped: ["skipped"],
   problems: ["failed", "skipped"],
 };
+// While a review shown is queued or running, the list refreshes itself this often.
+const POLL_MS = 10_000;
+const DEEP_MODES = new Set(["agent", "deep"]);
 
 /**
  * Review results of a dự án (or of everything the viewer may see), filtered by time, member,
@@ -45,15 +50,20 @@ export function ReviewResults({
   period,
   id = "review-results",
   defaultCollapsed,
+  projects,
+  title = "Kết quả review",
 }: {
   businessProjectId?: number;
+  /** The dự án offered by a dự án filter (the shared /reviews page; shown when there is more than one). */
+  projects?: { id: number; name: string }[];
+  title?: string;
   /** One repo's results (the repo drawer of the dự án page): no repo filter, no repo column. */
   repo?: number;
   /** Key the card's fold state is remembered under (pages that fold it by default use their own). */
   id?: string;
   defaultCollapsed?: boolean;
   /** The repos offered by the repo filter (shown when there is more than one). */
-  repos?: { id: number; path_with_namespace: string }[];
+  repos?: { id: number; path_with_namespace: string; business_project_id?: number | null }[];
   /** One person's results (the member page): no member filter, no member column. */
   person?: number;
   /** The page's range, when other cards follow the same one. */
@@ -66,9 +76,11 @@ export function ReviewResults({
   const [userId, setUserId] = useState("");
   // Picked by clicking a name: may be someone /people leaves out (deactivated since).
   const [picked, setPicked] = useState<{ id: string; name: string } | null>(null);
+  const [bpId, setBpId] = useState("");
   const [repoId, setRepoId] = useState("");
   const [verdict, setVerdict] = useState<"" | Verdict>("");
   const [status, setStatus] = useState<StatusFilter>("results");
+  const [mode, setMode] = useState<"" | "fast" | "deep">("");
   // Re-run several at once: only rows the API marks can_rerun (the viewer manages them).
   const [chosen, setChosen] = useState<Set<number>>(() => new Set());
   // "Chọn tất cả" past the loaded pages: every match of the filters `base` was, from the API.
@@ -84,10 +96,11 @@ export function ReviewResults({
       ? `/reviews${qs({
           from: range.from,
           to: range.to,
-          business_project_id: businessProjectId,
+          business_project_id: businessProjectId ?? bpId,
           project_id: repo ?? repoId,
           user_id: person ?? userId,
           verdict,
+          mode,
           limit: PAGE,
         })}${STATUSES[status].map((s) => `&status=${s}`).join("")}`
       : null;
@@ -98,12 +111,20 @@ export function ReviewResults({
       return previous?.next_cursor ? `${base}&cursor=${encodeURIComponent(previous.next_cursor)}` : null;
     },
     (path: string) => api.get<Page<ReviewListItem>>(path),
-    { keepPreviousData: true, shouldRetryOnError: (e: ApiError) => !e.status || e.status >= 500 },
+    {
+      keepPreviousData: true,
+      shouldRetryOnError: (e: ApiError) => !e.status || e.status >= 500,
+      // Follow reviews still queued or running until they end.
+      refreshInterval: (loaded) =>
+        loaded?.some((p) => p.items.some((r) => r.status === "queued" || r.status === "running")) ? POLL_MS : 0,
+    },
   );
   const items = pages.data?.flatMap((p) => p.items) ?? [];
   const last = pages.data?.at(-1);
   const loadingMore = pages.isValidating && pages.size > (pages.data?.length ?? 0);
-  const filtered = !!(userId || repoId || verdict || status !== "results");
+  const filtered = !!(bpId || userId || repoId || verdict || mode || status !== "results");
+  // The repo filter follows the chosen dự án.
+  const repoChoices = bpId ? (repos ?? []).filter((r) => String(r.business_project_id) === bpId) : repos;
   // Nobody else to pick: the member page, or a developer who only sees themselves.
   const onlySelf = person !== undefined || people?.length === 1;
 
@@ -191,6 +212,8 @@ export function ReviewResults({
     }
   };
   const reset = () => {
+    setBpId("");
+    setMode("");
     setUserId("");
     setRepoId("");
     setVerdict("");
@@ -200,7 +223,7 @@ export function ReviewResults({
   return (
     <Card
       id={id}
-      title="Kết quả review"
+      title={title}
       subtitle={period ? undefined : "Commit mới nhất trước; lọc theo thời gian commit"}
       actions={
         period ? (
@@ -229,12 +252,32 @@ export function ReviewResults({
             </select>
           </label>
         )}
-        {repo === undefined && repos && repos.length > 1 && (
+        {businessProjectId === undefined && projects && projects.length > 1 && (
+          <label className="filter">
+            <span className="small muted">Dự án</span>
+            <select
+              value={bpId}
+              onChange={(e) => {
+                setBpId(e.target.value);
+                setRepoId("");
+              }}
+              aria-label="Lọc theo dự án"
+            >
+              <option value="">Mọi dự án</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {repo === undefined && repoChoices && repoChoices.length > 1 && (
           <label className="filter">
             <span className="small muted">Repo</span>
             <select value={repoId} onChange={(e) => setRepoId(e.target.value)} aria-label="Lọc theo repo">
               <option value="">Mọi repo</option>
-              {repos.map((r) => (
+              {repoChoices.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.path_with_namespace}
                 </option>
@@ -257,10 +300,25 @@ export function ReviewResults({
           <span className="small muted">Trạng thái</span>
           <select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)} aria-label="Lọc theo trạng thái">
             <option value="results">Mọi kết quả</option>
-            <option value="done">Đã chấm điểm</option>
+            <option value="all">Tất cả (cả đang chạy)</option>
+            <option value="done">Hoàn thành</option>
+            <option value="in_progress">Đang diễn ra</option>
             <option value="failed">Lỗi</option>
             <option value="skipped">Bỏ qua</option>
             <option value="problems">Lỗi hoặc bỏ qua</option>
+          </select>
+        </label>
+        <label className="filter">
+          <span className="small muted">Kiểu review</span>
+          <select
+            value={mode}
+            onChange={(e) => setMode(e.target.value as "" | "fast" | "deep")}
+            aria-label="Lọc theo kiểu review"
+            title="Kiểu được ghi khi review xong; review đang chờ hoặc đang chạy tính là nhanh"
+          >
+            <option value="">Nhanh và sâu</option>
+            <option value="fast">Nhanh (chỉ đọc diff)</option>
+            <option value="deep">Sâu (mở mã nguồn)</option>
           </select>
         </label>
         <span className="spacer" />
@@ -381,6 +439,14 @@ export function ReviewResults({
                       <td>
                         <Link href={`/reviews/${r.id}`}>{r.target}</Link>
                         {r.round > 1 && <span className="muted small"> · vòng {r.round}</span>}
+                        {r.status === "done" && DEEP_MODES.has(r.mode) && (
+                          <>
+                            {" "}
+                            <Pill tone="primary" title="Review sâu: đã mở mã nguồn của repo để đối chứng">
+                              Sâu
+                            </Pill>
+                          </>
+                        )}
                         {r.status !== "done" && r.error && (
                           <div className="muted small" title={r.error}>
                             {r.error.length > 90 ? `${r.error.slice(0, 90)}…` : r.error}
