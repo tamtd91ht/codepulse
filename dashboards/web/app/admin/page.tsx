@@ -355,31 +355,37 @@ function LlmTab() {
   const costs = useApi<LlmCosts>("/admin/llm-costs");
   const data = costs.data;
   const latest = data?.months[0];
-  const pct = data && latest && data.budget_usd ? Math.round((100 * latest.cost_usd) / data.budget_usd) : null;
+  const pct = data && latest && data.budget_usd ? Math.round((100 * latest.total_usd) / data.budget_usd) : null;
+  const usd = (n: number) => `$${n.toFixed(2)}`;
   return (
     <>
       <div className="grid kpis">
         <div className="card kpi">
           <div className="label">Chi phí tháng này</div>
-          <div className="value">
-            {latest ? `$${latest.cost_usd.toFixed(2)}` : "—"}
-          </div>
+          <div className="value">{latest ? usd(latest.total_usd) : "—"}</div>
           <div className="delta">
-            <span className="muted">{data ? `Ngân sách $${data.budget_usd}` : ""}</span>
+            <span className="muted">Review, knowledge, lệnh .claude và Stetho</span>
           </div>
         </div>
         <div className="card kpi">
           <div className="label">% ngân sách</div>
           <div className={`value${pct !== null && pct >= 80 ? " bad" : ""}`}>{pct === null ? "—" : `${pct}%`}</div>
           <div className="delta">
-            <span className="muted">Cảnh báo từ 80%, dừng review khi hết</span>
+            <span className="muted">{data ? `Ngân sách $${data.budget_usd}, dừng khi hết` : ""}</span>
           </div>
         </div>
         <div className="card kpi">
           <div className="label">Reviews tháng này</div>
           <div className="value">{latest ? latest.reviews : "—"}</div>
           <div className="delta">
-            <span className="muted">Có gọi LLM</span>
+            <span className="muted">{latest ? usd(latest.cost_usd) : "Có gọi LLM"}</span>
+          </div>
+        </div>
+        <div className="card kpi">
+          <div className="label">Câu hỏi Stetho tháng này</div>
+          <div className="value">{latest ? latest.assistant_turns : "—"}</div>
+          <div className="delta">
+            <span className="muted">{latest ? usd(latest.assistant_usd) : "Trợ lý AI"}</span>
           </div>
         </div>
       </div>
@@ -388,14 +394,21 @@ function LlmTab() {
           <div style={{ padding: "0 18px 16px" }}>
             <Loading error={costs.error} />
           </div>
+        ) : data.months.length === 0 ? (
+          <p className="muted" style={{ padding: "0 18px 16px" }}>
+            Chưa có chi phí LLM nào.
+          </p>
         ) : (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <th>Tháng</th>
-                  <th className="num">Reviews</th>
-                  <th className="num">Chi phí</th>
+                  <th className="num">Review</th>
+                  <th className="num">Knowledge</th>
+                  <th className="num">Lệnh .claude</th>
+                  <th className="num">Stetho</th>
+                  <th className="num">Tổng</th>
                   <th className="num">% ngân sách</th>
                 </tr>
               </thead>
@@ -403,9 +416,23 @@ function LlmTab() {
                 {data.months.map((m) => (
                   <tr key={m.month}>
                     <td>{m.month}</td>
-                    <td className="num">{m.reviews}</td>
-                    <td className="num">${m.cost_usd.toFixed(2)}</td>
-                    <td className="num">{data.budget_usd ? `${((100 * m.cost_usd) / data.budget_usd).toFixed(0)}%` : "—"}</td>
+                    <td className="num">
+                      {usd(m.cost_usd)} <span className="muted small">· {m.reviews}</span>
+                    </td>
+                    <td className="num">
+                      {usd(m.knowledge_usd)} <span className="muted small">· {m.knowledge_builds}</span>
+                    </td>
+                    <td className="num">
+                      {usd(m.commands_usd)} <span className="muted small">· {m.commands_runs}</span>
+                    </td>
+                    <td className="num" title={m.assistant_estimated ? `${m.assistant_estimated} câu dừng giữa chừng: chi phí ước tính` : undefined}>
+                      {usd(m.assistant_usd)}
+                      {m.assistant_estimated > 0 && <span className="muted">*</span>} <span className="muted small">· {m.assistant_turns}</span>
+                    </td>
+                    <td className="num">
+                      <strong>{usd(m.total_usd)}</strong>
+                    </td>
+                    <td className="num">{data.budget_usd ? `${((100 * m.total_usd) / data.budget_usd).toFixed(0)}%` : "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -413,7 +440,7 @@ function LlmTab() {
           </div>
         )}
         <p className="muted small" style={{ padding: "10px 18px 14px" }}>
-          Ngân sách tháng: MONTHLY_LLM_BUDGET_USD, sửa được ở “Cài đặt review” bên dưới. Rubric v1; trọng số severity đổi qua SCORING_WEIGHTS rồi chạy{" "}
+          Ngân sách tháng: MONTHLY_LLM_BUDGET_USD, sửa được ở “Cài đặt review” bên dưới. Số sau dấu · là số lượt (review, lần dựng knowledge, lần chạy lệnh, câu hỏi). * Chi phí Stetho ước tính (dư) cho câu hỏi bị dừng trước khi Claude báo giá. Rubric v1; trọng số severity đổi qua SCORING_WEIGHTS rồi chạy{" "}
           <code>codepulse metrics recompute</code>.
         </p>
       </Card>

@@ -3,6 +3,7 @@
 import json
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -17,7 +18,7 @@ from app.api.routers.assistant import get_assistant_recorder, get_assistant_stre
 from app.api.security import load_principal
 from app.assistant.context import Screen, build_context
 from app.config import Settings
-from app.models import AuditLog
+from app.models import AuditLog, CommandRun, ReviewKnowledge
 from app.workers.knowledge_jobs import month_spend_breakdown
 from tests.api.conftest import World
 
@@ -239,3 +240,52 @@ def test_context_adds_the_team_the_question_names(
     assert "bản manager: chỉ tổng hợp" in text
     # Mobile is not the manager's: never named, even when asked about.
     assert "Team Mobile" not in build_context(db_session, manager, settings, None, "mobile?")
+
+
+def test_admin_llm_costs_show_every_budget_source_per_month(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    audit(db_session, world.manager.id, "assistant.chat", "assistant", cost_usd=0.25)
+    audit(
+        db_session,
+        world.admin.id,
+        "assistant.chat",
+        "assistant",
+        cost_usd=0.5,
+        cost_estimated=True,
+    )
+    audit(db_session, world.admin.id, "assistant.chat", "assistant", status="cancelled")
+    for version, cost in ((1, 0.4), (2, "odd")):  # a failed build's odd meta is skipped
+        db_session.add(
+            ReviewKnowledge(
+                scope="project",
+                project_id=world.project.id,
+                version=version,
+                schema_version=1,
+                data={"meta": {"cost_usd": cost}},
+                status="failed",
+                built_by="manual",
+            )
+        )
+    db_session.add(
+        CommandRun(
+            project_id=world.project.id,
+            source="repo",
+            command="report:weekly",
+            status="succeeded",
+            cost_usd=Decimal("1.1"),
+        )
+    )
+    db_session.flush()
+    body = client.get("/api/v1/admin/llm-costs", headers=as_user(world.admin)).json()
+    month = body["months"][0]
+    assert month["month"] == datetime.now(UTC).strftime("%Y-%m")
+    assert month["assistant_usd"] == 0.75
+    assert month["assistant_turns"] == 3
+    assert month["assistant_estimated"] == 1
+    assert month["reviews"] == 0
+    assert (month["knowledge_usd"], month["knowledge_builds"]) == (0.4, 1)
+    assert (month["commands_usd"], month["commands_runs"]) == (1.1, 1)
+    assert month["total_usd"] == 2.25
+    # The same figure the budget compares.
+    assert month_spend_breakdown(db_session, datetime.now(UTC))["total_usd"] == 2.25

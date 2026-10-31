@@ -673,7 +673,24 @@ export interface TelegramLinkCode {
 
 export interface LlmCosts {
   budget_usd: number;
-  months: { month: string; cost_usd: number; reviews: number }[];
+  months: {
+    month: string;
+    /** Reviews' spend. */
+    cost_usd: number;
+    reviews: number;
+    /** Review knowledge builds (every status: all were paid). */
+    knowledge_usd: number;
+    knowledge_builds: number;
+    /** .claude command runs (Admin > Chạy command). */
+    commands_usd: number;
+    commands_runs: number;
+    /** Stetho, the AI assistant: spend, questions, and how many were priced by an estimate (stopped early). */
+    assistant_usd: number;
+    assistant_turns: number;
+    assistant_estimated: number;
+    /** Every source above: what the monthly budget compares. */
+    total_usd: number;
+  }[];
 }
 
 /** POST /admin/llm-check: configuration, account and one live call; never contains the token. */

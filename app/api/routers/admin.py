@@ -63,6 +63,7 @@ from app.models import (
     Account,
     AuditLog,
     BusinessProject,
+    CommandRun,
     Connection,
     FindingDispute,
     MergeRequest,
@@ -70,6 +71,7 @@ from app.models import (
     Project,
     ProjectGrant,
     Review,
+    ReviewKnowledge,
     Team,
     TeamMember,
     TelegramRequest,
@@ -1079,19 +1081,97 @@ def llm_costs(
     settings: Annotated[Settings, Depends(get_settings)],
     months: Annotated[int, Query(ge=1, le=24)] = 6,
 ) -> dict[str, Any]:
-    """LLM spend per month vs MONTHLY_LLM_BUDGET_USD (Admin screen, docs/specs/10)."""
+    """LLM spend per month vs MONTHLY_LLM_BUDGET_USD (Admin screen, docs/specs/10).
+
+    Every source the budget counts (app/workers/knowledge_jobs.month_spend_breakdown), counted the
+    same way: `cost_usd`/`reviews` the reviews; `knowledge_*` the knowledge builds (each row's
+    `meta.cost_usd`, whatever its status); `commands_*` the .claude command runs; `assistant_*`
+    Stetho's turns (app/assistant) from their `assistant.chat` audit rows, `assistant_estimated`
+    of them stopped before the CLI priced them and carrying an estimate. `total_usd` is their sum,
+    what the budget compares."""
     month = func.date_trunc("month", Review.started_at)
-    rows = session.execute(
+    reviews = session.execute(
         select(month, func.coalesce(func.sum(Review.cost_usd), 0), func.count())
         .where(Review.cost_usd.is_not(None))
         .group_by(month)
         .order_by(month.desc())
         .limit(months)
     ).all()
+    turn_month = func.date_trunc("month", AuditLog.at)
+    turns = session.execute(
+        select(
+            turn_month,
+            func.coalesce(func.sum(AuditLog.details["cost_usd"].as_float()), 0),
+            func.count(),
+            func.count().filter(AuditLog.details["cost_estimated"].as_boolean().is_(True)),
+        )
+        .where(AuditLog.action == "assistant.chat")
+        .group_by(turn_month)
+        .order_by(turn_month.desc())
+        .limit(months)
+    ).all()
+    run_month = func.date_trunc("month", CommandRun.created_at)
+    runs = session.execute(
+        select(run_month, func.coalesce(func.sum(CommandRun.cost_usd), 0), func.count())
+        .where(CommandRun.cost_usd.is_not(None))
+        .group_by(run_month)
+        .order_by(run_month.desc())
+        .limit(months)
+    ).all()
+    # Knowledge costs sit in JSON a failed build may have left odd: read in Python, as the
+    # budget does, over the months shown.
+    now = datetime.now(UTC)
+    first = now.year * 12 + now.month - 1 - (months - 1)  # 0-based month index of the oldest
+    since = datetime(first // 12, first % 12 + 1, 1, tzinfo=UTC)
+    builds: dict[str, list[float]] = {}
+    for created_at, data in session.execute(
+        select(ReviewKnowledge.created_at, ReviewKnowledge.data).where(
+            ReviewKnowledge.created_at >= since
+        )
+    ).tuples():
+        try:
+            cost = float((data or {}).get("meta", {}).get("cost_usd") or 0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if cost:
+            builds.setdefault(created_at.astimezone(UTC).strftime("%Y-%m"), []).append(cost)
+    by_month: dict[str, dict[str, Any]] = {}
+
+    def row(m: datetime | str) -> dict[str, Any]:
+        key = m if isinstance(m, str) else m.date().isoformat()[:7]
+        return by_month.setdefault(
+            key,
+            {
+                "month": key,
+                "cost_usd": 0.0,
+                "reviews": 0,
+                "knowledge_usd": 0.0,
+                "knowledge_builds": 0,
+                "commands_usd": 0.0,
+                "commands_runs": 0,
+                "assistant_usd": 0.0,
+                "assistant_turns": 0,
+                "assistant_estimated": 0,
+            },
+        )
+
+    for m, cost, count in reviews:
+        row(m).update(cost_usd=float(cost), reviews=count)
+    for key, costs in builds.items():
+        row(key).update(knowledge_usd=round(sum(costs), 4), knowledge_builds=len(costs))
+    for m, cost, count in runs:
+        row(m).update(commands_usd=round(float(cost), 4), commands_runs=count)
+    for m, cost, count, estimated in turns:
+        row(m).update(
+            assistant_usd=round(float(cost), 4),
+            assistant_turns=count,
+            assistant_estimated=estimated,
+        )
+    for r in by_month.values():
+        r["total_usd"] = round(
+            r["cost_usd"] + r["knowledge_usd"] + r["commands_usd"] + r["assistant_usd"], 4
+        )
     return {
         "budget_usd": monthly_budget_usd(session, settings),
-        "months": [
-            {"month": m.date().isoformat()[:7], "cost_usd": float(cost), "reviews": count}
-            for m, cost, count in rows
-        ],
+        "months": sorted(by_month.values(), key=lambda r: r["month"], reverse=True)[:months],
     }
