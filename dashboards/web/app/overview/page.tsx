@@ -19,16 +19,21 @@ import { Score, scoreTone } from "@/components/Evaluation";
 import { Icon } from "@/components/icons";
 import { Card, ChartTip, CountLink, EmptyState, Loading, PageHeader, Pager, Segmented, Sparkline, SplitBar, StatStrip, StripStat } from "@/components/ui";
 import { type BoardScope, boardLink, qs, useApi } from "@/lib/api";
-import { delta, localDay, num, periodLabel, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
+import { delta, localDay, num, periodLabel, rangeLabel, shiftDays, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
 import type { Me, ProjectEntry, ProjectsOverview } from "@/lib/types";
 
-type Period = "week" | "month";
+/** "range": a custom range of days, from RANGE_MIN on. */
+type Period = "week" | "month" | "range";
+/** A calendar period: what "latest review" hints and jumps point at. */
+type Cycle = "week" | "month";
 type View = "grid" | "table";
 const COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)", "var(--chart-6)"];
 const VIEW_STORE = "cp:project-view";
+/** Earliest day a custom range may start (the API refuses an earlier one). */
+const RANGE_MIN = "2026-04-01";
 
 /** The period (its first day) holding a dự án's latest review, when the shown one has none. */
-const lastPeriod = (p: ProjectEntry, period: Period): string | null => {
+const lastPeriod = (p: ProjectEntry, period: Cycle): string | null => {
   if (p.reviews > 0 || !p.last_review_at) return null;
   const day = localDay(new Date(p.last_review_at));
   return period === "week" ? weekOf(day) : `${day.slice(0, 7)}-01`;
@@ -53,7 +58,7 @@ function SevPair({ critical, high, hrefC, hrefH, what }: { critical: number; hig
 }
 
 /** One dự án at a glance: score and its change, the trend, open critical / high; opens the dự án. */
-function ProjectTile({ p, period }: { p: ProjectEntry; period: Period }) {
+function ProjectTile({ p, period }: { p: ProjectEntry; period: Cycle }) {
   const change = p.delta.avg_score;
   const last = lastPeriod(p, period);
   const body = (
@@ -96,7 +101,7 @@ function ProjectTile({ p, period }: { p: ProjectEntry; period: Period }) {
 }
 
 /** "Xem tuần từ 19/10": moves the page to the period of the dự án's latest review. */
-function JumpToLast({ p, period, onJump }: { p: ProjectEntry; period: Period; onJump: (start: string) => void }) {
+function JumpToLast({ p, period, onJump }: { p: ProjectEntry; period: Cycle; onJump: (start: string) => void }) {
   const last = lastPeriod(p, period);
   if (!last) return null;
   return (
@@ -114,7 +119,7 @@ function ProjectTable({
 }: {
   projects: ProjectEntry[];
   inPeriod: BoardScope["period"];
-  period: Period;
+  period: Cycle;
   onJump: (start: string) => void;
 }) {
   const link = (severity: "critical" | "high", p: ProjectEntry, period: boolean) =>
@@ -173,13 +178,37 @@ export default function OverviewPage() {
   }, []);
   const start = cursor === null ? null : period === "week" ? cursor : `${cursor.slice(0, 7)}-01`;
   const latest = period === "week" ? thisWeek() : thisMonth();
+  // A custom range: the shown period when it is picked, clipped to [RANGE_MIN, today].
+  const [range, setRange] = useState<{ from: string; to: string }>({ from: "", to: "" });
+  const today = localDay();
+  const rangeOk = range.from >= RANGE_MIN && range.from <= range.to && range.to <= today;
   const changePeriod = (p: Period) => {
+    if (p === "range") {
+      if (start !== null && period !== "range") {
+        const last = period === "week" ? shiftDays(start, 6) : shiftDays(shiftMonths(start, 1), -1);
+        const to = last < today ? last : today;
+        const from = start > RANGE_MIN ? start : RANGE_MIN;
+        setRange({ from, to: to > from ? to : from });
+      }
+      setPeriod(p);
+      return;
+    }
     setPeriod(p);
     setCursor((c) => (c === null ? c : p === "month" ? `${c.slice(0, 7)}-01` : c >= thisMonth() ? thisWeek() : weekOf(c)));
   };
   const step = (by: number) => setCursor((c) => (c === null ? c : period === "week" ? shiftWeeks(c, by) : shiftMonths(c, by)));
+  // From a range, "latest review" hints point at weeks; a jump opens that week.
+  const cycle: Cycle = period === "range" ? "week" : period;
+  const jump = (s: string) => {
+    if (period === "range") setPeriod("week");
+    setCursor(s);
+  };
 
-  const { data, error } = useApi<ProjectsOverview>(start && `/metrics/projects${qs({ period, start })}`, { keepPreviousData: true });
+  const url =
+    period === "range"
+      ? rangeOk && `/metrics/projects${qs({ period, start: range.from, end: range.to })}`
+      : start && `/metrics/projects${qs({ period, start })}`;
+  const { data, error } = useApi<ProjectsOverview>(url || null, { keepPreviousData: true });
   const { data: me } = useApi<Me>("/auth/me");
   const [view, setView] = useState<View>("grid");
   useEffect(() => {
@@ -199,32 +228,68 @@ export default function OverviewPage() {
     }
   };
 
+  const rangeHint =
+    period === "range" && !rangeOk ? (
+      <p className="error small" role="alert" style={{ marginTop: 0 }}>
+        Chọn khoảng ngày hợp lệ: từ {RANGE_MIN.split("-").reverse().join("/")} đến hôm nay, ngày bắt đầu không sau ngày kết thúc.
+      </p>
+    ) : null;
   const header = (
-    <PageHeader
-      eyebrow="Tổng quan"
-      title="Chất lượng code theo dự án"
-      actions={
-        <>
-          <Segmented<Period>
-            label="Chu kỳ"
-            value={period}
-            onChange={changePeriod}
-            options={[
-              { value: "week", label: "Tuần" },
-              { value: "month", label: "Tháng" },
-            ]}
-          />
-          <Pager
-            label={periodLabel(period, start)}
-            onPrev={() => step(-1)}
-            onNext={() => step(1)}
-            nextDisabled={start === null || start >= latest}
-            prevDisabled={start === null}
-          />
-        </>
-      }
-    />
+    <>
+      <PageHeader
+        eyebrow="Tổng quan"
+        title="Chất lượng code theo dự án"
+        actions={
+          <>
+            <Segmented<Period>
+              label="Chu kỳ"
+              value={period}
+              onChange={changePeriod}
+              options={[
+                { value: "week", label: "Tuần" },
+                { value: "month", label: "Tháng" },
+                { value: "range", label: "Khoảng ngày" },
+              ]}
+            />
+            {period === "range" ? (
+              <span className="date-range" role="group" aria-label="Khoảng ngày">
+                <input
+                  type="date"
+                  value={range.from}
+                  min={RANGE_MIN}
+                  max={range.to || today}
+                  onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
+                  aria-label="Từ ngày"
+                  aria-invalid={range.from !== "" && !rangeOk}
+                  title={`Từ ngày (sớm nhất ${RANGE_MIN.split("-").reverse().join("/")})`}
+                />
+                <span className="muted" aria-hidden="true">–</span>
+                <input
+                  type="date"
+                  value={range.to}
+                  min={range.from || RANGE_MIN}
+                  max={today}
+                  onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
+                  aria-label="Đến ngày"
+                  aria-invalid={range.to !== "" && !rangeOk}
+                />
+              </span>
+            ) : (
+              <Pager
+                label={periodLabel(period, start)}
+                onPrev={() => step(-1)}
+                onNext={() => step(1)}
+                nextDisabled={start === null || start >= latest}
+                prevDisabled={start === null}
+              />
+            )}
+          </>
+        }
+      />
+      {rangeHint}
+    </>
   );
+  if (!data && rangeHint) return header;
   if (!data)
     return (
       <>
@@ -235,7 +300,7 @@ export default function OverviewPage() {
 
   const t = data.totals;
   // Dự án with reviews, none of them in this period: they show "—", so say where to look.
-  const idle = data.projects.filter((p) => lastPeriod(p, period) !== null);
+  const idle = data.projects.filter((p) => lastPeriod(p, cycle) !== null);
   const named = data.projects.filter((p) => p.id !== null);
   const bars = data.projects.map((p) => ({
     name: p.name,
@@ -244,9 +309,12 @@ export default function OverviewPage() {
     high: p.high,
   }));
   // From the response, not the cursor: while the next period loads, links keep the shown one.
-  const inPeriod = { range: data.period_range, label: periodLabel(data.period_type, data.period_start) };
+  const inPeriod = {
+    range: data.period_range,
+    label: data.period_type === "range" ? rangeLabel(data.period_start, data.period_end) : periodLabel(data.period_type, data.period_start),
+  };
   const trendRows = data.trend_starts.map((s, i) => ({
-    period: period === "week" ? weekLabel(s) : s.slice(5, 7),
+    period: data.trend_period === "week" ? weekLabel(s) : `${s.slice(5, 7)}/${s.slice(2, 4)}`,
     ...Object.fromEntries(named.slice(0, 6).map((p) => [p.name, p.trend[i]])),
   }));
 
@@ -312,7 +380,7 @@ export default function OverviewPage() {
               <ul className="proj-grid">
                 {data.projects.map((p) => (
                   <li key={p.id ?? "none"}>
-                    <ProjectTile p={p} period={period} />
+                    <ProjectTile p={p} period={cycle} />
                   </li>
                 ))}
               </ul>
@@ -323,18 +391,18 @@ export default function OverviewPage() {
                 {idle.map((p, i) => (
                   <span key={p.id ?? "none"}>
                     {i > 0 && " · "}
-                    {p.name} <JumpToLast p={p} period={period} onJump={setCursor} />
+                    {p.name} <JumpToLast p={p} period={cycle} onJump={jump} />
                   </span>
                 ))}
               </p>
             )}
             {view === "grid" ? null : (
-              <ProjectTable projects={data.projects} inPeriod={inPeriod} period={period} onJump={setCursor} />
+              <ProjectTable projects={data.projects} inPeriod={inPeriod} period={cycle} onJump={jump} />
             )}
           </Card>
 
           <div className="grid two">
-            <Card title="Review và lỗi theo dự án" actions={<span className="muted small">trong kỳ</span>}>
+            <Card title="Review và lỗi theo dự án" actions={<span className="muted small">{data.period_type === "range" ? inPeriod.label : "trong kỳ"}</span>}>
               <div className="chart-box">
                 <ResponsiveContainer>
                   <BarChart data={bars} margin={{ top: 8, right: 8, bottom: 0, left: -16 }} barCategoryGap="30%">

@@ -8,7 +8,7 @@ repos outside one, docs/specs/09 "Phân quyền theo dự án"); per-person data
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -41,6 +41,12 @@ from app.scoring.verdict import VERDICTS
 router = APIRouter(tags=["overview"])
 SessionDep = Annotated[Session, Depends(get_session)]
 Period = Literal["week", "month"]
+OverviewPeriod = Literal["week", "month", "range"]
+# The earliest day a custom range (period=range) may start: reviews before it are not
+# comparable (requested by the user 2026-10-31).
+RANGE_MIN = date(2026, 4, 1)
+# A custom range up to this many days trends by week, a longer one by month.
+RANGE_WEEKLY_DAYS = 92
 SEVERITIES = ("critical", "high", "medium", "low", "info")
 SEVERE = ("critical", "high")
 TREND_PERIODS = 8
@@ -261,27 +267,91 @@ def _trend_starts(period_start: date, period: PeriodType, n: int) -> list[date]:
     return starts
 
 
+@dataclass
+class Window:
+    """What the overview shows: [lo, hi), the window before it for deltas, and the trend."""
+
+    period_start: date
+    period_end: date  # last day, inclusive
+    lo: datetime
+    hi: datetime
+    prev_lo: datetime
+    prev_hi: datetime
+    trend_period: PeriodType
+    trend_starts: list[date]
+    load_lo: datetime  # earliest instant the rows must cover (trend and previous window)
+    trend_lo: datetime  # rows from here on feed the trend
+    trend_hi: datetime
+
+
+def _window(
+    period: OverviewPeriod, start: date | None, end: date | None, settings: Settings
+) -> Window:
+    if period != "range":
+        period_start, tz = _resolve_period(period, start, settings)
+        lo, hi = period_bounds(period_start, period, tz)
+        prev_lo, prev_hi = period_bounds(previous_period(period_start, period), period, tz)
+        trend_starts = _trend_starts(period_start, period, TREND_PERIODS)
+        trend_lo = period_bounds(trend_starts[0], period, tz)[0]
+        return Window(
+            period_start,
+            next_period(period_start, period) - timedelta(days=1),
+            lo,
+            hi,
+            prev_lo,
+            prev_hi,
+            period,
+            trend_starts,
+            trend_lo,
+            trend_lo,
+            hi,
+        )
+    # A custom range [start, end] of whole days: deltas against the as-long range right before
+    # it, the trend by week (or month, when long) over the range itself.
+    tz = ZoneInfo(settings.report_tz)
+    today = datetime.now(UTC).astimezone(tz).date()
+    if start is None or end is None:
+        raise HTTPException(422, "period=range needs start and end")
+    if start < RANGE_MIN:
+        raise HTTPException(422, f"start must be on or after {RANGE_MIN.isoformat()}")
+    if start > today:
+        raise HTTPException(422, "start is in the future")
+    end = min(end, today)
+    if end < start:
+        raise HTTPException(422, "end is before start")
+    days = (end - start).days + 1
+    lo = datetime.combine(start, time.min, tz)
+    hi = datetime.combine(end + timedelta(days=1), time.min, tz)
+    prev_lo = datetime.combine(start - timedelta(days=days), time.min, tz)
+    trend_period: PeriodType = "week" if days <= RANGE_WEEKLY_DAYS else "month"
+    trend_starts = [period_start_of(start, trend_period)]
+    while (following := next_period(trend_starts[-1], trend_period)) <= end:
+        trend_starts.append(following)
+    return Window(start, end, lo, hi, prev_lo, lo, trend_period, trend_starts, prev_lo, lo, hi)
+
+
 @router.get("/metrics/projects")
 def projects_overview(
     principal: CurrentPrincipal,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
-    period: Period = "week",
+    period: OverviewPeriod = "week",
     start: date | None = None,
+    end: date | None = None,
 ) -> dict[str, Any]:
-    """Every dự án (plus repos without one) for one period, with deltas and an 8-period trend."""
-    period_start, tz = _resolve_period(period, start, settings)
-    lo, hi = period_bounds(period_start, period, tz)
-    prev_lo, prev_hi = period_bounds(previous_period(period_start, period), period, tz)
-    trend_starts = _trend_starts(period_start, period, TREND_PERIODS)
-    trend_lo = period_bounds(trend_starts[0], period, tz)[0]
+    """Every dự án (plus repos without one) for one period, or a custom range of days
+    (period=range, start..end inclusive, from RANGE_MIN), with deltas and a trend."""
+    w = _window(period, start, end, settings)
+    tz = ZoneInfo(settings.report_tz)
+    lo, hi, prev_lo, prev_hi = w.lo, w.hi, w.prev_lo, w.prev_hi
+    trend_starts, trend_period = w.trend_starts, w.trend_period
 
     visible = principal.visible_projects()  # None: every dự án and the unassigned repos
 
     def shown(bp_id: int | None) -> bool:
         return visible is None or bp_id in visible
 
-    rows = _done_reviews(session, trend_lo, hi, bp_ids=visible)
+    rows = _done_reviews(session, w.load_lo, hi, bp_ids=visible)
     sev = _severities(session, [r[2] for r in rows])
     by_bp = lambda p, bp, fin: bp  # noqa: E731 - small keyed aggregations below
     current = _bucket([r for r in rows if r[5] is not None and lo <= r[5] < hi], sev, by_bp)
@@ -290,10 +360,10 @@ def projects_overview(
     )
 
     def bucket_period(fin: datetime) -> date:
-        return period_start_of(fin.astimezone(tz).date(), period)
+        return period_start_of(fin.astimezone(tz).date(), trend_period)
 
     trend = _bucket(
-        [r for r in rows if r[5] is not None],
+        [r for r in rows if r[5] is not None and w.trend_lo <= r[5] < w.trend_hi],
         sev,
         lambda p, bp, fin: (bp, bucket_period(fin)),
     )
@@ -365,10 +435,13 @@ def projects_overview(
             total_prev.severity[s] += b.severity[s]
     return {
         "period_type": period,
-        "period_start": period_start.isoformat(),
+        "period_start": w.period_start.isoformat(),
+        "period_end": w.period_end.isoformat(),
         # The period's [from, to) instants: the dashboard links its "new" counts to the findings
         # list with them, so both count the same reviews.
         "period_range": [lo.isoformat(), hi.isoformat()],
+        "range_min": RANGE_MIN.isoformat(),
+        "trend_period": trend_period,
         "trend_starts": [s.isoformat() for s in trend_starts],
         "totals": {
             **total_cur.as_dict(),

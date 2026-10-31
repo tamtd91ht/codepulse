@@ -672,8 +672,14 @@ export interface ProjectEntry extends ProjectAgg {
 }
 
 export interface ProjectsOverview {
-  period_type: "week" | "month";
+  /** "range": a custom range of days, period_start..period_end inclusive. */
+  period_type: "week" | "month" | "range";
   period_start: string;
+  period_end: string;
+  /** Earliest day a custom range may start. */
+  range_min: string;
+  /** How the trend is bucketed (a range: by week, or by month when long). */
+  trend_period: "week" | "month";
   /** [from, to) instants of the period, for links to the findings found in it. */
   period_range: [string, string];
   trend_starts: string[];

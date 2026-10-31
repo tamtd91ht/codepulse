@@ -992,6 +992,16 @@ form.toolbar {
   font-size: 13px;
   white-space: nowrap;
 }
+/* Two date inputs for a custom range, beside the period switch. */
+.date-range {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.date-range input[aria-invalid="true"] {
+  border-color: var(--bad-text);
+}
 
 /* Admin tabs (page level) and the Telegram link code */
 .admin-tabs {

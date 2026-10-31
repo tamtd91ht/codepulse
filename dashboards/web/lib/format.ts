@@ -139,6 +139,16 @@ export function weekLabel(week: string): string {
   return `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
+/** "dd/mm/yyyy" for a YYYY-MM-DD day. */
+export function dayLabel(day: string): string {
+  return `${day.slice(8, 10)}/${day.slice(5, 7)}/${day.slice(0, 4)}`;
+}
+
+/** "01/04/2026 – 31/10/2026" for a range of days (both inclusive). */
+export function rangeLabel(from: string, to: string): string {
+  return from === to ? dayLabel(from) : `${dayLabel(from)} – ${dayLabel(to)}`;
+}
+
 /** "Tuần từ 05/10" or "Tháng 10/2026" for a period starting on `start` (YYYY-MM-DD). */
 export function periodLabel(period: "week" | "month", start: string | null): string {
   if (!start) return "…";

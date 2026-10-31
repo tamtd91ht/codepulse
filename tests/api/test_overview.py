@@ -193,3 +193,44 @@ def test_project_detail_has_repos_series_categories_and_scoped_recent(
     assert (
         client.get("/api/v1/metrics/projects/999", headers=as_user(world.lead)).status_code == 404
     )
+
+
+def test_overview_custom_range(
+    client: TestClient, world: World, omicrm: BusinessProject, as_user: Any
+) -> None:
+    # 2026-10-01..2026-10-10 holds the world's review (10-06); the 10 days before hold the
+    # unassigned repo's (09-30): the deltas compare with it.
+    admin = as_user(world.admin)
+    res = client.get(
+        "/api/v1/metrics/projects?period=range&start=2026-10-01&end=2026-10-10", headers=admin
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["period_type"] == "range"
+    assert (body["period_start"], body["period_end"]) == ("2026-10-01", "2026-10-10")
+    assert body["trend_period"] == "week"
+    assert body["trend_starts"] == ["2026-09-28", "2026-10-05"]
+    assert body["totals"]["reviews"] == 1
+    assert body["totals"]["delta"]["reviews"] == 0  # one review in the 10 days before too
+    # A longer range trends by month, and the range alone counts: 09-30 is outside it.
+    body = client.get(
+        "/api/v1/metrics/projects?period=range&start=2026-04-01&end=2026-10-05", headers=admin
+    ).json()
+    assert body["trend_period"] == "month" and body["trend_starts"][0] == "2026-04-01"
+    assert body["totals"]["reviews"] == 1
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "period=range&start=2026-03-31&end=2026-10-10",  # before the earliest allowed day
+        "period=range&start=2026-10-10&end=2026-10-01",  # end before start
+        "period=range&start=2026-10-01",  # no end
+        "period=range&start=2999-01-01&end=2999-01-02",  # in the future
+    ],
+)
+def test_overview_rejects_bad_ranges(
+    client: TestClient, world: World, as_user: Any, query: str
+) -> None:
+    res = client.get(f"/api/v1/metrics/projects?{query}", headers=as_user(world.an))
+    assert res.status_code == 422, res.text
