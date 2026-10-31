@@ -109,7 +109,7 @@ def test_status_without_claude(client: TestClient, world: World, as_user: Any) -
     body = client.get("/api/v1/assistant/status", headers=as_user(world.manager)).json()
     assert body["name"] == "Stetho"
     assert body["available"] is False
-    assert "Kết nối Claude" in body["reason"]
+    assert "Đăng nhập Claude" in body["reason"]
     assert [m["id"] for m in body["models"]] == ["sonnet", "opus", "haiku"]
 
 

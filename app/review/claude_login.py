@@ -55,13 +55,24 @@ def clean(text: str) -> str:
 
 
 def find_url(text: str) -> str | None:
-    match = _URL_RE.search(clean(text))
-    return match.group(0) if match else None
+    """The login URL once something follows it (it may arrive in pieces too, see find_token)."""
+    cleaned = clean(text)
+    for match in _URL_RE.finditer(cleaned):
+        if match.end() < len(cleaned):
+            return match.group(0)
+    return None
 
 
-def find_token(text: str) -> str | None:
-    match = _TOKEN_RE.search(clean(text))
-    return match.group(0) if match else None
+def find_token(text: str, complete: bool = True) -> str | None:
+    """The token, only once something follows it. The CLI's output arrives in pieces, and a piece
+    that ends inside the token would otherwise hand over its first part: stored, it fails every
+    call with "401 OAuth access token is invalid". `complete=False` once the CLI has exited."""
+    cleaned = clean(text)
+    for match in _TOKEN_RE.finditer(cleaned):
+        # Greedy: a match that ends before the text does is followed by a non-token character.
+        if not complete or match.end() < len(cleaned):
+            return match.group(0)
+    return None
 
 
 def find_error(text: str) -> str | None:
@@ -154,7 +165,10 @@ class PtySetupToken:
         timeout_s: float,
         what: str,
         fail: Callable[[str], str | None] = lambda _: None,
+        last: Callable[[str], str | None] | None = None,
     ) -> str:
+        """`find` in the output as it grows; once the CLI has exited, `last` (if given) gets a
+        final look at everything it printed."""
         deadline = time.monotonic() + timeout_s
         with self._changed:
             while True:
@@ -169,6 +183,8 @@ class PtySetupToken:
                     tail = scrub_secrets(clean(self._buffer).strip())[-300:]
                     raise LoginError(f"the CLI showed no {what} within {timeout_s:g}s: {tail}")
                 self._changed.wait(min(remaining, 0.5))
+            if last is not None and (found := last(self._buffer)):
+                return found
         tail = scrub_secrets(clean(self._buffer).strip())[-300:]
         raise LoginError(f"the CLI exited {self._proc.returncode} without a {what}: {tail}")
 
@@ -183,7 +199,13 @@ class PtySetupToken:
         os.write(self._master, code.encode())
         time.sleep(ENTER_DELAY_S)
         os.write(self._master, b"\r")
-        return self._wait(find_token, timeout_s, "token", fail=find_error)
+        return self._wait(
+            find_token,
+            timeout_s,
+            "token",
+            fail=find_error,
+            last=lambda text: find_token(text, complete=False),
+        )
 
     def close(self) -> None:
         if self._proc.poll() is None:

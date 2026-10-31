@@ -139,3 +139,17 @@ def test_a_turn_killed_after_it_started_is_still_priced() -> None:
     assert got == ["a" * 300]
     assert result.cost_estimated
     assert result.cost_usd is not None and result.cost_usd > 0
+
+
+def test_an_invalid_token_says_who_fixes_it_and_where() -> None:
+    failed = {
+        **RESULT,
+        "subtype": "success",
+        "is_error": True,
+        "result": "Failed to authenticate. API Error: 401 OAuth access token is invalid.",
+    }
+    result, _ = turn(lines(failed), streamer=streamer(lines(failed), code=1))
+    assert result.error is not None
+    assert result.error.startswith("Token Claude của CodePulse không còn hợp lệ")
+    assert "Đăng nhập Claude" in result.error
+    assert "401" in result.error

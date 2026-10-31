@@ -17,6 +17,12 @@ from typing import Literal
 from app.review.providers.claude_code import cli_env, scrub_secrets, stream_lines
 
 NAME = "Stetho"
+# Where an admin connects CodePulse to Claude (components/ClaudeLogin.tsx on the Admin screen).
+LOGIN_PLACE = "Admin → LLM & Chi phí → Đăng nhập Claude"
+AUTH_HINT = (
+    "Token Claude của CodePulse không còn hợp lệ (hết hạn hoặc bị thu hồi) — nhờ admin đăng nhập "
+    f"lại ở {LOGIN_PLACE}, rồi bấm Kiểm tra kết nối LLM."
+)
 MAX_QUESTION = 4_000
 MAX_TURN = 8_000
 MAX_HISTORY_CHARS = 40_000
@@ -305,6 +311,9 @@ def run_chat(
             or f"Claude Code CLI thoát với mã {code}"
         )
         out.error = scrub_secrets(why, token)[-500:]
+        # `claude` says "Failed to authenticate. API Error: 401 …": say what to do about it.
+        if "401" in why or "authenticat" in why.lower():
+            out.error = f"{AUTH_HINT} (Chi tiết: {out.error[:200]})"
         return out
     if not pieces and final.text:
         emit(final.text)

@@ -124,3 +124,54 @@ def test_pty_flow_against_a_fake_cli(tmp_path: Path) -> None:
             bad.submit("bad#s", 5)
     finally:
         bad.close()
+
+
+def test_a_token_cut_by_the_output_pieces_is_not_taken() -> None:
+    # The PTY delivered the token in two reads: the first ends inside it.
+    first = "Your OAuth token (valid for 1 year):\r\n\x1b[33msk-ant-oat01-AbC_def-1234567890123456"
+    assert find_token(first) is None
+    assert (
+        find_token(first + "78901234\x1b[39m\r\n")
+        == "sk-ant-oat01-AbC_def-123456789012345678901234"
+    )
+    assert find_url("https://claude.ai/oauth/authorize?code=true&cli") is None
+    # Once the CLI has exited, a token at the very end is all there will be.
+    assert find_token(first, complete=False) == "sk-ant-oat01-AbC_def-1234567890123456"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="needs a pseudo-terminal")
+def test_pty_waits_for_the_whole_token(tmp_path: Path) -> None:
+    """The fake CLI prints the token in two writes with a pause between, then exits without a
+    newline after a second token (the CLI's last output): both arrive whole."""
+    script = tmp_path / "claude"
+    script.write_text(
+        "#!/bin/sh\n"
+        "printf 'https://claude.ai/oauth/authorize?state=s\n'\n"
+        "read code\n"
+        "printf 'sk-ant-oat01-firsthalffirsthalffirsthalf'\n"
+        "sleep 0.5\n"
+        "printf 'SECONDhalfSECONDhalf\nStore this token securely.\n'\n"
+    )
+    script.chmod(0o700)
+    login = PtySetupToken(str(script), {"PATH": os.environ.get("PATH", "")})
+    try:
+        login.wait_for_url(5)
+        assert (
+            login.submit("good#s", 5)
+            == "sk-ant-oat01-firsthalffirsthalffirsthalfSECONDhalfSECONDhalf"
+        )
+    finally:
+        login.close()
+
+    script.write_text(
+        "#!/bin/sh\n"
+        "printf 'https://claude.ai/oauth/authorize?state=s\n'\n"
+        "read code\n"
+        "printf 'sk-ant-oat01-lastthinglastthinglastthing'\n"
+    )
+    ended = PtySetupToken(str(script), {"PATH": os.environ.get("PATH", "")})
+    try:
+        ended.wait_for_url(5)
+        assert ended.submit("good#s", 5) == "sk-ant-oat01-lastthinglastthinglastthing"
+    finally:
+        ended.close()

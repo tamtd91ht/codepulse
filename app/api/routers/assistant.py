@@ -26,7 +26,16 @@ from app.admin_settings import effective, monthly_budget_usd
 from app.api.audit import audit
 from app.api.deps import get_secret_box, get_session
 from app.api.security import CurrentPrincipal, Principal
-from app.assistant.chat import MAX_QUESTION, MODELS, NAME, ChatOutcome, Streamer, Turn, run_chat
+from app.assistant.chat import (
+    LOGIN_PLACE,
+    MAX_QUESTION,
+    MODELS,
+    NAME,
+    ChatOutcome,
+    Streamer,
+    Turn,
+    run_chat,
+)
 from app.assistant.context import Screen, build_context
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
@@ -45,7 +54,7 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 HEARTBEAT_S = 15.0
 POLL_S = 0.05
 MAX_RUNNING = 4
-NOT_CONNECTED = f"{NAME} chưa được kết nối với Claude — nhờ admin vào Admin → Kết nối Claude."
+NOT_CONNECTED = f"{NAME} chưa được kết nối với Claude — nhờ admin vào {LOGIN_PLACE}."
 # People with a question running (user ids). The API is one process (Dockerfile, compose).
 _busy: set[int] = set()
 _busy_lock = threading.Lock()
