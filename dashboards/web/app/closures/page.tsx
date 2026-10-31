@@ -4,11 +4,12 @@ import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 import useSWRInfinite from "swr/infinite";
 
+import { DateRangePicker } from "@/components/DateRangePicker";
 import { CLOSED_AS, shortShas } from "@/components/FindingClose";
 import { Icon, IconButton } from "@/components/icons";
 import { Card, EmptyState, Loading, Message, PageHeader, Pill, Segmented, SeverityBadge } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
-import { CATEGORY_LABEL, date } from "@/lib/format";
+import { CATEGORY_LABEL, date, localDay } from "@/lib/format";
 import type { ClosureFacets, ClosureListItem } from "@/lib/types";
 
 /**
@@ -227,14 +228,19 @@ export default function ClosuresPage() {
               </select>
             </label>
           )}
-          <label className="filter">
-            <span className="small muted">Từ ngày</span>
-            <input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => set("from", e.target.value)} />
-          </label>
-          <label className="filter">
-            <span className="small muted">Đến ngày</span>
-            <input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => set("to", e.target.value)} />
-          </label>
+          <div className="filter">
+            <span className="small muted" aria-hidden="true">
+              Thời gian
+            </span>
+            <DateRangePicker
+              label="Thời gian"
+              showLabel={false}
+              clearable
+              value={{ from: filters.from, to: filters.to }}
+              max={localDay()}
+              onChange={(r) => setFilters((f) => ({ ...f, from: r.from, to: r.to }))}
+            />
+          </div>
           {filtered && (
             <button
               className="ghost"

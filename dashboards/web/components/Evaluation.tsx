@@ -2,6 +2,7 @@
 
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
+import { DateRangePicker } from "@/components/DateRangePicker";
 import { Icon } from "@/components/icons";
 import { Segmented } from "@/components/ui";
 import { VERDICT_LABEL, localDay, num } from "@/lib/format";
@@ -114,18 +115,7 @@ export function rangeProblem(from: string, to: string): string | null {
  * half-typed year never reaches the API.
  */
 export function RangePicker({ value, onChange }: { value: Range | null; onChange: (r: Range) => void }) {
-  const [draft, setDraft] = useState<{ from: string; to: string } | null>(null);
-  const from = value?.from;
-  const to = value?.to;
-  useEffect(() => {
-    if (from !== undefined && to !== undefined) setDraft({ from, to });
-  }, [from, to]);
-  if (!value || !draft) return null;
-  const problem = value.preset === "custom" ? rangeProblem(draft.from, draft.to) : null;
-  const edit = (next: { from: string; to: string }) => {
-    setDraft(next);
-    if (!rangeProblem(next.from, next.to)) onChange({ preset: "custom", ...next });
-  };
+  if (!value) return null;
   return (
     <div className="range-picker">
       <Segmented<Preset>
@@ -142,34 +132,13 @@ export function RangePicker({ value, onChange }: { value: Range | null; onChange
         ]}
       />
       {value.preset === "custom" && (
-        <span className="range-dates">
-          <input
-            type="date"
-            value={draft.from}
-            max={draft.to}
-            onChange={(e) => edit({ ...draft, from: e.target.value })}
-            aria-label="Từ ngày"
-            aria-invalid={!!problem}
-            aria-describedby={problem ? "range-problem" : undefined}
-          />
-          <span className="muted" aria-hidden="true">
-            →
-          </span>
-          <input
-            type="date"
-            value={draft.to}
-            min={draft.from}
-            onChange={(e) => edit({ ...draft, to: e.target.value })}
-            aria-label="Đến ngày"
-            aria-invalid={!!problem}
-            aria-describedby={problem ? "range-problem" : undefined}
-          />
-        </span>
-      )}
-      {problem && (
-        <span id="range-problem" className="range-problem small" role="status">
-          {problem}
-        </span>
+        <DateRangePicker
+          label="Thời gian"
+          value={{ from: value.from, to: value.to }}
+          max={localDay()}
+          maxSpan={MAX_SPAN_DAYS}
+          onChange={(r) => onChange({ preset: "custom", ...r })}
+        />
       )}
     </div>
   );

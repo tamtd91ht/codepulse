@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { useSWRConfig } from "swr";
 
+import { DateRangePicker } from "@/components/DateRangePicker";
 import { Icon } from "@/components/icons";
 import { LinkAuthor } from "@/components/LinkAuthor";
 import { announceReviewQueued } from "@/components/ReviewActivity";
@@ -429,10 +430,15 @@ export default function RequestReviewPage() {
                 <div className="toolbar" style={{ margin: 0 }}>
                   <Segmented label="Khoảng thời gian" value={window_} onChange={setWindow} options={WINDOWS} />
                   {window_ === "custom" && (
-                    <>
-                      <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="Từ ngày" />
-                      <input type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label="Đến ngày" />
-                    </>
+                    <DateRangePicker
+                      label="Ngày commit"
+                      value={{ from, to }}
+                      max={localDay()}
+                      onChange={(r) => {
+                        setFrom(r.from);
+                        setTo(r.to);
+                      }}
+                    />
                   )}
                 </div>
               </div>

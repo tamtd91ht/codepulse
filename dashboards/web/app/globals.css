@@ -1021,7 +1021,7 @@ form.toolbar {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  z-index: 40;
+  z-index: 48; /* above the Stetho button and the activity panel (45), under drawers (50) */
   display: flex;
   max-width: calc(100vw - 32px);
   background: var(--surface);
@@ -3198,28 +3198,10 @@ textarea.rules {
   gap: 8px;
   flex-wrap: wrap;
 }
-.range-dates {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.range-problem {
-  color: var(--bad-text);
-  flex-basis: 100%;
-}
 @media (max-width: 700px) {
-  .range-picker,
-  .range-dates {
+  .range-picker {
     width: 100%;
   }
-  .range-dates input {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-}
-.range-dates input {
-  width: auto;
 }
 .toolbar.filters {
   gap: 10px 14px;
