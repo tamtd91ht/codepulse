@@ -54,7 +54,7 @@ from app.review.claude_repo import (
 )
 from app.review.live import LiveTracker, describe
 from app.review.postprocess import Finding, postprocess
-from app.review.prepare import ContextFetcher, PreparedDiff, chunk, prepare, redact
+from app.review.prepare import ContextFetcher, DiffFile, PreparedDiff, chunk, prepare, redact
 from app.review.profile import render_profile
 from app.review.progress import NullProgress, ProgressSink
 from app.review.prompt import (
@@ -66,6 +66,7 @@ from app.review.prompt import (
     target_header,
 )
 from app.review.providers.base import AgenticProvider, LLMError, LLMProvider, ReviewResult
+from app.review.resolve import check, close_finding, recent_open
 from app.review.rubric import RUBRIC_LENS, RUBRIC_VERSION
 from app.review.rules import collect_rules
 from app.review.schema import AgentFinding, Intent, LLMFinding
@@ -148,6 +149,9 @@ class ReviewSettings:
     verify_timeout_s: float = VERIFY_TIMEOUT_S
     verify_min_confidence_unverified: float = 0.7
     knowledge_tokens: int = 12_000  # docs/specs/19 §3.1: RK budget in the prompt
+    # Open critical/high findings of the repo from the last N days a finished review checks its
+    # change against, to close the fixed ones (app/review/resolve.py); 0 = off.
+    auto_close_days: int = 0
     stale_running: timedelta = STALE_RUNNING  # see STALE_RUNNING
 
 
@@ -215,6 +219,8 @@ class ReviewService:
         self._progress: ProgressSink = progress or NullProgress()
         self._unclaimed: str | None = None  # why the last _claim took nothing (None: running)
         self._pending_basis: dict[int, dict[str, Any]] = {}
+        # The reviewed diff per review, for the auto-close check after the save.
+        self._reviewed_files: dict[int, list[DiffFile]] = {}
         self._client = client
         self._provider = provider
         self._settings = settings
@@ -304,6 +310,9 @@ class ReviewService:
             # After the save: the comment points at a review that is already there.
             body = comment.render(result, findings)
             comment.post_or_update(self._client, project.external_id, mr.iid, body)
+        if result.status == "done" and review.round == 1:
+            self._auto_close(result, project, f"MR !{mr.iid} (head {head_sha[:12]})", mr.id)
+        self._reviewed_files.pop(review.id, None)
         return result
 
     def review_commit(
@@ -361,7 +370,85 @@ class ReviewService:
         )
         result = self._run(review, project, target, entries, commit.sha)
         self._commit_step("save")
+        if result.status == "done" and review.round == 1:
+            self._auto_close(result, project, f"commit {commit.sha[:12]} {title[:120]}")
+        self._reviewed_files.pop(review.id, None)
         return result
+
+    def _auto_close(
+        self, review: Review, project: Project, change: str, mr_id: int | None = None
+    ) -> None:
+        """AUTO_CLOSE_FINDINGS: does this change fix open critical/high findings the repo got in
+        the last AUTO_CLOSE_DAYS days? Their stored text is checked against this diff in one
+        no-tool call (app/review/resolve.py); nothing is reviewed again. A re-judgment of the
+        same change (round > 1) fixes nothing. Never fails the review: it is already saved."""
+        days = self._settings.auto_close_days
+        files = self._reviewed_files.get(review.id)
+        if days <= 0 or not files:
+            return
+        try:
+            until = review.changed_at if review.changed_at > CHANGE_TIME_UNKNOWN else self._clock()
+            candidates = recent_open(
+                self._session,
+                project.id,
+                since=until - timedelta(days=days),
+                until=until,
+                touched=[f.path for f in files],
+                exclude_review=review.id,
+                exclude_mr=mr_id,
+            )
+            if not candidates or self._over_budget(review, project) is not None:
+                return
+            self._step(review.id, "close", f"{len(candidates)} finding")
+            self._commit_step("close-prepare")  # no transaction open while the model works
+            checked = check(self._provider, project.path_with_namespace, change, files, candidates)
+        except Exception:
+            log.exception("auto-close check failed", extra={"review_id": review.id})
+            if self._short:  # the review is saved; only this step's reads are dropped
+                self._session.rollback()
+            return
+        # The call is paid whatever comes next: its cost is on the review (the budget) first.
+        if checked.call is not None:
+            self._record_usage(review, [checked.call])
+            self._commit_step("close-usage")
+        closed: list[int] = []
+        try:
+            # A savepoint: a failure here never aborts the caller's transaction (single-
+            # transaction mode) nor drops the cost recorded above.
+            with self._session.begin_nested():
+                for outcome in checked.outcomes:
+                    finding = self._session.get(ReviewFinding, outcome.finding_id)
+                    # close_finding re-checks "still open" in the UPDATE itself: the finding may
+                    # have been disputed or closed while the model worked.
+                    if (
+                        outcome.closes
+                        and finding is not None
+                        and close_finding(
+                            self._session,
+                            finding,
+                            kind="auto",
+                            now=self._clock(),
+                            review_id=review.id,
+                            shas=[review.reviewed_sha],
+                            reason=outcome.reason,
+                            evidence=outcome.evidence,
+                        )
+                    ):
+                        closed.append(finding.id)
+                review.basis = {
+                    **(review.basis or {}),
+                    "auto_close": {
+                        "days": days,
+                        "checked": [f.id for f in candidates],
+                        "closed": closed,
+                        **({"error": checked.error} if checked.error else {}),
+                    },
+                }
+            self._commit_step("close")
+        except Exception:
+            log.exception("auto-close write failed", extra={"review_id": review.id})
+            if self._short:
+                self._session.rollback()
 
     # -- steps ---------------------------------------------------------------------------------
 
@@ -674,6 +761,7 @@ class ReviewService:
             return self._finish(review, "skipped", "project does not allow external LLM")
 
         prepared = prepare(entries, settings.ignore_paths, settings.sensitive_paths)
+        self._reviewed_files[review.id] = prepared.files
         review.loc_reviewed = prepared.loc
         if not prepared.files:
             return self._finish(review, "skipped", "no reviewable files")

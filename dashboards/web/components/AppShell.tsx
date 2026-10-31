@@ -83,6 +83,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         { href: "/reviews", label: "Kết quả review", icon: "inbox" },
         { href: "/reviews/request", label: "Yêu cầu review", icon: "review" },
         { href: "/critical", label: "Critical Board", icon: "alert" },
+        { href: "/closures", label: "Đóng finding", icon: "checkCircle" },
         { href: "/disputes", label: isLead ? "Duyệt khiếu nại" : "Khiếu nại", icon: "scale" },
       ]
     : [];

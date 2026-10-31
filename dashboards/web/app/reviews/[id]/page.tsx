@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { use, useEffect, useRef, useState } from "react";
 
+import { CloseActions, ClosureNote } from "@/components/FindingClose";
 import { BasisCard, basisSummary, changedRules, previousRun } from "@/components/ReviewBasis";
 import { announceReviewQueued } from "@/components/ReviewActivity";
 import { Alert, Card, EmptyState, ExternalLink, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, TRIGGER_LABEL, VERDICT_LABEL, date, num } from "@/lib/format";
-import type { Finding, Me, Repo, ReviewDetail } from "@/lib/types";
+import type { Finding, FindingClosure, Me, Repo, ReviewDetail } from "@/lib/types";
 
 const STATUS_LABEL: Record<string, string> = {
   open: "Đang mở",
@@ -332,6 +333,10 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
     refreshInterval: rerun?.pending ? RERUN_POLL_MS : 0,
   });
   const { data: me } = useApi<Me>("/auth/me");
+  // How findings were closed as fixed; polled while a request to close one is being checked.
+  const closures = useApi<FindingClosure[]>(`/reviews/${id}/closures`, {
+    refreshInterval: (latest) => (latest?.some((c) => c.status === "checking") ? 5000 : 0),
+  });
   // The knowledge line links to the repo's knowledge page; the detail only names the repo, so look its id up.
   const repos = useApi<Repo[]>(review?.basis?.knowledge ? "/repos" : null);
   const repoId = repos.data?.find((r) => r.path_with_namespace === review?.project)?.id ?? null;
@@ -611,6 +616,8 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
         )}
         {review.findings.map((f) => {
           const status = f.status ?? "open";
+          // Newest first: the latest closing (or request) of this finding.
+          const closure = closures.data?.find((c) => c.finding_id === f.id);
           return (
             <article key={f.id} className={`finding ${f.severity}`}>
               <div className="finding-head">
@@ -644,7 +651,17 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
                 )}
                 {f.code_excerpt && <pre className="excerpt">{f.code_excerpt}</pre>}
               </div>
-              {isAuthor && status === "open" && <DisputeForm finding={f} onDone={() => mutate()} />}
+              <ClosureNote closure={closure} onDone={() => Promise.all([mutate(), closures.mutate()])} />
+              <CloseActions
+                finding={f}
+                closure={closure}
+                isAuthor={isAuthor}
+                isAdmin={!!me?.is_admin}
+                onDone={() => Promise.all([mutate(), closures.mutate()])}
+              />
+              {isAuthor && status === "open" && closure?.status !== "pending" && closure?.status !== "checking" && (
+                <DisputeForm finding={f} onDone={() => mutate()} />
+              )}
             </article>
           );
         })}

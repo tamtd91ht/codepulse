@@ -65,6 +65,7 @@ from app.models import (
     BusinessProject,
     CommandRun,
     Connection,
+    FindingClosure,
     FindingDispute,
     MergeRequest,
     MetricsUserPeriod,
@@ -1085,7 +1086,8 @@ def llm_costs(
 
     Every source the budget counts (app/workers/knowledge_jobs.month_spend_breakdown), counted the
     same way: `cost_usd`/`reviews` the reviews; `knowledge_*` the knowledge builds (each row's
-    `meta.cost_usd`, whatever its status); `commands_*` the .claude command runs; `assistant_*`
+    `meta.cost_usd`, whatever its status); `commands_*` the .claude command runs; `closures_*`
+    the checks of close requests (app/workers/closure_jobs); `assistant_*`
     Stetho's turns (app/assistant) from their `assistant.chat` audit rows, `assistant_estimated`
     of them stopped before the CLI priced them and carrying an estimate. `total_usd` is their sum,
     what the budget compares."""
@@ -1116,6 +1118,14 @@ def llm_costs(
         .where(CommandRun.cost_usd.is_not(None))
         .group_by(run_month)
         .order_by(run_month.desc())
+        .limit(months)
+    ).all()
+    close_month = func.date_trunc("month", FindingClosure.created_at)
+    checks = session.execute(
+        select(close_month, func.coalesce(func.sum(FindingClosure.cost_usd), 0), func.count())
+        .where(FindingClosure.cost_usd.is_not(None))
+        .group_by(close_month)
+        .order_by(close_month.desc())
         .limit(months)
     ).all()
     # Knowledge costs sit in JSON a failed build may have left odd: read in Python, as the
@@ -1149,6 +1159,8 @@ def llm_costs(
                 "knowledge_builds": 0,
                 "commands_usd": 0.0,
                 "commands_runs": 0,
+                "closures_usd": 0.0,
+                "closure_checks": 0,
                 "assistant_usd": 0.0,
                 "assistant_turns": 0,
                 "assistant_estimated": 0,
@@ -1161,6 +1173,8 @@ def llm_costs(
         row(key).update(knowledge_usd=round(sum(costs), 4), knowledge_builds=len(costs))
     for m, cost, count in runs:
         row(m).update(commands_usd=round(float(cost), 4), commands_runs=count)
+    for m, cost, count in checks:
+        row(m).update(closures_usd=round(float(cost), 4), closure_checks=count)
     for m, cost, count, estimated in turns:
         row(m).update(
             assistant_usd=round(float(cost), 4),
@@ -1169,7 +1183,12 @@ def llm_costs(
         )
     for r in by_month.values():
         r["total_usd"] = round(
-            r["cost_usd"] + r["knowledge_usd"] + r["commands_usd"] + r["assistant_usd"], 4
+            r["cost_usd"]
+            + r["knowledge_usd"]
+            + r["commands_usd"]
+            + r["assistant_usd"]
+            + r["closures_usd"],
+            4,
         )
     return {
         "budget_usd": monthly_budget_usd(session, settings),

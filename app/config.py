@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     claude_code_oauth_token: SecretStr = SecretStr("")
     claude_code_bin: str = "claude"
     monthly_llm_budget_usd: float = Field(default=200, ge=0)
+    # Closing critical/high findings a later change fixed (app/review/resolve.py): off unless
+    # turned on; each review then checks the repo's open ones of the last AUTO_CLOSE_DAYS days
+    # (0 = not set; turning it on needs a value). Both editable on the Admin screen.
+    auto_close_findings: bool = False
+    auto_close_days: int = Field(default=0, ge=0, le=90)
     max_review_loc: int = Field(default=1500, gt=0)
     max_tokens_per_chunk: int = Field(default=12000, gt=0)
     # How much of the .claude configuration (rules, skills, agents, CLAUDE.md, review commands)

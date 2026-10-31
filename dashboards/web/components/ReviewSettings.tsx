@@ -50,15 +50,21 @@ export function ReviewSettings() {
   const model = find("llm_model");
   const link = find("public_url");
   const budget = find("monthly_llm_budget_usd");
+  const autoClose = find("auto_close_findings");
+  const autoDays = find("auto_close_days");
 
-  async function save(key: Key, value: number | string | null) {
+  async function save(key: Key, value: number | string | boolean | null) {
+    await saveAll({ [key]: value });
+    if (key === "llm_model") setCustomModel(false);
+  }
+
+  async function saveAll(values: Partial<Record<Key, number | string | boolean | null>>) {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      await settings.mutate(await api.put<ReviewSetting[]>("/admin/review-settings", { [key]: value }), false);
-      setNotice(value === null ? "Đã trả về giá trị mặc định." : "Đã lưu. Áp dụng cho review tiếp theo.");
-      if (key === "llm_model") setCustomModel(false);
+      await settings.mutate(await api.put<ReviewSetting[]>("/admin/review-settings", values), false);
+      setNotice(Object.values(values).every((v) => v === null) ? "Đã trả về giá trị mặc định." : "Đã lưu. Áp dụng cho review tiếp theo.");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     } finally {
@@ -337,6 +343,66 @@ export function ReviewSettings() {
           </div>
         </form>
       )}
+
+      {autoClose && autoDays && (
+        <AutoCloseForm
+          key={`${String(autoClose.value)}-${String(autoDays.value)}`}
+          enabled={autoClose.value === true}
+          days={Number(autoDays.value)}
+          env={`${autoClose.env}, ${autoDays.env}`}
+          busy={busy}
+          onSave={(on, days) => saveAll(on ? { auto_close_findings: true, auto_close_days: days } : { auto_close_findings: false })}
+        />
+      )}
     </section>
+  );
+}
+
+/** AUTO_CLOSE_FINDINGS: a switch, and once on, how many days back each review looks (required). */
+function AutoCloseForm({
+  enabled,
+  days,
+  env,
+  busy,
+  onSave,
+}: {
+  enabled: boolean;
+  days: number;
+  env: string;
+  busy: boolean;
+  onSave: (on: boolean, days: number) => Promise<void>;
+}) {
+  const [on, setOn] = useState(enabled);
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        const value = Number(new FormData(e.currentTarget).get("auto_close_days") ?? 0);
+        void onSave(on, value);
+      }}
+      style={{ display: "grid", gap: 10, padding: "0 18px 14px" }}
+    >
+      <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input type="checkbox" checked={on} onChange={(e) => setOn(e.target.checked)} />
+        <span>Tự đóng critical/high khi commit sau đã sửa ({env})</span>
+      </label>
+      {on && (
+        <label style={{ display: "grid", gap: 4, maxWidth: 320 }}>
+          <span className="small muted">Số ngày N: rà finding critical/high còn mở trong N ngày trước thay đổi</span>
+          <input name="auto_close_days" type="number" required min={1} max={90} defaultValue={days >= 1 ? days : undefined} />
+        </label>
+      )}
+      <p className="muted small">
+        Mỗi review xong, CodePulse lấy các finding critical/high còn mở của repo trong N ngày (từ lịch sử, không review
+        lại code cũ) và hỏi model diff mới có sửa chúng không, tốn thêm một lượt gọi nhỏ khi có finding cần rà. Chỉ đóng
+        khi model chỉ ra được chỗ sửa trong diff; finding vẫn giữ mức critical/high và vẫn tính điểm. Finding quá N ngày
+        thì tác giả của thay đổi dùng “Yêu cầu đóng” ở trang review.
+      </p>
+      <div className="toolbar">
+        <button type="submit" disabled={busy}>
+          Lưu
+        </button>
+      </div>
+    </form>
   );
 }

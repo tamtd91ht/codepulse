@@ -15,7 +15,8 @@ from app.api.deps import get_session
 from app.api.schemas import ORM
 from app.api.security import CurrentPrincipal, Principal
 from app.config import Settings, get_settings
-from app.models import FindingDispute, Review, ReviewFinding, User
+from app.models import FindingClosure, FindingDispute, Review, ReviewFinding, User
+from app.models.review import CLOSURE_OPEN
 from app.scoring.aggregate import aggregate, recompute_scores
 from app.scoring.verdict import assess
 
@@ -76,6 +77,12 @@ def raise_dispute(
         raise HTTPException(403, "only the author of the change can dispute its findings")
     if finding.status != "open":
         raise HTTPException(409, f"finding is {finding.status}")
+    # One flow at a time: a request to close it as fixed is being checked.
+    pending_close = select(FindingClosure.id).where(
+        FindingClosure.finding_id == finding.id, FindingClosure.status.in_(CLOSURE_OPEN)
+    )
+    if session.scalar(pending_close) is not None:
+        raise HTTPException(409, "finding has a close request being checked")
     dispute = FindingDispute(finding_id=finding.id, raised_by=principal.user_id, reason=body.reason)
     finding.status = "disputed"
     session.add(dispute)

@@ -4148,3 +4148,64 @@ td.check-col {
 .md a {
   color: var(--link);
 }
+
+/* ---- "Đóng finding" (app/closures/page.tsx) ---- */
+.closure-flow {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 16px;
+  padding: 12px 16px 12px 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+table.closures tr.open td {
+  border-bottom-color: transparent;
+}
+tr.closure-detail td {
+  background: var(--bg-elevated);
+  white-space: normal;
+}
+.closure-story {
+  display: grid;
+  gap: 12px;
+  padding: 4px 4px 8px;
+}
+.closure-timeline {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.closure-timeline li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 10px;
+}
+/* The line joining the steps. */
+.closure-timeline li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 28px;
+  bottom: -14px;
+  left: 13px;
+  width: 2px;
+  background: var(--border);
+}
+.closure-timeline .step-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--muted);
+}
+.closure-timeline .step-title {
+  font-weight: 600;
+  font-size: 14px;
+}

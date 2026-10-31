@@ -380,6 +380,69 @@ export interface Page<T> {
   next_cursor: string | null;
 }
 
+/**
+ * One closing of a critical/high finding that a later change fixed, or a request to close one
+ * (GET /reviews/{id}/closures, /close-requests). A closed finding keeps its severity and still
+ * counts in the score.
+ */
+export interface FindingClosure {
+  id: number;
+  finding_id: number;
+  /** auto: a later review's change fixed it; request: the author named the fixing commits; admin: by hand; reopen. */
+  kind: "auto" | "request" | "admin" | "reopen";
+  /** pending: waiting for a manager/admin; checking: the check runs; then closed / rejected / failed; cancelled by the author. */
+  status: "pending" | "checking" | "closed" | "rejected" | "failed" | "cancelled" | "reopened";
+  shas: string[];
+  /** auto: the review whose change closed it. */
+  review_id: number | null;
+  requested_by: number | null;
+  /** Who ran the check or refused the request. */
+  decided_by: number | null;
+  note: string | null;
+  /** The checker's reason, or why the request was refused. */
+  reason: string | null;
+  /** file:lines of the fix in the change. */
+  evidence: string | null;
+  cost_usd: number | null;
+  created_at: string;
+  updated_at: string;
+  decided_at: string | null;
+}
+
+/** A row of the "Đóng finding" page. */
+export interface ClosureListItem extends FindingClosure {
+  finding: {
+    id: number;
+    title: string | null;
+    severity: Severity;
+    category: string;
+    file_path: string | null;
+    line_start: number | null;
+    message: string | null;
+    status: string | null;
+  };
+  finding_review_id: number;
+  repo: { id: number; path: string } | null;
+  business_project: { id: number; name: string } | null;
+  author: { id: number; name: string | null } | null;
+  requested_by_name: string | null;
+  decided_by_name: string | null;
+  /** A manager of the author's team or an admin: may run the check or refuse. */
+  can_decide: boolean;
+  can_cancel: boolean;
+  /** The finding's review page is visible to this person (a manager may decide without it). */
+  can_open_review: boolean;
+}
+
+export interface ClosureFacets {
+  authors: { id: number; name: string | null }[];
+  repos: { id: number; path: string; business_project_id: number | null }[];
+  business_projects: { id: number; name: string }[];
+  /** Requests waiting for this person's decision. */
+  todo: number;
+  can_decide: boolean;
+}
+
 export interface Dispute {
   id: number;
   finding_id: number | null;
@@ -684,6 +747,9 @@ export interface LlmCosts {
     /** .claude command runs (Admin > Chạy command). */
     commands_usd: number;
     commands_runs: number;
+    /** Checks of requests to close a finding (the automatic ones are in the reviews' cost). */
+    closures_usd: number;
+    closure_checks: number;
     /** Stetho, the AI assistant: spend, questions, and how many were priced by an estimate (stopped early). */
     assistant_usd: number;
     assistant_turns: number;
@@ -759,11 +825,13 @@ export interface ReviewSetting {
     | "command_clone_depth"
     | "command_max_output_mb"
     | "command_file_ttl_hours"
-    | "monthly_llm_budget_usd";
+    | "monthly_llm_budget_usd"
+    | "auto_close_findings"
+    | "auto_close_days";
   env: string;
-  kind: "int" | "model" | "url";
-  value: number | string;
-  default: number | string;
+  kind: "int" | "model" | "url" | "bool";
+  value: number | string | boolean;
+  default: number | string | boolean;
   overridden: boolean;
   minimum: number | null;
   maximum: number | null;

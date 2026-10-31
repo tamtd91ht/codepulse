@@ -7,7 +7,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.admin_settings import EDITABLE, defaults, effective, overrides, set_value
+from app.admin_settings import (
+    EDITABLE,
+    check_auto_close,
+    defaults,
+    effective,
+    overrides,
+    set_value,
+)
 from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.schemas import ReviewSettingOut, ReviewSettingsIn
@@ -55,6 +62,7 @@ def update_review_settings(
     try:
         for key, value in changes.items():
             set_value(session, key, value, principal.user_id)
+        check_auto_close(session, settings)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     after = effective(session, settings)

@@ -844,9 +844,9 @@ class LlmLoginCodeIn(BaseModel):
 class ReviewSettingOut(BaseModel):
     key: str
     env: str  # the environment variable it overrides
-    kind: str  # int | model | url
-    value: int | float | str  # what reviews use now
-    default: int | float | str  # from the environment (or the built-in default)
+    kind: str  # int | model | url | bool
+    value: bool | int | float | str  # what reviews use now
+    default: bool | int | float | str  # from the environment (or the built-in default)
     overridden: bool
     minimum: int | None = None  # int settings only
     maximum: int | None = None
@@ -870,6 +870,8 @@ class ReviewSettingsIn(BaseModel):
     command_max_output_mb: Annotated[int, Field(strict=True)] | None = None
     command_file_ttl_hours: Annotated[int, Field(strict=True)] | None = None
     monthly_llm_budget_usd: Annotated[int, Field(strict=True)] | None = None
+    auto_close_findings: Annotated[bool, Field(strict=True)] | None = None
+    auto_close_days: Annotated[int, Field(strict=True)] | None = None
 
 
 class LiveEvent(BaseModel):

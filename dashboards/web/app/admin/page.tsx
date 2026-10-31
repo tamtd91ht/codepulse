@@ -364,7 +364,7 @@ function LlmTab() {
           <div className="label">Chi phí tháng này</div>
           <div className="value">{latest ? usd(latest.total_usd) : "—"}</div>
           <div className="delta">
-            <span className="muted">Review, knowledge, lệnh .claude và Stetho</span>
+            <span className="muted">Review, knowledge, lệnh .claude, đóng finding và Stetho</span>
           </div>
         </div>
         <div className="card kpi">
@@ -407,6 +407,7 @@ function LlmTab() {
                   <th className="num">Review</th>
                   <th className="num">Knowledge</th>
                   <th className="num">Lệnh .claude</th>
+                  <th className="num">Đóng finding</th>
                   <th className="num">Stetho</th>
                   <th className="num">Tổng</th>
                   <th className="num">% ngân sách</th>
@@ -425,6 +426,9 @@ function LlmTab() {
                     <td className="num">
                       {usd(m.commands_usd)} <span className="muted small">· {m.commands_runs}</span>
                     </td>
+                    <td className="num">
+                      {usd(m.closures_usd)} <span className="muted small">· {m.closure_checks}</span>
+                    </td>
                     <td className="num" title={m.assistant_estimated ? `${m.assistant_estimated} câu dừng giữa chừng: chi phí ước tính` : undefined}>
                       {usd(m.assistant_usd)}
                       {m.assistant_estimated > 0 && <span className="muted">*</span>} <span className="muted small">· {m.assistant_turns}</span>
@@ -440,7 +444,7 @@ function LlmTab() {
           </div>
         )}
         <p className="muted small" style={{ padding: "10px 18px 14px" }}>
-          Ngân sách tháng: MONTHLY_LLM_BUDGET_USD, sửa được ở “Cài đặt review” bên dưới. Số sau dấu · là số lượt (review, lần dựng knowledge, lần chạy lệnh, câu hỏi). * Chi phí Stetho ước tính (dư) cho câu hỏi bị dừng trước khi Claude báo giá. Rubric v1; trọng số severity đổi qua SCORING_WEIGHTS rồi chạy{" "}
+          Ngân sách tháng: MONTHLY_LLM_BUDGET_USD, sửa được ở “Cài đặt review” bên dưới. Số sau dấu · là số lượt (review, lần dựng knowledge, lần chạy lệnh, lần kiểm yêu cầu đóng, câu hỏi); kiểm tự động sau review nằm trong chi phí review. * Chi phí Stetho ước tính (dư) cho câu hỏi bị dừng trước khi Claude báo giá. Rubric v1; trọng số severity đổi qua SCORING_WEIGHTS rồi chạy{" "}
           <code>codepulse metrics recompute</code>.
         </p>
       </Card>

@@ -6,7 +6,7 @@ from app.models.identity import Account, Team, TeamMember, User
 from app.models.knowledge import ReviewKnowledge, ReviewKnowledgeEdit
 from app.models.metrics import MetricsTeamPeriod, MetricsUserPeriod
 from app.models.notifications import NotificationWebhook
-from app.models.review import FindingDispute, Review, ReviewFinding
+from app.models.review import FindingClosure, FindingDispute, Review, ReviewFinding
 from app.models.secrets import AppSetting, StoredSecret
 from app.models.source import BusinessProject, Connection, Project, ProjectGrant, RawGitlab
 from app.models.telegram import TelegramBot, TelegramRequest
@@ -20,6 +20,7 @@ __all__ = [
     "CommandRun",
     "Commit",
     "Connection",
+    "FindingClosure",
     "FindingDispute",
     "MergeRequest",
     "MetricsTeamPeriod",

@@ -34,6 +34,7 @@ from app.models import (
     BusinessProject,
     CommandRun,
     Connection,
+    FindingClosure,
     Project,
     Review,
     ReviewKnowledge,
@@ -158,7 +159,8 @@ class _Target:
 def month_spend_usd(session: Session, now: datetime | None = None) -> float:
     """The month's LLM spend: reviews' `cost_usd` plus every knowledge row's `meta.cost_usd`,
     whatever its status (active, superseded, failed: all were paid), plus the .claude command
-    runs (app/commands) and the Stetho turns (app/assistant, audited as `assistant.chat`). The
+    runs (app/commands), the Stetho turns (app/assistant, audited as `assistant.chat`) and the
+    checks of close requests (app/workers/closure_jobs). The
     one budget figure they all share (docs/specs/19 §6)."""
     return float(month_spend_breakdown(session, now)["total_usd"])
 
@@ -180,6 +182,11 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
             AuditLog.action == "assistant.chat", AuditLog.at >= month_start
         )
     )
+    closures = session.scalar(
+        select(func.coalesce(func.sum(FindingClosure.cost_usd), 0)).where(
+            FindingClosure.created_at >= month_start
+        )
+    )
     builds = 0.0
     for data in session.scalars(
         select(ReviewKnowledge.data).where(ReviewKnowledge.created_at >= month_start)
@@ -194,8 +201,14 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
         "commands_usd": round(float(commands or 0), 4),
         "knowledge_usd": round(builds, 4),
         "assistant_usd": round(float(assistant or 0), 4),
+        "closures_usd": round(float(closures or 0), 4),
         "total_usd": round(
-            float(reviews or 0) + float(commands or 0) + builds + float(assistant or 0), 4
+            float(reviews or 0)
+            + float(commands or 0)
+            + builds
+            + float(assistant or 0)
+            + float(closures or 0),
+            4,
         ),
     }
 

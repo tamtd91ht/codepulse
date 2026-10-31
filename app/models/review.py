@@ -171,3 +171,67 @@ class FindingDispute(TimestampMixin, Base):
     decision: Mapped[str | None]
     decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+CLOSURE_KINDS = ("auto", "request", "admin", "reopen")
+CLOSURE_STATUSES = (
+    "pending",
+    "checking",
+    "closed",
+    "rejected",
+    "failed",
+    "cancelled",
+    "reopened",
+)
+# A request in flight: waiting for a manager/admin, or being checked.
+CLOSURE_OPEN = ("pending", "checking")
+
+
+class FindingClosure(TimestampMixin, Base):
+    """A critical/high finding closed because a later change fixed it (outside the spec,
+    requested by the user 2026-10-31; see PROGRESS.md and app/review/resolve.py).
+
+    Closing only moves the finding to `fixed`: its severity stays and it still counts in the
+    review's score and verdict (only false_positive and rejected do not). One row per attempt:
+    - kind "auto": a later review's change, checked against the repo's open findings of the last
+      AUTO_CLOSE_DAYS days, fixed it (only closings are stored; `review_id` is that review);
+    - kind "request": the author named the commits that fix it (`pending`); a manager of their
+      team or an admin either refuses it (`rejected`, note) or runs the check (`checking`, then
+      `closed`, `rejected` with the reason, or `failed`);
+    - kind "admin": closed by hand, the note is mandatory; kind "reopen": opened again (note).
+    """
+
+    __tablename__ = "finding_closures"
+    __table_args__ = (
+        CheckConstraint("kind IN ('auto','request','admin','reopen')", name="kind"),
+        CheckConstraint(
+            "status IN ('pending','checking','closed','rejected','failed','cancelled','reopened')",
+            name="status",
+        ),
+        Index("ix_finding_closures_created_at", "created_at"),
+        # One request in flight per finding: a double click must not pay twice.
+        Index(
+            "uq_finding_closures_pending",
+            "finding_id",
+            unique=True,
+            postgresql_where=text("status IN ('pending','checking')"),
+            sqlite_where=text("status IN ('pending','checking')"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    finding_id: Mapped[int] = mapped_column(
+        ForeignKey("review_findings.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str]
+    status: Mapped[str]
+    shas: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    review_id: Mapped[int | None] = mapped_column(ForeignKey("reviews.id", ondelete="SET NULL"))
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # Who ran the check or refused the request (a manager of the author's team, or an admin).
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    note: Mapped[str | None]
+    reason: Mapped[str | None]  # the checker's reason, or why the request was refused
+    evidence: Mapped[str | None]  # file:lines of the fix in the change
+    cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

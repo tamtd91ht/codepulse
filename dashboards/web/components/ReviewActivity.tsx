@@ -50,6 +50,7 @@ const STAGE_LABEL: Record<string, string> = {
   profile: "Dựng hồ sơ dự án",
   deep: "Review sâu",
   save: "Chấm điểm và lưu",
+  close: "Kiểm finding cũ đã được sửa chưa",
   docs: "Đọc tài liệu và .claude của repo",
   compile: "Biên dịch thành tri thức review",
   probe: "Agent thăm dò mã nguồn",

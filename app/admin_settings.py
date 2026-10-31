@@ -22,13 +22,13 @@ DEFAULT_REVIEW_MODEL = "claude-opus-5-5"
 MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,99}$")
 MAX_URL_CHARS = 300
 
-Value = int | float | str
+Value = bool | int | float | str
 
 
 @dataclass(frozen=True)
 class Editable:
     env: str  # the environment variable it overrides
-    kind: Literal["int", "model", "url"]
+    kind: Literal["int", "model", "url", "bool"]
     minimum: int = 0
     maximum: int = 0
 
@@ -60,6 +60,10 @@ EDITABLE: dict[str, Editable] = {
     # docs/specs/06: reviews, knowledge builds and command runs stop once the month's LLM
     # spend reaches it (0 = no limit).
     "monthly_llm_budget_usd": Editable("MONTHLY_LLM_BUDGET_USD", "int", 0, 1_000_000),
+    # Close critical/high findings a later change fixed (app/review/resolve.py): a switch, and
+    # how many days back each review looks; on needs the days (check_auto_close).
+    "auto_close_findings": Editable("AUTO_CLOSE_FINDINGS", "bool"),
+    "auto_close_days": Editable("AUTO_CLOSE_DAYS", "int", 1, 90),
 }
 
 
@@ -80,6 +84,8 @@ def defaults(settings: Settings) -> dict[str, Value]:
         "command_max_output_mb": settings.command_max_output_mb,
         "command_file_ttl_hours": settings.command_file_ttl_hours,
         "monthly_llm_budget_usd": settings.monthly_llm_budget_usd,
+        "auto_close_findings": settings.auto_close_findings,
+        "auto_close_days": settings.auto_close_days,
     }
 
 
@@ -111,6 +117,19 @@ def with_overrides(session: Session, settings: Settings) -> Settings:
 def monthly_budget_usd(session: Session, settings: Settings) -> float:
     """MONTHLY_LLM_BUDGET_USD, or what an admin set on the Admin screen (0 = no limit)."""
     return float(effective(session, settings)["monthly_llm_budget_usd"])
+
+
+def auto_close_days(session: Session, settings: Settings) -> int:
+    """How many days back a review looks for open critical/high findings to close; 0 = off."""
+    values = effective(session, settings)
+    return int(values["auto_close_days"]) if values["auto_close_findings"] else 0
+
+
+def check_auto_close(session: Session, settings: Settings) -> None:
+    """Turned on without a number of days: refused, as the Admin screen asks for both."""
+    values = effective(session, settings)
+    if values["auto_close_findings"] and int(values["auto_close_days"]) < 1:
+        raise ValueError("auto_close_days: bật tự đóng finding thì phải nhập số ngày N (1-90)")
 
 
 def link_base(session: Session, settings: Settings) -> str:
@@ -145,6 +164,10 @@ def normalize_url(raw: str) -> str:
 def clean(key: str, value: object) -> Value:
     """The value to store for `key`, or ValueError. Checked here, not only in the API."""
     spec = EDITABLE[key]
+    if spec.kind == "bool":
+        if not isinstance(value, bool):
+            raise ValueError(f"{key} must be true or false")
+        return value
     if spec.kind == "int":
         if not isinstance(value, int) or isinstance(value, bool):
             raise ValueError(f"{key} must be a whole number")

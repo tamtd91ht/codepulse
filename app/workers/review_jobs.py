@@ -89,6 +89,11 @@ def review_settings(settings: Settings, session: Session | None = None) -> Revie
         verify_max_turns=settings.verify_max_turns,
         verify_min_confidence_unverified=settings.verify_min_confidence_unverified,
         knowledge_tokens=settings.knowledge_tokens,
+        auto_close_days=(
+            int(edited.get("auto_close_days", settings.auto_close_days))
+            if edited.get("auto_close_findings", settings.auto_close_findings)
+            else 0
+        ),
         stale_running=timedelta(seconds=review_job_timeout(settings) + STALE_GRACE_S),
     )
 
