@@ -992,15 +992,206 @@ form.toolbar {
   font-size: 13px;
   white-space: nowrap;
 }
-/* Two date inputs for a custom range, beside the period switch. */
-.date-range {
+/* Range-of-days filter (components/DateRangePicker): trigger chip + popover calendar. */
+.drp {
+  position: relative;
   display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
 }
-.date-range input[aria-invalid="true"] {
-  border-color: var(--bad-text);
+.drp-trigger {
+  gap: 8px;
+  padding: 0 12px;
+  color: var(--text);
+  font-weight: 500;
+}
+.drp-trigger > svg {
+  color: var(--muted);
+  flex: none;
+}
+.drp-trigger.open {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+.drp-trigger.open > svg:last-child {
+  transform: rotate(180deg);
+}
+.drp-trigger-label {
+  font-variant-numeric: tabular-nums;
+}
+.drp-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  max-width: calc(100vw - 32px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-md);
+  animation: drp-in var(--duration-fast) var(--ease-standard);
+}
+@keyframes drp-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.drp-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 140px;
+  padding: 12px;
+  border-right: 1px solid var(--border);
+}
+.drp-presets button {
+  justify-content: flex-start;
+  height: 32px;
+  padding: 0 10px;
+  border-color: transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-2);
+  font-size: 13px;
+}
+.drp-presets button:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: transparent;
+}
+.drp-presets button.active {
+  background: var(--primary);
+  color: var(--on-primary);
+  font-weight: 600;
+}
+.drp-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+.drp-nav {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.drp-nav .icon-btn {
+  pointer-events: auto;
+}
+.drp-months {
+  display: flex;
+  gap: 24px;
+}
+.drp-month-title {
+  height: 32px;
+  margin-bottom: 4px;
+  line-height: 32px;
+  text-align: center;
+  font-weight: 600;
+}
+.drp-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 36px);
+  row-gap: 2px;
+}
+.drp-weekday {
+  height: 28px;
+  line-height: 28px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.drp-day {
+  width: 36px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.drp-day:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: transparent;
+}
+.drp-day.today {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.drp-day.in-range,
+.drp-day.in-range:hover:not(:disabled) {
+  border-radius: 0;
+  background: var(--primary-soft);
+}
+.drp-day.edge,
+.drp-day.edge:hover:not(:disabled) {
+  background: var(--primary);
+  color: var(--on-primary);
+  font-weight: 600;
+  box-shadow: none;
+}
+.drp-day.start:not(.end) {
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+.drp-day.end:not(.start) {
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.drp-day:disabled {
+  color: var(--faint);
+  opacity: 0.45;
+}
+.drp-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.drp-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+@media (max-width: 720px) {
+  .drp-pop {
+    position: fixed;
+    top: auto;
+    bottom: 16px;
+    left: 16px;
+    right: 16px;
+    flex-direction: column;
+    max-width: none;
+    max-height: calc(100vh - 32px);
+    overflow: auto;
+  }
+  .drp-presets {
+    flex-direction: row;
+    flex-wrap: wrap;
+    min-width: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .drp-months > .drp-month:first-child {
+    display: none;
+  }
+  .drp-months {
+    justify-content: center;
+  }
+  .drp-foot {
+    flex-wrap: wrap;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .drp-pop {
+    animation: none;
+  }
 }
 
 /* Admin tabs (page level) and the Telegram link code */

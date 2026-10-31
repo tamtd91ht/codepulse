@@ -15,6 +15,7 @@ import {
   YAxis,
 } from "recharts";
 
+import { DateRangePicker } from "@/components/DateRangePicker";
 import { Score, scoreTone } from "@/components/Evaluation";
 import { Icon } from "@/components/icons";
 import { Card, ChartTip, CountLink, EmptyState, Loading, PageHeader, Pager, Segmented, Sparkline, SplitBar, StatStrip, StripStat } from "@/components/ui";
@@ -228,12 +229,6 @@ export default function OverviewPage() {
     }
   };
 
-  const rangeHint =
-    period === "range" && !rangeOk ? (
-      <p className="error small" role="alert" style={{ marginTop: 0 }}>
-        Chọn khoảng ngày hợp lệ: từ {RANGE_MIN.split("-").reverse().join("/")} đến hôm nay, ngày bắt đầu không sau ngày kết thúc.
-      </p>
-    ) : null;
   const header = (
     <>
       <PageHeader
@@ -252,28 +247,7 @@ export default function OverviewPage() {
               ]}
             />
             {period === "range" ? (
-              <span className="date-range" role="group" aria-label="Khoảng ngày">
-                <input
-                  type="date"
-                  value={range.from}
-                  min={RANGE_MIN}
-                  max={range.to || today}
-                  onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
-                  aria-label="Từ ngày"
-                  aria-invalid={range.from !== "" && !rangeOk}
-                  title={`Từ ngày (sớm nhất ${RANGE_MIN.split("-").reverse().join("/")})`}
-                />
-                <span className="muted" aria-hidden="true">–</span>
-                <input
-                  type="date"
-                  value={range.to}
-                  min={range.from || RANGE_MIN}
-                  max={today}
-                  onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
-                  aria-label="Đến ngày"
-                  aria-invalid={range.to !== "" && !rangeOk}
-                />
-              </span>
+              <DateRangePicker label="Thời gian" value={range} min={RANGE_MIN} max={today} onChange={setRange} />
             ) : (
               <Pager
                 label={periodLabel(period, start)}
@@ -286,10 +260,8 @@ export default function OverviewPage() {
           </>
         }
       />
-      {rangeHint}
     </>
   );
-  if (!data && rangeHint) return header;
   if (!data)
     return (
       <>
