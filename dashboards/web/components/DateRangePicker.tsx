@@ -3,11 +3,14 @@
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 
 import { Icon } from "@/components/icons";
-import { rangeLabel, shiftDays, shiftMonths } from "@/lib/format";
+import { dayLabel, rangeLabel, shiftDays, shiftMonths } from "@/lib/format";
 
 export type DayRange = { from: string; to: string };
+type Field = "from" | "to";
 
-const WEEKDAYS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
+/** Matches the CSS breakpoint where the popover becomes a bottom sheet. */
+const SINGLE_MONTH_QUERY = "(max-width: 720px)";
+const WEEKDAYS =["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
 
 /** Days (YYYY-MM-DD) of the month starting on `month`, with blanks before the 1st (weeks start Monday). */
 function monthCells(month: string): (string | null)[] {
@@ -22,6 +25,8 @@ function monthCells(month: string): (string | null)[] {
 const monthOf = (day: string) => `${day.slice(0, 7)}-01`;
 const monthTitle = (month: string) => `Tháng ${Number(month.slice(5, 7))}, ${month.slice(0, 4)}`;
 const clamp = (day: string, min: string, max: string) => (day < min ? min : day > max ? max : day);
+/** Days in from..to, both included. */
+const dayCount = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
 
 /** Quick picks, clipped to [min, max]. */
 function presets(min: string, max: string): { label: string; range: DayRange }[] {
@@ -42,8 +47,10 @@ function presets(min: string, max: string): { label: string; range: DayRange }[]
 
 /**
  * A range-of-days filter in the house style: a trigger showing the range, and a popover with
- * quick picks and a two-month calendar (one month on narrow screens). Click a start day, then an
- * end day; "Áp dụng" commits. Days outside [min, max] are disabled.
+ * quick picks, a "Từ ngày" and a "Đến ngày" field, and a two-month calendar (one month on
+ * narrow screens). A day click fills the active field (picking the start moves on to the end);
+ * moving between months never drops a picked day. "Áp dụng" commits. Days outside [min, max],
+ * and days before the start while picking the end, are disabled.
  */
 export function DateRangePicker({
   value,
@@ -60,6 +67,7 @@ export function DateRangePicker({
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<{ from: string; to: string | null }>(value);
+  const [active, setActive] = useState<Field>("from");
   const [hover, setHover] = useState<string | null>(null);
   // The right-hand month; the left one is the month before it.
   const [view, setView] = useState(monthOf(value.to || max));
@@ -67,9 +75,26 @@ export function DateRangePicker({
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const dialogId = useId();
+  // Narrow screens show one month (`view`) instead of two.
+  const [single, setSingle] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia(SINGLE_MONTH_QUERY);
+    const sync = () => setSingle(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+  const firstShown = single ? view : shiftMonths(view, -1);
+
+  /** Months so that `day` shows: in the left month, or the right one when it is the last allowed. */
+  const showDay = (day: string) => {
+    const m = monthOf(day);
+    setView(single || m >= monthOf(max) ? m : shiftMonths(m, 1));
+  };
 
   const show = () => {
     setDraft(value);
+    setActive("from");
     setHover(null);
     setView(monthOf(value.to || max));
     setFocusDay(null);
@@ -95,18 +120,28 @@ export function DateRangePicker({
   }, [open, focusDay, view]);
 
   const pick = (day: string) => {
-    if (draft.to === null) {
-      setDraft(day < draft.from ? { from: day, to: draft.from } : { from: draft.from, to: day });
+    if (active === "from") {
+      // A start after the end empties the end; either way the end is picked next.
+      setDraft((d) => ({ from: day, to: d.to !== null && d.to >= day ? d.to : null }));
+      setActive("to");
     } else {
-      setDraft({ from: day, to: null });
+      setDraft((d) => ({ ...d, to: day }));
     }
+    setHover(null);
     setFocusDay(day);
+  };
+
+  const choose = (field: Field) => {
+    setActive(field);
+    setHover(null);
+    setFocusDay(null);
+    const day = field === "from" ? draft.from : draft.to;
+    if (day) showDay(day);
   };
 
   const moveFocus = (from: string, by: number) => {
     const next = clamp(shiftDays(from, by), min, max);
-    const left = shiftMonths(view, -1);
-    if (next < left) setView(shiftMonths(monthOf(next), 1));
+    if (next < firstShown) setView(single ? monthOf(next) : shiftMonths(monthOf(next), 1));
     else if (next >= shiftMonths(view, 1)) setView(monthOf(next));
     setFocusDay(next);
   };
@@ -119,13 +154,15 @@ export function DateRangePicker({
     }
   };
 
-  // The shown range: a finished draft, or start..hovered day while choosing the end.
-  const end = draft.to ?? hover;
-  const [lo, hi] = end === null ? [draft.from, draft.from] : end < draft.from ? [end, draft.from] : [draft.from, end];
-  const prevDisabled = shiftMonths(view, -1) <= monthOf(min);
+  // The shown range; while picking the end, start..the hovered day previews it.
+  const end = active === "to" && hover !== null && hover >= draft.from ? hover : draft.to;
+  const lo = draft.from;
+  const hi = end ?? draft.from;
+  const prevDisabled = firstShown <= monthOf(min);
   const nextDisabled = view >= monthOf(max);
   const quick = presets(min, max);
   const activePreset = quick.find((p) => draft.to !== null && p.range.from === draft.from && p.range.to === draft.to)?.label;
+  const focusTarget = focusDay ?? (active === "to" ? (draft.to ?? draft.from) : draft.from);
 
   const month = (m: string) => (
     <div className="drp-month" key={m}>
@@ -138,7 +175,7 @@ export function DateRangePicker({
         ))}
         {monthCells(m).map((day, i) => {
           if (day === null) return <span key={`b${i}`} aria-hidden="true" />;
-          const disabled = day < min || day > max;
+          const disabled = day < min || day > max || (active === "to" && day < draft.from);
           const edge = day === lo || day === hi;
           const inside = day > lo && day < hi;
           const cls = [
@@ -151,7 +188,6 @@ export function DateRangePicker({
           ]
             .filter(Boolean)
             .join(" ");
-          const tabbable = focusDay ? day === focusDay : day === draft.from;
           return (
             <button
               key={day}
@@ -159,11 +195,11 @@ export function DateRangePicker({
               className={cls}
               data-day={day}
               disabled={disabled}
-              tabIndex={tabbable ? 0 : -1}
+              tabIndex={day === focusTarget ? 0 : -1}
               aria-pressed={edge}
               aria-label={`${Number(day.slice(8))} ${monthTitle(m).toLowerCase()}`}
               onClick={() => pick(day)}
-              onMouseEnter={() => draft.to === null && setHover(day)}
+              onMouseEnter={() => active === "to" && setHover(day)}
               onKeyDown={(e) => onGridKey(e, day)}
             >
               {Number(day.slice(8))}
@@ -210,6 +246,8 @@ export function DateRangePicker({
                 aria-pressed={p.label === activePreset}
                 onClick={() => {
                   setDraft(p.range);
+                  setActive("to");
+                  setHover(null);
                   setView(monthOf(p.range.to));
                 }}
               >
@@ -218,21 +256,34 @@ export function DateRangePicker({
             ))}
           </div>
           <div className="drp-body">
-            <div className="drp-nav">
-              <button type="button" className="icon-btn" aria-label="Tháng trước" disabled={prevDisabled} onClick={() => setView((v) => shiftMonths(v, -1))}>
-                <Icon name="chevronLeft" size={16} />
-              </button>
-              <button type="button" className="icon-btn" aria-label="Tháng sau" disabled={nextDisabled} onClick={() => setView((v) => shiftMonths(v, 1))}>
-                <Icon name="chevronRight" size={16} />
-              </button>
+            <div className="drp-fields" role="group" aria-label="Ngày đang chọn">
+              {(["from", "to"] as const).map((f) => {
+                const day = f === "from" ? draft.from : draft.to;
+                return (
+                  <button key={f} type="button" className={`drp-field${active === f ? " active" : ""}`} aria-pressed={active === f} onClick={() => choose(f)}>
+                    <span className="drp-field-label">{f === "from" ? "Từ ngày" : "Đến ngày"}</span>
+                    <span className={`drp-field-value${day ? "" : " empty"}`}>{day ? dayLabel(day) : "dd/mm/yyyy"}</span>
+                  </button>
+                );
+              })}
             </div>
-            <div className="drp-months" onMouseLeave={() => setHover(null)}>
-              {month(shiftMonths(view, -1))}
-              {month(view)}
+            <div className="drp-cal">
+              <div className="drp-nav">
+                <button type="button" className="icon-btn" aria-label="Lùi một tháng" disabled={prevDisabled} onClick={() => setView((v) => shiftMonths(v, -1))}>
+                  <Icon name="chevronLeft" size={16} />
+                </button>
+                <button type="button" className="icon-btn" aria-label="Tới một tháng" disabled={nextDisabled} onClick={() => setView((v) => shiftMonths(v, 1))}>
+                  <Icon name="chevronRight" size={16} />
+                </button>
+              </div>
+              <div className="drp-months" onMouseLeave={() => setHover(null)}>
+                {!single && month(shiftMonths(view, -1))}
+                {month(view)}
+              </div>
             </div>
             <div className="drp-foot">
               <span className="small muted" aria-live="polite">
-                {draft.to === null ? `Từ ${rangeLabel(draft.from, draft.from)} — chọn ngày kết thúc` : rangeLabel(draft.from, draft.to)}
+                {active === "from" ? "Chọn ngày bắt đầu" : draft.to === null ? "Chọn ngày kết thúc" : `${dayCount(draft.from, draft.to)} ngày`}
               </span>
               <span className="drp-actions">
                 <button type="button" className="ghost" onClick={() => close()}>

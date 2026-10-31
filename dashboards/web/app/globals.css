@@ -1070,11 +1070,49 @@ form.toolbar {
   gap: 12px;
   padding: 16px;
 }
+.drp-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+button.drp-field {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0;
+  height: 48px;
+  padding: 0 12px;
+  background: var(--surface);
+  text-align: left;
+}
+button.drp-field.active,
+button.drp-field.active:hover:not(:disabled) {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.drp-field-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.drp-field-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.drp-field-value.empty {
+  font-weight: 400;
+  color: var(--faint);
+}
+.drp-cal {
+  position: relative;
+}
 .drp-nav {
   position: absolute;
-  top: 10px;
-  left: 10px;
-  right: 10px;
+  top: -6px;
+  left: -6px;
+  right: -6px;
   display: flex;
   justify-content: space-between;
   pointer-events: none;
@@ -1177,9 +1215,6 @@ form.toolbar {
     min-width: 0;
     border-right: 0;
     border-bottom: 1px solid var(--border);
-  }
-  .drp-months > .drp-month:first-child {
-    display: none;
   }
   .drp-months {
     justify-content: center;
