@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import AuditLog, BusinessProject, Commit, Project, Review, ReviewFinding
-from tests.api.conftest import World
+from tests.api.conftest import World, grant
 
 pytestmark = pytest.mark.integration
 
@@ -33,6 +33,11 @@ def second_repo(db_session: Session, world: World) -> Project:
     )
     db_session.add(other)
     db_session.flush()
+    # Everyone keeps the view grant the world gives on its dự án, so the team rules decide as
+    # before (docs/specs/09 "Phân quyền theo dự án").
+    for user in (world.lead, world.manager, world.an, world.binh, world.outsider):
+        grant(db_session, user, bp.id)
+        grant(db_session, user, other_bp.id)
     db_session.add(Commit(sha="c" * 40, project_id=other.id))
     db_session.flush()
     done = Review(

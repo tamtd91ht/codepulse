@@ -191,7 +191,9 @@ def test_other_branches_flag_off_and_review_off(db_session: Session, project: Pr
     handle_event(db_session, queue, "Push Hook", push(".claude/a.md"))
     assert knowledge_jobs(queue) == []
 
-    # the knowledge refresh does not need reviews to be on
+    # the knowledge refresh does not need reviews to be on (a fresh queue: the push above,
+    # reviews still on, rightly queued a commit review)
+    queue = FakeQueue()
     project.knowledge_auto_refresh = True
     project.review_enabled = False
     handle_event(db_session, queue, "Push Hook", push("CLAUDE.md"))

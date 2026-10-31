@@ -459,8 +459,9 @@ def test_run_build_compiles_the_default_branch_and_stores_a_new_version(
     (tmp_path / ".claude" / "rules" / "tenant.md").write_text("# Tenant\nalways filter", "utf-8")
     (tmp_path / "README.md").write_text('# demo\nCRM. api_key="abcdefgh12345678"', "utf-8")
     world.project.default_branch = "main"
+    # Read before the commit: after it, the attribute reloads and opens a transaction.
+    project_id, lead_id = world.project.id, world.lead.id
     db_session.commit()  # the job opens its own short transactions
-    project_id = world.project.id
     provider = FakeProvider()
     progress = MemoryProgress()
 
@@ -468,7 +469,8 @@ def test_run_build_compiles_the_default_branch_and_stores_a_new_version(
         db_session,
         project_id,
         settings,
-        requested_by=world.lead.id,
+        probe=False,
+        requested_by=lead_id,
         progress=progress,
         provider=provider,
         make_client=lambda connection: FakeGitLab(tmp_path),
@@ -486,6 +488,7 @@ def test_run_build_compiles_the_default_branch_and_stores_a_new_version(
         db_session,
         project_id,
         settings,
+        probe=False,
         provider=provider,
         make_client=lambda connection: FakeGitLab(tmp_path),
         built_by="auto",
@@ -506,7 +509,7 @@ def test_run_build_compiles_the_default_branch_and_stores_a_new_version(
     sources = active.sources or {}
     assert sources["claude_tree_sha"] == TREE and sources["default_branch_sha"] == HEAD
     assert active.data["invariants"][0]["id"] == "repo:tenant"
-    assert active.data["meta"]["code_probe"] == {"skipped": "not implemented"}
+    assert active.data["meta"]["code_probe"] == {"skipped": "no agentic provider"}
     assert active.data["meta"]["cost_usd"] == 0.25
 
 
@@ -523,14 +526,16 @@ def test_run_build_that_paid_and_failed_keeps_a_failed_row_with_its_cost(
 ) -> None:
     (tmp_path / "README.md").write_text("# demo", "utf-8")
     before = month_spend_usd(db_session)
-    db_session.commit()  # the job opens its own short transactions
+    # Read before the commit: after it, the attribute reloads and opens a transaction.
     project_id = world.project.id
+    db_session.commit()  # the job opens its own short transactions
     progress = MemoryProgress()
 
     result = run_build(
         db_session,
         project_id,
         settings,
+        probe=False,
         progress=progress,
         provider=JunkProvider(),
         make_client=lambda connection: FakeGitLab(tmp_path),
@@ -555,11 +560,11 @@ def test_run_build_refuses_without_budget_or_external_llm(
     world: World, db_session: Session, settings: Settings, tmp_path: Path
 ) -> None:
     world.project.allow_external_llm = False
-    db_session.commit()
     project_id = world.project.id
+    db_session.commit()
     progress = MemoryProgress()
     refused = run_build(
-        db_session, project_id, settings, provider=FakeProvider(), progress=progress
+        db_session, project_id, settings, probe=False, provider=FakeProvider(), progress=progress
     )
     assert refused == {"built": False, "reason": "external LLM disabled for this repo"}
     # Not silent: the live panel's recent list says why the asked build did not run.
@@ -576,5 +581,5 @@ def test_run_build_refuses_without_budget_or_external_llm(
     world.an_review.cost_usd = Decimal(199)
     db_session.commit()
     broke = Settings(session_secret=SecretStr("s" * 48), monthly_llm_budget_usd=100)
-    refused = run_build(db_session, project_id, broke, provider=FakeProvider())
+    refused = run_build(db_session, project_id, broke, probe=False, provider=FakeProvider())
     assert refused == {"built": False, "reason": "monthly LLM budget reached"}

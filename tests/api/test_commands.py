@@ -98,7 +98,8 @@ def test_a_run_is_queued_once_per_repo_and_audited(
     body = first.json()
     assert body["status"] == "queued" and body["ref"] == "dev" and body["arguments"] == "W43"
     ((func, args, kwargs),) = queue.jobs
-    assert func == "app.commands.jobs.run_command_job" and args == (body["id"],)
+    # The run's timeout goes with it: RQ's job timeout was computed from the same value.
+    assert func == "app.commands.jobs.run_command_job" and args == (body["id"], 30 * 60)
     assert kwargs["job_id"] == f"command-{body['id']}" and kwargs["job_timeout"] > 30 * 60
 
     again = _start(commands_client, admin, project_id=world.project.id)

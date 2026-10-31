@@ -150,8 +150,9 @@ def test_manage_shows_everyones_work_in_that_dự_án_only(
     by_an = client.get(f"/api/v1/reviews?user_id={world.an.id}", headers=outsider)
     assert by_an.status_code == 200
     assert [r["id"] for r in by_an.json()["items"]] == [world.an_review.id]
-    # Not in a dự án they do not manage, even with a "view" grant there.
-    assert client.get(f"/api/v1/reviews/{elsewhere.id}", headers=outsider).status_code == 403
+    # Not in a dự án they do not manage: without a grant it does not exist for them (404),
+    # with a "view" grant it is there but not theirs to read (403).
+    assert client.get(f"/api/v1/reviews/{elsewhere.id}", headers=outsider).status_code == 404
     grant(db_session, world.outsider, other.id, "view")
     assert client.get(f"/api/v1/reviews/{elsewhere.id}", headers=outsider).status_code == 403
     assert elsewhere.id not in {

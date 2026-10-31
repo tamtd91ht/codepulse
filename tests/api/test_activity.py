@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.api.main import app
 from app.api.routers.activity import get_backlog, get_progress
-from app.models import Account, Commit, Project
+from app.models import Account, Commit, Project, ProjectGrant
 from app.review.progress import MemoryProgress
 from tests.api.conftest import World
 
@@ -183,7 +183,7 @@ def test_a_knowledge_build_shows_for_everyone_and_never_breaks_the_panel(
 
 
 def test_a_queued_knowledge_build_shows_while_it_waits_for_a_worker(
-    client: TestClient, world: World, as_user: Any, live: Any
+    client: TestClient, world: World, as_user: Any, live: Any, db_session: Session
 ) -> None:
     """ "Rà soát lại" behind a long review: the build waits in the queue, and the panel says so
     instead of showing nothing until a worker takes it."""
@@ -207,6 +207,11 @@ def test_a_queued_knowledge_build_shows_while_it_waits_for_a_worker(
         "Rà soát lại dự án",
     )
     assert body["queued_total"] == 1
+    # Someone without a grant on the dự án does not see its builds (docs/specs/09).
+    grant = db_session.get(ProjectGrant, (world.project.business_project_id, world.outsider.id))
+    assert grant is not None
+    db_session.delete(grant)
+    db_session.flush()
     outsider = client.get("/api/v1/activity/reviews", headers=as_user(world.outsider)).json()
     assert outsider["queued"] == [] and outsider["queued_total"] == 0
 

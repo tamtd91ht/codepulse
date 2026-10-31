@@ -59,6 +59,10 @@ def finding(session: Session, review_id: int, rule_id: str, verified: str) -> Re
 
 
 def seed(session: Session, world: World) -> dict[str, Any]:
+    # The world's own reviews (finished on a fixed date) stay out of every window, so the counts
+    # below do not depend on the day the tests run.
+    for own in (world.an_review, world.binh_review):
+        own.finished_at = datetime.now(UTC) - timedelta(days=400)
     recent = review(session, world, "1" * 40, days_ago=3, applied=["rk:inv-1", "rk:inv-2"])
     older = review(session, world, "2" * 40, days_ago=60, applied=["rk:inv-2"])
     stale = review(session, world, "3" * 40, days_ago=200, applied=["rk:inv-3"])

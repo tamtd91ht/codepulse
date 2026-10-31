@@ -772,8 +772,11 @@ def test_short_transactions_release_the_claim_while_the_model_works(
     seen: list[tuple[bool, str | None]] = []
 
     def answer(prompt: ReviewPrompt) -> dict[str, Any]:
+        # What the service left open when it called the model: checked before this read, which
+        # opens a transaction of its own.
+        opened = db_session.in_transaction()
         row = db_session.scalar(select(Review.status).where(Review.reviewed_sha == HEAD))
-        seen.append((db_session.in_transaction(), row))
+        seen.append((opened, row))
         db_session.commit()  # the read above opened one; leave it as the service does
         return sqli(prompt)
 

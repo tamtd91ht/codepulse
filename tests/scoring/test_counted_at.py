@@ -57,6 +57,6 @@ def test_the_database_counts_the_same_moment(db_session: Session) -> None:
     in_db = dict(
         db_session.execute(
             select(Review.id, Review.counted_at).where(Review.id.in_([r.id for r in rows]))
-        ).tuples()
+        ).all()
     )
     assert in_db == {r.id: r.counted_at for r in rows}
