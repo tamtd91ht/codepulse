@@ -3909,3 +3909,242 @@ td.check-col {
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 14px;
 }
+
+/* ---- Stetho, the AI assistant (components/Stetho.tsx) ---- */
+.stetho-fab {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  /* Same layer as the review activity pill, which moves up above it (.has-stetho .activity). */
+  z-index: 45;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: var(--shadow-md);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+.stetho-fab:hover {
+  background: var(--primary-hover);
+}
+.stetho-fab:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.has-stetho .activity {
+  bottom: 64px;
+}
+@media (max-width: 640px) {
+  .stetho-fab {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+  .stetho-fab span:not(.spinner) {
+    display: none;
+  }
+}
+.stetho-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.stetho-model {
+  max-width: 170px;
+  height: 32px;
+  font-size: 13px;
+}
+.side-drawer-body:has(> .stetho) {
+  display: flex;
+  padding: 0;
+  overflow: hidden;
+}
+.stetho {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.stetho-focus {
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stetho-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  padding: 16px 20px;
+  overflow-y: auto;
+}
+.stetho-empty h3 {
+  margin: 8px 0 6px;
+  font-size: 16px;
+}
+.stetho-empty p {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.stetho-suggest {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.stetho-suggest button {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  background: var(--surface);
+  text-align: left;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard);
+}
+.stetho-suggest button:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+.stetho-suggest button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 0;
+}
+.stetho-msg.user {
+  display: flex;
+  justify-content: flex-end;
+}
+.stetho-bubble {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--primary-soft);
+  color: var(--primary-text);
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.stetho-msg.assistant {
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.stetho-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.stetho-meta span + span::before {
+  content: "·";
+  margin-right: 8px;
+}
+.stetho-typing {
+  display: inline-block;
+  width: 36px;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--border) 25%, var(--border-strong) 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: stetho-typing 1.2s linear infinite;
+}
+@keyframes stetho-typing {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stetho-typing {
+    animation: none;
+  }
+}
+.stetho-compose {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--border);
+}
+.stetho-compose textarea {
+  flex: 1;
+  max-height: 160px;
+  resize: none;
+}
+.stetho-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+}
+.md > :first-child {
+  margin-top: 0;
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+.md p,
+.md ul,
+.md ol,
+.md blockquote,
+.md pre {
+  margin: 0 0 10px;
+}
+.md ul,
+.md ol {
+  padding-left: 20px;
+}
+.md li + li {
+  margin-top: 4px;
+}
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  margin: 14px 0 6px;
+  font-size: 15px;
+}
+.md code {
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.md pre {
+  padding: 10px 12px;
+  border-radius: var(--radius-small);
+  background: var(--bg-elevated);
+  overflow-x: auto;
+}
+.md pre code {
+  padding: 0;
+  background: none;
+}
+.md blockquote {
+  padding-left: 12px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--muted);
+}
+.md hr {
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.md a {
+  color: var(--link);
+}

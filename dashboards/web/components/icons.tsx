@@ -183,6 +183,16 @@ const PATHS = {
     </>
   ),
   pulse: <path d="M3 12h4l3-8 4 16 3-8h4" />,
+  plus: <path d="M12 5v14M5 12h14" />,
+  arrowUp: <path d="M12 19V5M5 12l7-7 7 7" />,
+  stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
+  stethoscope: (
+    <>
+      <path d="M5 2v2M11 2v2M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1" />
+      <path d="M8 15a6 6 0 0 0 12 0v-3" />
+      <circle cx="20" cy="10" r="2" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;

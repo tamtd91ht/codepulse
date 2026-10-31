@@ -6,6 +6,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { Icon, type IconName, IconButton } from "@/components/icons";
 import { ReviewActivity } from "@/components/ReviewActivity";
+import { Stetho } from "@/components/Stetho";
 import { RAIL_KEY, ThemeToggle } from "@/components/theme";
 import { Avatar } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
@@ -67,6 +68,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const isAdmin = !!me?.is_admin;
   const isLead = !!me && (isAdmin || me.lead_teams.length > 0);
+  // Stetho, the AI assistant: admins and managers only (app/api/routers/assistant.py).
+  const assistant = !!me && (isAdmin || me.managed_teams.length > 0);
   const role = !me ? "" : isAdmin ? "Admin" : me.lead_teams.length ? "Lead" : me.managed_teams.length ? "Manager" : "Thành viên";
 
   const primary: Item[] = me
@@ -123,7 +126,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className={`shell${rail ? " rail" : ""}${drawer ? " drawer-open" : ""}`}>
+    <div className={`shell${rail ? " rail" : ""}${drawer ? " drawer-open" : ""}${assistant ? " has-stetho" : ""}`}>
       <a href="#main" className="skip-link">
         Bỏ qua điều hướng
       </a>
@@ -234,6 +237,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </main>
       </div>
       {me && <ReviewActivity />}
+      {assistant && <Stetho />}
     </div>
   );
 }

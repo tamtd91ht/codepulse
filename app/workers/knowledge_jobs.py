@@ -30,6 +30,7 @@ from app.config import Settings, get_settings
 from app.crypto import secret_box
 from app.db import get_sessionmaker
 from app.models import (
+    AuditLog,
     BusinessProject,
     CommandRun,
     Connection,
@@ -157,7 +158,8 @@ class _Target:
 def month_spend_usd(session: Session, now: datetime | None = None) -> float:
     """The month's LLM spend: reviews' `cost_usd` plus every knowledge row's `meta.cost_usd`,
     whatever its status (active, superseded, failed: all were paid), plus the .claude command
-    runs (app/commands). The one budget figure they all share (docs/specs/19 §6)."""
+    runs (app/commands) and the Stetho turns (app/assistant, audited as `assistant.chat`). The
+    one budget figure they all share (docs/specs/19 §6)."""
     return float(month_spend_breakdown(session, now)["total_usd"])
 
 
@@ -173,6 +175,11 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
             CommandRun.created_at >= month_start
         )
     )
+    assistant = session.scalar(
+        select(func.coalesce(func.sum(AuditLog.details["cost_usd"].as_float()), 0)).where(
+            AuditLog.action == "assistant.chat", AuditLog.at >= month_start
+        )
+    )
     builds = 0.0
     for data in session.scalars(
         select(ReviewKnowledge.data).where(ReviewKnowledge.created_at >= month_start)
@@ -186,7 +193,10 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
         "reviews_usd": round(float(reviews or 0), 4),
         "commands_usd": round(float(commands or 0), 4),
         "knowledge_usd": round(builds, 4),
-        "total_usd": round(float(reviews or 0) + float(commands or 0) + builds, 4),
+        "assistant_usd": round(float(assistant or 0), 4),
+        "total_usd": round(
+            float(reviews or 0) + float(commands or 0) + builds + float(assistant or 0), 4
+        ),
     }
 
 
