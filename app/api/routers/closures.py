@@ -442,7 +442,11 @@ def confirm_proposal(
         session.rollback()
         raise HTTPException(409, f"finding đang ở trạng thái {finding.status}, không còn mở")
     audit(
-        session, principal.user_id, "finding.close_request.confirm", f"finding:{closure.finding_id}"
+        session,
+        principal.user_id,
+        "finding.close_request.confirm",
+        f"finding:{closure.finding_id}",
+        closure_id=closure.id,
     )
     session.commit()
     return closure

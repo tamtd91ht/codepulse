@@ -263,9 +263,17 @@ def build_prompt(
     )
 
 
+def repo_path(path: str | None) -> str:
+    """A path as GitLab knows it: no leading "./" or "/" (and the dot of .gitlab/ kept)."""
+    text = (path or "").strip()
+    while text.startswith("./"):
+        text = text[2:]
+    return text.lstrip("/")
+
+
 def _lines_in(path: str | None, lines: str | None, sources: dict[str, str]) -> bool:
     """The evidence is a file that was shown, and its lines exist in what was shown."""
-    wanted = (path or "").strip().lstrip("./")
+    wanted = repo_path(path)
     text = next(
         (t for p, t in sources.items() if p == wanted or (wanted and p.endswith(f"/{wanted}"))),
         None,
@@ -280,7 +288,7 @@ def _lines_in(path: str | None, lines: str | None, sources: dict[str, str]) -> b
 
 
 def _among(path: str | None, known: Iterable[str]) -> bool:
-    wanted = (path or "").strip().lstrip("./")
+    wanted = repo_path(path)
     return bool(wanted) and any(p == wanted or p.endswith(f"/{wanted}") for p in known)
 
 
@@ -314,11 +322,11 @@ def check(
         if not 0 <= answer.index < len(findings) or answer.index in outcomes:
             continue
         finding = findings[answer.index]
-        evidence = (
-            f"{answer.evidence_file}:{answer.evidence_lines}"
-            if answer.evidence_file and answer.evidence_lines
-            else answer.evidence_file
-        )
+        # From the model: redacted, and the lines only in the "12" / "12-20" shape.
+        lines = (answer.evidence_lines or "").replace(" ", "")
+        lines = lines if re.fullmatch(r"\d+(-\d+)?", lines) else ""
+        file = redact(answer.evidence_file) if answer.evidence_file else None
+        evidence = f"{file}:{lines}" if file and lines else file
         sure = answer.confidence >= MIN_CONFIDENCE
         diff_paths = [f.path for f in files]
         closes_as: str | None = None

@@ -2,19 +2,23 @@
 requested by the user 2026-10-31; app/workers/closure_jobs.gather_sources).
 
 An argument like "prod reads the key from the k8s environment" is checked on the files it names,
-and those are exactly the files that hold secrets. Nothing of a value is ever shown:
-- a configuration file (`.env*`, yaml, properties, ini, toml, json, tfvars…, or a SENSITIVE_PATHS
-  match): `mask_config` keeps the keys, replaces every value by a fixed label (a literal and its
-  length, or where the value comes from), and hides comments, key blocks and multi-line values;
-- a source file: `mask_code` hides the literal values of secret-looking names, key blocks, and
-  what `redact` catches.
+and those are exactly the files that hold secrets. No character of a value is ever shown:
+- a configuration file (`.env*`, yaml, properties, ini, toml, json, xml, `.config`, credential
+  dotfiles, shell/Docker files, their .example/.tpl/.bak variants, or a SENSITIVE_PATHS match):
+  `mask_config` keeps the keys, replaces every value by a fixed label (a literal and its length,
+  or where the value comes from) and hides comments, key blocks, multi-line values and anything
+  it cannot parse;
+- a source file: `mask_code` replaces EVERY string literal by its length, and on a line naming
+  a secret (password, token, key, auth…) hides every value after the name except calls and
+  dotted references (os.getenv(…), cfg.db.password); long random tokens are hidden anywhere.
+Over-hiding costs a little precision; showing a secret is not an option.
 `looks_secret` refuses an argument that pastes a secret.
 """
 
 import re
 
 from app.collector.gitlab.diffstat import is_ignored
-from app.review.prepare import redact
+from app.review.prepare import SECRET_PATTERNS, redact
 
 MAX_LINES = 400
 MAX_LINE = 500
@@ -27,6 +31,7 @@ CONFIG_EXTENSIONS = frozenset(
         "ini",
         "toml",
         "conf",
+        "config",
         "cfg",
         "cnf",
         "tfvars",
@@ -35,19 +40,67 @@ CONFIG_EXTENSIONS = frozenset(
         "env",
         "plist",
         "hcl",
+        "sh",
+        "bash",
+        "zsh",
+        "bat",
+        "cmd",
+        "ps1",
+        "dockerfile",
+    }
+)
+# A template, sample or backup of a config file is a config file too.
+TEMPLATE_SUFFIXES = frozenset(
+    {
+        "example",
+        "sample",
+        "dist",
+        "tpl",
+        "tmpl",
+        "template",
+        "j2",
+        "jinja",
+        "erb",
+        "bak",
+        "orig",
+        "old",
+        "local",
+    }
+)
+CREDENTIAL_FILES = frozenset(
+    {
+        "env",
+        "secrets",
+        "credentials",
+        "dockerfile",
+        "makefile",
+        ".npmrc",
+        ".pypirc",
+        ".netrc",
+        ".pgpass",
+        ".htpasswd",
+        ".git-credentials",
+        ".dockercfg",
+        ".s3cfg",
+        "id_rsa",
+        "id_ed25519",
     }
 )
 
 
 def is_config(path: str, sensitive_paths: list[str]) -> bool:
-    """A file shown through `mask_config`: SENSITIVE_PATHS on the whole path or the file name
-    alone (".env*" must catch config/.env-prod), `.env…` names, configuration extensions."""
+    """A file shown through `mask_config` (the stricter one): SENSITIVE_PATHS on the whole path
+    or the file name alone (".env*" must catch config/.env-prod), `.env…` names, credential
+    files, configuration and script extensions, and their template/backup variants."""
     name = path.rsplit("/", 1)[-1].lower()
     if is_ignored(path, sensitive_paths) or is_ignored(name, sensitive_paths):
         return True
-    if name.startswith(".env") or name.endswith(".env") or name in {"env", "secrets"}:
+    if name.startswith(".env") or name.endswith(".env") or name in CREDENTIAL_FILES:
         return True
-    return "." in name and name.rsplit(".", 1)[-1] in CONFIG_EXTENSIONS
+    parts = name.split(".")
+    while len(parts) > 1 and parts[-1] in TEMPLATE_SUFFIXES:
+        parts.pop()
+    return (len(parts) > 1 and parts[-1] in CONFIG_EXTENSIONS) or parts[0] == "dockerfile"
 
 
 # -- values ------------------------------------------------------------------------------------
@@ -59,6 +112,7 @@ ENV_CALL = re.compile(
     re.IGNORECASE,
 )
 SECRET_STORE = re.compile(r"^(vault:|\{\{.+\}\}$|secretKeyRef\b|valueFrom\b|ref\+)", re.IGNORECASE)
+BLOCK_SCALAR = re.compile(r"^[|>][-+0-9]*\s*(#.*)?$")
 
 
 def describe(value: str) -> str:
@@ -76,38 +130,37 @@ def describe(value: str) -> str:
             else "<ẩn: đọc từ biến môi trường>"
         )
     if ENV_CALL.match(text):
-        return "<ẩn: đọc từ biến môi trường bằng hàm>"
+        return "<ẩn: đọc từ biến môi trường bằng hàm, có thể kèm giá trị mặc định>"
     if SECRET_STORE.match(text):
         return "<ẩn: lấy từ kho bí mật/template>"
-    if text in {"|", "|-", "|+", ">", ">-", ">+"}:
+    if BLOCK_SCALAR.match(text):
         return "<ẩn: giá trị nhiều dòng>"
     return f"<ẩn: chuỗi cứng {len(text)} ký tự>"
 
 
-# -- lines -------------------------------------------------------------------------------------
+# -- configuration files --------------------------------------------------------------------------
 
 # A key: an identifier (letters first, ≤ 64 chars), optionally quoted, after an optional
-# "- " (yaml list) or "export ". A random-looking run before "=" is base64, not a key.
+# "- " (yaml list) or "export " / "ENV " (Dockerfile).
 LINE = re.compile(
-    r"^(?P<lead>\s*(?:-\s+)?(?:export\s+)?)"
+    r"^(?P<lead>\s*(?:-\s+)?(?:(?:export|ENV|ARG|set)\s+)?)"
     r"(?P<key>[\"']?[A-Za-z_][A-Za-z0-9_.\-\[\]]{0,63}[\"']?)"
-    r"(?P<sep>\s*(?::|=|=>)\s*)(?P<value>.*)$"
+    r"(?P<sep>\s*(?::|=|=>)\s*|\s+)(?P<value>.*)$"
 )
-COMMENT = re.compile(r"^\s*(#|//|;|<!--|--)")
+COMMENT = re.compile(r"^\s*(#|//|;|<!--|--|REM\b|::)", re.IGNORECASE)
 PEM_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]*-----")
 PEM_END = re.compile(r"-----END [A-Z0-9 ]*-----")
-BLOCK_SCALAR = re.compile(r"^[|>][-+]?\s*$")
+TOKEN_SHAPE = re.compile(r"\d.*[A-Za-z]|[A-Za-z].*\d")
 
 
-def _random_key(key: str) -> bool:
+def _shown_key(key: str) -> bool:
+    """A key that can be shown: not a token itself (sk_live_… as a map key, AKIA…, base64)."""
     bare = key.strip("\"'")
-    return (
-        len(bare) > 16
-        and bool(re.search(r"[a-z]", bare))
-        and bool(re.search(r"[A-Z]", bare))
-        and bool(re.search(r"\d", bare))
-        and not re.search(r"[_.\-]", bare)
-    )
+    if redact(bare) != bare:
+        return False
+    if len(bare) >= 24 and TOKEN_SHAPE.search(bare):
+        return False
+    return not (len(bare) >= 16 and bare.isupper() and any(c.isdigit() for c in bare))
 
 
 def _indent(line: str) -> int:
@@ -119,10 +172,15 @@ def mask_config(text: str) -> str:
     out: list[str] = []
     in_pem = False
     block_indent: int | None = None
-    for line in text.splitlines()[:MAX_LINES]:
+    open_quote: str | None = None
+    for line in text.replace("\r\n", "\n").split("\n")[:MAX_LINES]:
         if in_pem:
             if PEM_END.search(line):
                 in_pem = False
+            continue
+        if open_quote is not None:  # inside a quoted value that spans lines
+            if line.count(open_quote) % 2 == 1:
+                open_quote = None
             continue
         if PEM_BEGIN.search(line):
             out.append("<ẩn: khối khoá>")
@@ -132,57 +190,84 @@ def mask_config(text: str) -> str:
             if not line.strip() or _indent(line) > block_indent:
                 continue  # inside a multi-line value
             block_indent = None
-        stripped = line.strip()
-        if not stripped:
+        if not line.strip():
             out.append("")
             continue
         if COMMENT.match(line):
             out.append("<ẩn: chú thích>")
             continue
         match = LINE.match(line)
-        if len(line) > MAX_LINE or match is None or _random_key(match["key"]):
+        if len(line) > MAX_LINE or match is None or not _shown_key(match["key"]):
             out.append("<ẩn: dòng>")
             continue
-        value = match["value"]
-        if BLOCK_SCALAR.match(value.strip()):
+        value = match["value"].strip()
+        if BLOCK_SCALAR.match(value):
             block_indent = _indent(line)
-        label = describe(value) if value.strip() else "<ẩn: trống>"
-        out.append(f"{match['lead']}{match['key']}{match['sep'].rstrip()} {label}".rstrip())
+        for quote in ('"', "'"):
+            if value.startswith(quote) and value.count(quote) % 2 == 1:
+                open_quote = quote
+        label = describe(value) if value else "<ẩn: trống>"
+        separator = match["sep"].strip() or " "
+        out.append(f"{match['lead']}{match['key']}{separator} {label}".rstrip())
     return "\n".join(out)
 
 
-# A secret-looking name and the literal given to it, in code: name = "x", name: 'x', "name": "x",
-# name := "x", setPassword("x") is out of reach (not an assignment) but redact() still runs.
-GUARDED_NAME = (
-    r"[\w.\-\"']*(?:pass(?:word|wd)?|pwd|secret|token|api[_-]?key|private[_-]?key|credential"
-    r"|access[_-]?key|aes[_-]?key|signing[_-]?key|salt)[\w\-\"']*"
+# -- source files -------------------------------------------------------------------------------
+
+# Names that hold secrets. "key"/"auth" alone included: over-hiding is harmless.
+GUARDED = re.compile(
+    r"(?i)(pass(?:word|wd|phrase)?|pwd|secret|token|\bkey\b|_key\b|key_|apikey|auth|credential"
+    r"|dsn|webhook|salt|cookie|session_?id|private|mật\s*khẩu|\bmk\b|khóa|khoá)"
 )
-CODE_ASSIGNMENT = re.compile(
-    rf"(?P<name>{GUARDED_NAME})(?P<sep>\s*(?::=|=>|:|=)\s*)(?P<q>[\"'`])(?P<value>[^\"'`\n]+)(?P=q)",
-    re.IGNORECASE,
+# A string literal, with its prefix (b"", r"", f"", @"") and escapes; triple quotes too.
+STRING = re.compile(r"(?:\b[rRbBuUfF]{1,2}|@)?(\"\"\"|'''|\"|'|`)((?:\\.|(?!\1)[\s\S])*?)\1")
+# What stays after a secret's name: dotted references and calls.
+CALL_OR_PATH = re.compile(r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+|[A-Za-z_$][\w$]*(?=\s*\()")
+VALUE_TOKEN = re.compile(
+    r"<chuỗi \d+ ký tự>|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+|[\w$@%!#^&*+~\\-]+"
 )
-BARE_ASSIGNMENT = re.compile(
-    rf"(?P<name>{GUARDED_NAME})(?P<sep>\s*[:=]\s*)(?P<value>[^\s\"'`,;)(\]}}{{]{{6,}})(?=\s|$|[,;])",
-    re.IGNORECASE,
-)
-# Kept as code: an attribute or module path (cfg.password), or a plain name without digits
-# (password = pwd). Anything else unquoted may be a literal: hidden (over-hiding is harmless).
-REFERENCE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$|^[A-Za-z_]+$")
+# A long random-looking token, anywhere: hidden.
+RANDOM_TOKEN = re.compile(r"(?<![\w/.-])[A-Za-z0-9+/_=-]{20,}(?![\w/.-])")
 
 
-def _bare(match: re.Match[str]) -> str:
-    value = match["value"]
-    if REFERENCE.match(value):
-        return match.group(0)
-    return f"{match['name']}{match['sep']}<ẩn: giá trị không nháy {len(value)} ký tự>"
+def _literal(match: re.Match[str]) -> str:
+    return f"<chuỗi {len(match.group(2))} ký tự>"
+
+
+def _after_name(line: str) -> str:
+    """On a line naming a secret: keep the name, punctuation, calls and dotted references; hide
+    every other value token (an unquoted word may be the password itself)."""
+    found = GUARDED.search(line)
+    if found is None:
+        return line
+    head, tail = line[: found.end()], line[found.end() :]
+    kept: list[str] = []
+    position = 0
+    for token in VALUE_TOKEN.finditer(tail):
+        kept.append(tail[position : token.start()])
+        text = token.group(0)
+        call = CALL_OR_PATH.match(tail, token.start())
+        if text.startswith("<chuỗi") or (call is not None and call.end() == token.end()):
+            kept.append(text)
+        else:
+            kept.append("<ẩn>")
+        position = token.end()
+    kept.append(tail[position:])
+    return head + "".join(kept)
+
+
+def _random(token: re.Match[str]) -> str:
+    text = token.group(0)
+    return "<ẩn: chuỗi ngẫu nhiên>" if TOKEN_SHAPE.search(text) else text
 
 
 def mask_code(text: str) -> str:
-    """A source file as the checker may see it: literals of secret-looking names and key blocks
-    hidden, the rest through `redact`."""
+    """A source file as the checker may see it: every string literal as its length, values after
+    secret names hidden, key blocks and random tokens hidden, the rest through `redact`."""
+    text = STRING.sub(_literal, redact(text.replace("\r\n", "\n")))
     out: list[str] = []
     in_pem = False
-    for line in text.splitlines()[:MAX_LINES]:
+    for line in text.split("\n")[:MAX_LINES]:
         if in_pem:
             if PEM_END.search(line):
                 in_pem = False
@@ -194,17 +279,60 @@ def mask_code(text: str) -> str:
         if len(line) > MAX_LINE:
             out.append("<ẩn: dòng quá dài>")
             continue
-        line = CODE_ASSIGNMENT.sub(
-            lambda m: f"{m['name']}{m['sep']}{m['q']}{describe(m['value'])}{m['q']}", line
-        )
-        line = BARE_ASSIGNMENT.sub(_bare, line)
-        out.append(redact(line))
+        quote = next((q for q in ('"', "'", "`") if q in line), None)
+        if quote is not None:  # a literal left open (it spans lines): hidden from its quote on
+            line = line[: line.index(quote)] + "<ẩn: chuỗi nhiều dòng>"
+        line = RANDOM_TOKEN.sub(_random, line)
+        out.append(_after_name(line))
     return "\n".join(out)
 
 
-def looks_secret(text: str) -> bool:
-    """An argument that pastes a secret: a key block, something `redact` catches, or a literal
-    given to a secret-looking name."""
-    if PEM_BEGIN.search(text) or redact(text) != text:
+# -- arguments ----------------------------------------------------------------------------------
+
+# A secret's name, then a separator (":", "=", "là", "is"; a few words may come between:
+# "mật khẩu prod là …") or just a space, then a value.
+MASKED_WORD = (
+    r"(?:pass(?:word|wd)?|pwd|\bpw\b|secret|token|api[_-]?key|private[_-]?key|access[_-]?key"
+    r"|aes[_-]?key|mật\s*khẩu|\bmk\b|khóa|khoá|\bkey\b)"
+)
+PASTED = re.compile(
+    rf"(?i){MASKED_WORD}(?:[^\n:=.]{{0,30}}?\s*(?:[:=]|\blà\b|\bis\b)|\s)\s*[\"'`]?"
+    r"(?P<value>[^\s\"'`,;)]{5,})"
+)
+HIGH_ENTROPY = re.compile(r"(?<![\w/.-])[A-Za-z0-9+/_=@!#$%^&*-]{20,}(?![\w/.-])")
+FILE_NAME = re.compile(r"^[\w.-]*\.[A-Za-z0-9]{1,10}$")
+
+
+def _is_path(token: str) -> bool:
+    """A file name or a repository path, not a token: config/.env-prod, deploy/k8s/app.yaml;
+    "wJalrXUtnFEMI/K7MDENG/bPxRfi…" (mixed case, no extension) is a key."""
+    if FILE_NAME.match(token):
         return True
-    return bool(CODE_ASSIGNMENT.search(text)) or mask_code(text) != text
+    if "/" not in token:
+        return False
+    return bool(FILE_NAME.match(token.rsplit("/", 1)[-1])) or token == token.lower()
+
+
+def _token_secret(text: str) -> bool:
+    """What redact's token patterns catch (keys, URLs with credentials…), not its quoted
+    assignments: quoting "${DB_PASSWORD}" is a fine argument."""
+    return any(pattern.search(text) for pattern in SECRET_PATTERNS)
+
+
+def looks_secret(text: str) -> bool:
+    """An argument that pastes a secret: a key block, something `redact` catches, a value with
+    digits or symbols given to a secret's name that is not a reference (an env variable, a file
+    name), or a long random token."""
+    text = text.replace("\r\n", "\n")
+    if PEM_BEGIN.search(text) or _token_secret(text):
+        return True
+    for match in PASTED.finditer(text):
+        value = match["value"].rstrip(".")
+        if value.startswith("$") or _is_path(value):
+            continue  # ${DB_PASSWORD}, $AES_KEY, application-prod.yml, config/.env-prod
+        if any(c.isdigit() for c in value) or not value.replace("_", "").isalnum():
+            return True
+    return any(
+        TOKEN_SHAPE.search(m.group(0)) and not _is_path(m.group(0))
+        for m in HIGH_ENTROPY.finditer(text)
+    )

@@ -27,7 +27,16 @@ SECRET_PATTERNS = [
         r"\bxox[abpors]-[A-Za-z0-9-]{10,}",
         r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
         r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{20,}",
-        r"(?i)://[^/\s:@]+:[^/\s@]+@",  # credentials inside URLs
+        r"(?i)\bbasic\s+[A-Za-z0-9+/=]{8,}",
+        r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}",
+        r"\bAIza[0-9A-Za-z_\-]{30,}",
+        r"https://hooks\.slack\.com/services/[A-Za-z0-9/_-]+",
+        # Credentials inside URLs, up to the LAST "@" before the host: a password may hold "/"
+        # or "@" (postgres://app:pa/ss@db, postgres://app:p@ss@db).
+        r"(?i)://[^/\s:@]+:[^\s\"']*@(?=[^@\s\"']*(?:[/?#\s\"']|$))",
+        r"(?i)--password[= ]\S+",
+        r"(?i)\b(?:mysql|mysqldump|mariadb)\b[^\n]*?\s-p(?=[^\s-])\S+",  # mysql -pSecret
+        r"(?i)(?<=\s)-u\s+[^\s:]+:\S+",  # curl -u user:password
     )
 ]
 # key = "value" style assignments; only the value is replaced so the finding still makes sense.

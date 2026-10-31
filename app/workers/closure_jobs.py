@@ -42,7 +42,7 @@ from app.models.review import CHANGE_TIME_UNKNOWN
 from app.review.masking import is_config, mask_code, mask_config
 from app.review.prepare import prepare
 from app.review.providers import LLMProvider, build_provider
-from app.review.resolve import MAX_SOURCE_CHARS, check, mark_fixed
+from app.review.resolve import MAX_SOURCE_CHARS, check, mark_fixed, repo_path
 
 log = logging.getLogger(__name__)
 
@@ -147,7 +147,7 @@ def gather_sources(
     never a value."""
     paths, names = _named(argument)
     wanted: list[str] = [finding_path] if finding_path else []
-    wanted += [p.lstrip("./") for p in paths if p.lstrip("./") not in wanted]
+    wanted += [p for p in map(repo_path, paths) if p not in wanted]
     not_shown: dict[str, str] = {}
     if names and len(wanted) < MAX_SOURCES:
         try:
@@ -162,7 +162,9 @@ def gather_sources(
             )
             wanted += found[:MAX_PER_NAME]
             if not found:
-                not_shown[name] = f"không có file nào tên như vậy trên nhánh {ref}"
+                not_shown[name] = (
+                    f"không thấy file nào tên như vậy trên nhánh {ref} (xét tối đa 5000 file)"
+                )
     shown: dict[str, str] = {}
     for path in wanted[:MAX_SOURCES]:
         try:
