@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 import useSWRInfinite from "swr/infinite";
 
-import { shortShas } from "@/components/FindingClose";
+import { CLOSED_AS, shortShas } from "@/components/FindingClose";
 import { Icon, IconButton } from "@/components/icons";
 import { Card, EmptyState, Loading, Message, PageHeader, Pill, Segmented, SeverityBadge } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
@@ -30,6 +30,7 @@ type Tab = "todo" | "history";
 const STATUS: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "info" }> = {
   pending: { label: "Chờ duyệt", tone: "info" },
   checking: { label: "Đang review", tone: "info" },
+  proposed: { label: "Đề xuất chấp nhận rủi ro", tone: "warn" },
   closed: { label: "Đã đóng", tone: "good" },
   rejected: { label: "Chưa đủ điều kiện", tone: "bad" },
   failed: { label: "Chưa kiểm được", tone: "warn" },
@@ -160,7 +161,7 @@ export default function ClosuresPage() {
             <span className="small muted">Trạng thái</span>
             <select value={filters.status} onChange={(e) => set("status", e.target.value)}>
               <option value="">Mọi trạng thái</option>
-              <option value="waiting">Đang chờ (chờ duyệt, đang review)</option>
+              <option value="waiting">Đang chờ (chờ duyệt, đang review, chờ xác nhận)</option>
               <option value="closed">Đã đóng</option>
               <option value="rejected">Chưa đủ điều kiện / bị từ chối</option>
               <option value="failed">Chưa kiểm được</option>
@@ -308,10 +309,12 @@ export default function ClosuresPage() {
                               <code>{shortShas(c.shas)}</code>
                             </div>
                           )}
+                          {c.argument && <div className="small muted">có phản biện</div>}
                         </td>
                         <td>
                           <Pill tone={st.tone}>
                             {c.status === "checking" && <span className="spinner inline" aria-hidden="true" />} {st.label}
+                            {c.status === "closed" && c.closed_as ? ` · ${CLOSED_AS[c.closed_as]}` : ""}
                           </Pill>
                           <div className="muted small">{date(c.decided_at ?? c.created_at)}</div>
                         </td>
@@ -353,7 +356,7 @@ export default function ClosuresPage() {
 /** "waiting" groups the two in-flight states. */
 function statusParams(status: string): string {
   if (!status) return "";
-  const list = status === "waiting" ? ["pending", "checking"] : [status];
+  const list = status === "waiting" ? ["pending", "checking", "proposed"] : [status];
   return list.map((s) => `&status=${s}`).join("");
 }
 
@@ -377,6 +380,7 @@ function Detail({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const decidable = c.can_decide && (c.status === "pending" || c.status === "failed");
+  const confirmable = c.can_decide && c.status === "proposed";
   const refusedByPerson = c.status === "rejected" && (c.reason ?? "").startsWith("Từ chối:");
 
   async function act(path: string, body: unknown, done: string) {
@@ -419,6 +423,11 @@ function Detail({
                 Từ <Link href={`/reviews/${c.review_id}`}>review #{c.review_id}</Link>
               </div>
             )}
+            {c.argument && (
+              <blockquote className="closure-argument small">
+                <strong>Phản biện:</strong> {c.argument}
+              </blockquote>
+            )}
             {c.note && <div className="small">Ghi chú: {c.note}</div>}
           </div>
         </li>
@@ -435,7 +444,7 @@ function Detail({
                     ? "Người gửi đã rút yêu cầu"
                     : refusedByPerson
                       ? `${c.decided_by_name ?? "Người duyệt"} từ chối, không chạy review`
-                      : `${c.decided_by_name ?? "Người duyệt"} chạy review các commit`}
+                      : `${c.decided_by_name ?? "Người duyệt"} chạy review ${[c.shas.length ? "các commit" : "", c.argument ? "phản biện" : ""].filter(Boolean).join(" và ")}`}
               </div>
               {c.decided_at && c.status !== "pending" && <div className="muted small">{date(c.decided_at)}</div>}
             </div>
@@ -447,9 +456,19 @@ function Detail({
           </span>
           <div>
             <div className="step-title">
-              Kết quả: <Pill tone={st.tone}>{st.label}</Pill>
+              Kết quả:{" "}
+              <Pill tone={st.tone}>
+                {st.label}
+                {c.status === "closed" && c.closed_as ? ` · ${CLOSED_AS[c.closed_as]}` : ""}
+              </Pill>
             </div>
             {c.status === "checking" && <div className="muted small">Đang lấy diff và hỏi model, thường dưới 1 phút…</div>}
+            {c.status === "proposed" && (
+              <div className="small">
+                Model thấy phản biện được code hiện tại chứng minh. Finding chỉ được đóng (“Chấp nhận rủi ro”) khi manager
+                hoặc admin xác nhận: hãy mở file bằng chứng trên GitLab và chắc đó là cấu hình đang chạy thật.
+              </div>
+            )}
             {c.reason && <div className="small">{c.reason}</div>}
             {c.evidence && (
               <div className="small">
@@ -461,8 +480,17 @@ function Detail({
         </li>
       </ol>
 
-      {(decidable || c.can_cancel) && (
+      {(decidable || confirmable || c.can_cancel) && (
         <div className="toolbar" style={{ marginTop: 12 }}>
+          {confirmable && (
+            <button
+              className="primary"
+              disabled={busy}
+              onClick={() => act(`/close-requests/${c.id}/confirm`, undefined, "Đã đóng finding: chấp nhận rủi ro.")}
+            >
+              Xác nhận chấp nhận rủi ro
+            </button>
+          )}
           {decidable && (
             <button
               className="primary"
@@ -472,7 +500,7 @@ function Detail({
               {c.status === "failed" ? "Chạy review lại" : "Chạy review"}
             </button>
           )}
-          {decidable && !refusing && (
+          {(decidable || confirmable) && !refusing && (
             <button disabled={busy} onClick={() => setRefusing(true)}>
               Từ chối
             </button>

@@ -659,7 +659,7 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
                 isAdmin={!!me?.is_admin}
                 onDone={() => Promise.all([mutate(), closures.mutate()])}
               />
-              {isAuthor && status === "open" && closure?.status !== "pending" && closure?.status !== "checking" && (
+              {isAuthor && status === "open" && !["pending", "checking", "proposed"].includes(closure?.status ?? "") && (
                 <DisputeForm finding={f} onDone={() => mutate()} />
               )}
             </article>

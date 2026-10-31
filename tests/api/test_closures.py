@@ -56,6 +56,35 @@ class FakeClient:
     def commit_diff(self, project_id: int, sha: str) -> list[dict[str, Any]]:
         return [DIFF]
 
+    def tree_paths(self, project_id: int, ref: str) -> list[str]:
+        return list(FILES)
+
+    def file_raw(self, project_id: int, path: str, ref: str) -> str:
+        if path not in FILES:
+            raise GitLabError("404", status_code=404)
+        return FILES[path]
+
+
+SECRET = "q8ZrT1vYw3LmN5bK"
+FILES = {
+    "app/a.py": "key = load_key()\n",
+    "config/.env-dev": f"# local debug only\nAES_KEY={SECRET}\n",
+    "config/.env-prod": "AES_KEY=${AES_KEY}\nDB_URL=${DATABASE_URL}\n",
+    "README.md": "docs\n",
+}
+ARGUMENT = (
+    "Key trong .env-dev chỉ dùng cho profile dev để debug; profile prod ở env-prod không "
+    "hardcode key mà bắt buộc đọc từ biến môi trường k8s (AES_KEY)."
+)
+ACCEPTED = {
+    "index": 0,
+    "verdict": "accepted",
+    "reason": "env-prod đọc AES_KEY từ biến môi trường.",
+    "evidence_file": "config/.env-prod",
+    "evidence_lines": "1",
+    "confidence": 0.9,
+}
+
 
 def factory(client: FakeClient) -> Any:
     @contextmanager
@@ -99,8 +128,9 @@ def work(
     token: str,
     answer: Any,
     gitlab: FakeClient | None = None,
+    provider: FakeLLMProvider | None = None,
 ) -> str:
-    provider = FakeLLMProvider(
+    provider = provider or FakeLLMProvider(
         lambda p: answer if isinstance(answer, str) else {"answers": [answer]}
     )
     return run_close_request(
@@ -483,3 +513,184 @@ def test_search_is_literal(client: TestClient, world: World, as_user: Any) -> No
     ask(client, world, as_user, world.an, [FIX])
     page = client.get("/api/v1/close-requests?q=%25", headers=as_user(world.admin)).json()
     assert page["items"] == []
+
+
+def ask_with(client: TestClient, world: World, as_user: Any, body: dict[str, Any]) -> Any:
+    return client.post(
+        f"/api/v1/findings/{world.an_finding.id}/close-requests",
+        json=body,
+        headers=as_user(world.an),
+    )
+
+
+def test_a_request_needs_commits_or_a_long_enough_argument(
+    client: TestClient, world: World, as_user: Any
+) -> None:
+    nothing = ask_with(client, world, as_user, {"commits": [], "argument": "  "})
+    assert nothing.status_code == 422
+    assert "ít nhất một commit" in nothing.text
+    short = ask_with(client, world, as_user, {"argument": "x" * 49})
+    assert short.status_code == 422
+    assert "50 ký tự" in short.text
+    ok = ask_with(client, world, as_user, {"argument": ARGUMENT})
+    assert ok.status_code == 201
+    assert (ok.json()["shas"], ok.json()["argument"]) == ([], ARGUMENT)
+
+
+def test_an_argument_proven_by_the_current_code_accepts_the_risk(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = ask_with(client, world, as_user, {"argument": ARGUMENT}).json()["id"]
+    run(client, as_user, world.manager, closure_id)
+    provider = FakeLLMProvider(lambda p: {"answers": [ACCEPTED]})
+    token = token_of(db_session, closure_id)
+    # The argument held: a proposal, the finding still open until someone confirms it.
+    assert work(db_session, settings, closure_id, token, ACCEPTED, provider=provider) == "proposed"
+    db_session.refresh(world.an_finding)
+    assert world.an_finding.status == "open"
+    todo = client.get("/api/v1/close-requests?view=todo", headers=as_user(world.manager)).json()
+    assert [(i["status"], i["can_decide"]) for i in todo["items"]] == [("proposed", True)]
+    # Neither the author nor someone outside the team confirms it.
+    confirm = f"/api/v1/close-requests/{closure_id}/confirm"
+    assert client.post(confirm, headers=as_user(world.an)).status_code == 403
+    assert client.post(confirm, headers=as_user(world.lead)).status_code == 403
+    confirmed = client.post(confirm, headers=as_user(world.manager))
+    assert confirmed.status_code == 200
+    assert (confirmed.json()["status"], confirmed.json()["closed_as"]) == (
+        "closed",
+        "accepted_risk",
+    )
+    db_session.refresh(world.an_finding)
+    assert (world.an_finding.status, world.an_finding.severity) == ("accepted_risk", "critical")
+    assert client.post(confirm, headers=as_user(world.manager)).status_code == 409
+
+    asked = provider.prompts[0].user
+    assert ARGUMENT in asked
+    assert "### File: app/a.py" in asked  # the finding's own file
+    assert "### File: config/.env-prod" in asked and "### File: config/.env-dev" in asked
+    assert "README.md" not in asked  # not named by the argument
+    assert SECRET not in asked  # no value is ever shown
+    assert "AES_KEY= <ẩn: chuỗi cứng 16 ký tự>" in asked
+    assert "AES_KEY= <ẩn: đọc từ biến môi trường>" in asked
+    assert "local debug" not in asked  # comments are hidden too
+
+    # An admin may reopen what an argument closed.
+    reopened = client.post(
+        f"/api/v1/findings/{world.an_finding.id}/reopen",
+        json={"note": "Prod vẫn còn dùng key cứng"},
+        headers=as_user(world.admin),
+    )
+    assert reopened.status_code == 200
+
+
+def test_an_argument_without_proof_in_the_code_shown_stays_open(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = ask_with(client, world, as_user, {"argument": ARGUMENT}).json()["id"]
+    run(client, as_user, world.manager, closure_id)
+    elsewhere = {**ACCEPTED, "evidence_file": "deploy/k8s/secret.yaml"}  # never shown
+    assert check(db_session, settings, closure_id, elsewhere) == "rejected"
+    closure = db_session.get(FindingClosure, closure_id)
+    assert closure is not None and "phản biện hợp lý nhưng chưa đủ chắc chắn" in (
+        closure.reason or ""
+    )
+    db_session.refresh(world.an_finding)
+    assert world.an_finding.status == "open"
+
+    again = ask_with(client, world, as_user, {"argument": ARGUMENT}).json()["id"]
+    run(client, as_user, world.manager, again)
+    not_fixed = {"index": 0, "verdict": "not_fixed", "reason": "Không thấy file prod."}
+    assert check(db_session, settings, again, not_fixed) == "rejected"
+    closure = db_session.get(FindingClosure, again)
+    assert closure is not None and "Phản biện chưa được code trên nhánh HEAD chứng minh" in (
+        closure.reason or ""
+    )
+
+
+def test_accepted_is_not_a_verdict_without_an_argument(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    run(client, as_user, world.manager, closure_id)
+    assert check(db_session, settings, closure_id, {**ACCEPTED, "evidence_file": "app/a.py"}) == (
+        "rejected"
+    )
+
+
+def test_an_argument_pasting_a_secret_is_refused_at_once(
+    client: TestClient, world: World, as_user: Any
+) -> None:
+    pasted = ask_with(
+        client,
+        world,
+        as_user,
+        {"argument": f"Key dev là AES_KEY={SECRET}, prod thì đọc từ biến môi trường k8s rồi ạ."},
+    )
+    assert pasted.status_code == 422
+    assert "khoá/mật khẩu" in pasted.text
+
+
+def test_a_proposal_can_be_refused(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = ask_with(client, world, as_user, {"argument": ARGUMENT}).json()["id"]
+    run(client, as_user, world.manager, closure_id)
+    assert check(db_session, settings, closure_id, ACCEPTED) == "proposed"
+    refused = client.post(
+        f"/api/v1/close-requests/{closure_id}/reject",
+        json={"note": "File prod này không phải cấu hình đang chạy"},
+        headers=as_user(world.manager),
+    )
+    assert refused.json()["status"] == "rejected"
+    db_session.refresh(world.an_finding)
+    assert world.an_finding.status == "open"
+
+
+def test_evidence_must_be_lines_of_a_file_that_was_shown(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    for evidence in (
+        {"evidence_file": "config/.env-prod", "evidence_lines": "40"},  # past its 2 lines
+        {"evidence_file": "config/.env-staging", "evidence_lines": "1"},  # named, missing
+    ):
+        argument = ARGUMENT + " Thêm nữa .env-staging cũng vậy."
+        closure_id = ask_with(client, world, as_user, {"argument": argument}).json()["id"]
+        run(client, as_user, world.manager, closure_id)
+        provider = FakeLLMProvider(lambda p, e=evidence: {"answers": [{**ACCEPTED, **e}]})
+        token = token_of(db_session, closure_id)
+        assert work(db_session, settings, closure_id, token, None, provider=provider) == "rejected"
+        assert "FILES NOT SHOWN" in provider.prompts[0].user
+        assert "env-staging" in provider.prompts[0].user
+
+
+def test_a_name_matches_whole_names_and_the_nearest_first() -> None:
+    from app.workers.closure_jobs import gather_sources
+
+    class Tree(FakeClient):
+        def tree_paths(self, project_id: int, ref: str) -> list[str]:
+            return [
+                "svc-a/config/application-prod.yml",
+                "svc-b/config/application-prod.yml",
+                "svc-c/config/application-prod.yml",
+                "svc-b/src/data.py",
+                "svc-b/src/a.py",
+            ]
+
+        def file_raw(self, project_id: int, path: str, ref: str) -> str:
+            return "spring:\n  datasource:\n    password: hunter22secret\n"
+
+    got = gather_sources(
+        Tree(),
+        1,
+        "main",
+        "svc-b/src/a.py",
+        "Bản prod ở application-prod.yml đọc mật khẩu từ biến môi trường, xem thêm data.py.",
+        [".env*"],
+    )
+    assert list(got.shown) == [
+        "svc-b/src/a.py",
+        "svc-b/config/application-prod.yml",  # same service first
+        "svc-a/config/application-prod.yml",
+        "svc-b/src/data.py",
+    ]
+    assert all("hunter22secret" not in text for text in got.shown.values())

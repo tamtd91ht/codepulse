@@ -3,10 +3,13 @@
 
 The manual flow:
 1. the author of the change that brought the finding (only them, as for a dispute) asks to close
-   it, naming the commits that fix it (hashes or GitLab links): `pending`, nothing is paid yet;
+   it with the commits that fix it (hashes or GitLab links), an argument (why it does not hold
+   where it matters, at least MIN_ARGUMENT characters), or both: `pending`, nothing is paid yet;
 2. a manager of a team the author is in, or an admin, refuses it (`rejected`, with a note) or
-   presses "Chạy review": `checking`, a worker checks the commits (app/workers/closure_jobs) and
-   closes the finding or says why not. A failed check can be run again.
+   presses "Chạy review": `checking`, a worker checks it (app/workers/closure_jobs). Commits that
+   fix it close the finding (`fixed`); an argument the current code proves becomes `proposed`,
+   which the manager or admin confirms ("Xác nhận chấp nhận rủi ro": `accepted_risk`) or
+   refuses; otherwise it says why not. A failed check can be run again.
 Admins may also close or reopen a finding by hand, a note being mandatory. Automatic closings
 after a review are recorded in the same table.
 
@@ -25,7 +28,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import ColumnElement, String, and_, cast, func, or_, select, true, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
@@ -47,7 +50,8 @@ from app.models import (
     User,
 )
 from app.models.review import CLOSURE_OPEN
-from app.review.resolve import close_finding
+from app.review.masking import looks_secret
+from app.review.resolve import close_finding, mark_fixed
 from app.review.status import SEVERE
 
 router = APIRouter(tags=["closures"])
@@ -56,6 +60,10 @@ SHA = re.compile(r"^[0-9a-f]{7,40}$")
 # A GitLab commit link: …/-/commit/<sha>, …/commit/<sha>, also with a #fragment or ?query.
 COMMIT_LINK = re.compile(r"/commits?/([0-9a-fA-F]{7,40})(?:[/?#].*)?$")
 MAX_COMMITS = 5
+# A request waiting for a manager's or an admin's decision.
+TO_DECIDE = ("pending", "failed", "proposed")
+MIN_ARGUMENT = 50  # an argument shorter than this says too little to be checked
+MAX_ARGUMENT = 4000
 MAX_REQUESTS_PER_DAY = 20  # per author: each one may cost a check
 CHECK_STALE = timedelta(minutes=30)  # a check begun this long ago was lost (worker killed)
 QUEUE_STALE = timedelta(hours=3)  # "Chạy review" this long ago and never begun: job lost
@@ -73,7 +81,8 @@ def parse_commit(raw: str) -> str:
 
 
 class CloseRequestIn(BaseModel):
-    commits: list[str] = Field(min_length=1, max_length=MAX_COMMITS)
+    commits: list[str] = Field(default_factory=list, max_length=MAX_COMMITS)
+    argument: str | None = Field(default=None, max_length=MAX_ARGUMENT)
     note: str | None = Field(default=None, max_length=1000)
 
     @field_validator("commits")
@@ -83,9 +92,31 @@ class CloseRequestIn(BaseModel):
         for raw in value:
             if raw.strip() and (sha := parse_commit(raw)) not in out:
                 out.append(sha)
-        if not out:
-            raise ValueError("cần ít nhất một commit")
         return out
+
+    @field_validator("argument")
+    @classmethod
+    def _argument(cls, value: str | None) -> str | None:
+        text = (value or "").strip()
+        if text and looks_secret(text):
+            raise ValueError(
+                "phản biện có vẻ chứa khoá/mật khẩu thật: xoá giá trị đi, chỉ cần nói nó nằm ở "
+                "file nào và được đọc từ đâu"
+            )
+        if text and len(text) < MIN_ARGUMENT:
+            raise ValueError(
+                f"phản biện cần ít nhất {MIN_ARGUMENT} ký tự (đang có {len(text)}): nói rõ vì sao "
+                "finding không đúng ở môi trường thật và file nào chứng minh"
+            )
+        return text or None
+
+    @model_validator(mode="after")
+    def _something(self) -> "CloseRequestIn":
+        if not self.commits and not self.argument:
+            raise ValueError(
+                f"cần ít nhất một commit đã sửa, hoặc phản biện từ {MIN_ARGUMENT} ký tự"
+            )
+        return self
 
 
 class NoteIn(BaseModel):
@@ -102,6 +133,8 @@ class ClosureOut(ORM):
     requested_by: int | None
     decided_by: int | None
     note: str | None
+    argument: str | None
+    closed_as: str | None
     reason: str | None
     evidence: str | None
     cost_usd: float | None
@@ -258,6 +291,7 @@ def request_close(
         kind="request",
         status="pending",
         shas=body.commits,
+        argument=body.argument,
         requested_by=principal.user_id,
         note=(body.note or "").strip() or None,
     )
@@ -273,6 +307,7 @@ def request_close(
         f"finding:{finding.id}",
         closure_id=closure.id,
         shas=body.commits,
+        argument=bool(body.argument),
     )
     session.commit()
     return closure
@@ -367,7 +402,7 @@ def reject_request(
     moved = _move(
         session,
         closure,
-        ("pending", "failed"),
+        ("pending", "failed", "proposed"),
         status="rejected",
         decided_by=principal.user_id,
         decided_at=datetime.now(UTC),
@@ -377,6 +412,37 @@ def reject_request(
         raise HTTPException(409, "yêu cầu đang được kiểm hoặc đã có kết quả; tải lại trang")
     audit(
         session, principal.user_id, "finding.close_request.reject", f"finding:{closure.finding_id}"
+    )
+    session.commit()
+    return closure
+
+
+@router.post("/close-requests/{closure_id}/confirm", response_model=ClosureOut)
+def confirm_proposal(
+    closure_id: int, principal: CurrentPrincipal, session: SessionDep
+) -> FindingClosure:
+    """ "Xác nhận chấp nhận rủi ro": the check found the argument holds; a manager or an admin
+    who read its reason and evidence closes the finding as `accepted_risk`."""
+    closure = _request(session, closure_id)
+    _decider(session, principal, closure)
+    finding = session.get(ReviewFinding, closure.finding_id)
+    if finding is None:
+        raise HTTPException(404, "finding not found")
+    now = datetime.now(UTC)
+    if not _move(
+        session,
+        closure,
+        ("proposed",),
+        status="closed",
+        decided_by=principal.user_id,
+        decided_at=now,
+    ):
+        raise HTTPException(409, "đề xuất đã được xử lý; tải lại trang")
+    if not mark_fixed(session, finding, "accepted_risk"):
+        session.rollback()
+        raise HTTPException(409, f"finding đang ở trạng thái {finding.status}, không còn mở")
+    audit(
+        session, principal.user_id, "finding.close_request.confirm", f"finding:{closure.finding_id}"
     )
     session.commit()
     return closure
@@ -392,10 +458,10 @@ def close_by_admin(
     waiting = _in_flight(session, finding.id)
     if waiting is not None and waiting.status == "checking":
         raise HTTPException(409, "finding đang được kiểm; chờ kết quả")
-    if waiting is not None and not _move(  # a pending request: the admin's decision answers it
+    if waiting is not None and not _move(  # a waiting request: the admin's decision answers it
         session,
         waiting,
-        ("pending",),
+        ("pending", "proposed"),
         status="rejected",
         decided_by=principal.user_id,
         decided_at=datetime.now(UTC),
@@ -423,7 +489,7 @@ def reopen_by_admin(
     finding_id: int, body: NoteIn, principal: AdminPrincipal, session: SessionDep
 ) -> FindingClosure:
     finding, _ = _finding(session, principal, finding_id)
-    if finding.status != "fixed":
+    if finding.status not in ("fixed", "accepted_risk"):
         raise HTTPException(409, f"chỉ mở lại được finding đã đóng (đang {finding.status})")
     finding.status = "open"
     closure = FindingClosure(
@@ -560,7 +626,7 @@ def list_closures(
     if view == "todo":
         query = query.where(
             FindingClosure.kind == "request",
-            FindingClosure.status.in_(("pending", "failed")),
+            FindingClosure.status.in_(TO_DECIDE),
             Review.author_user_id != principal.user_id,
         )
         if not principal.is_admin:
@@ -589,6 +655,7 @@ def list_closures(
                 func.lower(ReviewFinding.title).like(like, escape="\\"),
                 func.lower(ReviewFinding.file_path).like(like, escape="\\"),
                 func.lower(cast(FindingClosure.shas, String)).like(like, escape="\\"),
+                func.lower(FindingClosure.argument).like(like, escape="\\"),
             )
         )
     if (after := _after(cursor)) is not None:
@@ -599,7 +666,7 @@ def list_closures(
     for closure, finding, review, project, bp, who, asker, judge in rows[:PAGE]:
         decides = (
             closure.kind == "request"
-            and closure.status in ("pending", "failed")
+            and closure.status in TO_DECIDE
             and _may_decide(
                 principal,
                 managed,
@@ -672,7 +739,7 @@ def closure_facets(principal: CurrentPrincipal, session: SessionDep) -> dict[str
     todo = select(func.count()).select_from(
         base.where(
             FindingClosure.kind == "request",
-            FindingClosure.status.in_(("pending", "failed")),
+            FindingClosure.status.in_(TO_DECIDE),
             Review.author_user_id != principal.user_id,
             *([] if principal.is_admin else [Review.author_user_id.in_(managed)]),
         ).subquery()

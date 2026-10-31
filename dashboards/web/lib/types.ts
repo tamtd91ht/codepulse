@@ -390,8 +390,9 @@ export interface FindingClosure {
   finding_id: number;
   /** auto: a later review's change fixed it; request: the author named the fixing commits; admin: by hand; reopen. */
   kind: "auto" | "request" | "admin" | "reopen";
-  /** pending: waiting for a manager/admin; checking: the check runs; then closed / rejected / failed; cancelled by the author. */
-  status: "pending" | "checking" | "closed" | "rejected" | "failed" | "cancelled" | "reopened";
+  /** pending: waiting for a manager/admin; checking: the check runs; proposed: the argument held, waiting for a
+   * manager/admin to confirm; then closed / rejected / failed; cancelled by the author. */
+  status: "pending" | "checking" | "proposed" | "closed" | "rejected" | "failed" | "cancelled" | "reopened";
   shas: string[];
   /** auto: the review whose change closed it. */
   review_id: number | null;
@@ -399,6 +400,10 @@ export interface FindingClosure {
   /** Who ran the check or refused the request. */
   decided_by: number | null;
   note: string | null;
+  /** The author's case that the finding does not hold (instead of, or with, the commits). */
+  argument: string | null;
+  /** What the finding became: fixed (a change fixed it) or accepted_risk (the argument held). */
+  closed_as: "fixed" | "accepted_risk" | null;
   /** The checker's reason, or why the request was refused. */
   reason: string | null;
   /** file:lines of the fix in the change. */

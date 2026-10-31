@@ -316,6 +316,22 @@ class GitLabClient:
             raise GitLabError(f"GET archive: {exc.__class__.__name__}") from exc
         return total
 
+    def tree_paths(self, project_id: int, ref: str, limit: int = 5000) -> list[str]:
+        """Paths of the files at `ref` (recursive), at most `limit` of them. A failure part way
+        raises GitLabError carrying what was read so far as `partial`."""
+        out: list[str] = []
+        params = {"ref": ref, "recursive": "true", "per_page": 100}
+        try:
+            for entry in self.paginate(f"/projects/{project_id}/repository/tree", params):
+                if isinstance(entry, dict) and entry.get("type") == "blob" and entry.get("path"):
+                    out.append(str(entry["path"]))
+                    if len(out) >= limit:
+                        break
+        except GitLabError as exc:
+            exc.partial = out  # type: ignore[attr-defined]
+            raise
+        return out
+
     def file_raw(self, project_id: int, path: str, ref: str) -> str:
         encoded = quote(path, safe="")
         response = self.request(

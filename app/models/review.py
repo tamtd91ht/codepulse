@@ -177,14 +177,15 @@ CLOSURE_KINDS = ("auto", "request", "admin", "reopen")
 CLOSURE_STATUSES = (
     "pending",
     "checking",
+    "proposed",
     "closed",
     "rejected",
     "failed",
     "cancelled",
     "reopened",
 )
-# A request in flight: waiting for a manager/admin, or being checked.
-CLOSURE_OPEN = ("pending", "checking")
+# A request in flight: waiting for a manager/admin, being checked, or its proposal waiting.
+CLOSURE_OPEN = ("pending", "checking", "proposed")
 
 
 class FindingClosure(TimestampMixin, Base):
@@ -205,17 +206,19 @@ class FindingClosure(TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint("kind IN ('auto','request','admin','reopen')", name="kind"),
         CheckConstraint(
-            "status IN ('pending','checking','closed','rejected','failed','cancelled','reopened')",
+            "status IN ('pending','checking','proposed','closed','rejected','failed','cancelled',"
+            "'reopened')",
             name="status",
         ),
+        CheckConstraint("closed_as IN ('fixed','accepted_risk')", name="closed_as"),
         Index("ix_finding_closures_created_at", "created_at"),
         # One request in flight per finding: a double click must not pay twice.
         Index(
             "uq_finding_closures_pending",
             "finding_id",
             unique=True,
-            postgresql_where=text("status IN ('pending','checking')"),
-            sqlite_where=text("status IN ('pending','checking')"),
+            postgresql_where=text("status IN ('pending','checking','proposed')"),
+            sqlite_where=text("status IN ('pending','checking','proposed')"),
         ),
     )
 
@@ -231,6 +234,11 @@ class FindingClosure(TimestampMixin, Base):
     # Who ran the check or refused the request (a manager of the author's team, or an admin).
     decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     note: Mapped[str | None]
+    # The author's case that the finding does not hold (instead of, or with, the commits).
+    argument: Mapped[str | None]
+    # The finding's status this closing set: fixed (a change fixed it) or accepted_risk (the
+    # argument held against the current code); None while not closed.
+    closed_as: Mapped[str | None]
     reason: Mapped[str | None]  # the checker's reason, or why the request was refused
     evidence: Mapped[str | None]  # file:lines of the fix in the change
     # Every check of this request (a re-run adds); billed by the `finding.close_request.cost`

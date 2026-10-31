@@ -4209,3 +4209,10 @@ tr.closure-detail td {
   font-weight: 600;
   font-size: 14px;
 }
+.closure-argument {
+  margin: 6px 0 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--border-strong);
+  background: var(--surface);
+  white-space: pre-wrap;
+}

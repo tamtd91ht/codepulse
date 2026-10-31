@@ -17,6 +17,11 @@ import type { Finding, FindingClosure } from "@/lib/types";
  */
 
 const SEVERE = new Set(["critical", "high"]);
+/** As the API (app/api/routers/closures.py MIN_ARGUMENT). */
+export const MIN_ARGUMENT = 50;
+
+/** What a closing made of the finding. */
+export const CLOSED_AS: Record<string, string> = { fixed: "Đã sửa", accepted_risk: "Chấp nhận rủi ro" };
 
 export const shortShas = (shas: string[]) => shas.map((s) => s.slice(0, 10)).join(", ");
 
@@ -31,8 +36,7 @@ export function ClosureNote({ closure, onDone }: { closure: FindingClosure | und
       <div className="small" style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <Pill tone="info">Chờ duyệt</Pill>
         <span className="muted">
-          Đã gửi yêu cầu đóng với commit {shortShas(closure.shas)} · {date(closure.created_at)}. Manager hoặc admin sẽ chạy
-          review để kiểm.
+          Đã gửi yêu cầu đóng {basis(closure)} · {date(closure.created_at)}. Manager hoặc admin sẽ chạy review để kiểm.
         </span>
         <button
           className="ghost sm"
@@ -59,11 +63,25 @@ export function ClosureNote({ closure, onDone }: { closure: FindingClosure | und
         )}
       </div>
     );
+  if (closure.status === "proposed")
+    return (
+      <div className="small" style={{ marginTop: 8, display: "grid", gap: 4 }}>
+        <span>
+          <Pill tone="info">Đề xuất chấp nhận rủi ro</Pill>{" "}
+          <span className="muted">Phản biện được code chứng minh; chờ manager hoặc admin xác nhận.</span>
+        </span>
+        {closure.reason && <span className="muted">{closure.reason}</span>}
+        {closure.evidence && (
+          <span className="muted">
+            Bằng chứng: <code>{closure.evidence}</code>
+          </span>
+        )}
+      </div>
+    );
   if (closure.status === "checking")
     return (
       <p className="small" style={{ marginTop: 8 }}>
-        <span className="spinner inline" aria-hidden="true" /> Đang review commit {shortShas(closure.shas)} để kiểm đã sửa
-        chưa…
+        <span className="spinner inline" aria-hidden="true" /> Đang review {basis(closure)}…
       </p>
     );
   if (closure.status === "closed") {
@@ -75,7 +93,7 @@ export function ClosureNote({ closure, onDone }: { closure: FindingClosure | und
           {closure.shas.length ? ` (commit ${shortShas(closure.shas)})` : ""}
         </>
       ) : closure.kind === "request" ? (
-        <>theo yêu cầu, commit {shortShas(closure.shas)}</>
+        <>theo yêu cầu, {basis(closure)}</>
       ) : (
         <>admin đóng thủ công</>
       );
@@ -83,7 +101,7 @@ export function ClosureNote({ closure, onDone }: { closure: FindingClosure | und
       <div className="small" style={{ marginTop: 8, display: "grid", gap: 4 }}>
         <span>
           <Pill tone="good" icon="check">
-            Đã đóng
+            Đã đóng · {CLOSED_AS[closure.closed_as ?? "fixed"] ?? "Đã sửa"}
           </Pill>{" "}
           {how}
           {when}
@@ -107,7 +125,7 @@ export function ClosureNote({ closure, onDone }: { closure: FindingClosure | und
   if (closure.status === "cancelled")
     return (
       <p className="small muted" style={{ marginTop: 8 }}>
-        Đã rút yêu cầu đóng (commit {shortShas(closure.shas)}){when}.
+        Đã rút yêu cầu đóng ({basis(closure)}){when}.
       </p>
     );
   return (
@@ -116,11 +134,19 @@ export function ClosureNote({ closure, onDone }: { closure: FindingClosure | und
         {closure.status === "failed" ? "Chưa kiểm được" : "Chưa đủ điều kiện đóng"}
       </Pill>{" "}
       <span className="muted">
-        commit {shortShas(closure.shas)}
+        {basis(closure)}
         {when}: {closure.reason}
       </span>
     </p>
   );
+}
+
+/** "với commit …", "với phản biện", or both. */
+export function basis(closure: FindingClosure): string {
+  const parts = [];
+  if (closure.shas.length) parts.push(`commit ${shortShas(closure.shas)}`);
+  if (closure.argument) parts.push("phản biện");
+  return parts.length ? `với ${parts.join(" và ")}` : "";
 }
 
 type Mode = "request" | "close" | "reopen";
@@ -134,13 +160,30 @@ const MODE: Record<Mode, { open: string; submit: string; path: string }> = {
 function CloseForm({ finding, mode, onDone }: { finding: Finding; mode: Mode; onDone: () => Promise<unknown> }) {
   const [open, setOpen] = useState(false);
   const [commits, setCommits] = useState("");
+  const [argument, setArgument] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const opener = useRef<HTMLButtonElement>(null);
   const id = `${mode}-${finding.id}`;
   const list = commits.split(/[\s,]+/).filter(Boolean);
-  const ready = mode === "request" ? list.length > 0 && list.length <= 5 : note.trim().length >= 5;
+  const argued = argument.trim().length;
+  // At least one of the two, as the API checks: commits, or an argument long enough to check.
+  const argumentOk = argued === 0 || argued >= MIN_ARGUMENT;
+  const ready =
+    mode === "request"
+      ? list.length <= 5 && argumentOk && (list.length > 0 || argued >= MIN_ARGUMENT)
+      : note.trim().length >= 5;
+  const why =
+    mode !== "request"
+      ? null
+      : list.length > 5
+        ? "Tối đa 5 commit."
+        : !argumentOk
+          ? `Phản biện cần ít nhất ${MIN_ARGUMENT} ký tự (đang có ${argued}).`
+          : list.length === 0 && argued === 0
+            ? `Nhập commit đã sửa, hoặc phản biện từ ${MIN_ARGUMENT} ký tự.`
+            : null;
   const close = () => {
     setOpen(false);
     requestAnimationFrame(() => opener.current?.focus());
@@ -159,7 +202,10 @@ function CloseForm({ finding, mode, onDone }: { finding: Finding; mode: Mode; on
         setBusy(true);
         setError(null);
         try {
-          const body = mode === "request" ? { commits: list, note: note.trim() || null } : { note: note.trim() };
+          const body =
+            mode === "request"
+              ? { commits: list, argument: argument.trim() || null, note: note.trim() || null }
+              : { note: note.trim() };
           await api.post(`/findings/${finding.id}/${MODE[mode].path}`, body);
           await onDone();
           setOpen(false);
@@ -172,8 +218,11 @@ function CloseForm({ finding, mode, onDone }: { finding: Finding; mode: Mode; on
     >
       {mode === "request" && (
         <>
+          <p className="small muted" style={{ margin: 0 }}>
+            Cần ít nhất một trong hai: commit đã sửa, hoặc phản biện vì sao finding không đúng ở môi trường thật.
+          </p>
           <label htmlFor={`${id}-commits`} style={{ fontWeight: 600 }}>
-            Commit đã sửa lỗi này
+            Commit đã sửa lỗi này (nếu có)
           </label>
           <textarea
             id={`${id}-commits`}
@@ -184,9 +233,30 @@ function CloseForm({ finding, mode, onDone }: { finding: Finding; mode: Mode; on
             onChange={(e) => setCommits(e.target.value)}
             autoFocus
           />
+          <label htmlFor={`${id}-argument`} style={{ fontWeight: 600 }}>
+            Phản biện (nếu có)
+          </label>
+          <textarea
+            id={`${id}-argument`}
+            rows={4}
+            maxLength={4000}
+            value={argument}
+            placeholder={
+              "Vì sao finding không đúng ở môi trường thật, và file nào chứng minh.\n" +
+              "vd: Key trong .env-dev chỉ dùng cho profile dev để debug; profile prod (.env-prod) không hardcode, bắt buộc đọc AES_KEY từ biến môi trường k8s."
+            }
+            aria-describedby={`${id}-help ${id}-count`}
+            aria-invalid={!argumentOk}
+            onChange={(e) => setArgument(e.target.value)}
+          />
+          <span id={`${id}-count`} className={`small ${argumentOk ? "muted" : "error"}`}>
+            {argued}/{MIN_ARGUMENT} ký tự tối thiểu{argued === 0 ? " (bỏ trống nếu chỉ gửi commit)" : ""}
+          </span>
           <span id={`${id}-help`} className="muted small">
-            Manager của team bạn hoặc admin sẽ xem và chạy review các commit này. Đạt thì finding được đóng (vẫn giữ mức
-            và vẫn tính điểm); không đạt thì lý do hiện ngay dưới finding.
+            Manager của team bạn hoặc admin sẽ chạy review: hệ thống đối chiếu commit và/hoặc phản biện với code hiện tại
+            của nhánh chính (file của finding và các file bạn nhắc tới; giá trị trong file .env được che). Đạt thì finding
+            được đóng (“Đã sửa” hoặc “Chấp nhận rủi ro”, vẫn giữ mức và vẫn tính điểm); không đạt thì lý do hiện ngay dưới
+            finding.
           </span>
         </>
       )}
@@ -201,6 +271,11 @@ function CloseForm({ finding, mode, onDone }: { finding: Finding; mode: Mode; on
         onChange={(e) => setNote(e.target.value)}
         autoFocus={mode !== "request"}
       />
+      {why && (
+        <span className="small muted" role="status">
+          {why}
+        </span>
+      )}
       <div style={{ display: "flex", gap: 8 }}>
         <button className="primary sm" type="submit" disabled={!ready || busy}>
           {busy ? "Đang gửi…" : MODE[mode].submit}
@@ -234,11 +309,11 @@ export function CloseActions({
   onDone: () => Promise<unknown>;
 }) {
   const status = finding.status ?? "open";
-  const inFlight = closure?.status === "pending" || closure?.status === "checking";
+  const inFlight = closure?.status === "pending" || closure?.status === "checking" || closure?.status === "proposed";
   const actions: Mode[] = [];
   if (isAuthor && status === "open" && !inFlight && SEVERE.has(finding.severity)) actions.push("request");
   if (isAdmin && status === "open" && closure?.status !== "checking") actions.push("close");
-  if (isAdmin && status === "fixed") actions.push("reopen");
+  if (isAdmin && (status === "fixed" || status === "accepted_risk")) actions.push("reopen");
   if (!actions.length) return null;
   return (
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>

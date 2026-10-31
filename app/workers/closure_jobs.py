@@ -12,6 +12,7 @@ No transaction stays open while GitLab or the model work (docs/specs/19 §4.6).
 """
 
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -38,9 +39,10 @@ from app.models import (
     ReviewFinding,
 )
 from app.models.review import CHANGE_TIME_UNKNOWN
+from app.review.masking import is_config, mask_code, mask_config
 from app.review.prepare import prepare
 from app.review.providers import LLMProvider, build_provider
-from app.review.resolve import check, mark_fixed
+from app.review.resolve import MAX_SOURCE_CHARS, check, mark_fixed
 
 log = logging.getLogger(__name__)
 
@@ -73,10 +75,114 @@ class _Target:
     """What the check needs, copied out so no transaction is open during GitLab calls."""
 
     shas: list[str]
+    argument: str | None
     external_id: int
     path: str
+    ref: str  # the default branch: where the argument's claims are checked
+    finding_path: str | None
     since: datetime | None
     connection: Connection
+
+
+MAX_SOURCES = 6  # current files shown with an argument
+MAX_PER_NAME = 2  # files shown for one bare name ("application-prod.yml" in several services)
+MAX_FILE_BYTES = 200_000
+# A path or a file name in the argument: "config/.env-prod", "application-prod.yml",
+# ".env-prod", "env-prod" (a dashed or dotted word of 4+ characters). URLs are left out.
+NAMED = re.compile(r"(?<![\w./:-])(\.?[\w-]+(?:[./][\w-]+)*[./-][\w-]+)(?![\w/-])")
+
+
+@dataclass
+class Sources:
+    """What an argument is checked on: files shown (their text masked: app/review/masking.py)
+    and named files that could not be shown, with why (they prove nothing)."""
+
+    shown: dict[str, str]
+    not_shown: dict[str, str]
+
+
+def _named(argument: str) -> tuple[list[str], list[str]]:
+    """(paths, bare names) the argument mentions."""
+    paths: list[str] = []
+    names: list[str] = []
+    for token in NAMED.findall(argument):
+        if "://" in token or len(token.lstrip(".")) < 4:
+            continue
+        bucket = paths if "/" in token else names
+        if token not in bucket:
+            bucket.append(token)
+    return paths, names
+
+
+def _closeness(path: str, near: str | None) -> int:
+    """Directories shared with the finding's file: the nearer config of a monorepo first."""
+    if not near:
+        return 0
+    shared = 0
+    for a, b in zip(path.split("/")[:-1], near.split("/")[:-1], strict=False):
+        if a != b:
+            break
+        shared += 1
+    return shared
+
+
+def _matches(name: str, path: str) -> bool:
+    file = path.rsplit("/", 1)[-1].lower()
+    wanted = name.lower()
+    stem = file.rsplit(".", 1)[0] if "." in file.lstrip(".") else file
+    return wanted in (file, file.lstrip("."), stem, stem.lstrip("."))
+
+
+def gather_sources(
+    client: Any,
+    project_id: int,
+    ref: str,
+    finding_path: str | None,
+    argument: str,
+    sensitive_paths: list[str],
+) -> Sources:
+    """The files an argument is checked on, at `ref` (the default branch): the finding's own
+    file, the paths the argument names, then the files whose name it names (the tree is walked
+    only for those). Configuration files are shown with `mask_config`, source with `mask_code`:
+    never a value."""
+    paths, names = _named(argument)
+    wanted: list[str] = [finding_path] if finding_path else []
+    wanted += [p.lstrip("./") for p in paths if p.lstrip("./") not in wanted]
+    not_shown: dict[str, str] = {}
+    if names and len(wanted) < MAX_SOURCES:
+        try:
+            tree = client.tree_paths(project_id, ref)
+        except GitLabError as exc:
+            tree = list(getattr(exc, "partial", []) or [])
+            not_shown["(cây thư mục)"] = "không đọc được hết danh sách file của repo"
+        for name in names:
+            found = sorted(
+                (p for p in tree if _matches(name, p) and p not in wanted),
+                key=lambda p: (-_closeness(p, finding_path), p),
+            )
+            wanted += found[:MAX_PER_NAME]
+            if not found:
+                not_shown[name] = f"không có file nào tên như vậy trên nhánh {ref}"
+    shown: dict[str, str] = {}
+    for path in wanted[:MAX_SOURCES]:
+        try:
+            raw = client.file_raw(project_id, path, ref)
+        except GitLabError as exc:
+            not_shown[path] = (
+                f"không có trên nhánh {ref}"
+                if getattr(exc, "status_code", None) == 404
+                else "không lấy được từ GitLab"
+            )
+            continue
+        if len(raw) > MAX_FILE_BYTES or "\x00" in raw:
+            not_shown[path] = "file quá lớn hoặc nhị phân, không gửi"
+            continue
+        shown[path] = (mask_config(raw) if is_config(path, sensitive_paths) else mask_code(raw))[
+            :MAX_SOURCE_CHARS
+        ]
+    for path in wanted[MAX_SOURCES:]:
+        not_shown[path] = f"vượt giới hạn {MAX_SOURCES} file một lần kiểm"
+    return Sources(shown, not_shown)
 
 
 def _still_mine(closure_id: int, token: str) -> tuple[Any, ...]:
@@ -158,8 +264,11 @@ def run_close_request(
         return decide("failed", "Repo chưa có kết nối GitLab.")
     target = _Target(
         shas=list(closure.shas),
+        argument=closure.argument,
         external_id=project.external_id,
         path=project.path_with_namespace,
+        ref=project.default_branch or "HEAD",
+        finding_path=finding.file_path,
         since=review.changed_at if review.changed_at > CHANGE_TIME_UNKNOWN else None,
         connection=connection,
     )
@@ -183,12 +292,24 @@ def run_close_request(
                     )
                     break
                 entries += client.commit_diff(target.external_id, sha)
+            sources = (
+                gather_sources(
+                    client,
+                    target.external_id,
+                    target.ref,
+                    target.finding_path,
+                    target.argument,
+                    settings.sensitive_paths,
+                )
+                if target.argument and refused is None
+                else Sources({}, {})
+            )
     except GitLabError as exc:
         return decide("failed", f"GitLab: {str(exc)[:200]}")
     if refused is not None:
         return decide("rejected", refused)
     prepared = prepare(entries, settings.ignore_paths, settings.sensitive_paths)
-    if not prepared.files:
+    if target.shas and not prepared.files and not target.argument:
         return decide("rejected", "Các commit không có thay đổi nào xem được (file bị bỏ qua).")
     if prepared.loc > settings.max_review_loc:
         return decide(
@@ -196,9 +317,22 @@ def run_close_request(
             f"Các commit thay đổi {prepared.loc} dòng, quá MAX_REVIEW_LOC "
             f"({settings.max_review_loc}); chọn đúng commit sửa lỗi.",
         )
-    change = "commit " + ", ".join(sha[:12] for sha in target.shas)
+    change = (
+        "commit " + ", ".join(sha[:12] for sha in target.shas)
+        if target.shas
+        else "không có commit: chỉ phản biện của tác giả"
+    )
 
-    checked = check(provider, target.path, change, prepared.files, [finding])
+    checked = check(
+        provider,
+        target.path,
+        change,
+        prepared.files,
+        [finding],
+        argument=target.argument,
+        sources=sources.shown,
+        not_shown=sources.not_shown,
+    )
     if checked.call is not None:
         # Paid whatever comes next: recorded and committed before anything else can fail. The
         # request keeps the sum of its checks; the budget counts each call when it was made.
@@ -225,12 +359,25 @@ def run_close_request(
             "Không kiểm được (lỗi khi hỏi model); chạy lại sau."
             + (f" Chi tiết: {checked.error[:200]}" if checked.error else ""),
         )
+    if outcome.closes_as == "accepted_risk":
+        # An argument holding is a proposal: the files shown are the requester's to change, so
+        # a manager or an admin confirms it with the reason and the evidence in front of them.
+        return decide(
+            "proposed", outcome.reason, evidence=outcome.evidence, closed_as="accepted_risk"
+        )
     if outcome.closes:
         # One transaction: the request is closed only if this run still owns it, and the
         # finding only if it is still open; otherwise neither changes.
-        if decide("closed", outcome.reason, commit=False, evidence=outcome.evidence) != "closed":
+        closed = decide(
+            "closed",
+            outcome.reason,
+            commit=False,
+            evidence=outcome.evidence,
+            closed_as=outcome.closes_as,
+        )
+        if closed != "closed":
             return "superseded"
-        if mark_fixed(session, finding):
+        if mark_fixed(session, finding, outcome.closes_as or "fixed"):
             session.commit()
             return "closed"
         session.rollback()
@@ -240,8 +387,16 @@ def run_close_request(
         "fixed": (
             "Model cho là đã sửa nhưng chưa đủ chắc chắn hoặc không chỉ ra được chỗ sửa trong diff"
         ),
-        "partial": "Mới sửa một phần",
-        "not_fixed": "Các commit này chưa sửa lỗi",
+        "accepted": (
+            "Model thấy phản biện hợp lý nhưng chưa đủ chắc chắn hoặc không chỉ ra được bằng "
+            "chứng trong code"
+        ),
+        "partial": "Mới xử lý được một phần",
+        "not_fixed": (
+            f"Phản biện chưa được code trên nhánh {target.ref} chứng minh"
+            if target.argument and not target.shas
+            else "Các commit này chưa sửa lỗi"
+        ),
     }[outcome.verdict]
     return decide(
         "rejected",
