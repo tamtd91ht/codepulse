@@ -3,7 +3,7 @@ refuses), admin close/reopen, the "Đóng finding" page, the auto-close switch."
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -14,9 +14,10 @@ from sqlalchemy.orm import Session
 from app.api.routers.closures import parse_commit
 from app.collector.gitlab.client import GitLabError
 from app.config import Settings
-from app.models import AuditLog, FindingClosure, Review
+from app.models import AuditLog, FindingClosure, ProjectGrant, Review, TeamMember, User
 from app.review.providers import FakeLLMProvider
 from app.workers.closure_jobs import run_close_request
+from app.workers.knowledge_jobs import month_spend_breakdown
 from tests.api.conftest import FakeQueue, World
 
 FIX = "c" * 40
@@ -79,10 +80,31 @@ def check(
     answer: dict[str, Any],
     gitlab: FakeClient | None = None,
 ) -> str:
-    """What the worker does once a manager pressed "Chạy review"."""
-    provider = FakeLLMProvider(lambda p: {"answers": [answer]})
+    """What the worker does once a manager pressed "Chạy review" (with that run's token)."""
+    return work(db_session, settings, closure_id, token_of(db_session, closure_id), answer, gitlab)
+
+
+def token_of(db_session: Session, closure_id: int) -> str:
+    closure = db_session.get(FindingClosure, closure_id)
+    assert closure is not None
+    db_session.refresh(closure)
+    assert closure.run_token is not None
+    return closure.run_token
+
+
+def work(
+    db_session: Session,
+    settings: Settings,
+    closure_id: int,
+    token: str,
+    answer: Any,
+    gitlab: FakeClient | None = None,
+) -> str:
+    provider = FakeLLMProvider(
+        lambda p: answer if isinstance(answer, str) else {"answers": [answer]}
+    )
     return run_close_request(
-        db_session, closure_id, factory(gitlab or FakeClient()), provider, settings
+        db_session, closure_id, token, factory(gitlab or FakeClient()), provider, settings
     )
 
 
@@ -253,7 +275,7 @@ def test_a_lost_check_can_be_run_again(
     run(client, as_user, world.admin, closure_id)
     closure = db_session.get(FindingClosure, closure_id)
     assert closure is not None
-    closure.updated_at = datetime.now(UTC) - timedelta(hours=2)  # the worker died long ago
+    closure.updated_at = datetime.now(UTC) - timedelta(hours=4)  # the job never began
     db_session.flush()
     listed = client.get(
         f"/api/v1/reviews/{world.an_review.id}/closures", headers=as_user(world.an)
@@ -332,3 +354,132 @@ def test_the_switch_needs_its_days(client: TestClient, world: World, as_user: An
     assert (values["auto_close_findings"], values["auto_close_days"]) == (True, 3)
     off = client.put(url, json={"auto_close_findings": False}, headers=admin).json()
     assert {s["key"]: s["value"] for s in off}["auto_close_findings"] is False
+
+
+def test_two_presses_pay_once_and_a_cancel_or_refusal_cannot_race_a_check(
+    client: TestClient, world: World, as_user: Any, queue: FakeQueue, db_session: Session
+) -> None:
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    assert run(client, as_user, world.manager, closure_id).status_code == 202
+    assert run(client, as_user, world.admin, closure_id).status_code == 409
+    assert len(queue.jobs) == 1
+    cancel = client.post(f"/api/v1/close-requests/{closure_id}/cancel", headers=as_user(world.an))
+    assert cancel.status_code == 409
+    refuse = client.post(
+        f"/api/v1/close-requests/{closure_id}/reject",
+        json={"note": "Không cần nữa"},
+        headers=as_user(world.admin),
+    )
+    assert refuse.status_code == 409
+
+
+def test_only_the_runs_own_job_pays_and_decides(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    run(client, as_user, world.admin, closure_id)
+    first = token_of(db_session, closure_id)
+    assert work(db_session, settings, closure_id, "stale-token", FIXED) == "not mine"
+    assert work(db_session, settings, closure_id, first, "no json") == "failed"  # paid, unparsed
+    # A duplicate job of the same run cannot claim it again.
+    assert work(db_session, settings, closure_id, first, FIXED) == "not mine"
+    run(client, as_user, world.admin, closure_id)
+    second = token_of(db_session, closure_id)
+    assert second != first
+    assert work(db_session, settings, closure_id, first, FIXED) == "not mine"
+    assert work(db_session, settings, closure_id, second, FIXED) == "closed"
+    closure = db_session.get(FindingClosure, closure_id)
+    assert closure is not None and float(closure.cost_usd or 0) == 0.02  # both checks kept
+    # The budget counts each call in the month it was made.
+    assert month_spend_breakdown(db_session, datetime.now(UTC))["closures_usd"] == 0.02
+
+
+def test_a_cancel_while_queued_leaves_the_finding_open(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    run(client, as_user, world.admin, closure_id)
+    token = token_of(db_session, closure_id)
+    closure = db_session.get(FindingClosure, closure_id)
+    assert closure is not None
+    closure.status = "rejected"  # e.g. an admin answered it another way meanwhile
+    db_session.flush()
+    assert work(db_session, settings, closure_id, token, FIXED) == "not mine"
+    db_session.refresh(world.an_finding)
+    assert world.an_finding.status == "open"
+
+
+def test_a_lost_check_shows_on_the_page_and_runs_again(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    run(client, as_user, world.admin, closure_id)
+    closure = db_session.get(FindingClosure, closure_id)
+    assert closure is not None
+    closure.started_at = datetime.now(UTC) - timedelta(hours=1)  # began, then the worker died
+    db_session.flush()
+    todo = client.get("/api/v1/close-requests?view=todo", headers=as_user(world.manager)).json()
+    assert [(i["id"], i["status"], i["can_decide"]) for i in todo["items"]] == [
+        (closure_id, "failed", True)
+    ]
+    assert run(client, as_user, world.manager, closure_id).status_code == 202
+
+
+def test_a_queued_check_is_not_given_up_too_early(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    run(client, as_user, world.admin, closure_id)
+    closure = db_session.get(FindingClosure, closure_id)
+    assert closure is not None
+    closure.updated_at = datetime.now(UTC) - timedelta(hours=1)  # waits in a busy queue
+    db_session.flush()
+    client.get("/api/v1/close-requests", headers=as_user(world.admin))
+    db_session.refresh(closure)
+    assert closure.status == "checking"
+
+
+def test_a_manager_decides_only_for_their_teams_in_their_granted_projects(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    other = User(full_name="Other", primary_email="other@x.vn")
+    db_session.add(other)
+    db_session.flush()
+    db_session.add(
+        TeamMember(
+            team_id=world.mobile.id, user_id=other.id, role="manager", joined_at=date(2025, 1, 1)
+        )
+    )
+    db_session.flush()
+    assert run(client, as_user, other, closure_id).status_code == 403
+    assert client.get("/api/v1/close-requests", headers=as_user(other)).json()["items"] == []
+
+    # Without a grant on the dự án, the work there does not exist for the manager (spec 09).
+    grant = db_session.get(ProjectGrant, (world.project.business_project_id, world.manager.id))
+    assert grant is not None
+    db_session.delete(grant)
+    db_session.flush()
+    assert run(client, as_user, world.manager, closure_id).status_code == 403
+    assert (
+        client.get("/api/v1/close-requests", headers=as_user(world.manager)).json()["items"] == []
+    )
+    facets = client.get("/api/v1/close-requests/facets", headers=as_user(world.manager)).json()
+    assert (facets["todo"], facets["repos"]) == (0, [])
+
+
+def test_decided_rows_offer_no_decision(client: TestClient, world: World, as_user: Any) -> None:
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    client.post(
+        f"/api/v1/close-requests/{closure_id}/reject",
+        json={"note": "Chưa đủ bằng chứng"},
+        headers=as_user(world.manager),
+    )
+    rows = client.get("/api/v1/close-requests", headers=as_user(world.manager)).json()["items"]
+    assert rows[0]["can_decide"] is False
+
+
+def test_search_is_literal(client: TestClient, world: World, as_user: Any) -> None:
+    ask(client, world, as_user, world.an, [FIX])
+    page = client.get("/api/v1/close-requests?q=%25", headers=as_user(world.admin)).json()
+    assert page["items"] == []

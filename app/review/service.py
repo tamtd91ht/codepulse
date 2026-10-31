@@ -388,16 +388,20 @@ class ReviewService:
             return
         try:
             until = review.changed_at if review.changed_at > CHANGE_TIME_UNKNOWN else self._clock()
-            candidates = recent_open(
-                self._session,
-                project.id,
-                since=until - timedelta(days=days),
-                until=until,
-                touched=[f.path for f in files],
-                exclude_review=review.id,
-                exclude_mr=mr_id,
-            )
-            if not candidates or self._over_budget(review, project) is not None:
+            # A savepoint: a database error here never aborts the caller's transaction (single-
+            # transaction mode), which still holds the review.
+            with self._session.begin_nested():
+                candidates = recent_open(
+                    self._session,
+                    project.id,
+                    since=until - timedelta(days=days),
+                    until=until,
+                    touched=[f.path for f in files],
+                    exclude_review=review.id,
+                    exclude_mr=mr_id,
+                )
+                over_budget = self._over_budget(review, project) if candidates else None
+            if not candidates or over_budget is not None:
                 return
             self._step(review.id, "close", f"{len(candidates)} finding")
             self._commit_step("close-prepare")  # no transaction open while the model works

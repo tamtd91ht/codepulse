@@ -20,13 +20,13 @@ filters (status, kind, severity, dự án, repo, member, period, text).
 
 import base64
 import re
+import secrets
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
-from rq import Retry
-from sqlalchemy import ColumnElement, String, cast, func, or_, select, true
+from sqlalchemy import ColumnElement, String, and_, cast, func, or_, select, true, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -57,7 +57,8 @@ SHA = re.compile(r"^[0-9a-f]{7,40}$")
 COMMIT_LINK = re.compile(r"/commits?/([0-9a-fA-F]{7,40})(?:[/?#].*)?$")
 MAX_COMMITS = 5
 MAX_REQUESTS_PER_DAY = 20  # per author: each one may cost a check
-CHECK_STALE = timedelta(minutes=30)  # a check longer than this was lost (worker killed)
+CHECK_STALE = timedelta(minutes=30)  # a check begun this long ago was lost (worker killed)
+QUEUE_STALE = timedelta(hours=3)  # "Chạy review" this long ago and never begun: job lost
 PAGE = 50
 
 
@@ -113,23 +114,32 @@ class ClosureOut(ORM):
 
 
 def _managed_members(session: Session, principal: Principal) -> set[int]:
-    """People currently in a team this person manages (sub-teams included)."""
+    """People in a team this person manages (sub-teams included) today, counted as
+    app/api/security.load_principal counts memberships."""
     if not principal.managed_teams:
         return set()
+    today = datetime.now(UTC).date()
     return set(
         session.scalars(
             select(TeamMember.user_id).where(
-                TeamMember.team_id.in_(principal.managed_teams), TeamMember.left_at.is_(None)
+                TeamMember.team_id.in_(principal.managed_teams),
+                TeamMember.joined_at <= today,
+                or_(TeamMember.left_at.is_(None), TeamMember.left_at > today),
             )
         )
     )
 
 
-def _may_decide(session: Session, principal: Principal, author_id: int | None) -> bool:
-    """An admin, or a manager of a team the author is in; never the author themselves."""
-    if author_id is None or author_id == principal.user_id:
-        return principal.is_admin and author_id != principal.user_id
-    return principal.is_admin or author_id in _managed_members(session, principal)
+def _may_decide(
+    principal: Principal, managed: set[int], author_id: int | None, bp_id: int | None
+) -> bool:
+    """An admin, or a manager of a team the author is in who is granted the dự án (docs/specs/09:
+    one without a grant does not exist for them); never the author themselves."""
+    if author_id == principal.user_id:
+        return False
+    if principal.is_admin:
+        return True
+    return author_id is not None and author_id in managed and principal.can_view_project(bp_id)
 
 
 def _finding(
@@ -142,23 +152,54 @@ def _finding(
     return finding, review
 
 
+def _sweep(session: Session, finding_id: int | None = None) -> None:
+    """Checks that will not end become `failed` (and can be run again): begun by a worker longer
+    than CHECK_STALE ago (it died), or never begun QUEUE_STALE after "Chạy review" (the job was
+    lost). A late job of the old run can no longer claim it: a re-run gets a new token."""
+    now = datetime.now(UTC)
+    query = (
+        update(FindingClosure)
+        .where(
+            FindingClosure.status == "checking",
+            or_(
+                FindingClosure.started_at < now - CHECK_STALE,
+                and_(
+                    FindingClosure.started_at.is_(None),
+                    FindingClosure.updated_at < now - QUEUE_STALE,
+                ),
+            ),
+        )
+        .values(status="failed", reason="Lần kiểm bị gián đoạn (worker dừng); chạy lại.")
+        .execution_options(synchronize_session=False)
+    )
+    if finding_id is not None:
+        query = query.where(FindingClosure.finding_id == finding_id)
+    session.execute(query)
+
+
 def _in_flight(session: Session, finding_id: int) -> FindingClosure | None:
-    """The request being decided or checked; a check lost by the worker is failed first."""
-    row = session.scalars(
+    """The request being decided or checked (a lost check is failed first)."""
+    _sweep(session, finding_id)
+    return session.scalars(
         select(FindingClosure).where(
             FindingClosure.finding_id == finding_id, FindingClosure.status.in_(CLOSURE_OPEN)
         )
     ).first()
-    if (
-        row is not None
-        and row.status == "checking"
-        and row.updated_at < datetime.now(UTC) - CHECK_STALE
-    ):
-        row.status = "failed"
-        row.reason = "Lần kiểm bị gián đoạn (worker dừng); chạy lại."
-        session.flush()
-        return None
-    return row
+
+
+def _move(session: Session, closure: FindingClosure, frm: tuple[str, ...], **values: Any) -> bool:
+    """One state change, only from the states `frm`: two people pressing at once, or a cancel
+    racing a run, change the row once; the other gets False (409)."""
+    result = session.execute(
+        update(FindingClosure)
+        .where(FindingClosure.id == closure.id, FindingClosure.status.in_(frm))
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    if not getattr(result, "rowcount", 0):
+        return False
+    session.refresh(closure)
+    return True
 
 
 def _request(session: Session, closure_id: int) -> FindingClosure:
@@ -168,12 +209,23 @@ def _request(session: Session, closure_id: int) -> FindingClosure:
     return closure
 
 
-def _author_of(session: Session, closure: FindingClosure) -> int | None:
-    return session.scalar(
-        select(Review.author_user_id)
+def _owner(session: Session, closure: FindingClosure) -> tuple[int | None, int | None]:
+    """(author of the change, its repo's dự án) of the request's finding."""
+    repo = _repo_of_review()
+    row = session.execute(
+        select(Review.author_user_id, Project.business_project_id)
         .join(ReviewFinding, ReviewFinding.review_id == Review.id)
+        .outerjoin(repo, repo.c.review_id == Review.id)
+        .outerjoin(Project, Project.id == repo.c.project_id)
         .where(ReviewFinding.id == closure.finding_id)
-    )
+    ).first()
+    return (row[0], row[1]) if row else (None, None)
+
+
+def _decider(session: Session, principal: Principal, closure: FindingClosure) -> None:
+    author, bp_id = _owner(session, closure)
+    if not _may_decide(principal, _managed_members(session, principal), author, bp_id):
+        raise HTTPException(403, "chỉ manager của team tác giả hoặc admin được duyệt yêu cầu này")
 
 
 # -- the author ------------------------------------------------------------------------------------
@@ -233,10 +285,8 @@ def cancel_request(
     closure = _request(session, closure_id)
     if closure.requested_by != principal.user_id:
         raise HTTPException(403, "chỉ người gửi mới rút được yêu cầu")
-    if closure.status != "pending":
-        raise HTTPException(409, f"yêu cầu đang ở trạng thái {closure.status}")
-    closure.status = "cancelled"
-    closure.decided_at = datetime.now(UTC)
+    if not _move(session, closure, ("pending",), status="cancelled", decided_at=datetime.now(UTC)):
+        raise HTTPException(409, "yêu cầu đã được duyệt hoặc đang được kiểm; tải lại trang")
     audit(
         session, principal.user_id, "finding.close_request.cancel", f"finding:{closure.finding_id}"
     )
@@ -256,39 +306,53 @@ def run_request(
 ) -> FindingClosure:
     """ "Chạy review": check the commits now (a failed check may be run again)."""
     closure = _request(session, closure_id)
-    if not _may_decide(session, principal, _author_of(session, closure)):
-        raise HTTPException(403, "chỉ manager của team tác giả hoặc admin được duyệt yêu cầu này")
-    if closure.status not in ("pending", "failed"):
-        raise HTTPException(409, f"yêu cầu đang ở trạng thái {closure.status}")
-    if closure.status == "failed":
-        other = _in_flight(session, closure.finding_id)
-        if other is not None and other.id != closure.id:
-            raise HTTPException(409, "finding này đang có yêu cầu khác")
+    _decider(session, principal, closure)
+    _sweep(session, closure.finding_id)  # a lost check may be run again
+    session.refresh(closure)
     finding = session.get(ReviewFinding, closure.finding_id)
     if finding is None or finding.status != "open":
         raise HTTPException(409, "finding không còn mở")
-    previous = closure.status
-    closure.status = "checking"
-    closure.decided_by = principal.user_id
-    closure.decided_at = None
-    closure.reason = None
+    before = {
+        "status": closure.status,
+        "reason": closure.reason,
+        "decided_at": closure.decided_at,
+        "decided_by": closure.decided_by,
+    }
+    token = secrets.token_hex(8)
     try:
-        session.flush()
-    except IntegrityError:
+        moved = _move(
+            session,
+            closure,
+            ("pending", "failed"),
+            status="checking",
+            run_token=token,
+            started_at=None,
+            decided_by=principal.user_id,
+            decided_at=None,
+            reason=None,
+        )
+    except IntegrityError:  # another request of the same finding is in flight
         raise HTTPException(409, "finding này đang có yêu cầu khác") from None
+    if not moved:
+        raise HTTPException(409, "yêu cầu vừa được người khác duyệt; tải lại trang")
     audit(session, principal.user_id, "finding.close_request.run", f"finding:{closure.finding_id}")
     session.commit()
     try:
         queue.enqueue(
             "app.workers.closure_jobs.close_request_job",
             closure.id,
-            job_id=f"close-request-{closure.id}-{int(datetime.now(UTC).timestamp())}",
+            token,
+            job_id=f"close-request-{closure.id}-{token}",
             job_timeout=600,
-            retry=Retry(max=2, interval=[30, 120]),
         )
     except Exception:
-        # Not queued: back to where it was, or it would wait for a check that never comes.
-        closure.status = previous
+        # Not queued: back to where it was (this run only), or it would wait for a check
+        # that never comes.
+        session.execute(
+            update(FindingClosure)
+            .where(FindingClosure.id == closure.id, FindingClosure.run_token == token)
+            .values(**before, run_token=None)
+        )
         session.commit()
         raise HTTPException(503, "không đưa được vào hàng đợi kiểm; thử lại") from None
     return closure
@@ -299,14 +363,18 @@ def reject_request(
     closure_id: int, body: NoteIn, principal: CurrentPrincipal, session: SessionDep
 ) -> FindingClosure:
     closure = _request(session, closure_id)
-    if not _may_decide(session, principal, _author_of(session, closure)):
-        raise HTTPException(403, "chỉ manager của team tác giả hoặc admin được duyệt yêu cầu này")
-    if closure.status not in ("pending", "failed"):
-        raise HTTPException(409, f"yêu cầu đang ở trạng thái {closure.status}")
-    closure.status = "rejected"
-    closure.decided_by = principal.user_id
-    closure.decided_at = datetime.now(UTC)
-    closure.reason = f"Từ chối: {body.note.strip()}"
+    _decider(session, principal, closure)
+    moved = _move(
+        session,
+        closure,
+        ("pending", "failed"),
+        status="rejected",
+        decided_by=principal.user_id,
+        decided_at=datetime.now(UTC),
+        reason=f"Từ chối: {body.note.strip()}",
+    )
+    if not moved:
+        raise HTTPException(409, "yêu cầu đang được kiểm hoặc đã có kết quả; tải lại trang")
     audit(
         session, principal.user_id, "finding.close_request.reject", f"finding:{closure.finding_id}"
     )
@@ -324,11 +392,16 @@ def close_by_admin(
     waiting = _in_flight(session, finding.id)
     if waiting is not None and waiting.status == "checking":
         raise HTTPException(409, "finding đang được kiểm; chờ kết quả")
-    if waiting is not None:  # a pending request: the admin's decision answers it
-        waiting.status = "rejected"
-        waiting.decided_by = principal.user_id
-        waiting.decided_at = datetime.now(UTC)
-        waiting.reason = "Admin đã đóng thủ công finding này."
+    if waiting is not None and not _move(  # a pending request: the admin's decision answers it
+        session,
+        waiting,
+        ("pending",),
+        status="rejected",
+        decided_by=principal.user_id,
+        decided_at=datetime.now(UTC),
+        reason="Admin đã đóng thủ công finding này.",
+    ):
+        raise HTTPException(409, "yêu cầu đóng vừa được chạy; chờ kết quả")
     closure = close_finding(
         session,
         finding,
@@ -386,10 +459,11 @@ def review_closures(
             .order_by(FindingClosure.id.desc())
         )
     )
-    for row in rows:
-        if row.status == "checking":
-            _in_flight(session, row.finding_id)  # fails a lost check
-    session.commit()
+    if any(row.status == "checking" for row in rows):
+        _sweep(session)
+        session.commit()
+        for row in rows:
+            session.refresh(row)
     return rows
 
 
@@ -404,13 +478,20 @@ def _repo_of_review() -> Any:
     return mr.union_all(commit).subquery("review_repo")
 
 
-def _visible(session: Session, principal: Principal) -> ColumnElement[bool]:
-    """Whose closings this person sees: everyone's (admin), their own work, and that of the
-    teams they manage (they decide those requests)."""
+def _visible(session: Session, principal: Principal, repo: Any) -> ColumnElement[bool]:
+    """Whose closings this person sees: everyone's (admin), their own work anywhere, and that of
+    the teams they manage in the dự án they are granted (they decide those requests)."""
     if principal.is_admin:
         return true()
-    people = {principal.user_id} | _managed_members(session, principal)
-    return Review.author_user_id.in_(people)
+    own = Review.author_user_id == principal.user_id
+    managed = _managed_members(session, principal)
+    granted = principal.visible_projects() or set()
+    if not managed or not granted:
+        return own
+    in_granted = repo.c.project_id.in_(
+        select(Project.id).where(Project.business_project_id.in_(granted))
+    )
+    return or_(own, and_(Review.author_user_id.in_(managed), in_granted))
 
 
 def _day_start(day: date) -> datetime:
@@ -449,6 +530,8 @@ def list_closures(
     """The "Đóng finding" page. `view=todo`: requests waiting for this person's decision (a
     manager's team, or every one for an admin). `history`: every closing they may see, newest
     first, with the filters."""
+    _sweep(session)  # lost checks show as such (and can be run again) right away
+    session.commit()
     repo = _repo_of_review()
     author = aliased(User)
     requester = aliased(User)
@@ -472,7 +555,7 @@ def list_closures(
         .outerjoin(author, author.id == Review.author_user_id)
         .outerjoin(requester, requester.id == FindingClosure.requested_by)
         .outerjoin(decider, decider.id == FindingClosure.decided_by)
-        .where(_visible(session, principal))
+        .where(_visible(session, principal, repo))
     )
     if view == "todo":
         query = query.where(
@@ -499,12 +582,13 @@ def list_closures(
     if date_to is not None:
         query = query.where(FindingClosure.created_at < _day_start(date_to + timedelta(days=1)))
     if q and q.strip():
-        like = f"%{q.strip().lower()}%"
+        text = q.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{text}%"
         query = query.where(
             or_(
-                func.lower(ReviewFinding.title).like(like),
-                func.lower(ReviewFinding.file_path).like(like),
-                func.lower(cast(FindingClosure.shas, String)).like(like),
+                func.lower(ReviewFinding.title).like(like, escape="\\"),
+                func.lower(ReviewFinding.file_path).like(like, escape="\\"),
+                func.lower(cast(FindingClosure.shas, String)).like(like, escape="\\"),
             )
         )
     if (after := _after(cursor)) is not None:
@@ -515,8 +599,13 @@ def list_closures(
     for closure, finding, review, project, bp, who, asker, judge in rows[:PAGE]:
         decides = (
             closure.kind == "request"
-            and (principal.is_admin or review.author_user_id in managed)
-            and review.author_user_id != principal.user_id
+            and closure.status in ("pending", "failed")
+            and _may_decide(
+                principal,
+                managed,
+                review.author_user_id,
+                project.business_project_id if project else None,
+            )
         )
         items.append(
             {
@@ -558,12 +647,15 @@ def list_closures(
 @router.get("/close-requests/facets")
 def closure_facets(principal: CurrentPrincipal, session: SessionDep) -> dict[str, Any]:
     """The filter choices of the page (only what this person may see) and the to-do count."""
+    _sweep(session)
+    session.commit()
     repo = _repo_of_review()
     base = (
         select(FindingClosure.id)
         .join(ReviewFinding, ReviewFinding.id == FindingClosure.finding_id)
         .join(Review, Review.id == ReviewFinding.review_id)
-        .where(_visible(session, principal))
+        .outerjoin(repo, repo.c.review_id == Review.id)
+        .where(_visible(session, principal, repo))
     )
     authors = session.execute(
         select(User.id, User.full_name, User.primary_email)
@@ -573,11 +665,7 @@ def closure_facets(principal: CurrentPrincipal, session: SessionDep) -> dict[str
     repos = session.execute(
         select(Project.id, Project.path_with_namespace, BusinessProject.id, BusinessProject.name)
         .outerjoin(BusinessProject, BusinessProject.id == Project.business_project_id)
-        .where(
-            Project.id.in_(
-                base.join(repo, repo.c.review_id == Review.id).with_only_columns(repo.c.project_id)
-            )
-        )
+        .where(Project.id.in_(base.with_only_columns(repo.c.project_id)))
         .order_by(Project.path_with_namespace)
     ).all()
     managed = _managed_members(session, principal)

@@ -34,7 +34,6 @@ from app.models import (
     BusinessProject,
     CommandRun,
     Connection,
-    FindingClosure,
     Project,
     Review,
     ReviewKnowledge,
@@ -182,9 +181,10 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
             AuditLog.action == "assistant.chat", AuditLog.at >= month_start
         )
     )
+    # One audit row per paid check of a close request, in the month the call was made.
     closures = session.scalar(
-        select(func.coalesce(func.sum(FindingClosure.cost_usd), 0)).where(
-            FindingClosure.created_at >= month_start
+        select(func.coalesce(func.sum(AuditLog.details["cost_usd"].as_float()), 0)).where(
+            AuditLog.action == "finding.close_request.cost", AuditLog.at >= month_start
         )
     )
     builds = 0.0

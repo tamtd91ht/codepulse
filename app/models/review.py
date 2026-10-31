@@ -233,5 +233,10 @@ class FindingClosure(TimestampMixin, Base):
     note: Mapped[str | None]
     reason: Mapped[str | None]  # the checker's reason, or why the request was refused
     evidence: Mapped[str | None]  # file:lines of the fix in the change
+    # Every check of this request (a re-run adds); billed by the `finding.close_request.cost`
+    # audit rows, one per call, in the month it was made.
     cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The "Chạy review" being run: only the worker carrying this token claims and decides it.
+    run_token: Mapped[str | None]
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

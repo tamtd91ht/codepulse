@@ -65,7 +65,6 @@ from app.models import (
     BusinessProject,
     CommandRun,
     Connection,
-    FindingClosure,
     FindingDispute,
     MergeRequest,
     MetricsUserPeriod,
@@ -1120,12 +1119,18 @@ def llm_costs(
         .order_by(run_month.desc())
         .limit(months)
     ).all()
-    close_month = func.date_trunc("month", FindingClosure.created_at)
+    # One audit row per paid check of a close request (app/workers/closure_jobs), as the
+    # budget counts them: in the month the call was made.
+    check_month = func.date_trunc("month", AuditLog.at)
     checks = session.execute(
-        select(close_month, func.coalesce(func.sum(FindingClosure.cost_usd), 0), func.count())
-        .where(FindingClosure.cost_usd.is_not(None))
-        .group_by(close_month)
-        .order_by(close_month.desc())
+        select(
+            check_month,
+            func.coalesce(func.sum(AuditLog.details["cost_usd"].as_float()), 0),
+            func.count(),
+        )
+        .where(AuditLog.action == "finding.close_request.cost")
+        .group_by(check_month)
+        .order_by(check_month.desc())
         .limit(months)
     ).all()
     # Knowledge costs sit in JSON a failed build may have left odd: read in Python, as the

@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
+from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 
 from app.admin_settings import monthly_budget_usd, with_overrides
@@ -42,6 +43,9 @@ from app.review.providers import LLMProvider, build_provider
 from app.review.resolve import check, mark_fixed
 
 log = logging.getLogger(__name__)
+
+# The audit action of one paid check: the month's budget sums these (`closures_usd`).
+CHECK_COST = "finding.close_request.cost"
 
 
 def _repo(session: Session, review: Review) -> Project | None:
@@ -75,25 +79,53 @@ class _Target:
     connection: Connection
 
 
+def _still_mine(closure_id: int, token: str) -> tuple[Any, ...]:
+    """The row of this run: still being checked, with this run's token."""
+    return (
+        FindingClosure.id == closure_id,
+        FindingClosure.status == "checking",
+        FindingClosure.run_token == token,
+    )
+
+
 def run_close_request(
     session: Session,
     closure_id: int,
+    token: str,
     make_client: ClientFactory,
     provider: LLMProvider,
     settings: Settings,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> str:
-    """Decide one request being checked; returns its new status."""
-    closure = session.get(FindingClosure, closure_id)
-    if closure is None or closure.status != "checking":
-        return "not checking"
+    """Decide one request being checked by the run `token`; returns its new status.
 
-    def decide(status: str, reason: str, **extra: Any) -> str:
-        closure.status = status
-        closure.reason = reason[:1000]
-        closure.decided_at = clock()
-        for key, value in extra.items():
-            setattr(closure, key, value)
+    Every write is conditional on "still checking, with this token": a request cancelled,
+    refused or run again meanwhile is left alone ("superseded"), and a duplicate job of the same
+    run never pays (it cannot claim the start)."""
+    claimed = session.execute(
+        update(FindingClosure)
+        .where(*_still_mine(closure_id, token), FindingClosure.started_at.is_(None))
+        .values(started_at=clock())
+        .execution_options(synchronize_session=False)
+    )
+    session.commit()
+    if not getattr(claimed, "rowcount", 0):
+        return "not mine"
+    closure = session.get(FindingClosure, closure_id)
+    if closure is None:
+        return "not mine"
+    session.refresh(closure)
+
+    def decide(status: str, reason: str, *, commit: bool = True, **extra: Any) -> str:
+        done = session.execute(
+            update(FindingClosure)
+            .where(*_still_mine(closure_id, token))
+            .values(status=status, reason=reason[:1000], decided_at=clock(), **extra)
+            .execution_options(synchronize_session=False)
+        )
+        if not getattr(done, "rowcount", 0):
+            session.rollback()
+            return "superseded"
         audit(
             session,
             closure.decided_by,
@@ -102,7 +134,8 @@ def run_close_request(
             closure_id=closure.id,
             status=status,
         )
-        session.commit()
+        if commit:
+            session.commit()
         return status
 
     finding = session.get(ReviewFinding, closure.finding_id)
@@ -166,8 +199,25 @@ def run_close_request(
     change = "commit " + ", ".join(sha[:12] for sha in target.shas)
 
     checked = check(provider, target.path, change, prepared.files, [finding])
-    # Paid whatever comes next: on the row before anything else can fail.
-    closure.cost_usd = Decimal(str(round(checked.call.cost_usd, 4))) if checked.call else None
+    if checked.call is not None:
+        # Paid whatever comes next: recorded and committed before anything else can fail. The
+        # request keeps the sum of its checks; the budget counts each call when it was made.
+        cost = round(checked.call.cost_usd, 4)
+        session.execute(
+            update(FindingClosure)
+            .where(FindingClosure.id == closure_id)
+            .values(cost_usd=func.coalesce(FindingClosure.cost_usd, 0) + Decimal(str(cost)))
+            .execution_options(synchronize_session=False)
+        )
+        audit(
+            session,
+            closure.decided_by,
+            CHECK_COST,
+            f"finding:{closure.finding_id}",
+            closure_id=closure.id,
+            cost_usd=cost,
+        )
+        session.commit()
     outcome = checked.outcomes[0] if checked.outcomes else None
     if outcome is None:
         return decide(
@@ -176,8 +226,15 @@ def run_close_request(
             + (f" Chi tiết: {checked.error[:200]}" if checked.error else ""),
         )
     if outcome.closes:
+        # One transaction: the request is closed only if this run still owns it, and the
+        # finding only if it is still open; otherwise neither changes.
+        if decide("closed", outcome.reason, commit=False, evidence=outcome.evidence) != "closed":
+            return "superseded"
         if mark_fixed(session, finding):
-            return decide("closed", outcome.reason, evidence=outcome.evidence)
+            session.commit()
+            return "closed"
+        session.rollback()
+        session.refresh(finding)
         return decide("rejected", f"Finding đã đổi trạng thái ({finding.status}) trong lúc kiểm.")
     why = {
         "fixed": (
@@ -193,22 +250,31 @@ def run_close_request(
     )
 
 
-def close_request_job(closure_id: int) -> str:
+def close_request_job(closure_id: int, token: str) -> str:
     settings = get_settings()
     with get_sessionmaker()() as session:
         tuned = with_overrides(session, settings)
         session.commit()
         try:
             return run_close_request(
-                session, closure_id, client_factory(secret_box()), build_provider(tuned), tuned
+                session,
+                closure_id,
+                token,
+                client_factory(secret_box()),
+                build_provider(tuned),
+                tuned,
             )
         except Exception:
             log.exception("close request failed", extra={"closure_id": closure_id})
             session.rollback()
-            closure = session.get(FindingClosure, closure_id)
-            if closure is not None and closure.status == "checking":
-                closure.status = "failed"
-                closure.reason = "Lỗi khi kiểm; chạy lại sau."
-                closure.decided_at = datetime.now(UTC)
-                session.commit()
+            session.execute(
+                update(FindingClosure)
+                .where(*_still_mine(closure_id, token))
+                .values(
+                    status="failed",
+                    reason="Lỗi khi kiểm; chạy lại sau.",
+                    decided_at=datetime.now(UTC),
+                )
+            )
+            session.commit()
             raise
