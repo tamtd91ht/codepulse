@@ -64,7 +64,7 @@ def _range(
     return start, end, lo, hi
 
 
-def _load(
+def load_review_facts(
     session: Session,
     users: set[int] | None,
     lo: datetime,
@@ -228,7 +228,7 @@ def members_evaluation(
             raise HTTPException(404, "team not found")
         members = _team_members(session, team_id, start, end)
         visible = members if visible is None else visible & members
-    reviews = _load(
+    reviews = load_review_facts(
         session,
         visible,
         lo,
@@ -317,7 +317,9 @@ def member_evaluation(
         raise HTTPException(404, "person not found")
     tz = ZoneInfo(settings.report_tz)
     start, end, lo, hi = _range(tz, date_from, date_to)
-    result = evaluate_member(_load(session, {user_id}, lo, hi, viewer=principal), start, end, tz)
+    result = evaluate_member(
+        load_review_facts(session, {user_id}, lo, hi, viewer=principal), start, end, tz
+    )
     if user_id != principal.user_id:
         audit(
             session,

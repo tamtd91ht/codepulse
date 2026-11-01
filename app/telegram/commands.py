@@ -3,12 +3,14 @@
 Preferred form (order-free key=value pairs; every key but type is optional):
 
     /review type=mr|merge-request|commit [id=<iid|sha|url>] [repo=<hint>] [user=<hint>]
-            [range=today|3d|7d|30d]
+            [range=today|3d|7d|30d] [again=1]
 
     type=mr id=412 repo=global-api        review MR !412 of cloud-saas-global-api
     type=commit user=tamtd                the latest commit of tamtd (in the bot's scope)
     type=commit user=tamtd range=7d       tamtd's commits of the last 7 days
     type=mr user=an                       the latest MR of An
+    ... again=1                           also review again what already has a finished review
+                                          (a new round; default: answer with the old result)
 
 Hints may be abbreviated ("global-api" for "cloud-saas-global-api", "tamtd" for
 tamtd@company.vn); the bot resolves them, asking an LLM when several items fit.
@@ -22,6 +24,7 @@ Legacy positional form, still accepted:
     /review today [repo] [users...]    today's commits of one or more people
     /review open [repo]                open MRs that have no review yet (lead)
     /status  /critical [repo]  /score [user] [week|month]  /repos  /sync [repo]
+    /report [user=<hint>|all] [time=<period>] [repo=<hint>]   (app/telegram/report.py)
     /link <code>  /unlink  /whoami  /help
 
 A repo is named by its GitLab path or any suffix of it ("api", "omicrm/api"); a person by
@@ -59,6 +62,7 @@ KNOWN = {
     "critical",
     "score",
     "sync",
+    "report",
 }
 
 SHA = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
@@ -99,6 +103,9 @@ class ReviewArgs:
     # Keyed form without a single explicit target: show the picker (buttons) instead of queuing
     # everything; all=1 queues everything at once like the legacy actions.
     pick: bool = False
+    # again=1: also take items that already have a finished review (each becomes a new round).
+    # Default no: a done item answers with its result instead of spending the LLM budget again.
+    again: bool = False
 
 
 KEYS = {
@@ -116,8 +123,11 @@ KEYS = {
     "ref",
     "all",
     "auto",
+    "again",
+    "rereview",
 }
 TRUE_WORDS = {"1", "true", "yes", "y", "on", "có"}
+FALSE_WORDS = {"0", "false", "no", "n", "off", "không", "khong"}
 TYPES = {
     "mr": "mr",
     "merge-request": "mr",
@@ -145,6 +155,7 @@ def parse_keyed(args: Sequence[str]) -> ReviewArgs | str | None:
         return (
             f"Không hiểu '{' '.join(free)}'."
             " Cú pháp: /review type=mr|commit [id=] [repo=] [branch=] [user=] [range=] [all=1]"
+            " [again=1]"
         )
     kind_name = TYPES.get(pairs.get("type", "").casefold())
     if kind_name is None:
@@ -158,6 +169,10 @@ def parse_keyed(args: Sequence[str]) -> ReviewArgs | str | None:
     if branch and branch.casefold() in ("*", "all"):
         branch = ALL_BRANCHES  # every branch
     auto = (pairs.get("all") or pairs.get("auto") or "").casefold() in TRUE_WORDS
+    again_word = (pairs.get("again") or pairs.get("rereview") or "").casefold()
+    if again_word and again_word not in TRUE_WORDS and again_word not in FALSE_WORDS:
+        return "again chỉ nhận 1/0 (yes/no): again=1 để review lại mục đã review."
+    again = again_word in TRUE_WORDS
     if ref and (from_url := parse_gitlab_url(ref)):
         url_kind, path, value = from_url
         if url_kind != kind:
@@ -173,7 +188,7 @@ def parse_keyed(args: Sequence[str]) -> ReviewArgs | str | None:
             return "id của merge request phải là số (ví dụ id=412) hoặc link."
         if kind == "commit" and not SHA.match(ref):
             return "id của commit phải là 7-40 ký tự hex hoặc link commit."
-        return ReviewArgs(kind, ref=ref, repo_hint=repo)
+        return ReviewArgs(kind, ref=ref, repo_hint=repo, again=again)
     people = (user,) if user else ()
     days = 7
     if window:
@@ -189,13 +204,21 @@ def parse_keyed(args: Sequence[str]) -> ReviewArgs | str | None:
     # One person, no window: their latest item, queued at once (one tap on the phone).
     if user and not window:
         action: Action = "last" if kind == "commit" else "lastmr"
-        return ReviewArgs(action, repo_hint=repo, people=people, branch=branch)
+        return ReviewArgs(action, repo_hint=repo, people=people, branch=branch, again=again)
     # Otherwise a list: the picker, unless all=1 asks for everything right away.
     if kind == "commit":
         return ReviewArgs(
-            "today", repo_hint=repo, people=people, days=days, branch=branch, pick=not auto
+            "today",
+            repo_hint=repo,
+            people=people,
+            days=days,
+            branch=branch,
+            pick=not auto,
+            again=again,
         )
-    return ReviewArgs("open", repo_hint=repo, people=people, branch=branch, pick=not auto)
+    return ReviewArgs(
+        "open", repo_hint=repo, people=people, branch=branch, pick=not auto, again=again
+    )
 
 
 def parse_review(args: Sequence[str]) -> ReviewArgs | str:

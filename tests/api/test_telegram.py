@@ -393,6 +393,76 @@ def test_status_critical_score_and_repos(
     assert queue.jobs[-1][0] == "app.collector.sync.sync_project_job"
 
 
+def test_again_reviews_a_reviewed_target_as_a_new_round_for_managers_only(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    link(db_session, world.an, 777)
+    link(db_session, world.admin, 999)
+    svc = service(db_session, bot, settings, queue)
+    # Default: no. The old result answers and nothing is queued.
+    assert "đã được review" in (svc.handle(message("/review type=mr id=7", from_id=999)) or "")
+    assert queue.jobs == []
+    # A member may not re-roll a score, not even their own.
+    assert "Chỉ người quản lý dự án" in (svc.handle(message("/review type=mr id=7 again=1")) or "")
+    assert "again chỉ nhận" in (svc.handle(message("/review type=mr id=7 again=maybe")) or "")
+    reply = svc.handle(message("/review type=mr id=7 again=1", from_id=999)) or ""
+    assert "Đã đưa <b>1</b> review" in reply
+    ((func, args, kwargs),) = queue.jobs
+    assert func == "app.workers.review_jobs.review_mr_job" and args[2] == "a" * 40
+    assert kwargs["force"] is True
+    assert kwargs["expected_round"] == world.an_review.round
+    assert kwargs["job_id"].endswith(f"-again-{world.an_review.round}")
+
+
+def test_report_of_a_person_over_a_period(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    link(db_session, world.an, 777)
+    link(db_session, world.lead, 888)
+    svc = service(db_session, bot, settings, queue)
+    # No time: this month so far (the clock says 24/10/2026); An's own review of 06/10.
+    mine = svc.handle(message("/report")) or ""
+    assert "Báo cáo review · An" in mine and "01/10/2026 - 24/10/2026" in mine
+    assert "Review <b>1</b> (MR 1 · commit 0)" in mine and "Điểm TB <b>50.0</b>" in mine
+    assert "1 critical" in mine and "Cần hỗ trợ" in mine
+    assert "/members/" in mine and "from=2026-10-01&amp;to=2026-10-24" in mine
+    # Someone else's metrics never go to a group chat (docs/specs/09).
+    assert "chat riêng" in (svc.handle(message("/report user=an@x.vn", from_id=888)) or "")
+    # A lead asks privately for An over several months: the same review, a monthly line.
+    lead = svc.handle(private("/report user=an@x.vn time=04-2026,10-2026", from_id=888)) or ""
+    assert "01/04/2026 - 24/10/2026" in lead and "Review <b>1</b>" in lead
+    assert db_session.scalar(select(AuditLog).where(AuditLog.action == "telegram.report"))
+    # A month without reviews, a member asking about someone else, a bad period.
+    empty = svc.handle(message("/report time=09-2026")) or ""
+    assert "tháng 09/2026" in empty and "Chưa có review" in empty
+    assert "Chỉ số cá nhân chỉ" in (svc.handle(private("/report user=binh")) or "")
+    # Bare words: dates are a period, a name stays a person ("tuan" is Tuấn, not "this week").
+    assert "Không tìm thấy người 'tuan'" in (svc.handle(message("/report tuan")) or "")
+    assert "tháng 09/2026" in (svc.handle(message("/report 09-2026")) or "")
+    assert "Không hiểu thời gian" in (svc.handle(message("/report time=13-2026")) or "")
+
+
+def test_report_of_everyone_lists_each_person(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    link(db_session, world.lead, 888)
+    reply = (
+        service(db_session, bot, settings, queue).handle(
+            private("/report user=all time=10-2026", from_id=888)
+        )
+        or ""
+    )
+    assert "mọi người" in reply and "1 người" in reply
+    assert "• An: TB <b>50.0</b>" in reply and "⚠️" in reply
+    link(db_session, world.an, 777)
+    member = service(db_session, bot, settings, queue).handle(private("/report user=all")) or ""
+    assert "dành cho lead" in member
+
+
+def private(text: str, from_id: int = 777) -> Incoming:
+    return Incoming(1, from_id, "private", 5, from_id, "tam", "Tâm", text)
+
+
 # -- poller ----------------------------------------------------------------------------------------
 
 

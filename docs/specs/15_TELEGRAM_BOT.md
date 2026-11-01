@@ -30,6 +30,7 @@ Dạng ưu tiên (2026-10-26): các cặp `key=value`, không cần đúng thứ
 
 - **Viết tắt**: `repo` khớp đường dẫn, hậu tố, chuỗi con, rồi theo token ở cuối tên (`global-api` → `vihat/cloud-saas-global-api`); `user` khớp `@username`, email, phần trước `@` của email (`tamtd`), một phần tên, hoặc tài khoản git/GitLab đã gắn. Còn nhiều kết quả → **LLM chọn** (`app/telegram/resolve.py`: một lời gọi nhỏ, không tool, timeout 20 s không thử lại để không nghẽn poller, chỉ gửi danh sách tên trong phạm vi bot và trong phạm vi người gửi được xem, cần độ tin cậy ≥ 0.6); không chọn được → bot liệt kê và hỏi lại. Không có LLM (provider lỗi) → luôn hỏi lại.
 - `range` chỉ dùng với `type=commit`.
+- **Review lại** (2026-11-01): `again=1` (mặc định không) cho phép lấy cả mục đã có review `done` cùng sha; mỗi mục thành một lần review mới (`force`, `expected_round` như nút ↻ của danh sách chọn), lần cũ giữ trong lịch sử. Dùng được với `id=`, `user=` (mục gần nhất), danh sách chọn (mở sẵn chế độ ↻) và `all=1`. Chỉ người quản lý dự án/admin (như nút ↻); mục đang `queued`/`running` không bao giờ bị xếp lại.
 - Dạng cũ bên dưới vẫn dùng được.
 
 ### Chọn bằng nút (không cần mở GitLab)
@@ -49,11 +50,19 @@ Dạng ưu tiên (2026-10-26): các cặp `key=value`, không cần đúng thứ
 | `/status` | 5 review gần nhất của bạn, số yêu cầu đang chờ | ai cũng dùng |
 | `/critical [repo]` | Finding critical/high đang mở trong phạm vi bạn xem được | theo quyền xem |
 | `/score [người] [week\|month]` | Chỉ số kỳ gần nhất (Quality Index, điểm TB, critical/high, fix rate) | theo quyền xem |
+| `/report [user=…\|all] [time=…] [repo=…]` | Báo cáo review theo khoảng thời gian (xem dưới) | theo quyền xem chỉ số cá nhân |
 | `/repos`, `/sync [repo]`, `/whoami`, `/link <mã>`, `/unlink`, `/help` | tiện ích | `/sync` lead/admin |
 
 Repo: đường dẫn GitLab hoặc hậu tố (`api`, `omicrm/api`). Người: `@username` GitLab, email, một phần tên, hoặc `me`. Viết tắt: `/mr 12`, `/commit abc`, `/today`, `/last`, `/open`.
 
 Mục đã có review `done` cùng sha → bot trả kết quả ngay, không xếp hàng lại; `failed`/`skipped` → chạy lại (như `POST /reviews/{id}/rerun`).
+
+### `/report` (2026-11-01)
+- `/report user=tamtd time=04-2026,10-2026`; mọi phần tuỳ chọn, không cần thứ tự, từ không có `=` được hiểu là thời gian nếu đọc được, không thì là người (`/report tamtd 04-2026`).
+- Thời gian: một mốc hoặc hai mốc nối bằng `,` / `..` / `~` (từ đầu mốc đầu đến cuối mốc sau), hoặc `from=` / `to=`. Mốc: tháng `04-2026` `4/2026` `2026-04`; ngày `15-04-2026` `15/04/2026` `2026-04-15`; năm `2026`; quý `q2-2026`; `today`, `yesterday`, `week`, `lastweek`, `month`, `lastmonth`, `year`, `7d` (và tiếng Việt: hôm nay, tuần, tháng trước…). Bỏ trống = tháng này. Cuối khoảng cắt về hôm nay (REPORT_TZ); tối đa 366 ngày; khoảng ở tương lai bị từ chối.
+- Nội dung (một người): số review MR/commit, dòng code, số repo, điểm TB có trọng số LOC, điểm thấp nhất, tỉ lệ APPROVE, verdict, finding theo mức (cách đếm như điểm), cờ "cần hỗ trợ", theo repo (≤ 6), nhóm lỗi hay gặp (≤ 5), xu hướng theo tuần (≤ 62 ngày) hoặc theo tháng, link trang Thành viên với cùng khoảng. Cùng số liệu với `GET /members/{id}/evaluation` (`app/scoring/evaluation.py`), nhưng ranh giới đúng ngày, không làm tròn theo tuần.
+- `user=all`: tổng hợp và từng người (điểm thấp trước, ≤ 15 người) trong phạm vi người gửi được xem.
+- Chỉ tính review thuộc dự án của bot (hoặc repo được ghim / `repo=`). Quyền như chỉ số cá nhân trên dashboard: bản thân, lead của người đó, admin. Xem người khác hoặc `all` ghi audit `telegram.report`.
 
 ## API
 - Admin: `GET/POST /telegram/bots`, `PATCH/DELETE /telegram/bots/{id}`, `POST /telegram/bots/{id}/test` (getMe), `GET /telegram/bots/{id}/requests`.

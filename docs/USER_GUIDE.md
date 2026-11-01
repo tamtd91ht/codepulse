@@ -72,6 +72,8 @@ tính vào điểm và mọi chỉ số liên quan được tính lại ngay.
   - `/review last` / `/review lastmr` – commit / MR gần nhất của bạn.
   - Lead: `/review today an@company.vn binh@company.vn` (commit hôm nay của các bạn đó), `/review open` (MR đang mở chưa review), `/review last @username`.
   - `/status`, `/critical`, `/score` – xem nhanh review gần đây, lỗi nghiêm trọng đang mở, điểm kỳ gần nhất.
+  - `/report user=tamtd time=04-2026,10-2026` – báo cáo review theo khoảng thời gian (bỏ `time` = tháng này; `time=04-2026`, `time=15-04-2026..30-06-2026`, `time=q2-2026`, `time=7d`, `time=lastmonth` đều được; `user=all` cho cả team).
+  - Người quản lý dự án/admin: thêm `again=1` vào lệnh `/review` để review lại mục đã review (mặc định không review lại).
 - Khi review xong, bot trả về cùng chat: điểm, số finding theo mức độ và link xem chi tiết trên dashboard.
 - Quyền giống dashboard: bạn chỉ review được việc của mình; lead review được người trong team mình.
 

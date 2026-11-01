@@ -10,9 +10,11 @@ import html
 import logging
 import secrets
 import time
+from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime, timedelta
+from datetime import time as day_start
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -21,6 +23,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.audit import audit
+from app.api.routers.evaluation import load_review_facts
 from app.api.security import Principal, load_principal
 from app.collector.gitlab.client import GitLabError
 from app.collector.sync import SYNC_JOB_TIMEOUT, ClientFactory, Enqueuer
@@ -41,7 +44,8 @@ from app.models import (
 )
 from app.models.source import ALL_BRANCHES
 from app.review.rubric import RUBRIC_VERSION
-from app.scoring.verdict import VERDICT_LABEL
+from app.scoring.evaluation import Bucket, ReviewFacts, evaluate_member, evaluate_members
+from app.scoring.verdict import VERDICT_LABEL, VERDICTS
 from app.telegram.commands import (
     MAX_RANGE_DAYS,
     Command,
@@ -66,6 +70,7 @@ from app.telegram.picker import (
     repo_keyboard,
     repo_pages,
 )
+from app.telegram.report import Period, parse_period, parse_report
 from app.telegram.resolve import NoResolver, Resolver
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
 
@@ -84,6 +89,14 @@ TAKEN = ("queued", "running", "done", "skipped")
 SEVERE = ("critical", "high")
 
 esc = html.escape
+
+
+def num(value: Any, digits: int = 1) -> str:
+    return "—" if value is None else f"{float(value):.{digits}f}"
+
+
+def thousands(value: int) -> str:
+    return f"{value:,}".replace(",", ".")
 
 
 # -- small stores (Redis in production, memory in tests) ------------------------------------------
@@ -435,6 +448,8 @@ class BotService:
                 return self._score(me, command.args)
             case "sync":
                 return self._sync(me, command.args[0] if command.args else None)
+            case "report":
+                return self._report(me, msg, command.args)
             case "review":
                 return self._review(command, msg, me)
         return "Không có lệnh này. Dùng /help để xem danh sách."
@@ -504,6 +519,7 @@ class BotService:
             "  type=commit user=tamtd - commit gần nhất của tamtd",
             "  type=commit user=tamtd range=7d - commit 7 ngày qua của tamtd",
             "  type=mr user=an - MR gần nhất của An (bỏ user = của bạn)",
+            "  thêm again=1 để review lại mục đã review (mặc định không; quản lý dự án/admin)",
             "  repo/user viết tắt được; bot tự chọn, hỏi lại khi còn mơ hồ",
             "Dạng cũ vẫn dùng được: /review mr &lt;số|link&gt; [repo],",
             "  /review commit &lt;sha&gt; [repo], /review last|lastmr [repo] [người],",
@@ -513,6 +529,9 @@ class BotService:
             "/status - review gần đây của bạn · /critical [repo] - lỗi nghiêm trọng đang mở",
             "/score [người] [week|month] - điểm kỳ gần nhất · /repos - repo trong phạm vi",
             "/sync [repo] - lấy dữ liệu GitLab ngay (lead) · /whoami · /unlink",
+            "<b>/report [user=…|all] [time=…] [repo=…]</b> - báo cáo review theo khoảng thời gian",
+            "  time=04-2026 (tháng) · time=04-2026,10-2026 · time=01-04-2026..15-10-2026",
+            "  time=2026 · q2-2026 · 7d · week · month · lastmonth; bỏ time = tháng này",
             "",
             "Repo: đường dẫn GitLab hoặc phần cuối (api, omicrm/api).",
             "Người: @username GitLab, email, một phần tên, hoặc me.",
@@ -732,6 +751,9 @@ class BotService:
         parsed = parse_review(command.args)
         if isinstance(parsed, str):
             return esc(parsed)
+        if parsed.again and not self._manages(me):
+            # A new round re-rolls a score and spends budget: managers of the dự án only.
+            return "Chỉ người quản lý dự án hoặc admin được review lại mục đã review (again=1)."
         if not self._limiter.allow(f"user:{me.user_id}"):
             return "Bạn gửi quá nhiều lệnh review trong 10 phút; thử lại sau ít phút."
         if parsed.pick:
@@ -790,10 +812,7 @@ class BotService:
         self._may_review_author(author, me, "merge request")
         label = f"{project.path_with_namespace} !{iid}" + (f" - {title[:60]}" if title else "")
         target = Target("mr", project.id, str(iid), head, label)
-        existing = self._existing(target, mr.id if mr else None)
-        if existing is not None:
-            return [], [self._already(existing, target)]
-        return [target], []
+        return self._settle(target, mr.id if mr else None, args.again)
 
     def _target_commit(self, args: ReviewArgs, me: Principal) -> tuple[list[Target], list[str]]:
         project = self._pick_repos(args.repo_hint, one=True)[0]
@@ -828,10 +847,7 @@ class BotService:
                 author = acc.user_id if acc else None
         self._may_review_author(author, me, "commit")
         target = Target("commit", project.id, sha, sha, f"{project.path_with_namespace} {sha[:8]}")
-        existing = self._existing(target, None)
-        if existing is not None:
-            return [], [self._already(existing, target)]
-        return [target], []
+        return self._settle(target, None, args.again)
 
     def _accounts_of(self, users: list[User]) -> list[int]:
         ids = [u.id for u in users]
@@ -863,10 +879,7 @@ class BotService:
             commit.sha,
             f"{project.path_with_namespace} {commit.sha[:8]}",
         )
-        existing = self._existing(target, None)
-        if existing is not None:
-            return [], [self._already(existing, target)]
-        return [target], []
+        return self._settle(target, None, args.again)
 
     def _target_lastmr(self, args: ReviewArgs, me: Principal) -> tuple[list[Target], list[str]]:
         repos = self._pick_repos(args.repo_hint, one=False)
@@ -891,10 +904,7 @@ class BotService:
             f" - {mr.title[:60]}" if mr.title else ""
         )
         target = Target("mr", project.id, str(mr.iid), mr.head_sha, label)
-        existing = self._existing(target, mr.id)
-        if existing is not None:
-            return [], [self._already(existing, target)]
-        return [target], []
+        return self._settle(target, mr.id, args.again)
 
     def _target_today(self, args: ReviewArgs, me: Principal) -> tuple[list[Target], list[str]]:
         repos = self._pick_repos(args.repo_hint, one=False)
@@ -903,8 +913,10 @@ class BotService:
         today = self._clock().astimezone(self._tz).date()
         end = datetime.combine(today, datetime.min.time(), self._tz) + timedelta(days=1)
         start = end - timedelta(days=max(args.days, 1))
+        # again=1: finished ones too (a new round each); never what is queued / running now.
+        taken = ("queued", "running") if args.again else TAKEN
         active = select(Review.commit_sha).where(
-            Review.commit_sha.is_not(None), Review.status.in_(TAKEN)
+            Review.commit_sha.is_not(None), Review.status.in_(taken)
         )
         commits = self._s.scalars(
             select(Commit)
@@ -941,13 +953,17 @@ class BotService:
                 )
                 + "\nDữ liệu theo lần sync gần nhất; /sync để lấy mới."
             )
-        return self._cap(targets, notes)
+        targets, notes = self._cap(targets, notes)
+        if args.again:
+            targets = [t for target in targets for t in self._settle(target, None, True)[0]]
+        return targets, notes
 
     def _target_open(self, args: ReviewArgs, me: Principal) -> tuple[list[Target], list[str]]:
         if not (me.is_admin or me.is_lead or self._manages(me)):
             raise Denied("/review open dành cho lead, người quản lý dự án hoặc admin.")
         repos = self._pick_repos(args.repo_hint, one=False)
-        reviewed = select(Review.mr_id).where(Review.mr_id.is_not(None), Review.status.in_(TAKEN))
+        taken = ("queued", "running") if args.again else TAKEN
+        reviewed = select(Review.mr_id).where(Review.mr_id.is_not(None), Review.status.in_(taken))
         query = select(MergeRequest).where(
             MergeRequest.project_id.in_([p.id for p in repos]),
             MergeRequest.state == "opened",
@@ -966,22 +982,33 @@ class BotService:
             )
         mrs = self._s.scalars(query.order_by(MergeRequest.created_at_src.desc().nulls_last())).all()
         by_id = {p.id: p for p in repos}
-        targets = [
-            Target(
-                "mr",
-                mr.project_id,
-                str(mr.iid),
-                mr.head_sha,
-                f"{by_id[mr.project_id].path_with_namespace} !{mr.iid}"
-                + (f" - {mr.title[:60]}" if mr.title else ""),
+        mr_of: dict[str, int] = {}
+        targets: list[Target] = []
+        for mr in mrs:
+            if mr.project_id not in by_id or not mr.head_sha:
+                continue
+            mr_of[f"{mr.project_id}:{mr.iid}"] = mr.id
+            targets.append(
+                Target(
+                    "mr",
+                    mr.project_id,
+                    str(mr.iid),
+                    mr.head_sha,
+                    f"{by_id[mr.project_id].path_with_namespace} !{mr.iid}"
+                    + (f" - {mr.title[:60]}" if mr.title else ""),
+                )
             )
-            for mr in mrs
-            if mr.project_id in by_id and mr.head_sha
-        ]
         notes: list[str] = []
         if not targets:
             notes.append("Không có MR đang mở nào chưa được review (theo lần sync gần nhất).")
-        return self._cap(targets, notes)
+        targets, notes = self._cap(targets, notes)
+        if args.again:
+            targets = [
+                t
+                for target in targets
+                for t in self._settle(target, mr_of[f"{target.project_id}:{target.ref}"], True)[0]
+            ]
+        return targets, notes
 
     def _cap(self, targets: list[Target], notes: list[str]) -> tuple[list[Target], list[str]]:
         limit = self._settings.telegram_max_targets
@@ -1063,6 +1090,19 @@ class BotService:
         if review.status in ("queued", "running"):
             return f"{esc(target.label)}: review đang chạy, tôi sẽ báo khi xong."
         return f"{esc(target.label)}: đã được review.\n{self._result_line(review)}"
+
+    def _settle(
+        self, target: Target, mr_id: int | None, again: bool
+    ) -> tuple[list[Target], list[str]]:
+        """A target as it should be queued: as is when it has no live review; with again, a
+        finished one becomes a new round; otherwise the old result (or "running") answers."""
+        existing = self._existing(target, mr_id)
+        if existing is None:
+            return [target], []
+        if again and existing.status == "done":
+            # `existing` is the newest round of the current rubric: the one a rerun replaces.
+            return [replace(target, force=True, round=existing.round)], []
+        return [], [self._already(existing, target)]
 
     def _enqueue(
         self, targets: list[Target], me: Principal, msg: Incoming, raw: str
@@ -1181,6 +1221,7 @@ class BotService:
             branch=args.branch or "",
             days=args.days,
             may_force=me.can_manage_project(self._bot.business_project_id),
+            again=args.again and me.can_manage_project(self._bot.business_project_id),
         )
 
     def _state_of(self, kind: str, project_id: int, ref: str, sha: str) -> tuple[str, str]:
@@ -1649,21 +1690,25 @@ class BotService:
         return CallbackOutcome(answer="Nút này không còn hiệu lực.")
 
     def _latest_round(self, item: Item) -> int | None:
+        return self._round_of(item.kind, item.project_id, item.ref, item.sha)
+
+    def _round_of(self, kind: str, project_id: int, ref: str, sha: str) -> int | None:
         """The newest round of a done item now (a forced rerun replaces exactly that one)."""
         query = select(Review.round).where(
-            Review.target_type == item.kind,
-            Review.reviewed_sha == item.sha,
+            Review.target_type == kind,
+            Review.reviewed_sha == sha,
+            Review.rubric_version == RUBRIC_VERSION,  # rounds count per rubric (uq_reviews_target)
             Review.status.in_(("done", "queued", "running")),
         )
-        if item.kind == "mr":
+        if kind == "mr":
             mr_id = self._s.scalar(
                 select(MergeRequest.id).where(
-                    MergeRequest.project_id == item.project_id, MergeRequest.iid == int(item.ref)
+                    MergeRequest.project_id == project_id, MergeRequest.iid == int(ref)
                 )
             )
             query = query.where(Review.mr_id == mr_id)
         else:
-            query = query.where(Review.commit_sha == item.sha)
+            query = query.where(Review.commit_sha == sha)
         return self._s.scalar(query.order_by(Review.round.desc()).limit(1))
 
     def _picker_go(self, state: PickerState, cb: Callback, me: Principal) -> CallbackOutcome:
@@ -1864,6 +1909,208 @@ class BotService:
             repos=[p.id for p in repos],
         )
         return f"Đã đưa {len(repos)} repo vào hàng đợi sync; vài phút nữa dữ liệu sẽ mới."
+
+    # -- /report: review results over a period (app/telegram/report.py) ----------------------
+
+    def _report(self, me: Principal, msg: Incoming, args: tuple[str, ...]) -> str:
+        parsed = parse_report(args)
+        if isinstance(parsed, str):
+            return esc(parsed)
+        if parsed.everyone and not (me.is_admin or me.is_lead or self._manages(me)):
+            raise Denied("/report user=all dành cho lead, người quản lý dự án hoặc admin.")
+        user: User | None = None
+        if not parsed.everyone:
+            user = (
+                self._find_user(parsed.user, me) if parsed.user else self._s.get(User, me.user_id)
+            )
+            if user is None:
+                raise Denied(
+                    f"Không tìm thấy người '{esc(parsed.user or 'me')}'. Dùng @username GitLab,"
+                    " email hoặc tên."
+                )
+            if not me.can_see_user(user.id):
+                raise Denied(
+                    "Chỉ số cá nhân chỉ người đó, lead của họ và admin xem được"
+                    f" ({esc(user.full_name or parsed.user or '')})."
+                )
+        if (user is None or user.id != me.user_id) and msg.chat_type != "private":
+            # docs/specs/09: a person's metrics are for them, their lead and admin, not a group.
+            raise Denied(
+                "Báo cáo của người khác hoặc cả team chỉ gửi trong chat riêng với bot;"
+                " nhắn riêng cho bot để xem."
+            )
+        if not self._limiter.allow(f"user:{me.user_id}"):
+            return "Bạn gửi quá nhiều lệnh trong 10 phút; thử lại sau ít phút."
+        today = self._clock().astimezone(self._tz).date()
+        period = parse_period(parsed.time, today)
+        if isinstance(period, str):
+            return esc(period)
+        project_id: int | None = None
+        scope = self._scope_label()
+        if parsed.repo or self._bot.project_id is not None:
+            project = self._pick_repos(parsed.repo, one=True)[0]
+            project_id, scope = project.id, project.path_with_namespace
+        lo = datetime.combine(period.start, day_start.min, self._tz)
+        hi = datetime.combine(period.end + timedelta(days=1), day_start.min, self._tz)
+        if user is None:
+            users = me.visible_users()  # None: everyone (admin)
+            facts = load_review_facts(
+                self._s,
+                users,
+                lo,
+                hi,
+                viewer=me,
+                business_project_id=self._bot.business_project_id,
+                project_id=project_id,
+            )
+            audit(
+                self._s,
+                me.user_id,
+                "telegram.report",
+                f"telegram_bot:{self._bot.id}",
+                users="all",
+                **{"from": period.start.isoformat(), "to": period.end.isoformat()},
+            )
+            return self._report_team(facts, period, scope)
+        facts = load_review_facts(
+            self._s,
+            {user.id},
+            lo,
+            hi,
+            viewer=me,
+            business_project_id=self._bot.business_project_id,
+            project_id=project_id,
+        )
+        if user.id != me.user_id:
+            audit(
+                self._s,
+                me.user_id,
+                "telegram.report",
+                f"user:{user.id}",
+                **{"from": period.start.isoformat(), "to": period.end.isoformat()},
+            )
+        return self._report_person(user, facts, period, scope)
+
+    def _trend(self, facts: list[ReviewFacts], period: Period) -> tuple[str, list[str]]:
+        """Monthly rows for a long period, weekly rows for a short one."""
+        monthly = period.days > 62
+        buckets: dict[date, Bucket] = defaultdict(Bucket)
+        for review in facts:
+            day = (review.counted_at or review.finished_at).astimezone(self._tz).date()
+            key = day.replace(day=1) if monthly else day - timedelta(days=day.weekday())
+            buckets[key].add(review)
+        rows = []
+        for key in sorted(buckets):
+            b = buckets[key]
+            when = f"{key:%m/%Y}" if monthly else f"tuần {key:%d/%m}"
+            rows.append(
+                f"• {when}: TB <b>{num(b.avg_score)}</b> · {b.reviews} review"
+                + (f" · {b.severe} critical/high" if b.severe else "")
+            )
+        return ("Theo tháng" if monthly else "Theo tuần"), rows
+
+    def _report_link(self, path: str, period: Period) -> str:
+        base = self._settings.dashboard_url.rstrip("/")
+        return esc(f"{base}{path}?from={period.start.isoformat()}&to={period.end.isoformat()}")
+
+    def _report_person(
+        self, user: User, facts: list[ReviewFacts], period: Period, scope: str
+    ) -> str:
+        name = user.full_name or user.primary_email or f"#{user.id}"
+        lines = [
+            f"📊 <b>Báo cáo review · {esc(name)}</b>",
+            f"{esc(period.label())} · {esc(scope)}",
+        ]
+        result = evaluate_member(facts, period.start, period.end, self._tz)
+        s = result["summary"]
+        if not s["reviews"]:
+            lines.append("Chưa có review nào hoàn tất trong khoảng này.")
+            return "\n".join(lines)
+        lines += [
+            "",
+            f"Review <b>{s['reviews']}</b> (MR {s['mrs']} · commit {s['commits']})"
+            f" · {thousands(s['loc'])} dòng · {s['repos']} repo",
+            f"Điểm TB <b>{num(s['avg_score'])}</b> · thấp nhất {num(s['min_score'], 0)}"
+            f" · tỉ lệ APPROVE {num(s['pass_rate'], 0)}%",
+        ]
+        verdicts = [
+            f"{VERDICT_ICON.get(v, '')} {VERDICT_LABEL[v]} {s['verdicts'][v]}"
+            for v in VERDICTS
+            if s["verdicts"].get(v)
+        ]
+        if verdicts:
+            lines.append(" · ".join(verdicts))
+        per_loc = s["findings_per_100_loc"]
+        lines.append(
+            f"Finding: {s['critical']} critical · {s['high']} high · {s['medium']} medium"
+            f" · {s['low']} low" + (f" ({per_loc}/100 dòng)" if per_loc is not None else "")
+        )
+        if s["needs_attention"]:
+            lines.append("⚠️ Cần hỗ trợ: có critical hoặc điểm TB dưới 65.")
+        if len(result["by_repo"]) > 1:
+            lines += ["", "<b>Theo repo</b>"]
+            for row in result["by_repo"][:6]:
+                lines.append(
+                    f"• <code>{esc(row['path'] or '?')}</code>: {row['reviews']} review"
+                    f" · TB {num(row['avg_score'])}"
+                )
+            if len(result["by_repo"]) > 6:
+                lines.append(f"… và {len(result['by_repo']) - 6} repo nữa")
+        if result["categories"]:
+            top = ", ".join(
+                f"{esc(c['category'])} ({c['count']})" for c in result["categories"][:5]
+            )
+            lines += ["", f"Hay gặp: {top}"]
+        title, trend = self._trend(facts, period)
+        if len(trend) > 1:
+            lines += ["", f"<b>{title}</b>", *trend[-13:]]
+        lines += [
+            "",
+            "Chi tiết (mọi dự án, theo tuần): " + self._report_link(f"/members/{user.id}", period),
+            "Điểm là tín hiệu coaching, không phải căn cứ duy nhất để đánh giá.",
+        ]
+        return "\n".join(lines)
+
+    def _report_team(self, facts: list[ReviewFacts], period: Period, scope: str) -> str:
+        lines = [
+            "📊 <b>Báo cáo review · mọi người</b>",
+            f"{esc(period.label())} · {esc(scope)}",
+        ]
+        result = evaluate_members(facts, period.start, period.end, self._tz)
+        t = result["totals"]
+        if not t["reviews"]:
+            lines.append("Chưa có review nào hoàn tất trong khoảng này.")
+            return "\n".join(lines)
+        lines += [
+            "",
+            f"{t['members']} người · <b>{t['reviews']}</b> review"
+            f" (MR {t['mrs']} · commit {t['commits']}) · {thousands(t['loc'])} dòng",
+            f"Điểm TB <b>{num(t['avg_score'])}</b> · {t['critical']} critical · {t['high']} high"
+            f" · tỉ lệ APPROVE {num(t['pass_rate'], 0)}%",
+            "",
+            "<b>Từng người</b> (điểm thấp trước)",
+        ]
+        rows = result["members"]
+        names = {
+            u.id: u.full_name or u.primary_email or f"#{u.id}"
+            for u in self._s.scalars(select(User).where(User.id.in_([r["user_id"] for r in rows])))
+        }
+        for row in rows[:15]:
+            severe = row["critical"] + row["high"]
+            lines.append(
+                f"• {esc(names.get(row['user_id'], '?'))}: TB <b>{num(row['avg_score'])}</b>"
+                f" · {row['reviews']} review"
+                + (f" · {severe} critical/high" if severe else "")
+                + (" ⚠️" if row["needs_attention"] else "")
+            )
+        if len(rows) > 15:
+            lines.append(f"… và {len(rows) - 15} người nữa")
+        lines += [
+            "",
+            "Chi tiết (mọi dự án, theo tuần): " + self._report_link("/members", period),
+            "Điểm là tín hiệu coaching, không phải căn cứ duy nhất để đánh giá.",
+        ]
+        return "\n".join(lines)
 
 
 # -- answering finished requests ------------------------------------------------------------------

@@ -293,7 +293,8 @@ export default function GuidePage() {
           Mỗi lần review là một bản ghi riêng theo commit hoặc theo head của MR; không bao giờ bị xoá và không review lại
           tự động. Lead/admin có thể bấm <strong>Review lại</strong> trên trang review của một commit (bất kỳ) hoặc của MR
           còn mở ở đúng head hiện tại: lần mới thay lần cũ trong điểm tuần/tháng, lần cũ vẫn xem được trong bảng{" "}
-          <strong>Lịch sử review</strong>. Trên Telegram, lead/admin bấm <strong>↻ Cho chọn mục đã review</strong> trong danh sách chọn. Lần cũ chỉ bị
+          <strong>Lịch sử review</strong>. Trên Telegram, lead/admin bấm <strong>↻ Cho chọn mục đã review</strong> trong danh sách chọn, hoặc thêm{" "}
+          <code>again=1</code> vào lệnh <code>/review</code> (mặc định không review lại). Lần cũ chỉ bị
           thay khi lần mới review xong.
         </p>
         <h3>Thêm repo</h3>
@@ -467,6 +468,16 @@ export default function GuidePage() {
                   <code>/status</code> · <code>/critical</code> · <code>/score</code>
                 </td>
                 <td>Review gần đây, lỗi nghiêm trọng đang mở, điểm kỳ gần nhất</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>/report user=tamtd time=04-2026,10-2026</code>
+                </td>
+                <td>
+                  Báo cáo review theo khoảng thời gian. <code>time</code>: tháng (<code>04-2026</code>), ngày, năm, quý
+                  (<code>q2-2026</code>), <code>7d</code>, <code>lastmonth</code>, hoặc hai mốc nối bằng dấu phẩy; bỏ trống = tháng
+                  này. <code>user=all</code>: cả team
+                </td>
               </tr>
             </tbody>
           </table>
