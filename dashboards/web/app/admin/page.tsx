@@ -15,7 +15,8 @@ import { TelegramAdmin } from "@/components/TelegramAdmin";
 import { Card, EmptyState, Loading, Message, PageHeader } from "@/components/ui";
 import { WebhookAdmin } from "@/components/WebhookAdmin";
 import { ApiError, api, useApi } from "@/lib/api";
-import type { Account, Connection, LlmCosts, Me, Person } from "@/lib/types";
+import { attributedText } from "@/lib/format";
+import type { Account, AccountLinked, Connection, LlmCosts, Me, Person } from "@/lib/types";
 
 type Tab = "gitlab" | "repos" | "people" | "telegram" | "webhooks" | "llm" | "commands" | "data";
 const TABS: { key: Tab; label: string; icon: IconName; hint: string }[] = [
@@ -279,6 +280,8 @@ function PeopleTab() {
   const unmapped = useApi<Account[]>("/identity/unmapped");
   const users = useApi<Person[]>("/users");
   const { message, setMessage, run, busy } = useActions();
+  // Earlier reviews of the account follow the link (and their weeks / months are re-scored).
+  const [backfill, setBackfill] = useState(true);
   return (
     <>
       <Message text={message} onClose={() => setMessage(null)} />
@@ -299,6 +302,11 @@ function PeopleTab() {
         ) : unmapped.data.length === 0 ? (
           <EmptyState icon="checkCircle" tone="good" title="Mọi tài khoản đã được gắn" />
         ) : (
+          <>
+          <label className="inline-check" style={{ padding: "0 18px 10px" }}>
+            <input type="checkbox" checked={backfill} onChange={(e) => setBackfill(e.target.checked)} />
+            Chuyển cả các review trước đây của tài khoản sang người được gắn và tính lại điểm
+          </label>
           <div className="table-wrap">
             <table>
               <thead>
@@ -325,9 +333,13 @@ function PeopleTab() {
                         onChange={(e) =>
                           e.target.value &&
                           run(async () => {
-                            await api.put(`/accounts/${a.id}/user`, { user_id: Number(e.target.value) });
+                            const done = await api.put<AccountLinked>(`/accounts/${a.id}/user`, {
+                              user_id: Number(e.target.value),
+                              backfill,
+                            });
                             await unmapped.mutate();
-                          }, `Đã gắn ${a.external_key}.`)
+                            return `Đã gắn ${a.external_key}.${attributedText(done.reviews_attributed, done.periods_queued)}`;
+                          })
                         }
                       >
                         <option value="">Gắn với…</option>
@@ -345,6 +357,7 @@ function PeopleTab() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </Card>
     </>

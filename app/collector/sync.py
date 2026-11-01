@@ -3,13 +3,15 @@
 import logging
 import secrets
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.audit import audit
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.gitlab.collect import GitLabCollector, window_start
 from app.collector.gitlab.convert import Converter, raw_rows_query
@@ -17,6 +19,7 @@ from app.collector.gitlab.extract import extract
 from app.config import get_settings
 from app.crypto import SecretBox, secret_box
 from app.db import get_redis, get_sessionmaker
+from app.identity.attribution import Attribution, attribute_reviews, rebuild_after_commit
 from app.identity.autolink import PublicEmailLookup, autolink
 from app.models import Connection, Project
 
@@ -37,6 +40,8 @@ class SyncResult:
     skipped: bool
     window_start: datetime | None = None
     counts: dict[str, int] | None = None
+    # Reviews that got their person this sync, and the stored periods to rebuild after commit.
+    attribution: Attribution = field(default_factory=Attribution)
 
 
 class Enqueuer(Protocol):
@@ -96,10 +101,13 @@ def sync_project(
     allowed_email_domains: Sequence[str] = (),
     now: datetime | None = None,
     full: bool = False,
+    attribute_tz: ZoneInfo | None = None,
 ) -> SyncResult:
     """Run inside the caller's transaction; last_synced_at only advances if everything succeeds.
     `full`: collect the whole backfill window again (e.g. after a collector fix), not only what
-    changed since the last sync."""
+    changed since the last sync. `attribute_tz`: afterwards give every review still without a
+    person the person its author account has now (app/identity/attribution.py); the caller
+    queues the metrics rebuild once committed."""
     if not project.tracked:
         log.info("sync skipped: repo not tracked", extra={"project_id": project.id})
         return SyncResult(project.id, skipped=True)
@@ -128,10 +136,27 @@ def sync_project(
 
     project.last_synced_at = started
     session.flush()
+    attribution = Attribution()
+    if attribute_tz is not None and linked.account_ids:
+        # Only the accounts this sync tied: one an admin linked by hand with the option off
+        # keeps its earlier reviews without a person.
+        attribution = attribute_reviews(session, attribute_tz, linked.account_ids)
+        if attribution.reviews:
+            audit(
+                session,
+                None,
+                "identity.attribute",
+                f"project:{project.id}",
+                accounts=sorted(set(linked.account_ids)),
+                reviews_attributed=attribution.reviews,
+            )
     counts = {**collected.counts, **{f"domain.{k}": v for k, v in converted.counts.items()}}
     counts["identity.linked"] = sum(linked.linked.values())
+    counts["identity.reviews_attributed"] = attribution.reviews
     log.info("project synced", extra={"project_id": project.id, "counts": counts})
-    return SyncResult(project.id, skipped=False, window_start=since, counts=counts)
+    return SyncResult(
+        project.id, skipped=False, window_start=since, counts=counts, attribution=attribution
+    )
 
 
 def fetch_commit(
@@ -182,7 +207,12 @@ def sync_project_job(project_id: int, full: bool = False) -> dict[str, object]:
             ignore_paths=settings.ignore_paths,
             allowed_email_domains=settings.allowed_email_domains,
             full=full,
+            attribute_tz=ZoneInfo(settings.report_tz),
         )
+    if result.attribution.periods:
+        from rq import Queue
+
+        rebuild_after_commit(Queue("default", connection=get_redis()), result.attribution)
     return {"project_id": result.project_id, "skipped": result.skipped, "counts": result.counts}
 
 

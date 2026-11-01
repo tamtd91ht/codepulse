@@ -5,6 +5,7 @@ every change is audited, one entry per linked account with its previous owner.
 Errors are in Vietnamese: the Admin screen shows them as they are to a non-technical admin."""
 
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
@@ -12,8 +13,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.audit import audit
-from app.api.deps import get_secret_box, get_session
+from app.api.deps import get_queue, get_secret_box, get_session
 from app.api.schemas import (
+    AccountLinked,
     AccountOut,
     AuthorLinkIn,
     GitLabMemberOut,
@@ -23,9 +25,10 @@ from app.api.schemas import (
 )
 from app.api.security import AdminPrincipal
 from app.collector.gitlab.client import GitLabError
-from app.collector.sync import client_factory
+from app.collector.sync import Enqueuer, client_factory
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
+from app.identity.attribution import Attribution, attribute_reviews, rebuild_after_commit
 from app.identity.members import (
     Choice,
     GitLabUser,
@@ -152,6 +155,7 @@ def import_gitlab_members(
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
     settings: Annotated[Settings, Depends(get_settings)],
+    queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> GitLabMembersImported:
     """Create or pick the person of each confirmed member and link their GitLab account.
 
@@ -181,6 +185,17 @@ def import_gitlab_members(
     except IntegrityError:
         session.rollback()  # the same email created concurrently
         raise HTTPException(409, "Email vừa được dùng cho người khác; thử lại.") from None
+    attribution = Attribution()
+    if body.backfill:
+        tz = ZoneInfo(settings.report_tz)
+        # A member moved from another person takes their reviews along; the other accounts
+        # that got a person (imported, or a commit email the import's autolink tied) take
+        # their reviews without a person.
+        moved = set(result.moved_account_ids)
+        attribution.merge(attribute_reviews(session, tz, moved, unassigned_only=False))
+        attribution.merge(
+            attribute_reviews(session, tz, [i for i in result.account_ids if i not in moved])
+        )
     for item in result.items:
         audit(session, principal.user_id, "identity.import_member", "gitlab", **item)
     audit(
@@ -192,18 +207,28 @@ def import_gitlab_members(
         linked=result.linked,
         skipped=result.skipped,
         autolinked=result.autolinked,
+        reviews_attributed=attribution.reviews,
     )
     session.commit()
+    queued = rebuild_after_commit(queue, attribution)
     return GitLabMembersImported(
         created=len(result.created),
         linked=result.linked,
         skipped=result.skipped,
         emails_linked=result.emails_linked,
+        reviews_attributed=attribution.reviews,
+        periods_queued=queued,
     )
 
 
-@router.post("/identity/authors", response_model=AccountOut)
-def link_author(body: AuthorLinkIn, principal: AdminPrincipal, session: SessionDep) -> Account:
+@router.post("/identity/authors", response_model=AccountLinked)
+def link_author(
+    body: AuthorLinkIn,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+    queue: Annotated[Enqueuer, Depends(get_queue)],
+) -> AccountLinked:
     """A commit author (from the commit list) to an existing person or a new one."""
     email = body.email.strip().lower()
     try:
@@ -230,6 +255,13 @@ def link_author(body: AuthorLinkIn, principal: AdminPrincipal, session: SessionD
     except IntegrityError:
         session.rollback()
         raise HTTPException(409, "Email vừa được dùng cho người khác; thử lại.") from None
+    attribution = (
+        attribute_reviews(
+            session, ZoneInfo(settings.report_tz), [account.id], unassigned_only=False
+        )
+        if body.backfill
+        else Attribution()
+    )
     audit(
         session,
         principal.user_id,
@@ -239,6 +271,15 @@ def link_author(body: AuthorLinkIn, principal: AdminPrincipal, session: SessionD
         user_id=user_id,
         previous_user_id=previous,
         created=body.create,
+        backfill=body.backfill,
+        reviews_attributed=attribution.reviews,
     )
     session.commit()
-    return account
+    queued = rebuild_after_commit(queue, attribution)
+    return AccountLinked.model_validate(
+        {
+            **AccountOut.model_validate(account).model_dump(),
+            "reviews_attributed": attribution.reviews,
+            "periods_queued": queued,
+        }
+    )

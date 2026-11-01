@@ -8,7 +8,10 @@ from app.models.base import Base, TimestampMixin
 
 class Commit(TimestampMixin, Base):
     __tablename__ = "commits"
-    __table_args__ = (Index("ix_commits_project_id_authored_at", "project_id", "authored_at"),)
+    __table_args__ = (
+        Index("ix_commits_project_id_authored_at", "project_id", "authored_at"),
+        Index("ix_commits_author_account_id", "author_account_id"),
+    )
 
     sha: Mapped[str] = mapped_column(primary_key=True)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"))
@@ -26,6 +29,7 @@ class MergeRequest(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("project_id", "iid"),
         Index("ix_merge_requests_project_id_merged_at", "project_id", "merged_at"),
+        Index("ix_merge_requests_author_account_id", "author_account_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)

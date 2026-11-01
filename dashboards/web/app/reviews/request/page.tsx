@@ -567,6 +567,8 @@ function RepoCommits({
   onList: (repoId: number, list: CommitList | undefined, error: boolean) => void;
 }) {
   const [polling, setPolling] = useState(false);
+  // What linking an author did to their earlier reviews (LinkAuthor), until the next link.
+  const [linkNote, setLinkNote] = useState<string | null>(null);
   const commits = useApi<CommitList>(path, {
     keepPreviousData: true,
     refreshInterval: polling ? (active ? POLL_MS : POLL_HIDDEN_MS) : 0,
@@ -653,6 +655,11 @@ function RepoCommits({
               </button>
             )}
             {commits.error && <span className="error small">Không làm mới được: {commits.error.message}</span>}
+            {linkNote && (
+              <span className="muted small" role="status">
+                {linkNote}
+              </span>
+            )}
           </div>
           {list.commits.length === 0 ? (
             <EmptyState icon="inbox" title="Không có commit nào trong khoảng này">
@@ -715,7 +722,14 @@ function RepoCommits({
                         {!c.user_id && c.author_email && (
                           <>
                             {" "}
-                            <LinkAuthor email={c.author_email} name={c.author_name} onDone={() => void commits.mutate()} />
+                            <LinkAuthor
+                              email={c.author_email}
+                              name={c.author_name}
+                              onDone={(note) => {
+                                setLinkNote(note);
+                                void commits.mutate();
+                              }}
+                            />
                           </>
                         )}
                       </td>

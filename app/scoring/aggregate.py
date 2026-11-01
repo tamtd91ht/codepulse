@@ -305,6 +305,34 @@ def recompute_job(first_day: str, last_day: str) -> dict[str, int]:
     return {"periods": len(result.periods)}
 
 
+def aggregate_periods_job(periods: list[list[str]]) -> dict[str, int]:
+    """RQ entry point: rebuild the stored metrics of the given [period_type, start] periods
+    (reviews were given their person, app/identity/attribution.py). Scores do not change."""
+    from app.config import get_settings
+    from app.db import get_sessionmaker
+
+    settings = get_settings()
+    tz = ZoneInfo(settings.report_tz)
+    done = 0
+    for kind, start in periods:
+        if kind not in ("week", "month"):
+            continue
+        period_type: PeriodType = "week" if kind == "week" else "month"
+        # One transaction per period: a long backfill keeps what it rebuilt if one fails.
+        with get_sessionmaker()() as session, session.begin():
+            aggregate(
+                session,
+                period_type,
+                date.fromisoformat(start),
+                tz,
+                settings.scoring_weights,
+                settings.min_sample,
+                min_confidence_unverified=settings.verify_min_confidence_unverified,
+            )
+            done += 1
+    return {"periods": done}
+
+
 def aggregate_job(period_type: PeriodType, period_start: str | None = None) -> dict[str, int]:
     """Scheduler/RQ entry point: the given period, or the last complete one."""
     from app.config import get_settings

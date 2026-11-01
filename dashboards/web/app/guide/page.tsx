@@ -360,6 +360,9 @@ export default function GuidePage() {
           <li>
             Tài khoản Git, GitLab hoặc Telegram chưa nhận ra được hiện ở <strong>Tài khoản chưa gắn người</strong>; chọn
             người tương ứng để gắn. Có nhiều người cùng lúc thì vẫn có thể nhập CSV bằng lệnh <code>codepulse identity import</code>.
+            Ô <strong>Chuyển cả các review trước đây của tài khoản…</strong> (bật sẵn) chuyển các review cũ của tài khoản đó sang
+            người được gắn và tính lại điểm các tuần/tháng đã chốt ở nền; lần sync tự động cũng làm vậy với các tài khoản
+            nó tự nhận ra.
           </li>
         </ol>
         <h3>Telegram</h3>

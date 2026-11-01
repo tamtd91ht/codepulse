@@ -4434,3 +4434,16 @@ tr.closure-detail td {
   background: var(--surface);
   white-space: pre-wrap;
 }
+
+/* A checkbox with its label on one line (an option next to a form or above a table). */
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.inline-check.small {
+  font-size: 12px;
+}

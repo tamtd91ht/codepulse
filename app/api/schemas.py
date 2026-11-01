@@ -365,6 +365,14 @@ class AccountOut(ORM):
 
 class AccountLink(BaseModel):
     user_id: int | None  # None unlinks
+    # Also give this account's earlier reviews (those without a person) to the person, and
+    # rebuild the stored metrics of their periods (app/identity/attribution.py).
+    backfill: bool = True
+
+
+class AccountLinked(AccountOut):
+    reviews_attributed: int = 0  # reviews that took the account's (new) person
+    periods_queued: int = 0  # stored weeks / months queued for a rebuild
 
 
 # -- telegram -------------------------------------------------------------------------------------
@@ -1024,6 +1032,9 @@ class GitLabMemberChoice(BaseModel):
 
 class GitLabMembersImport(BaseModel):
     members: list[GitLabMemberChoice] = Field(min_length=1, max_length=1000)
+    # Also give this account's earlier reviews (those without a person) to the person, and
+    # rebuild the stored metrics of their periods (app/identity/attribution.py).
+    backfill: bool = True
 
     @model_validator(mode="after")
     def _once_each(self) -> "GitLabMembersImport":
@@ -1038,6 +1049,8 @@ class GitLabMembersImported(BaseModel):
     linked: int
     skipped: int
     emails_linked: int  # commit emails tied to the people afterwards
+    reviews_attributed: int = 0
+    periods_queued: int = 0
 
 
 class AuthorLinkIn(BaseModel):
@@ -1047,3 +1060,6 @@ class AuthorLinkIn(BaseModel):
     name: str | None = Field(default=None, max_length=255)
     user_id: int | None = None
     create: bool = False  # True: a new person named `name`, with `email` as primary email
+    # Also give this account's earlier reviews (those without a person) to the person, and
+    # rebuild the stored metrics of their periods (app/identity/attribution.py).
+    backfill: bool = True

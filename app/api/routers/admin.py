@@ -20,6 +20,7 @@ from app.api.audit import audit
 from app.api.deps import get_queue, get_secret_box, get_session
 from app.api.schemas import (
     AccountLink,
+    AccountLinked,
     AccountOut,
     BranchBulkIn,
     BranchBulkOut,
@@ -58,6 +59,7 @@ from app.collector.sync import (
 )
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
+from app.identity.attribution import Attribution, attribute_reviews, rebuild_after_commit
 from app.identity.autolink import unmapped_accounts
 from app.models import (
     Account,
@@ -1055,18 +1057,47 @@ def list_accounts(principal: AdminPrincipal, session: SessionDep) -> list[Accoun
     return list(session.scalars(select(Account).order_by(Account.kind, Account.external_key)))
 
 
-@router.put("/accounts/{account_id}/user", response_model=AccountOut)
+@router.put("/accounts/{account_id}/user", response_model=AccountLinked)
 def link_account(
-    account_id: int, body: AccountLink, principal: AdminPrincipal, session: SessionDep
-) -> Account:
+    account_id: int,
+    body: AccountLink,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+    queue: Annotated[Enqueuer, Depends(get_queue)],
+) -> AccountLinked:
     account = _get(session, Account, account_id, "account")
     if body.user_id is not None:
         _get(session, User, body.user_id, "user")
     account.user_id = body.user_id
+    session.flush()
+    # Unlinking never touches reviews: they keep the person they were counted for.
+    attribution = (
+        attribute_reviews(
+            session, ZoneInfo(settings.report_tz), [account.id], unassigned_only=False
+        )
+        if body.backfill and body.user_id is not None
+        else Attribution()
+    )
     action = "account.link" if body.user_id else "account.unlink"
-    audit(session, principal.user_id, action, f"account:{account.id}", user_id=body.user_id)
+    audit(
+        session,
+        principal.user_id,
+        action,
+        f"account:{account.id}",
+        user_id=body.user_id,
+        backfill=body.backfill,
+        reviews_attributed=attribution.reviews,
+    )
     session.commit()
-    return account
+    queued = rebuild_after_commit(queue, attribution)
+    return AccountLinked.model_validate(
+        {
+            **AccountOut.model_validate(account).model_dump(),
+            "reviews_attributed": attribution.reviews,
+            "periods_queued": queued,
+        }
+    )
 
 
 @router.get("/identity/unmapped", response_model=list[AccountOut])

@@ -640,6 +640,12 @@ export interface Account {
   user_id: number | null;
 }
 
+/** PUT /accounts/{id}/user, POST /identity/authors: the account and the reviews it brought. */
+export interface AccountLinked extends Account {
+  reviews_attributed: number;
+  periods_queued: number;
+}
+
 /** GET /metrics/projects: anonymous aggregates per dự án for one period. */
 export interface ProjectAgg {
   reviews: number;
@@ -948,6 +954,8 @@ export interface GitLabMembersImported {
   linked: number;
   skipped: number;
   emails_linked: number;
+  reviews_attributed: number;
+  periods_queued: number;
 }
 
 /* ---- review knowledge (docs/specs/19) ---- */

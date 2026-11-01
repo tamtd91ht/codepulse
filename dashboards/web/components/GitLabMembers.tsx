@@ -5,6 +5,7 @@ import { useSWRConfig } from "swr";
 
 import { EmptyState, Loading, Message, Pill, Segmented } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
+import { attributedText } from "@/lib/format";
 import type { BusinessProject, GitLabMember, GitLabMembers as Members, GitLabMembersImported, Person, Project } from "@/lib/types";
 
 /** What the admin chose for one member: skip, create, link to the person `userId`, or still pick one ("other"). */
@@ -72,6 +73,8 @@ export function GitLabMembers() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Earlier reviews of the linked accounts follow (and their weeks / months are re-scored).
+  const [backfill, setBackfill] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const [message, setMessage] = useState<{ text: string; tone?: "warning" } | null>(null);
   const card = useRef<HTMLElement>(null);
@@ -178,13 +181,14 @@ export function GitLabMembers() {
     });
     setSaving(true);
     try {
-      const done = await api.post<GitLabMembersImported>("/gitlab-members/import", { members: choices });
+      const done = await api.post<GitLabMembersImported>("/gitlab-members/import", { members: choices, backfill });
       await Promise.all([users.mutate(), mutate("/identity/unmapped"), load(source)]);
       setMessage({
         text:
           `Đã tạo ${done.created} người, gắn ${done.linked} tài khoản GitLab` +
           (done.emails_linked ? `, tự gắn thêm ${done.emails_linked} email commit` : "") +
-          ".",
+          "." +
+          attributedText(done.reviews_attributed, done.periods_queued),
       });
       requestAnimationFrame(() => status.current?.focus());
     } catch (e) {
@@ -449,6 +453,10 @@ export function GitLabMembers() {
                   <span role="status">
                     Sẽ <strong>tạo {counts.create}</strong> người mới, <strong>gắn {counts.link}</strong> tài khoản, bỏ qua {counts.skip}.
                   </span>
+                  <label className="inline-check">
+                    <input type="checkbox" checked={backfill} onChange={(e) => setBackfill(e.target.checked)} disabled={saving} />
+                    Gắn cả review cũ và tính lại điểm
+                  </label>
                   <button className="ghost" onClick={() => setConfirming(false)} disabled={saving}>
                     Xem lại
                   </button>

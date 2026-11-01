@@ -137,7 +137,14 @@ def test_import_creates_and_links_the_confirmed_members(
             headers=as_user(world.admin),
         )
     assert res.status_code == 200, res.text
-    assert res.json() == {"created": 1, "linked": 2, "skipped": 1, "emails_linked": 1}
+    assert res.json() == {
+        "created": 1,
+        "linked": 2,
+        "skipped": 1,
+        "emails_linked": 1,
+        "reviews_attributed": 0,
+        "periods_queued": 0,
+    }
     new = db_session.scalars(select(User).where(User.primary_email == "newdev@gmail.com")).one()
     accounts = {
         a.external_key: (a.user_id, a.display_name)

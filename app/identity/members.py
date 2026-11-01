@@ -281,6 +281,9 @@ class ImportResult:
     # One per linked member, for the audit: who went to whom, and from whom when moved.
     items: list[dict[str, Any]] = field(default_factory=list)
     autolinked: dict[str, int] = field(default_factory=dict)  # autolink's reason -> count
+    # Accounts that got a person: the imported GitLab accounts, then those autolink tied.
+    account_ids: list[int] = field(default_factory=list)
+    moved_account_ids: list[int] = field(default_factory=list)  # taken from another person
 
     @property
     def emails_linked(self) -> int:
@@ -383,6 +386,11 @@ def import_members(
             session.add(account)
         account.display_name = member.username
         account.user_id = user_id
+        session.flush()
+        if previous != user_id:
+            result.account_ids.append(account.id)
+            if previous is not None:
+                result.moved_account_ids.append(account.id)
         result.linked += 1
         result.items.append(
             {
@@ -396,7 +404,9 @@ def import_members(
     session.flush()
     # The member's commit emails (noreply, <username>@<domain>) now find the person too. This
     # runs the usual autolink over every unlinked account, as a sync would.
-    result.autolinked = dict(autolink(session, allowed_email_domains).linked)
+    linked = autolink(session, allowed_email_domains)
+    result.autolinked = dict(linked.linked)
+    result.account_ids += linked.account_ids
     return result
 
 

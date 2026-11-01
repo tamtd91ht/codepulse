@@ -140,6 +140,15 @@ export function weekLabel(week: string): string {
 }
 
 /** "dd/mm/yyyy" for a YYYY-MM-DD day. */
+/** What linking an account did to earlier reviews (app/identity/attribution.py); "" when nothing. */
+export function attributedText(reviews: number, periods: number): string {
+  if (!reviews) return "";
+  return (
+    ` ${reviews} review trước đây chưa có người đã được tính cho người này` +
+    (periods ? `; đang tính lại điểm ${periods} tuần/tháng.` : ".")
+  );
+}
+
 export function dayLabel(day: string): string {
   return `${day.slice(8, 10)}/${day.slice(5, 7)}/${day.slice(0, 4)}`;
 }

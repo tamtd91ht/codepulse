@@ -35,6 +35,7 @@ PublicEmailLookup = Callable[[int], str | None]
 class LinkResult:
     linked: dict[str, int] = field(default_factory=dict)  # reason -> count
     bots: int = 0
+    account_ids: list[int] = field(default_factory=list)  # accounts that got a person (and bots)
 
 
 def is_bot(account: Account) -> bool:
@@ -70,6 +71,7 @@ def autolink(
             return False
         account.user_id = user.id
         result.linked[reason] = result.linked.get(reason, 0) + 1
+        result.account_ids.append(account.id)
         return True
 
     def user_of(user_id: int | None) -> User | None:
@@ -82,6 +84,7 @@ def autolink(
         session.flush()
         account.user_id = bot.id
         result.bots += 1
+        result.account_ids.append(account.id)
     unlinked = [a for a in unlinked if a.user_id is None]
 
     # GitLab users: their public email, or <username>@<allowed domain>, is a primary email.

@@ -3,18 +3,30 @@
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { ApiError, api, useApi } from "@/lib/api";
-import type { Person } from "@/lib/types";
+import { attributedText } from "@/lib/format";
+import type { AccountLinked, Person } from "@/lib/types";
 
 /**
  * Admin, in a commit list: tie an author nobody is recognised as (their git email) to a person,
  * or create the person from the commit's name and email. Every commit of that email follows.
  */
-export function LinkAuthor({ email, name, onDone }: { email: string; name: string | null; onDone: () => void }) {
+export function LinkAuthor({
+  email,
+  name,
+  onDone,
+}: {
+  email: string;
+  name: string | null;
+  /** Called after the link, with what it did to earlier reviews (null: nothing to say). */
+  onDone: (note: string | null) => void;
+}) {
   const [open, setOpen] = useState(false);
   const users = useApi<Person[]>(open ? "/users" : null);
   const [pick, setPick] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Earlier reviews of this email follow the link (and their weeks / months are re-scored).
+  const [backfill, setBackfill] = useState(true);
   const button = useRef<HTMLButtonElement>(null);
   const wasOpen = useRef(false);
 
@@ -37,10 +49,13 @@ export function LinkAuthor({ email, name, onDone }: { email: string; name: strin
     setBusy(true);
     setError(null);
     try {
-      await api.post("/identity/authors", pick === "create" ? { email, name, create: true } : { email, name, user_id: Number(pick) });
+      const done = await api.post<AccountLinked>(
+        "/identity/authors",
+        pick === "create" ? { email, name, create: true, backfill } : { email, name, user_id: Number(pick), backfill },
+      );
       setPick("");
       setOpen(false);
-      onDone();
+      onDone(attributedText(done.reviews_attributed, done.periods_queued).trim() || null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -79,6 +94,10 @@ export function LinkAuthor({ email, name, onDone }: { email: string; name: strin
             </option>
           ))}
       </select>
+      <label className="inline-check small">
+        <input type="checkbox" checked={backfill} onChange={(e) => setBackfill(e.target.checked)} />
+        Gắn cả review cũ
+      </label>
       <button type="submit" className="compact" disabled={!pick || busy}>
         {busy ? "…" : "Lưu"}
       </button>
