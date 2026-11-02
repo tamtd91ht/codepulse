@@ -27,6 +27,7 @@ import time
 from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -50,9 +51,12 @@ ACCESS = {
 }
 MAX_REPOS = 200  # a dự án with more repos than this is listed from its first 200
 MAX_MEMBERS = 1000
-# Public emails are looked up one GET /users/:id each, without retries, for this long at most:
-# they only help suggest a match, and a big dự án must not outlast the HTTP request.
+# Public emails are looked up one GET /users/:id each, without retries, started within this
+# long (so at most this plus one request timeout): they only help suggest a match, and a big
+# dự án must not outlast the HTTP request.
 EMAIL_BUDGET_S = 15.0
+# Failures that hold for every repo of the connection: its other repos are not tried.
+CONNECTION_WIDE = {"unauthorized", "unreachable"}
 
 
 @dataclass
@@ -112,13 +116,14 @@ def fetch_members(
     """Members of every repo, one entry per GitLab user (highest access, every repo listed).
 
     A repo GitLab refuses (token without access, repo moved, GitLab down) is reported in
-    `failed` and the others are still listed. The public email (one GET /users/:id each) is
-    looked up only for active members not in `linked` (GitLab ids already tied to a person),
-    within EMAIL_BUDGET_S: it only serves to suggest a match."""
+    `failed` and the others are still listed (one retry each; a bad token or an unreachable
+    GitLab fails the connection's other repos at once). The public email (one GET /users/:id
+    each) is looked up only for active members not in `linked` (GitLab ids already tied to a
+    person), within EMAIL_BUDGET_S from the first lookup: it only serves to suggest a match."""
     found: dict[int, Member] = {}
     failed: list[RepoFailure] = []
     emails_skipped = False
-    deadline = clock() + EMAIL_BUDGET_S
+    deadline: float | None = None
     truncated = len(projects) > MAX_REPOS
     by_connection: dict[int, list[Project]] = {}
     for project in projects[:MAX_REPOS]:
@@ -127,9 +132,15 @@ def fetch_members(
     for connection_id, repos in by_connection.items():
         with make_client(connections[connection_id]) as client:
             mine: set[int] = set()
+            down: str | None = None  # a connection-wide failure: the other repos are skipped
             for project in repos:
+                if down is not None:
+                    failed.append(RepoFailure(project.path_with_namespace, down))
+                    continue
                 try:
-                    for raw in client.project_members(project.external_id):
+                    with client.retries(1):
+                        members = list(_capped(client.project_members(project.external_id)))
+                    for raw in members:
                         gitlab_id = _gitlab_id(raw)
                         if gitlab_id is None:
                             continue
@@ -145,17 +156,29 @@ def fetch_members(
                         extra={"repo": project.path_with_namespace, "reason": reason},
                     )
                     failed.append(RepoFailure(project.path_with_namespace, reason))
+                    if reason in CONNECTION_WIDE:
+                        down = reason
             with client.retries(0):
                 for gitlab_id in sorted(mine - set(linked)):
                     member = found[gitlab_id]
                     if member.email is not None or member.state != "active" or is_bot(member):
                         continue
-                    if clock() > deadline:
+                    if deadline is None:
+                        deadline = clock() + EMAIL_BUDGET_S
+                    elif clock() > deadline:
                         emails_skipped = True
                         break
                     member.email = _public_email(client, gitlab_id)
     members = sorted(found.values(), key=lambda m: (m.name or m.username).casefold())
     return Listing(members, truncated, failed, emails_skipped)
+
+
+def _capped(rows: Iterable[Any]) -> Iterable[Any]:
+    """At most MAX_MEMBERS + 1 rows of one repo: the cap is applied by the caller."""
+    for n, raw in enumerate(rows):
+        if n > MAX_MEMBERS:
+            return
+        yield raw
 
 
 def _gitlab_id(raw: dict[str, Any]) -> int | None:
@@ -207,11 +230,13 @@ def _public_email(client: GitLabClient, gitlab_id: int) -> str | None:
 def lookup_user(client: GitLabClient, connection_id: int, query: str) -> Member | None:
     """One GitLab user by numeric id, username (with or without @) or profile URL; None when
     GitLab does not know them. For adding a member who is in no tracked repo yet."""
-    key = query.strip().rstrip("/").rsplit("/", 1)[-1].lstrip("@")
+    text = query.strip()
+    path = urlsplit(text).path if "://" in text else text
+    key = path.rstrip("/").rsplit("/", 1)[-1].lstrip("@")
     if not key:
         return None
     try:
-        if key.isdigit():
+        if key.isascii() and key.isdigit():
             raw: Any = client.user(int(key))
         else:
             users = client.get("/users", {"username": key})
@@ -222,7 +247,7 @@ def lookup_user(client: GitLabClient, connection_id: int, query: str) -> Member 
         raise
     if not isinstance(raw, dict) or (gitlab_id := _gitlab_id(raw)) is None:
         return None
-    email = raw.get("public_email") or raw.get("email")
+    email = raw.get("public_email")  # as the listing: never a private email an admin token sees
     return Member(
         gitlab_id=gitlab_id,
         username=str(raw.get("username") or gitlab_id),

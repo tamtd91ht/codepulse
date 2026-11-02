@@ -152,6 +152,31 @@ def test_a_repo_gitlab_refuses_is_reported_and_the_others_listed(
     assert "không đủ quyền" in body["failed"][0]["message"]
 
 
+def test_a_bad_token_fails_the_connection_s_other_repos_at_once(
+    client: TestClient, members_world: World, as_user: Any, db_session: Session
+) -> None:
+    world = members_world
+    other = Project(
+        connection_id=world.project.connection_id,
+        external_id=1002,
+        path_with_namespace="demo/zz",
+        business_project_id=world.project.business_project_id,
+    )
+    db_session.add(other)
+    db_session.flush()
+    with respx.mock(assert_all_called=False) as router:
+        router.route(host="testserver").pass_through()
+        first = router.get(f"{API}/projects/1001/members/all").respond(401)
+        second = router.get(f"{API}/projects/1002/members/all").respond(json=MEMBERS)
+        res = client.get(
+            f"/api/v1/business-projects/{world.project.business_project_id}/gitlab-members",
+            headers=as_user(world.admin),
+        )
+    assert first.called and not second.called
+    assert res.status_code == 502
+    assert "demo/p (và 1 repo khác)" in res.json()["detail"]
+
+
 def test_nothing_listed_says_why(client: TestClient, members_world: World, as_user: Any) -> None:
     world = members_world
     with respx.mock(assert_all_called=False) as router:
@@ -182,9 +207,11 @@ def test_a_member_is_added_by_username_id_or_profile_url(
         router.get(f"{API}/users", params={"username": "an"}).respond(json=[USERS[11]])
         router.get(f"{API}/users", params={"username": "ghost"}).respond(json=[])
         new = lookup("@newdev")
-        by_url = lookup("https://gitlab.example.com/an/")
+        by_url = lookup("https://gitlab.example.com/an/?tab=activity")
         by_id = lookup("16")
         ghost = lookup("ghost")
+        router.get(f"{API}/users", params={"username": "²"}).respond(json=[])
+        odd_digit = lookup("\u00b2")  # not an id: looked up as a username, not a 500
         refused = lookup("an", world.an)
     assert new.status_code == 200, new.text
     m = new.json()["members"][0]
@@ -200,6 +227,7 @@ def test_a_member_is_added_by_username_id_or_profile_url(
     )
     assert by_id.json()["members"][0]["action"] == "linked"
     assert ghost.status_code == 404 and "ghost" in ghost.json()["detail"]
+    assert odd_digit.status_code == 404
     assert refused.status_code == 403
 
 

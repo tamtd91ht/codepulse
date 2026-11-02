@@ -99,7 +99,7 @@ def _members(
         {"repo": f.repo, "reason": f.reason, "message": FAILURE.get(f.reason, f.reason)}
         for f in listing.failed
     ]
-    if failed and not listing.members and len(failed) >= len(projects):
+    if failed and not listing.members:
         # Nothing could be read: say why rather than an empty list.
         first = failed[0]
         more = f" (và {len(failed) - 1} repo khác)" if len(failed) > 1 else ""
@@ -156,12 +156,10 @@ def lookup_member(
         raise HTTPException(404, "Chưa có kết nối GitLab; thêm ở tab Kết nối GitLab.")
     session.commit()  # no transaction stays open while GitLab answers
     try:
-        with client_factory(box)(connection) as client:
+        with client_factory(box)(connection) as client, client.retries(1):
             member = lookup_user(client, connection.id, q)
     except GitLabError as exc:
-        reason = failure_reason(exc)
-        text = "bot không được xem thông tin người dùng" if reason == "not_found" else None
-        raise HTTPException(502, f"GitLab: {text or FAILURE[reason]}.") from None
+        raise HTTPException(502, f"GitLab: {FAILURE[failure_reason(exc)]}.") from None
     if member is None:
         raise HTTPException(
             404, f'Không thấy tài khoản GitLab "{q.strip()}" trên {connection.name}.'

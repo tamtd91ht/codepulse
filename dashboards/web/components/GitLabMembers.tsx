@@ -80,6 +80,7 @@ export function GitLabMembers() {
   const [lookup, setLookup] = useState("");
   const [lookupConnection, setLookupConnection] = useState("");
   const [looking, setLooking] = useState(false);
+  const [missing, setMissing] = useState(0); // members added by hand GitLab no longer finds
   const [source, setSource] = useState("");
   const [members, setMembers] = useState<Members | null>(null);
   const [rows, setRows] = useState<Record<number, Row>>({});
@@ -114,7 +115,9 @@ export function GitLabMembers() {
   /** The members added by hand, as GitLab and CodePulse see them now (one gone is dropped). */
   async function extras(): Promise<GitLabMember[]> {
     const found = await Promise.all(extra.current.map((e) => lookupOne(e.q, e.connectionId).catch(() => undefined)));
-    return found.filter((m): m is GitLabMember => m !== undefined);
+    const ok = found.filter((m): m is GitLabMember => m !== undefined);
+    setMissing(found.length - ok.length);
+    return ok;
   }
 
   async function load(from: string, scroll = false): Promise<boolean> {
@@ -130,8 +133,14 @@ export function GitLabMembers() {
       ]);
       const data = withExtra(listed, added);
       if (n !== seq.current || data === null) return false;
-      setMembers(data);
-      setRows(Object.fromEntries(data.members.map((m) => [m.gitlab_id, initial(m)])));
+      // A member added by hand while this ran is not in `data`: kept as it is in the table.
+      const hand = new Set(extra.current.map((e) => e.q));
+      setMembers((prev) => withExtra(data, (prev?.members ?? []).filter((m) => hand.has(String(m.gitlab_id)))));
+      setRows((prev) => {
+        const next: Record<number, Row> = Object.fromEntries(data.members.map((m) => [m.gitlab_id, initial(m)]));
+        for (const [key, row] of Object.entries(prev)) if (hand.has(key) && !(Number(key) in next)) next[Number(key)] = row;
+        return next;
+      });
       setInvalid({});
       setFilter("todo");
       if (scroll) requestAnimationFrame(() => card.current?.scrollIntoView({ block: "start" }));
@@ -155,7 +164,10 @@ export function GitLabMembers() {
     setLooking(true);
     try {
       const m = await lookupOne(q, connectionId);
-      if (!extra.current.some((x) => x.q === m.username && x.connectionId === connectionId)) extra.current.push({ q: m.username, connectionId });
+      // By GitLab id: a rename on GitLab does not lose the member on the next reload.
+      const key = String(m.gitlab_id);
+      if (!extra.current.some((x) => x.q === key && x.connectionId === connectionId)) extra.current.push({ q: key, connectionId });
+
       const known = members?.members.some((x) => x.gitlab_id === m.gitlab_id);
       setMembers((d) => withExtra(d, [m]));
       setRows((r) => (r[m.gitlab_id] ? r : { ...r, [m.gitlab_id]: initial(m) }));
@@ -358,22 +370,29 @@ export function GitLabMembers() {
       </datalist>
 
       {loading && <Loading rows={4}>Đang đọc thành viên từ GitLab…</Loading>}
-      {!loading && members && all.length === 0 && (
-        <EmptyState icon="members" title={members.repos === 0 ? "Dự án chưa có repo nào đang theo dõi" : `${isProject ? "Dự án" : "Repo"} không có thành viên nào bot đọc được`} />
-      )}
-      {!loading && members && all.length > 0 && (
+      {!loading && members && (
         <>
           {(members.failed?.length ?? 0) > 0 && (
             <Message
               tone="warning"
               text={`Không đọc được thành viên của ${members.failed?.length} repo: ${members.failed
                 ?.map((f) => `${f.repo} (${f.message})`)
-                .join("; ")}. Danh sách dưới đây là của các repo còn lại; thiếu ai thì dùng "Thêm theo GitLab".`}
+                .join("; ")}. Các repo còn lại vẫn được liệt kê; thiếu ai thì dùng "Thêm theo GitLab".`}
             />
           )}
           {members.emails_skipped && (
             <Message tone="warning" text="Nhiều thành viên quá nên chưa tra hết email công khai; một số đề xuất gắn theo email có thể thiếu." />
           )}
+          {missing > 0 && (
+            <Message tone="warning" text={`${missing} thành viên thêm tay không tra lại được trên GitLab nên đã bị bỏ khỏi bảng.`} />
+          )}
+        </>
+      )}
+      {!loading && members && all.length === 0 && (
+        <EmptyState icon="members" title={members.repos === 0 ? "Dự án chưa có repo nào đang theo dõi" : `${isProject ? "Dự án" : "Repo"} không có thành viên nào bot đọc được`} />
+      )}
+      {!loading && members && all.length > 0 && (
+        <>
           {members.truncated && (
             <Message
               tone="warning"
