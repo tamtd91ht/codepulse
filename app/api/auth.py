@@ -222,6 +222,8 @@ def me(
     return {
         **public_user(user),
         "is_admin": principal.is_admin,
+        # Manages every dự án without a grant (users.manage_all); `projects` lists them all.
+        "manage_all": principal.manages_all,
         "lead_teams": sorted(principal.lead_teams),
         "managed_teams": sorted(principal.managed_teams),
         "teams": sorted(principal.own_teams),

@@ -22,6 +22,7 @@ from app.api.schemas import (
     AccountLink,
     AccountLinked,
     AccountOut,
+    AdminUserOut,
     BranchBulkIn,
     BranchBulkOut,
     BusinessProjectIn,
@@ -44,7 +45,6 @@ from app.api.schemas import (
     TeamIn,
     TeamOut,
     UserIn,
-    UserOut,
     UserPatch,
 )
 from app.api.security import AdminPrincipal, LeadPrincipal
@@ -877,12 +877,23 @@ def backfill_reviews(
 # -- identity -------------------------------------------------------------------------------------
 
 
-@router.get("/users", response_model=list[UserOut])
-def list_users(principal: AdminPrincipal, session: SessionDep) -> list[User]:
-    return list(session.scalars(select(User).order_by(User.id)))
+@router.get("/users", response_model=list[AdminUserOut])
+def list_users(
+    principal: AdminPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> list[dict[str, Any]]:
+    admins = {e.lower() for e in settings.admin_emails}
+    return [
+        {
+            **AdminUserOut.model_validate(u).model_dump(),
+            "is_admin": bool(u.primary_email and u.primary_email.lower() in admins),
+        }
+        for u in session.scalars(select(User).order_by(User.id))
+    ]
 
 
-@router.post("/users", response_model=UserOut, status_code=201)
+@router.post("/users", response_model=AdminUserOut, status_code=201)
 def create_user(body: UserIn, principal: AdminPrincipal, session: SessionDep) -> User:
     user = User(
         full_name=body.full_name, primary_email=body.primary_email.lower(), active=body.active
@@ -898,7 +909,7 @@ def create_user(body: UserIn, principal: AdminPrincipal, session: SessionDep) ->
     return user
 
 
-@router.patch("/users/{user_id}", response_model=UserOut)
+@router.patch("/users/{user_id}", response_model=AdminUserOut)
 def update_user(
     user_id: int, body: UserPatch, principal: AdminPrincipal, session: SessionDep
 ) -> User:

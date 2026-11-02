@@ -75,7 +75,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     ? ""
     : isAdmin
       ? "Admin"
-      : me.lead_teams.length
+      : me.manage_all
+        ? "Quản lý tổng"
+        : me.lead_teams.length
         ? "Lead"
         : me.managed_teams.length || managesProject
           ? "Manager"

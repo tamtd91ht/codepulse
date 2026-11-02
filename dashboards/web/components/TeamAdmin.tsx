@@ -163,6 +163,30 @@ export function TeamAdmin() {
                           <code>{u.primary_email ?? "—"}</code>
                           {u.active === false ? " · đã tắt" : ""}
                         </td>
+                        <td>
+                          {u.is_admin ? (
+                            <span className="muted small">Admin</span>
+                          ) : (
+                          <label
+                            className="inline-check small"
+                            title="Xem và quản lý mọi dự án như quản lý dự án, không cần cấp quyền từng dự án; không vào được Admin."
+                          >
+                            <input
+                              type="checkbox"
+                              checked={!!u.manage_all}
+                              onChange={(e) => {
+                                const on = e.target.checked;
+                                const name = u.full_name ?? u.primary_email ?? `#${u.id}`;
+                                void run(async () => {
+                                  await api.patch(`/users/${u.id}`, { manage_all: on });
+                                  await users.mutate();
+                                }, on ? `${name} giờ quản lý mọi dự án.` : `${name} không còn quản lý mọi dự án.`);
+                              }}
+                            />
+                            Quản lý tổng
+                          </label>
+                          )}
+                        </td>
                         <td style={{ textAlign: "right" }}>
                           <IconButton
                             icon="remove"

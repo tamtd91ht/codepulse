@@ -1,6 +1,6 @@
 from datetime import date
 
-from sqlalchemy import ForeignKey, UniqueConstraint
+from sqlalchemy import ForeignKey, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -21,6 +21,8 @@ class User(TimestampMixin, Base):
     full_name: Mapped[str | None]
     primary_email: Mapped[str | None] = mapped_column(unique=True)
     active: Mapped[bool | None] = mapped_column(server_default="true")
+    # Manages every dự án without a grant (below admin, 2026-11-02; app/api/security.py).
+    manage_all: Mapped[bool] = mapped_column(server_default=false(), default=False)
 
 
 class TeamMember(TimestampMixin, Base):

@@ -35,6 +35,7 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 
 ### Phân quyền theo dự án (bổ sung ngoài spec, người dùng yêu cầu 2026-10-28)
 - Admin = email nằm trong `ADMIN_EMAILS` (`.env`): toàn quyền, không cần cấp quyền dự án.
+- **Quản lý tổng** (`users.manage_all`, người dùng yêu cầu 2026-11-02): dưới admin, trên mọi role khác — như `manage` trên **mọi** dự án (cả dự án tạo sau) mà không cần cấp quyền từng dự án; không vào Admin, không thấy repo chưa gán dự án. Họ thấy mọi người (số liệu vẫn chỉ tính việc trong dự án), nhưng bản thân không tính là "người trong dự án" của ai (không hiện trong danh sách người của manager khác) trừ khi có commit/MR ở đó; ô bật tắt ẩn với admin. Admin bật/tắt ở Admin › Người & Team (`PATCH /users/{id}` `{manage_all}`, audit `user.update`); `GET /auth/me` trả `manage_all`.
 - Người khác chỉ thấy các dự án (`business_projects`) được admin cấp quyền trong bảng `project_grants`; dự án không được cấp coi như không tồn tại (404), repo chưa gán dự án chỉ admin thấy.
 - Hai mức trong một dự án:
 

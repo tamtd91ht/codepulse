@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_session
 from app.config import Settings, get_settings
-from app.models import ProjectGrant, Team, TeamMember, User
+from app.models import BusinessProject, ProjectGrant, Team, TeamMember, User
 
 SESSION_COOKIE = "codepulse_session"
 ALGORITHM = "HS256"
@@ -60,6 +60,8 @@ class Principal:
     lead_members: set[int] = field(default_factory=set)  # users in the teams this person leads
     # dự án id -> "view" | "manage" (project_grants); admins need none.
     project_roles: dict[int, str] = field(default_factory=dict)
+    # users.manage_all: "manage" on every dự án, granted or not (not admin: no Admin screens).
+    manages_all: bool = False
 
     @property
     def is_lead(self) -> bool:
@@ -168,7 +170,12 @@ def load_principal(
     admins = {e.lower() for e in settings.admin_emails}
     is_admin = bool(user.primary_email and user.primary_email.lower() in admins)
     roles: dict[int, str] = {}
-    if not is_admin:
+    manages_all = not is_admin and bool(user.manage_all)
+    if manages_all:
+        # Every dự án as its manager: every rule on project_roles then holds as for a granted
+        # manager. Repos outside every dự án stay the admins'.
+        roles = {int(bp): "manage" for bp in session.scalars(select(BusinessProject.id))}
+    elif not is_admin:
         roles = {
             int(bp): str(role)
             for bp, role in session.execute(
@@ -186,6 +193,7 @@ def load_principal(
         own_teams={m.team_id for m in memberships},
         lead_members=lead_members,
         project_roles=roles,
+        manages_all=manages_all,
     )
 
 

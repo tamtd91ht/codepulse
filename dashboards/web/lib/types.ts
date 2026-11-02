@@ -7,6 +7,8 @@ export interface Me {
   full_name: string | null;
   email: string | null;
   is_admin: boolean;
+  /** Manages every dự án without a grant (below admin); `projects` then lists every dự án as "manage". */
+  manage_all?: boolean;
   lead_teams: number[];
   managed_teams: number[];
   teams: number[];
@@ -47,6 +49,10 @@ export interface Person {
   full_name: string | null;
   primary_email: string | null;
   active: boolean | null;
+  /** Admin › Người & Team only: manages every dự án without a grant. */
+  manage_all?: boolean;
+  /** Admin › Người & Team only: in ADMIN_EMAILS (has every right already). */
+  is_admin?: boolean;
 }
 
 export interface Metrics {

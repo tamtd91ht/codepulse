@@ -326,6 +326,14 @@ class UserIn(BaseModel):
 class UserPatch(BaseModel):
     full_name: str | None = None
     active: bool | None = None
+    manage_all: bool | None = None  # manages every dự án without a grant (below admin)
+
+
+class AdminUserOut(UserOut):
+    """A person as Admin > Người & Team lists them."""
+
+    manage_all: bool = False
+    is_admin: bool = False  # ADMIN_EMAILS: has every right already, manage_all does nothing
 
 
 class TeamOut(ORM):

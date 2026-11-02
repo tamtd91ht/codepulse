@@ -112,14 +112,14 @@ def seen_people(session: Session, principal: Principal) -> set[int] | None:
     A). None: everyone (admin). Their numbers then only count work the viewer may see
     (`review_scope`)."""
     visible = principal.visible_users()
-    if visible is None:
-        return None
+    if visible is None or principal.manages_all:
+        return None  # admin, or "Quản lý tổng": everyone (numbers still by `review_scope`)
     managed = principal.managed_projects() or set()
     return visible | project_people(session, managed) if managed else visible
 
 
 def may_see_person(session: Session, principal: Principal, user_id: int) -> bool:
-    if principal.can_see_user(user_id):
+    if principal.can_see_user(user_id) or principal.manages_all:
         return True
     managed = list(principal.managed_projects() or set())
     if not managed:
