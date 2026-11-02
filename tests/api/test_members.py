@@ -16,7 +16,14 @@ pytestmark = pytest.mark.integration
 
 API = "https://gitlab.example.com/api/v4"
 MEMBERS = [
-    {"id": 11, "username": "an", "name": "An Nguyen", "state": "active", "access_level": 30},
+    {
+        "id": 11,
+        "username": "an",
+        "name": "An Nguyen",
+        "state": "active",
+        "access_level": 30,
+        "web_url": "https://gitlab.example.com/an",
+    },
     {"id": 12, "username": "binh.tran", "name": "Binh", "state": "active", "access_level": 40},
     {"id": 13, "username": "newdev", "name": "New Dev", "state": "active", "access_level": 30},
     {"id": 14, "username": "renovate-bot", "name": "Renovate", "state": "active"},
@@ -86,6 +93,12 @@ def test_repo_members_come_with_what_to_do(
     assert (by_name["lead"]["action"], by_name["lead"]["user_id"]) == ("linked", world.lead.id)
     assert by_name["lead"]["access"] == "owner"
     assert by_name["an"]["connection_id"] == world.project.connection_id
+    # GitLab id and profile page: to check it is the right member.
+    assert (by_name["an"]["gitlab_id"], by_name["an"]["web_url"]) == (
+        11,
+        "https://gitlab.example.com/an",
+    )
+    assert by_name["binh.tran"]["web_url"] is None
     # Only admins.
     for url in (
         f"/api/v1/projects/{world.project.id}/gitlab-members",

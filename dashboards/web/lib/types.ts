@@ -955,6 +955,8 @@ export interface GitLabMember {
   state: string;
   access: string;
   email: string | null;
+  /** The GitLab profile page. */
+  web_url?: string | null;
   repos: string[];
   /** Sent back on import: the GitLab the member is read back from. */
   connection_id: number;

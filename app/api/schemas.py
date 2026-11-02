@@ -1032,6 +1032,7 @@ class GitLabMemberOut(BaseModel):
     state: str
     access: str  # guest | reporter | developer | maintainer | owner
     email: str | None  # public (or visible to the token); used to suggest a match
+    web_url: str | None = None  # the GitLab profile page: to check it is the right member
     repos: list[str]
     connection_id: int  # sent back on import: the GitLab the user is read back from
     # linked: already a person's; link: firm match; review: weak hint (same name), not

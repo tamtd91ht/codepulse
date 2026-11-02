@@ -101,6 +101,7 @@ def _members(
                 state=s.member.state,
                 access=s.member.access,
                 email=s.member.email,
+                web_url=s.member.web_url,
                 repos=s.member.repos,
                 connection_id=s.member.connection_id,
                 action=s.action,

@@ -59,6 +59,7 @@ class Member:
     level: int  # highest GitLab access level over the repos
     connection_id: int  # the GitLab it was listed from: import reads the user back from it
     email: str | None = None  # only when the token may see it, or the user made it public
+    web_url: str | None = None  # the GitLab profile page (http(s) only)
     repos: list[str] = field(default_factory=list)
 
     @property
@@ -124,6 +125,11 @@ def _gitlab_id(raw: dict[str, Any]) -> int | None:
         return None
 
 
+def _web_url(value: object) -> str | None:
+    url = str(value or "")
+    return url if url.startswith(("https://", "http://")) else None
+
+
 def _merge(found: dict[int, Member], raw: dict[str, Any], repo: str, connection_id: int) -> None:
     gitlab_id = _gitlab_id(raw)
     if gitlab_id is None:
@@ -142,6 +148,7 @@ def _merge(found: dict[int, Member], raw: dict[str, Any], repo: str, connection_
             level=level,
             connection_id=connection_id,
             email=(str(raw["email"]).lower() if raw.get("email") else None),
+            web_url=_web_url(raw.get("web_url")),
         )
         found[gitlab_id] = member
     member.level = max(member.level, level)

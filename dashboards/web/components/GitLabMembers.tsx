@@ -217,7 +217,7 @@ export function GitLabMembers() {
     if (!row) return false;
     const b = bucket(m, row);
     if (filter === "todo" ? b === "linked" : b !== filter) return false;
-    return !q || `${m.name ?? ""} ${m.username} ${m.email ?? ""}`.toLowerCase().includes(q);
+    return !q || `${m.name ?? ""} ${m.username} ${m.email ?? ""} ${m.gitlab_id}`.toLowerCase().includes(q);
   });
   const isProject = source.startsWith("bp:");
 
@@ -302,7 +302,7 @@ export function GitLabMembers() {
                 { value: "linked", label: `Đã gắn (${all.length - pending.length})` },
               ]}
             />
-            <input className="compact" type="search" placeholder="Tìm tên, username, email" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Tìm thành viên" />
+            <input className="compact" type="search" placeholder="Tìm tên, username, email, GitLab ID" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Tìm thành viên" />
             {pending.length > 0 && (
               <>
                 <button
@@ -349,7 +349,17 @@ export function GitLabMembers() {
                     return (
                       <tr key={m.gitlab_id}>
                         <td>
-                          <strong>{m.name ?? m.username}</strong> <span className="muted">@{m.username}</span>
+                          <strong>{m.name ?? m.username}</strong>{" "}
+                          {m.web_url ? (
+                            <a href={m.web_url} target="_blank" rel="noopener noreferrer" title="Mở hồ sơ GitLab">
+                              @{m.username}
+                            </a>
+                          ) : (
+                            <span className="muted">@{m.username}</span>
+                          )}
+                          <div className="muted small">
+                            GitLab ID: <code>{m.gitlab_id}</code>
+                          </div>
                           {m.email && <div className="muted small">{m.email}</div>}
                           {members.repos > 1 && <div className="muted small">{m.repos.length} repo</div>}
                         </td>
