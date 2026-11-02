@@ -231,14 +231,37 @@ def import_gitlab_members(
     }
     if set(wanted) - set(connections):
         raise HTTPException(404, "Không tìm thấy kết nối GitLab; lấy lại danh sách.")
+    # Where GitLab listed each member (tracked repos of that connection, from our own table):
+    # asked when GET /users/:id is closed on the instance.
+    paths = {p for c in choices for p in c.repos}
+    repo_ids = {
+        (p.connection_id, p.path_with_namespace): p.external_id
+        for p in (
+            session.scalars(select(Project).where(Project.path_with_namespace.in_(paths)))
+            if paths
+            else []
+        )
+    }
+    member_of = {
+        c.gitlab_id: [
+            repo_ids[(c.connection_id, p)] for p in c.repos if (c.connection_id, p) in repo_ids
+        ]
+        for c in choices
+    }
     session.commit()  # no transaction stays open while GitLab answers
     gitlab: dict[int, GitLabUser] = {}
     make = client_factory(box)
     try:
         for connection_id, ids in wanted.items():
             with make(connections[connection_id]) as client:
-                gitlab |= resolve(client, ids)
+                gitlab |= resolve(client, ids, member_of)
         result = import_members(session, choices, gitlab, settings.allowed_email_domains)
+    except GitLabError as exc:
+        session.rollback()
+        reason = failure_reason(exc)
+        raise HTTPException(
+            502, f"Không đọc lại được thành viên từ GitLab: {FAILURE[reason]}. Chưa lưu gì."
+        ) from None
     except ImportRefused as exc:
         session.rollback()
         raise _refused(exc) from None

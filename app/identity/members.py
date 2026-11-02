@@ -365,6 +365,7 @@ class Choice:
     full_name: str | None = None  # create
     email: str | None = None  # create
     move: bool = False  # link even when the account or the person is linked elsewhere
+    repos: list[str] = field(default_factory=list)  # where the listing saw them (a hint)
 
 
 @dataclass
@@ -401,22 +402,48 @@ class ImportRefused(ValueError):
         self.code = code
 
 
-def resolve(client: GitLabClient, gitlab_ids: Iterable[int]) -> dict[int, GitLabUser]:
-    """Each id's username, name and state from GitLab (GET /users/:id); unknown ids are absent."""
+MAX_FALLBACK_REPOS = 3  # repos asked for a member when GET /users/:id does not answer
+
+
+def resolve(
+    client: GitLabClient,
+    gitlab_ids: Iterable[int],
+    member_of: dict[int, list[int]] | None = None,
+) -> dict[int, GitLabUser]:
+    """Each id's username, name and state from GitLab; unknown ids are absent.
+
+    GET /users/:id first; where the instance closes or fails it (a token that is not admin
+    on a locked-down GitLab), the member entry of a repo they were listed in (`member_of`:
+    GitLab project ids) says the same. One retry each: the admin is waiting."""
     out: dict[int, GitLabUser] = {}
     for gitlab_id in gitlab_ids:
         try:
-            raw = client.user(gitlab_id)
+            with client.retries(1):
+                raw = client.user(gitlab_id)
         except GitLabError as exc:
-            if exc.status_code == 404:
-                continue
-            raise
+            raw = _member_entry(client, gitlab_id, (member_of or {}).get(gitlab_id, []))
+            if raw is None:
+                if exc.status_code == 404:
+                    continue
+                raise
         out[gitlab_id] = GitLabUser(
             username=str(raw.get("username") or gitlab_id),
             name=raw.get("name") or None,
             state=str(raw.get("state") or "active"),
         )
     return out
+
+
+def _member_entry(client: GitLabClient, gitlab_id: int, projects: list[int]) -> Any:
+    for project_id in projects[:MAX_FALLBACK_REPOS]:
+        try:
+            with client.retries(1):
+                raw = client.project_member(project_id, gitlab_id)
+        except GitLabError:
+            continue
+        if isinstance(raw, dict) and _gitlab_id(raw) == gitlab_id:
+            return raw
+    return None
 
 
 def import_members(

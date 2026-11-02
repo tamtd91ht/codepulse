@@ -359,3 +359,55 @@ def test_a_commit_author_links_to_a_person_or_a_new_one(
     assert client.post("/api/v1/identity/authors", json=nobody, headers=admin).status_code == 422
     lead = as_user(world.lead)
     assert client.post("/api/v1/identity/authors", json=nobody, headers=lead).status_code == 403
+
+
+# -- GET /users/:id closed on the instance (a non-admin token on a locked-down GitLab) --
+
+
+def _create(world: World, repos: list[str]) -> dict[str, Any]:
+    return {
+        "gitlab_id": 13,
+        "connection_id": world.project.connection_id,
+        "action": "create",
+        "full_name": "New Dev",
+        "email": "newdev@gmail.com",
+        "repos": repos,
+    }
+
+
+def test_a_member_is_read_from_the_repo_when_the_users_api_is_closed(
+    client: TestClient, members_world: World, as_user: Any, db_session: Session
+) -> None:
+    world = members_world
+    with respx.mock(assert_all_called=False) as router:
+        router.route(host="testserver").pass_through()
+        router.get(f"{API}/users/13").respond(403)
+        entry = router.get(f"{API}/projects/1001/members/all/13").respond(json=USERS[13])
+        res = client.post(
+            "/api/v1/gitlab-members/import",
+            json={"members": [_create(world, ["demo/p", "not/tracked"])]},
+            headers=as_user(world.admin),
+        )
+    assert res.status_code == 200, res.text
+    assert entry.called and res.json()["created"] == 1
+    account = db_session.scalars(
+        select(Account).where(Account.kind == "gitlab_user", Account.external_key == "13")
+    ).one()
+    assert account.display_name == "newdev" and account.user_id is not None
+
+
+def test_nothing_is_saved_and_the_admin_is_told_why(
+    client: TestClient, members_world: World, as_user: Any, db_session: Session
+) -> None:
+    world = members_world
+    with respx.mock(assert_all_called=False) as router:
+        router.route(host="testserver").pass_through()
+        router.get(f"{API}/users/13").respond(403)
+        res = client.post(
+            "/api/v1/gitlab-members/import",
+            json={"members": [_create(world, [])]},
+            headers=as_user(world.admin),
+        )
+    assert res.status_code == 502
+    assert "không đủ quyền" in res.json()["detail"] and "Chưa lưu gì" in res.json()["detail"]
+    assert db_session.scalars(select(Account).where(Account.external_key == "13")).first() is None

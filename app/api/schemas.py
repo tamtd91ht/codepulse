@@ -1062,6 +1062,8 @@ class GitLabMemberChoice(BaseModel):
     full_name: str | None = Field(default=None, max_length=255)  # create
     email: str | None = Field(default=None, pattern=r"^$|^[^@\s]+@[^@\s]+$", max_length=255)
     move: bool = False  # take the account from the person it is linked to
+    # Repos the listing saw them in: asked for the member when GET /users/:id is closed.
+    repos: list[str] = Field(default_factory=list, max_length=200)
 
 
 class GitLabMembersImport(BaseModel):

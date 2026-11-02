@@ -243,7 +243,7 @@ export function GitLabMembers() {
     if (!members) return;
     const choices = pending.map((m) => {
       const row = rows[m.gitlab_id];
-      const base = { gitlab_id: m.gitlab_id, connection_id: m.connection_id };
+      const base = { gitlab_id: m.gitlab_id, connection_id: m.connection_id, repos: m.repos.slice(0, 200) };
       if (row.action === "create") return { ...base, action: "create", full_name: row.fullName.trim(), email: row.email.trim() || null };
       if (row.action === "link" && row.userId) return { ...base, action: "link", user_id: row.userId };
       return { ...base, action: "skip" };
@@ -273,6 +273,7 @@ export function GitLabMembers() {
         requestAnimationFrame(() => document.getElementById(`gm-${row.gitlab_id}`)?.focus());
       }
       setMessage({ text: `Lỗi: ${text}` });
+      requestAnimationFrame(() => status.current?.focus()); // the message is at the top of the card
     } finally {
       setSaving(false);
       setConfirming(false);
