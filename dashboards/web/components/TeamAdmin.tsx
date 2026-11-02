@@ -177,6 +177,12 @@ export function TeamAdmin() {
                               onChange={(e) => {
                                 const on = e.target.checked;
                                 const name = u.full_name ?? u.primary_email ?? `#${u.id}`;
+                                const ok = window.confirm(
+                                  on
+                                    ? `Cho "${name}" quyền Quản lý tổng? Họ sẽ xem và quản lý MỌI dự án (yêu cầu, chạy lại review, sửa Tiền đề, gắn tác giả) mà không cần cấp quyền từng dự án.`
+                                    : `Bỏ quyền Quản lý tổng của "${name}"? Họ chỉ còn các quyền dự án được cấp riêng.`,
+                                );
+                                if (!ok) return;
                                 void run(async () => {
                                   await api.patch(`/users/${u.id}`, { manage_all: on });
                                   await users.mutate();
@@ -247,16 +253,25 @@ export function TeamAdmin() {
                           <select
                             value={m.role ?? "member"}
                             aria-label="Vai trò"
-                            onChange={(e) =>
-                              run(async () => {
+                            onChange={(e) => {
+                              const role = e.target.value;
+                              const label = ROLES.find((r) => r.value === role)?.label ?? role;
+                              const before = ROLES.find((r) => r.value === (m.role ?? "member"))?.label ?? m.role;
+                              if (
+                                !window.confirm(
+                                  `Đổi vai trò của ${m.full_name ?? m.primary_email} trong ${teamName(teamId)} từ "${before}" sang "${label}"? Vai trò quyết định họ xem được điểm và review của ai.`,
+                                )
+                              )
+                                return;
+                              void run(async () => {
                                 await api.put(`/teams/${teamId}/members`, {
                                   user_id: m.user_id,
-                                  role: e.target.value,
+                                  role,
                                   joined_at: m.joined_at,
                                 });
                                 await members.mutate();
-                              }, `Đã đổi vai trò của ${m.full_name ?? m.primary_email}.`)
-                            }
+                              }, `Đã đổi vai trò của ${m.full_name ?? m.primary_email}.`);
+                            }}
                           >
                             {ROLES.map((r) => (
                               <option key={r.value} value={r.value}>
@@ -273,8 +288,14 @@ export function TeamAdmin() {
                           <IconButton
                             icon="leave"
                             label="Rời team (giữ lịch sử)"
-                            onClick={() =>
-                              run(async () => {
+                            onClick={() => {
+                              if (
+                                !window.confirm(
+                                  `Cho ${m.full_name ?? m.primary_email} rời ${teamName(teamId)} từ hôm nay? Họ mất các quyền theo vai trò trong team; dữ liệu cũ vẫn giữ.`,
+                                )
+                              )
+                                return;
+                              void run(async () => {
                                 await api.put(`/teams/${teamId}/members`, {
                                   user_id: m.user_id,
                                   role: m.role ?? "member",
@@ -282,8 +303,8 @@ export function TeamAdmin() {
                                   left_at: today(),
                                 });
                                 await members.mutate();
-                              }, `${m.full_name ?? m.primary_email} đã rời team (dữ liệu cũ vẫn giữ).`)
-                            }
+                              }, `${m.full_name ?? m.primary_email} đã rời team (dữ liệu cũ vẫn giữ).`);
+                            }}
                           />
                         )}
                       </td>
@@ -295,7 +316,18 @@ export function TeamAdmin() {
           )}
           <form
             className="toolbar"
-            onSubmit={(e) =>
+            onSubmit={(e) => {
+              const f = new FormData(e.currentTarget);
+              const who = users.data?.find((u) => String(u.id) === f.get("user_id"));
+              const label = ROLES.find((r) => r.value === f.get("role"))?.label ?? String(f.get("role"));
+              if (
+                !window.confirm(
+                  `Thêm ${who?.full_name ?? who?.primary_email ?? "người này"} vào ${teamName(teamId)} với vai trò "${label}"?`,
+                )
+              ) {
+                e.preventDefault();
+                return;
+              }
               submit(
                 e,
                 async (f) => {
@@ -307,8 +339,8 @@ export function TeamAdmin() {
                   await members.mutate();
                 },
                 "Đã thêm vào team.",
-              )
-            }
+              );
+            }}
           >
             <select name="user_id" required defaultValue="">
               <option value="" disabled>

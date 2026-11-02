@@ -54,7 +54,25 @@ export function ProjectGrants({ project, busy }: { project: BusinessProject; bus
       { user_id: user.id, full_name: user.full_name, email: user.primary_email, active: user.active !== false, role: "view" },
     ]);
   }
+  /** What saving changes, for the confirmation. */
+  function changes(): string[] {
+    const before = new Map((saved.data ?? []).map((g) => [g.user_id, g]));
+    const after = new Map(rows.map((g) => [g.user_id, g]));
+    const name = (g: ProjectGrant) => g.full_name ?? g.email ?? `#${g.user_id}`;
+    const role = (r: ProjectRole) => ROLES.find((x) => x.value === r)?.label ?? r;
+    const out: string[] = [];
+    for (const g of rows) {
+      const was = before.get(g.user_id);
+      if (!was) out.push(`+ ${name(g)}: ${role(g.role)}`);
+      else if (was.role !== g.role) out.push(`~ ${name(g)}: ${role(was.role)} → ${role(g.role)}`);
+    }
+    for (const g of saved.data ?? []) if (!after.has(g.user_id)) out.push(`- ${name(g)}: bỏ quyền`);
+    return out;
+  }
+
   async function save() {
+    const list = changes();
+    if (!window.confirm(`Lưu quyền dự án "${project.name}"?\n\n${list.join("\n")}`)) return;
     setWorking(true);
     setResult(null);
     try {

@@ -93,3 +93,25 @@ def test_nobody_turns_it_on_for_themselves_or_through_create(
     assert created.status_code == 201 and created.json()["manage_all"] is False
     listed = {u["id"]: u for u in client.get("/api/v1/users", headers=as_user(world.admin)).json()}
     assert listed[world.admin.id]["is_admin"] is True and listed[world.an.id]["is_admin"] is False
+
+
+def test_only_an_admin_grants_or_removes_it_not_a_quan_ly_tong(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    world.outsider.manage_all = True
+    db_session.flush()
+    me = as_user(world.outsider)
+    give = client.patch(f"/api/v1/users/{world.an.id}", json={"manage_all": True}, headers=me)
+    drop = client.patch(
+        f"/api/v1/users/{world.outsider.id}", json={"manage_all": False}, headers=me
+    )
+    assert (give.status_code, drop.status_code) == (403, 403)
+    # Nor through a dự án's grants (admin screens).
+    grants = client.put(
+        f"/api/v1/business-projects/{world.project.business_project_id}/grants",
+        json={"grants": []},
+        headers=me,
+    )
+    assert grants.status_code == 403
+    db_session.refresh(world.an)
+    assert world.an.manage_all is False
