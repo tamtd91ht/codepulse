@@ -12,7 +12,7 @@ from app.api.main import app
 from app.api.routers.activity import get_backlog, get_progress
 from app.models import Account, Commit, Project, ProjectGrant
 from app.review.progress import MemoryProgress
-from tests.api.conftest import World
+from tests.api.conftest import World, grant
 
 pytestmark = pytest.mark.integration
 
@@ -59,7 +59,7 @@ def live(
             "ref": "c" * 40,
             "sha": "c" * 40,
             "title": "secret work",
-            "author_user_id": None,  # unmapped author: leads and admins only
+            "author_user_id": None,  # unmapped author: managers and admins only
             "trigger": "webhook",
             "started_at": "2026-10-27T09:01:00+00:00",
         },
@@ -95,7 +95,7 @@ def test_lead_sees_running_waiting_and_ended_reviews_with_details(
     client: TestClient, world: World, as_user: Any, live: Any
 ) -> None:
     body = client.get("/api/v1/activity/reviews", headers=as_user(world.lead)).json()
-    first, unmapped = body["running"]
+    (first,) = body["running"]  # the unmapped author's review is for managers / admins
     assert (first["review_id"], first["stage"], first["detail"], first["round"]) == (
         900,
         "deep",
@@ -104,14 +104,14 @@ def test_lead_sees_running_waiting_and_ended_reviews_with_details(
     )
     assert first["web_url"] == "https://gitlab.example.com/demo/p/-/merge_requests/7"
     assert (first["author"], first["requested_by"], first["loc"]) == ("An", "Lead", 120)
-    assert unmapped["review_id"] == 901
     (waiting,) = body["queued"]  # the unsynced MR is for admins; the unknown commit is skipped
     assert (waiting["ref"], waiting["title"], waiting["author"]) == ("b" * 40, "b" * 8, "Binh")
     assert waiting["web_url"].endswith("/-/commit/" + "b" * 40)
     (ended,) = body["recent"]
     assert (ended["review_id"], ended["status"], ended["state"]) == (903, "done", "ended")
     assert body["queued_total"] == 1
-    assert body["hidden"] == 2  # the untracked repo's review, the unsynced MR
+    # The untracked repo's review, the unmapped author's, the unsynced MR.
+    assert body["hidden"] == 3
 
 
 def test_admin_also_sees_work_that_is_not_synced_yet(
@@ -242,7 +242,7 @@ def test_nothing_running(client: TestClient, world: World, as_user: Any, live: A
 
 
 def test_live_view_of_a_review_follows_its_visibility(
-    client: TestClient, world: World, as_user: Any, live: Any
+    client: TestClient, db_session: Session, world: World, as_user: Any, live: Any
 ) -> None:
     progress, _ = live
     progress.event(900, [{"kind": "tool", "tool": "Read", "target": "src/app.py", "turn": 1}])
@@ -252,11 +252,11 @@ def test_live_view_of_a_review_follows_its_visibility(
     assert body["running"] is True
     assert [(e["tool"], e["target"]) for e in body["events"]] == [("Read", "src/app.py")]
 
-    # The unmapped author's review: leads and admins only, invisible (404) to a member.
-    assert (
-        client.get("/api/v1/activity/reviews/901/live", headers=as_user(world.an)).status_code
-        == 404
-    )
+    # The unmapped author's review: managers of the dự án and admins only (404 otherwise).
+    for who in (world.an, world.lead):
+        url = "/api/v1/activity/reviews/901/live"
+        assert client.get(url, headers=as_user(who)).status_code == 404
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
     lead = client.get("/api/v1/activity/reviews/901/live", headers=as_user(world.lead))
     assert lead.status_code == 200 and lead.json()["events"][0]["target"] == "tenant_id"
 

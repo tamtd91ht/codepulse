@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.models import Account, BusinessProject, Commit, Project, TelegramBot
 from app.telegram.resolve import Kind
-from tests.api.conftest import FakeQueue, World
+from tests.api.conftest import FakeQueue, World, grant
 from tests.api.test_telegram import link, message, service
 
 
@@ -46,7 +46,7 @@ def test_abbreviated_repo_and_user_resolve_deterministically(
     assert bp is not None
     api = add_repo(db_session, world, "vihat/cloud-saas-global-api", bp.id)
     add_repo(db_session, world, "vihat/cloud-saas-global-web", bp.id)
-    # binh's email is binh@x.vn: "binh" is its local part; the lead may review binh.
+    # binh's email is binh@x.vn: "binh" is its local part; a manager may review binh.
     db_session.add(
         Account(kind="git_email", external_key="binh.personal@gmail.com", user_id=world.binh.id)
     )
@@ -77,6 +77,7 @@ def test_abbreviated_repo_and_user_resolve_deterministically(
     )
     db_session.flush()
     link(db_session, world.lead, 888)
+    grant(db_session, world.lead, bp.id, "manage")
     svc = service(db_session, bot, settings, queue, clock=now)
 
     reply = svc.handle(message("/review type=commit repo=global-api user=binh", from_id=888)) or ""
@@ -95,7 +96,11 @@ def test_abbreviated_repo_and_user_resolve_deterministically(
     # A member cannot widen scope with user=: an may not review binh.
     link(db_session, world.an, 777)
     denied = svc.handle(message("/review type=commit user=binh repo=global-api")) or ""
-    assert "không review được" in denied
+    assert "chỉ review được commit / MR của chính mình" in denied
+    # Binh himself may: "binh" names him.
+    link(db_session, world.binh, 666)
+    mine = svc.handle(message("/review type=commit user=binh repo=global-api", from_id=666)) or ""
+    assert "11111111" in mine
 
     # type=mr without id: the latest MR of the sender (none here -> a clear note, nothing queued).
     before = len(queue.jobs)

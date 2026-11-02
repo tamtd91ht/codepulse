@@ -81,13 +81,6 @@ class Principal:
         """None means everyone (admin)."""
         return None if self.is_admin else {self.user_id} | self.lead_members
 
-    def may_review_author(self, author_user_id: int | None) -> bool:
-        """Asking for a review of someone's work: yourself, people you lead, admin anyone;
-        work whose author is not mapped to a person needs a lead or admin."""
-        if author_user_id is None:
-            return self.is_admin or self.is_lead
-        return self.can_see_user(author_user_id)
-
     # -- dự án grants (docs/specs/09 "Phân quyền theo dự án") -----------------------------------
     # A dự án you hold no grant on does not exist for you; repos outside every dự án are the
     # admins'. Inside a dự án you see, the team rules above still hold ("view"); "manage" covers
@@ -120,10 +113,21 @@ class Principal:
         return author_user_id is not None and author_user_id in self.lead_members
 
     def may_review_work(self, author_user_id: int | None, bp_id: int | None) -> bool:
-        """Asking for a review of a commit in a repo of dự án `bp_id`."""
-        if not self.can_view_project(bp_id):
-            return False
-        return self.can_manage_project(bp_id) or self.may_review_author(author_user_id)
+        """Asking for a review of a commit / MR in a repo of dự án `bp_id` (dashboard and
+        Telegram alike, 2026-11-02): your own work in a dự án you see; anyone else's, and work
+        whose author is not mapped to a person, only as a manager of that dự án or admin.
+        Leading a team gives no review right (it still shows the team's results)."""
+        if self.can_manage_project(bp_id):
+            return True
+        return (
+            self.can_view_project(bp_id)
+            and author_user_id is not None
+            and author_user_id == self.user_id
+        )
+
+    def reviews_others(self, bp_id: int | None) -> bool:
+        """May ask for reviews of other people's work in dự án `bp_id`."""
+        return self.can_manage_project(bp_id)
 
 
 def _descendants(teams: Iterable[Team], roots: set[int]) -> set[int]:

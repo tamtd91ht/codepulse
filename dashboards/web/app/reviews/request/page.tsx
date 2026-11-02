@@ -100,7 +100,7 @@ type Outcome = ReviewCommitsResult | { error: string };
 /** Pick repos (up to 10), a branch, people and a window; see the commits per repo; queue reviews (docs/specs/17). */
 export default function RequestReviewPage() {
   const repos = useApi<Repo[]>("/repos");
-  const people = useApi<Person[]>("/people");
+  const people = useApi<Person[]>("/people?for=review");
   const { mutate } = useSWRConfig();
   const [bp, setBp] = useState(ALL);
   const [repoIds, setRepoIds] = useState<number[]>([]);
@@ -286,7 +286,7 @@ export default function RequestReviewPage() {
       <PageHeader
         eyebrow="Review"
         title="Yêu cầu review"
-        subtitle="Chọn tối đa 10 repo, một branch, người và khoảng thời gian; review chạy trong nền và lưu vào dashboard như review tự động. Chỉ repo thuộc dự án bạn được cấp quyền; trong đó bạn review được việc của mình, lead thêm người mình lead, người quản lý dự án và admin mọi người."
+        subtitle="Chọn tối đa 10 repo, một branch, người và khoảng thời gian; review chạy trong nền và lưu vào dashboard như review tự động. Chỉ repo thuộc dự án bạn được cấp quyền; trong đó bạn review được việc của mình; người quản lý dự án và admin review được mọi người."
       />
 
       <Card title="Phạm vi">

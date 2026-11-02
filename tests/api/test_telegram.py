@@ -35,7 +35,7 @@ from app.telegram.service import (
     MemoryWebhookGuard,
     incoming,
 )
-from tests.api.conftest import FakeQueue, World
+from tests.api.conftest import FakeQueue, World, grant
 
 pytestmark = pytest.mark.integration
 
@@ -233,7 +233,7 @@ def test_member_reviews_their_own_mr_and_a_request_is_recorded(
     )
 
 
-def test_member_cannot_review_someone_elses_work_but_lead_can(
+def test_only_a_manager_of_the_dự_án_reviews_someone_elses_work(
     db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
 ) -> None:
     binh_account = Account(kind="git_email", external_key="binh@x.vn", user_id=world.binh.id)
@@ -245,14 +245,22 @@ def test_member_cannot_review_someone_elses_work_but_lead_can(
     link(db_session, world.an, 777)
     link(db_session, world.lead, 888)
     link(db_session, world.outsider, 999)
+    link(db_session, world.manager, 666)
     svc = service(db_session, bot, settings, queue)
     denied = svc.handle(message(f"/review commit {'e' * 8}")) or ""
-    assert "chỉ review được" in denied and queue.jobs == []
-    # A lead of another team is not Binh's lead either.
+    assert "chỉ review được commit của chính mình" in denied and queue.jobs == []
     assert "chỉ review được" in (
         svc.handle(message(f"/review commit {'e' * 8}", from_id=999)) or ""
     )
-    ok = svc.handle(message(f"/review commit {'e' * 8}", from_id=888)) or ""
+    # Binh's team lead sees his results but may not queue reviews of his work (2026-11-02).
+    assert "chỉ review được" in (
+        svc.handle(message(f"/review commit {'e' * 8}", from_id=888)) or ""
+    )
+    # Naming someone else is refused before any lookup.
+    assert "quản lý dự án" in (svc.handle(message("/review last binh@x.vn", from_id=888)) or "")
+    assert queue.jobs == []
+    grant(db_session, world.manager, world.project.business_project_id, "manage")
+    ok = svc.handle(message(f"/review commit {'e' * 8}", from_id=666)) or ""
     assert "Đã đưa <b>1</b> review" in ok
     assert queue.jobs[0][0] == "app.workers.review_jobs.review_commit_job"
     assert queue.jobs[0][1] == (world.project.id, "e" * 40)
@@ -281,7 +289,7 @@ def test_failed_review_is_requeued(
     assert world.binh_review.status == "queued"
 
 
-def test_today_reviews_todays_commits_of_the_people_a_lead_names(
+def test_today_reviews_todays_commits_of_the_people_a_manager_names(
     db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
 ) -> None:
     accounts = {
@@ -323,7 +331,18 @@ def test_today_reviews_todays_commits_of_the_people_a_lead_names(
     db_session.add_all(rows)
     db_session.flush()
     link(db_session, world.lead, 888)
+    link(db_session, world.an, 777)
     svc = service(db_session, bot, settings, queue, clock=now)
+    # A member (or a plain team lead) names only themselves.
+    assert "quản lý dự án" in (svc.handle(message("/review today binh@x.vn")) or "")
+    assert "quản lý dự án" in (
+        svc.handle(message("/review today an@x.vn binh@x.vn", from_id=888)) or ""
+    )
+    assert queue.jobs == []
+    reply = svc.handle(message("/review today an@x.vn", from_id=777)) or ""  # An herself
+    assert "Đã đưa <b>1</b> review" in reply and queue.jobs[0][1][1] == "1" * 40
+    queue.jobs.clear()
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
     reply = svc.handle(message("/review today an@x.vn binh@x.vn", from_id=888)) or ""
     assert "Đã đưa <b>2</b> review" in reply
     assert sorted(j[1][1] for j in queue.jobs) == ["1" * 40, "2" * 40]
@@ -333,7 +352,7 @@ def test_today_reviews_todays_commits_of_the_people_a_lead_names(
     )
 
 
-def test_open_is_lead_only_scoped_to_the_leads_people_and_skips_reviewed_mrs(
+def test_open_lists_a_members_own_mrs_and_everyones_for_a_manager(
     db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
 ) -> None:
     outsider_acc = Account(kind="gitlab_user", external_key="900", user_id=world.outsider.id)
@@ -341,7 +360,7 @@ def test_open_is_lead_only_scoped_to_the_leads_people_and_skips_reviewed_mrs(
     db_session.flush()
     db_session.add_all(
         [
-            # Unmapped author, hostile title: queued for the lead, title escaped in the reply.
+            # Unmapped author, hostile title: a manager's, title escaped in the reply.
             MergeRequest(
                 project_id=world.project.id,
                 iid=9,
@@ -349,7 +368,7 @@ def test_open_is_lead_only_scoped_to_the_leads_people_and_skips_reviewed_mrs(
                 state="opened",
                 title="<b>x</b> & co",
             ),
-            # Authored by someone the Backend lead does not lead: not theirs to review.
+            # The outsider's own MR.
             MergeRequest(
                 project_id=world.project.id,
                 iid=10,
@@ -364,10 +383,17 @@ def test_open_is_lead_only_scoped_to_the_leads_people_and_skips_reviewed_mrs(
     link(db_session, world.an, 777)
     link(db_session, world.lead, 888)
     link(db_session, world.admin, 999)
+    link(db_session, world.outsider, 555)
     svc = service(db_session, bot, settings, queue)
-    assert "dành cho lead" in (svc.handle(message("/review open")) or "")
+    # Members, team leads included: their own open MRs only.
+    assert "MR đang mở nào của bạn" in (svc.handle(message("/review open")) or "")
+    assert "MR đang mở nào của bạn" in (svc.handle(message("/review open", from_id=888)) or "")
+    reply = svc.handle(message("/review open", from_id=555)) or ""
+    assert "Đã đưa <b>1</b> review" in reply and "!10" in reply and "!9" not in reply
+    queue.jobs.clear()
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
     reply = svc.handle(message("/review open", from_id=888)) or ""
-    assert "Đã đưa <b>1</b> review" in reply and "!9" in reply and "!10" not in reply
+    assert "Đã đưa <b>2</b> review" in reply and "!9" in reply
     assert "&lt;b&gt;x&lt;/b&gt; &amp; co" in reply and "<b>x</b>" not in reply
     # The admin sees everyone: !9 and !10 (the fake queue wrote no review row for !9 yet).
     reply = svc.handle(message("/review open", from_id=999)) or ""

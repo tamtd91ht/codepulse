@@ -12,7 +12,8 @@
 ## Danh tính và quyền
 - Telegram user là một `accounts` kind `telegram` (external_key = telegram user id), chỉ được tạo khi `/link` thành công (ai cũng nhắn được cho bot nên người lạ không được ghi vào DB). Người chưa gắn → bot hướng dẫn `/link MÃ`.
 - Mã liên kết: `POST /me/telegram/link-code`, 6 ký tự, dùng một lần, sống 15 phút (Redis).
-- Quyền đúng như dashboard (09, 11): thành viên review việc của mình; lead review người trong team mình lead; admin mọi người. Tác giả chưa gắn người → cần lead/admin. `/review open`, `/sync` chỉ lead/admin.
+- **Quyền review (2026-11-02, chung với dashboard, `Principal.may_review_work`)**: mỗi người chỉ review được commit / MR của **chính mình**; **người quản lý dự án** (grant `manage` trên dự án của bot) và **admin** review được của mọi người, kể cả tác giả chưa gắn người. Lead / manager của team **không** còn quyền review người khác (vẫn xem được kết quả của người mình lead như trước). Quyền xem (`/score`, `/report`, `/critical`) không đổi. `/sync` vẫn cho lead / quản lý dự án / admin.
+- Kiểm tra ở mọi lối vào: `user=` / tên người trong lệnh (thành viên gõ tên người khác → từ chối ngay, không tra cứu, không gọi LLM), `id=` (theo tác giả), danh sách nút (thành viên chỉ thấy việc của mình), mọi lần bấm nút (nút "của ai?" của người quản lý trong nhóm bị thành viên bấm → vẫn chỉ ra danh sách của thành viên đó), và lần cuối khi bấm **Review đã chọn**.
 - Mỗi người tối đa `TELEGRAM_COMMANDS_PER_10MIN` lệnh review/sync trong 10 phút; mỗi lệnh `today`/`open` tối đa `TELEGRAM_MAX_TARGETS` mục (bảo vệ ngân sách LLM).
 - `allowed_chat_ids` (tuỳ chọn): bot chỉ trả lời trong các chat đó.
 - Audit: `telegram.bot.*` (admin), `telegram.link`, `telegram.unlink`, `telegram.link_code`, `telegram.review`, `telegram.sync`.
@@ -34,24 +35,26 @@ Dạng ưu tiên (2026-10-26): các cặp `key=value`, không cần đúng thứ
 - Dạng cũ bên dưới vẫn dùng được.
 
 ### Chọn bằng nút (không cần mở GitLab)
-- `/review` không tham số → menu nút: **Commit gần đây** / **MR đang mở**; dự án có nhiều repo → thêm bước chọn repo (tối đa 8 nút); người gọi review được nhiều người (lead/admin) → thêm bước **của ai?** (👥 Mọi người, hoặc từng người trong phạm vi, tối đa 12 nút; quá thì gõ `user=`). Trong danh sách luôn có nút **👤 Người** để lọc lại. Mặc định không còn là commit của chính người gọi.
-- `type=commit` không `id=` và không `user=` (hoặc có `range=`) → bot liệt kê commit của **mọi người** trên nhánh (`branch=`, mặc định default branch; GitLab trước, DB khi GitLab lỗi), tối đa 40 mục, 8 mục/trang, bỏ merge commit; mỗi mục ghi tiêu đề, tác giả, thời gian và trạng thái: ⬜ chọn được, ✅ đã review (kèm verdict/điểm), ⏳ đang review, ↻ lần trước lỗi, 🚫 ngoài quyền của người gọi. `type=mr` không `id=` → danh sách MR đang mở tương tự. `user=` lọc danh sách theo người; `all=1` bỏ qua bước chọn và xếp hàng tất cả như trước.
+- Luồng theo vai trò (2026-11-02), ít bước nhất có thể:
+  - **Thành viên**: `/review` → **📝 Commit của tôi** / **🔀 MR của tôi** → (chọn repo nếu dự án có nhiều repo; repo có commit mới nhất của bạn đứng đầu) → danh sách **chỉ gồm việc của bạn**, commit lấy trên **mọi nhánh** (việc của mình thường nằm ở nhánh tính năng; `branch=` hoặc nút 🌿 để chỉ xem nhánh review) → tick → **Review đã chọn**. Không có bước "của ai?", không có nút 👤, không có dòng 🚫.
+  - **Người quản lý dự án / admin**: `/review` → **Commit gần đây** / **MR đang mở** → repo (repo có commit mới nhất đứng đầu) → **của ai?**: 🙋 Của tôi, 👥 Mọi người, rồi từng người (người được cấp quyền dự án và người đã commit trong dự án 90 ngày qua, ai commit gần nhất trước; tối đa 12 nút, quá thì gõ `user=`) → danh sách trên nhánh review (nút 🌿 để xem mọi nhánh; nút 👤 để đổi người).
+- `type=commit` không `id=` và không `user=` (hoặc có `range=`) → danh sách commit (thành viên: của mình trên mọi nhánh; quản lý: của mọi người trên nhánh review, `branch=` để đổi; GitLab trước, DB khi GitLab lỗi), tối đa 40 mục, 8 mục/trang, bỏ merge commit; mỗi mục ghi tiêu đề, tác giả, thời gian và trạng thái: ⬜ chọn được, ✅ đã review (kèm verdict/điểm), ⏳ đang review, ↻ lần trước lỗi, 🚫 không được review (chỉ còn là chốt chặn phòng thủ). `type=mr` không `id=` → danh sách MR đang mở tương tự. `user=` lọc danh sách theo người (thành viên: chỉ chính mình); `all=1` bỏ qua bước chọn và xếp hàng tất cả.
 - Bàn phím inline: nút số để tick, **Chọn hết**, **Review đã chọn (n)**, **Trước/Sau**, **Huỷ**. Trạng thái chọn lưu Redis (`tg:pick:<token>`, 30 phút); chỉ người gọi lệnh bấm được (người khác được báo); hết hạn → báo gõ lại. Bấm **Review đã chọn** → kiểm tra quyền theo tác giả từng mục, enqueue như lệnh thường (`trigger=telegram`, `telegram_requests` để trả kết quả về chat), sửa tin nhắn thành danh sách đã xếp hàng và gỡ nút. Mọi lần bấm đều được `answerCallbackQuery` để tắt vòng xoay.
 - Poller nhận thêm `callback_query` trong `getUpdates`; lỗi khi xử lý một lần bấm chỉ hiện thông báo cho người bấm, không chặn bot.
 
 | Lệnh | Ý nghĩa | Quyền |
 |---|---|---|
-| `/review mr <iid\|link> [repo]` | Review một MR (head hiện tại lấy từ GitLab) | tác giả / lead / admin |
-| `/review commit <sha\|link> [repo]` | Review một commit | tác giả / lead / admin |
+| `/review mr <iid\|link> [repo]` | Review một MR (head hiện tại lấy từ GitLab) | tác giả / quản lý dự án / admin |
+| `/review commit <sha\|link> [repo]` | Review một commit | tác giả / quản lý dự án / admin |
 | `/review last [repo] [người]` | Commit gần nhất của một người | như trên |
 | `/review lastmr [repo] [người]` | MR gần nhất của một người | như trên |
-| `/review today [repo] [người...]` | Commit hôm nay (REPORT_TZ) của một/nhiều người, bỏ merge commit và commit đã có review | lead cho người khác |
-| `/review open [repo]` | MR đang mở chưa có review, của người mình lead (admin: mọi người) | lead / admin |
+| `/review today [repo] [người...]` | Commit hôm nay (REPORT_TZ) của một/nhiều người, bỏ merge commit và commit đã có review | quản lý dự án / admin cho người khác |
+| `/review open [repo]` | MR đang mở chưa có review: của bạn (quản lý dự án / admin: mọi người) | ai cũng dùng |
 | `/status` | 5 review gần nhất của bạn, số yêu cầu đang chờ | ai cũng dùng |
 | `/critical [repo]` | Finding critical/high đang mở trong phạm vi bạn xem được | theo quyền xem |
 | `/score [người] [week\|month]` | Chỉ số kỳ gần nhất (Quality Index, điểm TB, critical/high, fix rate) | theo quyền xem |
 | `/report [user=…\|all] [time=…] [repo=…]` | Báo cáo review theo khoảng thời gian (xem dưới) | theo quyền xem chỉ số cá nhân |
-| `/repos`, `/sync [repo]`, `/whoami`, `/link <mã>`, `/unlink`, `/help` | tiện ích | `/sync` lead/admin |
+| `/repos`, `/sync [repo]`, `/whoami` (vai trò và quyền review), `/link <mã>`, `/unlink`, `/help` | tiện ích | `/sync` lead / quản lý dự án / admin |
 
 Repo: đường dẫn GitLab hoặc hậu tố (`api`, `omicrm/api`). Người: `@username` GitLab, email, một phần tên, hoặc `me`. Viết tắt: `/mr 12`, `/commit abc`, `/today`, `/last`, `/open`.
 

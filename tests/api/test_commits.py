@@ -79,10 +79,28 @@ def test_repos_people_and_branches_follow_the_callers_scope(
     assert [p["id"] for p in client.get("/api/v1/people", headers=as_user(world.an)).json()] == [
         world.an.id
     ]
+    # Viewing (filters of review lists): a lead still sees the people they lead.
     lead_people = {
         p["id"] for p in client.get("/api/v1/people", headers=as_user(world.lead)).json()
     }
     assert lead_people == {world.lead.id, world.an.id, world.binh.id}
+    # Asking for reviews (2026-11-02): leading a team gives no review right.
+    review_people = client.get(
+        "/api/v1/people", params={"for": "review"}, headers=as_user(world.lead)
+    ).json()
+    assert [p["id"] for p in review_people] == [world.lead.id]
+    # A manager of the dự án: themself first, then the people granted it.
+    grant(db_session, world.manager, bp.id, "manage")
+    manager_people = [
+        p["id"]
+        for p in client.get(
+            "/api/v1/people", params={"for": "review"}, headers=as_user(world.manager)
+        ).json()
+    ]
+    assert manager_people[0] == world.manager.id and set(manager_people) == {
+        world.manager.id,
+        world.an.id,
+    }
     assert len(client.get("/api/v1/people", headers=as_user(world.admin)).json()) == 6
 
     with respx.mock(assert_all_called=False) as router:
@@ -101,6 +119,8 @@ def test_recent_commits_show_review_state_and_hide_strangers(
     with respx.mock(assert_all_called=False) as router:
         gitlab(router)
         as_an = client.get(path, params={"ref": "main"}, headers=as_user(world.an)).json()
+        plain_lead = client.get(path, params={"ref": "main"}, headers=as_user(world.lead)).json()
+        grant(db_session, world.lead, world.project.business_project_id, "manage")
         as_lead = client.get(path, params={"ref": "main"}, headers=as_user(world.lead)).json()
         only_binh = client.get(
             path, params={"ref": "main", "user_id": world.binh.id}, headers=as_user(world.lead)
@@ -115,7 +135,9 @@ def test_recent_commits_show_review_state_and_hide_strangers(
     a, c = as_an["commits"]
     assert a["reviewable"] is True and a["user_name"] == "An" and a["additions"] == 30
     assert (c["is_merge"], c["reviewable"], c["reason"]) == (True, False, "merge commit")
-    # The lead sees their people and the unmapped author; binh's commit has a failed review.
+    # A team lead without the manage grant has no commit of their own here: all hidden.
+    assert plain_lead["commits"] == [] and plain_lead["hidden"] == 4
+    # A manager sees everyone and the unmapped author; binh's commit has a failed review.
     by_sha = {c["sha"]: c for c in as_lead["commits"]}
     assert set(by_sha) == {A, B, C, D} and as_lead["hidden"] == 0
     assert (by_sha[B]["review_status"], by_sha[B]["reviewable"]) == ("failed", True)
@@ -135,6 +157,11 @@ def test_review_commits_queues_dashboard_reviews_and_explains_skips(
         denied = client.post(
             path, json={"ref": "main", "shas": [B]}, headers=as_user(world.an)
         ).json()
+        # Binh's team lead may not either; a manager of the dự án may.
+        lead_denied = client.post(
+            path, json={"ref": "main", "shas": [B]}, headers=as_user(world.lead)
+        ).json()
+        grant(db_session, world.lead, world.project.business_project_id, "manage")
         result = client.post(
             path,
             json={"ref": "main", "shas": [A, B, C, D, "e" * 40, A]},
@@ -144,6 +171,7 @@ def test_review_commits_queues_dashboard_reviews_and_explains_skips(
         "queued": [],
         "skipped": [{"sha": B, "reason": "không thuộc quyền review của bạn"}],
     }
+    assert lead_denied == denied
     assert result.status_code == 202, result.text
     body = result.json()
     # A and D are new commits (rows created); B's failed review may run again; C is a merge.
@@ -163,6 +191,7 @@ def test_review_commits_queues_dashboard_reviews_and_explains_skips(
         select(AuditLog).where(AuditLog.action == "project.review_commits").order_by(AuditLog.id)
     ).all()
     assert [a.details for a in audits] == [
+        {"ref": "main", "queued": 0, "skipped": 1},
         {"ref": "main", "queued": 0, "skipped": 1},
         {"ref": "main", "queued": 3, "skipped": 2},
     ]
@@ -218,14 +247,14 @@ def test_a_reviewed_commit_can_be_reviewed_again_as_a_new_round(
             headers=as_user(world.admin),
         ).json()
 
-    # A lead may not spend a second review; a manager or admin may, with a warning on the page.
-    lead_b = next(c for c in as_lead.json()["commits"] if c["sha"] == B)
-    assert (lead_b["reviewable"], lead_b["again"], lead_b["reason"]) == (False, False, "đã review")
+    # A lead does not even see Binh's commit; a manager or admin may review it again, with a
+    # warning on the page.
+    assert B not in {c["sha"] for c in as_lead.json()["commits"]}
     admin_b = next(c for c in as_admin.json()["commits"] if c["sha"] == B)
     assert (admin_b["reviewable"], admin_b["again"], admin_b["reason"]) == (True, True, None)
 
     assert plain["skipped"] == [{"sha": B, "reason": "đã có review (done)"}]
-    assert lead["skipped"] == [{"sha": B, "reason": "chỉ quản lý dự án hoặc admin được review lại"}]
+    assert lead["skipped"] == [{"sha": B, "reason": "không thuộc quyền review của bạn"}]
     assert admin == {"queued": [B], "skipped": []}
     # The new round is queued now; the second request finds it and spends nothing.
     assert twice["skipped"] == [{"sha": B, "reason": "đã có review (queued)"}]

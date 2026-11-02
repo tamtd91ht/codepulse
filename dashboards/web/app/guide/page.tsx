@@ -444,7 +444,7 @@ export default function GuidePage() {
                 </td>
                 <td>
                   Commit / MR gần nhất của một người (viết tắt theo username, email hoặc tên; bỏ <code>user=</code> là
-                  của bạn; lead mới review được người khác)
+                  của bạn; chỉ người quản lý dự án và admin review được người khác)
                 </td>
               </tr>
               <tr>
@@ -464,7 +464,7 @@ export default function GuidePage() {
                 <td>
                   <code>/review open</code>
                 </td>
-                <td>Các MR đang mở chưa được review (lead)</td>
+                <td>Các MR đang mở chưa được review: của bạn (quản lý dự án / admin: của mọi người)</td>
               </tr>
               <tr>
                 <td>

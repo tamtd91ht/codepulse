@@ -76,7 +76,7 @@ def test_render_escapes_and_marks_states() -> None:
     assert "☑ <b>1.</b> feat: change 0 &lt;b&gt; · An · 2 giờ trước" in text
     assert "✅ <b>2.</b>" in text and "đã review: APPROVE 82" in text
     assert "⏳ <b>3.</b>" in text and "đang review" in text
-    assert "🚫 <b>4.</b>" in text and "ngoài quyền review" in text
+    assert "🚫 <b>4.</b>" in text and "chỉ tác giả / quản lý dự án" in text
     assert "đã chọn 1" in text
 
 
@@ -164,9 +164,20 @@ def test_people_keyboard_offers_everyone_then_people() -> None:
         "commit",
         "7:2",
     )
+    # The caller's own list comes first for a manager.
+    mine = people_keyboard("mr", 7, [(2, "Bình")], me=5)["inline_keyboard"][0]
+    assert [b["text"] for b in mine] == ["🙋 Của tôi", "👥 Mọi người"]
+    assert mine[0]["callback_data"] == "us||mr|7:5"
     st = state(1)
     st.project_id = 7
-    assert any(b["text"] == "👤 Người" for row in keyboard(st)["inline_keyboard"] for b in row)
+
+    def texts(st: PickerState) -> list[str]:
+        return [b["text"] for row in keyboard(st)["inline_keyboard"] for b in row]
+
+    # A member's list is their own work: no button to look at someone else's.
+    assert "👤 Người" not in texts(st)
+    st.may_others = True
+    assert "👤 Người" in texts(st)
 
 
 def test_memory_store_round_trips_and_expires() -> None:

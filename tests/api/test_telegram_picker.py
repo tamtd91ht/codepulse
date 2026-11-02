@@ -26,6 +26,13 @@ from tests.api.test_telegram import FakeGitLab, FakeTelegram, link, no_gitlab
 NOW = datetime(2026, 10, 24, 9, tzinfo=UTC)
 
 
+def link_manager(db_session: Session, world: World, telegram_id: int = 777) -> None:
+    """The Backend lead, made a manager of the bot's dự án: only managers (and admins) review
+    other people's work (2026-11-02)."""
+    link(db_session, world.lead, telegram_id)
+    grant(db_session, world.lead, world.project.business_project_id, "manage")
+
+
 def message_update(update_id: int, text: str, from_id: int = 777) -> dict[str, Any]:
     return {
         "update_id": update_id,
@@ -145,7 +152,7 @@ def test_commit_picker_lists_everyone_and_queues_the_ticked_ones(
 ) -> None:
     seed_commits(db_session, world)
     world.project.default_branch = "main"
-    link(db_session, world.lead, 777)
+    link_manager(db_session, world)
     link(db_session, world.binh, 999)  # another linked person: may look, may not tap this list
     db_session.commit()
     tg = FakeTelegram()
@@ -197,7 +204,7 @@ def test_people_step_filters_the_list_to_one_person(
     db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
 ) -> None:
     seed_commits(db_session, world)
-    link(db_session, world.lead, 777)
+    link_manager(db_session, world)
     db_session.commit()
     tg = FakeTelegram()
     store = MemoryPickerStore()
@@ -217,7 +224,7 @@ def test_people_step_filters_the_list_to_one_person(
     tg.updates = [tap(4, kb["👤 Người"])]
     run(db_session, bot, settings, queue, tg, store)
     assert "👥 Mọi người" in buttons(tg.edited[-1]["markup"])
-    # A member only has themself: no people step, straight to the list.
+    # A member only has themself: no people step, straight to their own list.
     tg2 = FakeTelegram()
     link(db_session, world.an, 778)
     db_session.commit()
@@ -225,12 +232,19 @@ def test_people_step_filters_the_list_to_one_person(
         message_update(5, "/review", from_id=778),
     ]
     run(db_session, bot, settings, queue, tg2, store)
-    tg2.updates = [tap(6, buttons(tg2.sent[0]["markup"])["📝 Commit gần đây"], from_id=778)]
+    assert tg2.sent[0]["text"] == "Review commit / MR nào của bạn?"
+    tg2.updates = [tap(6, buttons(tg2.sent[0]["markup"])["📝 Commit của tôi"], from_id=778)]
     run(db_session, bot, settings, queue, tg2, store)
-    assert "<b>Commit gần đây</b>" in tg2.edited[-1]["text"]
+    text = tg2.edited[-1]["text"]
+    assert "<b>Commit gần đây</b>" in text and "của bạn" in text.splitlines()[0]
+    assert "feat: one · An" in text and "Binh" not in text
+    # Tapping the manager's "Binh" button in the group does not show a member Binh's work.
+    tg2.updates = [tap(7, who["Binh"], from_id=778)]
+    run(db_session, bot, settings, queue, tg2, store)
+    assert "Binh" not in tg2.edited[-1]["text"] and "feat: one" in tg2.edited[-1]["text"]
 
 
-def test_member_sees_others_as_blocked_and_select_all_respects_it(
+def test_a_members_list_holds_only_their_own_work(
     db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
 ) -> None:
     seed_commits(db_session, world)
@@ -241,19 +255,29 @@ def test_member_sees_others_as_blocked_and_select_all_respects_it(
     tg.updates = [message_update(1, "/review type=commit")]
     run(db_session, bot, settings, queue, tg, store)
     text = tg.sent[0]["text"]
-    assert "🚫 <b>2.</b> fix: two · Binh" in text and "ngoài quyền review" in text
+    # Binh's commit is not even listed (no 🚫 rows): An's two, every branch by default.
+    assert "Binh" not in text and "🚫" not in text and "2 mục" in text
+    assert "mọi nhánh" in text.splitlines()[0] and "của bạn" in text.splitlines()[0]
     kb = buttons(tg.sent[0]["markup"])
-    assert "☐ 2" not in kb and "☐ 1" in kb
+    assert "☐ 1" in kb and "👤 Người" not in kb  # no switching to someone else's list
     token = kb["☐ 1"].split("|")[1]
-    tg.updates = [tap(2, f"pk|{token}|all"), tap(3, f"pk|{token}|go")]
+    # A forged "whose?" tap is refused.
+    tg.updates = [tap(2, f"pk|{token}|who")]
     run(db_session, bot, settings, queue, tg, store)
-    assert [args[1] for _, args, _ in queue.jobs] == ["1" * 40]  # binh's commit never queued
+    assert "chính mình" in tg.answered[-1]["text"]
+    tg.updates = [tap(3, f"pk|{token}|all"), tap(4, f"pk|{token}|go")]
+    run(db_session, bot, settings, queue, tg, store)
+    assert [args[1] for _, args, _ in queue.jobs] == ["1" * 40]  # 3333 is already reviewed
+    # user= cannot widen the list to someone else.
+    tg.updates = [message_update(5, "/review type=commit user=binh")]
+    run(db_session, bot, settings, queue, tg, store)
+    assert "chính mình" in tg.sent[-1]["text"]
 
 
 def test_bare_review_opens_the_menu_and_mr_picker_lists_open_mrs(
     db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
 ) -> None:
-    link(db_session, world.lead, 777)
+    link_manager(db_session, world)
     world.mr.state = "opened"
     world.mr.title = "Add parser"
     db_session.add(
@@ -268,11 +292,13 @@ def test_bare_review_opens_the_menu_and_mr_picker_lists_open_mrs(
     run(db_session, bot, settings, queue, tg, store)
     menu = buttons(tg.sent[0]["markup"])
     assert "🔀 MR đang mở" in menu and tg.sent[0]["text"] == "Bạn muốn review gì?"
-    # One repo in scope, but a lead may review several people: pick whose MRs first.
+    # One repo in scope, but a manager may review everyone: pick whose MRs first.
     tg.updates = [tap(2, menu["🔀 MR đang mở"])]
     run(db_session, bot, settings, queue, tg, store)
     who = buttons(tg.edited[-1]["markup"])
-    assert "👥 Mọi người" in who and "An" in who and "Binh" in who and "Outsider" not in who
+    assert "🙋 Của tôi" in who and "👥 Mọi người" in who
+    # Everyone granted the dự án (the manager is not listed twice).
+    assert {"An", "Binh", "Outsider"} <= set(who) and "Lead" not in who
     tg.updates = [tap(20, who["👥 Mọi người"])]
     run(db_session, bot, settings, queue, tg, store)
     listed = tg.edited[-1]
@@ -294,7 +320,7 @@ def test_bare_review_opens_the_menu_and_mr_picker_lists_open_mrs(
 def test_the_repo_step_pages_through_every_repo_of_the_dự_án(
     db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
 ) -> None:
-    link(db_session, world.lead, 777)
+    link_manager(db_session, world)
     paths = [f"demo/svc-{i:02}" for i in range(1, 12)]
     db_session.add_all(
         Project(
@@ -326,7 +352,7 @@ def test_again_lets_the_owner_tick_a_reviewed_commit_as_a_new_round(
 ) -> None:
     seed_commits(db_session, world)
     world.project.default_branch = "main"
-    link(db_session, world.lead, 777)
+    link_manager(db_session, world)
     # A new round spends budget: managers of the dự án only (docs/specs/09).
     grant(db_session, world.lead, world.project.business_project_id, "manage")
     db_session.commit()
@@ -364,7 +390,7 @@ def test_a_member_cannot_review_their_own_work_again(
     token = kb["☐ 1"].split("|")[1]
     tg.updates = [tap(2, f"pk|{token}|again")]
     run(db_session, bot, settings, queue, tg, store)
-    assert "lead/admin" in tg.answered[-1]["text"]
+    assert "quản lý dự án" in tg.answered[-1]["text"]
 
 
 class BranchGitLab(FakeGitLab):
@@ -385,7 +411,7 @@ def test_the_repo_review_branch_is_listed_and_an_empty_branch_says_how_to_change
     seed_commits(db_session, world)  # in the DB: synced commits of other branches
     world.project.default_branch = "main"
     world.project.review_branch = "develop"
-    link(db_session, world.lead, 777)
+    link_manager(db_session, world)
     db_session.commit()
     tg = FakeTelegram()
     BranchGitLab.asked = []
@@ -460,7 +486,7 @@ class BusyGitLab(FakeGitLab):
 def test_one_persons_commits_on_a_busy_branch_are_found(
     db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
 ) -> None:
-    link(db_session, world.lead, 777)
+    link_manager(db_session, world)
     db_session.commit()
     tg = FakeTelegram()
     BusyGitLab.limits = []
@@ -512,7 +538,7 @@ def test_the_menu_offers_every_branch_when_the_review_branch_is_empty(
     db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
 ) -> None:
     world.project.default_branch = "main"
-    link(db_session, world.lead, 777)
+    link_manager(db_session, world)
     db_session.commit()
     tg = FakeTelegram()
     store = MemoryPickerStore()
@@ -557,7 +583,7 @@ def test_an_empty_typed_list_offers_every_branch_too(
     db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
 ) -> None:
     world.project.default_branch = "main"
-    link(db_session, world.lead, 777)
+    link_manager(db_session, world)
     db_session.commit()
     tg = FakeTelegram()
     tg.updates = [message_update(1, "/review type=commit repo=demo/p range=3d")]

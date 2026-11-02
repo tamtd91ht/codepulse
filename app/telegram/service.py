@@ -1,9 +1,11 @@
 """What the bot does with a command: identity, authorization, queueing reviews, answers.
 
-Rules (same as the dashboard, docs/specs/09, 11): a person may ask for reviews of their own
-work; a lead may ask for anyone in the teams they lead; an admin for anyone. Reviews run
-through the normal worker pipeline, so scores and findings land in the same tables and the
-same weekly/monthly metrics as reviews started by webhooks.
+Rules (same as the dashboard, `Principal.may_review_work`, 2026-11-02): a person may ask for
+reviews of their own work only; a manager of the bot's dự án or an admin for anyone's (and for
+work whose author is not mapped to a person). The flow follows the role: a member's lists hold
+only their own commits / MRs and never ask "whose?"; a manager picks a person or everyone.
+Reviews run through the normal worker pipeline, so scores and findings land in the same tables
+and the same weekly/monthly metrics as reviews started by webhooks.
 """
 
 import html
@@ -22,6 +24,7 @@ from redis import Redis
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.access import reviewable_people
 from app.api.audit import audit
 from app.api.routers.evaluation import load_review_facts
 from app.api.security import Principal, load_principal
@@ -87,6 +90,13 @@ ACTIVE = ("queued", "running", "done")
 # Targets a bulk command (today / open) leaves alone: handled, or skipped on purpose.
 TAKEN = ("queued", "running", "done", "skipped")
 SEVERE = ("critical", "high")
+# The "whose?" step lists the dự án's people who committed this recently (managers only).
+PEOPLE_ACTIVE_DAYS = 90
+PEOPLE_BUTTONS = 12
+OWN_ONLY = (
+    "Bạn chỉ review được commit / MR của chính mình."
+    " Review việc của người khác cần quyền quản lý dự án hoặc admin."
+)
 
 esc = html.escape
 
@@ -523,7 +533,7 @@ class BotService:
             "  repo/user viết tắt được; bot tự chọn, hỏi lại khi còn mơ hồ",
             "Dạng cũ vẫn dùng được: /review mr &lt;số|link&gt; [repo],",
             "  /review commit &lt;sha&gt; [repo], /review last|lastmr [repo] [người],",
-            "  /review today [repo] [người...], /review open [repo] (lead)",
+            "  /review today [repo] [người...], /review open [repo] (MR đang mở chưa review)",
             "",
             "<b>Xem</b>",
             "/status - review gần đây của bạn · /critical [repo] - lỗi nghiêm trọng đang mở",
@@ -535,7 +545,8 @@ class BotService:
             "",
             "Repo: đường dẫn GitLab hoặc phần cuối (api, omicrm/api).",
             "Người: @username GitLab, email, một phần tên, hoặc me.",
-            "Bạn review được việc của mình; lead review được người trong team mình.",
+            "Quyền: mỗi người review việc của chính mình; người quản lý dự án và admin review"
+            " được mọi người. /whoami cho biết quyền của bạn.",
         ]
         if not linked:
             lines += ["", self._not_linked()]
@@ -543,20 +554,18 @@ class BotService:
 
     def _whoami(self, account: Account, me: Principal) -> str:
         user = self._s.get(User, me.user_id)
-        role = (
-            "admin"
-            if me.is_admin
-            else "lead"
-            if me.is_lead
-            else "manager"
-            if me.is_manager
-            else "thành viên"
+        manages = self._manages(me)
+        role = "admin" if me.is_admin else "quản lý dự án" if manages else "thành viên"
+        rights = (
+            "review được commit / MR của mọi người trong dự án"
+            if manages
+            else "chỉ review được commit / MR của chính bạn"
         )
         name = user.full_name if user and user.full_name else (user.primary_email if user else "")
         return (
             f"<b>{esc(name or '')}</b> ({esc(user.primary_email or '') if user else ''}) · {role}\n"
             f"Telegram {esc(account.display_name or account.external_key)}"
-            f" · bot: {esc(self._scope_label())}"
+            f" · bot: {esc(self._scope_label())}\nQuyền: {rights}."
         )
 
     # -- scope ---------------------------------------------------------------------------------
@@ -613,19 +622,37 @@ class BotService:
         if not hints:
             hints = ("me",)
         users: dict[int, User] = {}
+        manages = self._manages(me)
         for hint in hints:
+            if not manages:
+                # Asking for reviews, a member may only name themselves: no lookup over other
+                # people (nor an LLM call that would see their names), just "is this me?".
+                if hint.strip().casefold() != "me" and not self._names_me(hint.strip(), me):
+                    raise Denied(OWN_ONLY)
+                hint = "me"
             user = self._find_user(hint, me)
             if user is None:
                 raise Denied(
                     f"Không tìm thấy người '{esc(hint)}'. Dùng @username GitLab, email hoặc tên."
                 )
-            if not (me.can_see_user(user.id) or self._manages(me)):
-                raise Denied(
-                    f"Bạn không review được việc của {esc(user.full_name or hint)}:"
-                    " chỉ lead của người đó, người quản lý dự án hoặc admin."
-                )
             users[user.id] = user
         return list(users.values())
+
+    def _viewable_person(self, hint: str, me: Principal) -> User:
+        """A person whose individual numbers the sender may read (/score): like the dashboard,
+        themselves, the people they lead, or anyone as a manager of the dự án / admin. Viewing
+        is wider than asking for reviews (`_people`)."""
+        user = self._find_user(hint, me)
+        if user is None:
+            raise Denied(
+                f"Không tìm thấy người '{esc(hint)}'. Dùng @username GitLab, email hoặc tên."
+            )
+        if not (me.can_see_user(user.id) or self._manages(me)):
+            raise Denied(
+                f"Chỉ số của {esc(user.full_name or hint)}: chỉ lead của người đó,"
+                " người quản lý dự án hoặc admin xem được."
+            )
+        return user
 
     def _find_user(self, hint: str, me: Principal) -> User | None:
         """A person from "me", @gitlab-username, email, an email/username prefix ("tamtd"), or
@@ -695,7 +722,8 @@ class BotService:
         if len(matches) == 1:
             return matches[0]
         if len(matches) > 1:
-            visible = me.visible_users()
+            # Only names the sender may see or review are spelled out (or sent to the resolver).
+            visible = None if self._manages(me) else me.visible_users()
             shown = [u for u in matches if visible is None or u.id in visible]
             picked = self._resolver.pick(
                 "user", hint, [f"{u.full_name or ''} · {u.primary_email or ''}" for u in shown]
@@ -709,6 +737,27 @@ class BotService:
                 " dùng @username GitLab hoặc email."
             )
         return None
+
+    def _names_me(self, word: str, me: Principal) -> bool:
+        """Whether a person hint means the sender: email or its local part, part of the name,
+        or a linked GitLab / git account (username, email)."""
+        user = self._s.get(User, me.user_id)
+        if user is None:
+            return False
+        needle = (word[1:] if word.startswith("@") else word).casefold()
+        if len(needle) < 2:
+            return False
+        email = (user.primary_email or "").casefold()
+        name = (user.full_name or "").casefold()
+        # Exact only: one word of a name ("nguyen") may well mean a colleague.
+        if needle in (email, email.partition("@")[0], name):
+            return True
+        keys = self._s.execute(
+            select(Account.external_key, Account.display_name).where(
+                Account.user_id == me.user_id, Account.kind != TELEGRAM_KIND
+            )
+        ).all()
+        return any(needle in ((k or "").casefold(), (d or "").casefold()) for k, d in keys)
 
     def _user_of_account(self, account_id: int | None) -> int | None:
         if account_id is None:
@@ -736,9 +785,14 @@ class BotService:
     def _may_review_author(self, author_user_id: int | None, me: Principal, what: str) -> None:
         if me.may_review_work(author_user_id, self._bot.business_project_id):
             return
+        if author_user_id is None:
+            raise Denied(
+                f"Tác giả {what} này chưa gắn với người dùng CodePulse nên chỉ người quản lý"
+                " dự án hoặc admin review được (admin gắn tác giả ở trang Thành viên)."
+            )
         raise Denied(
-            f"Bạn chỉ review được {what} của mình hoặc của người mình lead"
-            " (tác giả chưa gắn người thì cần lead, người quản lý dự án hoặc admin)."
+            f"Bạn chỉ review được {what} của chính mình;"
+            " việc của người khác cần quyền quản lý dự án hoặc admin."
         )
 
     # -- review commands -----------------------------------------------------------------------
@@ -746,8 +800,9 @@ class BotService:
     def _review(self, command: Command, msg: Incoming, me: Principal) -> str:
         if not command.args:
             # Bare /review on a phone: buttons, not syntax.
-            self.pending_markup = menu_keyboard()
-            return "Bạn muốn review gì?"
+            mine = not self._manages(me)
+            self.pending_markup = menu_keyboard(mine=mine)
+            return "Review commit / MR nào của bạn?" if mine else "Bạn muốn review gì?"
         parsed = parse_review(command.args)
         if isinstance(parsed, str):
             return esc(parsed)
@@ -959,8 +1014,7 @@ class BotService:
         return targets, notes
 
     def _target_open(self, args: ReviewArgs, me: Principal) -> tuple[list[Target], list[str]]:
-        if not (me.is_admin or me.is_lead or self._manages(me)):
-            raise Denied("/review open dành cho lead, người quản lý dự án hoặc admin.")
+        """Open MRs without a review: everyone's for a manager, the sender's own otherwise."""
         repos = self._pick_repos(args.repo_hint, one=False)
         taken = ("queued", "running") if args.again else TAKEN
         reviewed = select(Review.mr_id).where(Review.mr_id.is_not(None), Review.status.in_(taken))
@@ -970,16 +1024,13 @@ class BotService:
             MergeRequest.head_sha.is_not(None),
             MergeRequest.id.not_in(reviewed),
         )
-        visible = None if self._manages(me) else me.visible_users()
-        if visible is not None:
-            # A lead sees their own team: MRs by people they lead, plus unmapped authors.
-            mine = select(Account.id).where(Account.user_id.in_(visible))
-            unmapped = select(Account.id).where(Account.user_id.is_(None))
-            query = query.where(
-                MergeRequest.author_account_id.is_(None)
-                | MergeRequest.author_account_id.in_(mine)
-                | MergeRequest.author_account_id.in_(unmapped)
-            )
+        manages = self._manages(me)
+        if not manages or args.people:
+            # A member naming someone else is refused here, like today / last / lastmr.
+            people = self._people(args.people, me) if args.people else []
+            ids = [u.id for u in people] or [me.user_id]
+            authors = select(Account.id).where(Account.user_id.in_(ids))
+            query = query.where(MergeRequest.author_account_id.in_(authors))
         mrs = self._s.scalars(query.order_by(MergeRequest.created_at_src.desc().nulls_last())).all()
         by_id = {p.id: p for p in repos}
         mr_of: dict[str, int] = {}
@@ -1000,7 +1051,10 @@ class BotService:
             )
         notes: list[str] = []
         if not targets:
-            notes.append("Không có MR đang mở nào chưa được review (theo lần sync gần nhất).")
+            whose = "" if manages else " của bạn"
+            notes.append(
+                f"Không có MR đang mở nào{whose} chưa được review (theo lần sync gần nhất)."
+            )
         targets, notes = self._cap(targets, notes)
         if args.again:
             targets = [
@@ -1168,18 +1222,20 @@ class BotService:
         people = self._people(args.people, me) if args.people else []
         state = self._build_picker(kind, project, args, people, me, msg, raw)
         if state is None:
+            whose = "" if self._manages(me) else " của bạn"
             if kind == "commit":
-                branch = review_branch(project, args.branch)
+                branch = self._list_branch(project, args.branch, me)
                 if branch != ALL_BRANCHES and len(people) <= 1:
                     who = people[0].id if people else 0
                     self.pending_markup = {
                         "inline_keyboard": [all_branches_row(project.id, who, args.days)]
                     }
+                hint = "\n" + BRANCH_HINT if branch != ALL_BRANCHES else ""
                 return (
-                    f"{esc(project.path_with_namespace)}: không có commit nào"
-                    f" trong {args.days} ngày qua trên {esc(branch_label(branch))}.\n" + BRANCH_HINT
+                    f"{esc(project.path_with_namespace)}: không có commit nào{whose}"
+                    f" trong {args.days} ngày qua trên {esc(branch_label(branch))}.{hint}"
                 )
-            return "Không có mục nào trong phạm vi này."
+            return f"{esc(project.path_with_namespace)}: không có MR đang mở nào{whose}."
         self._picker.save(state)
         self.pending_markup = keyboard(state)
         return render_text(state)
@@ -1194,9 +1250,11 @@ class BotService:
         msg: Incoming,
         raw: str,
     ) -> PickerState | None:
-        only = {u.id for u in people} or None
+        manages = self._manages(me)
+        # A member's list is their own work only: nothing they could not tick, no "whose?".
+        only = ({u.id for u in people} or None) if manages else {me.user_id}
         if kind == "commit":
-            branch = review_branch(project, args.branch)
+            branch = self._list_branch(project, args.branch, me)
             items = self._commit_items(project, branch, args.days, only, me)
             scope = f"{project.path_with_namespace} · {branch_label(branch)} · {args.days} ngày"
         else:
@@ -1204,7 +1262,9 @@ class BotService:
             scope = project.path_with_namespace
         if not items:
             return None
-        if people:
+        if not manages:
+            scope += " · của bạn"
+        elif people:
             scope += " · " + ", ".join((u.full_name or u.primary_email or "?") for u in people[:3])
         return PickerState(
             token=new_token(),
@@ -1218,11 +1278,19 @@ class BotService:
             raw=raw,
             project_id=project.id,
             person_id=people[0].id if len(people) == 1 else None,
-            branch=args.branch or "",
+            branch=args.branch or ("" if manages else ALL_BRANCHES),
             days=args.days,
-            may_force=me.can_manage_project(self._bot.business_project_id),
-            again=args.again and me.can_manage_project(self._bot.business_project_id),
+            may_force=manages,
+            may_others=manages,
+            again=args.again and manages,
         )
+
+    def _list_branch(self, project: Project, asked: str | None, me: Principal) -> str:
+        """The branch a commit list covers: the one asked for; for a member every branch (their
+        work usually sits on a feature branch); for a manager the repo's review branch."""
+        if asked is None and not self._manages(me):
+            return ALL_BRANCHES
+        return review_branch(project, asked)
 
     def _state_of(self, kind: str, project_id: int, ref: str, sha: str) -> tuple[str, str]:
         target = Target(kind, project_id, ref, sha, "")
@@ -1469,7 +1537,7 @@ class BotService:
                     int(user_part or 0),
                     cb,
                     me,
-                    all_branches=branch_part == ALL_BRANCHES,
+                    all_branches=True if branch_part == ALL_BRANCHES else None,
                     days=max(1, min(int(days_part), MAX_RANGE_DAYS)) if days_part.isdigit() else 7,
                 )
             return self._picker_callback(action.token, action.op, action.arg, cb, me)
@@ -1488,7 +1556,7 @@ class BotService:
             return CallbackOutcome(answer="Gõ /review type=… user=tên để lọc người khác.")
         if op not in ("commit", "mr"):
             return CallbackOutcome(answer="Nút này không còn hiệu lực.")
-        repos = self._scope()
+        repos = self._repos_by_activity(me)
         if not repos:
             return CallbackOutcome(answer="Dự án chưa có repo nào.", alert=True)
         if len(repos) > 1:
@@ -1509,27 +1577,50 @@ class BotService:
         project = next((p for p in self._scope() if p.id == project_id), None)
         if project is None or op not in ("commit", "mr"):
             return CallbackOutcome(answer="Repo không còn trong phạm vi bot.", alert=True)
+        if not self._manages(me):
+            # A member reviews their own work only: straight to their list, no "whose?".
+            return self._person_callback(op, project.id, me.user_id, cb, me)
         people, more = self._people_for_picker(me)
-        if len(people) > 1:
-            # Whose work? Everyone, or one of the people this person may review.
+        if people:
+            # Whose work? Mine, everyone, or one of the dự án's people.
             what = "commit gần đây" if op == "commit" else "MR đang mở"
             return CallbackOutcome(
                 text=f"{esc(project.path_with_namespace)} · {what}: của ai?",
                 markup=people_keyboard(
-                    "commit" if op == "commit" else "mr", project.id, people, more
+                    "commit" if op == "commit" else "mr", project.id, people, more, me=me.user_id
                 ),
             )
         return self._person_callback(op, project.id, 0, cb, me)
 
     def _people_for_picker(self, me: Principal) -> tuple[list[tuple[int, str]], int]:
-        """(user_id, name) the caller may review, at most 12; the rest is a count."""
-        query = select(User).where(User.active.is_not(False)).order_by(User.full_name, User.id)
-        visible = me.visible_users()
-        if visible is not None:
-            query = query.where(User.id.in_(visible))
-        users = list(self._s.scalars(query))
-        shown = [(u.id, u.full_name or u.primary_email or f"#{u.id}") for u in users[:12]]
-        return shown, max(0, len(users) - 12)
+        """Other people a manager may pick, the dự án's most recent authors first, at most
+        PEOPLE_BUTTONS; the rest is a count. Empty for a member: they review their own only."""
+        if not self._manages(me):
+            return [], 0
+        since = self._clock() - timedelta(days=PEOPLE_ACTIVE_DAYS)
+        found = reviewable_people(self._s, me, [self._bot.business_project_id], since)
+        shown = [(u.id, u.full_name or u.primary_email or f"#{u.id}") for u in found]
+        shown = [(uid, name) for uid, name in shown if uid != me.user_id]
+        return shown[:PEOPLE_BUTTONS], max(0, len(shown) - PEOPLE_BUTTONS)
+
+    def _repos_by_activity(self, me: Principal) -> list[Project]:
+        """The bot's repos, newest commits first (a member: their own commits; a manager:
+        anyone's), so the repo to tap is usually on the first row."""
+        repos = self._scope()
+        if len(repos) < 2:
+            return repos
+        query = (
+            select(Commit.project_id, func.max(Commit.authored_at))
+            .where(Commit.project_id.in_([p.id for p in repos]))
+            .group_by(Commit.project_id)
+        )
+        if not self._manages(me):
+            mine = select(Account.id).where(Account.user_id == me.user_id)
+            query = query.where(Commit.author_account_id.in_(mine))
+        last = {pid: when for pid, when in self._s.execute(query).all() if when is not None}
+        floor = datetime.min.replace(tzinfo=UTC)
+        # sorted() is stable: repos without activity keep their path order at the end.
+        return sorted(repos, key=lambda p: last.get(p.id, floor), reverse=True)
 
     def _person_callback(
         self,
@@ -1539,25 +1630,30 @@ class BotService:
         cb: Callback,
         me: Principal,
         *,
-        all_branches: bool = False,
+        all_branches: bool | None = None,
         days: int = 7,
     ) -> CallbackOutcome:
+        """The list of one person's (0: everyone's) commits / open MRs. `all_branches`: True
+        every branch, False the review branch, None the role's default (`_list_branch`)."""
         project = next((p for p in self._scope() if p.id == project_id), None)
         if project is None or op not in ("commit", "mr"):
             return CallbackOutcome(answer="Repo không còn trong phạm vi bot.", alert=True)
+        manages = self._manages(me)
+        if not manages:
+            # Anyone in a group may tap a manager's buttons: a member's list is their own,
+            # whatever the button said.
+            user_id = me.user_id
         people: list[User] = []
         if user_id:
             person = self._s.get(User, user_id)
-            if person is None or not me.can_see_user(person.id):
-                return CallbackOutcome(answer="Bạn không review được người này.", alert=True)
+            if person is None or not me.may_review_work(person.id, self._bot.business_project_id):
+                return CallbackOutcome(answer=OWN_ONLY, alert=True)
             people = [person]
-        every = all_branches and op == "commit"
-        args = ReviewArgs(
-            "today" if op == "commit" else "open",
-            days=days,
-            branch=ALL_BRANCHES if every else None,
-            pick=True,
-        )
+        asked: str | None = None
+        if op == "commit" and all_branches is not None:
+            asked = ALL_BRANCHES if all_branches else review_branch(project, None)
+        every = op == "commit" and self._list_branch(project, asked, me) == ALL_BRANCHES
+        args = ReviewArgs("today" if op == "commit" else "open", days=days, branch=asked, pick=True)
         msg = Incoming(cb.update_id, cb.chat_id, "", cb.message_id, cb.from_id, cb.username, "", "")
         who = f" user={people[0].primary_email}" if people else ""
         on = " branch=all" if every else ""
@@ -1571,19 +1667,30 @@ class BotService:
             f"/review (menu) {op} {project.path_with_namespace}{who}{on}",
         )
         if state is None:
-            branch = review_branch(project, args.branch)
+            branch = self._list_branch(project, args.branch, me)
             what = (
                 f"commit nào trong {days} ngày qua trên {esc(branch_label(branch))}"
                 if op == "commit"
                 else "MR nào đang mở"
             )
-            whose = f" của {esc(people[0].full_name or '')}" if people else ""
+            whose = (
+                " của bạn"
+                if not manages
+                else f" của {esc(people[0].full_name or '')}"
+                if people
+                else ""
+            )
             hint = f"\n{BRANCH_HINT}" if op == "commit" and not every else ""
-            markup = people_keyboard(
-                "commit" if op == "commit" else "mr",
-                project.id,
-                *self._people_for_picker(me),
-                all_branches=every,
+            markup: dict[str, Any] = (
+                people_keyboard(
+                    "commit" if op == "commit" else "mr",
+                    project.id,
+                    *self._people_for_picker(me),
+                    all_branches=every,
+                    me=me.user_id,
+                )
+                if manages
+                else {"inline_keyboard": [[{"text": "✖ Đóng", "callback_data": "mn||x"}]]}
             )
             if op == "commit" and not every:
                 # The usual reason: the work is on a feature branch. One tap to look there.
@@ -1616,6 +1723,8 @@ class BotService:
             self._picker.delete(token)
             return CallbackOutcome(answer="Đã huỷ.", text="Đã huỷ.")
         if op == "who":
+            if not (state.may_others and self._manages(me)):
+                return CallbackOutcome(answer=OWN_ONLY, alert=True)
             people, more = self._people_for_picker(me)
             self._picker.delete(token)
             what = "commit gần đây" if state.kind == "commit" else "MR đang mở"
@@ -1627,6 +1736,7 @@ class BotService:
                     people,
                     more,
                     all_branches=state.branch == ALL_BRANCHES,
+                    me=me.user_id,
                 ),
             )
         if op == "br":
@@ -1658,7 +1768,9 @@ class BotService:
         if op == "again":
             # Deliberate: finished items become tickable (a new round each, old rounds kept).
             if not state.may_force:
-                return CallbackOutcome(answer="Chỉ lead/admin được review lại.", alert=True)
+                return CallbackOutcome(
+                    answer="Chỉ người quản lý dự án hoặc admin được review lại.", alert=True
+                )
             state.again = not state.again
             if not state.again:
                 state.selected = [i for i in state.selected if state.items[i].selectable]
@@ -1739,9 +1851,7 @@ class BotService:
             if me.may_review_work(it.author_user_id, self._bot.business_project_id)
         ]
         if not targets:
-            return CallbackOutcome(
-                answer="Các mục đã chọn nằm ngoài quyền review của bạn.", alert=True
-            )
+            return CallbackOutcome(answer=OWN_ONLY, alert=True)
         msg = Incoming(
             cb.update_id, cb.chat_id, "", cb.message_id, cb.from_id, cb.username, "", state.raw
         )
@@ -1853,7 +1963,7 @@ class BotService:
                 period = "month" if word.casefold().startswith(("m", "th")) else "week"
             else:
                 hints.append(word)
-        user = self._people(tuple(hints), me)[0]
+        user = self._viewable_person(hints[0] if hints else "me", me)
         rows = self._s.scalars(
             select(MetricsUserPeriod)
             .where(MetricsUserPeriod.user_id == user.id, MetricsUserPeriod.period_type == period)

@@ -72,6 +72,9 @@ class PickerState:
     days: int = 7  # commits: the window of the list
     again: bool = False  # finished items may be ticked (each becomes a new review round)
     may_force: bool = False  # manager of the dự án/admin: nobody else re-rolls a score
+    # manager of the dự án/admin: may switch the list to another person ("👤 Người"); a
+    # member's list is their own work only.
+    may_others: bool = False
     selected: list[int] = field(default_factory=list)
     page: int = 0
     raw: str = ""  # the command, for the audit log
@@ -193,7 +196,7 @@ def render_text(state: PickerState) -> str:
         elif it.state == "failed":
             tail = " — lần trước lỗi, review lại được"
         elif it.state == "blocked":
-            tail = " — ngoài quyền review của bạn"
+            tail = " — chỉ tác giả / quản lý dự án review được"
         who = f" · {esc(it.author)}" if it.author else ""
         when = f" · {esc(it.when)}" if it.when else ""
         lines.append(f"{mark} <b>{i + 1}.</b> {esc(it.title)}{who}{when}{tail}")
@@ -240,7 +243,8 @@ def keyboard(state: PickerState) -> dict[str, Any]:
     rows.append(controls)
     extras: list[dict[str, str]] = []
     if state.project_id:
-        extras.append({"text": "👤 Người", "callback_data": encode("pk", state.token, "who")})
+        if state.may_others:
+            extras.append({"text": "👤 Người", "callback_data": encode("pk", state.token, "who")})
         if state.kind == "commit":
             # Work often sits on a feature branch, not the review branch the list starts on.
             label = "🌿 Nhánh review" if state.branch == ALL_BRANCHES else "🌿 Mọi nhánh"
@@ -268,12 +272,16 @@ def keyboard(state: PickerState) -> dict[str, Any]:
     return {"inline_keyboard": rows}
 
 
-def menu_keyboard() -> dict[str, Any]:
+def menu_keyboard(mine: bool = False) -> dict[str, Any]:
+    """`mine`: the caller reviews their own work only, so the buttons say so."""
+    commits, mrs = (
+        ("📝 Commit của tôi", "🔀 MR của tôi") if mine else ("📝 Commit gần đây", "🔀 MR đang mở")
+    )
     return {
         "inline_keyboard": [
             [
-                {"text": "📝 Commit gần đây", "callback_data": encode("mn", op="commit")},
-                {"text": "🔀 MR đang mở", "callback_data": encode("mn", op="mr")},
+                {"text": commits, "callback_data": encode("mn", op="commit")},
+                {"text": mrs, "callback_data": encode("mn", op="mr")},
             ],
             [{"text": "✖ Huỷ", "callback_data": encode("mn", op="x")}],
         ]
@@ -299,18 +307,27 @@ def people_keyboard(
     people: list[tuple[int, str]],
     more: int = 0,
     all_branches: bool = False,
+    me: int | None = None,
 ) -> dict[str, Any]:
-    """Everyone first, then the people the caller may review (two per row), then cancel.
-    `all_branches`: the commit list the person comes from covered every branch; keep it."""
+    """Mine and everyone first, then the other people the caller may review (two per row),
+    then cancel. `all_branches`: the commit list the person comes from covered every branch;
+    keep it. `me`: the caller's user id (the "Của tôi" button)."""
     every = all_branches and kind == "commit"
-    rows: list[list[dict[str, str]]] = [
-        [
-            {
-                "text": "👥 Mọi người",
-                "callback_data": encode("us", op=kind, arg=person_arg(project_id, 0, every)),
-            }
-        ]
+    first = [
+        {
+            "text": "👥 Mọi người",
+            "callback_data": encode("us", op=kind, arg=person_arg(project_id, 0, every)),
+        }
     ]
+    if me:
+        first.insert(
+            0,
+            {
+                "text": "🙋 Của tôi",
+                "callback_data": encode("us", op=kind, arg=person_arg(project_id, me, every)),
+            },
+        )
+    rows: list[list[dict[str, str]]] = [first]
     row: list[dict[str, str]] = []
     for user_id, name in people:
         row.append(

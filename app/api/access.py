@@ -5,13 +5,14 @@ for lists and into 404/403 for single repos, so every router hides the same thin
 """
 
 from collections.abc import Iterable
+from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import ColumnElement, and_, exists, or_
+from sqlalchemy import ColumnElement, and_, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.api.security import Principal
-from app.models import Commit, MergeRequest, Project, Review
+from app.models import Account, Commit, MergeRequest, Project, ProjectGrant, Review, User
 
 
 def reviews_in_projects(bp_ids: Iterable[int]) -> ColumnElement[bool]:
@@ -71,3 +72,50 @@ def visible_repo(session: Session, principal: Principal, project_id: int) -> Pro
 def require_manage(principal: Principal, bp_id: int | None) -> None:
     if not principal.can_manage_project(bp_id):
         raise HTTPException(403, "only a manager of this dự án or an admin can do this")
+
+
+def reviewable_people(
+    session: Session, principal: Principal, bp_ids: Iterable[int] | None, since: datetime
+) -> list[User]:
+    """People whose work `principal` may ask a review for (`Principal.may_review_work`) in
+    dự án `bp_ids` (None: every dự án), yourself first, then the most recently active.
+
+    Not a manager there: only yourself. A manager: also everyone granted those dự án and every
+    mapped author of a commit in their repos since `since` (who actually works there). Admin
+    with no dự án given: every active person."""
+    me = session.get(User, principal.user_id)
+    managed = principal.managed_projects()  # None = every dự án (admin)
+    scope: set[int] | None
+    if bp_ids is None:
+        scope = managed
+    else:
+        wanted = set(bp_ids)
+        scope = wanted if managed is None else wanted & managed
+    if scope is not None and not scope:
+        return [me] if me is not None and me.active is not False else []
+    authored = (
+        select(Account.user_id.label("user_id"), func.max(Commit.authored_at).label("last"))
+        .join(Commit, Commit.author_account_id == Account.id)
+        .join(Project, Project.id == Commit.project_id)
+        .where(Account.user_id.is_not(None), Commit.authored_at >= since)
+    )
+    if scope is not None:
+        authored = authored.where(Project.business_project_id.in_(scope))
+    active = authored.group_by(Account.user_id).subquery()
+    query = (
+        select(User)
+        .outerjoin(active, active.c.user_id == User.id)
+        .where(User.active.is_not(False))
+        .order_by(
+            (User.id == principal.user_id).desc(),
+            active.c.last.desc().nulls_last(),
+            User.full_name,
+            User.id,
+        )
+    )
+    if scope is not None:
+        granted = select(ProjectGrant.user_id).where(ProjectGrant.business_project_id.in_(scope))
+        query = query.where(
+            or_(User.id == principal.user_id, User.id.in_(granted), active.c.user_id.is_not(None))
+        )
+    return list(session.scalars(query))

@@ -37,16 +37,22 @@ def test_view_keeps_the_team_rules_inside_the_dự_án() -> None:
     assert not lead.can_see_work(12, OMI)  # someone else in the same dự án
     assert not lead.can_see_work(11, CALL)  # their member, but in a dự án they lack
     assert not lead.can_see_work(None, OMI)  # unmapped author: managers only
-    assert lead.may_review_work(None, OMI)  # leads may still ask for unmapped work
+    # Reviews (2026-11-02): leading a team gives no review right; your own work only.
+    assert lead.may_review_work(10, OMI)
+    assert not lead.may_review_work(11, OMI)  # sees their member's results, cannot queue
+    assert not lead.may_review_work(None, OMI)  # unmapped author: managers only
     assert not lead.may_review_work(12, OMI)
+    assert not lead.reviews_others(OMI)
 
 
 def test_manage_covers_everyone_in_that_dự_án_only() -> None:
     dev = person(project_roles={OMI: "manage", CALL: "view"})
     assert dev.managed_projects() == {OMI}
     assert dev.can_see_work(12, OMI) and dev.can_see_work(None, OMI)
-    assert dev.may_review_work(12, OMI)
+    assert dev.may_review_work(12, OMI) and dev.may_review_work(None, OMI)
+    assert dev.reviews_others(OMI) and not dev.reviews_others(CALL)
     assert not dev.can_see_work(12, CALL) and not dev.may_review_work(12, CALL)
+    assert dev.may_review_work(10, CALL)  # own work in a dự án they view
     assert not dev.can_manage_project(CALL)
 
 

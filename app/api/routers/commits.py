@@ -11,14 +11,14 @@ so scores, findings and verdicts land in the same tables as webhook reviews.
 import logging
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import ColumnElement, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.api.access import visible_repo
+from app.api.access import reviewable_people, visible_repo
 from app.api.audit import audit
 from app.api.deps import get_queue, get_secret_box, get_session
 from app.api.schemas import (
@@ -52,6 +52,8 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 SHA = re.compile(r"^[0-9a-f]{7,40}$")
 # Request-path GitLab calls: short timeout, one retry; a slow GitLab must not pin API workers.
 REQUEST_TIMEOUT_S = 10.0
+# GET /people: a manager's list also holds whoever committed in their dự án this long ago.
+PEOPLE_ACTIVE_DAYS = 90
 
 
 def _client(box: SecretBox, connection: Connection) -> GitLabClient:
@@ -175,9 +177,18 @@ def refresh_profile(
 
 
 @router.get("/people", response_model=list[UserOut])
-def list_people(principal: CurrentPrincipal, session: SessionDep) -> list[User]:
-    """People whose work this person may ask a review for (admin: everyone active; a manager
-    of a dự án also the people granted it)."""
+def list_people(
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    purpose: Annotated[Literal["view", "review"], Query(alias="for")] = "view",
+) -> list[User]:
+    """`for=view` (default, filters of review lists): people whose results this person sees:
+    yourself, the people you lead, the people granted a dự án you manage; admin everyone.
+    `for=review` (Yêu cầu review): people whose work you may ask a review for: yourself; a
+    manager of a dự án also the people granted it and its recent authors; admin everyone."""
+    if purpose == "review":
+        since = datetime.now(UTC) - timedelta(days=PEOPLE_ACTIVE_DAYS)
+        return reviewable_people(session, principal, None, since)
     query = select(User).where(User.active.is_not(False)).order_by(User.full_name, User.id)
     visible = principal.visible_users()
     if visible is not None:
@@ -371,7 +382,7 @@ def list_commits(
         uid = author[0]
         if wanted is not None and uid not in wanted:
             continue
-        # Strangers' commits are not even listed for members; leads/admins see the unmapped.
+        # Other people's commits are not even listed for members; managers/admins see all.
         if not principal.may_review_work(uid, project.business_project_id):
             hidden += 1
             continue

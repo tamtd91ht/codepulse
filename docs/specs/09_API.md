@@ -40,7 +40,7 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 
 | Mức | Được làm |
 |---|---|
-| `view` (Xem) | Số liệu dự án; review/finding theo luật role ở trên **và** thuộc dự án (dev: của mình; lead: người trong team mình); yêu cầu review việc của mình / người mình lead |
+| `view` (Xem) | Số liệu dự án; review/finding theo luật role ở trên **và** thuộc dự án (dev: của mình; lead: người trong team mình); yêu cầu review **chỉ việc của mình** (2026-11-02: lead không review được người khác) |
 | `manage` (Quản lý) | Như `view` + review/finding của mọi người trong dự án (cả tác giả chưa gắn người); yêu cầu review cho bất kỳ ai; chạy lại review; làm mới, duyệt, sửa Tiền đề review |
 
 - Review của chính mình luôn xem được. Bot Telegram phục vụ một dự án: người dùng phải được cấp quyền dự án đó.
@@ -58,7 +58,7 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | GET | `/people` | Người trong phạm vi của người gọi | đăng nhập |
 | GET | `/repos/{id}/branches?search=` | Branch từ GitLab | đăng nhập |
 | GET | `/repos/{id}/commits?ref&since&until&user_id&limit` | Commit gần đây kèm trạng thái review (ẩn người ngoài phạm vi) | đăng nhập |
-| POST | `/repos/{id}/review-commits` | Xếp hàng review các commit đã chọn (≤ REVIEW_BATCH_MAX) | theo tác giả: mình / người mình lead / admin |
+| POST | `/repos/{id}/review-commits` | Xếp hàng review các commit đã chọn (≤ REVIEW_BATCH_MAX) | theo tác giả: mình; quản lý dự án / admin mọi người |
 | GET | `/reviews?verdict=&trigger=` | Lọc thêm theo kết luận merge và nguồn yêu cầu | như cũ |
 | PATCH | `/business-projects/{id}` `review_rules`, `/projects/{id}` `review_rules`, `review_rules_paths` | Quy tắc review | admin |
 

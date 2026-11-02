@@ -153,11 +153,9 @@ def live_review(
             raise HTTPException(404, "review not found")
         author, running = review.author_user_id, False
         repo = review_repo(session, review)
-    # Whoever may queue it may follow it (leads: unmapped authors too); your own anywhere.
+    # Whoever may see the review may follow it (managers: unmapped authors too).
     bp_id = repo.business_project_id if repo else None
-    if repo is None or not (
-        principal.can_see_work(author, bp_id) or principal.may_review_work(author, bp_id)
-    ):
+    if repo is None or not principal.can_see_work(author, bp_id):
         raise HTTPException(404, "review not found")
     return LiveReviewOut(review_id=review_id, running=running, events=progress.live(review_id))
 
@@ -167,7 +165,7 @@ def _may_see_record(principal: Principal, item: dict[str, Any], project: Project
     dự án, like the repo's knowledge page (docs/specs/19 §3.5). Reviews follow their author."""
     if item.get("kind") == "knowledge":
         return principal.can_view_project(project.business_project_id)
-    return principal.may_review_work(item.get("author_user_id"), project.business_project_id)
+    return principal.can_see_work(item.get("author_user_id"), project.business_project_id)
 
 
 def _may_see_queued(principal: Principal, item: dict[str, Any], project: Project) -> bool:
@@ -175,7 +173,7 @@ def _may_see_queued(principal: Principal, item: dict[str, Any], project: Project
         return _may_see_record(principal, item, project)
     if not item["found"]:  # not synced yet: its author is unknown, not "unmapped"
         return principal.can_manage_project(project.business_project_id)
-    return principal.may_review_work(item["author_user_id"], project.business_project_id)
+    return principal.can_see_work(item["author_user_id"], project.business_project_id)
 
 
 def _from_record(
