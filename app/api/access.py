@@ -6,9 +6,10 @@ for lists and into 404/403 for single repos, so every router hides the same thin
 
 from collections.abc import Iterable
 from datetime import datetime
+from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import ColumnElement, and_, exists, func, or_, select
+from sqlalchemy import ColumnElement, Select, and_, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.api.security import Principal
@@ -72,6 +73,70 @@ def visible_repo(session: Session, principal: Principal, project_id: int) -> Pro
 def require_manage(principal: Principal, bp_id: int | None) -> None:
     if not principal.can_manage_project(bp_id):
         raise HTTPException(403, "only a manager of this dự án or an admin can do this")
+
+
+def _people_of(bps: list[int]) -> list[Select[Any]]:
+    """Who is part of dự án `bps`, three ways: granted on it, or the mapped author of a commit or
+    an MR in one of its tracked repos (a review's person comes from that same account). Each
+    is driven by an index (project_grants, commits / merge_requests by author account)."""
+    in_repos = and_(Project.business_project_id.in_(bps), Project.tracked.is_(True))
+    return [
+        select(ProjectGrant.user_id).where(ProjectGrant.business_project_id.in_(bps)),
+        select(Account.user_id)
+        .join(Commit, Commit.author_account_id == Account.id)
+        .join(Project, Project.id == Commit.project_id)
+        .where(Account.user_id.is_not(None), in_repos),
+        select(Account.user_id)
+        .join(MergeRequest, MergeRequest.author_account_id == Account.id)
+        .join(Project, Project.id == MergeRequest.project_id)
+        .where(Account.user_id.is_not(None), in_repos),
+    ]
+
+
+def project_people(session: Session, bp_ids: Iterable[int]) -> set[int]:
+    """Everyone who is part of dự án `bp_ids` (`_people_of`), for lists."""
+    bps = list(bp_ids)
+    if not bps:
+        return set()
+    granted, committed, opened = _people_of(bps)
+    return {
+        int(user_id)
+        for user_id in session.scalars(granted.union(committed, opened))
+        if user_id is not None
+    }
+
+
+def seen_people(session: Session, principal: Principal) -> set[int] | None:
+    """Whose individual pages and evaluations `principal` may open: themselves, the people they
+    lead, and everyone in a dự án they manage (2026-11-02: a manager of dự án A sees all of
+    A). None: everyone (admin). Their numbers then only count work the viewer may see
+    (`review_scope`)."""
+    visible = principal.visible_users()
+    if visible is None:
+        return None
+    managed = principal.managed_projects() or set()
+    return visible | project_people(session, managed) if managed else visible
+
+
+def may_see_person(session: Session, principal: Principal, user_id: int) -> bool:
+    if principal.can_see_user(user_id):
+        return True
+    managed = list(principal.managed_projects() or set())
+    if not managed:
+        return False
+    granted, committed, opened = _people_of(managed)
+    # One person: three EXISTS, each stops at the first row.
+    return bool(
+        session.scalar(
+            select(
+                or_(
+                    exists(granted.where(ProjectGrant.user_id == user_id)),
+                    exists(committed.where(Account.user_id == user_id)),
+                    exists(opened.where(Account.user_id == user_id)),
+                )
+            )
+        )
+    )
 
 
 def reviewable_people(

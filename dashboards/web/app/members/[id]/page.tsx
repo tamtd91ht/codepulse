@@ -214,6 +214,9 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
   const { data: open, error: openError } = useApi<Page<BoardFinding>>(`/findings${qs({ user_id: id, limit: 50 })}`);
 
   if (!person) return <Loading error={error} rows={4} />;
+  // Stored weekly scores mix every dự án of the person: a dự án manager who is not their lead
+  // does not get them (the evaluation below counts only their dự án).
+  const seriesHidden = seriesError instanceof ApiError && seriesError.status === 403;
   const latest = series?.series.at(-1) ?? null;
   const rank = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
   const findings = [...(open?.items ?? [])].sort((a, b) => rank[a.severity] - rank[b.severity]);
@@ -228,7 +231,7 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
         avatar={<Avatar name={person.full_name} email={person.primary_email} size="lg" />}
       />
 
-      {!series && <Loading error={seriesError} rows={3} />}
+      {!series && !seriesHidden && <Loading error={seriesError} rows={3} />}
       {series && (
         <StatStrip label="Tuần gần nhất">
           <StripStat
@@ -289,6 +292,11 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
                 </LineChart>
               </ResponsiveContainer>
             </div>
+          ) : seriesHidden ? (
+            <p className="muted small">
+              Điểm theo tuần gộp mọi dự án của người này nên chỉ họ, lead của họ và admin xem được. Phần đánh giá và kết quả review trên
+              trang này chỉ tính việc trong dự án bạn quản lý.
+            </p>
           ) : (
             <Loading error={seriesError} rows={4} />
           )}

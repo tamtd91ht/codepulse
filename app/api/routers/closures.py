@@ -549,19 +549,26 @@ def _repo_of_review() -> Any:
 
 
 def _visible(session: Session, principal: Principal, repo: Any) -> ColumnElement[bool]:
-    """Whose closings this person sees: everyone's (admin), their own work anywhere, and that of
-    the teams they manage in the dự án they are granted (they decide those requests)."""
+    """Whose closings this person sees: everyone's (admin), their own work anywhere, every one in
+    a dự án they manage (project_grants "manage"), and that of the teams they manage in the dự án
+    they are granted (they decide those requests)."""
     if principal.is_admin:
         return true()
-    own = Review.author_user_id == principal.user_id
+    seen: list[ColumnElement[bool]] = [Review.author_user_id == principal.user_id]
+    if managed_bps := principal.managed_projects() or set():
+        seen.append(
+            repo.c.project_id.in_(
+                select(Project.id).where(Project.business_project_id.in_(managed_bps))
+            )
+        )
     managed = _managed_members(session, principal)
     granted = principal.visible_projects() or set()
-    if not managed or not granted:
-        return own
-    in_granted = repo.c.project_id.in_(
-        select(Project.id).where(Project.business_project_id.in_(granted))
-    )
-    return or_(own, and_(Review.author_user_id.in_(managed), in_granted))
+    if managed and granted:
+        in_granted = repo.c.project_id.in_(
+            select(Project.id).where(Project.business_project_id.in_(granted))
+        )
+        seen.append(and_(Review.author_user_id.in_(managed), in_granted))
+    return or_(*seen)
 
 
 def _day_start(day: date) -> datetime:

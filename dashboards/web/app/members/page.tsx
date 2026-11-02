@@ -6,7 +6,7 @@ import { Bar, BarChart, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YA
 import { AttentionBadge, RangePicker, Score, VerdictMix, rangeLabel, rangeSearch, scoreTone, useUrlRange } from "@/components/Evaluation";
 import { Icon } from "@/components/icons";
 import { Alert, Card, ChartTip, CountLink, EmptyState, Loading, PageHeader, PersonLink, Sparkline, SortTh, StatStrip, StripStat, useSort } from "@/components/ui";
-import { boardLink, qs, useApi } from "@/lib/api";
+import { boardLink, managesAnyProject, qs, useApi } from "@/lib/api";
 import { num, relative } from "@/lib/format";
 import type { Me, MemberEvaluationRow, MembersEvaluation, Repo, Team } from "@/lib/types";
 
@@ -209,7 +209,8 @@ export default function MembersEvaluationPage() {
     );
   }, [data, search, onlyAttention, reviewedOnly]);
 
-  const isLead = !!me && (me.is_admin || me.lead_teams.length > 0);
+  // Sees other people here: admin, a team lead, a dự án manager (everyone in their dự án).
+  const isLead = !!me && (me.lead_teams.length > 0 || managesAnyProject(me));
   // Links pair the response's own range with its own label, also while the next one loads.
   const period = data ? { range: data.range, label: rangeLabel(data.from, data.to), counted: false as const } : undefined;
   const link = (severity: "critical" | "high", m: MemberEvaluationRow) =>
@@ -353,14 +354,14 @@ export default function MembersEvaluationPage() {
                 {data.members.length === 0
                   ? isLead
                     ? "Chưa có thành viên nào trong phạm vi. Thêm người vào team ở Admin › Người & Team."
-                    : "Trang này chỉ hiện người trong phạm vi của bạn: bản thân, hoặc thành viên team bạn lead."
+                    : "Trang này chỉ hiện người trong phạm vi của bạn: bản thân, thành viên team bạn lead, hoặc mọi người trong dự án bạn quản lý."
                   : "Nới bộ lọc hoặc khoảng thời gian."}
               </EmptyState>
             )}
           </Card>
           {!isLead && (
             <p className="muted small" style={{ marginTop: 12 }}>
-              <Icon name="info" size={14} /> Điểm cá nhân chỉ bản thân và lead xem được (quyết định Phase 0). Lead sẽ thấy cả team ở đây.
+              <Icon name="info" size={14} /> Điểm cá nhân chỉ bản thân, lead và quản lý dự án xem được. Lead thấy cả team, quản lý dự án thấy mọi người trong dự án ở đây.
             </p>
           )}
         </>

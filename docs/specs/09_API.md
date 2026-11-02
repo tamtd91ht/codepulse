@@ -41,7 +41,10 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | Mức | Được làm |
 |---|---|
 | `view` (Xem) | Số liệu dự án; review/finding theo luật role ở trên **và** thuộc dự án (dev: của mình; lead: người trong team mình); yêu cầu review **chỉ việc của mình** (2026-11-02: lead không review được người khác) |
-| `manage` (Quản lý) | Như `view` + review/finding của mọi người trong dự án (cả tác giả chưa gắn người); yêu cầu review cho bất kỳ ai; chạy lại review; làm mới, duyệt, sửa Tiền đề review |
+| `manage` (Quản lý) | Như `view` + review/finding của mọi người trong dự án (cả tác giả chưa gắn người); yêu cầu review cho bất kỳ ai; chạy lại review; làm mới, duyệt, sửa Tiền đề review. **Xem đủ mọi người trong dự án** (2026-11-02): trang thành viên (`/people/{id}`, `/members/evaluation`, `/members/{id}/evaluation`, heatmap), danh sách người lọc (`/people`), Đóng finding và Khiếu nại của dự án — số liệu chỉ tính việc trong dự án họ được xem |
+
+- "Người trong dự án" = được cấp quyền dự án đó, hoặc tác giả (đã gắn người) của commit/review trong repo của dự án (`app/api/access.py` `project_people`).
+- Không mở cho quản lý dự án: điểm tuần lưu sẵn (`/metrics/users/{id}`, leaderboard, báo cáo team) vì gộp mọi dự án của một người; quyết định khiếu nại / yêu cầu đóng finding (vẫn theo lead/manager team); cấu hình Admin.
 
 - Review của chính mình luôn xem được. Bot Telegram phục vụ một dự án: người dùng phải được cấp quyền dự án đó.
 - API (admin): `GET`/`PUT /business-projects/{id}/grants` (PUT thay cả danh sách, audit `business_project.grants`); `GET /auth/me` trả `projects: {id: role}`.

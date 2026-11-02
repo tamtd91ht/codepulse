@@ -4,10 +4,10 @@ import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
 import { Loading } from "@/components/ui";
-import { useApi } from "@/lib/api";
+import { managesAnyProject, useApi } from "@/lib/api";
 import type { Me } from "@/lib/types";
 
-/** Leads, managers and admins land on the overview; everyone else on their own page. */
+/** Leads, managers (of a team or a dự án) and admins land on the overview; everyone else on their own page. */
 export default function Home() {
   const router = useRouter();
   const { data: me, error } = useApi<Me>("/auth/me");
@@ -15,7 +15,7 @@ export default function Home() {
   useEffect(() => {
     if (!me) return;
     const led = me.lead_teams[0] ?? me.managed_teams[0];
-    router.replace(me.is_admin || led !== undefined ? "/overview" : `/members/${me.id}`);
+    router.replace(me.is_admin || led !== undefined || managesAnyProject(me) ? "/overview" : `/members/${me.id}`);
   }, [me, router]);
 
   return <Loading error={error} />;

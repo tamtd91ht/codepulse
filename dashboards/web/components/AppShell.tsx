@@ -9,7 +9,7 @@ import { ReviewActivity } from "@/components/ReviewActivity";
 import { Stetho } from "@/components/Stetho";
 import { RAIL_KEY, ThemeToggle } from "@/components/theme";
 import { Avatar } from "@/components/ui";
-import { api, useApi } from "@/lib/api";
+import { api, managesAnyProject, useApi } from "@/lib/api";
 import type { Me } from "@/lib/types";
 
 const NARROW = "(max-width: 1023px)";
@@ -70,15 +70,24 @@ export function AppShell({ children }: { children: ReactNode }) {
   const isLead = !!me && (isAdmin || me.lead_teams.length > 0);
   // Stetho, the AI assistant: admins and managers only (app/api/routers/assistant.py).
   const assistant = !!me && (isAdmin || me.managed_teams.length > 0);
-  const role = !me ? "" : isAdmin ? "Admin" : me.lead_teams.length ? "Lead" : me.managed_teams.length ? "Manager" : "Thành viên";
+  const managesProject = managesAnyProject(me);
+  const role = !me
+    ? ""
+    : isAdmin
+      ? "Admin"
+      : me.lead_teams.length
+        ? "Lead"
+        : me.managed_teams.length || managesProject
+          ? "Manager"
+          : "Thành viên";
 
   const primary: Item[] = me
     ? [
         { href: "/overview", label: "Tổng quan", icon: "activity" },
         { href: "/teams", label: "Team", icon: "members" },
-        // Per-person evaluation: a lead sees their team, admin everyone (a developer only
-        // themselves, which the "Của tôi" page already shows).
-        ...(isAdmin || me.lead_teams.length > 0 ? [{ href: "/members", label: "Thành viên", icon: "pulse" } as Item] : []),
+        // Per-person evaluation: a lead sees their team, a dự án manager everyone in their dự án,
+        // admin everyone (a developer only themselves, which the "Của tôi" page already shows).
+        ...(isAdmin || me.lead_teams.length > 0 || managesProject ? [{ href: "/members", label: "Thành viên", icon: "pulse" } as Item] : []),
         { href: `/members/${me.id}`, label: "Của tôi", icon: "user" },
         { href: "/reviews", label: "Kết quả review", icon: "inbox" },
         { href: "/reviews/request", label: "Yêu cầu review", icon: "review" },

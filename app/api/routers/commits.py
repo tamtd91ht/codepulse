@@ -14,11 +14,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import ColumnElement, or_, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.api.access import reviewable_people, visible_repo
+from app.api.access import reviewable_people, seen_people, visible_repo
 from app.api.audit import audit
 from app.api.deps import get_queue, get_secret_box, get_session
 from app.api.schemas import (
@@ -38,7 +38,7 @@ from app.collector.gitlab.extract import _commit as gl_commit
 from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
-from app.models import Account, BusinessProject, Connection, Project, ProjectGrant, Review, User
+from app.models import Account, BusinessProject, Connection, Project, Review, User
 from app.models.review import CHANGE_TIME_UNKNOWN
 from app.review.rubric import RUBRIC_VERSION
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
@@ -183,22 +183,16 @@ def list_people(
     purpose: Annotated[Literal["view", "review"], Query(alias="for")] = "view",
 ) -> list[User]:
     """`for=view` (default, filters of review lists): people whose results this person sees:
-    yourself, the people you lead, the people granted a dự án you manage; admin everyone.
+    yourself, the people you lead, everyone in a dự án you manage; admin everyone.
     `for=review` (Yêu cầu review): people whose work you may ask a review for: yourself; a
     manager of a dự án also the people granted it and its recent authors; admin everyone."""
     if purpose == "review":
         since = datetime.now(UTC) - timedelta(days=PEOPLE_ACTIVE_DAYS)
         return reviewable_people(session, principal, None, since)
     query = select(User).where(User.active.is_not(False)).order_by(User.full_name, User.id)
-    visible = principal.visible_users()
-    if visible is not None:
-        allowed: ColumnElement[bool] = User.id.in_(visible)
-        if managed := principal.managed_projects():
-            granted = select(ProjectGrant.user_id).where(
-                ProjectGrant.business_project_id.in_(managed)
-            )
-            allowed = or_(allowed, User.id.in_(granted))
-        query = query.where(allowed)
+    # Everyone in a dự án you manage: granted on it or an author in its repos.
+    if (visible := seen_people(session, principal)) is not None:
+        query = query.where(User.id.in_(visible))
     return list(session.scalars(query))
 
 

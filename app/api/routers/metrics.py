@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.access import reviews_in_projects
+from app.api.access import may_see_person, review_scope, reviews_in_projects
 from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.schemas import (
@@ -270,8 +270,8 @@ def user_category_heatmap(
     weeks: Annotated[int, Query(ge=1, le=52)] = 12,
 ) -> list[dict[str, Any]]:
     """Findings per category per week (Member Detail heatmap, docs/specs/10)."""
-    if not principal.can_see_user(user_id):
-        raise HTTPException(403, "individual metrics are visible to the person and their lead only")
+    if not may_see_person(session, principal, user_id):
+        raise HTTPException(403, "not allowed to see this person")
     tz = ZoneInfo(settings.report_tz)
     first = period_start_of(datetime.now(tz).date(), "week") - timedelta(weeks=weeks - 1)
     rows = session.execute(
@@ -282,11 +282,10 @@ def user_category_heatmap(
             Review.author_user_id == user_id,
             Review.counted_at >= period_bounds(first, "week", tz)[0],
             ReviewFinding.status != "false_positive",
-            # Someone else's work: only in the dự án the viewer is granted (docs/specs/09).
+            # Someone else's work: only what the viewer may see (docs/specs/09).
             *(
-                [reviews_in_projects(granted)]
-                if user_id != principal.user_id
-                and (granted := principal.visible_projects()) is not None
+                [scope]
+                if user_id != principal.user_id and (scope := review_scope(principal)) is not None
                 else []
             ),
         )
@@ -313,7 +312,7 @@ def visible_teams(principal: CurrentPrincipal, session: SessionDep) -> list[Team
 
 @router.get("/people/{user_id}", response_model=UserOut)
 def person(user_id: int, principal: CurrentPrincipal, session: SessionDep) -> User:
-    if not principal.can_see_user(user_id):
+    if not may_see_person(session, principal, user_id):
         raise HTTPException(403, "not allowed to see this person")
     user = session.get(User, user_id)
     if user is None:

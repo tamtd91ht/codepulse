@@ -10,9 +10,10 @@ from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.access import may_see_person, review_scope, seen_people
 from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.schemas import MemberEvaluationDetail, MembersEvaluation, UserOut
@@ -110,14 +111,10 @@ def load_review_facts(
     )
     if users is not None:
         reviews = reviews.where(Review.author_user_id.in_(users))
-    # Only work in the dự án the viewer is granted, besides their own (docs/specs/09).
-    if (granted := viewer.visible_projects()) is not None:
-        reviews = reviews.where(
-            or_(
-                Review.author_user_id == viewer.user_id,
-                Project.business_project_id.in_(granted),
-            )
-        )
+    # Only work the viewer may see (docs/specs/09): their own, everything in a dự án they
+    # manage, the people they lead in a dự án they are granted.
+    if (scope := review_scope(viewer)) is not None:
+        reviews = reviews.where(scope)
     if project_id is not None:
         reviews = reviews.where(Project.id == project_id)
     if business_project_id is not None:
@@ -195,10 +192,10 @@ def _teams_of(session: Session, user_ids: set[int], end: date) -> dict[int, list
     return out
 
 
-def _scope(principal: Principal, team_id: int | None) -> set[int] | None:
+def _scope(session: Session, principal: Principal, team_id: int | None) -> set[int] | None:
     if team_id is not None and not principal.can_see_team(team_id):
         raise HTTPException(403, "not allowed to see this team")
-    return principal.visible_users()
+    return seen_people(session, principal)
 
 
 @router.get("/members/evaluation", response_model=MembersEvaluation)
@@ -216,7 +213,7 @@ def members_evaluation(
     the filters), plus everyone in scope who had none when no repo filter narrows it."""
     tz = ZoneInfo(settings.report_tz)
     start, end, lo, hi = _range(tz, date_from, date_to)
-    visible = _scope(principal, team_id)
+    visible = _scope(session, principal, team_id)
     if business_project_id is not None and not principal.can_view_project(business_project_id):
         raise HTTPException(404, "dự án not found")
     if project_id is not None:
@@ -310,8 +307,10 @@ def member_evaluation(
     date_to: Annotated[date | None, Query(alias="to")] = None,
 ) -> dict[str, Any]:
     """One person over the range: summary, per-repo rows, verdict / severity / category mix."""
-    if not principal.can_see_user(user_id):
-        raise HTTPException(403, "individual metrics are visible to the person and their lead only")
+    if not may_see_person(session, principal, user_id):
+        raise HTTPException(
+            403, "individual metrics are visible to the person, their lead and dự án managers"
+        )
     user = session.get(User, user_id)
     if user is None:
         raise HTTPException(404, "person not found")

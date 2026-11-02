@@ -111,6 +111,11 @@ export function canManageProject(me: Me | undefined, bpId: number | null | undef
   return bpId != null && me.projects?.[String(bpId)] === "manage";
 }
 
+/** Manager ("manage" grant) of at least one dự án: sees everyone in it (people, reviews, closings, disputes). */
+export function managesAnyProject(me: Me | undefined): boolean {
+  return !!me && (me.is_admin || Object.values(me.projects ?? {}).includes("manage"));
+}
+
 /** Who may rebuild, approve and hand-edit a repo's knowledge: a manager of its dự án or an admin. */
 export function canEditKnowledge(me: Me | undefined, bpId: number | null | undefined): boolean {
   return canManageProject(me, bpId);

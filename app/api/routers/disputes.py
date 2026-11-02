@@ -6,10 +6,10 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import ColumnElement, and_, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.access import review_repo, review_scope
+from app.api.access import review_repo, review_scope, reviews_in_projects
 from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.schemas import ORM
@@ -100,15 +100,21 @@ def list_disputes(
     query = select(FindingDispute).order_by(FindingDispute.id.desc())
     if pending:
         query = query.where(FindingDispute.decision.is_(None))
-    visible = principal.visible_users()
-    if visible is not None:
-        query = query.where(FindingDispute.raised_by.in_(visible))
-    # In SQL, before the limit: only disputes on reviews of dự án this person sees.
+    # In SQL, before the limit: your own; those of the people you lead on reviews of dự án you
+    # see; every one in a dự án you manage.
     if (allowed := review_scope(principal)) is not None:
+        visible = principal.visible_users() or set()
+        managed = principal.managed_projects() or set()
+        seen: list[ColumnElement[bool]] = [
+            FindingDispute.raised_by == principal.user_id,
+            and_(FindingDispute.raised_by.in_(visible), allowed),
+        ]
+        if managed:
+            seen.append(reviews_in_projects(managed))
         query = (
             query.outerjoin(ReviewFinding, ReviewFinding.id == FindingDispute.finding_id)
             .outerjoin(Review, Review.id == ReviewFinding.review_id)
-            .where(or_(FindingDispute.raised_by == principal.user_id, allowed))
+            .where(or_(*seen))
         )
     items = []
     for dispute in session.scalars(query.limit(200)):

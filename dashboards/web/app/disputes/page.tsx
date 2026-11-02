@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Card, EmptyState, Loading, Message, PageHeader, Pill, Segmented, SeverityBadge } from "@/components/ui";
 import { mutate as mutateAll } from "swr";
 
-import { ApiError, api, useApi } from "@/lib/api";
+import { ApiError, api, managesAnyProject, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
 import type { Dispute, Me } from "@/lib/types";
 
@@ -36,7 +36,7 @@ export default function DisputesPage() {
     <>
       <PageHeader
         eyebrow="Disputes"
-        title={isLead ? "Duyệt khiếu nại" : "Khiếu nại của tôi"}
+        title={isLead ? "Duyệt khiếu nại" : managesAnyProject(me) ? "Khiếu nại trong dự án" : "Khiếu nại của tôi"}
         subtitle={
           isLead
             ? "Khiếu nại được chấp nhận sẽ không tính vào điểm và các chỉ số liên quan được tính lại ngay."
