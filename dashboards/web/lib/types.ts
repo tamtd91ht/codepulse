@@ -972,6 +972,10 @@ export interface GitLabMembers {
   /** More than 200 repos or 1000 members: the list is not complete. */
   truncated: boolean;
   members: GitLabMember[];
+  /** Repos GitLab did not list (the others are), with why. */
+  failed?: { repo: string; reason: string; message: string }[];
+  /** Public emails not all looked up (time budget): fewer suggestions by email. */
+  emails_skipped?: boolean;
 }
 
 export interface GitLabMembersImported {

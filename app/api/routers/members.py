@@ -7,7 +7,7 @@ Errors are in Vietnamese: the Admin screen shows them as they are to a non-techn
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -33,9 +33,12 @@ from app.identity.members import (
     Choice,
     GitLabUser,
     ImportRefused,
+    Member,
+    failure_reason,
     fetch_members,
     import_members,
     link_email,
+    lookup_user,
     resolve,
     suggest,
 )
@@ -54,6 +57,16 @@ REFUSED = {
     ),
     "person_has_account": (409, "Người được chọn đã có một tài khoản GitLab khác."),
     "user_not_found": (404, "Không tìm thấy người được chọn; tải lại trang."),
+}
+
+
+# Why GitLab did not answer, said to a non-technical admin.
+FAILURE = {
+    "unauthorized": "token của bot sai hoặc đã hết hạn (cập nhật ở tab Kết nối GitLab)",
+    "forbidden": "token của bot không đủ quyền (cần scope read_api và quyền vào repo)",
+    "not_found": "bot không thấy repo (chưa được thêm vào repo, hoặc repo đã đổi chỗ)",
+    "unreachable": "không kết nối được GitLab (mạng hoặc quá thời gian chờ)",
+    "error": "GitLab báo lỗi; thử lại sau",
 }
 
 
@@ -81,35 +94,83 @@ def _members(
         if key.isdigit()
     }
     session.commit()  # no transaction stays open while GitLab is paginated
-    try:
-        listing = fetch_members(projects, connections, client_factory(box), linked)
-    except GitLabError as exc:
-        if exc.status_code in (401, 403, 404):
-            raise HTTPException(
-                502, "GitLab: token của bot không xem được thành viên của repo này."
-            ) from None
-        raise
+    listing = fetch_members(projects, connections, client_factory(box), linked)
+    failed = [
+        {"repo": f.repo, "reason": f.reason, "message": FAILURE.get(f.reason, f.reason)}
+        for f in listing.failed
+    ]
+    if failed and not listing.members and len(failed) >= len(projects):
+        # Nothing could be read: say why rather than an empty list.
+        first = failed[0]
+        more = f" (và {len(failed) - 1} repo khác)" if len(failed) > 1 else ""
+        raise HTTPException(
+            502, f"Không lấy được thành viên từ GitLab: {first['repo']}{more}: {first['message']}."
+        )
     rows = suggest(session, listing.members, settings.allowed_email_domains)
     return {
         "repos": len(projects),
         "truncated": listing.truncated,
-        "members": [
-            GitLabMemberOut(
-                gitlab_id=s.member.gitlab_id,
-                username=s.member.username,
-                name=s.member.name,
-                state=s.member.state,
-                access=s.member.access,
-                email=s.member.email,
-                web_url=s.member.web_url,
-                repos=s.member.repos,
-                connection_id=s.member.connection_id,
-                action=s.action,
-                user_id=s.user_id,
-                reason=s.reason,
-            )
-            for s in rows
-        ],
+        "failed": failed,
+        "emails_skipped": listing.emails_skipped,
+        "members": [_member_out(s.member, s.action, s.user_id, s.reason) for s in rows],
+    }
+
+
+def _member_out(
+    member: Member, action: str, user_id: int | None, reason: str | None
+) -> GitLabMemberOut:
+    return GitLabMemberOut.model_validate(
+        {
+            "gitlab_id": member.gitlab_id,
+            "username": member.username,
+            "name": member.name,
+            "state": member.state,
+            "access": member.access,
+            "email": member.email,
+            "web_url": member.web_url,
+            "repos": member.repos,
+            "connection_id": member.connection_id,
+            "action": action,
+            "user_id": user_id,
+            "reason": reason,
+        }
+    )
+
+
+@router.get("/gitlab-members/lookup", response_model=GitLabMembersOut)
+def lookup_member(
+    principal: AdminPrincipal,
+    session: SessionDep,
+    box: Annotated[SecretBox, Depends(get_secret_box)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    q: Annotated[str, Query(min_length=1, max_length=255)],
+    connection_id: int | None = None,
+) -> dict[str, Any]:
+    """One GitLab user by username, numeric id or profile URL, with what to do with them:
+    to add a member who is in no tracked repo (or whose repo GitLab would not list)."""
+    if connection_id is None:
+        connection = session.scalars(select(Connection).order_by(Connection.id)).first()
+    else:
+        connection = session.get(Connection, connection_id)
+    if connection is None:
+        raise HTTPException(404, "Chưa có kết nối GitLab; thêm ở tab Kết nối GitLab.")
+    session.commit()  # no transaction stays open while GitLab answers
+    try:
+        with client_factory(box)(connection) as client:
+            member = lookup_user(client, connection.id, q)
+    except GitLabError as exc:
+        reason = failure_reason(exc)
+        text = "bot không được xem thông tin người dùng" if reason == "not_found" else None
+        raise HTTPException(502, f"GitLab: {text or FAILURE[reason]}.") from None
+    if member is None:
+        raise HTTPException(
+            404, f'Không thấy tài khoản GitLab "{q.strip()}" trên {connection.name}.'
+        )
+    row = suggest(session, [member], settings.allowed_email_domains)[0]
+    return {
+        "repos": 0,
+        "truncated": False,
+        "members": [_member_out(row.member, row.action, row.user_id, row.reason)],
     }
 
 

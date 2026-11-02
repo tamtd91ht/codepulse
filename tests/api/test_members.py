@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import Account, AuditLog, BusinessProject, User
+from app.models import Account, AuditLog, BusinessProject, Project, User
 from tests.api.conftest import World
 
 pytestmark = pytest.mark.integration
@@ -124,6 +124,83 @@ def test_dự_án_members_list_every_tracked_repo(
     assert res.status_code == 200, res.text
     assert len(res.json()["members"]) == len(MEMBERS)
     assert res.json()["members"][0]["repos"] == ["demo/p"]
+
+
+def test_a_repo_gitlab_refuses_is_reported_and_the_others_listed(
+    client: TestClient, members_world: World, as_user: Any, db_session: Session
+) -> None:
+    world = members_world
+    other = Project(
+        connection_id=world.project.connection_id,
+        external_id=1002,
+        path_with_namespace="demo/secret",
+        business_project_id=world.project.business_project_id,
+    )
+    db_session.add(other)
+    db_session.flush()
+    bp_id = world.project.business_project_id
+    with respx.mock(assert_all_called=False) as router:
+        mock_gitlab(router)
+        router.get(f"{API}/projects/1002/members/all").respond(403)
+        res = client.get(
+            f"/api/v1/business-projects/{bp_id}/gitlab-members", headers=as_user(world.admin)
+        )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert len(body["members"]) == len(MEMBERS)
+    assert [(f["repo"], f["reason"]) for f in body["failed"]] == [("demo/secret", "forbidden")]
+    assert "không đủ quyền" in body["failed"][0]["message"]
+
+
+def test_nothing_listed_says_why(client: TestClient, members_world: World, as_user: Any) -> None:
+    world = members_world
+    with respx.mock(assert_all_called=False) as router:
+        router.route(host="testserver").pass_through()
+        router.get(f"{API}/projects/1001/members/all").respond(401)
+        res = client.get(
+            f"/api/v1/projects/{world.project.id}/gitlab-members", headers=as_user(world.admin)
+        )
+    assert res.status_code == 502
+    assert "demo/p" in res.json()["detail"] and "hết hạn" in res.json()["detail"]
+
+
+def test_a_member_is_added_by_username_id_or_profile_url(
+    client: TestClient, members_world: World, as_user: Any
+) -> None:
+    world = members_world
+
+    def lookup(q: str, who: Any = None) -> Any:
+        return client.get(
+            "/api/v1/gitlab-members/lookup", params={"q": q}, headers=as_user(who or world.admin)
+        )
+
+    with respx.mock(assert_all_called=False) as router:
+        mock_gitlab(router)
+        router.get(f"{API}/users", params={"username": "newdev"}).respond(
+            json=[{**USERS[13], "public_email": "NewDev@Gmail.com"}]
+        )
+        router.get(f"{API}/users", params={"username": "an"}).respond(json=[USERS[11]])
+        router.get(f"{API}/users", params={"username": "ghost"}).respond(json=[])
+        new = lookup("@newdev")
+        by_url = lookup("https://gitlab.example.com/an/")
+        by_id = lookup("16")
+        ghost = lookup("ghost")
+        refused = lookup("an", world.an)
+    assert new.status_code == 200, new.text
+    m = new.json()["members"][0]
+    assert (m["gitlab_id"], m["action"], m["email"], m["access"]) == (
+        13,
+        "create",
+        "newdev@gmail.com",
+        "none",
+    )
+    assert (by_url.json()["members"][0]["action"], by_url.json()["members"][0]["user_id"]) == (
+        "link",
+        world.an.id,
+    )
+    assert by_id.json()["members"][0]["action"] == "linked"
+    assert ghost.status_code == 404 and "ghost" in ghost.json()["detail"]
+    assert refused.status_code == 403
 
 
 def test_import_creates_and_links_the_confirmed_members(

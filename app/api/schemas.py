@@ -1047,6 +1047,9 @@ class GitLabMembersOut(BaseModel):
     repos: int  # repos listed
     truncated: bool  # more than 200 repos or 1000 members: the list is not complete
     members: list[GitLabMemberOut]
+    # Repos GitLab did not list (the others are): {repo, reason, message}
+    failed: list[dict[str, str]] = []
+    emails_skipped: bool = False  # public emails not all looked up (time budget)
 
 
 class GitLabMemberChoice(BaseModel):

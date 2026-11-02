@@ -23,6 +23,7 @@ ties the member's commit emails (noreply, `<username>@<domain>`) to the same per
 """
 
 import logging
+import time
 from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -39,6 +40,7 @@ log = logging.getLogger(__name__)
 Action = Literal["linked", "link", "review", "create", "skip"]
 # GitLab access levels, for the admin to tell a maintainer from a guest.
 ACCESS = {
+    0: "none",  # looked up by hand (`lookup_user`): not read from a repo
     10: "guest",
     15: "planner",
     20: "reporter",
@@ -48,6 +50,9 @@ ACCESS = {
 }
 MAX_REPOS = 200  # a dự án with more repos than this is listed from its first 200
 MAX_MEMBERS = 1000
+# Public emails are looked up one GET /users/:id each, without retries, for this long at most:
+# they only help suggest a match, and a big dự án must not outlast the HTTP request.
+EMAIL_BUDGET_S = 15.0
 
 
 @dataclass
@@ -68,9 +73,25 @@ class Member:
 
 
 @dataclass
+class RepoFailure:
+    """A repo whose members GitLab did not give: the others are still listed."""
+
+    repo: str
+    reason: str  # unauthorized | forbidden | not_found | unreachable | error
+
+
+@dataclass
 class Listing:
     members: list[Member]
     truncated: bool  # more repos than MAX_REPOS, or more members than MAX_MEMBERS
+    failed: list[RepoFailure] = field(default_factory=list)
+    emails_skipped: bool = False  # the email budget ran out: fewer suggestions by email
+
+
+def failure_reason(exc: GitLabError) -> str:
+    if exc.status_code is None:
+        return "unreachable"  # network error or timeout
+    return {401: "unauthorized", 403: "forbidden", 404: "not_found"}.get(exc.status_code, "error")
 
 
 @dataclass
@@ -86,12 +107,18 @@ def fetch_members(
     connections: dict[int, Connection],
     make_client: Callable[[Connection], GitLabClient],
     linked: Collection[int] = (),
+    clock: Callable[[], float] = time.monotonic,
 ) -> Listing:
     """Members of every repo, one entry per GitLab user (highest access, every repo listed).
 
-    The public email (one GET /users/:id each) is looked up only for active members not in
-    `linked` (GitLab ids already tied to a person): it only serves to suggest a match."""
+    A repo GitLab refuses (token without access, repo moved, GitLab down) is reported in
+    `failed` and the others are still listed. The public email (one GET /users/:id each) is
+    looked up only for active members not in `linked` (GitLab ids already tied to a person),
+    within EMAIL_BUDGET_S: it only serves to suggest a match."""
     found: dict[int, Member] = {}
+    failed: list[RepoFailure] = []
+    emails_skipped = False
+    deadline = clock() + EMAIL_BUDGET_S
     truncated = len(projects) > MAX_REPOS
     by_connection: dict[int, list[Project]] = {}
     for project in projects[:MAX_REPOS]:
@@ -101,21 +128,34 @@ def fetch_members(
         with make_client(connections[connection_id]) as client:
             mine: set[int] = set()
             for project in repos:
-                for raw in client.project_members(project.external_id):
-                    gitlab_id = _gitlab_id(raw)
-                    if gitlab_id is None:
+                try:
+                    for raw in client.project_members(project.external_id):
+                        gitlab_id = _gitlab_id(raw)
+                        if gitlab_id is None:
+                            continue
+                        if gitlab_id not in found and len(found) >= MAX_MEMBERS:
+                            truncated = True
+                            break  # the rest of this repo's pages would add nobody
+                        _merge(found, raw, project.path_with_namespace, connection_id)
+                        mine.add(gitlab_id)
+                except GitLabError as exc:
+                    reason = failure_reason(exc)
+                    log.warning(
+                        "gitlab members not read",
+                        extra={"repo": project.path_with_namespace, "reason": reason},
+                    )
+                    failed.append(RepoFailure(project.path_with_namespace, reason))
+            with client.retries(0):
+                for gitlab_id in sorted(mine - set(linked)):
+                    member = found[gitlab_id]
+                    if member.email is not None or member.state != "active" or is_bot(member):
                         continue
-                    if gitlab_id not in found and len(found) >= MAX_MEMBERS:
-                        truncated = True
-                        break  # the rest of this repo's pages would add nobody
-                    _merge(found, raw, project.path_with_namespace, connection_id)
-                    mine.add(gitlab_id)
-            for gitlab_id in mine - set(linked):
-                member = found[gitlab_id]
-                if member.email is None and member.state == "active" and not is_bot(member):
+                    if clock() > deadline:
+                        emails_skipped = True
+                        break
                     member.email = _public_email(client, gitlab_id)
     members = sorted(found.values(), key=lambda m: (m.name or m.username).casefold())
-    return Listing(members, truncated)
+    return Listing(members, truncated, failed, emails_skipped)
 
 
 def _gitlab_id(raw: dict[str, Any]) -> int | None:
@@ -162,6 +202,37 @@ def _public_email(client: GitLabClient, gitlab_id: int) -> str | None:
     except GitLabError:
         return None  # a hidden or deleted user must not fail the whole list
     return str(email).lower() if email else None
+
+
+def lookup_user(client: GitLabClient, connection_id: int, query: str) -> Member | None:
+    """One GitLab user by numeric id, username (with or without @) or profile URL; None when
+    GitLab does not know them. For adding a member who is in no tracked repo yet."""
+    key = query.strip().rstrip("/").rsplit("/", 1)[-1].lstrip("@")
+    if not key:
+        return None
+    try:
+        if key.isdigit():
+            raw: Any = client.user(int(key))
+        else:
+            users = client.get("/users", {"username": key})
+            raw = users[0] if isinstance(users, list) and users else None
+    except GitLabError as exc:
+        if exc.status_code == 404:
+            return None
+        raise
+    if not isinstance(raw, dict) or (gitlab_id := _gitlab_id(raw)) is None:
+        return None
+    email = raw.get("public_email") or raw.get("email")
+    return Member(
+        gitlab_id=gitlab_id,
+        username=str(raw.get("username") or gitlab_id),
+        name=raw.get("name") or None,
+        state=str(raw.get("state") or "active"),
+        level=0,
+        connection_id=connection_id,
+        email=str(email).lower() if email else None,
+        web_url=_web_url(raw.get("web_url")),
+    )
 
 
 def is_bot(member: Member) -> bool:

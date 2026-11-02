@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useSWRConfig } from "swr";
 
 import { EmptyState, Loading, Message, Pill, Segmented } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { attributedText } from "@/lib/format";
-import type { BusinessProject, GitLabMember, GitLabMembers as Members, GitLabMembersImported, Person, Project } from "@/lib/types";
+import type { BusinessProject, Connection, GitLabMember, GitLabMembers as Members, GitLabMembersImported, Person, Project } from "@/lib/types";
 
 /** What the admin chose for one member: skip, create, link to the person `userId`, or still pick one ("other"). */
 type RowAction = "skip" | "create" | "link" | "other";
@@ -24,6 +24,7 @@ type Filter = "todo" | "link" | "create" | "skip" | "linked";
 
 const EMAIL = /^[^@\s]+@[^@\s]+$/;
 const ACCESS_LABEL: Record<string, string> = {
+  none: "Thêm tay",
   guest: "Khách",
   planner: "Lập kế hoạch",
   reporter: "Chỉ xem",
@@ -51,6 +52,14 @@ const initial = (m: GitLabMember): Row => ({
   search: "",
 });
 
+/** `extra` added by hand, put into (or refreshed in) a listing. */
+const withExtra = (data: Members | null, extra: GitLabMember[]): Members | null => {
+  if (extra.length === 0) return data;
+  const base = data ?? { repos: 0, truncated: false, members: [] };
+  const listed = new Set(base.members.map((m) => m.gitlab_id));
+  return { ...base, members: [...base.members, ...extra.filter((m) => !listed.has(m.gitlab_id))] };
+};
+
 /** Which list a member sits in for the filter, from the admin's current choice. */
 const bucket = (m: GitLabMember, row: Row): Filter => (m.action === "linked" ? "linked" : row.action === "other" ? "link" : row.action);
 
@@ -64,7 +73,13 @@ export function GitLabMembers() {
   const projects = useApi<BusinessProject[]>("/business-projects");
   const repos = useApi<Project[]>("/projects");
   const users = useApi<Person[]>("/users");
+  const connections = useApi<Connection[]>("/connections");
   const { mutate } = useSWRConfig();
+  // "Thêm theo GitLab": members looked up by hand, kept across reloads of the listing.
+  const extra = useRef<{ q: string; connectionId: number }[]>([]);
+  const [lookup, setLookup] = useState("");
+  const [lookupConnection, setLookupConnection] = useState("");
+  const [looking, setLooking] = useState(false);
   const [source, setSource] = useState("");
   const [members, setMembers] = useState<Members | null>(null);
   const [rows, setRows] = useState<Record<number, Row>>({});
@@ -93,15 +108,28 @@ export function GitLabMembers() {
     }
   }, []); // once, on arrival
 
+  const lookupOne = (q: string, connectionId: number) =>
+    api.get<Members>(`/gitlab-members/lookup?q=${encodeURIComponent(q)}&connection_id=${connectionId}`).then((d) => d.members[0]);
+
+  /** The members added by hand, as GitLab and CodePulse see them now (one gone is dropped). */
+  async function extras(): Promise<GitLabMember[]> {
+    const found = await Promise.all(extra.current.map((e) => lookupOne(e.q, e.connectionId).catch(() => undefined)));
+    return found.filter((m): m is GitLabMember => m !== undefined);
+  }
+
   async function load(from: string, scroll = false): Promise<boolean> {
-    if (!from) return false;
+    if (!from && extra.current.length === 0) return false;
     const n = ++seq.current;
     const [kind, id] = from.split(":");
     setLoading(true);
     setConfirming(false);
     try {
-      const data = await api.get<Members>(kind === "bp" ? `/business-projects/${id}/gitlab-members` : `/projects/${id}/gitlab-members`);
-      if (n !== seq.current) return false;
+      const [listed, added] = await Promise.all([
+        from ? api.get<Members>(kind === "bp" ? `/business-projects/${id}/gitlab-members` : `/projects/${id}/gitlab-members`) : Promise.resolve(null),
+        extras(),
+      ]);
+      const data = withExtra(listed, added);
+      if (n !== seq.current || data === null) return false;
       setMembers(data);
       setRows(Object.fromEntries(data.members.map((m) => [m.gitlab_id, initial(m)])));
       setInvalid({});
@@ -115,6 +143,35 @@ export function GitLabMembers() {
       return false;
     } finally {
       if (n === seq.current) setLoading(false);
+    }
+  }
+
+  /** "Thêm theo GitLab": one user by username, id or profile URL, added to the table to create or link. */
+  async function addMember(e: FormEvent) {
+    e.preventDefault();
+    const q = lookup.trim();
+    const connectionId = Number(lookupConnection || connections.data?.[0]?.id);
+    if (!q || !connectionId) return;
+    setLooking(true);
+    try {
+      const m = await lookupOne(q, connectionId);
+      if (!extra.current.some((x) => x.q === m.username && x.connectionId === connectionId)) extra.current.push({ q: m.username, connectionId });
+      const known = members?.members.some((x) => x.gitlab_id === m.gitlab_id);
+      setMembers((d) => withExtra(d, [m]));
+      setRows((r) => (r[m.gitlab_id] ? r : { ...r, [m.gitlab_id]: initial(m) }));
+      setFilter(m.action === "linked" ? "linked" : "todo");
+      setQuery(m.username);
+      setLookup("");
+      setMessage({
+        text:
+          m.action === "linked"
+            ? `@${m.username} (GitLab ID ${m.gitlab_id}) đã được gắn với ${nameOf(m.user_id)}.`
+            : `${known ? "Đã có" : "Đã thêm"} @${m.username} (GitLab ID ${m.gitlab_id}) trong bảng: chọn Tạo người mới hoặc Gắn với, rồi Lưu lựa chọn.`,
+      });
+    } catch (err) {
+      setMessage({ text: `Lỗi: ${err instanceof ApiError ? err.message : String(err)}` });
+    } finally {
+      setLooking(false);
     }
   }
 
@@ -269,6 +326,29 @@ export function GitLabMembers() {
           {loading ? "Đang lấy…" : "Lấy danh sách"}
         </button>
       </div>
+      <form className="toolbar" onSubmit={(e) => void addMember(e)}>
+        <span className="muted small">Thêm theo GitLab:</span>
+        {(connections.data?.length ?? 0) > 1 && (
+          <select className="compact" value={lookupConnection} onChange={(e) => setLookupConnection(e.target.value)} aria-label="Máy chủ GitLab">
+            {connections.data?.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        )}
+        <input
+          className="compact"
+          value={lookup}
+          onChange={(e) => setLookup(e.target.value)}
+          placeholder="username, GitLab ID hoặc link hồ sơ"
+          aria-label="Username, GitLab ID hoặc link hồ sơ GitLab của member cần thêm"
+          disabled={looking || saving}
+        />
+        <button type="submit" disabled={!lookup.trim() || looking || saving || !connections.data?.length}>
+          {looking ? "Đang tìm…" : "Thêm"}
+        </button>
+      </form>
 
       {/* One list of people for every "Người khác…" field. */}
       <datalist id="cp-people">
@@ -283,6 +363,17 @@ export function GitLabMembers() {
       )}
       {!loading && members && all.length > 0 && (
         <>
+          {(members.failed?.length ?? 0) > 0 && (
+            <Message
+              tone="warning"
+              text={`Không đọc được thành viên của ${members.failed?.length} repo: ${members.failed
+                ?.map((f) => `${f.repo} (${f.message})`)
+                .join("; ")}. Danh sách dưới đây là của các repo còn lại; thiếu ai thì dùng "Thêm theo GitLab".`}
+            />
+          )}
+          {members.emails_skipped && (
+            <Message tone="warning" text="Nhiều thành viên quá nên chưa tra hết email công khai; một số đề xuất gắn theo email có thể thiếu." />
+          )}
           {members.truncated && (
             <Message
               tone="warning"
