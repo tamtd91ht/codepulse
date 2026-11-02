@@ -60,6 +60,12 @@ Repo: đường dẫn GitLab hoặc hậu tố (`api`, `omicrm/api`). Người: 
 
 Mục đã có review `done` cùng sha → bot trả kết quả ngay, không xếp hàng lại; `failed`/`skipped` → chạy lại (như `POST /reviews/{id}/rerun`).
 
+### Kết quả MR và file phân tích (2026-11-02)
+- Chỉ áp dụng cho **merge request được yêu cầu review từ Telegram** (tin nhắn kết quả của `telegram_requests`); commit và review từ nguồn khác giữ dòng ngắn như cũ.
+- Mỗi MR trong tin kết quả ghi: kết luận, điểm, **mức cao nhất** (🔴 Critical / 🟠 High / 🟡 Medium / 🔵 Low / ✅ không có lỗi), số finding **cả bốn mức** (kể cả 0) theo đúng cách đếm của kết luận (bỏ finding bị bác bỏ / báo nhầm; finding chưa kiểm chứng ghi riêng, không tính điểm), link **⬇ Tải kết quả phân tích** và link trang review. Cuối tin có chú giải bốn mức (một lần).
+- File phân tích: một file HTML tự chứa (`app/telegram/mr_report.py`: CSS nội tuyến, không script, không gọi ra ngoài, sáng/tối theo máy) gồm thông tin MR, kết luận, điểm, mức cao nhất, bảng **các mức nghĩa là gì** (theo rubric), từng finding theo mức (file:dòng, nhóm, trạng thái kiểm chứng, mô tả, gợi ý sửa, đoạn diff đã lưu ≤ 40 dòng); finding không tính điểm xếp cuối.
+- Link ký sẵn (người dùng chọn: mở trên điện thoại không cần đăng nhập): `<DASHBOARD_URL>/api/v1/review-reports/<review id>.<hết hạn>.<chữ ký>`, HMAC-SHA256 với khoá dẫn xuất từ `SESSION_SECRET` (không dùng được làm phiên đăng nhập), sống `TELEGRAM_REPORT_LINK_HOURS` (mặc định 24). **Ai có link đều tải được** cho tới khi hết hạn (chuyển tiếp tin nhắn là chuyển quyền tải); hết hạn → 410, sai chữ ký → 404, review không phải MR hoặc chưa `done` → 404. Phản hồi: `Content-Disposition: attachment`, `Cache-Control: no-store`, CSP `default-src 'none'`, `X-Robots-Tag: noindex`. Mỗi lần tải ghi audit `telegram.report_download`.
+
 ### `/report` (2026-11-01)
 - `/report user=tamtd time=04-2026,10-2026`; mọi phần tuỳ chọn, không cần thứ tự, từ không có `=` được hiểu là thời gian nếu đọc được, không thì là người (`/report tamtd 04-2026`).
 - Thời gian: một mốc hoặc hai mốc nối bằng `,` / `..` / `~` (từ đầu mốc đầu đến cuối mốc sau), hoặc `from=` / `to=`. Mốc: tháng `04-2026` `4/2026` `2026-04`; ngày `15-04-2026` `15/04/2026` `2026-04-15`; năm `2026`; quý `q2-2026`; `today`, `yesterday`, `week`, `lastweek`, `month`, `lastmonth`, `year`, `7d` (và tiếng Việt: hôm nay, tuần, tháng trước…). Bỏ trống = tháng này. Cuối khoảng cắt về hôm nay (REPORT_TZ); tối đa 366 ngày; khoảng ở tương lai bị từ chối.

@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     telegram_commands_per_10min: int = Field(default=20, ge=1)
     # Commits one "today" / "open" command may queue (LLM budget guard).
     telegram_max_targets: int = Field(default=20, ge=1, le=200)
+    # How long the download link of an MR's analysis (Telegram result message) stays valid;
+    # anyone holding the link may download it until then (app/telegram/mr_report.py).
+    telegram_report_link_hours: int = Field(default=24, ge=1, le=168)
 
     # Review flow v2 (docs/specs/19 §4, §8): the main pass runs with read-only tools inside a
     # copy of the repository (REVIEW_AGENT); below REVIEW_AGENT_MIN_LOC only the no-tool pass

@@ -25,6 +25,7 @@ from app.db import get_redis, get_sessionmaker
 from app.models import Connection, TelegramBot
 from app.review.providers import build_provider
 from app.telegram.client import TelegramClient, TelegramError
+from app.telegram.mr_report import link_url
 from app.telegram.picker import PickerStore, RedisPickerStore
 from app.telegram.resolve import LLMResolver, NoResolver, Resolver
 from app.telegram.service import (
@@ -220,7 +221,13 @@ def poll_bot(
         handled += 1
     now = clock()
     for request, text in finished_requests(
-        session, bot, settings.dashboard_url, now, RESULT_MAX_AGE
+        session,
+        bot,
+        settings.dashboard_url,
+        now,
+        RESULT_MAX_AGE,
+        report_link=lambda review_id: link_url(settings, review_id, now),
+        link_hours=settings.telegram_report_link_hours,
     ):
         try:
             client.send_message(request.chat_id, text, request.message_id)

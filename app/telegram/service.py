@@ -57,6 +57,7 @@ from app.telegram.commands import (
     parse,
     parse_review,
 )
+from app.telegram.mr_report import LEVEL, SHOWN, findings_of, tally
 from app.telegram.picker import (
     MAX_ITEMS,
     Item,
@@ -2227,9 +2228,19 @@ class BotService:
 
 
 def finished_requests(
-    session: Session, bot: TelegramBot, dashboard_url: str, now: datetime, max_age: timedelta
+    session: Session,
+    bot: TelegramBot,
+    dashboard_url: str,
+    now: datetime,
+    max_age: timedelta,
+    report_link: Callable[[int], str | None] | None = None,
+    link_hours: int = 24,
 ) -> list[tuple[TelegramRequest, str]]:
-    """Queued requests whose targets all finished (or aged out), with the message to send."""
+    """Queued requests whose targets all finished (or aged out), with the message to send.
+
+    A merge request's result spells out its highest level and the four severity counts, with
+    a signed link to download the full analysis (`report_link`, app/telegram/mr_report.py)
+    and what each level means; a commit's keeps the short line."""
     out: list[tuple[TelegramRequest, str]] = []
     requests = session.scalars(
         select(TelegramRequest)
@@ -2239,21 +2250,72 @@ def finished_requests(
     for request in requests:
         lines: list[str] = []
         all_done = True
+        any_mr = False
         for t in request.targets:
             review = _review_for(session, t)
             if review is None or review.status not in FINISHED:
                 all_done = False
                 continue
-            lines.append(
-                f"• {esc(str(t.get('label', '')))}\n  {_result(session, review, dashboard_url)}"
-            )
+            if t.get("kind") == "mr" and review.status == "done":
+                any_mr = True
+                body = _mr_result(session, review, dashboard_url, report_link, link_hours)
+            else:
+                body = _result(session, review, dashboard_url)
+            lines.append(f"• {esc(str(t.get('label', '')))}\n  {body}")
         expired = request.created_at is not None and now - request.created_at > max_age
         if not all_done and not expired:
             continue
         if not all_done:
             lines.append("• Một số mục chưa xong sau 3 giờ; xem trạng thái bằng /status.")
+        if any_mr:
+            lines.append(LEGEND)
         out.append((request, "<b>Kết quả review</b>\n" + "\n".join(lines)))
     return out
+
+
+# What each level means, once under a result that has an MR (the file has the long version).
+LEGEND = (
+    "\n<i>Các mức:</i>\n"
+    "🔴 <b>Critical</b>: mất / lộ dữ liệu, lỗ hổng bảo mật, sai tiền, sập production. Sửa trước"
+    " khi merge.\n"
+    "🟠 <b>High</b>: lỗi luồng chính, thiếu kiểm tra quyền, race, không chịu nổi tải. Nên sửa"
+    " trước khi merge.\n"
+    "🟡 <b>Medium</b>: lỗi trường hợp biên, hiệu năng, thiếu test logic quan trọng. Sửa sớm.\n"
+    "🔵 <b>Low</b>: bảo trì, code smell (hàm dài, magic number, tên khó hiểu). Sửa khi tiện."
+)
+
+
+def _mr_result(
+    session: Session,
+    review: Review,
+    dashboard_url: str,
+    report_link: Callable[[int], str | None] | None,
+    link_hours: int = 24,
+) -> str:
+    """An MR review asked for in Telegram: verdict, score, highest level, the four counts, the
+    download link of the analysis and the dashboard page."""
+    t = tally(findings_of(session, review.id))
+    top = t.top
+    score = f"{review.score:.0f}" if review.score is not None else "—"
+    verdict = ""
+    if review.verdict:
+        icon = VERDICT_ICON.get(review.verdict, "")
+        verdict = f"{icon} <b>{VERDICT_LABEL.get(review.verdict, review.verdict)}</b> · "
+    level = f"{top.icon} <b>{top.label}</b>" if top else "✅ không có lỗi"
+    counts = " · ".join(
+        f"{LEVEL[k].icon} {t.counted.get(k, 0)} {LEVEL[k].label.lower()}" for k in SHOWN
+    )
+    lines = [f"{verdict}Điểm <b>{score}</b>/100 · Mức cao nhất: {level}", f"  {counts}"]
+    if t.unverified:
+        lines.append(f"  ({t.unverified} finding chưa kiểm chứng, không tính điểm)")
+    url = report_link(review.id) if report_link else None
+    if url:
+        lines.append(
+            f'  ⬇ <a href="{html.escape(url, quote=True)}">Tải kết quả phân tích</a>'
+            f" (HTML, link hết hạn sau {link_hours} giờ)"
+        )
+    lines.append(f"  {esc(dashboard_url.rstrip('/'))}/reviews/{review.id}")
+    return "\n".join(lines)
 
 
 def _review_for(session: Session, target: dict[str, Any]) -> Review | None:
