@@ -350,6 +350,29 @@ export interface ReviewListItem extends Review {
   changed_at?: string | null;
   /** The viewer manages it and it may run again (as ReviewDetail.can_rerun). */
   can_rerun?: boolean;
+  /** No person yet: the git / GitLab identity behind the change. */
+  author_account?: ReviewAuthorAccount | null;
+}
+
+/** The author of a review with no person: a git email (commit) or a GitLab account (MR). */
+export interface ReviewAuthorAccount {
+  id: number;
+  kind: "git_email" | "gitlab_user" | string;
+  name: string | null;
+  email: string | null;
+  /** Linked after the review ran: a sync moves the review to them. */
+  user: Person | null;
+  /** Admin, or a manager of the review's dự án. */
+  can_link: boolean;
+}
+
+/** GET /reviews/{id}/author: what the "Gắn" form offers. */
+export interface ReviewAuthorOut {
+  account: ReviewAuthorAccount;
+  candidates: Person[];
+  can_create: boolean;
+  /** Reviews of this author with no person yet (what a sync moves). */
+  reviews: number;
 }
 
 /** POST /reviews/rerun: which ones were queued, and why the others were not. */

@@ -9,12 +9,15 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import Date, Select, exists, func, or_, select, tuple_
 from sqlalchemy import cast as sql_cast
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.access import require_manage, review_repo, review_scope
+from app.api.access import require_manage, review_repo, review_scope, reviewable_people
 from app.api.audit import audit
 from app.api.deps import get_queue, get_session
 from app.api.schemas import (
+    AccountLinked,
+    AccountOut,
     BoardFindingOut,
     FindingOut,
     Page,
@@ -22,6 +25,9 @@ from app.api.schemas import (
     RerunManyIn,
     RerunManyOut,
     RerunnableOut,
+    ReviewAuthorAccount,
+    ReviewAuthorLink,
+    ReviewAuthorOut,
     ReviewDetail,
     ReviewListItem,
     ReviewOut,
@@ -34,7 +40,9 @@ from app.api.schemas import (
 from app.api.security import CurrentPrincipal, Principal
 from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
+from app.identity.attribution import Attribution, attribute_reviews, rebuild_after_commit
 from app.models import (
+    Account,
     Commit,
     Connection,
     MergeRequest,
@@ -214,10 +222,38 @@ def list_reviews(
         if author_ids
         else {}
     )
+    # No person yet: the git / GitLab identity behind the change, and whether this viewer may
+    # tie it to someone (admin, or a manager of the review's dự án).
+    unmapped = [r for r in rows[:limit] if r.author_user_id is None]
+    account_of = _author_account_ids(session, unmapped)
+    accounts = (
+        {
+            a.id: a
+            for a in session.scalars(select(Account).where(Account.id.in_(account_of.values())))
+        }
+        if account_of
+        else {}
+    )
+    linked_ids = {a.user_id for a in accounts.values() if a.user_id is not None}
+    linked = (
+        {u.id: u for u in session.scalars(select(User).where(User.id.in_(linked_ids)))}
+        if linked_ids
+        else {}
+    )
     items = []
     for review in rows[:limit]:
         project, url, label = _target(session, review)
         author = authors.get(review.author_user_id) if review.author_user_id else None
+        account = accounts.get(account_of.get(review.id, 0))
+        author_account = (
+            _account_out(
+                account,
+                linked.get(account.user_id) if account.user_id else None,
+                principal.can_manage_project(project.business_project_id if project else None),
+            )
+            if account is not None
+            else None
+        )
         items.append(
             {
                 **ReviewOut.model_validate(review).model_dump(),
@@ -225,6 +261,7 @@ def list_reviews(
                 "project": project.path_with_namespace if project else None,
                 "web_url": url,
                 "author": UserOut.model_validate(author) if author else None,
+                "author_account": author_account,
                 "changed_at": None
                 if review.changed_at == CHANGE_TIME_UNKNOWN
                 else review.changed_at,
@@ -650,3 +687,203 @@ def list_findings(
         )
     more = len(rows) > limit
     return Page(items=items, next_cursor=encode_cursor(rows[limit - 1][0].id) if more else None)
+
+
+# -- tying an unmapped author to a person from the review list -----------------------------------
+# Who may: admin, or a manager of the review's dự án (they already see its reviews whose author
+# is not mapped). "Đồng bộ" gives every review of that git email / GitLab account the person and
+# re-scores their weeks and months (app/identity/attribution.py), like Admin > Tài khoản.
+
+AUTHOR_PEOPLE_DAYS = 90  # a manager links to people of the dự án: granted, or committed this long
+
+
+def _author_account_ids(session: Session, reviews: list[Review]) -> dict[int, int]:
+    """review id -> the account of its commit / MR author (when the change is synced)."""
+    shas = {r.commit_sha for r in reviews if r.mr_id is None and r.commit_sha}
+    mr_ids = {r.mr_id for r in reviews if r.mr_id is not None}
+    by_sha: dict[str, int | None] = {}
+    if shas:
+        sha_rows = session.execute(
+            select(Commit.sha, Commit.author_account_id).where(Commit.sha.in_(shas))
+        ).all()
+        by_sha = {sha: acc for sha, acc in sha_rows}
+    by_mr: dict[int, int | None] = {}
+    if mr_ids:
+        mr_rows = session.execute(
+            select(MergeRequest.id, MergeRequest.author_account_id).where(
+                MergeRequest.id.in_(mr_ids)
+            )
+        ).all()
+        by_mr = {mid: acc for mid, acc in mr_rows}
+    out: dict[int, int] = {}
+    for review in reviews:
+        if review.mr_id is not None:
+            account_id = by_mr.get(review.mr_id)
+        else:
+            account_id = by_sha.get(review.commit_sha or "")
+        if account_id is not None:
+            out[review.id] = account_id
+    return out
+
+
+def _account_out(account: Account, user: User | None, can_link: bool) -> ReviewAuthorAccount:
+    return ReviewAuthorAccount(
+        id=account.id,
+        kind=account.kind,
+        name=account.display_name,
+        email=account.external_key if account.kind == "git_email" else None,
+        user=UserOut.model_validate(user) if user else None,
+        can_link=can_link,
+    )
+
+
+def _review_author(
+    session: Session, principal: Principal, review_id: int
+) -> tuple[Review, int | None, Account]:
+    review = _visible_review(session, principal, review_id)
+    project = review_repo(session, review)
+    bp_id = project.business_project_id if project else None
+    if not principal.can_manage_project(bp_id):
+        raise HTTPException(403, "only a manager of this dự án or an admin can link authors")
+    account_id = _author_account_ids(session, [review]).get(review.id)
+    account = session.get(Account, account_id) if account_id else None
+    if account is None:
+        raise HTTPException(409, "Chưa biết tác giả của thay đổi này (chưa sync); chưa gắn được.")
+    return review, bp_id, account
+
+
+def _link_candidates(session: Session, principal: Principal, bp_id: int | None) -> list[User]:
+    if principal.is_admin:
+        return list(
+            session.scalars(
+                select(User).where(User.active.is_not(False)).order_by(User.full_name, User.id)
+            )
+        )
+    since = datetime.now(UTC) - timedelta(days=AUTHOR_PEOPLE_DAYS)
+    return reviewable_people(session, principal, [bp_id] if bp_id is not None else [], since)
+
+
+def _pending_reviews(session: Session, account_id: int) -> int:
+    """Reviews of this author that have no person (what a sync gives the person)."""
+    shas = select(Commit.sha).where(Commit.author_account_id == account_id)
+    mrs = select(MergeRequest.id).where(MergeRequest.author_account_id == account_id)
+    count = session.scalar(
+        select(func.count())
+        .select_from(Review)
+        .where(
+            Review.author_user_id.is_(None),
+            or_(Review.commit_sha.in_(shas), Review.mr_id.in_(mrs)),
+        )
+    )
+    return int(count or 0)
+
+
+@router.get("/reviews/{review_id}/author", response_model=ReviewAuthorOut)
+def review_author(
+    review_id: int, principal: CurrentPrincipal, session: SessionDep
+) -> ReviewAuthorOut:
+    """The "Gắn" form of a review without a person: its author, who it may go to."""
+    _, bp_id, account = _review_author(session, principal, review_id)
+    candidates = _link_candidates(session, principal, bp_id)
+    user = session.get(User, account.user_id) if account.user_id else None
+    if user is not None and not principal.is_admin and user.id not in {u.id for u in candidates}:
+        user = None  # someone outside the manager's dự án: not theirs to see (nor to move)
+    return ReviewAuthorOut(
+        account=_account_out(account, user, True),
+        candidates=[UserOut.model_validate(u) for u in candidates],
+        can_create=principal.is_admin and account.kind == "git_email",
+        reviews=_pending_reviews(session, account.id),
+    )
+
+
+@router.post("/reviews/{review_id}/author", response_model=AccountLinked)
+def link_review_author(
+    review_id: int,
+    body: ReviewAuthorLink,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+    queue: Annotated[Enqueuer, Depends(get_queue)],
+) -> AccountLinked:
+    """Tie the author of a review (their git email or GitLab account) to a person; with sync,
+    every review of that author follows and the affected periods are re-scored."""
+    review, bp_id, account = _review_author(session, principal, review_id)
+    # Row lock: an admin linking the same account meanwhile cannot be silently overwritten.
+    locked = session.get(Account, account.id, with_for_update=True, populate_existing=True)
+    if locked is None:  # deleted meanwhile
+        raise HTTPException(409, "Tài khoản tác giả vừa bị xoá; tải lại trang.")
+    account = locked
+    previous = account.user_id
+    if (
+        previous is not None
+        and not principal.is_admin
+        and (body.create or body.user_id != previous)
+    ):
+        # Re-pointing someone's account moves their reviews and scores: the admin's call.
+        raise HTTPException(409, "Tác giả này đã gắn với người khác; chỉ admin đổi được.")
+    if body.create:
+        if not principal.is_admin:
+            raise HTTPException(403, "Chỉ admin tạo được người mới.")
+        if account.kind != "git_email":
+            raise HTTPException(422, "Chỉ tạo người mới được từ email git của commit.")
+        email = account.external_key.strip().lower()
+        taken = select(User.id).where(func.lower(User.primary_email) == email)
+        if session.scalars(taken).first() is not None:
+            raise HTTPException(409, f"Đã có người dùng email {email}; hãy chọn người đó.")
+        user = User(
+            full_name=(account.display_name or email.partition("@")[0]).strip(),
+            primary_email=email,
+        )
+        session.add(user)
+    elif body.user_id is not None:
+        found = session.get(User, body.user_id)
+        if found is None or found.active is False:
+            raise HTTPException(404, "person not found")
+        allowed = {u.id for u in _link_candidates(session, principal, bp_id)}
+        if not principal.is_admin and found.id not in allowed:
+            raise HTTPException(403, "Người này không thuộc dự án bạn quản lý.")
+        user = found
+    else:
+        raise HTTPException(422, "Chọn một người (user_id) hoặc tạo mới (create: true).")
+    try:
+        session.flush()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(409, "Email vừa được dùng cho người khác; thử lại.") from None
+    if previous == user.id and not body.sync:
+        return AccountLinked.model_validate(  # nothing changes: no audit row
+            {**AccountOut.model_validate(account).model_dump(), "reviews_attributed": 0}
+        )
+    account.user_id = user.id
+    session.flush()
+    attribution = (
+        attribute_reviews(
+            session,
+            ZoneInfo(settings.report_tz),
+            [account.id],
+            unassigned_only=not principal.is_admin,
+        )
+        if body.sync
+        else Attribution()
+    )
+    audit(
+        session,
+        principal.user_id,
+        "account.link",
+        f"account:{account.id}",
+        user_id=user.id,
+        previous_user_id=previous,
+        created=body.create,
+        backfill=body.sync,
+        via=f"review:{review.id}",
+        reviews_attributed=attribution.reviews,
+    )
+    session.commit()
+    queued = rebuild_after_commit(queue, attribution)
+    return AccountLinked.model_validate(
+        {
+            **AccountOut.model_validate(account).model_dump(),
+            "reviews_attributed": attribution.reviews,
+            "periods_queued": queued,
+        }
+    )

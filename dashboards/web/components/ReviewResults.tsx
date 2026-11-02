@@ -5,6 +5,7 @@ import { useState } from "react";
 import useSWRInfinite from "swr/infinite";
 
 import { RangePicker, type SharedRange, useCardRange } from "@/components/Evaluation";
+import { LinkReviewAuthor, authorLabel } from "@/components/LinkReviewAuthor";
 import { announceReviewQueued } from "@/components/ReviewActivity";
 import { Alert, Avatar, Card, EmptyState, ExternalLink, Loading, Pill } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
@@ -470,6 +471,25 @@ export function ReviewResults({
                             <Avatar name={r.author.full_name} email={r.author.primary_email} size="sm" />
                             <span>{who}</span>
                           </button>
+                        ) : r.author_account ? (
+                          <div className="small">
+                            <span className="muted">
+                              {r.author_account.user
+                                ? `Đã gắn ${nameOf(r.author_account.user)}, chưa đồng bộ`
+                                : "Chưa gắn người"}
+                            </span>
+                            <div title={r.author_account.email ?? undefined}>{authorLabel(r.author_account)}</div>
+                            {r.author_account.can_link && (
+                              <LinkReviewAuthor
+                                reviewId={r.id}
+                                account={r.author_account}
+                                onDone={(text) => {
+                                  setSent({ tone: "success", text });
+                                  void pages.mutate();
+                                }}
+                              />
+                            )}
+                          </div>
                         ) : (
                           <span className="muted">Chưa gắn người</span>
                         )}

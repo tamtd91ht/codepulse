@@ -364,6 +364,12 @@ export default function GuidePage() {
             người được gắn và tính lại điểm các tuần/tháng đã chốt ở nền; lần sync tự động cũng làm vậy với các tài khoản
             nó tự nhận ra.
           </li>
+          <li>
+            Ở <strong>Kết quả review</strong>, dòng <strong>Chưa gắn người</strong> ghi tên và email git (hoặc tài khoản
+            GitLab) của tác giả. Admin và người quản lý dự án bấm <strong>Gắn</strong>, chọn người, rồi trả lời{" "}
+            <strong>Đồng bộ dữ liệu cũ?</strong>: <strong>Có</strong> chuyển mọi review của tác giả đó sang người này và
+            tính lại điểm; <strong>Không</strong> chỉ gắn từ nay, dòng còn nút <strong>Đồng bộ</strong> để làm sau.
+          </li>
         </ol>
         <h3>Telegram</h3>
         <p>

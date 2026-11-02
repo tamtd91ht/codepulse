@@ -30,6 +30,22 @@ git_email,a.personal@gmail.com,a@company.vn
 gitlab_user,1234567,a@company.vn
 ```
 
+## Gắn tác giả từ danh sách kết quả review (2026-11-02)
+- Dòng review chưa có người (`author_user_id` null) hiện tác giả gốc: tên + email git (commit) hoặc
+  `GitLab @username` (MR) — `ReviewListItem.author_account`. Tài khoản đã gắn người sau khi review chạy
+  thì ghi "Đã gắn X, chưa đồng bộ".
+- Ai gắn được: admin, hoặc người quản lý (`manage`) dự án của review. Người quản lý chỉ gắn với người
+  của dự án (được cấp quyền, hoặc đã commit trong dự án 90 ngày qua), không tạo người mới, không đổi
+  tài khoản đã thuộc người khác (409, việc của admin). Admin gắn với bất kỳ ai và tạo được người mới từ
+  email git.
+- `GET /reviews/{id}/author` (tác giả, người chọn được, số review cũ chưa có người),
+  `POST /reviews/{id}/author {user_id | create, sync}`. Gắn theo **đúng tài khoản đó** (một email git /
+  một tài khoản GitLab), không gộp theo tên.
+- Sau khi chọn người, giao diện hỏi **"Đồng bộ dữ liệu cũ?"**: **Có** → `sync=true`: mọi review của
+  tài khoản lấy người này (`attribute_reviews(unassigned_only=False)`) và các tuần/tháng liên quan được
+  tính lại ở nền (`aggregate_periods_job`); **Không** → chỉ gắn, review cũ giữ nguyên, dòng đó còn nút
+  **Đồng bộ** để làm sau. Audit `account.link` kèm `via=review:<id>`, `backfill`.
+
 ## Checklist
 - [ ] CLI `codepulse identity import --teams --users --accounts`
 - [ ] API CRUD users/teams/accounts + endpoint link/unlink account

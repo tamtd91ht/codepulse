@@ -506,11 +506,41 @@ class ReviewOut(ORM):
     basis: dict[str, Any] | None = None  # docs/specs/17 §Căn cứ review
 
 
+class ReviewAuthorAccount(BaseModel):
+    """The git / GitLab identity behind a review that has no person yet."""
+
+    id: int  # accounts.id
+    kind: str  # git_email (commit) | gitlab_user (MR)
+    name: str | None  # git author name / GitLab username
+    email: str | None  # the git email (git_email accounts only)
+    # The account got a person after this review ran: syncing moves the review to them.
+    user: "UserOut | None" = None
+    can_link: bool = False  # admin, or a manager of the review's dự án
+
+
+class ReviewAuthorOut(BaseModel):
+    """GET /reviews/{id}/author: what the "Gắn" form needs."""
+
+    account: ReviewAuthorAccount
+    candidates: list["UserOut"]  # people this viewer may link the author to
+    can_create: bool  # admin, git email known: may create the person from it
+    reviews: int  # reviews of this author with no person yet (what a sync moves)
+
+
+class ReviewAuthorLink(BaseModel):
+    user_id: int | None = None
+    create: bool = False  # admin: a new person from the author's name and git email
+    # Give every review of this author the person and re-score their weeks / months
+    # (app/identity/attribution.py); False links only what comes next.
+    sync: bool
+
+
 class ReviewListItem(ReviewOut):
     target: str  # "MR !12" or "commit abc12345"
     project: str | None
     web_url: str | None
     author: "UserOut | None" = None  # whose change was reviewed
+    author_account: ReviewAuthorAccount | None = None  # no person: the git / GitLab identity
     # When the change was made (commit time; MR creation for an MR); the list sorts by it.
     changed_at: datetime | None = None
     can_rerun: bool = False  # the viewer manages it and a new run is possible (as ReviewDetail)
