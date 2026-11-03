@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { use, useState } from "react";
+import { use, useEffect, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { SubPanel, type SubTab, SubTabs } from "@/components/AdminTabs";
 import { IconButton } from "@/components/icons";
 import { scoreTone, useUrlRange } from "@/components/Evaluation";
 import { MemberEvaluation } from "@/components/MemberEvaluation";
@@ -305,12 +306,44 @@ function TelegramCard() {
   );
 }
 
+type MemberTab = "overview" | "evaluation" | "reviews" | "categories" | "disputes" | "telegram";
+const MEMBER_TABS: MemberTab[] = ["overview", "evaluation", "reviews", "categories", "disputes", "telegram"];
+
+/** The member page's sub-tab, kept in the URL hash (#evaluation) like Admin's, so a link or a
+ * reload opens the same tab; Back / Forward follow it. */
+function useHashTab(): [MemberTab, (t: MemberTab) => void] {
+  const [tab, setTab] = useState<MemberTab>("overview");
+  useEffect(() => {
+    const read = () => {
+      const h = window.location.hash.slice(1) as MemberTab;
+      setTab(MEMBER_TABS.includes(h) ? h : "overview");
+    };
+    read();
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+  }, []);
+  const go = (t: MemberTab) => {
+    setTab(t);
+    try {
+      const url = new URL(window.location.href);
+      url.hash = t === "overview" ? "" : t;
+      window.history.pushState(null, "", url);
+    } catch {
+      /* the tab just is not kept in the URL */
+    }
+  };
+  return [tab, go];
+}
+
 export default function MemberDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const [tab, setTab] = useHashTab();
   const { data: person, error } = useApi<Person>(`/people/${id}`);
   const { data: me } = useApi<Me>("/auth/me");
   const { data: series, error: seriesError } = useApi<MetricsSeries>(`/metrics/users/${id}${qs({ period: "week" })}`);
-  const { data: heat, error: heatError } = useApi<CategoryWeek[]>(`/metrics/users/${id}/categories?weeks=12`);
+  const { data: heat, error: heatError } = useApi<CategoryWeek[]>(
+    tab === "categories" ? `/metrics/users/${id}/categories?weeks=12` : null,
+  );
   const { data: repos } = useApi<Repo[]>("/repos");
   // One period for the evaluation and the review results: changing either card moves both. It
   // comes from the URL, so the Thành viên page's period follows a click on a name.
@@ -327,6 +360,17 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
   const rank = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
   const findings = [...(open?.items ?? [])].sort((a, b) => rank[a.severity] - rank[b.severity]);
   const name = person.full_name ?? person.primary_email ?? `#${person.id}`;
+  const isMe = me?.id === person.id;
+  const tabs: SubTab<MemberTab>[] = [
+    { key: "overview", label: "Tổng quan", hint: "Chỉ số tuần gần nhất, xu hướng 12 tuần, finding đang mở" },
+    { key: "evaluation", label: "Đánh giá", hint: "Đánh giá trong kỳ: kết luận, loại lỗi, theo tuần, theo repo" },
+    { key: "reviews", label: "Kết quả review", hint: "Các review MR/commit trong kỳ" },
+    { key: "categories", label: "Loại lỗi", hint: "Loại lỗi theo tuần (12 tuần)" },
+    { key: "disputes", label: "Khiếu nại", hint: "Mọi khiếu nại đã gửi và kết quả duyệt" },
+    ...(isMe ? [{ key: "telegram" as const, label: "Telegram", hint: "Gắn Telegram để gửi lệnh review cho bot" }] : []),
+  ];
+  // A #telegram link opened on someone else's page shows the overview instead.
+  const shownTab: MemberTab = tabs.some((t) => t.key === tab) ? tab : "overview";
 
   return (
     <>
@@ -344,115 +388,147 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
         }
       />
 
-      {!series && !seriesHidden && <Loading error={seriesError} rows={3} />}
-      {series && (
-        <StatStrip label="Tuần gần nhất">
-          <StripStat
-            label="Quality Index"
-            title="Tuần gần nhất"
-            value={latest?.quality_index}
-            digits={1}
-            change={series.delta.quality_index ?? null}
-            tone={scoreTone(latest?.quality_index == null ? null : Number(latest.quality_index))}
-          />
-          <StripStat label="Điểm TB" title="Tuần gần nhất" value={latest?.avg_score} digits={1} change={series.delta.avg_score ?? null} />
-          <StripStat
-            label="Fix rate"
-            title="Tỉ lệ lỗi critical/high đã sửa ở lần review sau"
-            unit="%"
-            value={latest?.fix_rate == null ? null : Number(latest.fix_rate) * 100}
-          />
-          <StripStat label="QI TB team" value={series.team_quality_index} digits={1} />
-          <StripStat
-            label="Finding mở"
-            title="Chưa xử lý, mọi thời kỳ"
-            value={open ? findings.length : undefined}
-            unit={open?.next_cursor ? "+" : undefined}
-            tone={findings.some((f) => f.severity === "critical") ? "bad" : findings.length ? "warn" : undefined}
-          />
-        </StatStrip>
-      )}
+      <SubTabs<MemberTab>
+        id="member"
+        label="Nội dung trang thành viên"
+        tabs={tabs}
+        value={shownTab}
+        onChange={setTab}
+      />
 
-      <div className="grid wide-left">
-        <Card title="Xu hướng" actions={<span className="muted small">12 tuần</span>}>
-          {series ? (
-            <div className="chart-box">
-              <ResponsiveContainer>
-                <LineChart
-                  data={series.series.map((m) => ({
-                    week: weekLabel(m.period_start),
-                    score: m.avg_score === null ? null : Number(m.avg_score),
-                    qi: m.quality_index === null ? null : Number(m.quality_index),
-                  }))}
-                  margin={{ top: 8, right: 8, bottom: 0, left: -16 }}
-                >
-                  <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
-                  <XAxis dataKey="week" tickLine={false} axisLine={false} fontSize={12} />
-                  <YAxis domain={[0, 100]} tickLine={false} axisLine={false} fontSize={12} />
-                  <Tooltip content={<ChartTip />} cursor={{ stroke: "var(--border-strong)" }} />
-                  <Legend iconType="circle" iconSize={8} />
-                  <Line dataKey="score" name="Điểm TB" stroke="var(--chart-1)" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} connectNulls />
-                  <Line
-                    dataKey="qi"
-                    name="Quality Index"
-                    stroke="var(--chart-2)"
-                    strokeWidth={2.5}
-                    strokeDasharray="6 4"
-                    dot={false}
-                    activeDot={{ r: 4 }}
-                    connectNulls
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          ) : seriesHidden ? (
-            <p className="muted small">
-              Điểm theo tuần gộp mọi dự án của người này nên chỉ họ, lead của họ và admin xem được. Phần đánh giá và kết quả review trên
-              trang này chỉ tính việc trong dự án bạn quản lý.
-            </p>
-          ) : (
-            <Loading error={seriesError} rows={4} />
+      {shownTab === "overview" && (
+        <SubPanel id="member" tab="overview">
+          {!series && !seriesHidden && <Loading error={seriesError} rows={3} />}
+          {series && (
+            <StatStrip label="Tuần gần nhất">
+              <StripStat
+                label="Quality Index"
+                title="Tuần gần nhất"
+                value={latest?.quality_index}
+                digits={1}
+                change={series.delta.quality_index ?? null}
+                tone={scoreTone(latest?.quality_index == null ? null : Number(latest.quality_index))}
+              />
+              <StripStat label="Điểm TB" title="Tuần gần nhất" value={latest?.avg_score} digits={1} change={series.delta.avg_score ?? null} />
+              <StripStat
+                label="Fix rate"
+                title="Tỉ lệ lỗi critical/high đã sửa ở lần review sau"
+                unit="%"
+                value={latest?.fix_rate == null ? null : Number(latest.fix_rate) * 100}
+              />
+              <StripStat label="QI TB team" value={series.team_quality_index} digits={1} />
+              <StripStat
+                label="Finding mở"
+                title="Chưa xử lý, mọi thời kỳ"
+                value={open ? findings.length : undefined}
+                unit={open?.next_cursor ? "+" : undefined}
+                tone={findings.some((f) => f.severity === "critical") ? "bad" : findings.length ? "warn" : undefined}
+              />
+            </StatStrip>
           )}
-        </Card>
-        <Card title={open ? `Finding đang mở · ${findings.length}${open.next_cursor ? "+" : ""}` : "Finding đang mở"} actions={<span className="muted small">nặng nhất trước</span>}>
-          {open ? (
-            findings.length ? (
-              <>
-                <ul className="finding-list">
-                  {findings.slice(0, TOP).map((f) => (
-                    <FindingItem key={f.id} f={f} />
-                  ))}
-                </ul>
-                {findings.length > TOP && (
-                  <Expander summary={`${findings.length - TOP} finding khác`}>
+
+          <div className="grid wide-left">
+            <Card title="Xu hướng" actions={<span className="muted small">12 tuần</span>}>
+              {series ? (
+                <div className="chart-box">
+                  <ResponsiveContainer>
+                    <LineChart
+                      data={series.series.map((m) => ({
+                        week: weekLabel(m.period_start),
+                        score: m.avg_score === null ? null : Number(m.avg_score),
+                        qi: m.quality_index === null ? null : Number(m.quality_index),
+                      }))}
+                      margin={{ top: 8, right: 8, bottom: 0, left: -16 }}
+                    >
+                      <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
+                      <XAxis dataKey="week" tickLine={false} axisLine={false} fontSize={12} />
+                      <YAxis domain={[0, 100]} tickLine={false} axisLine={false} fontSize={12} />
+                      <Tooltip content={<ChartTip />} cursor={{ stroke: "var(--border-strong)" }} />
+                      <Legend iconType="circle" iconSize={8} />
+                      <Line dataKey="score" name="Điểm TB" stroke="var(--chart-1)" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} connectNulls />
+                      <Line
+                        dataKey="qi"
+                        name="Quality Index"
+                        stroke="var(--chart-2)"
+                        strokeWidth={2.5}
+                        strokeDasharray="6 4"
+                        dot={false}
+                        activeDot={{ r: 4 }}
+                        connectNulls
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : seriesHidden ? (
+                <p className="muted small">
+                  Điểm theo tuần gộp mọi dự án của người này nên chỉ họ, lead của họ và admin xem được. Phần đánh giá và kết quả review trên
+                  trang này chỉ tính việc trong dự án bạn quản lý.
+                </p>
+              ) : (
+                <Loading error={seriesError} rows={4} />
+              )}
+            </Card>
+            <Card title={open ? `Finding đang mở · ${findings.length}${open.next_cursor ? "+" : ""}` : "Finding đang mở"} actions={<span className="muted small">nặng nhất trước</span>}>
+              {open ? (
+                findings.length ? (
+                  <>
                     <ul className="finding-list">
-                      {findings.slice(TOP).map((f) => (
+                      {findings.slice(0, TOP).map((f) => (
                         <FindingItem key={f.id} f={f} />
                       ))}
                     </ul>
-                  </Expander>
-                )}
-              </>
-            ) : (
-              <EmptyState icon="checkCircle" tone="good" title="Không có finding đang mở" />
-            )
-          ) : (
-            <Loading error={openError} rows={4} />
-          )}
-        </Card>
-      </div>
+                    {findings.length > TOP && (
+                      <Expander summary={`${findings.length - TOP} finding khác`}>
+                        <ul className="finding-list">
+                          {findings.slice(TOP).map((f) => (
+                            <FindingItem key={f.id} f={f} />
+                          ))}
+                        </ul>
+                      </Expander>
+                    )}
+                  </>
+                ) : (
+                  <EmptyState icon="checkCircle" tone="good" title="Không có finding đang mở" />
+                )
+              ) : (
+                <Loading error={openError} rows={4} />
+              )}
+            </Card>
+          </div>
+        </SubPanel>
+      )}
 
-      <MemberEvaluation person={person} range={range} />
+      {shownTab === "evaluation" && (
+        <SubPanel id="member" tab="evaluation">
+          <MemberEvaluation person={person} range={range} />
+        </SubPanel>
+      )}
 
-      <DisputeLog userId={person.id} />
+      {shownTab === "reviews" && (
+        <SubPanel id="member" tab="reviews">
+          <ReviewResults person={person.id} repos={repos} range={range} id="review-results-member" />
+        </SubPanel>
+      )}
 
-      <Card id="member-heatmap" title="Loại lỗi theo tuần" actions={<span className="muted small">12 tuần</span>} defaultCollapsed>
-        {heat ? <Heatmap cells={heat} /> : <Loading error={heatError} rows={4} />}
-      </Card>
+      {shownTab === "categories" && (
+        <SubPanel id="member" tab="categories">
+          <Card id="member-heatmap" title="Loại lỗi theo tuần" actions={<span className="muted small">12 tuần</span>} collapsible={false}>
+            {heat ? <Heatmap cells={heat} /> : <Loading error={heatError} rows={4} />}
+          </Card>
+        </SubPanel>
+      )}
 
-      <ReviewResults person={person.id} repos={repos} range={range} id="review-results-member" defaultCollapsed />
+      {shownTab === "disputes" && (
+        <SubPanel id="member" tab="disputes">
+          <DisputeLog userId={person.id} />
+        </SubPanel>
+      )}
 
-      {me?.id === person.id && <TelegramCard />}
+      {shownTab === "telegram" && isMe && (
+        <SubPanel id="member" tab="telegram">
+          <TelegramCard />
+        </SubPanel>
+      )}
     </>
   );
 }

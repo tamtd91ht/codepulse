@@ -88,7 +88,7 @@ function MembersTable({
             <tr key={m.user_id} className={m.needs_attention ? "attention" : undefined}>
               <td>
                 <div className="cell-main">
-                  <PersonLink id={m.user_id} name={m.user.full_name} email={m.user.primary_email} search={search} />
+                  <PersonLink id={m.user_id} name={m.user.full_name} email={m.user.primary_email} search={`${search}#evaluation`} />
                   <AttentionBadge b={m} />
                 </div>
                 {m.teams.length > 0 && <div className="sub muted small">{m.teams.join(" · ")}</div>}
