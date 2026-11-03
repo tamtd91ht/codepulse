@@ -222,6 +222,7 @@ function SetEditor({
   const [name, setName] = useState(set.name);
   const [query, setQuery] = useState("");
   const [heldOnly, setHeldOnly] = useState(false);
+  const [group, setGroup] = useState<string>(catalog.groups[0]?.name ?? "");
   const [confirming, setConfirming] = useState<{ keys: string[]; go: () => void } | null>(null);
   const [assigning, setAssigning] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -266,15 +267,20 @@ function SetEditor({
     });
 
   const q = query.trim().toLowerCase();
-  const groups = catalog.groups
-    .map((g) => ({
-      ...g,
-      permissions: g.permissions.filter(
-        (p) => (!q || `${p.label} ${p.key} ${g.name}`.toLowerCase().includes(q)) && (!heldOnly || draft[p.key]),
-      ),
-    }))
-    .filter((g) => g.permissions.length);
   const held = Object.values(draft).filter(Boolean).length;
+  const current = catalog.groups.find((g) => g.name === group) ?? catalog.groups[0];
+  // Searching looks across every feature; otherwise one feature at a time (no long page).
+  const shown = (q
+    ? catalog.groups.flatMap((g) =>
+        g.permissions
+          .filter((p) => `${p.label} ${p.key} ${g.name}`.toLowerCase().includes(q))
+          .map((p) => ({ ...p, group: g.name })),
+      )
+    : (current?.permissions ?? []).map((p) => ({ ...p, group: current.name }))
+  ).filter((p) => !heldOnly || draft[p.key]);
+  const heldIn = (g: PermissionCatalog["groups"][number]) => g.permissions.filter((p) => draft[p.key]).length;
+  const changedIn = (g: PermissionCatalog["groups"][number]) =>
+    g.permissions.some((p) => (draft[p.key] || "") !== (original[p.key] || ""));
 
   return (
     <>
@@ -394,89 +400,126 @@ function SetEditor({
             </button>
           </div>
         </div>
-        <div className="table-wrap scroll-y" style={{ maxHeight: "min(62vh, 640px)" }}>
-          <table>
-            <thead>
-              <tr>
-                <th>Quyền</th>
-                <th style={{ width: 150 }}>Phạm vi</th>
-              </tr>
-            </thead>
-            <tbody>
-              {groups.map((g) => (
-                <GroupRows key={g.name} name={g.name}>
-                  {g.permissions.map((p) => (
-                    <tr key={p.key}>
-                      <td>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                          <span>{p.label}</span>
-                          {p.sensitive && (
-                            <Pill tone="warn" icon="alert" title="Chạm tới dữ liệu cá nhân: cần xác nhận khi cấp">
-                              Nhạy cảm
-                            </Pill>
-                          )}
-                        </div>
-                        <code className="muted small">{p.key}</code>
-                      </td>
-                      <td>
-                        {p.flag ? (
-                          <label className="inline-check small">
-                            <input
-                              type="checkbox"
-                              checked={draft[p.key] === "flag"}
-                              onChange={(e) => setDraft({ ...draft, [p.key]: e.target.checked ? "flag" : "" })}
-                              aria-label={p.label}
-                            />
-                            {draft[p.key] === "flag" ? "Có" : "Không"}
+        <div className="adm-pad" style={{ paddingTop: 0 }}>
+          <div className="perm-split">
+            <nav className="perm-groups" aria-label="Nhóm chức năng">
+              {catalog.groups.map((g) => {
+                const active = !q && g.name === current?.name;
+                const changed = changedIn(g);
+                return (
+                  <button
+                    key={g.name}
+                    type="button"
+                    className={`perm-group${active ? " active" : ""}`}
+                    aria-current={active ? "true" : undefined}
+                    onClick={() => {
+                      setGroup(g.name);
+                      setQuery("");
+                    }}
+                  >
+                    <span>
+                      {g.name}
+                      {changed && (
+                        <span className="perm-dirty" aria-label="có thay đổi chưa lưu" title="Có thay đổi chưa lưu">
+                          {" "}
+                          •
+                        </span>
+                      )}
+                    </span>
+                    <span className="perm-count">
+                      {heldIn(g)}/{g.permissions.length}
+                    </span>
+                  </button>
+                );
+              })}
+            </nav>
+            <div className="perm-panel" role="group" aria-label={q ? "Kết quả tìm" : `Quyền: ${current?.name ?? ""}`}>
+              <div className="perm-panel-head small" style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                <strong>{q ? `Kết quả tìm "${query.trim()}"` : current?.name}</strong>
+                {!q && current && current.permissions.length > 1 && (
+                  <span style={{ display: "flex", gap: 6 }}>
+                    <button
+                      type="button"
+                      className="sm ghost"
+                      onClick={() =>
+                        setDraft({
+                          ...draft,
+                          ...Object.fromEntries(current.permissions.map((p) => [p.key, p.flag ? "flag" : p.scopes[p.scopes.length - 1]])),
+                        })
+                      }
+                    >
+                      Chọn hết nhóm
+                    </button>
+                    <button
+                      type="button"
+                      className="sm ghost"
+                      onClick={() => setDraft({ ...draft, ...Object.fromEntries(current.permissions.map((p) => [p.key, ""])) })}
+                    >
+                      Bỏ hết nhóm
+                    </button>
+                  </span>
+                )}
+              </div>
+              {shown.length === 0 ? (
+                <p className="muted small" style={{ margin: 0 }}>
+                  {q ? "Không có quyền nào khớp." : heldOnly ? "Nhóm này chưa có quyền nào được bật." : "Nhóm này không có quyền."}
+                </p>
+              ) : (
+                <ul className="perm-rows">
+                  {shown.map((p) => {
+                    const id = `set-${set.id}-${p.key}`;
+                    const changed = (draft[p.key] || "") !== (original[p.key] || "");
+                    return (
+                      <li key={p.key} className={`perm-row${changed ? " changed" : ""}`}>
+                        <div className="perm-row-label">
+                          <label htmlFor={id}>
+                            {p.label}{" "}
+                            {p.sensitive && (
+                              <Pill tone="warn" icon="alert" title="Chạm tới dữ liệu cá nhân: cần xác nhận khi cấp">
+                                Nhạy cảm
+                              </Pill>
+                            )}
                           </label>
+                          <span className="small muted">
+                            {q ? `${p.group} · ` : ""}
+                            <code>{p.key}</code>
+                          </span>
+                        </div>
+                        {p.flag ? (
+                          <input
+                            id={id}
+                            type="checkbox"
+                            checked={draft[p.key] === "flag"}
+                            onChange={(e) => setDraft({ ...draft, [p.key]: e.target.checked ? "flag" : "" })}
+                          />
                         ) : (
                           <select
+                            id={id}
                             className="compact"
                             value={draft[p.key] ?? ""}
                             onChange={(e) => setDraft({ ...draft, [p.key]: e.target.value })}
-                            aria-label={`Phạm vi: ${p.label}`}
                           >
                             <option value="">Không</option>
-                            {p.scopes.map((s) => (
-                              <option key={s} value={s}>
-                                {scopeLabel(s)}
+                            {p.scopes.map((sc) => (
+                              <option key={sc} value={sc}>
+                                {scopeLabel(sc)}
                               </option>
                             ))}
                           </select>
                         )}
-                      </td>
-                    </tr>
-                  ))}
-                </GroupRows>
-              ))}
-              {groups.length === 0 && (
-                <tr>
-                  <td colSpan={2} className="muted small">
-                    Không có quyền nào khớp.
-                  </td>
-                </tr>
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
-            </tbody>
-          </table>
+            </div>
+          </div>
         </div>
         <p className="adm-foot muted small">
           Phạm vi: Của mình ⊂ Team (người mình lead/manage) ⊂ Dự án (dự án mình manage) ⊂ Tất cả (mọi dự án mình truy cập
           được). Quyền hiệu lực là hợp các bộ, lấy phạm vi rộng nhất. Admin luôn có mọi quyền.
         </p>
       </Card>
-    </>
-  );
-}
-
-function GroupRows({ name, children }: { name: string; children: ReactNode }) {
-  return (
-    <>
-      <tr className="group-row">
-        <td colSpan={2}>
-          <strong className="small">{name}</strong>
-        </td>
-      </tr>
-      {children}
     </>
   );
 }
@@ -717,15 +760,3 @@ function EffectiveView() {
   );
 }
 
-function GroupRows3({ name, children }: { name: string; children: ReactNode }) {
-  return (
-    <>
-      <tr className="group-row">
-        <td colSpan={3}>
-          <strong className="small">{name}</strong>
-        </td>
-      </tr>
-      {children}
-    </>
-  );
-}

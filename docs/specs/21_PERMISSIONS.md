@@ -196,3 +196,8 @@ Gán bộ quyền trước đây chỉ làm được bên trong một bộ tự 
   - quyền nhạy cảm phải xác nhận;
   - admin đã có mọi quyền nên trả 409;
   - mọi thay đổi ghi audit `permission_set.personal`.
+- **Trình soạn bộ quyền** (Admin › Phân quyền › Bộ quyền) dùng cùng bố cục:
+  - Bên trái là menu nhóm chức năng, kèm số quyền đang bật trên tổng, và dấu • khi nhóm có thay đổi chưa lưu.
+  - Bên phải là các quyền của nhóm, kèm nút "Chọn hết nhóm" và "Bỏ hết nhóm".
+  - Ô tìm kiếm tìm trên mọi nhóm và hiện tên nhóm cạnh từng kết quả.
+  - Quyền vừa đổi được tô viền.

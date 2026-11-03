@@ -6124,3 +6124,6 @@ button.crit-info-btn:focus-visible {
   .perm-row { flex-direction: column; align-items: stretch; }
   .perm-row select { max-width: none; }
 }
+
+.perm-dirty { color: var(--accent, var(--chart-1)); font-weight: 700; }
+.perm-row.changed { border-color: var(--accent, var(--chart-1)); }
