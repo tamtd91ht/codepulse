@@ -159,6 +159,8 @@ class ReviewFinding(TimestampMixin, Base):
         server_default="skipped"
     )  # confirmed|downgraded|rejected|unverified|skipped
     verification: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # docs/specs/22 §4: the component the model placed it in, per criteria set: {set_id: key}.
+    criteria: Mapped[dict[str, str] | None] = mapped_column(JSONB)
 
 
 class FindingDispute(TimestampMixin, Base):

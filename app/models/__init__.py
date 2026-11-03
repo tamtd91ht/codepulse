@@ -1,6 +1,12 @@
 from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.commands import CommandRun
+from app.models.criteria import (
+    CriteriaSet,
+    CriteriaSetVersion,
+    ProjectCriteriaSet,
+    ReviewCriteriaScore,
+)
 from app.models.domain import (
     Commit,
     CommitFile,
@@ -34,6 +40,8 @@ __all__ = [
     "Commit",
     "CommitFile",
     "Connection",
+    "CriteriaSet",
+    "CriteriaSetVersion",
     "Deployment",
     "EvidenceItem",
     "EvidencePack",
@@ -51,10 +59,12 @@ __all__ = [
     "PermissionSetItem",
     "Pipeline",
     "Project",
+    "ProjectCriteriaSet",
     "ProjectGrant",
     "RawGitlab",
     "RepoComponentMap",
     "Review",
+    "ReviewCriteriaScore",
     "ReviewFinding",
     "ReviewKnowledge",
     "ReviewKnowledgeEdit",
