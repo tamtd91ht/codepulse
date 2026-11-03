@@ -70,7 +70,7 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 ## Bổ sung (đánh giá theo thành viên, người dùng 2026-10-27)
 | Method | Path | Mô tả | Quyền |
 |---|---|---|---|
-| GET | `/members/evaluation?from&to&team_id&business_project_id&project_id` | Mỗi người trong phạm vi: số review hoàn tất, điểm TB theo LOC, kết luận, finding theo mức, xu hướng tuần (tính trực tiếp từ `reviews`, tối đa 366 ngày, mặc định 30 ngày; bỏ người dùng không hoạt động như số liệu đã lưu; `mrs`/`commits` là số lượt review, MR review nhiều vòng tính nhiều lần) | developer, manager: chỉ dòng của chính mình; lead: team mình; admin: tất cả |
+| GET | `/members/evaluation?from&to&team_id&business_project_id&project_id` | Mỗi người trong phạm vi: số review hoàn tất, điểm TB theo LOC, kết luận, finding theo mức, xu hướng tuần (tính trực tiếp từ `reviews`, tối đa 366 ngày, mặc định 30 ngày; bỏ người dùng không hoạt động như số liệu đã lưu; `mrs`/`commits` là số lượt review, MR review nhiều vòng tính nhiều lần) | **từ lead trở lên** (2026-11-03; developer và người chỉ `view` dự án: 403, xem mình ở `/members/{id}/evaluation`); manager: chỉ dòng của chính mình; lead: team mình; quản lý dự án: mọi người trong dự án; admin: tất cả |
 | GET | `/members/{id}/evaluation?from&to` | Một người: tóm tắt, theo repo, kết luận, loại lỗi, theo tuần | bản thân, lead, admin |
 | GET | `/reviews?…&business_project_id=&status=done&status=failed` | Thêm lọc theo dự án và trạng thái (lặp tham số); `from`/`to` là ngày trọn vẹn theo REPORT_TZ; mỗi dòng có `author` | theo phạm vi |
 

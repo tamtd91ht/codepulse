@@ -179,7 +179,23 @@ function ScoreChart({ rows }: { rows: MemberEvaluationRow[] }) {
   );
 }
 
+/** Thành viên is for lead and above (app/api/security.require_members_page): a member sees why. */
 export default function MembersEvaluationPage() {
+  const { data: me, error } = useApi<Me>("/auth/me");
+  if (!me) return <Loading error={error} rows={4} />;
+  if (!me.members_page)
+    return (
+      <Card>
+        <EmptyState icon="members" title="Thành viên chỉ dành cho lead trở lên">
+          Trang này cho lead, manager, quản lý dự án và admin xem đánh giá của các thành viên. Số liệu của bạn có ở trang
+          <a href={`/members/${me.id}`}> Của tôi</a>.
+        </EmptyState>
+      </Card>
+    );
+  return <MembersEvaluationBody />;
+}
+
+function MembersEvaluationBody() {
   // In the URL: a person's page opened from the table shows the same period.
   const [range, setRange] = useUrlRange("30");
   const [teamId, setTeamId] = useState("");

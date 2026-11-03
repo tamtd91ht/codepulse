@@ -241,4 +241,6 @@ def me(
         "command_runs": principal.is_admin and settings.command_runs_enabled,
         # Luồng làm việc: lead and above (app/api/security.require_insights).
         "insights": insights_allowed(principal),
+        # Thành viên: lead and above too (app/api/security.require_members_page).
+        "members_page": insights_allowed(principal),
     }

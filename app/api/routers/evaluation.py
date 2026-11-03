@@ -17,7 +17,7 @@ from app.api.access import may_see_person, review_scope, seen_people
 from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.schemas import MemberEvaluationDetail, MembersEvaluation, UserOut
-from app.api.security import CurrentPrincipal, Principal
+from app.api.security import CurrentPrincipal, MembersPagePrincipal, Principal
 from app.config import Settings, get_settings
 from app.models import (
     Commit,
@@ -200,7 +200,7 @@ def _scope(session: Session, principal: Principal, team_id: int | None) -> set[i
 
 @router.get("/members/evaluation", response_model=MembersEvaluation)
 def members_evaluation(
-    principal: CurrentPrincipal,
+    principal: MembersPagePrincipal,
     session: SessionDep,
     settings: SettingsDep,
     date_from: Annotated[date | None, Query(alias="from")] = None,

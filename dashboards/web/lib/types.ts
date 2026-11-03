@@ -20,6 +20,8 @@ export interface Me {
   command_runs: boolean;
   /** Luồng làm việc: lead and above (admin, lead/manager of a team, manager of a dự án). */
   insights?: boolean;
+  /** Thành viên (per-person evaluation of a team): lead and above too. */
+  members_page?: boolean;
 }
 
 export type ProjectRole = "view" | "manage";

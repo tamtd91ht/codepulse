@@ -89,9 +89,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         // Luồng làm việc: lead and above only (app/api/security.require_insights).
         ...(me.insights ? [{ href: "/insights", label: "Luồng làm việc", icon: "trendUp" } as Item] : []),
         { href: "/teams", label: "Team", icon: "members" },
-        // Per-person evaluation: a lead sees their team, a dự án manager everyone in their dự án,
-        // admin everyone (a developer only themselves, which the "Của tôi" page already shows).
-        ...(isAdmin || me.lead_teams.length > 0 || managesProject ? [{ href: "/members", label: "Thành viên", icon: "pulse" } as Item] : []),
+        // Per-person evaluation: lead and above (app/api/security.require_members_page); a member
+        // sees only themselves, on "Của tôi".
+        ...(me.members_page ? [{ href: "/members", label: "Thành viên", icon: "pulse" } as Item] : []),
         { href: `/members/${me.id}`, label: "Của tôi", icon: "user" },
         { href: "/reviews", label: "Kết quả review", icon: "inbox" },
         { href: "/reviews/request", label: "Yêu cầu review", icon: "review" },

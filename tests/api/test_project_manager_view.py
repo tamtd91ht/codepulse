@@ -66,8 +66,8 @@ def test_a_viewer_of_the_project_still_sees_only_themselves(
     me = as_user(world.outsider)  # "view" grant only
     assert client.get(f"/api/v1/people/{world.an.id}", headers=me).status_code == 403
     assert client.get(f"/api/v1/members/{world.an.id}/evaluation", headers=me).status_code == 403
-    listed = client.get("/api/v1/members/evaluation", headers=me).json()
-    assert {m["user_id"] for m in listed["members"]} == {world.outsider.id}
+    # Thành viên is for lead and above: a viewer of a dự án is not.
+    assert client.get("/api/v1/members/evaluation", headers=me).status_code == 403
 
 
 def test_a_project_manager_sees_the_disputes_in_the_project(

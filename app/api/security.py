@@ -238,12 +238,22 @@ def require_insights(principal: CurrentPrincipal) -> Principal:
     """Luồng làm việc (docs/specs/20 §8): lead and above only: an admin, a lead or a manager of
     a team, or a manager of a dự án (granted, or every one with manage_all). A member, or one
     who only views a dự án, does not see it (user request 2026-11-03)."""
-    if not insights_allowed(principal):
+    if not lead_and_above(principal):
         raise HTTPException(403, "Luồng làm việc chỉ dành cho lead trở lên")
     return principal
 
 
-def insights_allowed(principal: Principal) -> bool:
+def require_members_page(principal: CurrentPrincipal) -> Principal:
+    """Thành viên (the per-person evaluation of a team): lead and above, as Luồng làm việc; a
+    member's own numbers are on their own page (/members/{id})."""
+    if not lead_and_above(principal):
+        raise HTTPException(403, "Thành viên chỉ dành cho lead trở lên")
+    return principal
+
+
+def lead_and_above(principal: Principal) -> bool:
+    """An admin, manage_all, a lead or a manager of a team, or a manager of a dự án: who sees
+    the team-wide pages (Luồng làm việc, Thành viên), user request 2026-11-03."""
     return (
         principal.is_admin
         or principal.manages_all
@@ -253,8 +263,12 @@ def insights_allowed(principal: Principal) -> bool:
     )
 
 
+insights_allowed = lead_and_above
+
+
 AdminPrincipal = Annotated[Principal, Depends(require_admin)]
 InsightsPrincipal = Annotated[Principal, Depends(require_insights)]
+MembersPagePrincipal = Annotated[Principal, Depends(require_members_page)]
 LeadPrincipal = Annotated[Principal, Depends(require_lead)]
 LeadOrManagerPrincipal = Annotated[Principal, Depends(require_lead_or_manager)]
 

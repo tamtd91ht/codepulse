@@ -107,9 +107,11 @@ def test_rows_follow_the_viewer_scope(
         assert res.status_code == 200, res.text
         return {r["user"]["primary_email"] for r in res.json()["members"]}
 
-    # A developer: only themselves. A lead: themselves and the people they lead. A manager:
-    # nobody but themselves (Phase 0: aggregates only).
-    assert emails(world.an) == {"an@x.vn"}
+    # A developer: no Thành viên page at all (lead and above, user request 2026-11-03; their
+    # own numbers are on /members/{id}). A lead: themselves and the people they lead. A
+    # manager: nobody but themselves (Phase 0: aggregates only).
+    own = client.get(f"/api/v1/members/evaluation?{RANGE}", headers=as_user(world.an))
+    assert own.status_code == 403
     assert emails(world.lead) == {"lead@x.vn", "an@x.vn", "binh@x.vn"}
     assert emails(world.manager) == {"manager@x.vn"}
     # The team filter narrows to its members at the time, within the viewer's scope.
@@ -226,9 +228,13 @@ def test_filters_never_widen_the_viewer_scope(
     # nobody when they are not a member of the team filtered on.
     assert emails(world.manager, f"&team_id={world.engineering.id}") == {"manager@x.vn"}
     assert emails(world.manager, f"&team_id={world.backend.id}") == set()
-    # A developer filtering on a repo / project where someone else was reviewed sees nobody.
-    assert emails(world.an, f"&project_id={second_repo.id}") == set()
-    assert emails(world.an, f"&business_project_id={second_repo.business_project_id}") == set()
+    # A developer has no Thành viên page, whatever the filter.
+    for extra in (
+        f"&project_id={second_repo.id}",
+        f"&business_project_id={second_repo.business_project_id}",
+    ):
+        res = client.get(f"/api/v1/members/evaluation?{RANGE}{extra}", headers=as_user(world.an))
+        assert res.status_code == 403
 
 
 def test_people_without_reviews_have_the_same_row_shape(
@@ -259,3 +265,15 @@ def test_out_of_range_dates_are_rejected(client: TestClient, world: World, as_us
     for query in ("to=9999-12-31", "from=0001-01-01&to=0001-12-31"):
         res = client.get(f"/api/v1/members/evaluation?{query}", headers=headers)
         assert res.status_code == 422
+
+
+def test_thanh_vien_is_for_lead_and_above(client: TestClient, world: World, as_user: Any) -> None:
+    for who in (world.an, world.binh, world.outsider):
+        assert client.get("/api/v1/auth/me", headers=as_user(who)).json()["members_page"] is False
+    for who in (world.lead, world.manager, world.admin):
+        assert client.get("/api/v1/auth/me", headers=as_user(who)).json()["members_page"] is True
+        res = client.get(f"/api/v1/members/evaluation?{RANGE}", headers=as_user(who))
+        assert res.status_code == 200
+    # A member's own page stays theirs.
+    own = client.get(f"/api/v1/members/{world.an.id}/evaluation?{RANGE}", headers=as_user(world.an))
+    assert own.status_code == 200
