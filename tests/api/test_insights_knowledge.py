@@ -143,7 +143,7 @@ def test_components_bus_factor_and_flags(
 
 
 def test_owner_names_follow_work_visibility(
-    client: TestClient, world: World, seeded: None, as_user: Any
+    client: TestClient, world: World, seeded: None, as_user: Any, outsider_leads: Any
 ) -> None:
     lead = get(client, f"/api/v1/insights/knowledge?end={END}", as_user(world.lead))
     core = next(m for m in lead["modules"] if m["name"] == "core")
@@ -178,7 +178,12 @@ def test_no_file_data_is_insufficient(
 
 
 def test_partial_file_data_and_scope(
-    client: TestClient, db_session: Session, world: World, seeded: None, as_user: Any
+    client: TestClient,
+    db_session: Session,
+    world: World,
+    seeded: None,
+    as_user: Any,
+    outsider_leads: Any,
 ) -> None:
     # Commits synced before commit_files existed: no file rows for most of the window.
     for i in range(40):

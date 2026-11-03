@@ -234,7 +234,27 @@ def require_lead_or_manager(principal: CurrentPrincipal) -> Principal:
     return principal
 
 
+def require_insights(principal: CurrentPrincipal) -> Principal:
+    """Luồng làm việc (docs/specs/20 §8): lead and above only: an admin, a lead or a manager of
+    a team, or a manager of a dự án (granted, or every one with manage_all). A member, or one
+    who only views a dự án, does not see it (user request 2026-11-03)."""
+    if not insights_allowed(principal):
+        raise HTTPException(403, "Luồng làm việc chỉ dành cho lead trở lên")
+    return principal
+
+
+def insights_allowed(principal: Principal) -> bool:
+    return (
+        principal.is_admin
+        or principal.manages_all
+        or principal.is_lead
+        or principal.is_manager
+        or "manage" in principal.project_roles.values()
+    )
+
+
 AdminPrincipal = Annotated[Principal, Depends(require_admin)]
+InsightsPrincipal = Annotated[Principal, Depends(require_insights)]
 LeadPrincipal = Annotated[Principal, Depends(require_lead)]
 LeadOrManagerPrincipal = Annotated[Principal, Depends(require_lead_or_manager)]
 

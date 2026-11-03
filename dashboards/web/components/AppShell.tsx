@@ -86,7 +86,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const primary: Item[] = me
     ? [
         { href: "/overview", label: "Tổng quan", icon: "activity" },
-        { href: "/insights", label: "Luồng làm việc", icon: "trendUp" },
+        // Luồng làm việc: lead and above only (app/api/security.require_insights).
+        ...(me.insights ? [{ href: "/insights", label: "Luồng làm việc", icon: "trendUp" } as Item] : []),
         { href: "/teams", label: "Team", icon: "members" },
         // Per-person evaluation: a lead sees their team, a dự án manager everyone in their dự án,
         // admin everyone (a developer only themselves, which the "Của tôi" page already shows).

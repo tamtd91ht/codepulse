@@ -226,7 +226,23 @@ function readHash(): [string, string | null] {
  * The page tab and its sub-tab live in the URL hash (`#flow/mrs`), like Admin, so a link opens the
  * exact view and Back/Forward step through them. Filters stay in page state, kept across tabs.
  */
+/** Luồng làm việc is for lead and above (app/api/security.require_insights): a member sees why. */
 export default function InsightsPage() {
+  const { data: me, error } = useApi<Me>("/auth/me");
+  if (!me) return <Loading error={error} rows={4} />;
+  if (!me.insights)
+    return (
+      <Card>
+        <EmptyState icon="members" title="Luồng làm việc chỉ dành cho lead trở lên">
+          Trang này cho lead, manager, quản lý dự án và admin xem cách công việc chảy qua team. Số liệu của riêng bạn có ở trang
+          <a href={`/members/${me.id}`}> Của tôi</a> và Hồ sơ tháng.
+        </EmptyState>
+      </Card>
+    );
+  return <InsightsBody />;
+}
+
+function InsightsBody() {
   // null until the hash is read, so a deep link never fetches the wrong tab first.
   const [tab, setTab] = useState<Tab | null>(null);
   const [sub, setSub] = useState<string | null>(null);

@@ -104,7 +104,7 @@ def test_flow_totals_stages_and_deltas(
 
 
 def test_open_mrs_waiting_and_author_visibility(
-    client: TestClient, world: World, seeded: dict[str, Any], as_user: Any
+    client: TestClient, world: World, seeded: dict[str, Any], as_user: Any, outsider_leads: Any
 ) -> None:
     body = get(client, f"/api/v1/insights/flow?period=week&start={WEEK}", as_user(world.lead))
     assert body["open"]["opened"] == 2  # the draft is left out
@@ -113,7 +113,7 @@ def test_open_mrs_waiting_and_author_visibility(
     assert oldest["title"] == "Waiting" and oldest["author"]["name"] == "Binh"
     assert oldest["web_url"].endswith(f"/demo/p/-/merge_requests/{oldest['iid']}")
     assert oldest["waiting_h"] > 48
-    # Outsider sees the dự án (view) but does not lead binh: the number, not the name.
+    # The lead of another team sees the dự án but does not lead binh: the number, not the name.
     body = get(client, f"/api/v1/insights/flow?period=week&start={WEEK}", as_user(world.outsider))
     assert body["open"]["oldest"][0]["author"] == {
         "user_id": None,
@@ -144,13 +144,13 @@ def test_drill_down_sorted_by_stage_and_filtered(
     )
     assert [i["title"] for i in only["items"]] == ["Hotfix"]
     xl = get(
-        client, f"/api/v1/insights/flow/mrs?period=week&start={WEEK}&only=xl", as_user(world.an)
+        client, f"/api/v1/insights/flow/mrs?period=week&start={WEEK}&only=xl", as_user(world.lead)
     )
-    assert xl["total"] == 1 and xl["items"][0]["author"]["name"] == "An"  # their own MR
+    assert xl["total"] == 1 and xl["items"][0]["author"]["name"] == "An"  # their member's MR
 
 
 def test_review_load_names_follow_work_visibility(
-    client: TestClient, world: World, seeded: dict[str, Any], as_user: Any
+    client: TestClient, world: World, seeded: dict[str, Any], as_user: Any, outsider_leads: Any
 ) -> None:
     path = f"/api/v1/insights/review-load?period=week&start={WEEK}"
     body = get(client, path, as_user(world.admin))
@@ -164,15 +164,19 @@ def test_review_load_names_follow_work_visibility(
     lead_view = get(client, path, as_user(world.lead))
     shown = {r["name"] for r in lead_view["reviewers"]}
     assert shown == {"Binh", "Lead", "Một thành viên"}
-    # A developer sees only themselves by name.
-    an_view = get(client, path, as_user(world.an))
-    assert {r["name"] for r in an_view["reviewers"]} == {"Một thành viên"}
-    pair = next(p for p in an_view["pairs"] if p["author"]["name"] == "An")
-    assert pair["reviewer"]["hidden"] is True
+    # The lead of another team sees no one of Backend by name.
+    other_view = get(client, path, as_user(world.outsider))
+    assert {r["name"] for r in other_view["reviewers"]} == {"Một thành viên"}
+    assert all(p["author"]["hidden"] and p["reviewer"]["hidden"] for p in other_view["pairs"])
 
 
 def test_scope_rules(
-    client: TestClient, db_session: Session, world: World, seeded: dict[str, Any], as_user: Any
+    client: TestClient,
+    db_session: Session,
+    world: World,
+    seeded: dict[str, Any],
+    as_user: Any,
+    outsider_leads: Any,
 ) -> None:
     secret = BusinessProject(name="Secret")
     db_session.add(secret)
@@ -244,3 +248,33 @@ def test_range_is_capped_and_drill_down_carries_confidence(
     assert too_long.status_code == 422
     ok = get(client, "/api/v1/insights/flow/mrs?period=range&start=2026-10-01&end=2026-10-31", h)
     assert ok["total"] == 5 and ok["confidence"]["level"] == "ok" and ok["data_as_of"]
+
+
+def test_luong_lam_viec_is_for_lead_and_above(
+    client: TestClient, world: World, seeded: dict[str, Any], as_user: Any, db_session: Session
+) -> None:
+    from sqlalchemy import update
+
+    from app.models import ProjectGrant
+
+    paths = [
+        f"/api/v1/insights/flow?period=week&start={WEEK}",
+        f"/api/v1/insights/flow/mrs?period=week&start={WEEK}",
+        f"/api/v1/insights/review-load?period=week&start={WEEK}",
+        "/api/v1/insights/knowledge",
+        f"/api/v1/insights/dora?start={WEEK}",
+        f"/api/v1/insights/components?project_id={world.project.id}",
+    ]
+    for who in (world.an, world.binh, world.outsider):  # members, a dự án viewer
+        for path in paths:
+            assert client.get(path, headers=as_user(who)).status_code == 403, (who.id, path)
+        assert client.get("/api/v1/auth/me", headers=as_user(who)).json()["insights"] is False
+    for who in (world.lead, world.manager, world.admin):
+        assert client.get(paths[0], headers=as_user(who)).status_code == 200
+        assert client.get("/api/v1/auth/me", headers=as_user(who)).json()["insights"] is True
+    # A manager of a dự án is above a member too.
+    db_session.execute(
+        update(ProjectGrant).where(ProjectGrant.user_id == world.binh.id).values(role="manage")
+    )
+    db_session.flush()
+    assert client.get(paths[0], headers=as_user(world.binh)).status_code == 200

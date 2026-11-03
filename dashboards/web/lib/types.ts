@@ -18,6 +18,8 @@ export interface Me {
   projects: Record<string, ProjectRole>;
   /** Admin > Chạy command is on (COMMAND_RUNS_ENABLED) and this is an admin. */
   command_runs: boolean;
+  /** Luồng làm việc: lead and above (admin, lead/manager of a team, manager of a dự án). */
+  insights?: boolean;
 }
 
 export type ProjectRole = "view" | "manage";

@@ -405,7 +405,8 @@ Dashboard hiển thị `low` bằng biểu tượng cảnh báo kèm lý do; `in
 
 | Dữ liệu | Ai xem |
 |---|---|
-| Chỉ số tổng hợp §4 của một dự án (ẩn danh) | Mọi người được cấp quyền `view`/`manage` dự án đó; admin xem cả repo chưa gán dự án |
+| Trang **Luồng làm việc** (mọi `/insights/*`) | **Từ lead trở lên** (người dùng 2026-11-03, `require_insights`): admin, `manage_all`, lead hoặc manager của một team, quản lý dự án (`manage`). Thành viên và người chỉ có quyền `view` dự án nhận 403 và không thấy menu (`/auth/me` trả `insights`) |
+| Chỉ số tổng hợp §4 của một dự án (ẩn danh) | Trong số người trên: ai được cấp quyền `view`/`manage` dự án đó; admin xem cả repo chưa gán dự án |
 | Danh tính trong tải review, rủi ro tri thức, tác giả trong danh sách MR chi tiết | Người có `Principal.can_see_work(author_user_id, bp_id)`, tức bản thân, lead của người đó trong dự án được xem, quản lý dự án, admin. Người khác thấy "một thành viên" |
 | Hồ sơ bằng chứng | Bản thân + lead trực tiếp (`lead_members`) + admin ([DECISION D4]) |
 

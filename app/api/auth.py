@@ -15,7 +15,13 @@ from sqlalchemy.orm import Session
 from app.admin_settings import link_base
 from app.api.audit import audit
 from app.api.deps import get_session
-from app.api.security import SESSION_COOKIE, CurrentPrincipal, issue_token, public_user
+from app.api.security import (
+    SESSION_COOKIE,
+    CurrentPrincipal,
+    insights_allowed,
+    issue_token,
+    public_user,
+)
 from app.avatars import avatar_url
 from app.config import Settings, get_settings
 from app.models import Account, User
@@ -233,4 +239,6 @@ def me(
         "projects": {str(bp): role for bp, role in sorted(principal.project_roles.items())},
         # Admin > Chạy command (COMMAND_RUNS_ENABLED); always false for everyone else.
         "command_runs": principal.is_admin and settings.command_runs_enabled,
+        # Luồng làm việc: lead and above (app/api/security.require_insights).
+        "insights": insights_allowed(principal),
     }

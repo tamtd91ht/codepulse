@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.api.access import visible_repo
 from app.api.deps import get_session
 from app.api.routers.overview import RANGE_MIN, OverviewPeriod, Window, _window
-from app.api.security import CurrentPrincipal, Principal
+from app.api.security import InsightsPrincipal, Principal
 from app.config import Settings, get_settings
 from app.insights import INSIGHTS_VERSION, dora
 from app.insights import confidence as conf
@@ -198,7 +198,7 @@ def _diff(a: float | None, b: float | None) -> float | None:
 
 @router.get("/insights/flow")
 def insights_flow(
-    principal: CurrentPrincipal,
+    principal: InsightsPrincipal,
     session: SessionDep,
     settings: SettingsDep,
     business_project_id: int | None = None,
@@ -350,7 +350,7 @@ Only = Literal["unreviewed", "xl"]
 
 @router.get("/insights/flow/mrs")
 def insights_flow_mrs(
-    principal: CurrentPrincipal,
+    principal: InsightsPrincipal,
     session: SessionDep,
     settings: SettingsDep,
     business_project_id: int | None = None,
@@ -428,7 +428,7 @@ def _round(value: float | None) -> float | None:
 
 @router.get("/insights/review-load")
 def insights_review_load(
-    principal: CurrentPrincipal,
+    principal: InsightsPrincipal,
     session: SessionDep,
     settings: SettingsDep,
     business_project_id: int | None = None,
@@ -502,7 +502,7 @@ def _cut_tree(tree: list[kn.Module]) -> list[kn.Module]:
 
 @router.get("/insights/knowledge")
 def insights_knowledge(
-    principal: CurrentPrincipal,
+    principal: InsightsPrincipal,
     session: SessionDep,
     settings: SettingsDep,
     business_project_id: int | None = None,
@@ -625,7 +625,7 @@ def insights_knowledge(
 
 @router.get("/insights/components")
 def insights_components(
-    principal: CurrentPrincipal, session: SessionDep, project_id: int
+    principal: InsightsPrincipal, session: SessionDep, project_id: int
 ) -> dict[str, Any]:
     """§4.9b: what a repo is made of, as knowledge risk measures it (the automatic map,
     regrouped by the AI grouping when there is one), and the state of that grouping."""
@@ -819,7 +819,7 @@ def _shipped(
 
 @router.get("/insights/dora")
 def insights_dora(
-    principal: CurrentPrincipal,
+    principal: InsightsPrincipal,
     session: SessionDep,
     settings: SettingsDep,
     business_project_id: int | None = None,

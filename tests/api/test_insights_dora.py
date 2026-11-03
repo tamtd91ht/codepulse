@@ -86,7 +86,7 @@ def test_no_deployments_is_insufficient_and_scope_holds(
     db_session.add(secret)
     db_session.flush()
     res = client.get(
-        f"/api/v1/insights/dora?business_project_id={secret.id}", headers=as_user(world.an)
+        f"/api/v1/insights/dora?business_project_id={secret.id}", headers=as_user(world.lead)
     )
     assert res.status_code == 404
 

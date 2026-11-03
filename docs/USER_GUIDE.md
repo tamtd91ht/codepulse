@@ -121,7 +121,7 @@ Ghi chú và bằng chứng bổ sung được xoá sau 24 tháng, chỉ giữ t
 
 ## 6. Luồng làm việc (Insights): đo gì và không đo gì
 
-Menu **Luồng làm việc** cho thấy công việc chảy qua team thế nào. Đây là chỉ số **của dự án/repo** để cải thiện quy trình (đặt SLA review, tách MR nhỏ, giảm phụ thuộc một người), **không** dùng để chấm điểm hay xếp hạng ai. Không có điểm tổng cho từng người.
+Menu **Luồng làm việc** (chỉ hiện với **lead trở lên**: lead, manager, quản lý dự án, admin) cho thấy công việc chảy qua team thế nào. Thành viên xem số liệu của mình ở trang *Của tôi* và *Hồ sơ tháng*. Đây là chỉ số **của dự án/repo** để cải thiện quy trình (đặt SLA review, tách MR nhỏ, giảm phụ thuộc một người), **không** dùng để chấm điểm hay xếp hạng ai. Không có điểm tổng cho từng người.
 
 | Chỉ số | Cách tính | Ai "cầm bóng" |
 |---|---|---|

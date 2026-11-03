@@ -252,3 +252,18 @@ def bot(db_session: Session, world: World) -> TelegramBot:
     db_session.add(bot)
     db_session.flush()
     return bot
+
+
+@pytest.fixture
+def outsider_leads(db_session: Session, world: World) -> User:
+    """The outsider as the lead of Mobile: allowed into Luồng làm việc (lead and above), and
+    still not leading anyone of Backend, so their names stay hidden."""
+    from sqlalchemy import update as sa_update
+
+    db_session.execute(
+        sa_update(TeamMember)
+        .where(TeamMember.team_id == world.mobile.id, TeamMember.user_id == world.outsider.id)
+        .values(role="lead")
+    )
+    db_session.flush()
+    return world.outsider

@@ -87,7 +87,7 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 ## Bổ sung (Engineering Insights, docs/specs/20 §8–9, người dùng 2026-11-03)
 | Method | Path | Mô tả | Quyền |
 |---|---|---|---|
-| GET | `/insights/flow?business_project_id=&project_id=&period=week\|month\|range&start=&end=` | Luồng làm việc cấp dự án/repo: MR đã merge, 4 chặng (median/p75), merge không review, cỡ MR, xu hướng, MR đang chờ phản hồi, pipeline; `confidence`, `data_as_of` | được cấp dự án (admin: cả repo chưa gán); tên tác giả theo `can_see_work` |
+| GET | `/insights/flow?business_project_id=&project_id=&period=week\|month\|range&start=&end=` | Luồng làm việc cấp dự án/repo: MR đã merge, 4 chặng (median/p75), merge không review, cỡ MR, xu hướng, MR đang chờ phản hồi, pipeline; `confidence`, `data_as_of` | **từ lead trở lên** (admin, lead/manager team, quản lý dự án; thành viên 403), trong dự án được cấp (admin: cả repo chưa gán); tên tác giả theo `can_see_work` |
 | GET | `/insights/flow/mrs?…&stage=&only=unreviewed\|xl&limit=&offset=` | Danh sách MR tạo nên số liệu, chậm nhất trước | như trên |
 | GET | `/insights/review-load?…` | Ai review MR của ai (đếm MR, không đếm comment), độ tập trung | như trên |
 | GET | `/insights/knowledge?business_project_id=&project_id=&end=&limit=` | Rủi ro tri thức: thành phần (bản đồ thành phần, spec 20 §4.9b) trong `KNOWLEDGE_WINDOW_DAYS`, bus factor theo số lần chạm file có phai dần, một người nắm / người nắm đã vắng / cần gắn account; `nodes`: cây repo › module › thành phần › package con, `counted` (cảnh báo, đếm một lần ở cấp cao nhất) / `inherited` / `why` (§4.9c), người nắm (tên theo `can_see_work`) | như trên |
