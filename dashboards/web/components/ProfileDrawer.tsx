@@ -5,8 +5,9 @@ import { type ChangeEvent, type FormEvent, useEffect, useRef, useState } from "r
 import { useSWRConfig } from "swr";
 
 import { Avatar, Drawer, Loading, Message, Pill } from "@/components/ui";
-import { ApiError, api, useApi } from "@/lib/api";
-import type { Person } from "@/lib/types";
+import { ProfilePermissions } from "@/components/ProfilePermissions";
+import { ApiError, api, can, useApi } from "@/lib/api";
+import type { Me, Person } from "@/lib/types";
 
 /** The formats and size the API keeps (app/avatars.py, AVATAR_MAX_KB default 1024). */
 const AVATAR_TYPES = ["image/png", "image/jpeg", "image/webp"];
@@ -20,6 +21,7 @@ const EMAIL_PATTERN = "[^@\\s]+@[^@\\s]+\\.[^@\\s]+";
 /** Admin › Người & Team: one member's profile — name, email and their one avatar (2026-11-03). */
 export function ProfileDrawer({ userId, onClose, onChanged }: { userId: number; onClose: () => void; onChanged: () => void }) {
   const { data: person, error, mutate } = useApi<Person>(`/users/${userId}`);
+  const { data: me } = useApi<Me>("/auth/me");
   const { mutate: mutateKey } = useSWRConfig();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -188,6 +190,14 @@ export function ProfileDrawer({ userId, onClose, onChanged }: { userId: number; 
               </Link>
             </div>
           </form>
+          {can(me, "admin.permissions") && (
+            <section aria-labelledby={`perm-${person.id}`} style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
+              <h3 id={`perm-${person.id}`} style={{ margin: "0 0 10px", fontSize: "var(--text-base, 15px)" }}>
+                Phân quyền
+              </h3>
+              <ProfilePermissions userId={person.id} onChanged={onChanged} />
+            </section>
+          )}
         </>
       )}
     </Drawer>

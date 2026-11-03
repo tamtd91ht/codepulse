@@ -69,7 +69,7 @@ export interface UserPermissions {
   is_admin: boolean;
   active: boolean;
   roles: string[];
-  sets: { id: number; name: string; auto_role: string | null; via: "role" | "given" }[];
+  sets: { id: number; name: string; auto_role: string | null; via: "role" | "given" | "personal" }[];
   permissions: { key: string; scope: string; sources: { set_id: number | null; name: string; scope: string }[] }[];
 }
 

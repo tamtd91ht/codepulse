@@ -175,3 +175,24 @@ Giai đoạn B tìm thấy những chỗ bản 1 của §4 vượt quá hành vi
      - không chuyển repo vào hay ra một dự án mình có quyền.
    - Chạy lại review cần quyền trên **dự án** chứa review, kể cả review của chính mình, vì việc này tiêu ngân sách LLM.
    - `admin.permissions`: cả việc thu quyền (gỡ người khỏi bộ, xoá bộ) cũng chỉ được trong phạm vi quyền mình đang có.
+
+## 9. Quyền của một người: tick theo chức năng (người dùng 2026-11-03)
+
+Gán bộ quyền trước đây chỉ làm được bên trong một bộ tự tạo. Từ nay:
+
+- Hồ sơ thành viên (Admin › Người & Team) và Admin › Phân quyền › "Quyền của một người" có cùng một màn hình, mở cho người có `admin.permissions`. Màn này **không phải trang dài**:
+  - Bên trái là menu các nhóm chức năng, mỗi nhóm có số quyền đang có / tổng.
+  - Bấm một nhóm thì bên phải hiện các quyền của nhóm đó. Quyền flag là ô tick, quyền có phạm vi là ô chọn phạm vi.
+  - Quyền đã có theo vai trò hiện "Đã có: Team · từ Lead". Ô chọn chỉ cho chọn rộng hơn mức đã có.
+  - Có thanh Lưu / Huỷ nằm dính ở cuối, và xác nhận khi cấp quyền nhạy cảm.
+- Tab "Bộ quyền" của màn này: xem các bộ theo vai trò, và tick các bộ tự tạo để gán cho người đó (`PUT /admin/users/{id}/permission-sets`).
+- Phần tick riêng được lưu ở **bộ quyền riêng** của người đó (`permission_sets.personal_user_id`, migration `c1d3e5f7a9b2`).
+  - API: `GET` và `PUT /admin/users/{id}/own-permissions`.
+  - Bộ quyền riêng được tạo ở lần tick đầu và bị xoá khi bỏ hết.
+  - Bộ này không hiện trong danh sách bộ, và các API của bộ chung trả 404 với nó.
+- Các luật áp dụng như mọi lần cấp quyền:
+  - không tự cấp cho mình;
+  - người không phải admin chỉ cấp hoặc thu được quyền mình đang có, và không bao giờ cấp `admin.permissions`;
+  - quyền nhạy cảm phải xác nhận;
+  - admin đã có mọi quyền nên trả 409;
+  - mọi thay đổi ghi audit `permission_set.personal`.

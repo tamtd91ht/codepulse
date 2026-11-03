@@ -5,6 +5,7 @@ import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } 
 import { type SubNav, SubPanel, type SubTab, SubTabs, pickSub } from "@/components/AdminTabs";
 import { Icon, IconButton } from "@/components/icons";
 import { Card, Drawer, EmptyState, Loading, Message, Pill } from "@/components/ui";
+import { ProfilePermissions } from "@/components/ProfilePermissions";
 import { ApiError, api, useApi } from "@/lib/api";
 import type { CatalogPermission, Person, PermissionCatalog, PermissionItem, PermissionSetRow, UserPermissions } from "@/lib/types";
 
@@ -666,8 +667,8 @@ function EffectiveView() {
   const total = Object.keys(byKey).length;
   return (
     <Card
-      title="Quyền hiệu lực của một người"
-      subtitle="Hợp các bộ theo vai trò và các bộ được gán; mỗi quyền lấy phạm vi rộng nhất."
+      title="Quyền của một người"
+      subtitle="Chọn người, chọn nhóm chức năng rồi tick quyền; quyền theo vai trò hiện kèm nguồn."
       collapsible={false}
       flush
     >
@@ -706,52 +707,10 @@ function EffectiveView() {
         )}
       </div>
       {!userId ? (
-        <EmptyState icon="user" title="Chọn một người để xem trước quyền" />
-      ) : !data || !catalog.data ? (
-        <div className="adm-pad">
-          <Loading error={preview.error ?? catalog.error} />
-        </div>
-      ) : !data.active ? (
-        <EmptyState icon="info" title="Người này đã ngừng hoạt động: không có quyền nào" />
+        <EmptyState icon="user" title="Chọn một người để xem và tick quyền" />
       ) : (
-        <div className="table-wrap scroll-y" style={{ maxHeight: "min(66vh, 680px)" }}>
-          <table>
-            <thead>
-              <tr>
-                <th>Quyền</th>
-                <th>Phạm vi</th>
-                <th>Từ bộ</th>
-              </tr>
-            </thead>
-            <tbody>
-              {catalog.data.groups.map((g) => (
-                <GroupRows3 key={g.name} name={g.name}>
-                  {g.permissions.map((p) => {
-                    const row = held.get(p.key);
-                    return (
-                      <tr key={p.key} className={row ? undefined : "muted"}>
-                        <td>
-                          {p.label} {p.sensitive && <Icon name="alert" size={12} />}
-                        </td>
-                        <td className="nowrap">{row ? <strong>{scopeLabel(row.scope)}</strong> : "Không"}</td>
-                        <td className="small">
-                          {row?.sources.map((s, i) => (
-                            <span key={`${s.set_id}-${s.scope}`}>
-                              {i > 0 && ", "}
-                              <span className={i === 0 ? undefined : "muted"}>
-                                {s.name}
-                                {p.flag ? "" : ` (${scopeLabel(s.scope)})`}
-                              </span>
-                            </span>
-                          ))}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </GroupRows3>
-              ))}
-            </tbody>
-          </table>
+        <div className="adm-pad">
+          <ProfilePermissions key={userId} userId={userId} onChanged={() => void preview.mutate()} />
         </div>
       )}
     </Card>

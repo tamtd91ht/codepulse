@@ -100,6 +100,15 @@ class SetUsersIn(BaseModel):
     confirm_sensitive: bool = False
 
 
+class UserSetsIn(BaseModel):
+    """The custom sets given to one person (Admin, Người & Team, Phân quyền)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    set_ids: list[int]
+    confirm_sensitive: bool = False
+
+
 class PermissionOut(BaseModel):
     key: str
     label: str
@@ -158,7 +167,7 @@ class HeldSetOut(BaseModel):
     id: int
     name: str
     auto_role: str | None
-    via: str  # "role" | "given"
+    via: str  # "role" | "given" | "personal"
 
 
 class UserPermissionsOut(BaseModel):
@@ -251,7 +260,8 @@ def _given(session: Session, set_id: int) -> set[int]:
 
 def _get_set(session: Session, set_id: int) -> PermissionSet:
     row = session.get(PermissionSet, set_id)
-    if row is None:
+    # A person's own set is edited on their profile only (§9): not a set for these endpoints.
+    if row is None or row.personal_user_id is not None:
         raise HTTPException(404, "permission set not found")
     return row
 
@@ -386,7 +396,8 @@ def list_permission_sets(
     holders = _role_holders(session, settings, datetime.now(UTC).date())
     order: dict[str, int] = {r: i for i, r in enumerate(AUTO_ROLES)}
     rows = sorted(
-        session.scalars(select(PermissionSet)),
+        # A person's own set is edited on their profile, not listed here (§9).
+        session.scalars(select(PermissionSet).where(PermissionSet.personal_user_id.is_(None))),
         key=lambda s: (not s.builtin, order.get(s.auto_role or "", 99), s.name.lower()),
     )
     return [_set_out(session, row, holders, people) for row in rows]
@@ -616,9 +627,13 @@ def user_permissions(
         sets=[
             HeldSetOut(
                 id=s.id,
-                name=s.name,
+                name="Quyền riêng" if s.personal_user_id is not None else s.name,
                 auto_role=s.auto_role,
-                via="role" if s.auto_role is not None else "given",
+                via="role"
+                if s.auto_role is not None
+                else "personal"
+                if s.personal_user_id is not None
+                else "given",
             )
             for s in sets
         ],
@@ -631,3 +646,152 @@ def user_permissions(
             for k, v in sorted(held.perms.items(), key=lambda kv: order.get(kv[0], 999))
         ],
     )
+
+
+@router.put("/admin/users/{user_id}/permission-sets")
+def set_user_permission_sets(
+    user_id: int,
+    body: UserSetsIn,
+    principal: PermissionsAdmin,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> UserPermissionsOut:
+    """Replace the custom sets given to one person, from their profile; the same rules as
+    giving a set to people (docs/specs/21 §7): never to oneself, only within what one holds,
+    sensitive permissions confirmed. Built-in sets follow roles and are not given by hand."""
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(404, "user not found")
+    if _is_admin(user, settings):
+        raise HTTPException(409, "admin đã có mọi quyền")
+    if not principal.is_admin and user.id == principal.user_id:
+        raise HTTPException(403, "không tự gán bộ quyền cho mình")
+    wanted = set(body.set_ids)
+    rows = {
+        r.id: r for r in session.scalars(select(PermissionSet).where(PermissionSet.id.in_(wanted)))
+    }
+    if missing := sorted(wanted - set(rows)):
+        raise HTTPException(422, f"không có bộ quyền: {', '.join(map(str, missing))}")
+    if auto := sorted(r.name for r in rows.values() if r.builtin or r.auto_role is not None):
+        raise HTTPException(409, f"bộ có sẵn tự gán theo vai trò, không gán tay: {', '.join(auto)}")
+    current = set(
+        session.scalars(
+            select(UserPermissionSet.set_id)
+            .join(PermissionSet, PermissionSet.id == UserPermissionSet.set_id)
+            .where(UserPermissionSet.user_id == user.id, PermissionSet.personal_user_id.is_(None))
+        )
+    )
+    if personal := sorted(r.name for r in rows.values() if r.personal_user_id is not None):
+        raise HTTPException(409, f"quyền riêng của một người sửa ở mục Quyền riêng: {personal}")
+    added, removed = wanted - current, current - wanted
+    granted: dict[str, str] = {}
+    for set_id in sorted(added):
+        for key, scope in _items(session, set_id).items():
+            granted[key] = scope
+    if not principal.is_admin:
+        for set_id in sorted(added | removed):
+            _within_own(principal, _items(session, set_id))
+    if added:
+        _confirm_sensitive(granted, body.confirm_sensitive)
+    if removed:
+        session.execute(
+            delete(UserPermissionSet).where(
+                UserPermissionSet.user_id == user.id, UserPermissionSet.set_id.in_(removed)
+            )
+        )
+    session.add_all(
+        UserPermissionSet(user_id=user.id, set_id=set_id, granted_by=principal.user_id)
+        for set_id in sorted(added)
+    )
+    if added or removed:
+        audit(
+            session,
+            principal.user_id,
+            "permission_set.assign",
+            f"user:{user.id}",
+            added=sorted(added),
+            removed=sorted(removed),
+        )
+    session.commit()
+    return user_permissions(user.id, principal, session, settings)
+
+
+class OwnPermissionsIn(BaseModel):
+    """The permissions ticked for one person on their profile (§9): key -> scope or "flag"."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: dict[str, str]
+    confirm_sensitive: bool = False
+
+
+@router.get("/admin/users/{user_id}/own-permissions")
+def get_own_permissions(
+    user_id: int, principal: PermissionsAdmin, session: SessionDep
+) -> dict[str, str]:
+    """The permissions given to this person alone (their own set), key -> scope."""
+    if session.get(User, user_id) is None:
+        raise HTTPException(404, "user not found")
+    row = session.scalars(
+        select(PermissionSet).where(PermissionSet.personal_user_id == user_id)
+    ).first()
+    return _items(session, row.id) if row is not None else {}
+
+
+@router.put("/admin/users/{user_id}/own-permissions")
+def set_own_permissions(
+    user_id: int,
+    body: OwnPermissionsIn,
+    principal: PermissionsAdmin,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> UserPermissionsOut:
+    """Tick permissions for one person (§9): kept in their own set, created on the first tick
+    and removed when emptied; the rules of every grant apply (never to oneself, only within
+    what one holds and never admin.permissions for a non-admin, sensitive ones confirmed)."""
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(404, "user not found")
+    if _is_admin(user, settings):
+        raise HTTPException(409, "admin đã có mọi quyền")
+    if not principal.is_admin and user.id == principal.user_id:
+        raise HTTPException(403, "không tự cấp quyền cho mình")
+    wanted = {k: v for k, v in body.items.items() if v}
+    if bad := sorted(k for k, v in wanted.items() if not valid_item(k, v)):
+        raise HTTPException(422, f"quyền hoặc phạm vi không hợp lệ: {', '.join(bad)}")
+    row = session.scalars(
+        select(PermissionSet).where(PermissionSet.personal_user_id == user.id).with_for_update()
+    ).first()
+    before = _items(session, row.id) if row is not None else {}
+    widened = {k: v for k, v in wanted.items() if k not in before or RANK[v] > RANK[before[k]]}
+    narrowed = {k: v for k, v in before.items() if k not in wanted or RANK[wanted[k]] < RANK[v]}
+    if not principal.is_admin:
+        # Taking a permission away is handing it out the other way: within what one holds.
+        _within_own(principal, {**widened, **narrowed})
+    _confirm_sensitive(widened, body.confirm_sensitive)
+    if row is None and wanted:
+        row = PermissionSet(
+            name=f"Quyền riêng #{user.id}",
+            description=f"Quyền tick riêng cho {user.full_name or user.primary_email or user.id}",
+            builtin=False,
+            personal_user_id=user.id,
+        )
+        session.add(row)
+        session.flush()
+        session.add(UserPermissionSet(user_id=user.id, set_id=row.id, granted_by=principal.user_id))
+    if row is not None:
+        if wanted:
+            _write_items(session, row.id, wanted)
+        else:
+            session.delete(row)  # nothing ticked: no empty set left behind
+    if widened or narrowed:
+        audit(
+            session,
+            principal.user_id,
+            "permission_set.personal",
+            f"user:{user.id}",
+            before=before,
+            after=wanted,
+        )
+    session.commit()
+    return user_permissions(user.id, principal, session, settings)

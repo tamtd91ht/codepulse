@@ -25,6 +25,11 @@ class PermissionSet(TimestampMixin, Base):
     builtin: Mapped[bool] = mapped_column(default=False)
     # Who holds it without being given it: everyone of that role (built-in sets only).
     auto_role: Mapped[str | None]
+    # A person's own set (the permissions ticked on their profile, docs/specs/21 §9): hidden
+    # from the list of sets, given to that person only.
+    personal_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True
+    )
 
 
 class PermissionSetItem(Base):
