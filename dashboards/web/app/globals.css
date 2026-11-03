@@ -4463,3 +4463,290 @@ tr.closure-detail td {
 .inline-check.small {
   font-size: 12px;
 }
+
+/* ---------- Admin: sub-tabs, fixed-height lists, master/detail, drawer forms ---------- */
+
+/* Pill sub-tabs of one Admin area (components/AdminTabs.tsx), with the area's action at the right. */
+.sub-tabs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+  margin: 0 0 16px;
+}
+.tabs.compact.sub-tabs button {
+  gap: 6px;
+}
+.tabs.compact.sub-tabs button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.tabs.compact.sub-tabs button.active .tab-count {
+  background: var(--on-primary);
+  color: var(--primary);
+}
+.sub-tabs-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* A long list keeps its own height: the page stops growing, the header stays in view. */
+.table-wrap.scroll-y {
+  overflow: auto;
+  max-height: min(64vh, 640px);
+  overscroll-behavior: contain;
+}
+.table-wrap.scroll-y thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.table-wrap.scroll-y thead th:first-child {
+  z-index: 3;
+}
+.card.flush > .table-wrap.scroll-y {
+  margin-top: 0;
+}
+.card.flush > .toolbar + .table-wrap.scroll-y,
+.card.flush > .card-head + .table-wrap.scroll-y {
+  border-top: 1px solid var(--border);
+}
+
+/* Inner padding for blocks inside a flush card (toolbars, notes, loading rows). */
+.card.flush .adm-pad {
+  padding-left: 20px;
+  padding-right: 20px;
+}
+.card.flush > .toolbar.adm-pad {
+  margin: 0;
+  padding-bottom: 12px;
+}
+.card.flush > .adm-pad:not(.toolbar) {
+  padding-bottom: 16px;
+}
+.adm-foot {
+  margin: 0;
+  padding: 10px 20px 14px;
+  border-top: 1px solid var(--border);
+}
+.adm-top {
+  margin-top: 0;
+}
+form.toolbar.adm-inline-form {
+  margin: 0;
+  padding-bottom: 12px;
+}
+
+/* Master/detail: the list of teams on the left, the selected team on the right. */
+.master-detail {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.master-detail > .card + .card {
+  margin-top: 0;
+}
+.master-detail > .master {
+  position: sticky;
+  top: 16px;
+}
+@media (max-width: 860px) {
+  .master-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .master-detail > .master {
+    position: static;
+  }
+}
+.pick-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 8px 8px;
+  max-height: min(64vh, 640px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  gap: 2px;
+}
+@media (max-width: 860px) {
+  .pick-list {
+    max-height: 240px;
+  }
+}
+button.pick-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  width: 100%;
+  height: auto;
+  min-height: 40px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  box-shadow: none;
+  text-align: left;
+  white-space: normal;
+  font-weight: 500;
+}
+button.pick-item:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+button.pick-item:active:not(:disabled) {
+  transform: none;
+}
+button.pick-item.active,
+button.pick-item.active:hover:not(:disabled) {
+  background: var(--primary-soft);
+  color: var(--primary-text);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+button.pick-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.pick-name {
+  overflow-wrap: anywhere;
+}
+.pick-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* Create / edit forms inside a drawer: labelled fields stacked, buttons at the bottom right. */
+.adm-form {
+  display: grid;
+  gap: 12px;
+}
+.adm-form > .alert {
+  margin: 0;
+}
+.adm-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+.adm-form p {
+  margin: 0;
+}
+.adm-form-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
+/* Cài đặt review: one tile per setting, several per row instead of one long column. */
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: 12px;
+}
+.setting-tile {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.setting-tile p {
+  margin: 0;
+}
+.setting-tile .toolbar {
+  margin: 0;
+}
+
+/* Chạy command: the form and the run it started side by side on a wide screen. */
+.command-split {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+}
+.command-split > .card + .card {
+  margin-top: 0;
+}
+@media (min-width: 1200px) {
+  .command-split {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+/* Xoá dữ liệu: the scopes as choice tiles, two per row when there is room. */
+.purge-scopes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 8px;
+}
+label.purge-scope {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  cursor: pointer;
+}
+label.purge-scope.on {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+label.purge-scope:focus-within {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+@media (max-width: 480px) {
+  .card.flush .adm-pad {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .adm-foot {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .sub-tabs-row .tabs.compact.sub-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    max-width: 100%;
+    padding-bottom: 2px;
+  }
+  .sub-tabs-row .tabs.compact.sub-tabs button {
+    flex: none;
+  }
+}
+/* A filter with many options wraps on a phone instead of pushing the page sideways. */
+.toolbar.adm-pad .segmented {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.toolbar.adm-pad input[type="search"] {
+  flex: 1 1 200px;
+  min-width: 0;
+  max-width: 320px;
+}

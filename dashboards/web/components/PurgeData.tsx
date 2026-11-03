@@ -69,12 +69,13 @@ export function PurgeData() {
   return (
     <Card
       title="Xoá dữ liệu"
+      collapsible={false}
       subtitle="Làm sạch dữ liệu trên server này. Không đụng tới GitLab: repo, commit và webhook trên GitLab giữ nguyên."
     >
       <form onSubmit={submit} style={{ display: "grid", gap: 12 }}>
-        <div style={{ display: "grid", gap: 8 }}>
+        <div className="purge-scopes">
           {info.data.scopes.map((s) => (
-            <label key={s.scope} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+            <label key={s.scope} className={scope === s.scope ? "purge-scope on" : "purge-scope"}>
               <input
                 type="radio"
                 name="scope"

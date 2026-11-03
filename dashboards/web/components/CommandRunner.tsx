@@ -2,6 +2,7 @@
 
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
+import { type SubNav, SubPanel, type SubTab, SubTabs, pickSub } from "@/components/AdminTabs";
 import { Alert, Card, EmptyState, Loading, Pill } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { dateTime } from "@/lib/format";
@@ -42,72 +43,104 @@ function size(bytes: number): string {
  * .claude repo) on the command worker, follow it live, download what it wrote (once: the
  * download deletes it from the server).
  */
-export function CommandRunner() {
+type CommandSub = "run" | "history" | "limits";
+
+export function CommandRunner({ nav }: { nav?: SubNav }) {
   const [runId, setRunId] = useState<number | null>(null);
   const history = useApi<CommandRun[]>("/admin/command-runs?limit=30", {
     refreshInterval: (rows) => (rows?.some((r) => active(r.status)) ? POLL_MS * 2 : 0),
   });
+  const [localSub, setLocalSub] = useState<CommandSub>("run");
   if (history.error?.status === 403) return null;
+  const running = history.data?.filter((r) => active(r.status)).length ?? 0;
+  const tabs: SubTab<CommandSub>[] = [
+    { key: "run", label: "Chạy", hint: "Chọn repo, command và theo dõi lần chạy" },
+    { key: "history", label: running ? `Lịch sử · ${running} đang chạy` : "Lịch sử", count: history.data?.length, hint: "30 lần gần nhất" },
+    { key: "limits", label: "Giới hạn", hint: "Thời gian, số lượt, chi phí, dung lượng mỗi lần chạy" },
+  ];
+  const sub = nav ? pickSub(nav, tabs, "run") : localSub;
+  const go = (key: CommandSub) => (nav ? nav.onSub(key) : setLocalSub(key));
   return (
     <>
-      <RunForm
-        onStarted={(run) => {
-          setRunId(run.id);
-          void history.mutate();
-        }}
-      />
-      {runId !== null && <RunView runId={runId} onChanged={() => void history.mutate()} />}
-      <Card title="Lịch sử chạy" subtitle="30 lần gần nhất. Nội dung file không được lưu; chỉ còn tên và dung lượng." flush>
-        {!history.data ? (
-          <div style={{ padding: "0 18px 16px" }}>
-            <Loading error={history.error} />
-          </div>
-        ) : history.data.length === 0 ? (
-          <EmptyState icon="code" title="Chưa chạy command nào" />
-        ) : (
-          <div className="table-wrap">
-            <table className="stack-sm">
-              <thead>
-                <tr>
-                  <th>Command</th>
-                  <th>Ở đâu</th>
-                  <th>Trạng thái</th>
-                  <th className="num">Chi phí</th>
-                  <th>Người chạy</th>
-                  <th>Lúc</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.data.map((r) => (
-                  <tr key={r.id}>
-                    <td>
-                      <button type="button" className="link" onClick={() => setRunId(r.id)}>
-                        <code>/{r.command}</code>
-                      </button>
-                      {r.arguments && <span className="muted small"> {r.arguments}</span>}
-                    </td>
-                    <td className="muted">
-                      {r.repo ? `${r.repo} @ ${r.ref}` : `${r.business_project ?? "?"} (repo .claude dùng chung)`}
-                    </td>
-                    <td>
-                      <Pill tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Pill>
-                      {r.download && (
-                        <Pill tone="primary" icon="inbox">
-                          Có file
-                        </Pill>
-                      )}
-                    </td>
-                    <td className="num">{r.cost_usd !== null ? `$${r.cost_usd.toFixed(2)}` : "–"}</td>
-                    <td>{r.started_by ?? "–"}</td>
-                    <td className="muted">{dateTime(r.created_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      <SubTabs id="commands" label="Chạy command" tabs={tabs} value={sub} onChange={go} />
+      <SubPanel id="commands" tab={sub}>
+        {sub === "run" && (
+          <div className={runId !== null ? "command-split" : undefined}>
+            <RunForm
+              onStarted={(run) => {
+                setRunId(run.id);
+                void history.mutate();
+              }}
+            />
+            {runId !== null && <RunView runId={runId} onChanged={() => void history.mutate()} />}
           </div>
         )}
-      </Card>
-      <CommandLimits />
+        {sub === "history" && (
+          <Card
+            title="Lịch sử chạy"
+            subtitle="30 lần gần nhất; bấm tên command để xem lại. Nội dung file không được lưu; chỉ còn tên và dung lượng."
+            collapsible={false}
+            flush
+          >
+            {!history.data ? (
+              <div className="adm-pad">
+                <Loading error={history.error} />
+              </div>
+            ) : history.data.length === 0 ? (
+              <EmptyState icon="code" title="Chưa chạy command nào" />
+            ) : (
+              <div className="table-wrap scroll-y">
+                <table className="stack-sm">
+                  <thead>
+                    <tr>
+                      <th>Command</th>
+                      <th>Ở đâu</th>
+                      <th>Trạng thái</th>
+                      <th className="num">Chi phí</th>
+                      <th>Người chạy</th>
+                      <th>Lúc</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.data.map((r) => (
+                      <tr key={r.id}>
+                        <td>
+                          <button
+                            type="button"
+                            className="link"
+                            onClick={() => {
+                              setRunId(r.id);
+                              go("run");
+                            }}
+                          >
+                            <code>/{r.command}</code>
+                          </button>
+                          {r.arguments && <span className="muted small"> {r.arguments}</span>}
+                        </td>
+                        <td className="muted">
+                          {r.repo ? `${r.repo} @ ${r.ref}` : `${r.business_project ?? "?"} (repo .claude dùng chung)`}
+                        </td>
+                        <td>
+                          <Pill tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Pill>
+                          {r.download && (
+                            <Pill tone="primary" icon="inbox">
+                              Có file
+                            </Pill>
+                          )}
+                        </td>
+                        <td className="num">{r.cost_usd !== null ? `$${r.cost_usd.toFixed(2)}` : "–"}</td>
+                        <td>{r.started_by ?? "–"}</td>
+                        <td className="muted">{dateTime(r.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        )}
+        {sub === "limits" && <CommandLimits />}
+      </SubPanel>
     </>
   );
 }

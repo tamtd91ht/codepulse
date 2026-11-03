@@ -2,8 +2,8 @@
 
 import { type FormEvent, Fragment, useState } from "react";
 
-import { IconButton } from "@/components/icons";
-import { Alert, Card, EmptyState, Loading, Message, Pill } from "@/components/ui";
+import { Icon, IconButton } from "@/components/icons";
+import { Alert, Card, Drawer, EmptyState, Loading, Message, Pill } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { dateTime, relative } from "@/lib/format";
 import type { BusinessProject, Project, TelegramBot, TelegramRequest } from "@/lib/types";
@@ -54,30 +54,33 @@ export function TelegramAdmin() {
   const [rotating, setRotating] = useState<number | null>(null);
   const [showing, setShowing] = useState<number | null>(null);
   const [formProject, setFormProject] = useState("");
+  const [adding, setAdding] = useState(false);
   const [testResult, setTestResult] = useState<Record<number, { ok: boolean; error: string | null }>>({});
 
-  async function run(action: () => Promise<unknown>, done: string, id?: number) {
+  async function run(action: () => Promise<unknown>, done: string, id?: number): Promise<boolean> {
     setBusy(id ?? -1);
     try {
       await action();
       setTone("success");
       setMessage(done);
+      return true;
     } catch (e) {
       setTone("error");
       setMessage(`Lỗi: ${describe(e)}`);
+      return false;
     } finally {
       setBusy(null);
     }
   }
 
-  function submit(e: FormEvent<HTMLFormElement>, action: (f: FormData) => Promise<unknown>, done: string) {
+  function submit(e: FormEvent<HTMLFormElement>, action: (f: FormData) => Promise<unknown>, done: string, after?: () => void) {
     e.preventDefault();
     const form = e.currentTarget;
     const fields = new FormData(form);
     void run(async () => {
       await action(fields);
       form.reset();
-    }, done);
+    }, done).then((ok) => ok && after?.());
   }
 
   const forget = (id: number) => {
@@ -96,23 +99,30 @@ export function TelegramAdmin() {
 
   return (
     <>
-      <Message text={message} tone={tone} onClose={() => setMessage(null)} />
+      {!adding && <Message text={message} tone={tone} onClose={() => setMessage(null)} />}
 
       <Card
-        title="Bot Telegram theo dự án"
+        title={`Bot Telegram theo dự án${bots.data ? ` (${bots.data.length})` : ""}`}
         subtitle="Mỗi dự án (hoặc một repo trong dự án) có một bot; thành viên gửi lệnh review, hệ thống tự poll và trả kết quả vào chat."
+        collapsible={false}
         flush
+        actions={
+          <button type="button" className="primary sm" onClick={() => { setMessage(null); setAdding(true); }}>
+            <Icon name="plus" size={14} />
+            Thêm bot
+          </button>
+        }
       >
         {!bots.data ? (
-          <div style={{ padding: "0 18px 16px" }}>
+          <div className="adm-pad">
             <Loading error={bots.error} rows={3} />
           </div>
         ) : bots.data.length === 0 ? (
           <EmptyState icon="pulse" title="Chưa có bot nào">
-            Tạo bot với @BotFather trên Telegram, dán token vào biểu mẫu bên dưới.
+            Tạo bot với @BotFather trên Telegram, rồi bấm &ldquo;Thêm bot&rdquo; và dán token.
           </EmptyState>
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap scroll-y">
             <table>
               <thead>
                 <tr>
@@ -275,96 +285,110 @@ export function TelegramAdmin() {
         )}
       </Card>
 
-      <div className="grid two">
-        <Card title="Thêm bot" subtitle="Token được kiểm tra với Telegram (getMe) rồi mã hoá trong DB; không hiển thị lại.">
-          <form
-            style={{ display: "grid", gap: 10 }}
-            onSubmit={(e) =>
-              submit(
-                e,
-                async (f) => {
-                  const allowed_chat_ids = parseChatIds(String(f.get("allowed_chat_ids") ?? ""));
-                  await api.post("/telegram/bots", {
-                    name: String(f.get("name") ?? "").trim(),
-                    token: String(f.get("token") ?? "").trim(),
-                    business_project_id: Number(f.get("business_project_id")),
-                    project_id: f.get("project_id") ? Number(f.get("project_id")) : null,
-                    allowed_chat_ids,
-                  });
-                  setFormProject("");
-                  await bots.mutate();
-                },
-                "Đã thêm bot. Người dùng liên kết Telegram ở trang Của tôi, rồi gửi /help cho bot.",
-              )
-            }
-          >
-            <label style={{ display: "grid", gap: 4 }}>
-              <span className="small muted">Tên hiển thị</span>
-              <input name="name" placeholder="Ví dụ: OmiCRM review bot" required maxLength={100} />
-            </label>
-            <label style={{ display: "grid", gap: 4 }}>
-              <span className="small muted">Token từ @BotFather</span>
-              <input
-                name="token"
-                type="password"
-                placeholder="123456789:AAH…"
-                required
-                autoComplete="new-password"
-                pattern="^\s*\d+:[A-Za-z0-9_-]{20,}\s*$"
-                title="Dạng 123456789:AAH… (token từ @BotFather)"
-              />
-            </label>
-            <div className="grid two" style={{ gap: 10 }}>
+      {adding && (
+        <Drawer title="Thêm bot Telegram" width={520} onClose={() => setAdding(false)}>
+          <p className="muted small" style={{ marginTop: 0 }}>
+            Token được kiểm tra với Telegram (getMe) rồi mã hoá trong DB; không hiển thị lại.
+          </p>
+          {tone === "error" && <Message text={message} tone={tone} onClose={() => setMessage(null)} />}
+            <form
+              className="adm-form"
+              onSubmit={(e) =>
+                submit(
+                  e,
+                  async (f) => {
+                    const allowed_chat_ids = parseChatIds(String(f.get("allowed_chat_ids") ?? ""));
+                    await api.post("/telegram/bots", {
+                      name: String(f.get("name") ?? "").trim(),
+                      token: String(f.get("token") ?? "").trim(),
+                      business_project_id: Number(f.get("business_project_id")),
+                      project_id: f.get("project_id") ? Number(f.get("project_id")) : null,
+                      allowed_chat_ids,
+                    });
+                    setFormProject("");
+                    await bots.mutate();
+                  },
+                  "Đã thêm bot. Người dùng liên kết Telegram ở trang Của tôi, rồi gửi /help cho bot.",
+                  () => setAdding(false),
+                )
+              }
+            >
               <label style={{ display: "grid", gap: 4 }}>
-                <span className="small muted">Dự án</span>
-                <select name="business_project_id" required value={formProject} onChange={(e) => setFormProject(e.target.value)}>
-                  <option value="" disabled>
-                    {projects.data ? "Chọn dự án…" : "Đang tải…"}
-                  </option>
-                  {(projects.data ?? []).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.repos} repo)
-                    </option>
-                  ))}
-                </select>
+                <span className="small muted">Tên hiển thị</span>
+                <input name="name" placeholder="Ví dụ: OmiCRM review bot" required maxLength={100} autoFocus />
               </label>
               <label style={{ display: "grid", gap: 4 }}>
-                <span className="small muted">Chỉ một repo (tuỳ chọn)</span>
-                <select key={formProject} name="project_id" defaultValue="" disabled={!formProject}>
-                  <option value="">Cả dự án</option>
-                  {reposOf(formProject).map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.path_with_namespace}
-                    </option>
-                  ))}
-                </select>
+                <span className="small muted">Token từ @BotFather</span>
+                <input
+                  name="token"
+                  type="password"
+                  placeholder="123456789:AAH…"
+                  required
+                  autoComplete="new-password"
+                  pattern="^\s*\d+:[A-Za-z0-9_-]{20,}\s*$"
+                  title="Dạng 123456789:AAH… (token từ @BotFather)"
+                />
               </label>
-            </div>
-            <label style={{ display: "grid", gap: 4 }}>
-              <span className="small muted">Chỉ trả lời trong các chat id (tuỳ chọn, cách nhau bằng dấu phẩy)</span>
-              <input
-                name="allowed_chat_ids"
-                placeholder="-1001234567890, 987654321"
-                inputMode="numeric"
-                pattern="^\s*(-?\d+(\s*,\s*-?\d+)*)?\s*$"
-                title="Các số nguyên, cách nhau bằng dấu phẩy"
-              />
-            </label>
-            <div>
-              <button className="primary" type="submit" disabled={busy !== null || !projects.data?.length}>
-                Thêm bot
-              </button>
-            </div>
-            {projects.error && <Alert tone="error">Không tải được danh sách dự án: {projects.error.message}</Alert>}
-            {projects.data && projects.data.length === 0 && (
-              <p className="muted small">
-                Tạo dự án ở tab <a href="#repos">Dự án &amp; Repo</a> trước.
-              </p>
-            )}
-          </form>
-        </Card>
+              <div className="grid two" style={{ gap: 10 }}>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span className="small muted">Dự án</span>
+                  <select name="business_project_id" required value={formProject} onChange={(e) => setFormProject(e.target.value)}>
+                    <option value="" disabled>
+                      {projects.data ? "Chọn dự án…" : "Đang tải…"}
+                    </option>
+                    {(projects.data ?? []).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.repos} repo)
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span className="small muted">Chỉ một repo (tuỳ chọn)</span>
+                  <select key={formProject} name="project_id" defaultValue="" disabled={!formProject}>
+                    <option value="">Cả dự án</option>
+                    {reposOf(formProject).map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.path_with_namespace}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <label style={{ display: "grid", gap: 4 }}>
+                <span className="small muted">Chỉ trả lời trong các chat id (tuỳ chọn, cách nhau bằng dấu phẩy)</span>
+                <input
+                  name="allowed_chat_ids"
+                  placeholder="-1001234567890, 987654321"
+                  inputMode="numeric"
+                  pattern="^\s*(-?\d+(\s*,\s*-?\d+)*)?\s*$"
+                  title="Các số nguyên, cách nhau bằng dấu phẩy"
+                />
+              </label>
+              <div className="adm-form-foot">
+                <button type="button" className="ghost" onClick={() => setAdding(false)}>
+                  Đóng
+                </button>
+                <button className="primary" type="submit" disabled={busy !== null || !projects.data?.length}>
+                  Thêm bot
+                </button>
+              </div>
+              {projects.error && <Alert tone="error">Không tải được danh sách dự án: {projects.error.message}</Alert>}
+              {projects.data && projects.data.length === 0 && (
+                <p className="muted small">
+                  Tạo dự án ở tab <a href="#repos">Dự án &amp; Repo</a> trước.
+                </p>
+              )}
+            </form>
+        </Drawer>
+      )}
 
-        <Card title="Cách dùng" subtitle="Gửi cho bot trong chat riêng hoặc nhóm của team">
+      <Card
+        title="Cách dùng"
+        subtitle="Gửi cho bot trong chat riêng hoặc nhóm của team"
+        id="telegram-usage"
+        defaultCollapsed
+      >
           <ol style={{ paddingLeft: 18, display: "grid", gap: 6 }}>
             <li>
               Tạo bot với <strong>@BotFather</strong> (<code>/newbot</code>), lấy token. Với nhóm: tắt{" "}
@@ -389,8 +413,7 @@ export function TelegramAdmin() {
             Quyền như dashboard: thành viên review việc của mình; lead review người trong team mình; admin mọi người. Review tốn ngân sách LLM như
             bình thường và tính vào chỉ số tuần/tháng.
           </p>
-        </Card>
-      </div>
+      </Card>
     </>
   );
 }

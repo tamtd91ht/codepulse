@@ -440,7 +440,7 @@ export function GitLabMembers() {
               Không có thành viên nào trong mục này.
             </p>
           ) : (
-            <div className="table-wrap">
+            <div className="table-wrap scroll-y">
               <table>
                 <thead>
                   <tr>

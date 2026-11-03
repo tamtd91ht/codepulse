@@ -3,10 +3,10 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import { ConfirmRemove } from "@/components/ConfirmRemove";
-import { IconButton } from "@/components/icons";
+import { Icon, IconButton } from "@/components/icons";
 import { ProjectDrawer, ProjectTiles, type TileKey } from "@/components/ProjectTiles";
 import { BulkBranch, type Flag, groupOf, type RepoActions, repoName, type RepoSection, RepoTable, UNASSIGNED } from "@/components/RepoTable";
-import { Loading, Message, Segmented } from "@/components/ui";
+import { Drawer, Loading, Message, Segmented } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import type { BusinessProject, Connection, GroupImport, Project } from "@/lib/types";
 
@@ -25,6 +25,8 @@ const GROUP_BY_TABS: { key: GroupBy; label: string }[] = [
   { key: "project", label: "Theo dự án" },
 ];
 const VIEW_KEY = "codepulse.admin.repos.view";
+type AddKind = "project" | "repo" | "group";
+const GROUP_LOADING = "Đang lấy danh sách repo của group…";
 
 /** Per-viewer convenience only: unreadable storage (private mode, blocked) just means defaults. */
 function loadView(): { mode: Mode; groupBy: GroupBy; open: string[] } {
@@ -62,6 +64,7 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
   const [groupFilter, setGroupFilter] = useState("");
   const [search, setSearch] = useState("");
   const [importing, setImporting] = useState(false);
+  const [adding, setAdding] = useState<AddKind | null>(null); // the "Thêm" drawer, on the form it shows
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [removing, setRemoving] = useState<Project[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -107,7 +110,7 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
     if (openTile === null) setEditTile(false);
   }, [openTile]);
 
-  function submit(e: FormEvent<HTMLFormElement>, action: (f: FormData) => Promise<unknown>, done?: string) {
+  function submit(e: FormEvent<HTMLFormElement>, action: (f: FormData) => Promise<unknown>, done?: string, after?: () => void) {
     e.preventDefault();
     const form = e.currentTarget;
     const fields = new FormData(form);
@@ -115,8 +118,9 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
       const result = await action(fields);
       form.reset();
       return result;
-    }, done);
+    }, done).then((ok) => ok && after?.());
   }
+  const closeAdd = () => setAdding(null);
 
   async function refresh() {
     await Promise.all([repos.mutate(), projects.mutate()]);
@@ -363,6 +367,10 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
             </div>
           </div>
           <div className="actions">
+            <button type="button" className="primary sm" onClick={() => { setMessage(null); setAdding("project"); }}>
+              <Icon name="plus" size={14} />
+              Thêm
+            </button>
             <Segmented
               label="Chế độ xem"
               value={mode}
@@ -374,7 +382,7 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
             />
           </div>
         </div>
-        {openTile === null && notice}
+        {openTile === null && !adding && notice}
 
         {loading ? (
           <Loading error={repos.error ?? projects.error} />
@@ -393,7 +401,7 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
                   <IconButton
                     icon="members"
                     label={`Thành viên GitLab của ${b.name}`}
-                    onClick={() => window.location.assign(`/admin?members=bp:${b.id}#people`)}
+                    onClick={() => window.location.assign(`/admin?members=bp:${b.id}#people/gitlab`)}
                   />
                   <IconButton
                     icon="edit"
@@ -532,138 +540,6 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
           </>
         )}
 
-        <div className="grid three add-forms">
-          <div>
-            <h3>Tạo dự án</h3>
-            <form
-              className="toolbar"
-              onSubmit={(e) =>
-                submit(
-                  e,
-                  async (f) => {
-                    await api.post("/business-projects", { name: f.get("name"), description: f.get("description") || null });
-                    await projects.mutate();
-                  },
-                  "Đã tạo dự án.",
-                )
-              }
-            >
-              <input name="name" placeholder="Tên dự án, ví dụ OmiCRM" required />
-              <input name="description" placeholder="Mô tả (tuỳ chọn)" />
-              <button className="primary" type="submit">
-                Tạo dự án
-              </button>
-            </form>
-            <p className="muted">Xoá dự án chỉ bỏ cách nhóm; repo và lịch sử review vẫn giữ.</p>
-          </div>
-          <div>
-            <h3>Thêm repo</h3>
-            <form
-              className="toolbar"
-              onSubmit={(e) =>
-                submit(e, async (f) => {
-                  const project = await api.post<Project>("/projects", {
-                    connection_id: Number(f.get("connection_id")),
-                    external_id: Number(f.get("external_id")),
-                  });
-                  const bp = String(f.get("business_project_id") ?? UNASSIGNED);
-                  if (bp !== UNASSIGNED)
-                    await api.put("/projects/business-project", { project_ids: [project.id], business_project_id: Number(bp) });
-                  await api.post(`/projects/${project.id}/sync`);
-                  await refresh();
-                  let hook = "";
-                  if (f.get("webhook")) {
-                    try {
-                      hook = ` ${await registerWebhook(project)}`;
-                    } catch (err) {
-                      hook = ` Webhook lỗi: ${err instanceof ApiError ? err.message : String(err)}; bấm nút Webhook để thử lại.`;
-                    }
-                  }
-                  return `Đã thêm ${project.path_with_namespace} và đưa vào hàng đợi sync.${hook}`;
-                })
-              }
-            >
-              <select name="connection_id" required defaultValue="">
-                <option value="" disabled>
-                  Kết nối…
-                </option>
-                {connections.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-              <input name="external_id" type="number" min={1} placeholder="GitLab project ID" required />
-              <select name="business_project_id" defaultValue={UNASSIGNED} aria-label="Dự án">
-                {projectOptions}
-              </select>
-              <label>
-                <input name="webhook" type="checkbox" defaultChecked /> Webhook GitLab
-              </label>
-              <button className="primary" type="submit">
-                Thêm repo
-              </button>
-            </form>
-            <p className="muted">Project ID nằm dưới tên repo trên GitLab, hoặc Settings → General.</p>
-          </div>
-          <div>
-            <h3>Thêm cả group</h3>
-            <form
-              className="toolbar"
-              onSubmit={(e) =>
-                submit(e, async (f) => {
-                  setMessage("Đang lấy danh sách repo của group…");
-                  setImporting(true);
-                  const bp = String(f.get("business_project_id") ?? UNASSIGNED);
-                  const result = await api
-                    .post<GroupImport>("/projects/import-group", {
-                      connection_id: Number(f.get("connection_id")),
-                      group: f.get("group"),
-                      register_webhooks: !!f.get("webhook"),
-                      business_project_id: bp === UNASSIGNED ? null : Number(bp),
-                    })
-                    .finally(() => {
-                      setImporting(false);
-                      void refresh(); // show rows added before an error or timeout
-                    });
-                  if (result.added.length === 0) return `Không có repo mới (${result.skipped} repo đã có).`;
-                  const notQueued = result.not_queued.length
-                    ? ` Chưa đưa vào hàng đợi: ${result.not_queued.join(", ")} – sẽ được sync ở lần định kỳ; bấm Webhook ở dòng đó nếu cần.`
-                    : "";
-                  return (
-                    `Đã thêm ${result.added.length} repo (bỏ qua ${result.skipped} repo đã có). ` +
-                    `Webhook và sync chạy nền trong worker.${notQueued}`
-                  );
-                })
-              }
-            >
-              <select name="connection_id" required defaultValue="">
-                <option value="" disabled>
-                  Kết nối…
-                </option>
-                {connections.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-              <input name="group" placeholder="Group ID hoặc đường dẫn, ví dụ vihat/omicrm" required />
-              <select name="business_project_id" defaultValue={UNASSIGNED} aria-label="Gán vào dự án">
-                {projectOptions}
-              </select>
-              <label>
-                <input name="webhook" type="checkbox" defaultChecked /> Webhook GitLab
-              </label>
-              <button className="primary" type="submit" disabled={importing}>
-                {importing ? "Đang thêm…" : "Thêm cả group"}
-              </button>
-            </form>
-            <p className="muted">
-              Mọi repo đang hoạt động trong group, kể cả subgroup. Repo đã có (kể cả đã bỏ theo dõi) được bỏ qua; repo
-              tạo sau cần thêm lại.
-            </p>
-          </div>
-        </div>
       </section>
 
       {openTile !== null && openProjectStillExists && !loading && (
@@ -681,6 +557,202 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
           busy={busy || pending > 0}
           notice={notice}
         />
+      )}
+
+      {adding && (
+        <Drawer title="Thêm dự án hoặc repo" width={520} onClose={() => setAdding(null)}>
+          <div className="adm-form">
+            <Segmented<AddKind>
+              label="Thêm gì"
+              value={adding}
+              onChange={setAdding}
+              options={[
+                { value: "project", label: "Dự án" },
+                { value: "repo", label: "Một repo" },
+                { value: "group", label: "Cả group" },
+              ]}
+            />
+            {message?.startsWith("Lỗi") && <Message text={message} onClose={() => setMessage(null)} />}
+            {message === GROUP_LOADING && <Message text={message} tone="info" />}
+            {adding === "project" && (
+              <form
+                className="adm-form"
+                onSubmit={(e) =>
+                  submit(
+                    e,
+                    async (f) => {
+                      await api.post("/business-projects", { name: f.get("name"), description: f.get("description") || null });
+                      await projects.mutate();
+                    },
+                    "Đã tạo dự án.",
+                    closeAdd,
+                  )
+                }
+              >
+                <label className="adm-field">
+                  <span className="small muted">Tên dự án</span>
+                  <input name="name" placeholder="Ví dụ OmiCRM" required autoFocus />
+                </label>
+                <label className="adm-field">
+                  <span className="small muted">Mô tả (tuỳ chọn)</span>
+                  <input name="description" />
+                </label>
+                <p className="muted small">Xoá dự án chỉ bỏ cách nhóm; repo và lịch sử review vẫn giữ.</p>
+                <div className="adm-form-foot">
+                  <button type="button" className="ghost" onClick={closeAdd}>
+                    Đóng
+                  </button>
+                  <button className="primary" type="submit" disabled={pending > 0}>
+                    Tạo dự án
+                  </button>
+                </div>
+              </form>
+            )}
+            {adding === "repo" && (
+              <form
+                className="adm-form"
+                onSubmit={(e) =>
+                  submit(
+                    e,
+                    async (f) => {
+                      const project = await api.post<Project>("/projects", {
+                        connection_id: Number(f.get("connection_id")),
+                        external_id: Number(f.get("external_id")),
+                      });
+                      const bp = String(f.get("business_project_id") ?? UNASSIGNED);
+                      if (bp !== UNASSIGNED)
+                        await api.put("/projects/business-project", { project_ids: [project.id], business_project_id: Number(bp) });
+                      await api.post(`/projects/${project.id}/sync`);
+                      await refresh();
+                      let hook = "";
+                      if (f.get("webhook")) {
+                        try {
+                          hook = ` ${await registerWebhook(project)}`;
+                        } catch (err) {
+                          hook = ` Webhook lỗi: ${err instanceof ApiError ? err.message : String(err)}; bấm nút Webhook để thử lại.`;
+                        }
+                      }
+                      return `Đã thêm ${project.path_with_namespace} và đưa vào hàng đợi sync.${hook}`;
+                    },
+                    undefined,
+                    closeAdd,
+                  )
+                }
+              >
+                <label className="adm-field">
+                  <span className="small muted">Kết nối GitLab</span>
+                  <select name="connection_id" required defaultValue="">
+                    <option value="" disabled>
+                      Kết nối…
+                    </option>
+                    {connections.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="adm-field">
+                  <span className="small muted">GitLab project ID</span>
+                  <input name="external_id" type="number" min={1} required />
+                </label>
+                <label className="adm-field">
+                  <span className="small muted">Dự án</span>
+                  <select name="business_project_id" defaultValue={UNASSIGNED}>
+                    {projectOptions}
+                  </select>
+                </label>
+                <label className="inline-check">
+                  <input name="webhook" type="checkbox" defaultChecked /> Đăng ký webhook GitLab
+                </label>
+                <p className="muted small">Project ID nằm dưới tên repo trên GitLab, hoặc Settings → General.</p>
+                <div className="adm-form-foot">
+                  <button type="button" className="ghost" onClick={closeAdd}>
+                    Đóng
+                  </button>
+                  <button className="primary" type="submit" disabled={pending > 0}>
+                    Thêm repo
+                  </button>
+                </div>
+              </form>
+            )}
+            {adding === "group" && (
+              <form
+                className="adm-form"
+                onSubmit={(e) =>
+                  submit(
+                    e,
+                    async (f) => {
+                      setMessage(GROUP_LOADING);
+                      setImporting(true);
+                      const bp = String(f.get("business_project_id") ?? UNASSIGNED);
+                      const result = await api
+                        .post<GroupImport>("/projects/import-group", {
+                          connection_id: Number(f.get("connection_id")),
+                          group: f.get("group"),
+                          register_webhooks: !!f.get("webhook"),
+                          business_project_id: bp === UNASSIGNED ? null : Number(bp),
+                        })
+                        .finally(() => {
+                          setImporting(false);
+                          void refresh(); // show rows added before an error or timeout
+                        });
+                      if (result.added.length === 0) return `Không có repo mới (${result.skipped} repo đã có).`;
+                      const notQueued = result.not_queued.length
+                        ? ` Chưa đưa vào hàng đợi: ${result.not_queued.join(", ")} – sẽ được sync ở lần định kỳ; bấm Webhook ở dòng đó nếu cần.`
+                        : "";
+                      return (
+                        `Đã thêm ${result.added.length} repo (bỏ qua ${result.skipped} repo đã có). ` +
+                        `Webhook và sync chạy nền trong worker.${notQueued}`
+                      );
+                    },
+                    undefined,
+                    closeAdd,
+                  )
+                }
+              >
+                <label className="adm-field">
+                  <span className="small muted">Kết nối GitLab</span>
+                  <select name="connection_id" required defaultValue="">
+                    <option value="" disabled>
+                      Kết nối…
+                    </option>
+                    {connections.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="adm-field">
+                  <span className="small muted">Group ID hoặc đường dẫn</span>
+                  <input name="group" placeholder="Ví dụ vihat/omicrm" required />
+                </label>
+                <label className="adm-field">
+                  <span className="small muted">Gán vào dự án</span>
+                  <select name="business_project_id" defaultValue={UNASSIGNED}>
+                    {projectOptions}
+                  </select>
+                </label>
+                <label className="inline-check">
+                  <input name="webhook" type="checkbox" defaultChecked /> Đăng ký webhook GitLab
+                </label>
+                <p className="muted small">
+                  Mọi repo đang hoạt động trong group, kể cả subgroup. Repo đã có (kể cả đã bỏ theo dõi) được bỏ qua; repo
+                  tạo sau cần thêm lại.
+                </p>
+                <div className="adm-form-foot">
+                  <button type="button" className="ghost" onClick={closeAdd}>
+                    Đóng
+                  </button>
+                  <button className="primary" type="submit" disabled={importing}>
+                    {importing ? "Đang thêm…" : "Thêm cả group"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </Drawer>
       )}
 
       {removing && (

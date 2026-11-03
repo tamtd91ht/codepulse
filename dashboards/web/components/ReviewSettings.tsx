@@ -2,7 +2,7 @@
 
 import { type FormEvent, useState } from "react";
 
-import { Alert } from "@/components/ui";
+import { Alert, Loading } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import type { ReviewSetting } from "@/lib/types";
 
@@ -89,6 +89,8 @@ export function ReviewSettings() {
       {settings.error && <Alert tone="error">Lỗi: {settings.error.message}</Alert>}
       {error && <Alert tone="error">Lỗi: {error}</Alert>}
       {notice && <Alert tone="success">{notice}</Alert>}
+      {!settings.data && !settings.error && <Loading rows={4} />}
+      <div className="settings-grid">
 
       {model && (
         <form
@@ -97,7 +99,7 @@ export function ReviewSettings() {
             const picked = field(e, "llm_model");
             save("llm_model", picked === OTHER ? field(e, "custom_model") : picked);
           }}
-          style={{ display: "grid", gap: 10, padding: "0 18px 14px" }}
+          className="setting-tile"
         >
           <label style={{ display: "grid", gap: 4, maxWidth: 420 }}>
             <span className="small muted">Model dùng để review ({model.env})</span>
@@ -151,7 +153,7 @@ export function ReviewSettings() {
             e.preventDefault();
             save("monthly_llm_budget_usd", Number(field(e, "monthly_llm_budget_usd")));
           }}
-          style={{ display: "grid", gap: 10, padding: "0 18px 14px" }}
+          className="setting-tile"
         >
           <label style={{ display: "grid", gap: 4, maxWidth: 320 }}>
             <span className="small muted">Ngân sách LLM mỗi tháng, USD ({budget.env})</span>
@@ -191,7 +193,7 @@ export function ReviewSettings() {
             e.preventDefault();
             save("public_url", field(e, "public_url"));
           }}
-          style={{ display: "grid", gap: 10, padding: "0 18px 14px" }}
+          className="setting-tile"
         >
           <label style={{ display: "grid", gap: 4, maxWidth: 420 }}>
             <span className="small muted">Địa chỉ trong link gửi đi (thay {link.env})</span>
@@ -233,7 +235,7 @@ export function ReviewSettings() {
               e.preventDefault();
               save(key, Number(field(e, key)));
             }}
-            style={{ display: "grid", gap: 10, padding: "0 18px 14px" }}
+            className="setting-tile"
           >
             <label style={{ display: "grid", gap: 4, maxWidth: 320 }}>
               <span className="small muted">
@@ -274,7 +276,7 @@ export function ReviewSettings() {
             e.preventDefault();
             save("max_review_loc", Number(field(e, "max_review_loc")));
           }}
-          style={{ display: "grid", gap: 10, padding: "0 18px 14px" }}
+          className="setting-tile"
         >
           <label style={{ display: "grid", gap: 4, maxWidth: 320 }}>
             <span className="small muted">Số dòng thay đổi tối đa mỗi MR/commit ({loc.env})</span>
@@ -312,7 +314,7 @@ export function ReviewSettings() {
             e.preventDefault();
             save("review_agent_min_loc", Number(field(e, "review_agent_min_loc")));
           }}
-          style={{ display: "grid", gap: 10, padding: "0 18px 14px" }}
+          className="setting-tile"
         >
           <label style={{ display: "grid", gap: 4, maxWidth: 320 }}>
             <span className="small muted">Số dòng thay đổi tối thiểu để review sâu ({agentLoc.env})</span>
@@ -354,6 +356,7 @@ export function ReviewSettings() {
           onSave={(on, days) => saveAll(on ? { auto_close_findings: true, auto_close_days: days } : { auto_close_findings: false })}
         />
       )}
+      </div>
     </section>
   );
 }
@@ -380,7 +383,7 @@ function AutoCloseForm({
         const value = Number(new FormData(e.currentTarget).get("auto_close_days") ?? 0);
         void onSave(on, value);
       }}
-      style={{ display: "grid", gap: 10, padding: "0 18px 14px" }}
+      className="setting-tile"
     >
       <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <input type="checkbox" checked={on} onChange={(e) => setOn(e.target.checked)} />

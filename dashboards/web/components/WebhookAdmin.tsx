@@ -2,8 +2,8 @@
 
 import { type FormEvent, useState } from "react";
 
-import { IconButton } from "@/components/icons";
-import { Alert, Card, EmptyState, Loading, Message, Pill } from "@/components/ui";
+import { Icon, IconButton } from "@/components/icons";
+import { Card, Drawer, EmptyState, Expander, Loading, Message, Pill } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { dateTime, relative } from "@/lib/format";
 import type { BusinessProject, NotificationWebhook, Project, WebhookEvent, WebhookFormat, WebhookTestResult } from "@/lib/types";
@@ -39,6 +39,13 @@ export function WebhookAdmin() {
   const [editing, setEditing] = useState<NotificationWebhook | null>(null);
   const [formProject, setFormProject] = useState(ALL);
   const [tests, setTests] = useState<Record<number, WebhookTestResult>>({});
+  // The add / edit form lives in a drawer: open for a new hook (editing null) or for `editing`.
+  const [formOpen, setFormOpen] = useState(false);
+  const closeForm = () => {
+    setFormOpen(false);
+    setEditing(null);
+    setFormProject(ALL);
+  };
 
   async function run(action: () => Promise<unknown>, done: string, id?: number) {
     setBusy(id ?? -1);
@@ -85,6 +92,7 @@ export function WebhookAdmin() {
         form.reset();
         setEditing(null);
         setFormProject(ALL);
+        setFormOpen(false);
       },
       editing ? "Đã cập nhật webhook." : "Đã thêm webhook. Bấm Gửi thử để kiểm tra endpoint.",
     );
@@ -100,22 +108,38 @@ export function WebhookAdmin() {
 
   return (
     <>
-      <Message text={message} tone={tone} onClose={() => setMessage(null)} />
+      {!formOpen && <Message text={message} tone={tone} onClose={() => setMessage(null)} />}
       <Card
-        title="Webhook thông báo"
-        subtitle="Khi một review xong (hoặc lỗi), CodePulse POST kết quả tới endpoint của bạn. Khác với webhook GitLab (GitLab gọi CodePulse khi có MR/commit mới)."
+        title={`Webhook thông báo${hooks.data ? ` (${hooks.data.length})` : ""}`}
+        subtitle="Khi một review xong (hoặc lỗi), CodePulse POST kết quả tới endpoint của bạn. Khác với webhook GitLab (GitLab gọi CodePulse khi có MR/commit mới). Webhook tắt sau 20 lần gửi lỗi liên tiếp."
+        collapsible={false}
         flush
+        actions={
+          <button
+            type="button"
+            className="primary sm"
+            onClick={() => {
+              setEditing(null);
+              setFormProject(ALL);
+              setMessage(null);
+              setFormOpen(true);
+            }}
+          >
+            <Icon name="plus" size={14} />
+            Thêm webhook
+          </button>
+        }
       >
         {!hooks.data ? (
-          <div style={{ padding: "0 18px 16px" }}>
+          <div className="adm-pad">
             <Loading error={hooks.error} />
           </div>
         ) : hooks.data.length === 0 ? (
           <EmptyState icon="webhook" title="Chưa có webhook thông báo nào">
-            Thêm endpoint bên dưới: một kênh Slack/Teams, hoặc một service nội bộ nhận JSON có chữ ký.
+            Bấm &ldquo;Thêm webhook&rdquo;: một kênh Slack/Teams, hoặc một service nội bộ nhận JSON có chữ ký.
           </EmptyState>
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap scroll-y">
             <table>
               <thead>
                 <tr>
@@ -218,7 +242,8 @@ export function WebhookAdmin() {
                             onClick={() => {
                               setEditing(h);
                               setFormProject(h.business_project_id === null ? ALL : String(h.business_project_id));
-                              document.getElementById("webhook-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                              setMessage(null);
+                              setFormOpen(true);
                             }}
                           />
                           <IconButton
@@ -249,101 +274,96 @@ export function WebhookAdmin() {
         )}
       </Card>
 
-      <Card
-        title={editing ? `Sửa webhook: ${editing.name}` : "Thêm webhook"}
-        subtitle="Phạm vi: mọi dự án, một dự án, hoặc một repo. Webhook tắt sau 20 lần gửi lỗi liên tiếp; bật lại ở bảng trên."
-        actions={
-          editing ? (
-            <button
-              type="button"
-              onClick={() => {
-                setEditing(null);
-                setFormProject(ALL);
-              }}
-            >
-              Huỷ sửa
-            </button>
-          ) : undefined
-        }
-      >
-        <form id="webhook-form" key={editing?.id ?? "new"} style={{ display: "grid", gap: 10 }} onSubmit={submit}>
-          <div className="toolbar" style={{ margin: 0 }}>
-            <input name="name" placeholder="Tên, ví dụ Kênh #alerts" required maxLength={100} defaultValue={editing?.name} />
-            <input
-              name="url"
-              type="url"
-              placeholder="https://hooks.slack.com/services/… hoặc https://service.noi.bo/codepulse"
-              required
-              defaultValue={editing?.url}
-              style={{ flex: "2 1 320px" }}
-            />
-            <select name="format" defaultValue={editing?.format ?? "json"} aria-label="Định dạng">
-              {FORMATS.map((f) => (
-                <option key={f.key} value={f.key} title={f.hint}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="toolbar" style={{ margin: 0 }}>
-            <select
-              name="business_project_id"
-              value={formProject}
-              onChange={(e) => setFormProject(e.target.value)}
-              aria-label="Dự án"
-            >
-              <option value={ALL}>Mọi dự án</option>
-              {(projects.data ?? []).map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-            <select name="project_id" key={formProject} defaultValue={editing?.project_id ?? ""} aria-label="Repo (tuỳ chọn)">
-              <option value="">Mọi repo{formProject === ALL ? "" : " của dự án"}</option>
-              {formRepos.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.path_with_namespace}
-                  {p.tracked ? "" : " (đã bỏ theo dõi)"}
-                </option>
-              ))}
-            </select>
-            <input
-              name="secret"
-              type="password"
-              placeholder={editing?.has_secret ? "Secret mới (để trống = giữ nguyên)" : "Secret ký HMAC (tuỳ chọn, ≥16 ký tự)"}
-              minLength={16}
-              maxLength={200}
-              autoComplete="new-password"
-            />
-          </div>
-          <div className="toolbar" style={{ margin: 0 }}>
-            {EVENTS.map((ev) => (
-              <label key={ev.key} title={ev.hint}>
-                <input
-                  name={`event:${ev.key}`}
-                  type="checkbox"
-                  defaultChecked={editing ? editing.events.includes(ev.key) : ev.key === "review.done"}
-                />{" "}
-                {ev.label}
-              </label>
-            ))}
-            <span className="spacer" />
-            <button className="primary" type="submit" disabled={busy === -1}>
-              {editing ? "Lưu" : "Thêm webhook"}
-            </button>
-          </div>
-        </form>
-        <Alert tone="info">
-          <p style={{ margin: 0 }}>
-            <strong>Payload JSON.</strong> Header <code>X-CodePulse-Event</code> (review.done | review.severe | review.failed | ping), <code>X-CodePulse-Delivery</code>,{" "}
-            <code>X-CodePulse-Timestamp</code> và <code>X-CodePulse-Signature: sha256=HMAC(secret, timestamp + "." + body)</code>. Body gồm <code>review</code> (id, status, score,
-            loc_reviewed, summary, findings theo mức độ, top_findings, url, web_url), <code>project</code>,{" "}
-            <code>business_project</code>, <code>author</code>. Chi tiết trong <code>docs/specs/16_NOTIFICATION_WEBHOOKS.md</code>.
-            Endpoint cần trả 2xx trong 10 giây; 5xx/429 được thử lại 3 lần.
+      {formOpen && (
+        <Drawer title={editing ? `Sửa webhook: ${editing.name}` : "Thêm webhook"} width={640} onClose={closeForm}>
+          <p className="muted small" style={{ marginTop: 0 }}>
+            Phạm vi: mọi dự án, một dự án, hoặc một repo. Webhook tắt sau 20 lần gửi lỗi liên tiếp; bật lại ở bảng.
           </p>
-        </Alert>
-      </Card>
+          {tone === "error" && <Message text={message} tone={tone} onClose={() => setMessage(null)} />}
+          <form id="webhook-form" key={editing?.id ?? "new"} style={{ display: "grid", gap: 10 }} onSubmit={submit}>
+            <div className="toolbar" style={{ margin: 0 }}>
+              <input name="name" placeholder="Tên, ví dụ Kênh #alerts" required maxLength={100} defaultValue={editing?.name} aria-label="Tên" autoFocus />
+              <input
+                name="url"
+                type="url"
+                placeholder="https://hooks.slack.com/services/… hoặc https://service.noi.bo/codepulse"
+                required
+                aria-label="Endpoint"
+                defaultValue={editing?.url}
+                style={{ flex: "2 1 320px" }}
+              />
+              <select name="format" defaultValue={editing?.format ?? "json"} aria-label="Định dạng">
+                {FORMATS.map((f) => (
+                  <option key={f.key} value={f.key} title={f.hint}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="toolbar" style={{ margin: 0 }}>
+              <select
+                name="business_project_id"
+                value={formProject}
+                onChange={(e) => setFormProject(e.target.value)}
+                aria-label="Dự án"
+              >
+                <option value={ALL}>Mọi dự án</option>
+                {(projects.data ?? []).map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+              <select name="project_id" key={formProject} defaultValue={editing?.project_id ?? ""} aria-label="Repo (tuỳ chọn)">
+                <option value="">Mọi repo{formProject === ALL ? "" : " của dự án"}</option>
+                {formRepos.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.path_with_namespace}
+                    {p.tracked ? "" : " (đã bỏ theo dõi)"}
+                  </option>
+                ))}
+              </select>
+              <input
+                name="secret"
+                type="password"
+                placeholder={editing?.has_secret ? "Secret mới (để trống = giữ nguyên)" : "Secret ký HMAC (tuỳ chọn, ≥16 ký tự)"}
+                minLength={16}
+                maxLength={200}
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="toolbar" style={{ margin: 0 }}>
+              {EVENTS.map((ev) => (
+                <label key={ev.key} title={ev.hint}>
+                  <input
+                    name={`event:${ev.key}`}
+                    type="checkbox"
+                    defaultChecked={editing ? editing.events.includes(ev.key) : ev.key === "review.done"}
+                  />{" "}
+                  {ev.label}
+                </label>
+              ))}
+            </div>
+            <div className="adm-form-foot">
+              <button type="button" className="ghost" onClick={closeForm}>
+                Đóng
+              </button>
+              <button className="primary" type="submit" disabled={busy === -1}>
+                {editing ? "Lưu" : "Thêm webhook"}
+              </button>
+            </div>
+          </form>
+          <Expander summary="Định dạng payload và chữ ký">
+            <p style={{ margin: 0 }}>
+              <strong>Payload JSON.</strong> Header <code>X-CodePulse-Event</code> (review.done | review.severe | review.failed | ping), <code>X-CodePulse-Delivery</code>,{" "}
+              <code>X-CodePulse-Timestamp</code> và <code>X-CodePulse-Signature: sha256=HMAC(secret, timestamp + "." + body)</code>. Body gồm <code>review</code> (id, status, score,
+              loc_reviewed, summary, findings theo mức độ, top_findings, url, web_url), <code>project</code>,{" "}
+              <code>business_project</code>, <code>author</code>. Chi tiết trong <code>docs/specs/16_NOTIFICATION_WEBHOOKS.md</code>.
+              Endpoint cần trả 2xx trong 10 giây; 5xx/429 được thử lại 3 lần.
+            </p>
+          </Expander>
+        </Drawer>
+      )}
     </>
   );
 }
