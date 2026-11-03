@@ -151,22 +151,32 @@ def test_incidents_in_dora(
     assert inc["recent"][1]["fix_mrs"] == 1
 
 
-def test_admin_queues_the_insights_backfill(
-    client: TestClient, world: World, queue: Any, as_user: Any
+def test_admin_queues_the_insights_backfill_and_follows_it(
+    client: TestClient, db_session: Session, world: World, queue: Any, as_user: Any
 ) -> None:
-    res = client.post("/api/v1/admin/insights/backfill", headers=as_user(world.admin), json={})
-    assert res.status_code == 202 and res.json() == {"queued": 1}
+    from datetime import UTC, datetime
+
+    from app.models import InsightsBackfill
+
+    admin = as_user(world.admin)
+    url = "/api/v1/admin/insights/backfill"
+    res = client.post(url, headers=admin, json={})
+    assert res.status_code == 202 and res.json() == {"queued": 1, "running": 0}
     assert queue.jobs[-1][0] == "app.insights.backfill.backfill_job"
     assert queue.jobs[-1][1] == (world.project.id,)
-    one = client.post(
-        "/api/v1/admin/insights/backfill",
-        headers=as_user(world.admin),
-        json={"project_id": world.project.id},
-    )
-    assert one.json() == {"queued": 1}
-    assert (
-        client.post(
-            "/api/v1/admin/insights/backfill", headers=as_user(world.lead), json={}
-        ).status_code
-        == 403
-    )
+    # Clicking again while it runs queues nothing twice.
+    again = client.post(url, headers=admin, json={"project_id": world.project.id})
+    assert again.json() == {"queued": 0, "running": 1} and len(queue.jobs) == 1
+    progress = client.get(url, headers=admin).json()
+    assert (progress["total"], progress["active"], progress["queued"]) == (1, 1, 1)
+    assert progress["items"][0]["path_with_namespace"] == "demo/p"
+    # The job moves it on; a finished one may be filled again.
+    row = db_session.get(InsightsBackfill, world.project.id)
+    assert row is not None
+    row.status, row.runs, row.finished_at = "done", 3, datetime.now(UTC)
+    db_session.flush()
+    done = client.get(url, headers=admin).json()
+    assert done["done"] == 1 and done["active"] == 0 and done["items"][0]["runs"] == 3
+    assert client.post(url, headers=admin, json={}).json() == {"queued": 1, "running": 0}
+    assert client.post(url, headers=as_user(world.lead), json={}).status_code == 403
+    assert client.get(url, headers=as_user(world.lead)).status_code == 403

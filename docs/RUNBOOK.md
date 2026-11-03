@@ -226,4 +226,6 @@ Các tab mới (Rủi ro tri thức, DORA, sự cố, "Commit chưa thuộc MR n
 - **Bấm tay (admin):** trên trang Luồng làm việc, cảnh báo "Chưa đủ dữ liệu" có nút **Đồng bộ lại cho Insights** (repo đang chọn, hoặc mọi repo). API: `POST /api/v1/admin/insights/backfill {project_id?}`.
 - **CLI:** `codepulse insights backfill [--project ID]` (chạy ngay, không qua hàng đợi), rồi `codepulse projects resync` cho deployment/sự cố.
 
+Tiến trình từng repo (Chờ → Dựng lại dữ liệu → Đồng bộ GitLab → Xong / Lỗi, kèm lý do) hiện ngay dưới nút và tự cập nhật; API `GET /api/v1/admin/insights/backfill`. Bấm lại khi đang chạy không xếp hàng trùng; job dừng giữa chừng quá 3 giờ được coi là lỗi và chạy lại được.
+
 Mỗi repo: dựng lại dữ liệu từ các lần sync đã lưu trong `raw_gitlab` (giữ `RETENTION_DAYS`, mặc định 365 ngày; không gọi GitLab, không tốn LLM), rồi sync đầy đủ cửa sổ `BACKFILL_DAYS` để lấy deployment và sự cố. Chạy lại bao nhiêu lần cũng được. Dữ liệu cũ hơn `raw_gitlab` còn giữ thì không dựng lại được; khi đó trang vẫn báo thiếu cho phần đó.

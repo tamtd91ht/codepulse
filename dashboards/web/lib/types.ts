@@ -1674,3 +1674,28 @@ export interface InsightsDora {
     finished_at: string | null;
   }[];
 }
+
+/* ---- Insights backfill (docs/specs/20, 9.12) ---- */
+
+export type BackfillStatus = "queued" | "reconverting" | "syncing" | "done" | "failed";
+
+export interface BackfillProgress {
+  total: number;
+  active: number;
+  queued: number;
+  reconverting: number;
+  syncing: number;
+  done: number;
+  failed: number;
+  items: {
+    project_id: number;
+    path_with_namespace: string;
+    status: BackfillStatus;
+    runs: number | null;
+    commits: number | null;
+    error: string | null;
+    queued_at: string | null;
+    started_at: string | null;
+    finished_at: string | null;
+  }[];
+}

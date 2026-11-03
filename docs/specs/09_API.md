@@ -114,3 +114,4 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | — | `/insights/dora` thêm khối `incidents` (9.9) | Sự cố mới, đã đóng, đang mở, sự cố / deploy, thời gian khôi phục theo incident, 10 sự cố mới nhất | như trên |
 | POST | `/evidence/{user_id}/{yyyy-mm}/ai-draft` | Bản nháp nhận xét bằng AI từ snapshot đã chốt (không gửi mã nguồn); mỗi câu phải dẫn MR/finding/bằng chứng, câu không dẫn bị bỏ; chặn khi hết ngân sách hoặc có repo `allow_external_llm=false`; audit `evidence.ai_draft` kèm chi phí (tính vào ngân sách tháng) | lead trực tiếp, admin; hồ sơ đã gửi |
 | POST | `/admin/insights/backfill` `{project_id?}` | Lấp dữ liệu Insights cho repo đã sync trước Phase 9: dựng lại từ `raw_gitlab` rồi sync đầy đủ (202, hàng đợi); audit `insights.backfill` | admin |
+| GET | `/admin/insights/backfill?project_id=` | Tiến trình lấp dữ liệu Insights theo repo (queued, reconverting, syncing, done, failed; lỗi; thời điểm) | admin |

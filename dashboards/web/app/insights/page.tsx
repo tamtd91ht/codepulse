@@ -16,6 +16,8 @@ import type {
   InsightConfidence,
   InsightPerson,
   InsightsFlow,
+  BackfillProgress,
+  BackfillStatus,
   InsightsDora,
   InsightsKnowledge,
   Me,
@@ -96,10 +98,16 @@ function ConfidenceNote({ c, repoId }: { c: InsightConfidence | undefined; repoI
   );
 }
 
-/** Admin: fill the Insights data of repos synced before it existed (docs/specs/20, 9.12). */
+/** Admin: fill the Insights data of repos synced before it existed (docs/specs/20, 9.12), and
+ * follow it repo by repo (polled while any is still running). */
 function BackfillAction({ repoId }: { repoId: number | null }) {
-  const [state, setState] = useState<"idle" | "busy" | "done" | "error">("idle");
+  const path = `/admin/insights/backfill${repoId ? `?project_id=${repoId}` : ""}`;
+  const { data, mutate } = useApi<BackfillProgress>(path, {
+    refreshInterval: (latest) => (latest && latest.active > 0 ? 3000 : 0),
+  });
+  const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
+  const running = (data?.active ?? 0) > 0;
   const run = () => {
     const what = repoId ? "repo đang chọn" : "mọi repo đang theo dõi";
     if (
@@ -108,31 +116,82 @@ function BackfillAction({ repoId }: { repoId: number | null }) {
       )
     )
       return;
-    setState("busy");
+    setBusy(true);
+    setNote("");
     void api
-      .post<{ queued: number }>("/admin/insights/backfill", repoId ? { project_id: repoId } : {})
+      .post<{ queued: number; running: number }>("/admin/insights/backfill", repoId ? { project_id: repoId } : {})
       .then((r) => {
-        setState("done");
-        setNote(`Đã xếp hàng ${r.queued} repo. Mở lại trang sau vài phút.`);
+        setNote(r.running ? `Xếp hàng ${r.queued} repo; ${r.running} repo đang chạy từ trước.` : `Đã xếp hàng ${r.queued} repo.`);
+        return mutate();
       })
-      .catch((e: unknown) => {
-        setState("error");
-        setNote(e instanceof ApiError ? e.message : String(e));
-      });
+      .catch((e: unknown) => setNote(`Lỗi: ${e instanceof ApiError ? e.message : String(e)}`))
+      .finally(() => setBusy(false));
   };
+  const finished = (data?.done ?? 0) + (data?.failed ?? 0);
   return (
-    <div className="toolbar" style={{ marginTop: 8 }}>
-      <button type="button" className="sm" disabled={state === "busy" || state === "done"} onClick={run}>
-        {state === "busy" ? "Đang xếp hàng…" : "Đồng bộ lại cho Insights"}
-      </button>
-      {note && (
-        <span className="small" role="status">
-          {note}
-        </span>
+    <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+      <div className="toolbar" style={{ margin: 0 }}>
+        <button type="button" className="sm" disabled={busy || running} onClick={run}>
+          {running ? "Đang đồng bộ…" : busy ? "Đang xếp hàng…" : "Đồng bộ lại cho Insights"}
+        </button>
+        {note && (
+          <span className="small" role="status">
+            {note}
+          </span>
+        )}
+      </div>
+      {data && data.total > 0 && (
+        <div style={{ display: "grid", gap: 6 }}>
+          <div className="small" role="status" aria-live="polite">
+            {running ? "Đang đồng bộ" : "Lần đồng bộ gần nhất"}: {finished}/{data.total} repo xong
+            {data.failed ? ` · ${data.failed} lỗi` : ""}
+            {data.reconverting + data.syncing ? ` · ${data.reconverting + data.syncing} đang chạy` : ""}
+            {data.queued ? ` · ${data.queued} chờ` : ""}
+          </div>
+          <SplitBar
+            label={`${finished}/${data.total} repo đã xong`}
+            parts={[
+              { name: "Xong", value: data.done, color: "var(--good)" },
+              { name: "Lỗi", value: data.failed, color: "var(--sev-critical)" },
+              { name: "Đang chạy", value: data.reconverting + data.syncing, color: "var(--chart-1)" },
+              { name: "Chờ", value: data.queued, color: "var(--surface-2)" },
+            ]}
+          />
+          <ul className="finding-list" style={{ maxHeight: 180, overflowY: "auto" }}>
+            {data.items.map((i) => (
+              <li key={i.project_id}>
+                <Pill tone={BACKFILL_TONE[i.status]}>{BACKFILL_LABEL[i.status]}</Pill>
+                <div className="body">
+                  <span className="small">{i.path_with_namespace}</span>
+                  <div className="meta">
+                    {i.status === "done" && i.runs !== null ? `dựng lại ${i.runs} lần sync · ` : ""}
+                    {i.finished_at ? `xong ${dateTime(i.finished_at)}` : i.started_at ? `bắt đầu ${dateTime(i.started_at)}` : i.queued_at ? `xếp hàng ${dateTime(i.queued_at)}` : ""}
+                    {i.error ? ` · ${i.error}` : ""}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );
 }
+
+const BACKFILL_LABEL: Record<BackfillStatus, string> = {
+  queued: "Chờ",
+  reconverting: "Dựng lại dữ liệu",
+  syncing: "Đồng bộ GitLab",
+  done: "Xong",
+  failed: "Lỗi",
+};
+const BACKFILL_TONE: Record<BackfillStatus, "good" | "bad" | "info" | undefined> = {
+  queued: undefined,
+  reconverting: "info",
+  syncing: "info",
+  done: "good",
+  failed: "bad",
+};
 
 /** Loading skeleton, or the error with a retry. */
 function Pending({ error, retry, rows = 4 }: { error?: ApiError; retry: () => void; rows?: number }) {

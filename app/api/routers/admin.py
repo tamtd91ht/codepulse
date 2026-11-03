@@ -1433,15 +1433,28 @@ def insights_backfill(
         project = _get(session, Project, body.project_id, "project")
         if not project.tracked:
             raise HTTPException(409, "the repo is not tracked")
-    queued = enqueue_backfill(
-        session, queue, None if body.project_id is None else [body.project_id]
+    result = enqueue_backfill(
+        session,
+        queue,
+        None if body.project_id is None else [body.project_id],
+        requested_by=principal.user_id,
     )
     audit(
         session,
         principal.user_id,
         "insights.backfill",
         f"project:{body.project_id}" if body.project_id else "projects",
-        queued=queued,
+        **result,
     )
     session.commit()
-    return {"queued": queued}
+    return result
+
+
+@router.get("/admin/insights/backfill")
+def insights_backfill_progress(
+    principal: AdminPrincipal, session: SessionDep, project_id: int | None = None
+) -> dict[str, Any]:
+    """Where each repo's Insights backfill is (queued, reconverting, syncing, done, failed)."""
+    from app.insights.backfill import progress
+
+    return progress(session, None if project_id is None else [project_id])

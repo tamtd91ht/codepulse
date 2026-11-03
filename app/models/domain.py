@@ -140,3 +140,24 @@ class Incident(TimestampMixin, Base):
     closed_at_src: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # MRs (iids) GitLab says close the incident: its fix. NULL = not asked (still open).
     fix_mr_iids: Mapped[list[int] | None] = mapped_column(JSONB)
+
+
+BACKFILL_STATUSES = ("queued", "reconverting", "syncing", "done", "failed")
+
+
+class InsightsBackfill(TimestampMixin, Base):
+    """Progress of one repo's Insights backfill (app/insights/backfill.py): the latest run."""
+
+    __tablename__ = "insights_backfills"
+
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    status: Mapped[str]  # queued|reconverting|syncing|done|failed
+    runs: Mapped[int | None]  # stored sync runs converted again
+    counts: Mapped[dict[str, int] | None] = mapped_column(JSONB)
+    error: Mapped[str | None]
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
