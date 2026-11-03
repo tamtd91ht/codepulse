@@ -18,11 +18,12 @@ from app.admin_settings import (
 from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.schemas import ReviewSettingOut, ReviewSettingsIn
-from app.api.security import AdminPrincipal
+from app.api.security import Principal, require
 from app.config import Settings, get_settings
 
 router = APIRouter(tags=["admin"])
 SessionDep = Annotated[Session, Depends(get_session)]
+ReviewSettingsAdmin = Annotated[Principal, require("admin.review_settings")]  # docs/specs/21 B4
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
@@ -47,14 +48,17 @@ def _out(session: Session, settings: Settings) -> list[ReviewSettingOut]:
 
 @router.get("/admin/review-settings")
 def review_settings(
-    principal: AdminPrincipal, session: SessionDep, settings: SettingsDep
+    principal: ReviewSettingsAdmin, session: SessionDep, settings: SettingsDep
 ) -> list[ReviewSettingOut]:
     return _out(session, settings)
 
 
 @router.put("/admin/review-settings")
 def update_review_settings(
-    body: ReviewSettingsIn, principal: AdminPrincipal, session: SessionDep, settings: SettingsDep
+    body: ReviewSettingsIn,
+    principal: ReviewSettingsAdmin,
+    session: SessionDep,
+    settings: SettingsDep,
 ) -> list[ReviewSettingOut]:
     """Only the keys sent change; null restores the environment default."""
     changes = body.model_dump(exclude_unset=True)

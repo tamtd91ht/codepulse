@@ -51,7 +51,7 @@ from app.api.schemas import (
     UserIn,
     UserPatch,
 )
-from app.api.security import AdminPrincipal, CurrentPrincipal, LeadPrincipal
+from app.api.security import CurrentPrincipal, Principal, require
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.removal import REMOVAL_JOB_TIMEOUT, confirmation_phrase, remove_projects
 from app.collector.sync import (
@@ -90,6 +90,51 @@ log = logging.getLogger(__name__)
 router = APIRouter(tags=["admin"])
 SessionDep = Annotated[Session, Depends(get_session)]
 
+# docs/specs/21 B4: each Admin screen is one permission; by default only admins hold them.
+ConnectionsAdmin = Annotated[Principal, require("admin.connections")]
+ProjectsAdmin = Annotated[Principal, require("admin.projects")]
+PeopleAdmin = Annotated[Principal, require("admin.people")]
+LlmAdmin = Annotated[Principal, require("admin.llm")]
+InsightsAdmin = Annotated[Principal, require("admin.insights")]
+
+
+def _is_admin_email(email: str | None, settings: Settings) -> bool:
+    return bool(email) and (email or "").lower() in {e.lower() for e in settings.admin_emails}
+
+
+def _guard_admin_target(principal: Principal, user: User, settings: Settings) -> None:
+    """docs/specs/21 §3: admin status comes from ADMIN_EMAILS, never from a permission set. One
+    who holds admin.people without being admin must not edit, deactivate, re-email or delete an
+    admin (nor their avatar): that would let a delegated right reach above itself."""
+    if not principal.is_admin and _is_admin_email(user.primary_email, settings):
+        raise HTTPException(403, "only an admin may change an admin")
+
+
+def _guard_self(principal: Principal, user_id: int, what: str) -> None:
+    """docs/specs/21 §3: a non-admin holding an admin.* permission must not change their own
+    rights (manage_all, a team role, a dự án grant): the sets they hold would grow by their own
+    hand. Admins hold everything already, so they are not limited here."""
+    if not principal.is_admin and user_id == principal.user_id:
+        raise HTTPException(403, f"you cannot change your own {what}")
+
+
+def _keeps_an_admin(session: Session, settings: Settings, leaving: int) -> bool:
+    """docs/specs/21 §3 rule 5: at least one active admin must remain once `leaving` is no
+    longer one (deactivated, re-emailed or removed)."""
+    admins = [e.lower() for e in settings.admin_emails]
+    if not admins:
+        return True  # no admin configured at all: nothing to keep
+    others = session.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(
+            func.lower(User.primary_email).in_(admins),
+            User.active.is_not(False),
+            User.id != leaving,
+        )
+    )
+    return bool(others)
+
 
 def _get[M](session: Session, model: type[M], ident: int, name: str) -> M:
     row = session.get(model, ident)
@@ -107,7 +152,7 @@ def _require_reachable_base_url(settings: Settings) -> None:
 
 
 @router.get("/connections", response_model=list[ConnectionOut])
-def list_connections(principal: AdminPrincipal, session: SessionDep) -> list[ConnectionOut]:
+def list_connections(principal: ConnectionsAdmin, session: SessionDep) -> list[ConnectionOut]:
     repos = (
         select(Project.connection_id, func.count().label("n"))
         .group_by(Project.connection_id)
@@ -127,7 +172,7 @@ def list_connections(principal: AdminPrincipal, session: SessionDep) -> list[Con
 @router.post("/connections", response_model=ConnectionOut, status_code=201)
 def create_connection(
     body: ConnectionIn,
-    principal: AdminPrincipal,
+    principal: ConnectionsAdmin,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
 ) -> Connection:
@@ -148,7 +193,7 @@ def create_connection(
 def update_connection(
     connection_id: int,
     body: ConnectionPatch,
-    principal: AdminPrincipal,
+    principal: ConnectionsAdmin,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
 ) -> Connection:
@@ -178,7 +223,7 @@ def update_connection(
 
 
 @router.delete("/connections/{connection_id}", status_code=204)
-def delete_connection(connection_id: int, principal: AdminPrincipal, session: SessionDep) -> None:
+def delete_connection(connection_id: int, principal: ConnectionsAdmin, session: SessionDep) -> None:
     """Remove a GitLab connection nobody uses; its repos (and their history) must go first."""
     connection = _get(session, Connection, connection_id, "connection")
     repos = session.scalar(
@@ -209,7 +254,7 @@ def delete_connection(connection_id: int, principal: AdminPrincipal, session: Se
 
 @router.get("/business-projects", response_model=list[BusinessProjectOut])
 def list_business_projects(
-    principal: AdminPrincipal, session: SessionDep
+    principal: ProjectsAdmin, session: SessionDep
 ) -> list[BusinessProjectOut]:
     repos = (
         select(Project.business_project_id, func.count().label("n"))
@@ -246,7 +291,7 @@ def list_business_projects(
 
 @router.post("/business-projects", response_model=BusinessProjectOut, status_code=201)
 def create_business_project(
-    body: BusinessProjectIn, principal: AdminPrincipal, session: SessionDep
+    body: BusinessProjectIn, principal: ProjectsAdmin, session: SessionDep
 ) -> BusinessProject:
     bp = BusinessProject(name=body.name, description=body.description)
     session.add(bp)
@@ -262,7 +307,7 @@ def create_business_project(
 
 @router.patch("/business-projects/{bp_id}", response_model=BusinessProjectOut)
 def update_business_project(
-    bp_id: int, body: BusinessProjectIn, principal: AdminPrincipal, session: SessionDep
+    bp_id: int, body: BusinessProjectIn, principal: ProjectsAdmin, session: SessionDep
 ) -> BusinessProject:
     bp = _get(session, BusinessProject, bp_id, "dự án")
     old_name = bp.name
@@ -289,7 +334,7 @@ def update_business_project(
 
 
 @router.delete("/business-projects/{bp_id}", status_code=204)
-def delete_business_project(bp_id: int, principal: AdminPrincipal, session: SessionDep) -> None:
+def delete_business_project(bp_id: int, principal: ProjectsAdmin, session: SessionDep) -> None:
     """Only the grouping goes: its repos (and their history) stay, unassigned."""
     bp = _get(session, BusinessProject, bp_id, "dự án")
     session.execute(
@@ -301,9 +346,7 @@ def delete_business_project(bp_id: int, principal: AdminPrincipal, session: Sess
 
 
 @router.get("/business-projects/{bp_id}/grants", response_model=list[ProjectGrantOut])
-def list_grants(
-    bp_id: int, principal: AdminPrincipal, session: SessionDep
-) -> list[ProjectGrantOut]:
+def list_grants(bp_id: int, principal: ProjectsAdmin, session: SessionDep) -> list[ProjectGrantOut]:
     """Who may see (view) or also act on (manage) this dự án; ADMIN_EMAILS admins need no
     grant (docs/specs/09 "Phân quyền theo dự án")."""
     bp = _get(session, BusinessProject, bp_id, "dự án")
@@ -327,7 +370,7 @@ def list_grants(
 
 @router.put("/business-projects/{bp_id}/grants", response_model=list[ProjectGrantOut])
 def set_grants(
-    bp_id: int, body: ProjectGrantsIn, principal: AdminPrincipal, session: SessionDep
+    bp_id: int, body: ProjectGrantsIn, principal: ProjectsAdmin, session: SessionDep
 ) -> list[ProjectGrantOut]:
     """Replace the whole list: people left out lose access, the rest get the role given."""
     # The row lock serialises two admins saving the same dự án (no duplicate-key 500).
@@ -337,6 +380,12 @@ def set_grants(
     wanted = {g.user_id: g.role for g in body.grants}
     if len(wanted) != len(body.grants):
         raise HTTPException(422, "a person is listed twice")
+    if not principal.is_admin:
+        # A grant decides the Quản lý dự án set: a delegated admin.projects must not grow (or
+        # drop) its own holder's grant on this dự án (docs/specs/21 §3).
+        own = session.get(ProjectGrant, (bp.id, principal.user_id))
+        if wanted.get(principal.user_id) != (own.role if own else None):
+            _guard_self(principal, principal.user_id, "dự án grant")
     if wanted:
         known = set(session.scalars(select(User.id).where(User.id.in_(wanted))))
         if missing := sorted(set(wanted) - known):
@@ -387,7 +436,7 @@ def set_grants(
 
 
 @router.put("/projects/business-project", status_code=204)
-def assign_repos(body: RepoAssignment, principal: AdminPrincipal, session: SessionDep) -> None:
+def assign_repos(body: RepoAssignment, principal: ProjectsAdmin, session: SessionDep) -> None:
     """Put repos into a dự án (or take them out with business_project_id=null)."""
     if body.business_project_id is not None:
         _get(session, BusinessProject, body.business_project_id, "dự án")
@@ -415,7 +464,7 @@ BRANCH_CHECK_BUDGET_S = 10.0
 @router.put("/projects/review-branch", response_model=BranchBulkOut)
 def set_review_branch(
     body: BranchBulkIn,
-    principal: AdminPrincipal,
+    principal: ProjectsAdmin,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
 ) -> BranchBulkOut:
@@ -498,14 +547,14 @@ def _without_branch(
 
 
 @router.get("/projects", response_model=list[ProjectOut])
-def list_projects(principal: AdminPrincipal, session: SessionDep) -> list[Project]:
+def list_projects(principal: ProjectsAdmin, session: SessionDep) -> list[Project]:
     return list(session.scalars(select(Project).order_by(Project.id)))
 
 
 @router.post("/projects", response_model=ProjectOut, status_code=201)
 def create_project(
     body: ProjectIn,
-    principal: AdminPrincipal,
+    principal: ProjectsAdmin,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
 ) -> Project:
@@ -532,7 +581,7 @@ def create_project(
 @router.post("/projects/import-group", response_model=GroupImportOut, status_code=201)
 def import_group(
     body: GroupImportIn,
-    principal: AdminPrincipal,
+    principal: ProjectsAdmin,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -623,7 +672,7 @@ def import_group(
 def update_project(
     project_id: int,
     body: ProjectPatch,
-    principal: AdminPrincipal,
+    principal: ProjectsAdmin,
     session: SessionDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> Project:
@@ -665,7 +714,7 @@ def update_project(
 
 
 @router.post("/projects/{project_id}/untrack", response_model=ProjectOut)
-def untrack_project(project_id: int, principal: AdminPrincipal, session: SessionDep) -> Project:
+def untrack_project(project_id: int, principal: ProjectsAdmin, session: SessionDep) -> Project:
     """Stop syncing and reviewing a repo; its reviews, scores and history are kept."""
     project = _get(session, Project, project_id, "project")
     if project.tracked:
@@ -678,7 +727,7 @@ def untrack_project(project_id: int, principal: AdminPrincipal, session: Session
 @router.post("/projects/{project_id}/track", response_model=ProjectOut)
 def track_project(
     project_id: int,
-    principal: AdminPrincipal,
+    principal: ProjectsAdmin,
     session: SessionDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> Project:
@@ -704,7 +753,7 @@ def track_project(
 @router.post("/projects/remove", response_model=RepoRemovalOut)
 def remove_repos(
     body: RepoRemoval,
-    principal: AdminPrincipal,
+    principal: ProjectsAdmin,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     queue: Annotated[Enqueuer, Depends(get_queue)],
@@ -788,7 +837,7 @@ def _tracked(session: Session, project_id: int) -> Project:
 @router.post("/projects/{project_id}/webhook")
 def register_project_webhook(
     project_id: int,
-    principal: AdminPrincipal,
+    principal: ProjectsAdmin,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -810,14 +859,18 @@ def register_project_webhook(
 @router.post("/projects/{project_id}/sync", status_code=202)
 def sync_project_now(
     project_id: int,
-    principal: LeadPrincipal,
+    principal: CurrentPrincipal,
     session: SessionDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> dict[str, str]:
-    # A lead of a dự án they are granted; a repo they cannot see is "not found", one they see
-    # but no longer tracked still says so (409).
+    # admin.projects syncs any repo (as an admin did); a lead, as before spec 21, a repo of a
+    # dự án they are granted: one they cannot see is "not found", one they see but no longer
+    # tracked still says so (409).
+    projects_admin = principal.can("admin.projects")
+    if not (projects_admin or principal.is_lead):
+        raise HTTPException(403, "lead only")
     project = _get(session, Project, project_id, "project")
-    if not principal.can_view_project(project.business_project_id):
+    if not projects_admin and not principal.can_view_project(project.business_project_id):
         raise HTTPException(404, "project not found")
     _tracked(session, project_id)
     queue.enqueue(
@@ -834,7 +887,7 @@ def sync_project_now(
 @router.post("/projects/{project_id}/backfill-reviews", status_code=202)
 def backfill_reviews(
     project_id: int,
-    principal: AdminPrincipal,
+    principal: ProjectsAdmin,
     session: SessionDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
     date_from: Annotated[date, Query(alias="from")],
@@ -913,7 +966,7 @@ def _admin_user(user: User, settings: Settings) -> AdminUserOut:
 
 @router.get("/users", response_model=list[AdminUserOut])
 def list_users(
-    principal: AdminPrincipal,
+    principal: PeopleAdmin,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> list[AdminUserOut]:
@@ -923,7 +976,7 @@ def list_users(
 @router.get("/users/{user_id}", response_model=AdminUserOut)
 def get_user(
     user_id: int,
-    principal: AdminPrincipal,
+    principal: PeopleAdmin,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AdminUserOut:
@@ -932,7 +985,15 @@ def get_user(
 
 
 @router.post("/users", response_model=AdminUserOut, status_code=201)
-def create_user(body: UserIn, principal: AdminPrincipal, session: SessionDep) -> User:
+def create_user(
+    body: UserIn,
+    principal: PeopleAdmin,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> User:
+    if not principal.is_admin and _is_admin_email(body.primary_email, settings):
+        # An ADMIN_EMAILS address makes its holder admin: a set must not mint one (spec 21 §3).
+        raise HTTPException(403, "only an admin may add a person with an ADMIN_EMAILS address")
     user = User(
         full_name=body.full_name, primary_email=body.primary_email.lower(), active=body.active
     )
@@ -951,12 +1012,15 @@ def create_user(body: UserIn, principal: AdminPrincipal, session: SessionDep) ->
 def update_user(
     user_id: int,
     body: UserPatch,
-    principal: AdminPrincipal,
+    principal: PeopleAdmin,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AdminUserOut:
     user = _get(session, User, user_id, "user")
+    _guard_admin_target(principal, user, settings)
     changes = body.model_dump(exclude_none=True)
+    if "manage_all" in changes and changes["manage_all"] != bool(user.manage_all):
+        _guard_self(principal, user.id, "manage_all")
     if "full_name" in changes:
         changes["full_name"] = changes["full_name"].strip()
     if "primary_email" in changes:
@@ -973,6 +1037,18 @@ def update_user(
             )
         if email == (user.primary_email or "").lower():
             changes.pop("primary_email")
+    was_admin = _is_admin_email(user.primary_email, settings)
+    stops_being_admin = changes.get("active") is False or (
+        "primary_email" in changes and not _is_admin_email(changes["primary_email"], settings)
+    )
+    still_active = user.active is not False
+    if (
+        was_admin
+        and still_active
+        and stops_being_admin
+        and not _keeps_an_admin(session, settings, user.id)
+    ):
+        raise HTTPException(409, "at least one active admin must remain")
     before = {key: getattr(user, key) for key in changes}
     for key, value in changes.items():
         setattr(user, key, value)
@@ -998,7 +1074,7 @@ def update_user(
 async def upload_avatar(
     user_id: int,
     request: Request,
-    principal: AdminPrincipal,
+    principal: PeopleAdmin,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AdminUserOut:
@@ -1016,14 +1092,16 @@ async def upload_avatar(
         if len(data) > limit:
             raise HTTPException(413, f"the image is larger than {settings.avatar_max_kb} KB")
     return await run_in_threadpool(
-        _store_avatar, session, principal.user_id, user_id, bytes(data), settings
+        _store_avatar, session, principal, user_id, bytes(data), settings
     )
 
 
 def _store_avatar(
-    session: Session, actor: int, user_id: int, data: bytes, settings: Settings
+    session: Session, principal: Principal, user_id: int, data: bytes, settings: Settings
 ) -> AdminUserOut:
     user = _get(session, User, user_id, "user")
+    _guard_admin_target(principal, user, settings)
+    actor = principal.user_id
     try:
         name = avatars.save(settings.avatar_dir, user.id, data, settings.avatar_max_kb)
     except avatars.AvatarError as exc:
@@ -1050,11 +1128,12 @@ def _remove_avatar_files(settings: Settings, user_id: int, keep: str | None = No
 @router.delete("/users/{user_id}/avatar", response_model=AdminUserOut)
 def delete_avatar(
     user_id: int,
-    principal: AdminPrincipal,
+    principal: PeopleAdmin,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AdminUserOut:
     user = _get(session, User, user_id, "user")
+    _guard_admin_target(principal, user, settings)
     if user.avatar_file is not None:
         user.avatar_file = None
         audit(session, principal.user_id, "user.avatar_remove", f"user:{user.id}")
@@ -1095,7 +1174,7 @@ def get_avatar(
 @router.delete("/users/{user_id}", status_code=204)
 def delete_user(
     user_id: int,
-    principal: AdminPrincipal,
+    principal: PeopleAdmin,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     queue: Annotated[Enqueuer, Depends(get_queue)],
@@ -1109,6 +1188,13 @@ def delete_user(
     if user_id == principal.user_id:
         raise HTTPException(409, "you cannot remove yourself")
     user = _get(session, User, user_id, "user")
+    _guard_admin_target(principal, user, settings)
+    if (
+        _is_admin_email(user.primary_email, settings)
+        and user.active is not False
+        and not _keeps_an_admin(session, settings, user.id)
+    ):
+        raise HTTPException(409, "at least one active admin must remain")
     # The periods their reviews count in (the change's time), and those they finished in.
     first, last = session.execute(
         select(
@@ -1168,12 +1254,12 @@ def delete_user(
 
 
 @router.get("/teams", response_model=list[TeamOut])
-def list_teams(principal: AdminPrincipal, session: SessionDep) -> list[Team]:
+def list_teams(principal: PeopleAdmin, session: SessionDep) -> list[Team]:
     return list(session.scalars(select(Team).order_by(Team.name)))
 
 
 @router.post("/teams", response_model=TeamOut, status_code=201)
-def create_team(body: TeamIn, principal: AdminPrincipal, session: SessionDep) -> Team:
+def create_team(body: TeamIn, principal: PeopleAdmin, session: SessionDep) -> Team:
     if body.parent_id is not None:
         _get(session, Team, body.parent_id, "parent team")
     team = Team(name=body.name, parent_id=body.parent_id)
@@ -1189,7 +1275,7 @@ def create_team(body: TeamIn, principal: AdminPrincipal, session: SessionDep) ->
 
 
 @router.get("/teams/{team_id}/members", response_model=list[MemberOut])
-def list_members(team_id: int, principal: AdminPrincipal, session: SessionDep) -> list[MemberOut]:
+def list_members(team_id: int, principal: PeopleAdmin, session: SessionDep) -> list[MemberOut]:
     """Every membership of the team, past ones included (left_at set), current ones first."""
     _get(session, Team, team_id, "team")
     rows = session.execute(
@@ -1212,11 +1298,11 @@ def list_members(team_id: int, principal: AdminPrincipal, session: SessionDep) -
 
 
 @router.put("/teams/{team_id}/members", status_code=204)
-def set_member(
-    team_id: int, body: MemberIn, principal: AdminPrincipal, session: SessionDep
-) -> None:
+def set_member(team_id: int, body: MemberIn, principal: PeopleAdmin, session: SessionDep) -> None:
     _get(session, Team, team_id, "team")
     _get(session, User, body.user_id, "user")
+    # A team role decides the Lead / Manager sets: never by one's own hand (docs/specs/21 §3).
+    _guard_self(principal, body.user_id, "team membership")
     member = session.get(TeamMember, (team_id, body.user_id, body.joined_at))
     if member is None:
         member = TeamMember(team_id=team_id, user_id=body.user_id, joined_at=body.joined_at)
@@ -1235,7 +1321,7 @@ def set_member(
 
 
 @router.get("/accounts", response_model=list[AccountOut])
-def list_accounts(principal: AdminPrincipal, session: SessionDep) -> list[Account]:
+def list_accounts(principal: PeopleAdmin, session: SessionDep) -> list[Account]:
     return list(session.scalars(select(Account).order_by(Account.kind, Account.external_key)))
 
 
@@ -1243,14 +1329,17 @@ def list_accounts(principal: AdminPrincipal, session: SessionDep) -> list[Accoun
 def link_account(
     account_id: int,
     body: AccountLink,
-    principal: AdminPrincipal,
+    principal: PeopleAdmin,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> AccountLinked:
     account = _get(session, Account, account_id, "account")
-    if body.user_id is not None:
-        _get(session, User, body.user_id, "user")
+    # An account acts as its person (sign-in, Telegram): a non-admin must not move one onto or
+    # off an admin (docs/specs/21 §3).
+    for owner_id in (account.user_id, body.user_id):
+        if owner_id is not None:
+            _guard_admin_target(principal, _get(session, User, owner_id, "user"), settings)
     account.user_id = body.user_id
     session.flush()
     # Unlinking never touches reviews: they keep the person they were counted for.
@@ -1283,13 +1372,13 @@ def link_account(
 
 
 @router.get("/identity/unmapped", response_model=list[AccountOut])
-def list_unmapped(principal: AdminPrincipal, session: SessionDep) -> list[Account]:
+def list_unmapped(principal: PeopleAdmin, session: SessionDep) -> list[Account]:
     return unmapped_accounts(session)
 
 
 @router.get("/admin/llm-costs")
 def llm_costs(
-    principal: AdminPrincipal,
+    principal: LlmAdmin,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     months: Annotated[int, Query(ge=1, le=24)] = 6,
@@ -1421,7 +1510,7 @@ class InsightsBackfillIn(BaseModel):
 @router.post("/admin/insights/backfill", status_code=202)
 def insights_backfill(
     body: InsightsBackfillIn,
-    principal: AdminPrincipal,
+    principal: InsightsAdmin,
     session: SessionDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> dict[str, int]:
@@ -1453,7 +1542,7 @@ def insights_backfill(
 @router.post("/admin/insights/components/{project_id}", status_code=202)
 def insights_components_rebuild(
     project_id: int,
-    principal: AdminPrincipal,
+    principal: InsightsAdmin,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     queue: Annotated[Any, Depends(get_queue)],
@@ -1512,7 +1601,7 @@ def insights_components_rebuild(
 
 @router.delete("/admin/insights/components/{project_id}", status_code=204)
 def insights_components_reset(
-    project_id: int, principal: AdminPrincipal, session: SessionDep
+    project_id: int, principal: InsightsAdmin, session: SessionDep
 ) -> None:
     """Back to the automatic map (drops the AI grouping)."""
     from app.models import RepoComponentMap
@@ -1526,7 +1615,7 @@ def insights_components_reset(
 
 @router.get("/admin/insights/backfill")
 def insights_backfill_progress(
-    principal: AdminPrincipal, session: SessionDep, project_id: int | None = None
+    principal: InsightsAdmin, session: SessionDep, project_id: int | None = None
 ) -> dict[str, Any]:
     """Where each repo's Insights backfill is (queued, reconverting, syncing, done, failed)."""
     from app.insights.backfill import progress

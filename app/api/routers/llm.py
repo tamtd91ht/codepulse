@@ -14,7 +14,7 @@ from app.admin_settings import monthly_budget_usd, with_overrides
 from app.api.audit import audit
 from app.api.deps import get_secret_box, get_session
 from app.api.schemas import LlmLoginCodeIn, LlmLoginOut, LlmTokenIn, LlmTokenOut
-from app.api.security import AdminPrincipal
+from app.api.security import Principal, require
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
 from app.models import Review, User
@@ -38,6 +38,7 @@ from app.review.providers.claude_code import Runner
 log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin"])
+LlmAdmin = Annotated[Principal, require("admin.llm")]  # docs/specs/21 B4
 
 
 def get_llm_runner() -> Runner:
@@ -64,7 +65,7 @@ def month_usage(session: Session, budget_usd: float) -> dict[str, Any]:
 
 @router.post("/admin/llm-check")
 def llm_check(
-    principal: AdminPrincipal,
+    principal: LlmAdmin,
     session: Annotated[Session, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
     runner: Annotated[Runner, Depends(get_llm_runner)],
@@ -146,7 +147,7 @@ SupportedDep = Annotated[bool, Depends(get_login_supported)]
 
 @router.get("/admin/llm-token")
 def llm_token(
-    principal: AdminPrincipal,
+    principal: LlmAdmin,
     session: SessionDep,
     box: BoxDep,
     settings: SettingsDep,
@@ -159,7 +160,7 @@ def llm_token(
 @router.put("/admin/llm-token")
 def set_llm_token(
     body: LlmTokenIn,
-    principal: AdminPrincipal,
+    principal: LlmAdmin,
     session: SessionDep,
     box: BoxDep,
     settings: SettingsDep,
@@ -173,7 +174,7 @@ def set_llm_token(
 
 
 @router.delete("/admin/llm-token", status_code=204)
-def clear_llm_token(principal: AdminPrincipal, session: SessionDep) -> Response:
+def clear_llm_token(principal: LlmAdmin, session: SessionDep) -> Response:
     """Forget the stored token; reviews fall back to the environment."""
     if clear_claude_token(session):
         audit(session, principal.user_id, "llm.token.clear", "llm:claude_code")
@@ -183,7 +184,7 @@ def clear_llm_token(principal: AdminPrincipal, session: SessionDep) -> Response:
 
 @router.post("/admin/llm-login")
 def start_llm_login(
-    principal: AdminPrincipal,
+    principal: LlmAdmin,
     sessions: Annotated[LoginSessions, Depends(get_login_sessions)],
     factory: Annotated[SetupTokenFactory, Depends(get_setup_token_factory)],
     supported: SupportedDep,
@@ -205,7 +206,7 @@ def start_llm_login(
 def finish_llm_login(
     login_id: str,
     body: LlmLoginCodeIn,
-    principal: AdminPrincipal,
+    principal: LlmAdmin,
     session: SessionDep,
     box: BoxDep,
     settings: SettingsDep,
@@ -230,7 +231,7 @@ def finish_llm_login(
 @router.delete("/admin/llm-login/{login_id}", status_code=204)
 def cancel_llm_login(
     login_id: str,
-    principal: AdminPrincipal,
+    principal: LlmAdmin,
     sessions: Annotated[LoginSessions, Depends(get_login_sessions)],
 ) -> Response:
     sessions.cancel(login_id)

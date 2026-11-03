@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.api.audit import audit
 from app.api.deps import get_queue, get_session
 from app.api.schemas import PurgeIn, PurgeInfoOut, PurgeOut, PurgeScopeOut
-from app.api.security import AdminPrincipal
+from app.api.security import Principal, require
 from app.collector.purge import CONFIRMATION, counts, purge, tables
 from app.collector.removal import REMOVAL_JOB_TIMEOUT
 from app.collector.sync import Enqueuer
@@ -24,10 +24,11 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin"])
 SessionDep = Annotated[Session, Depends(get_session)]
+PurgeAdmin = Annotated[Principal, require("admin.purge")]  # docs/specs/21 B4
 
 
 @router.get("/admin/purge")
-def purge_info(principal: AdminPrincipal, session: SessionDep) -> PurgeInfoOut:
+def purge_info(principal: PurgeAdmin, session: SessionDep) -> PurgeInfoOut:
     """The scopes, what each deletes, and how many rows there are now."""
     return PurgeInfoOut(
         scopes=[
@@ -41,7 +42,7 @@ def purge_info(principal: AdminPrincipal, session: SessionDep) -> PurgeInfoOut:
 @router.post("/admin/purge")
 def purge_data(
     body: PurgeIn,
-    principal: AdminPrincipal,
+    principal: PurgeAdmin,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     queue: Annotated[Enqueuer, Depends(get_queue)],
