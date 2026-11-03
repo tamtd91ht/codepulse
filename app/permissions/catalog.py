@@ -99,6 +99,9 @@ CATALOG: tuple[Permission, ...] = (
         "project all",
     ),
     _p("knowledge.shared", "Tiền đề review", "Repo .claude dùng chung và làm mới hồ sơ dự án"),
+    # docs/specs/22 §5: making the sets is an admin's; giving them to a dự án is its manager's.
+    _p("criteria.manage", "Bộ tiêu chí", "Tạo, sửa, nhân bản, lưu trữ bộ tiêu chí"),
+    _p("criteria.assign", "Bộ tiêu chí", "Gán bộ tiêu chí cho dự án, tính lại điểm", "project all"),
     _p("gitlab_members.import", "Người & Team", "Tra cứu, nhập người từ GitLab"),
     _p("telegram.self", "Telegram", "Liên kết Telegram của mình"),
     _p("assistant.use", "Trợ lý", "Dùng trợ lý Stetho"),
@@ -193,6 +196,7 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "review.rerun": "project",
             "review.author": "project",
             "knowledge.edit": "project",
+            "criteria.assign": "project",
         },
     ),
     BuiltinSet(
@@ -208,6 +212,7 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "review.rerun": "all",
             "review.author": "all",
             "knowledge.edit": "all",
+            "criteria.assign": "all",
         },
     ),
 )

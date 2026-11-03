@@ -34,6 +34,7 @@ from app.review.prompt import (
     MAX_PROFILE_CHARS,
     ReviewParseError,
     ReviewTarget,
+    criteria_section,
     knowledge_sections,
     languages,
     repair_prompt,
@@ -108,7 +109,7 @@ TEAM RULES (set by the project's admins in CodePulse; a finding that breaks one 
 heading in rule_id):
 {conventions}
 
-DIFF (new-file line numbers; "+" lines are the change):
+{criteria}DIFF (new-file line numbers; "+" lines are the change):
 {diff}
 
 CONTEXT (unchanged surrounding code read from the checkout, for understanding only):
@@ -132,6 +133,7 @@ def build_agent_prompt(
                 [f.path for f in chunk.files], languages(chunk).split(", ")
             ),
             conventions=target.conventions[:MAX_CONVENTIONS_CHARS] or "(none)",
+            criteria=criteria_section(target),
             diff=chunk.diff,
             context=chunk.context or "(none)",
         ),
@@ -273,6 +275,7 @@ def agent_findings(
             code_excerpt=redact(code)[:4000],
             fingerprint=fingerprint(nf.file_path, nf.category, code, nf.title),
             rule_id=nf.rule_id,
+            criteria=nf.criteria,
         )
         if finding.fingerprint in seen:
             result.dropped["duplicate"] += 1

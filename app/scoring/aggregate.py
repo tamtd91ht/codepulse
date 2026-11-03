@@ -28,6 +28,7 @@ from app.models import (
     User,
 )
 from app.review.status import SEVERE
+from app.scoring.criteria_store import rescore_stored
 from app.scoring.formula import (
     MIN_CONFIDENCE_UNVERIFIED,
     SEVERITIES,
@@ -503,6 +504,8 @@ def recompute_scores(
                 )
             )
         )
+        # docs/specs/22 §4: its criteria scores follow, each at the version it was stored with.
+        rescore_stored(session, review, weights_override, min_confidence_unverified)
         verdict, risk = assess((f.severity, f.status, f.verified) for f in findings)
         if review.score != score or review.verdict != verdict or review.risk_score != risk:
             review.score, review.verdict, review.risk_score = score, verdict, risk

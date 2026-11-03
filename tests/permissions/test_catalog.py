@@ -56,7 +56,7 @@ def test_the_latest_migration_holds_the_builtin_sets_of_the_catalog() -> None:
     """The built-in sets are seeded by migrations (literal copies, never imports of the
     catalog): the newest one that carries them must equal the catalog."""
     path = sorted(
-        pathlib.Path("migrations/versions").glob("*_f8a0b2c4d6e8_permission_defaults.py")
+        pathlib.Path("migrations/versions").glob("*_b0c2d4e6f8a1_criteria_permissions.py")
     )[-1]
     spec = importlib.util.spec_from_file_location("perm_defaults", path)
     assert spec and spec.loader

@@ -23,6 +23,7 @@ from app.api.routers import (
     closures,
     commands,
     commits,
+    criteria,
     disputes,
     evaluation,
     evidence,
@@ -91,6 +92,7 @@ for api_router in (
     closures.router,
     insights.router,
     evidence.router,
+    criteria.router,
     permissions.router,
 ):
     app.include_router(api_router, prefix="/api/v1")

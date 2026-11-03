@@ -9,14 +9,18 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.models import Review
 from app.scoring.aggregate import aggregate, recompute_scores
+from app.scoring.criteria_store import rescore_stored
 
 
 def rescore_review(session: Session, review: Review, settings: Settings) -> None:
+    threshold = settings.verify_min_confidence_unverified
     moment = review.counted_at
     if moment is None:
+        # Counted nowhere, but its criteria scores still follow its findings (docs/specs/22
+        # §4); otherwise recompute_scores below rescores them, at their stored versions.
+        rescore_stored(session, review, settings.scoring_weights, threshold)
         return
     tz = ZoneInfo(settings.report_tz)
-    threshold = settings.verify_min_confidence_unverified
     # [moment, moment + 1us): exactly this review's moment (its change's time).
     recompute_scores(
         session,

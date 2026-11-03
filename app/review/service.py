@@ -58,10 +58,12 @@ from app.review.prepare import ContextFetcher, DiffFile, PreparedDiff, chunk, pr
 from app.review.profile import render_profile
 from app.review.progress import NullProgress, ProgressSink
 from app.review.prompt import (
+    CriteriaPromptSet,
     ReviewParseError,
     ReviewTarget,
     build_prompt,
     languages,
+    render_criteria,
     review_chunk,
     target_header,
 )
@@ -73,6 +75,7 @@ from app.review.schema import AgentFinding, Intent, LLMFinding
 from app.review.signals import detect_signals
 from app.review.status import mark_fixed_findings, supersede_mr_reviews
 from app.review.verify import skipped_status, verify
+from app.scoring.criteria_store import SetVersion, clean_criteria, project_sets, store_scores
 from app.scoring.formula import ScoredFinding, review_score, weights_for
 from app.scoring.verdict import assess
 
@@ -221,6 +224,8 @@ class ReviewService:
         self._pending_basis: dict[int, dict[str, Any]] = {}
         # The reviewed diff per review, for the auto-close check after the save.
         self._reviewed_files: dict[int, list[DiffFile]] = {}
+        # docs/specs/22 §4: the criteria sets of the review's dự án, read before the passes.
+        self._criteria: dict[int, list[SetVersion]] = {}
         self._client = client
         self._provider = provider
         self._settings = settings
@@ -787,7 +792,21 @@ class ReviewService:
         guidance: list[dict[str, Any]] = []
         if not target.knowledge:
             target.guidance, guidance = self._guidance(review, project, target, prepared, sha)
+        sets = project_sets(self._session, project.business_project_id)
+        self._criteria[review.id] = sets
+        target.criteria = render_criteria(
+            [
+                CriteriaPromptSet(
+                    s.set_id, s.name, [(c.key, c.name, c.description) for c in s.components]
+                )
+                for s in sets
+            ]
+        )
         review.basis = self._pending_basis.pop(review.id, None)
+        if review.basis is not None and sets:
+            review.basis["criteria"] = [
+                {"set_id": s.set_id, "name": s.name, "version": s.version} for s in sets
+            ]
         if review.basis is not None and over_limit:
             # Reviewed past MAX_REVIEW_LOC on a lead's request: say so where the run is described.
             review.basis["loc_limit"] = {"loc": prepared.loc, "max": settings.max_review_loc}
@@ -1096,9 +1115,12 @@ class ReviewService:
         settings = self._settings
         self._step(review.id, "save")
         final = outcome.findings
+        sets = self._criteria.pop(review.id, [])
+        stored: list[ReviewFinding] = []
         for f in final:
-            self._session.add(
+            stored.append(
                 ReviewFinding(
+                    criteria=clean_criteria(f.criteria, sets),
                     review_id=review.id,
                     source="ai",
                     severity=f.severity,
@@ -1118,6 +1140,7 @@ class ReviewService:
                     verification=f.verification,
                 )
             )
+        self._session.add_all(stored)
         review.verdict, review.risk_score = assess(
             (f.severity, f.status, f.verified) for f in final
         )
@@ -1134,6 +1157,8 @@ class ReviewService:
             )
         )
         review.summary = redact(outcome.summary)[:4000]
+        if sets:
+            self._store_criteria(review, sets, stored)
         review.deep = {
             **(review.deep or {}),
             "mode": outcome.mode,
@@ -1161,6 +1186,28 @@ class ReviewService:
             },
         )
         return self._finish(review, "done")
+
+    def _store_criteria(
+        self, review: Review, sets: list[SetVersion], findings: list[ReviewFinding]
+    ) -> None:
+        """docs/specs/22 §4: the review's score under every set of its dự án, at the set's
+        current version. In a savepoint: a failure here costs the criteria scores (the job
+        recomputes them), never the review."""
+        # Outside the savepoint: the review and its findings (their ids, for the breakdown) must
+        # not fail under a "criteria scores not stored" log.
+        self._session.flush()
+        try:
+            with self._session.begin_nested():
+                store_scores(
+                    self._session,
+                    review,
+                    sets,
+                    self._settings.scoring_weights,
+                    self._settings.verify_min_confidence_unverified,
+                    findings=findings,
+                )
+        except Exception:
+            log.exception("criteria scores not stored", extra={"review_id": review.id})
 
     def _guidance(
         self,

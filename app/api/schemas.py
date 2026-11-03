@@ -488,6 +488,8 @@ class FindingOut(ORM):
     # docs/specs/19 §4.3: the independent verification's verdict on this finding.
     verified: str | None = None
     verification: dict[str, Any] | None = None
+    # docs/specs/22 §4: the component the model placed it in, per criteria set.
+    criteria: dict[str, str] | None = None
 
 
 class BoardFindingOut(FindingOut):
@@ -584,12 +586,23 @@ class ReviewRound(BaseModel):
     basis: dict[str, Any] | None = None
 
 
+class CriteriaScoreOut(BaseModel):
+    set_id: int
+    set_name: str
+    version: int
+    is_primary: bool
+    score: Decimal
+    breakdown: dict[str, Any]
+
+
 class ReviewDetail(ReviewOut):
     findings: list[FindingOut]
     project: str | None
     web_url: str | None
     history: list[ReviewRound] = []  # every review of this MR / commit, oldest first
     can_rerun: bool = False  # a deliberate new round is possible (commit, or MR still open)
+    # docs/specs/22 §6: the score under each criteria set, the dự án's primary first.
+    criteria_scores: list[CriteriaScoreOut] = []
 
 
 class RerunIn(BaseModel):

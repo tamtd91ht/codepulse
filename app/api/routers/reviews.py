@@ -63,6 +63,7 @@ from app.models import (
 from app.models.review import CHANGE_TIME_UNKNOWN
 from app.review.rubric import RUBRIC_VERSION
 from app.review.service import TOO_LARGE
+from app.scoring.criteria_store import review_scores
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
 
 log = logging.getLogger(__name__)
@@ -401,6 +402,10 @@ def get_review(review_id: int, principal: ViewPrincipal, session: SessionDep) ->
         "web_url": url,
         "history": _history(session, review),
         "can_rerun": _can_rerun(session, review, project) and _reruns(principal, review, project),
+        # docs/specs/22 §5: who sees the review sees its criteria scores.
+        "criteria_scores": review_scores(
+            session, review.id, project.business_project_id if project else None
+        ),
     }
 
 

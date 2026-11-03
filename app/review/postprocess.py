@@ -32,6 +32,8 @@ class Finding:
     verified: str = "skipped"  # confirmed|downgraded|rejected|unverified|skipped
     verification: dict[str, Any] | None = None
     status: str = "open"  # open; rejected when the verification refuted it
+    # docs/specs/22 §4: the model's component per criteria set (set id -> key), unchecked here.
+    criteria: dict[str, str] | None = None
 
 
 @dataclass
@@ -102,6 +104,7 @@ def postprocess(
             code_excerpt=_excerpt(file, f.line_start, f.line_end),
             fingerprint=fingerprint(file.path, f.category, code, f.title),
             rule_id=(f.rule_id or "").strip()[:120] or None,
+            criteria=f.criteria,
         )
         kept = best.get(finding.fingerprint)
         if kept is None or (SEVERITY_RANK[finding.severity], finding.confidence) > (

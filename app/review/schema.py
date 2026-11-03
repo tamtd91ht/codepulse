@@ -31,6 +31,22 @@ class LLMFinding(BaseModel):
     confidence: float = Field(ge=0, le=1)
     # Heading of the team rule this finding breaks (docs/specs/17), else null.
     rule_id: str | None = None
+    # docs/specs/22 §4: the component of each criteria set (set id -> component key) this
+    # finding belongs to. Checked against the dự án's sets before it is stored.
+    criteria: dict[str, str] | None = None
+
+    @field_validator("criteria", mode="before")
+    @classmethod
+    def _criteria(cls, value: object) -> dict[str, str] | None:
+        # Advisory: anything malformed is dropped rather than failing the (paid) review.
+        if not isinstance(value, dict):
+            return None
+        out = {
+            str(k).strip()[:20]: str(v).strip()[:40]
+            for k, v in list(value.items())[:20]
+            if k is not None and isinstance(v, str | int) and str(v).strip()
+        }
+        return out or None
 
     @field_validator("rule_id", mode="before")
     @classmethod

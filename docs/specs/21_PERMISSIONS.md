@@ -99,6 +99,8 @@ Trong cột Mặc định: **TV** = Thành viên, **L** = Lead, **M** = Manager,
 | `admin.commands` | Chạy command .claude | flag | — |
 | `admin.purge` | Xoá dữ liệu | flag | — |
 | `admin.permissions` | Tạo, sửa, gán bộ quyền | flag | — |
+| `criteria.manage` | Tạo, sửa, nhân bản, lưu trữ bộ tiêu chí (spec 22) | flag | — |
+| `criteria.assign` | Gán bộ tiêu chí cho dự án, tính lại (spec 22, migration b0c2d4e6f8a1) | project/all | QLDA project; QLT all |
 
 Dấu "—" nghĩa là không bộ có sẵn nào có quyền đó: chỉ admin, hoặc bộ do admin tạo.
 
