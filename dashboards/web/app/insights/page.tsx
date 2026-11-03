@@ -901,6 +901,7 @@ function DoraTab({ query }: { query: Query }) {
   const t = data.totals;
   const lead = kpiHours(t.lead_time_h.median, t.delta.lead_time_h);
   const recovery = kpiHours(t.recovery_h.median, t.delta.recovery_h);
+  const incidentRestore = kpiHours(data.incidents.restore_h.median, data.incidents.delta.restore_h);
   const trend = data.trend.map((p) => ({
     period: data.trend_period === "week" ? weekLabel(p.period_start) : `${p.period_start.slice(5, 7)}/${p.period_start.slice(2, 4)}`,
     deployments: p.deployments,
@@ -948,6 +949,64 @@ function DoraTab({ query }: { query: Query }) {
           sub={`${t.recovery_h.n} lần`}
         />
       </StatStrip>
+
+      <Card
+        id="dora-incidents"
+        title="Sự cố (incident)"
+        subtitle="Issue GitLab loại incident hoặc có nhãn incident; khôi phục = mở → đóng"
+        flush
+      >
+        <StatStrip label="Sự cố trong kỳ" inline>
+          <StripStat
+            label="Sự cố mới"
+            value={data.incidents.opened}
+            change={data.incidents.delta.opened}
+            higherIsBetter={false}
+            tone={data.incidents.opened ? "warn" : undefined}
+            sub={data.incidents.per_deployment === null ? undefined : `${num(data.incidents.per_deployment, 2)} / lần deploy`}
+          />
+          <StripStat
+            label="Khôi phục (trung vị)"
+            value={incidentRestore.value}
+            digits={1}
+            unit={incidentRestore.unit}
+            change={incidentRestore.change}
+            higherIsBetter={false}
+            sub={`${data.incidents.closed} đã đóng`}
+          />
+          <StripStat label="Đang mở" value={data.incidents.open_now} tone={data.incidents.open_now ? "bad" : undefined} />
+        </StatStrip>
+        {data.incidents.recent.length === 0 ? (
+          <EmptyState icon="checkCircle" tone="good" title="Không có sự cố mới trong kỳ">
+            Chưa dùng issue loại incident? Gắn nhãn incident cho issue sự cố trên GitLab để CodePulse đếm được.
+          </EmptyState>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Sự cố</th>
+                  <th>Repo</th>
+                  <th>Trạng thái</th>
+                  <th>Mở lúc</th>
+                  <th className="num">MR sửa</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.incidents.recent.map((i) => (
+                  <tr key={i.id}>
+                    <td>{i.web_url ? <ExternalLink href={i.web_url}>{`#${i.iid} ${i.title ?? ""}`}</ExternalLink> : `#${i.iid} ${i.title ?? ""}`}</td>
+                    <td className="muted">{i.path_with_namespace}</td>
+                    <td>{i.state === "closed" ? <Pill tone="good">Đã đóng</Pill> : <Pill tone="bad">Đang mở</Pill>}</td>
+                    <td className="nowrap muted">{dateTime(i.opened_at)}</td>
+                    <td className="num">{i.fix_mrs}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
       <div className="grid two">
         <Card id="dora-trend" title="Deploy production theo kỳ">

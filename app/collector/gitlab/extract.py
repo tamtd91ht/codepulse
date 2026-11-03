@@ -105,6 +105,19 @@ class GlDeployment:
 
 
 @dataclass
+class GlIncident:
+    id: int
+    iid: int
+    title: str | None
+    state: str | None
+    labels: list[str]
+    web_url: str | None
+    created_at: datetime | None
+    closed_at: datetime | None
+    fix_mr_iids: list[int] | None = None  # None until an incident_fixes row is seen
+
+
+@dataclass
 class Extracted:
     default_branch: str | None = None
     commits: dict[str, GlCommit] = field(default_factory=dict)
@@ -112,6 +125,7 @@ class Extracted:
     pipelines: dict[int, GlPipeline] = field(default_factory=dict)
     environment_tiers: dict[str, str | None] = field(default_factory=dict)
     deployments: dict[int, GlDeployment] = field(default_factory=dict)
+    incidents: dict[int, GlIncident] = field(default_factory=dict)  # by iid
 
 
 def _user(raw: dict[str, Any]) -> GlUser:
@@ -159,6 +173,7 @@ def extract(rows: Iterable[RawGitlab]) -> Extracted:
     commit_files: dict[str, list[GlFileStat]] = {}
     mr_parts: dict[int, dict[str, Any]] = {}
     deployment_mrs: dict[int, list[int]] = {}
+    incident_fixes: dict[int, list[int]] = {}
 
     for row in rows:
         params = row.params or {}
@@ -203,6 +218,19 @@ def extract(rows: Iterable[RawGitlab]) -> Extracted:
                     created_at=parse_ts(payload.get("created_at")),
                     finished_at=parse_ts(finished),
                 )
+            case ep.EP_INCIDENT:
+                out.incidents[int(payload["iid"])] = GlIncident(
+                    id=int(payload["id"]),
+                    iid=int(payload["iid"]),
+                    title=payload.get("title"),
+                    state=payload.get("state"),
+                    labels=[str(label) for label in payload.get("labels") or []],
+                    web_url=payload.get("web_url"),
+                    created_at=parse_ts(payload.get("created_at")),
+                    closed_at=parse_ts(payload.get("closed_at")),
+                )
+            case ep.EP_INCIDENT_FIXES:
+                incident_fixes[int(params["iid"])] = [int(i) for i in payload or []]
             case ep.EP_DEPLOYMENT_MRS:
                 deployment_mrs[int(params["id"])] = [int(i) for i in payload or []]
             case ep.EP_PIPELINE:
@@ -216,6 +244,9 @@ def extract(rows: Iterable[RawGitlab]) -> Extracted:
                     finished_at=parse_ts(payload.get("finished_at")),
                 )
 
+    for iid, fixes in incident_fixes.items():
+        if iid in out.incidents:
+            out.incidents[iid].fix_mr_iids = fixes
     for dep_id, iids in deployment_mrs.items():
         if dep_id in out.deployments:
             out.deployments[dep_id].mr_iids = iids

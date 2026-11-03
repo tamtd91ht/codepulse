@@ -111,3 +111,4 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | POST/DELETE | `/evidence/{user_id}/{yyyy-mm}/items[/{item_id}]` | Thêm / xoá bằng chứng (chỉ người thêm xoá được) | như trên |
 | GET | `/insights/dora?business_project_id=&project_id=&period=&start=&end=` | DORA cấp repo/dự án (20 §4.10): deploy production, lead time, tỉ lệ thay đổi lỗi, khôi phục, xu hướng, thay đổi lỗi gần nhất | như `/insights/flow` |
 | PATCH | `/projects/{id}` `{production_environment}` | Môi trường production của repo cho DORA ("" = tự nhận theo tier/tên, D2) | admin |
+| — | `/insights/dora` thêm khối `incidents` (9.9) | Sự cố mới, đã đóng, đang mở, sự cố / deploy, thời gian khôi phục theo incident, 10 sự cố mới nhất | như trên |

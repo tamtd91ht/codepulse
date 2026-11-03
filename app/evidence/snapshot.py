@@ -7,22 +7,27 @@ one), frozen when the person submits it.
 """
 
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, exists, func, select
 from sqlalchemy.orm import Session
 
 from app.insights import INSIGHTS_VERSION
 from app.insights.flow import STAGES, Flow, flow, size_bucket
-from app.insights.load import load_mrs
+from app.insights.knowledge import module_of
+from app.insights.load import knowledge_modules, load_mrs
 from app.insights.stats import quantile
 from app.models import (
     Account,
+    Commit,
+    CommitFile,
     Connection,
     FindingDispute,
     MergeRequest,
+    MrCommit,
     MrNote,
     Project,
     Review,
@@ -32,6 +37,8 @@ from app.models import (
 MAX_MRS = 100
 MAX_REVIEWS_GIVEN = 30
 MAX_FINDINGS = 20
+MAX_DIRECT = 20
+MAX_UNMAPPED = 5
 NOTABLE = 5
 SEVERE = ("critical", "high")
 
@@ -104,6 +111,124 @@ def active_people(flows: list[Flow]) -> set[int]:
     return people
 
 
+@dataclass(frozen=True)
+class KnowledgeConfig:
+    """How §4.9 is computed (KNOWLEDGE_* settings)."""
+
+    window_days: int = 180
+    depth: int = 2
+    threshold: float = 0.5
+    min_commits: int = 10
+
+
+def knowledge_config(settings: Any) -> KnowledgeConfig:
+    """The KNOWLEDGE_* settings (app/config.py) as a KnowledgeConfig."""
+    return KnowledgeConfig(
+        window_days=settings.knowledge_window_days,
+        depth=settings.knowledge_module_depth,
+        threshold=settings.knowledge_bus_threshold,
+        min_commits=settings.knowledge_min_commits,
+    )
+
+
+def _single_owner_touched(
+    session: Session, mine: list[Flow], hi: datetime, config: KnowledgeConfig
+) -> dict[int, str]:
+    """mr id -> the module only one person holds (§4.9) that the MR changed: worth noting, as
+    the MR either spreads that knowledge or deepens the dependence on one person."""
+    repo_ids = sorted({f.mr.project_id for f in mine})
+    if not repo_ids:
+        return {}
+    flagged = {
+        (m.project_id, m.module)
+        for m in knowledge_modules(
+            session,
+            repo_ids,
+            hi - timedelta(days=config.window_days),
+            hi,
+            depth=config.depth,
+            threshold=config.threshold,
+            min_commits=config.min_commits,
+        )
+        if m.single_owner
+    }
+    if not flagged:
+        return {}
+    project_of = {f.mr.id: f.mr.project_id for f in mine}
+    out: dict[int, str] = {}
+    for mr_id, path in session.execute(
+        select(MrCommit.mr_id, CommitFile.path)
+        .join(CommitFile, CommitFile.sha == MrCommit.sha)
+        .where(MrCommit.mr_id.in_(list(project_of)))
+    ):
+        key = (project_of[int(mr_id)], module_of(str(path), config.depth))
+        if key in flagged and int(mr_id) not in out:
+            out[int(mr_id)] = key[1]
+    return out
+
+
+def _direct_commits(
+    session: Session,
+    user_id: int,
+    lo: datetime,
+    hi: datetime,
+    repos: dict[int, Project],
+    urls: dict[int, str],
+) -> dict[str, Any]:
+    """Their non-merge commits of the month that no MR carries: pushed straight to a branch."""
+    in_mr = select(MrCommit.sha).where(MrCommit.sha == Commit.sha)
+    rows = session.execute(
+        select(Commit.sha, Commit.project_id, Commit.message, Commit.authored_at)
+        .join(Account, Account.id == Commit.author_account_id)
+        .where(
+            Account.user_id == user_id,
+            Commit.is_merge.is_not(True),
+            Commit.authored_at >= lo,
+            Commit.authored_at < hi,
+            ~exists(in_mr),
+        )
+        .order_by(Commit.authored_at.desc())
+    ).all()
+    return {
+        "count": len(rows),
+        "items": [
+            {
+                "sha": sha,
+                "project_id": pid,
+                "path_with_namespace": repos[pid].path_with_namespace if pid in repos else None,
+                "web_url": f"{urls[pid]}/-/commit/{sha}" if pid in urls else None,
+                "title": (message or "").strip().splitlines()[0][:200] if message else None,
+                "authored_at": at.isoformat() if at else None,
+            }
+            for sha, pid, message, at in rows[:MAX_DIRECT]
+        ],
+    }
+
+
+def _unmapped_nearby(
+    session: Session, repo_ids: list[int], lo: datetime, hi: datetime
+) -> list[str]:
+    """Accounts tied to nobody that committed in these repos this month: if one is this person's,
+    their work is missing from the pack until an admin links it."""
+    if not repo_ids:
+        return []
+    return [
+        str(name)
+        for name in session.scalars(
+            select(func.coalesce(Account.display_name, Account.external_key))
+            .join(Commit, Commit.author_account_id == Account.id)
+            .where(
+                Account.user_id.is_(None),
+                Commit.project_id.in_(repo_ids),
+                Commit.authored_at >= lo,
+                Commit.authored_at < hi,
+            )
+            .distinct()
+            .limit(MAX_UNMAPPED + 1)
+        )
+    ]
+
+
 def build(
     session: Session,
     user_id: int,
@@ -111,6 +236,7 @@ def build(
     tz: ZoneInfo,
     stale_hours: int = 48,
     flows: list[Flow] | None = None,
+    knowledge: KnowledgeConfig | None = None,
 ) -> dict[str, Any]:
     lo, hi = month_bounds(period_start, tz)
     repos = {r.id: r for r in session.scalars(select(Project))}
@@ -161,6 +287,10 @@ def build(
         and f.pickup_h > bar
     ]
     mark(max(waited, key=lambda f: f.pickup_h or 0, default=None), "Chờ review lâu hơn thường lệ")
+    touched = _single_owner_touched(session, mine, hi, knowledge or KnowledgeConfig())
+    by_mr = {f.mr.id: f for f in mine}
+    for mr_id, module in sorted(touched.items()):
+        mark(by_mr.get(mr_id), f"Chạm module chỉ một người nắm ({module})")
 
     reviews_given = sorted(
         (_mr_row(f, repos, urls) for f in reviewed),
@@ -241,4 +371,6 @@ def build(
             for f in sorted(waited, key=lambda f: -(f.pickup_h or 0))
         ],
         "stale_repos": stale,
+        "direct_commits": _direct_commits(session, user_id, lo, hi, repos, urls),
+        "unmapped_accounts": _unmapped_nearby(session, sorted(active_repos), lo, hi),
     }

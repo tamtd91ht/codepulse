@@ -240,8 +240,20 @@ ALTER TABLE projects ADD COLUMN production_environment TEXT;   -- ghi đè D2
 - MR lưu dạng iid và nối với `merge_requests` lúc đọc: MR thu thập sau deployment vẫn được tính. Danh sách MR rỗng của deployment vừa xong < 10 phút không lưu (GitLab gắn MR bất đồng bộ), lần sync sau hỏi lại.
 - Repo chưa từng có deployment nào được thu thập: lần sync đầu lấy cả cửa sổ backfill. Đổi `production_environment` → xếp hàng sync đầy đủ repo để lấy MR của các deployment cũ. Tier đổi trên GitLab áp cho cả lịch sử của môi trường đó.
 
-### 5.3. `issues` (phase 9.9, chỉ làm sau [DECISION D3])
-Thiết kế chốt sau khi biết tracker là gì. Mục đích duy nhất: nối MR ↔ task và incident ↔ MR. **Không** có cột story point dùng cho đánh giá.
+### 5.3. `incidents` (phase 9.9, D3)
+```sql
+CREATE TABLE incidents (
+  id BIGINT PRIMARY KEY,                        -- GitLab issue id
+  project_id INT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  iid INT NOT NULL, title TEXT, state TEXT,     -- opened|closed
+  labels JSONB, web_url TEXT,
+  created_at_src TIMESTAMPTZ, closed_at_src TIMESTAMPTZ,
+  fix_mr_iids JSONB,                            -- MR (iid) đóng incident (GitLab closed_by)
+  UNIQUE (project_id, iid)
+);
+```
+- Thu thập: `GET /projects/:id/issues?issue_type=incident&updated_after=` và `?labels=<nhãn>&updated_after=` (gộp theo id); incident đã đóng hỏi thêm `/issues/:iid/closed_by`.
+- DORA (§4.10) thêm: số incident mở trong kỳ, **incident / deploy production**, thời gian khôi phục theo incident (mở → đóng, trung vị/p75), incident đang mở. Không gắn cho người nào.
 
 ### 5.4. Hồ sơ bằng chứng (phase 9.10)
 ```sql
@@ -301,7 +313,7 @@ Một trang cho mỗi người, mỗi tháng, dùng trong buổi 1:1. Trang tr�
 - Mọi thao tác ghi khoá dòng hồ sơ (`SELECT … FOR UPDATE`): hai người thao tác cùng lúc thì người sau thấy trạng thái mới và nhận 409.
 - Mọi lần mở hồ sơ hay danh sách tháng của người khác ghi `evidence.view` / `evidence.list`; mọi chuyển trạng thái/sửa ghi `evidence.<hành động>`, sửa sau khi gửi lưu cả nội dung cũ trong audit.
 - Job tạo nháp chạy ngày 1–3 hằng tháng (bù lần chạy lỡ), từng người riêng rẽ: một hồ sơ lỗi không làm mất nháp của người khác.
-- Chưa làm (theo dõi ở 14): MR chạm module một người nắm trong "MR đáng chú ý", commit thẳng lên nhánh chính, cảnh báo account chưa gắn người.
+- 9.10b: "MR đáng chú ý" thêm MR chạm module một người nắm (§4.9, cấu hình `KNOWLEDGE_*`); khối **Commit không qua MR** (commit không thuộc MR nào trong tháng, tối đa 20); cảnh báo **account chưa gắn người** có commit trong cùng repo (tối đa 5 tên).
 
 ### 6.3. Quy trình hàng tháng
 1. **Ngày 1–3:** job tạo `draft` cho mỗi người có hoạt động trong tháng trước (scheduler, `REPORT_TZ`).
@@ -439,7 +451,7 @@ Thứ tự này đảm bảo: có giá trị cấp team trước (9.2–9.6, kh�
 ## 14. `[DECISION]` – đã chốt (người dùng giao chọn phương án tối ưu về quản lý, 2026-11-03)
 - [x] **D1** Phân hệ B **chỉ dùng cho coaching / 1:1** ở v1: không điểm, không xếp loại, màn hình ghi rõ "không dùng làm căn cứ lương thưởng". Muốn dùng cho lương thưởng phải có đủ §11 (quy chế, HR, pháp chế) và một quyết định mới. *Lý do:* dev chỉ khai thật việc ngoài Git và vướng mắc khi tin rằng hồ sơ không bị dùng để phạt; gắn lương ngay sẽ biến hồ sơ thành chỗ tô vẽ.
 - [x] **D2** Môi trường production = environment có **`tier = production`** của GitLab (GitLab tự gán theo tên `production`/`prod`/`live`…); không có tier thì so tên `production`, `prod`. Admin ghi đè theo repo bằng `projects.production_environment`. *Lý do:* không bắt ai cấu hình trước, vẫn sửa được ngoại lệ.
-- [x] **D3** **Hoãn 9.9** (issue / incident). CFR v1 dùng tín hiệu deployment (§4.10: failed, rollback). Không làm tích hợp tracker trước khi pilot cho thấy cần; nếu làm thì chỉ để nối incident ↔ MR, không bao giờ đếm task/story point. *Lý do:* chưa có quy ước tracker chung; đếm task là đúng cái spec loại (§1.3.4).
+- [x] **D3** (cập nhật 2026-11-03, người dùng yêu cầu làm đủ) 9.9 làm **bản tối thiểu, chỉ incident trên GitLab**: issue có type `incident` hoặc nhãn trong `INCIDENT_LABELS` (mặc định `incident`); MR sửa = MR GitLab ghi là đóng issue (`closed_by`). Không tích hợp Jira, không đếm task. Trước đó: hoãn 9.9. CFR v1 dùng tín hiệu deployment (§4.10: failed, rollback). Không làm tích hợp tracker trước khi pilot cho thấy cần; nếu làm thì chỉ để nối incident ↔ MR, không bao giờ đếm task/story point. *Lý do:* chưa có quy ước tracker chung; đếm task là đúng cái spec loại (§1.3.4).
 - [x] **D4** Hồ sơ bằng chứng: **bản thân + lead trực tiếp (lead của team người đó đang thuộc) + admin**. Quản lý dự án, Quản lý tổng, HR **không** xem. *Lý do:* hồ sơ gộp việc ở mọi dự án và chứa nhận xét 1:1; càng ít người đọc, nội dung càng thật. Mở rộng cho HR chỉ khi D1 đổi.
 - [x] **D5** Độ sâu module mặc định 2 (`KNOWLEDGE_MODULE_DEPTH`).
 

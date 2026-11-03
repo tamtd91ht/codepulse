@@ -280,6 +280,13 @@ export default function EvidencePage({ params }: { params: Promise<{ id: string 
     <>
       {header}
       <Message text={message} onClose={() => setMessage(null)} />
+      {(snap.unmapped_accounts?.length ?? 0) > 0 && (
+        <Alert tone="info">
+          Có tài khoản Git chưa gắn với ai cùng làm trong các repo này ({(snap.unmapped_accounts ?? []).slice(0, 5).join(", ")}
+          {(snap.unmapped_accounts ?? []).length > 5 ? "…" : ""}). Nếu có tài khoản của người này, nhờ admin gắn (Admin › Tài khoản chưa
+          gắn người) để việc của họ có đủ trong hồ sơ.
+        </Alert>
+      )}
       {snap.stale_repos.length > 0 && (
         <Alert tone="info">
           Dữ liệu có thể chưa đủ: {snap.stale_repos.length} repo chưa đồng bộ gần đây ({snap.stale_repos.join(", ")}).
@@ -420,6 +427,27 @@ export default function EvidencePage({ params }: { params: Promise<{ id: string 
           )}
         </Card>
       </div>
+
+      {(snap.direct_commits?.count ?? 0) > 0 && (
+        <Card
+          id="evidence-direct"
+          title="Commit không qua MR"
+          subtitle={`${snap.direct_commits?.count ?? 0} commit đẩy thẳng lên nhánh, không có review qua MR${(snap.direct_commits?.items.length ?? 0) < (snap.direct_commits?.count ?? 0) ? ` · hiển thị ${snap.direct_commits?.items.length}` : ""}`}
+        >
+          <ul className="finding-list">
+            {(snap.direct_commits?.items ?? []).map((c) => (
+              <li key={c.sha}>
+                <div className="body">
+                  {c.web_url ? <ExternalLink href={c.web_url}>{c.title ?? c.sha.slice(0, 8)}</ExternalLink> : (c.title ?? c.sha.slice(0, 8))}
+                  <div className="meta">
+                    {c.path_with_namespace} · <code>{c.sha.slice(0, 8)}</code> · {dateTime(c.authored_at)}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       <Items key={`items-${period}`} pack={pack} busy={busy} run={(action, done) => run(period, action, done)} id={id} month={period} />
 

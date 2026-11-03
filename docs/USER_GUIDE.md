@@ -125,7 +125,7 @@ Menu **Luồng làm việc** cho thấy công việc chảy qua team thế nào.
 | Cỡ MR | Dòng thay đổi (bỏ file lock, vendor…); XL ≥ 1000 dòng là khó review kỹ, không phải lỗi của ai | — |
 | Tải review | Mỗi người review bao nhiêu MR (không đếm số comment, không chấm comment hay dở) | Team |
 | Rủi ro tri thức | Module nào chỉ một người nắm (bus factor 1) hoặc người nắm đã vắng; là rủi ro của team | Team |
-| Triển khai (DORA) | Số lần deploy production, lead time (commit đầu → lên production), tỉ lệ thay đổi lỗi (deploy hỏng + bị rollback), thời gian khôi phục. Production = môi trường tier production của GitLab, hoặc tên production/prod; admin đặt riêng cho repo ở tab này | Team |
+| Triển khai (DORA) | Số lần deploy production, lead time (commit đầu → lên production), tỉ lệ thay đổi lỗi (deploy hỏng + bị rollback), thời gian khôi phục. Production = môi trường tier production của GitLab, hoặc tên production/prod; admin đặt riêng cho repo ở tab này. Sự cố = issue GitLab loại incident hoặc có nhãn `incident`: số sự cố / deploy và thời gian khôi phục (mở → đóng) | Team |
 
 - Thời gian tính theo lịch (cả cuối tuần), dùng **trung vị** và p75; ít hơn 5 MR trong kỳ thì không hiện trung vị.
 - Comment tóm tắt do CodePulse đăng lên MR không được tính là review.

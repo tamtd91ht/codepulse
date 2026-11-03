@@ -21,7 +21,13 @@ def previous_month(today: date) -> date:
     return date(first.year - 1, 12, 1) if first.month == 1 else date(first.year, first.month - 1, 1)
 
 
-def create_drafts(session: Session, period_start: date, tz: ZoneInfo, stale_hours: int) -> int:
+def create_drafts(
+    session: Session,
+    period_start: date,
+    tz: ZoneInfo,
+    stale_hours: int,
+    knowledge: snapshot.KnowledgeConfig | None = None,
+) -> int:
     """A draft for every active person (switched-on users) without a pack that month."""
     flows = snapshot.month_flows(session, period_start, tz)
     people = snapshot.active_people(flows)
@@ -41,7 +47,15 @@ def create_drafts(session: Session, period_start: date, tz: ZoneInfo, stale_hour
         # one failing snapshot must not cost everyone else their draft.
         try:
             with session.begin_nested():
-                built = snapshot.build(session, user_id, period_start, tz, stale_hours, flows=flows)
+                built = snapshot.build(
+                    session,
+                    user_id,
+                    period_start,
+                    tz,
+                    stale_hours,
+                    flows=flows,
+                    knowledge=knowledge,
+                )
                 inserted = session.execute(
                     pg_insert(EvidencePack)
                     .values(
@@ -73,5 +87,11 @@ def create_drafts_job() -> dict[str, int]:
     tz = ZoneInfo(settings.report_tz)
     period = previous_month(datetime.now(UTC).astimezone(tz).date())
     with get_sessionmaker()() as session, session.begin():
-        created = create_drafts(session, period, tz, settings.insights_stale_sync_hours)
+        created = create_drafts(
+            session,
+            period,
+            tz,
+            settings.insights_stale_sync_hours,
+            snapshot.knowledge_config(settings),
+        )
     return {"created": created}

@@ -174,6 +174,9 @@ class Settings(BaseSettings):
     knowledge_module_depth: int = Field(default=2, ge=1, le=6)
     knowledge_bus_threshold: float = Field(default=0.5, gt=0, le=1)
     knowledge_min_commits: int = Field(default=10, ge=1, le=10_000)
+    # Incidents (docs/specs/20 §5.3, D3): GitLab issues of type incident, or with one of
+    # these labels.
+    incident_labels: CommaList = ["incident"]
 
     @field_validator(
         "ignore_paths",
@@ -181,6 +184,7 @@ class Settings(BaseSettings):
         "allowed_email_domains",
         "admin_emails",
         "webhook_allowed_ips",
+        "incident_labels",
         mode="before",
     )
     @classmethod

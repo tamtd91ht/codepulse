@@ -153,3 +153,39 @@ def first_shipped(
         if at is not None and (mr_id not in out or at < out[mr_id][1]):
             out[mr_id] = (dep_id, at)
     return out
+
+
+# -- incidents (docs/specs/20 §5.3, D3) -------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class IncidentFact:
+    id: int
+    project_id: int
+    opened_at: datetime | None
+    closed_at: datetime | None
+    open_now: bool
+
+
+def incident_summary(
+    incidents: Sequence[IncidentFact],
+    lo: datetime,
+    hi: datetime,
+    deployments: int,
+    min_sample: int,
+) -> dict[str, Any]:
+    """Incidents opened in [lo, hi), per successful production deployment; time to restore of
+    those closed in the window (opened -> closed); and how many are open now."""
+
+    def inside(when: datetime | None) -> bool:
+        return when is not None and lo <= when < hi
+
+    opened = [i for i in incidents if inside(i.opened_at)]
+    closed = [i for i in incidents if inside(i.closed_at)]
+    return {
+        "opened": len(opened),
+        "closed": len(closed),
+        "open_now": sum(1 for i in incidents if i.open_now),
+        "per_deployment": round(len(opened) / deployments, 2) if deployments else None,
+        "restore_h": spread((_hours(i.opened_at, i.closed_at) for i in closed), min_sample),
+    }

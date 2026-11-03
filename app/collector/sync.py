@@ -21,7 +21,7 @@ from app.crypto import SecretBox, secret_box
 from app.db import get_redis, get_sessionmaker
 from app.identity.attribution import Attribution, attribute_reviews, rebuild_after_commit
 from app.identity.autolink import PublicEmailLookup, autolink
-from app.models import Connection, Deployment, Project
+from app.models import Connection, Deployment, Incident, Project
 
 log = logging.getLogger(__name__)
 
@@ -102,6 +102,7 @@ def sync_project(
     now: datetime | None = None,
     full: bool = False,
     attribute_tz: ZoneInfo | None = None,
+    incident_labels: Sequence[str] = ("incident",),
 ) -> SyncResult:
     """Run inside the caller's transaction; last_synced_at only advances if everything succeeds.
     `full`: collect the whole backfill window again (e.g. after a collector fix), not only what
@@ -134,8 +135,17 @@ def sync_project(
             select(func.count()).select_from(Deployment).where(Deployment.project_id == project.id)
         )
         deployments_since = None if has_deployments else started - timedelta(days=backfill_days)
+        has_incidents = session.scalar(
+            select(func.count()).select_from(Incident).where(Incident.project_id == project.id)
+        )
+        incidents_since = None if has_incidents else started - timedelta(days=backfill_days)
         collected = GitLabCollector(client, clock=lambda: started).collect(
-            session, project, since, deployments_since=deployments_since
+            session,
+            project,
+            since,
+            deployments_since=deployments_since,
+            incidents_since=incidents_since,
+            incident_labels=incident_labels,
         )
         rows = session.scalars(raw_rows_query(project, fetched_since=collected.started_at)).all()
         converted = Converter(session, project, ignore_paths).run(extract(rows))
@@ -215,6 +225,7 @@ def sync_project_job(project_id: int, full: bool = False) -> dict[str, object]:
             allowed_email_domains=settings.allowed_email_domains,
             full=full,
             attribute_tz=ZoneInfo(settings.report_tz),
+            incident_labels=settings.incident_labels,
         )
     if result.attribution.periods:
         from rq import Queue

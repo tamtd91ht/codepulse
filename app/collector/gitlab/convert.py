@@ -25,6 +25,7 @@ from app.models import (
     Commit,
     CommitFile,
     Deployment,
+    Incident,
     MergeRequest,
     MrCommit,
     MrNote,
@@ -207,6 +208,22 @@ class Converter:
         counts["pipelines"] = len(data.pipelines)
         self._deployments(data)
         counts["deployments"] = len(data.deployments)
+        for incident in data.incidents.values():
+            row: dict[str, Any] = {
+                "id": incident.id,
+                "project_id": self._project.id,
+                "iid": incident.iid,
+                "title": incident.title,
+                "state": incident.state,
+                "labels": incident.labels,
+                "web_url": incident.web_url,
+                "created_at_src": incident.created_at,
+                "closed_at_src": incident.closed_at,
+            }
+            if incident.fix_mr_iids is not None:
+                row["fix_mr_iids"] = incident.fix_mr_iids
+            self._session.execute(self._upsert(Incident, row, ["id"]))
+        counts["incidents"] = len(data.incidents)
         self._session.flush()
         return result
 

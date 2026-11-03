@@ -1,7 +1,7 @@
 """Collect step: GitLab API -> raw_gitlab, unchanged except that diff text is reduced to stats."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any
@@ -29,6 +29,8 @@ EP_PIPELINE = "pipeline"  # one row per pipeline
 EP_ENVIRONMENTS = "environments"  # payload: list of environments (name, tier)
 EP_DEPLOYMENT = "deployment"  # one row per deployment
 EP_DEPLOYMENT_MRS = "deployment_mrs"  # params.id, payload: list of MR iids it shipped
+EP_INCIDENT = "incident"  # one row per incident issue (docs/specs/20 §5.3)
+EP_INCIDENT_FIXES = "incident_fixes"  # params.iid, payload: MR iids that close it
 
 SYNC_OVERLAP = timedelta(hours=1)
 # docs/specs/20 §5.2: GitLab links the MRs of a deployment asynchronously.
@@ -76,6 +78,8 @@ class GitLabCollector:
         project: Project,
         since: datetime | None,
         deployments_since: datetime | None = None,
+        incidents_since: datetime | None = None,
+        incident_labels: Sequence[str] = ("incident",),
     ) -> CollectResult:
         """`deployments_since`: the deployments window when it differs from `since` (a repo
         whose deployment history was never collected backfills it, docs/specs/20 §5.2)."""
@@ -165,6 +169,7 @@ class GitLabCollector:
         session.flush()
 
         self._collect_deployments(project, deployments_since or since, store, detail)
+        self._collect_incidents(project, incidents_since or since, incident_labels, store, detail)
         session.flush()
 
         log.info(
@@ -223,6 +228,45 @@ class GitLabCollector:
                 # GitLab links a deployment's MRs a little after it succeeds: an empty list
                 # that early is asked again by the next sync.
                 store(EP_DEPLOYMENT_MRS, iids, id=dep_id)
+
+    def _collect_incidents(
+        self,
+        project: Project,
+        since: datetime | None,
+        labels: Sequence[str],
+        store: Callable[..., None],
+        detail: Callable[..., Any],
+    ) -> None:
+        """docs/specs/20 §5.3 (D3): issues of type incident or with an incident label, and the
+        MRs that close each closed one. A repo with issues off (or not readable) has none."""
+        pid = project.external_id
+        found: dict[int, Any] = {}
+        try:
+            for issue in self._client.issues(pid, since, issue_type="incident"):
+                found[int(issue["id"])] = issue
+            for label in labels:
+                for issue in self._client.issues(pid, since, labels=label):
+                    found[int(issue["id"])] = issue
+        except GitLabError as exc:
+            if exc.status_code not in (403, 404):
+                raise
+            log.info(
+                "issues not readable, incidents skipped",
+                extra={"project_id": project.id, "status": exc.status_code},
+            )
+            return
+        for issue in found.values():
+            iid = int(issue["iid"])
+            store(EP_INCIDENT, issue, iid=iid)
+            if issue.get("state") != "closed":
+                continue
+            fixes = detail(
+                EP_INCIDENT_FIXES,
+                lambda iid=iid: [int(m["iid"]) for m in self._client.issue_closed_by(pid, iid)],
+                iid=iid,
+            )
+            if fixes is not None:
+                store(EP_INCIDENT_FIXES, fixes, iid=iid)
 
     def collect_commit(self, session: Session, project: Project, sha: str) -> list[RawGitlab]:
         """One commit (and its diff stats) into raw_gitlab, for a review of a commit the last

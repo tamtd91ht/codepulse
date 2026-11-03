@@ -284,6 +284,19 @@ class GitLabClient:
             params["updated_after"] = updated_after.isoformat()
         return self.paginate(f"/projects/{project_id}/deployments", params)
 
+    def issues(
+        self, project_id: int, updated_after: datetime | None, **filters: str
+    ) -> Iterator[Any]:
+        """Issues of the project matching `filters` (issue_type=incident, labels=...)."""
+        params: dict[str, Any] = {"scope": "all", "state": "all", **filters}
+        if updated_after:
+            params["updated_after"] = updated_after.isoformat()
+        return self.paginate(f"/projects/{project_id}/issues", params)
+
+    def issue_closed_by(self, project_id: int, iid: int) -> Iterator[Any]:
+        """MRs that close the issue when merged (its fix)."""
+        return self.paginate(f"/projects/{project_id}/issues/{iid}/closed_by")
+
     def deployment_merge_requests(self, project_id: int, deployment_id: int) -> Iterator[Any]:
         return self.paginate(f"/projects/{project_id}/deployments/{deployment_id}/merge_requests")
 

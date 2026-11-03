@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.access import visible_repo
@@ -37,16 +37,20 @@ from app.insights.flow import (
     summarise,
     waiting,
 )
-from app.insights.knowledge import ROOT_MODULE
-from app.insights.load import chunks, first_commits, load_mrs
+from app.insights.load import (
+    chunks,
+    file_coverage,
+    first_commits,
+    last_commits,
+    load_mrs,
+    module_rows,
+)
 from app.insights.review_load import author_of, review_load
 from app.models import (
-    Account,
     BusinessProject,
-    Commit,
-    CommitFile,
     Connection,
     Deployment,
+    Incident,
     MergeRequest,
     Pipeline,
     Project,
@@ -475,12 +479,6 @@ def insights_review_load(
     }
 
 
-def _module_sql(depth: int) -> Any:
-    """SQL twin of `knowledge.module_of`: the first `depth` directories, or ROOT_MODULE."""
-    first_dirs = func.substring(CommitFile.path, f"^((?:[^/]+/){{1,{depth}}})")
-    return func.coalesce(func.rtrim(first_dirs, "/"), ROOT_MODULE)
-
-
 @router.get("/insights/knowledge")
 def insights_knowledge(
     principal: CurrentPrincipal,
@@ -500,8 +498,8 @@ def insights_knowledge(
     lo = hi - timedelta(days=settings.knowledge_window_days)
     repos = _repos(session, principal, business_project_id, project_id)
     repo_ids = [r.id for r in repos]
-    totals, author_rows = _module_rows(session, repo_ids, lo, hi, settings.knowledge_module_depth)
-    coverage = _file_coverage(session, repo_ids, lo, hi)
+    totals, author_rows = module_rows(session, repo_ids, lo, hi, settings.knowledge_module_depth)
+    coverage = file_coverage(session, repo_ids, lo, hi)
     authors = {r.author for r in author_rows}
     inactive = {
         int(uid)
@@ -518,7 +516,7 @@ def insights_knowledge(
         threshold=settings.knowledge_bus_threshold,
         min_commits=settings.knowledge_min_commits,
         end=hi,
-        last_commit=_last_commits(session, authors, hi),
+        last_commit=last_commits(session, authors, hi),
         inactive_users=inactive,
     )
     shown = found[:limit]
@@ -590,107 +588,6 @@ def insights_knowledge(
     }
 
 
-def _in_window(repo_ids: list[int], lo: datetime, hi: datetime) -> Any:
-    return and_(
-        Commit.project_id.in_(repo_ids),
-        Commit.is_merge.is_not(True),
-        Commit.authored_at >= lo,
-        Commit.authored_at < hi,
-    )
-
-
-def _module_rows(
-    session: Session, repo_ids: list[int], lo: datetime, hi: datetime, depth: int
-) -> tuple[list[kn.ModuleTotalRow], list[kn.ModuleAuthorRow]]:
-    """commit_files of non-merge commits authored in [lo, hi), summed per (repo, module,
-    author) in one SQL pass; the per-module totals add those up (a commit has one author)."""
-    if not repo_ids:
-        return [], []
-    module = _module_sql(depth).label("module")
-    # One person writing from two e-mails is one author: their rows are folded here.
-    folded: dict[tuple[int, str, kn.Author], list[Any]] = {}
-    for pid, mod, uid, aid, total, n, last in session.execute(
-        select(
-            Commit.project_id,
-            module,
-            Account.user_id,
-            Commit.author_account_id,
-            func.sum(CommitFile.additions + CommitFile.deletions),
-            func.count(func.distinct(Commit.sha)),
-            func.max(Commit.authored_at),
-        )
-        .select_from(CommitFile)
-        .join(Commit, Commit.sha == CommitFile.sha)
-        .outerjoin(Account, Account.id == Commit.author_account_id)
-        .where(_in_window(repo_ids, lo, hi), Commit.author_account_id.is_not(None))
-        .group_by(Commit.project_id, module, Account.user_id, Commit.author_account_id)
-    ):
-        author = kn.Author(uid, None) if uid is not None else kn.Author(None, aid)
-        slot = folded.setdefault((int(pid), str(mod), author), [0, 0, None])
-        slot[0] += int(total or 0)
-        slot[1] += int(n)
-        if last is not None and (slot[2] is None or last > slot[2]):
-            slot[2] = last
-    authors = [kn.ModuleAuthorRow(p, m, a, c, n) for (p, m, a), (c, n, _l) in folded.items()]
-    sums: dict[tuple[int, str], list[Any]] = {}
-    for (p, m, _a), (c, n, last) in folded.items():
-        slot = sums.setdefault((p, m), [0, 0, None])
-        slot[0] += c
-        slot[1] += n
-        if last is not None and (slot[2] is None or last > slot[2]):
-            slot[2] = last
-    totals = [kn.ModuleTotalRow(p, m, c, n, last) for (p, m), (c, n, last) in sums.items()]
-    return totals, authors
-
-
-def _file_coverage(
-    session: Session, repo_ids: list[int], lo: datetime, hi: datetime
-) -> dict[int, tuple[int, int]]:
-    """repo -> (non-merge commits in the window, how many of them have file rows)."""
-    if not repo_ids:
-        return {}
-    has_files = exists().where(CommitFile.sha == Commit.sha)
-    return {
-        int(pid or 0): (int(n), int(with_files or 0))
-        for pid, n, with_files in session.execute(
-            select(
-                Commit.project_id,
-                func.count(),
-                func.count().filter(has_files),
-            )
-            .where(_in_window(repo_ids, lo, hi))
-            .group_by(Commit.project_id)
-        )
-    }
-
-
-def _last_commits(
-    session: Session, authors: set[kn.Author], hi: datetime
-) -> dict[kn.Author, datetime]:
-    """Each author's latest commit in any repo before `hi` (§4.9 `orphaned`)."""
-    out: dict[kn.Author, datetime] = {}
-    users = sorted({a.user_id for a in authors if a.user_id is not None})
-    accounts = sorted({a.account_id for a in authors if a.account_id is not None})
-    for chunk in chunks(users):
-        for uid, last in session.execute(
-            select(Account.user_id, func.max(Commit.authored_at))
-            .join(Commit, Commit.author_account_id == Account.id)
-            .where(Account.user_id.in_(chunk), Commit.authored_at < hi)
-            .group_by(Account.user_id)
-        ):
-            if uid is not None and last is not None:
-                out[kn.Author(int(uid), None)] = last
-    for chunk in chunks(accounts):
-        for aid, last in session.execute(
-            select(Commit.author_account_id, func.max(Commit.authored_at))
-            .where(Commit.author_account_id.in_(chunk), Commit.authored_at < hi)
-            .group_by(Commit.author_account_id)
-        ):
-            if aid is not None and last is not None:
-                out[kn.Author(None, int(aid))] = last
-    return out
-
-
 # -- DORA (docs/specs/20 §4.10, task 9.8) -----------------------------------------------------
 
 # History before the window that the rollback rule may look back on.
@@ -738,6 +635,34 @@ def _production(
         if d.status == "success" and d.mr_iids:
             iids[d.id] = [int(i) for i in d.mr_iids]
     return deps, iids
+
+
+def _incidents(
+    session: Session, repos: list[Project], since: datetime
+) -> list[tuple[dora.IncidentFact, Incident]]:
+    """Incidents of `repos` opened or closed from `since` on, or still open (docs/specs/20
+    §5.3)."""
+    if not repos:
+        return []
+    rows = session.scalars(
+        select(Incident).where(
+            Incident.project_id.in_([r.id for r in repos]),
+            or_(
+                Incident.created_at_src >= since,
+                Incident.closed_at_src >= since,
+                Incident.state == "opened",
+            ),
+        )
+    )
+    return [
+        (
+            dora.IncidentFact(
+                i.id, i.project_id, i.created_at_src, i.closed_at_src, i.state == "opened"
+            ),
+            i,
+        )
+        for i in rows
+    ]
 
 
 def _shipped(
@@ -880,6 +805,17 @@ def insights_dora(
         now,
         settings.insights_stale_sync_hours,
     )
+    incidents = _incidents(session, repos, w.prev_lo)
+    facts = [i for i, _row in incidents]
+    incident_now = dora.incident_summary(facts, w.lo, w.hi, totals["deployments"], min_sample)
+    incident_before = dora.incident_summary(
+        facts, w.prev_lo, w.prev_hi, before["deployments"], min_sample
+    )
+    recent_incidents = sorted(
+        (row for fact, row in incidents if fact.opened_at and w.lo <= fact.opened_at < w.hi),
+        key=lambda r: r.created_at_src or w.lo,
+        reverse=True,
+    )[:RECENT_FAILURES]
     if not deps:
         c.add(
             "insufficient",
@@ -905,6 +841,30 @@ def insights_dora(
                 ),
                 "recovery_h": _diff(totals["recovery_h"]["median"], before["recovery_h"]["median"]),
             },
+        },
+        "incidents": {
+            **incident_now,
+            "delta": {
+                "opened": incident_now["opened"] - incident_before["opened"],
+                "restore_h": _diff(
+                    incident_now["restore_h"]["median"], incident_before["restore_h"]["median"]
+                ),
+            },
+            "recent": [
+                {
+                    "id": r.id,
+                    "iid": r.iid,
+                    "title": r.title,
+                    "project_id": r.project_id,
+                    "path_with_namespace": paths.get(r.project_id),
+                    "web_url": r.web_url if r.web_url and r.web_url.startswith("http") else None,
+                    "state": r.state,
+                    "opened_at": r.created_at_src.isoformat() if r.created_at_src else None,
+                    "closed_at": r.closed_at_src.isoformat() if r.closed_at_src else None,
+                    "fix_mrs": len(r.fix_mr_iids or []),
+                }
+                for r in recent_incidents
+            ],
         },
         "trend": trend,
         "repos": by_repo,

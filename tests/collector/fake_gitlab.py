@@ -42,6 +42,7 @@ def mount(router: respx.MockRouter, project_id: int = 1001) -> respx.MockRouter:
     # Environments and deployments (docs/specs/20 §5.2): none by default.
     router.get(f"{p}/environments").mock(return_value=httpx.Response(200, json=[]))
     router.get(f"{p}/deployments").mock(return_value=httpx.Response(200, json=[]))
+    router.get(f"{p}/issues").mock(return_value=httpx.Response(200, json=[]))
     # File contents (review context): none by default, so context is simply skipped.
     router.get(url__regex=rf"{p}/repository/files/.+/raw").mock(
         return_value=httpx.Response(404, json={"message": "404 File Not Found"})

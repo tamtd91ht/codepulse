@@ -90,3 +90,19 @@ def test_summarise_nothing() -> None:
 def test_first_shipped_keeps_the_earliest_deployment() -> None:
     got = first_shipped([(7, 1, h(5)), (7, 2, h(1)), (8, 3, None), (9, 4, h(2))])
     assert got == {7: (2, h(1)), 9: (4, h(2))}
+
+
+def test_incident_summary() -> None:
+    from app.insights.dora import IncidentFact, incident_summary
+
+    facts = [
+        IncidentFact(1, 1, h(1), h(5), False),  # opened and closed inside: 4 h
+        IncidentFact(2, 1, h(2), None, True),  # still open
+        IncidentFact(3, 1, h(-50), h(10), False),  # opened before, closed inside: 60 h
+        IncidentFact(4, 1, h(-50), h(-40), False),  # outside
+    ]
+    s = incident_summary(facts, h(0), h(24), deployments=4, min_sample=1)
+    assert (s["opened"], s["closed"], s["open_now"]) == (2, 2, 1)
+    assert s["per_deployment"] == 0.5
+    assert s["restore_h"] == {"n": 2, "median": 32.0, "p75": 46.0}
+    assert incident_summary([], h(0), h(1), 0, 1)["per_deployment"] is None

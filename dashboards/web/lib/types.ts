@@ -1542,6 +1542,13 @@ export interface EvidenceSnapshot {
   };
   waiting: { id: number; pickup: number | null; repo_p75: number | null }[];
   stale_repos: string[];
+  /** Commits of the month no MR carries (packs built before 9.10b have none). */
+  direct_commits?: {
+    count: number;
+    items: { sha: string; project_id: number; path_with_namespace: string | null; web_url: string | null; title: string | null; authored_at: string | null }[];
+  };
+  /** Accounts tied to nobody that committed in the same repos this month. */
+  unmapped_accounts?: string[];
 }
 
 export interface EvidenceItem {
@@ -1619,6 +1626,26 @@ export interface InsightsDora {
   confidence: InsightConfidence;
   totals: DoraSummary & {
     delta: { deployments: number; change_failure_rate: number | null; lead_time_h: number | null; recovery_h: number | null };
+  };
+  incidents: {
+    opened: number;
+    closed: number;
+    open_now: number;
+    per_deployment: number | null;
+    restore_h: InsightSpread;
+    delta: { opened: number; restore_h: number | null };
+    recent: {
+      id: number;
+      iid: number;
+      title: string | null;
+      project_id: number;
+      path_with_namespace: string | null;
+      web_url: string | null;
+      state: string | null;
+      opened_at: string | null;
+      closed_at: string | null;
+      fix_mrs: number;
+    }[];
   };
   trend: { period_start: string; deployments: number; change_failure_rate: number | null; lead_time_h: number | null }[];
   repos: (DoraSummary & {

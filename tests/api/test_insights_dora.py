@@ -109,3 +109,43 @@ def test_changing_production_queues_a_full_resync(
         json={"production_environment": "live"},
     )
     assert len(queue.jobs) == count
+
+
+def test_incidents_in_dora(
+    client: TestClient, db_session: Session, world: World, seeded: None, as_user: Any
+) -> None:
+    from app.models import Incident
+
+    db_session.add_all(
+        [
+            Incident(
+                id=1,
+                project_id=world.project.id,
+                iid=5,
+                title="API down",
+                state="closed",
+                created_at_src=at(33),
+                closed_at_src=at(35),
+                fix_mr_iids=[7],
+                web_url="https://gitlab.example.com/demo/p/-/issues/5",
+            ),
+            Incident(
+                id=2,
+                project_id=world.project.id,
+                iid=6,
+                title="Slow",
+                state="opened",
+                created_at_src=at(41),
+                web_url="javascript:alert(1)",
+            ),
+        ]
+    )
+    db_session.flush()
+    body = client.get(f"/api/v1/insights/dora?start={WEEK}", headers=as_user(world.lead)).json()
+    inc = body["incidents"]
+    assert (inc["opened"], inc["closed"], inc["open_now"]) == (2, 1, 1)
+    assert inc["per_deployment"] == 0.4  # 2 incidents / 5 deployments
+    assert inc["restore_h"]["median"] == 2.0
+    assert [r["title"] for r in inc["recent"]] == ["Slow", "API down"]
+    assert inc["recent"][0]["web_url"] is None  # only http(s) links go out
+    assert inc["recent"][1]["fix_mrs"] == 1

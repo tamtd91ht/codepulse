@@ -124,7 +124,12 @@ def _stored(
 
 def _build(session: Session, user_id: int, start: date, settings: Settings) -> dict[str, Any]:
     return snapshot.build(
-        session, user_id, start, ZoneInfo(settings.report_tz), settings.insights_stale_sync_hours
+        session,
+        user_id,
+        start,
+        ZoneInfo(settings.report_tz),
+        settings.insights_stale_sync_hours,
+        knowledge=snapshot.knowledge_config(settings),
     )
 
 

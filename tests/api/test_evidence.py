@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import Settings
 from app.evidence.jobs import create_drafts, previous_month
 from app.models import AuditLog, EvidenceItem, EvidencePack
 from app.retention import purge
@@ -245,3 +246,62 @@ def test_a_failing_draft_does_not_cost_the_others_theirs(
     monkeypatch.setattr(snapshot, "build", flaky)
     assert create_drafts(db_session, date(2026, 10, 1), VN, 48) == 1
     assert set(db_session.scalars(select(EvidencePack.user_id))) == {world.binh.id}
+
+
+def test_single_owner_module_direct_commits_and_unmapped_accounts(
+    client: TestClient, db_session: Session, world: World, settings: Settings, as_user: Any
+) -> None:
+    """docs/specs/20 §6.2 (9.10b)."""
+    from app.models import Account, Commit, CommitFile, MrCommit
+    from tests.api.seeding import at
+
+    settings.knowledge_min_commits = 1
+    sd = Seeder(db_session, world.project)
+    an = sd.account(world.an, "an")
+    mail = Account(kind="git_email", external_key="an@x.vn", user_id=world.an.id)
+    stranger = Account(kind="git_email", external_key="who@else", display_name="Ai đó")
+    db_session.add_all([mail, stranger])
+    db_session.flush()
+    sd.mr(an, opened=0, merged=20, size=900, title="Big refactor")  # the largest one
+    payment = sd.mr(an, opened=0, merged=30, size=10, title="Payment fix")
+    commits = [
+        Commit(
+            sha="1" * 40,
+            project_id=world.project.id,
+            author_account_id=mail.id,
+            authored_at=at(-2),
+            is_merge=False,
+        ),
+        Commit(
+            sha="2" * 40,
+            project_id=world.project.id,
+            author_account_id=mail.id,
+            authored_at=at(50),
+            is_merge=False,
+            message="hotfix: typo\n\nlong body",
+        ),
+        Commit(
+            sha="3" * 40,
+            project_id=world.project.id,
+            author_account_id=stranger.id,
+            authored_at=at(51),
+            is_merge=False,
+        ),
+    ]
+    db_session.add_all(commits)
+    db_session.flush()
+    db_session.add_all(
+        [
+            MrCommit(mr_id=payment.id, sha="1" * 40),
+            CommitFile(sha="1" * 40, path="core/pay/a.py", additions=40, deletions=2),
+            CommitFile(sha="2" * 40, path="docs/x.md", additions=1, deletions=0),
+        ]
+    )
+    db_session.flush()
+    snap = client.get(path(world), headers=as_user(world.an)).json()["snapshot"]
+    reasons = {n["id"]: n["why"] for n in snap["notable"]}
+    assert reasons[payment.id] == "Chạm module chỉ một người nắm (core/pay)"
+    direct = snap["direct_commits"]
+    assert direct["count"] == 1 and direct["items"][0]["title"] == "hotfix: typo"
+    assert direct["items"][0]["web_url"].endswith("/-/commit/" + "2" * 40)
+    assert snap["unmapped_accounts"] == ["Ai đó"]

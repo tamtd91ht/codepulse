@@ -117,3 +117,23 @@ class Deployment(TimestampMixin, Base):
     # read, so an MR collected later still links. NULL = not asked (not a success, or not
     # production when collected).
     mr_iids: Mapped[list[int] | None] = mapped_column(JSONB)
+
+
+class Incident(TimestampMixin, Base):
+    """A GitLab issue of type incident, or carrying an INCIDENT_LABELS label (docs/specs/20
+    §5.3, D3). DORA reads them at team level only."""
+
+    __tablename__ = "incidents"
+    __table_args__ = (UniqueConstraint("project_id", "iid"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    iid: Mapped[int]
+    title: Mapped[str | None]
+    state: Mapped[str | None]  # opened|closed
+    labels: Mapped[list[str] | None] = mapped_column(JSONB)
+    web_url: Mapped[str | None]
+    created_at_src: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    closed_at_src: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # MRs (iids) GitLab says close the incident: its fix. NULL = not asked (still open).
+    fix_mr_iids: Mapped[list[int] | None] = mapped_column(JSONB)
