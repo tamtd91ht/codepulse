@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.api.access import visible_repo
 from app.api.deps import get_session
 from app.api.routers.overview import RANGE_MIN, OverviewPeriod, Window, _window
-from app.api.security import InsightsPrincipal, Principal
+from app.api.security import Principal, require
 from app.config import Settings, get_settings
 from app.insights import INSIGHTS_VERSION, dora
 from app.insights import confidence as conf
@@ -62,6 +62,9 @@ from app.scoring.aggregate import period_bounds, period_start_of
 router = APIRouter(tags=["insights"])
 SessionDep = Annotated[Session, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+# docs/specs/21: Luồng làm việc by permission (built-in: lead and above). Names inside still
+# follow `can_see_work` and no per-person composite exists, whatever the sets say (§3, P1-P8).
+InsightsViewer = Annotated[Principal, require("insights.view")]
 OLDEST_WAITING = 10
 HIDDEN_NAME = "Một thành viên"
 UNMAPPED_NAME = "Chưa gắn người"
@@ -198,7 +201,7 @@ def _diff(a: float | None, b: float | None) -> float | None:
 
 @router.get("/insights/flow")
 def insights_flow(
-    principal: InsightsPrincipal,
+    principal: InsightsViewer,
     session: SessionDep,
     settings: SettingsDep,
     business_project_id: int | None = None,
@@ -350,7 +353,7 @@ Only = Literal["unreviewed", "xl"]
 
 @router.get("/insights/flow/mrs")
 def insights_flow_mrs(
-    principal: InsightsPrincipal,
+    principal: InsightsViewer,
     session: SessionDep,
     settings: SettingsDep,
     business_project_id: int | None = None,
@@ -428,7 +431,7 @@ def _round(value: float | None) -> float | None:
 
 @router.get("/insights/review-load")
 def insights_review_load(
-    principal: InsightsPrincipal,
+    principal: InsightsViewer,
     session: SessionDep,
     settings: SettingsDep,
     business_project_id: int | None = None,
@@ -502,7 +505,7 @@ def _cut_tree(tree: list[kn.Module]) -> list[kn.Module]:
 
 @router.get("/insights/knowledge")
 def insights_knowledge(
-    principal: InsightsPrincipal,
+    principal: InsightsViewer,
     session: SessionDep,
     settings: SettingsDep,
     business_project_id: int | None = None,
@@ -625,7 +628,7 @@ def insights_knowledge(
 
 @router.get("/insights/components")
 def insights_components(
-    principal: InsightsPrincipal, session: SessionDep, project_id: int
+    principal: InsightsViewer, session: SessionDep, project_id: int
 ) -> dict[str, Any]:
     """§4.9b: what a repo is made of, as knowledge risk measures it (the automatic map,
     regrouped by the AI grouping when there is one), and the state of that grouping."""
@@ -819,7 +822,7 @@ def _shipped(
 
 @router.get("/insights/dora")
 def insights_dora(
-    principal: InsightsPrincipal,
+    principal: InsightsViewer,
     session: SessionDep,
     settings: SettingsDep,
     business_project_id: int | None = None,

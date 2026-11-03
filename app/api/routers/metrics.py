@@ -10,9 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.access import may_see_person, review_scope, reviews_in_projects
+from app.api.access import review_scope, reviews_in_projects
 from app.api.audit import audit
 from app.api.deps import get_session
+from app.api.personal import at_least, covers_person, covers_team, sees_team, visible_team_ids
 from app.api.schemas import (
     CategoryWeek,
     Hotspots,
@@ -22,7 +23,7 @@ from app.api.schemas import (
     TeamOut,
     UserOut,
 )
-from app.api.security import CurrentPrincipal, LeadOrManagerPrincipal
+from app.api.security import CurrentPrincipal, Principal, require
 from app.config import Settings, get_settings
 from app.models import (
     MetricsTeamPeriod,
@@ -46,6 +47,19 @@ from app.scoring.compare import compare_team, compare_user
 router = APIRouter(prefix="", tags=["metrics"])
 SessionDep = Annotated[Session, Depends(get_session)]
 Period = Annotated[Literal["week", "month"], Query()]
+# docs/specs/21: stored per-person scores, team numbers (leaderboard, report), evaluation.
+PersonMetrics = Annotated[Principal, require("metrics.person")]
+TeamMetrics = Annotated[Principal, require("metrics.team")]
+EvaluationViewer = Annotated[Principal, require("evaluation.view")]
+
+
+def _leads_team(principal: Principal, team_id: int) -> bool:
+    """The lead's version of a team's numbers, with per-person rows: the team's lead holding
+    `metrics.person` over their team, or admin. Never by managing the team (Phase 0: a manager
+    sees aggregates only), whatever the sets say."""
+    return principal.is_admin or (
+        team_id in principal.lead_teams and at_least(principal, "metrics.person", "team")
+    )
 
 
 def _default_range(
@@ -64,13 +78,13 @@ def _default_range(
 @router.get("/metrics/users/{user_id}", response_model=MetricsSeries)
 def user_metrics(
     user_id: int,
-    principal: CurrentPrincipal,
+    principal: PersonMetrics,
     session: SessionDep,
     period: Period = "week",
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
 ) -> dict[str, Any]:
-    if not principal.can_see_user(user_id):
+    if not covers_person(session, principal, "metrics.person", user_id):
         raise HTTPException(403, "individual metrics are visible to the person and their lead only")
     start, end = _default_range(period, date_from, date_to)
     series = session.scalars(
@@ -106,7 +120,7 @@ def team_metrics(
 ) -> dict[str, Any]:
     if session.get(Team, team_id) is None:
         raise HTTPException(404, "team not found")
-    if not principal.can_see_team(team_id):
+    if not sees_team(principal, team_id):
         raise HTTPException(403, "not allowed to see this team")
     start, end = _default_range(period, date_from, date_to)
     tz = ZoneInfo(settings.report_tz)
@@ -130,7 +144,7 @@ def team_metrics(
 @router.get("/leaderboard", response_model=Leaderboard)
 def leaderboard(
     team_id: int,
-    principal: LeadOrManagerPrincipal,
+    principal: TeamMetrics,
     session: SessionDep,
     period: Period = "week",
     start: date | None = None,
@@ -138,9 +152,9 @@ def leaderboard(
     team = session.get(Team, team_id)
     if team is None:
         raise HTTPException(404, "team not found")
-    leads_it = principal.is_admin or team_id in principal.lead_teams
-    if not (leads_it or team_id in principal.managed_teams):
+    if not covers_team(principal, "metrics.team", team_id):
         raise HTTPException(403, "not allowed to see this team")
+    leads_it = _leads_team(principal, team_id)
     period_start = period_start_of(start or datetime.now(UTC).date(), period)
     team_row = session.scalars(
         select(MetricsTeamPeriod).filter_by(
@@ -185,7 +199,7 @@ def leaderboard(
                 "trend": [history.get(u.id, {}).get(w) for w in weeks],
                 # Someone who left the team since: in its numbers, but the lead no longer sees
                 # their findings, so the row's counts cannot link to them.
-                "viewable": principal.can_see_user(u.id),
+                "viewable": covers_person(session, principal, "metrics.person", u.id),
             }
             for m, u in rows
         ]
@@ -223,7 +237,7 @@ def team_hotspots(
     start: date | None = None,
 ) -> dict[str, Any]:
     """Top 5 error categories and "hot" files of a team (docs/specs/08 §4, 10 Team Overview)."""
-    if not principal.can_see_team(team_id):
+    if not sees_team(principal, team_id):
         raise HTTPException(403, "not allowed to see this team")
     tz = ZoneInfo(settings.report_tz)
     period_start = period_start_of(start or datetime.now(tz).date(), period)
@@ -264,13 +278,13 @@ def team_hotspots(
 @router.get("/metrics/users/{user_id}/categories", response_model=list[CategoryWeek])
 def user_category_heatmap(
     user_id: int,
-    principal: CurrentPrincipal,
+    principal: EvaluationViewer,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     weeks: Annotated[int, Query(ge=1, le=52)] = 12,
 ) -> list[dict[str, Any]]:
     """Findings per category per week (Member Detail heatmap, docs/specs/10)."""
-    if not may_see_person(session, principal, user_id):
+    if not covers_person(session, principal, "evaluation.view", user_id):
         raise HTTPException(403, "not allowed to see this person")
     tz = ZoneInfo(settings.report_tz)
     first = period_start_of(datetime.now(tz).date(), "week") - timedelta(weeks=weeks - 1)
@@ -302,17 +316,17 @@ def user_category_heatmap(
 
 @router.get("/teams/visible", response_model=list[TeamOut])
 def visible_teams(principal: CurrentPrincipal, session: SessionDep) -> list[Team]:
-    """Teams the signed-in person can open in the dashboard."""
+    """Teams the signed-in person can open in the dashboard (`sees_team`). Everyone has their
+    own teams, so this asks for no permission."""
     query = select(Team).order_by(Team.name)
-    if not principal.is_admin:
-        ids = principal.own_teams | principal.lead_teams | principal.managed_teams
+    if (ids := visible_team_ids(principal)) is not None:
         query = query.where(Team.id.in_(ids))
     return list(session.scalars(query))
 
 
 @router.get("/people/{user_id}", response_model=UserOut)
-def person(user_id: int, principal: CurrentPrincipal, session: SessionDep) -> User:
-    if not may_see_person(session, principal, user_id):
+def person(user_id: int, principal: EvaluationViewer, session: SessionDep) -> User:
+    if not covers_person(session, principal, "evaluation.view", user_id):
         raise HTTPException(403, "not allowed to see this person")
     user = session.get(User, user_id)
     if user is None:
@@ -325,19 +339,17 @@ def report(
     period: Literal["week", "month"],
     start: date,
     team_id: int,
-    principal: LeadOrManagerPrincipal,
+    principal: TeamMetrics,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     format: Literal["md", "html"] = "md",
 ) -> Response:
     """docs/specs/09 /reports: the lead version for the team's lead, aggregates for managers."""
-    if not (principal.is_admin or team_id in principal.lead_teams | principal.managed_teams):
+    if not covers_team(principal, "metrics.team", team_id):
         raise HTTPException(403, "not allowed to see this team's report")
     if session.get(Team, team_id) is None:
         raise HTTPException(404, "team not found")
-    audience: Audience = (
-        "lead" if principal.is_admin or team_id in principal.lead_teams else "manager"
-    )
+    audience: Audience = "lead" if _leads_team(principal, team_id) else "manager"
     built = build_team_report(
         session,
         team_id,

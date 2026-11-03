@@ -21,7 +21,8 @@ from sqlalchemy.orm import Session
 
 from app.api.audit import audit
 from app.api.deps import get_queue, get_secret_box, get_session
-from app.api.security import CurrentPrincipal, Principal
+from app.api.personal import covers_person
+from app.api.security import Principal, require
 from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
@@ -34,6 +35,10 @@ from app.models.evidence import EVIDENCE_KINDS
 router = APIRouter(tags=["evidence"])
 SessionDep = Annotated[Session, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+# docs/specs/21: seeing a pack (every endpoint here; what one may change in it then follows
+# `Role` and the state machine), and the lead's AI draft.
+EvidenceViewer = Annotated[Principal, require("evidence.view")]
+EvidenceLead = Annotated[Principal, require("evidence.lead")]
 MAX_MONTHS_BACK = 24
 NOTE_MAX = 10_000
 PERIOD = re.compile(r"\d{4}-\d{2}")
@@ -51,14 +56,13 @@ def today(settings: Settings) -> date:
 
 @dataclass(frozen=True)
 class Role:
-    """How the viewer relates to the pack's person."""
+    """How the viewer relates to the pack's person (docs/specs/21: `evidence.view` to see it,
+    `evidence.edit_self` for the person's part, `evidence.lead` for the lead's part). The state
+    machine of §6.2b (`_can`) stays as it is whatever the sets say."""
 
-    self_: bool
+    self_: bool  # the person, writing their own part
     lead: bool  # their lead now, or an admin; never yourself
-
-    @property
-    def sees(self) -> bool:
-        return self.self_ or self.lead
+    me: bool = False  # the viewer is the pack's person (not audited, shown as "self")
 
 
 def _leads(session: Session, principal: Principal, user_id: int, day: date) -> bool:
@@ -83,10 +87,16 @@ def _person(
     session: Session, principal: Principal, user_id: int, settings: Settings
 ) -> tuple[User, Role]:
     me = principal.user_id == user_id
-    lead = not me and (principal.is_admin or _leads(session, principal, user_id, today(settings)))
-    role = Role(self_=me, lead=lead)
-    if not role.sees:
+    # The "team" scope here is the direct lead only (docs/specs/20 D4), never a co-lead or the
+    # manager of the team (`_leads` returns at once for someone who leads nobody).
+    direct = not me and _leads(session, principal, user_id, today(settings))
+    if not covers_person(session, principal, "evidence.view", user_id, leads=direct):
         raise HTTPException(403, "only the person, their lead or an admin sees evidence packs")
+    role = Role(
+        self_=me and principal.can("evidence.edit_self"),
+        lead=not me and covers_person(session, principal, "evidence.lead", user_id, leads=direct),
+        me=me,
+    )
     user = session.get(User, user_id)
     if user is None:
         raise HTTPException(404, "person not found")
@@ -245,7 +255,7 @@ def _out(
             }
             for i in items
         ],
-        "role": "self" if role.self_ else "lead",
+        "role": "self" if role.me else "lead",
         "can": _can(role, pack.status if pack else None),
         "insights_version": pack.insights_version if pack else INSIGHTS_VERSION,
     }
@@ -256,7 +266,7 @@ def _out(
 
 @router.get("/evidence/{user_id}")
 def list_packs(
-    user_id: int, principal: CurrentPrincipal, session: SessionDep, settings: SettingsDep
+    user_id: int, principal: EvidenceViewer, session: SessionDep, settings: SettingsDep
 ) -> dict[str, Any]:
     """The months this person has a pack for, newest first."""
     user, role = _person(session, principal, user_id, settings)
@@ -267,7 +277,7 @@ def list_packs(
             .order_by(EvidencePack.period_start.desc())
         )
     )
-    if not role.self_:
+    if not role.me:
         audit(session, principal.user_id, "evidence.list", f"user:{user.id}")
         session.commit()
     return {
@@ -288,7 +298,7 @@ def list_packs(
 def get_pack(
     user_id: int,
     period: str,
-    principal: CurrentPrincipal,
+    principal: EvidenceViewer,
     session: SessionDep,
     settings: SettingsDep,
 ) -> dict[str, Any]:
@@ -302,7 +312,7 @@ def get_pack(
         if pack is None or pack.status == "draft"
         else None
     )
-    if not role.self_:
+    if not role.me:
         audit(session, principal.user_id, "evidence.view", f"user:{user.id}", period=str(start))
     session.commit()
     return _out(session, principal.user_id, user, role, start, pack, live)
@@ -321,7 +331,7 @@ def update_pack(
     user_id: int,
     period: str,
     body: PackPatch,
-    principal: CurrentPrincipal,
+    principal: EvidenceViewer,
     session: SessionDep,
     settings: SettingsDep,
 ) -> dict[str, Any]:
@@ -382,7 +392,7 @@ def add_item(
     user_id: int,
     period: str,
     body: ItemIn,
-    principal: CurrentPrincipal,
+    principal: EvidenceViewer,
     session: SessionDep,
     settings: SettingsDep,
 ) -> dict[str, Any]:
@@ -424,7 +434,7 @@ def delete_item(
     user_id: int,
     period: str,
     item_id: int,
-    principal: CurrentPrincipal,
+    principal: EvidenceViewer,
     session: SessionDep,
     settings: SettingsDep,
 ) -> dict[str, Any]:
@@ -456,7 +466,7 @@ def delete_item(
 def ai_draft(
     user_id: int,
     period: str,
-    principal: CurrentPrincipal,
+    principal: EvidenceLead,
     session: SessionDep,
     settings: SettingsDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
@@ -524,7 +534,7 @@ def act(
     user_id: int,
     period: str,
     action: Action,
-    principal: CurrentPrincipal,
+    principal: EvidenceViewer,
     session: SessionDep,
     settings: SettingsDep,
 ) -> dict[str, Any]:

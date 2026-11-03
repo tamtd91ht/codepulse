@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_session
 from app.api.routers.reviews import _target, scoped
 from app.api.schemas import ReviewOut
-from app.api.security import CurrentPrincipal
+from app.api.security import Principal, require
 from app.config import Settings, get_settings
 from app.models import (
     BusinessProject,
@@ -40,6 +40,8 @@ from app.scoring.verdict import VERDICTS
 
 router = APIRouter(tags=["overview"])
 SessionDep = Annotated[Session, Depends(get_session)]
+# docs/specs/21: Tổng quan dự án (built-in: everyone); which dự án still by project grants.
+OverviewViewer = Annotated[Principal, require("overview.view")]
 Period = Literal["week", "month"]
 OverviewPeriod = Literal["week", "month", "range"]
 # The earliest day a custom range (period=range) may start: reviews before it are not
@@ -332,7 +334,7 @@ def _window(
 
 @router.get("/metrics/projects")
 def projects_overview(
-    principal: CurrentPrincipal,
+    principal: OverviewViewer,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     period: OverviewPeriod = "week",
@@ -461,7 +463,7 @@ def projects_overview(
 @router.get("/metrics/projects/{bp_id}")
 def project_detail(
     bp_id: int,
-    principal: CurrentPrincipal,
+    principal: OverviewViewer,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     period: Period = "week",
