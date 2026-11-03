@@ -49,6 +49,9 @@ class MergeRequest(TimestampMixin, Base):
     deletions: Mapped[int | None]
     review_rounds: Mapped[int | None]
     head_sha: Mapped[str | None]
+    # The commit the merge created / the squashed commit (docs/specs/20 §6.2, 9.10b).
+    merge_commit_sha: Mapped[str | None] = mapped_column(index=True)
+    squash_commit_sha: Mapped[str | None] = mapped_column(index=True)
 
 
 class MrCommit(TimestampMixin, Base):

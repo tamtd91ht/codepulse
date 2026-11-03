@@ -12,13 +12,13 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, exists, func, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.insights import INSIGHTS_VERSION
 from app.insights.flow import STAGES, Flow, flow, size_bucket
 from app.insights.knowledge import module_of
-from app.insights.load import knowledge_modules, load_mrs
+from app.insights.load import chunks, knowledge_modules, load_mrs
 from app.insights.stats import quantile
 from app.models import (
     Account,
@@ -156,14 +156,15 @@ def _single_owner_touched(
         return {}
     project_of = {f.mr.id: f.mr.project_id for f in mine}
     out: dict[int, str] = {}
-    for mr_id, path in session.execute(
-        select(MrCommit.mr_id, CommitFile.path)
-        .join(CommitFile, CommitFile.sha == MrCommit.sha)
-        .where(MrCommit.mr_id.in_(list(project_of)))
-    ):
-        key = (project_of[int(mr_id)], module_of(str(path), config.depth))
-        if key in flagged and int(mr_id) not in out:
-            out[int(mr_id)] = key[1]
+    for chunk in chunks(sorted(project_of)):
+        for mr_id, path in session.execute(
+            select(MrCommit.mr_id, CommitFile.path)
+            .join(CommitFile, CommitFile.sha == MrCommit.sha)
+            .where(MrCommit.mr_id.in_(chunk))
+        ):
+            key = (project_of[int(mr_id)], module_of(str(path), config.depth))
+            if key in flagged and int(mr_id) not in out:
+                out[int(mr_id)] = key[1]
     return out
 
 
@@ -175,8 +176,16 @@ def _direct_commits(
     repos: dict[int, Project],
     urls: dict[int, str],
 ) -> dict[str, Any]:
-    """Their non-merge commits of the month that no MR carries: pushed straight to a branch."""
+    """Their non-merge commits of the month no collected MR carries (pushed straight to a
+    branch, or on a branch without an MR yet, or rewritten by a rebase): context for the 1:1,
+    not a fault. Merge and squash commits of MRs went through review: left out."""
     in_mr = select(MrCommit.sha).where(MrCommit.sha == Commit.sha)
+    made_by_mr = select(MergeRequest.id).where(
+        or_(
+            MergeRequest.merge_commit_sha == Commit.sha,
+            MergeRequest.squash_commit_sha == Commit.sha,
+        )
+    )
     rows = session.execute(
         select(Commit.sha, Commit.project_id, Commit.message, Commit.authored_at)
         .join(Account, Account.id == Commit.author_account_id)
@@ -186,6 +195,7 @@ def _direct_commits(
             Commit.authored_at >= lo,
             Commit.authored_at < hi,
             ~exists(in_mr),
+            ~exists(made_by_mr),
         )
         .order_by(Commit.authored_at.desc())
     ).all()
@@ -224,6 +234,7 @@ def _unmapped_nearby(
                 Commit.authored_at < hi,
             )
             .distinct()
+            .order_by(func.coalesce(Account.display_name, Account.external_key))
             .limit(MAX_UNMAPPED + 1)
         )
     ]

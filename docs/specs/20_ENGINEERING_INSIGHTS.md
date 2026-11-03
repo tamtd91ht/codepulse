@@ -313,7 +313,7 @@ Một trang cho mỗi người, mỗi tháng, dùng trong buổi 1:1. Trang tr�
 - Mọi thao tác ghi khoá dòng hồ sơ (`SELECT … FOR UPDATE`): hai người thao tác cùng lúc thì người sau thấy trạng thái mới và nhận 409.
 - Mọi lần mở hồ sơ hay danh sách tháng của người khác ghi `evidence.view` / `evidence.list`; mọi chuyển trạng thái/sửa ghi `evidence.<hành động>`, sửa sau khi gửi lưu cả nội dung cũ trong audit.
 - Job tạo nháp chạy ngày 1–3 hằng tháng (bù lần chạy lỡ), từng người riêng rẽ: một hồ sơ lỗi không làm mất nháp của người khác.
-- 9.10b: "MR đáng chú ý" thêm MR chạm module một người nắm (§4.9, cấu hình `KNOWLEDGE_*`); khối **Commit không qua MR** (commit không thuộc MR nào trong tháng, tối đa 20); cảnh báo **account chưa gắn người** có commit trong cùng repo (tối đa 5 tên).
+- 9.10b: "MR đáng chú ý" thêm MR chạm module một người nắm (§4.9, cấu hình `KNOWLEDGE_*`); khối **Commit chưa thuộc MR nào** (không nằm trong MR đã thu thập, không phải merge/squash commit của MR; có thể là push thẳng, nhánh chưa mở MR hay commit cũ trước rebase — ngữ cảnh, không phải lỗi; không đưa vào bản nháp AI; tối đa 20); cảnh báo **account chưa gắn người** có commit trong cùng repo (tối đa 5 tên).
 
 ### 6.3. Quy trình hàng tháng
 1. **Ngày 1–3:** job tạo `draft` cho mỗi người có hoạt động trong tháng trước (scheduler, `REPORT_TZ`).
@@ -327,6 +327,12 @@ Một trang cho mỗi người, mỗi tháng, dùng trong buổi 1:1. Trang tr�
 - Đầu ra: 3 khối "đã làm / điểm tốt / cần chú ý". Mỗi câu phải trích ít nhất một `ref` trong snapshot; câu nào không có `ref` thì hậu xử lý bỏ đi.
 - Chỉ lead thấy bản nháp. Bản nháp không bao giờ tự phát hành.
 - Chỉ chạy khi project cho phép LLM ngoài (`allow_external_llm`) theo spec 11.
+
+### 6.4b. Chạy bản nháp (khi làm 9.11)
+- `POST …/ai-draft` trả 202 và xếp hàng job `ai_draft_job`; `ai_draft_started_at` giữ hồ sơ (một bản nháp một lúc, 409 nếu đang chạy; job chết quá 10 phút thì nhả). Người được nhận xét gọi → 403.
+- Kiểm tra trước khi xếp hàng: đã kết nối Claude, còn ngân sách tháng, mọi repo mà MR và finding trong hồ sơ thuộc về đều `allow_external_llm`.
+- Dữ liệu gửi đi đã qua `redact` (che secret) và không đóng được thẻ dữ liệu; job không khoá dòng khi model viết, xong mới khoá và kiểm tra lại hồ sơ vẫn ở `submitted`/`reviewed`, nếu không thì bỏ bản nháp. Chi phí luôn ghi audit `evidence.ai_draft` (tính vào ngân sách).
+- Incident (9.9): mỗi lần sync đọc lại incident đang mở mà bộ lọc không còn trả về (`iids[]`): đổi nhãn/loại hay bị xoá thì không còn là incident; mở lại thì bỏ MR sửa cũ; nhãn `Any`/`None` (ký tự đại diện của GitLab) bị bỏ qua.
 
 ### 6.5. Quyền
 Xem §8. Mặc định đề xuất: **bản thân + lead trực tiếp + admin**. Quản lý dự án và Quản lý tổng **không** xem hồ sơ, vì hồ sơ gộp việc ở mọi dự án của một người ([DECISION D4]).

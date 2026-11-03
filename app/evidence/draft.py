@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.assistant.chat import parse_stream_line
+from app.review.prepare import redact
 from app.review.providers.claude_code import cli_env, scrub_secrets, stream_lines
 
 TIMEOUT_S = 180.0
@@ -69,8 +70,6 @@ def references(snapshot: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) 
             out[f"mr:{m['id']}"] = f"MR !{m['iid']} {repo}".strip()
     for f in (snapshot.get("quality") or {}).get("items", []):
         out[f"finding:{f['id']}"] = f"finding: {f.get('title') or f['id']}"
-    for c in (snapshot.get("direct_commits") or {}).get("items", []):
-        out[f"commit:{str(c['sha'])[:8]}"] = f"commit {str(c['sha'])[:8]}"
     for i in items:
         out[f"item:{i['id']}"] = f"bằng chứng: {i.get('title') or i['id']}"
     return out
@@ -136,10 +135,6 @@ def build_prompt(
             }
             for w in snapshot.get("waiting", [])
         ],
-        "commit_khong_qua_mr": [
-            {"ref": f"commit:{str(c['sha'])[:8]}", "title": c.get("title")}
-            for c in (snapshot.get("direct_commits") or {}).get("items", [])[:MAX_ITEMS_PER_LIST]
-        ],
         "bang_chung_bo_sung": [
             {
                 "ref": f"item:{i['id']}",
@@ -151,11 +146,10 @@ def build_prompt(
         ],
         "tu_nhan_xet": (self_notes or "")[:4000],
     }
-    return (
-        "<du_lieu>\n"
-        + json.dumps(data, ensure_ascii=False, indent=1)
-        + "\n</du_lieu>\n\nViết bản nháp theo đúng quy tắc."
-    )
+    # Free text (titles, notes) could hold a secret or try to close the data tag.
+    dumped = redact(json.dumps(data, ensure_ascii=False, indent=1))
+    dumped = dumped.replace("<", "\\u003c").replace(">", "\\u003e")
+    return "<du_lieu>\n" + dumped + "\n</du_lieu>\n\nViết bản nháp theo đúng quy tắc."
 
 
 def postprocess(text: str, known: Mapping[str, str]) -> tuple[str, int]:

@@ -64,7 +64,6 @@ def test_references_cover_everything_the_draft_may_cite() -> None:
         "mr:12": "MR !102 demo/p",
         "mr:21": "MR !201 demo/q",
         "finding:31": "finding: SQL injection",
-        "commit:abcdef12": "commit abcdef12",
         "item:41": "bằng chứng: Kèm bạn mới",
     }
 

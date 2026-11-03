@@ -8,7 +8,6 @@ cannot both move it.
 """
 
 import re
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal, get_args
@@ -21,13 +20,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.audit import audit
-from app.api.deps import get_secret_box, get_session
+from app.api.deps import get_queue, get_secret_box, get_session
 from app.api.security import CurrentPrincipal, Principal
+from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
 from app.evidence import draft, snapshot
+from app.evidence import jobs as draft_jobs
 from app.insights import INSIGHTS_VERSION
-from app.models import EvidenceItem, EvidencePack, Project, TeamMember, User
+from app.models import EvidenceItem, EvidencePack, TeamMember, User
 from app.models.evidence import EVIDENCE_KINDS
 
 router = APIRouter(tags=["evidence"])
@@ -157,6 +158,12 @@ def _create(session: Session, user_id: int, start: date, settings: Settings) -> 
     return pack
 
 
+def _drafting(pack: EvidencePack) -> bool:
+    """A draft job holds the pack (a job dead for longer than its timeout frees it)."""
+    started = pack.ai_draft_started_at
+    return started is not None and datetime.now(UTC) - started < draft_jobs.DRAFT_STALE
+
+
 def _can(role: Role, status: str | None) -> dict[str, bool]:
     """§6.2b; status None = no stored pack yet (a draft in all but name)."""
     st = status or "draft"
@@ -220,6 +227,7 @@ def _out(
         "goals_next": pack.goals_next if pack else None,
         # §6.4: the AI draft is the lead's working material only.
         "ai_draft": pack.ai_draft if pack and role.lead else None,
+        "ai_draft_running": bool(pack and role.lead and _drafting(pack)),
         "submitted_at": pack.submitted_at.isoformat() if pack and pack.submitted_at else None,
         "reviewed_at": pack.reviewed_at.isoformat() if pack and pack.reviewed_at else None,
         "reviewed_by_name": names.get(pack.reviewed_by) if pack and pack.reviewed_by else None,
@@ -444,39 +452,7 @@ def delete_item(
     return _out(session, principal.user_id, user, role, start, pack, live)
 
 
-DraftRunner = Callable[[str, Mapping[str, str], Settings, str], draft.DraftOutcome]
-
-
-def _run_draft(
-    prompt: str, known: Mapping[str, str], settings: Settings, token: str
-) -> draft.DraftOutcome:
-    from app.admin_settings import effective
-    from app.db import get_sessionmaker
-
-    with get_sessionmaker()() as session:
-        model = str(effective(session, settings)["llm_model"])
-    return draft.run_draft(
-        binary=settings.claude_code_bin, model=model, token=token, prompt=prompt, known=known
-    )
-
-
-def get_draft_runner() -> DraftRunner:
-    """The CLI call (tests swap it for a fake)."""
-    return _run_draft
-
-
-def _llm_token(session: Session, box: SecretBox, settings: Settings) -> str:
-    from app.review.credentials import stored_claude_token
-
-    stored = stored_claude_token(session, box)
-    return (
-        (stored.token if stored else "")
-        or settings.claude_code_oauth_token.get_secret_value()
-        or settings.llm_api_key.get_secret_value()
-    )
-
-
-@router.post("/evidence/{user_id}/{period}/ai-draft")
+@router.post("/evidence/{user_id}/{period}/ai-draft", status_code=202)
 def ai_draft(
     user_id: int,
     period: str,
@@ -484,67 +460,51 @@ def ai_draft(
     session: SessionDep,
     settings: SettingsDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
-    runner: Annotated[DraftRunner, Depends(get_draft_runner)],
+    queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> dict[str, Any]:
-    """§6.4 (9.11): a draft of the lead's note from the frozen snapshot, never code; every
-    bullet cites the snapshot. Only for the lead, once the pack is submitted; within the
-    month's LLM budget; never when a repo of the month refuses external LLMs."""
+    """§6.4 (9.11): queue a draft of the lead's note from the frozen snapshot (never code;
+    every bullet cites the snapshot). Lead or admin only, once the pack is submitted; one at a
+    time per pack; within the month's LLM budget; never when a repo the pack draws on refuses
+    external LLMs. The pack's `ai_draft_running` turns false when the draft is in."""
     from app.admin_settings import monthly_budget_usd
     from app.workers.knowledge_jobs import month_spend_usd  # lazy: the worker module is heavy
 
     user, role = _person(session, principal, user_id, settings)
+    if not role.lead:
+        raise HTTPException(403, "only the lead or an admin drafts the lead's note")
     start = _period(period, settings)
-    pack = _stored(session, user.id, start)
+    pack = _stored(session, user.id, start, lock=True)
     if pack is None or not _can(role, pack.status)["ai_draft"]:
         raise HTTPException(409, "the lead drafts once the pack is submitted")
+    if _drafting(pack):
+        raise HTTPException(409, "a draft is being written for this pack")
     if settings.llm_provider != "claude_code":
         raise HTTPException(503, "the AI draft needs LLM_PROVIDER=claude_code")
-    token = _llm_token(session, box, settings)
-    if not token:
+    if not draft_jobs.llm_token(session, box, settings):
         raise HTTPException(503, "CodePulse is not connected to Claude (Admin > LLM & Chi phí)")
     budget = monthly_budget_usd(session, settings)
     if budget > 0 and month_spend_usd(session) >= budget:
         raise HTTPException(409, "the month's LLM budget is used up")
-    snap = pack.snapshot or {}
-    repo_ids = {
-        int(m["project_id"])
-        for key in ("merged", "reviews_given")
-        for m in (snap.get(key) or {}).get("items", [])
-        if m.get("project_id") is not None
-    }
-    if repo_ids and session.scalar(
-        select(Project.id)
-        .where(Project.id.in_(repo_ids), Project.allow_external_llm.is_(False))
-        .limit(1)
-    ):
+    if draft_jobs.refused_repos(session, pack.snapshot or {}):
         raise HTTPException(409, "a repo of this month does not allow sending data to the LLM")
-    items = [
-        {"id": i.id, "kind": i.kind, "title": i.title, "note": i.note}
-        for i in session.scalars(select(EvidenceItem).where(EvidenceItem.pack_id == pack.id))
-    ]
-    known = draft.references(snap, items)
-    prompt = draft.build_prompt(snap, items, pack.self_notes)
-    session.commit()  # nothing written yet: free the connection while the model writes
-    outcome = runner(prompt, known, settings, token)
-    pack = _stored(session, user.id, start, lock=True)
-    if pack is None:
-        raise HTTPException(404, "evidence pack not found")
+    pack.ai_draft_started_at = datetime.now(UTC)
     audit(
-        session,
-        principal.user_id,
-        "evidence.ai_draft",
-        f"user:{user.id}",
-        period=str(start),
-        ok=outcome.ok,
-        model=outcome.model,
-        cost_usd=outcome.cost_usd,
-        dropped=outcome.dropped,
+        session, principal.user_id, "evidence.ai_draft_queue", f"user:{user.id}", period=str(start)
     )
-    if outcome.ok:
-        pack.ai_draft = outcome.text
     session.commit()
-    if not outcome.ok:
-        raise HTTPException(502, outcome.error or "the AI draft failed")
+    try:
+        queue.enqueue(
+            "app.evidence.jobs.ai_draft_job",
+            pack.id,
+            principal.user_id,
+            job_id=f"evidence-draft-{pack.id}",
+            job_timeout=int(draft.TIMEOUT_S) + 120,
+        )
+    except Exception:
+        pack = _stored(session, user.id, start, lock=True) or pack
+        pack.ai_draft_started_at = None
+        session.commit()
+        raise HTTPException(503, "could not queue the draft; try again") from None
     return _out(session, principal.user_id, user, role, start, pack)
 
 

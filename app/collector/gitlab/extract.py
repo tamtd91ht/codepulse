@@ -76,6 +76,8 @@ class GlMergeRequest:
     created_at: datetime | None
     merged_at: datetime | None
     closed_at: datetime | None
+    merge_commit_sha: str | None = None
+    squash_commit_sha: str | None = None
     commits: list[GlCommit] = field(default_factory=list)
     notes: list[GlNote] = field(default_factory=list)
     files: list[GlFileStat] | None = None
@@ -126,6 +128,7 @@ class Extracted:
     environment_tiers: dict[str, str | None] = field(default_factory=dict)
     deployments: dict[int, GlDeployment] = field(default_factory=dict)
     incidents: dict[int, GlIncident] = field(default_factory=dict)  # by iid
+    incidents_gone: set[int] = field(default_factory=set)  # iids no longer incidents
 
 
 def _user(raw: dict[str, Any]) -> GlUser:
@@ -197,6 +200,8 @@ def extract(rows: Iterable[RawGitlab]) -> Extracted:
                     created_at=parse_ts(payload.get("created_at")),
                     merged_at=parse_ts(payload.get("merged_at")),
                     closed_at=parse_ts(payload.get("closed_at")),
+                    merge_commit_sha=payload.get("merge_commit_sha"),
+                    squash_commit_sha=payload.get("squash_commit_sha"),
                 )
             case ep.EP_MR_COMMITS | ep.EP_MR_NOTES | ep.EP_MR_DIFFS:
                 mr_parts.setdefault(int(params["iid"]), {})[row.endpoint] = payload
@@ -229,6 +234,8 @@ def extract(rows: Iterable[RawGitlab]) -> Extracted:
                     created_at=parse_ts(payload.get("created_at")),
                     closed_at=parse_ts(payload.get("closed_at")),
                 )
+            case ep.EP_INCIDENT_GONE:
+                out.incidents_gone.update(int(i) for i in payload or [])
             case ep.EP_INCIDENT_FIXES:
                 incident_fixes[int(params["iid"])] = [int(i) for i in payload or []]
             case ep.EP_DEPLOYMENT_MRS:

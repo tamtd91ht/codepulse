@@ -307,47 +307,95 @@ def test_single_owner_module_direct_commits_and_unmapped_accounts(
     assert snap["unmapped_accounts"] == ["Ai đó"]
 
 
-def test_ai_draft_for_the_lead_only(
+def test_ai_draft_is_queued_for_the_lead_and_written_by_the_job(
     client: TestClient,
     db_session: Session,
     world: World,
     settings: Settings,
     seeded: None,
+    queue: Any,
     as_user: Any,
 ) -> None:
     """docs/specs/20 §6.4 (9.11)."""
     from pydantic import SecretStr
 
-    from app.api.main import app
-    from app.api.routers.evidence import get_draft_runner
     from app.evidence.draft import DraftOutcome
+    from app.evidence.jobs import write_draft
+    from app.workers.knowledge_jobs import month_spend_breakdown
 
     settings.llm_provider = "claude_code"
     settings.claude_code_oauth_token = SecretStr("tok")
+    me, lead = as_user(world.an), as_user(world.lead)
+    url = f"{path(world)}/ai-draft"
+    assert client.post(url, headers=lead).status_code == 409  # nothing submitted yet
+    client.post(f"{path(world)}/submit", headers=me)
+    assert client.post(url, headers=me).status_code == 403  # never the person themselves
+    res = client.post(url, headers=lead)
+    assert res.status_code == 202, res.text
+    assert res.json()["ai_draft_running"] is True
+    name, args, _kwargs = queue.jobs[-1]
+    assert name == "app.evidence.jobs.ai_draft_job" and args[1] == world.lead.id
+    assert client.post(url, headers=lead).status_code == 409  # one at a time per pack
+
     seen: dict[str, Any] = {}
 
     def fake(prompt: str, known: Any, s: Any, token: str) -> DraftOutcome:
         seen.update(prompt=prompt, known=dict(known), token=token)
         return DraftOutcome(ok=True, text="### Đã làm\n- Việc lớn [MR !101]", cost_usd=0.02)
 
-    app.dependency_overrides[get_draft_runner] = lambda: fake
+    out = write_draft(db_session, args[0], args[1], settings, "tok", fake)
+    assert out.ok and "<du_lieu>" in seen["prompt"]
+    assert any(k.startswith("mr:") for k in seen["known"])
+    body = client.get(path(world), headers=lead).json()
+    assert body["ai_draft"].startswith("### Đã làm") and body["ai_draft_running"] is False
+    assert client.get(path(world), headers=me).json()["ai_draft"] is None  # the lead's only
+    assert month_spend_breakdown(db_session)["evidence_drafts_usd"] == 0.02
+
+
+def test_ai_draft_guards(
+    client: TestClient,
+    db_session: Session,
+    world: World,
+    settings: Settings,
+    seeded: None,
+    queue: Any,
+    as_user: Any,
+) -> None:
+    from decimal import Decimal
+
+    from pydantic import SecretStr
+
+    from app.evidence.draft import DraftOutcome
+    from app.evidence.jobs import write_draft
+    from app.models import Review
+
+    settings.llm_provider = "claude_code"
     me, lead = as_user(world.an), as_user(world.lead)
     url = f"{path(world)}/ai-draft"
-    assert client.post(url, headers=lead).status_code == 409  # nothing submitted yet
     client.post(f"{path(world)}/submit", headers=me)
-    assert client.post(url, headers=me).status_code == 409  # never the person themselves
-    res = client.post(url, headers=lead)
-    assert res.status_code == 200, res.text
-    assert res.json()["ai_draft"].startswith("### Đã làm")
-    assert seen["token"] == "tok" and "<du_lieu>" in seen["prompt"]
-    assert any(k.startswith("mr:") for k in seen["known"])
-    # The person never sees the lead's draft.
-    assert client.get(path(world), headers=me).json()["ai_draft"] is None
-    # Its cost is in the month's one LLM budget.
-    from app.workers.knowledge_jobs import month_spend_breakdown
-
-    assert month_spend_breakdown(db_session)["evidence_drafts_usd"] == 0.02
-    # A repo that refuses external LLMs blocks it.
-    world.project.allow_external_llm = False
+    settings.claude_code_oauth_token = SecretStr("")
+    settings.llm_api_key = SecretStr("")
+    assert client.post(url, headers=lead).status_code == 503  # not connected to Claude
+    settings.claude_code_oauth_token = SecretStr("tok")
+    settings.monthly_llm_budget_usd = 1.0
+    world.an_review.cost_usd = Decimal("5")
+    world.an_review.started_at = datetime.now(UTC)
+    db_session.flush()
+    assert client.post(url, headers=lead).status_code == 409  # budget used up
+    settings.monthly_llm_budget_usd = 0
+    world.project.allow_external_llm = False  # the repo of the confirmed finding
     db_session.flush()
     assert client.post(url, headers=lead).status_code == 409
+    world.project.allow_external_llm = True
+    db_session.flush()
+    assert client.post(url, headers=lead).status_code == 202
+    pack_id = queue.jobs[-1][1][0]
+    # Returned to the person while the model wrote: the draft is dropped, the cost still booked.
+    client.post(f"{path(world)}/return", headers=lead)
+
+    def fake(prompt: str, known: Any, s: Any, token: str) -> DraftOutcome:
+        return DraftOutcome(ok=True, text="- x [MR !1]", cost_usd=0.01)
+
+    write_draft(db_session, pack_id, world.lead.id, settings, "tok", fake)
+    assert client.get(path(world), headers=lead).json()["ai_draft"] is None
+    assert isinstance(db_session.get(Review, world.an_review.id), Review)

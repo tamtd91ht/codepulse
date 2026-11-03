@@ -140,7 +140,10 @@ export default function EvidencePage({ params }: { params: Promise<{ id: string 
     }
   };
   const key = month && `/evidence/${id}/${month}`;
-  const { data, error, mutate } = useApi<EvidencePack>(key);
+  // While an AI draft is being written (a background job), poll until it is in.
+  const { data, error, mutate } = useApi<EvidencePack>(key, {
+    refreshInterval: (latest) => (latest?.ai_draft_running ? 4000 : 0),
+  });
   const { mutate: mutateKey } = useSWRConfig();
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -474,10 +477,11 @@ export default function EvidencePage({ params }: { params: Promise<{ id: string 
               draft={pack.ai_draft}
               canRun={can.ai_draft}
               canUse={can.edit_lead_notes}
+              running={pack.ai_draft_running}
               hasNotes={!!pack.lead_notes}
               busy={busy}
               onRun={() =>
-                run(period, () => api.post<EvidencePack>(`/evidence/${id}/${period}/ai-draft`), "Đã tạo bản nháp. Đọc, sửa rồi mới dùng.")
+                run(period, () => api.post<EvidencePack>(`/evidence/${id}/${period}/ai-draft`), "Đang tạo bản nháp (thường dưới hai phút); trang tự cập nhật.")
               }
               onUse={(text) =>
                 run(period, () => api.patch<EvidencePack>(`/evidence/${id}/${period}`, { lead_notes: text }), "Đã chép bản nháp vào nhận xét của lead.")
@@ -512,6 +516,7 @@ function AiDraft({
   draft,
   canRun,
   canUse,
+  running,
   hasNotes,
   busy,
   onRun,
@@ -520,6 +525,7 @@ function AiDraft({
   draft: string | null;
   canRun: boolean;
   canUse: boolean;
+  running: boolean;
   hasNotes: boolean;
   busy: boolean;
   onRun: () => Promise<void>;
@@ -534,13 +540,13 @@ function AiDraft({
             <button
               type="button"
               className="sm"
-              disabled={busy}
+              disabled={busy || running}
               onClick={() => {
                 if (window.confirm("Tạo bản nháp nhận xét từ số liệu đã chốt? Chỉ số liệu và tiêu đề MR được gửi cho Claude, không gửi mã nguồn; tốn một ít ngân sách LLM của tháng."))
                   void onRun();
               }}
             >
-              {draft ? "Tạo lại" : "Tạo bản nháp"}
+              {running ? "Đang tạo…" : draft ? "Tạo lại" : "Tạo bản nháp"}
             </button>
           )}
           {draft && canUse && (
@@ -557,6 +563,11 @@ function AiDraft({
           )}
         </span>
       </div>
+      {running && (
+        <p className="small muted" role="status" style={{ margin: "8px 0 0" }}>
+          Đang tạo bản nháp từ số liệu đã chốt… trang tự cập nhật khi xong.
+        </p>
+      )}
       {draft ? (
         <p className="small" style={{ whiteSpace: "pre-wrap", margin: "8px 0 0" }}>
           {draft}

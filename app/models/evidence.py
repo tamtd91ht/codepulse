@@ -38,6 +38,8 @@ class EvidencePack(TimestampMixin, Base):
     self_notes: Mapped[str | None]
     lead_notes: Mapped[str | None]
     ai_draft: Mapped[str | None]  # 9.11; never published on its own
+    # A draft being written (one at a time per pack); NULL = none running.
+    ai_draft_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     goals_next: Mapped[str | None]
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

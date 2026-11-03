@@ -170,6 +170,8 @@ class Converter:
                 "deletions": deletions,
                 "review_rounds": review_rounds(mr),
                 "head_sha": mr.head_sha,
+                "merge_commit_sha": mr.merge_commit_sha,
+                "squash_commit_sha": mr.squash_commit_sha,
             }
             stmt = self._upsert(MergeRequest, values, ["project_id", "iid"])
             mr_id = self._session.execute(stmt.returning(MergeRequest.id)).scalar_one()
@@ -220,9 +222,19 @@ class Converter:
                 "created_at_src": incident.created_at,
                 "closed_at_src": incident.closed_at,
             }
-            if incident.fix_mr_iids is not None:
+            if incident.state != "closed":
+                row["fix_mr_iids"] = None  # reopened: its old fix is not one any more
+            elif incident.fix_mr_iids is not None:
                 row["fix_mr_iids"] = incident.fix_mr_iids
             self._session.execute(self._upsert(Incident, row, ["id"]))
+        if data.incidents_gone:
+            # Relabelled, retyped or deleted on GitLab: no longer an incident.
+            self._session.execute(
+                delete(Incident).where(
+                    Incident.project_id == self._project.id,
+                    Incident.iid.in_(sorted(data.incidents_gone)),
+                )
+            )
         counts["incidents"] = len(data.incidents)
         self._session.flush()
         return result

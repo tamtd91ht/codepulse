@@ -1573,6 +1573,8 @@ export interface EvidencePack {
   goals_next: string | null;
   /** The lead's AI draft (§6.4); null for the person themselves. */
   ai_draft: string | null;
+  /** A draft job is writing it (poll until false). */
+  ai_draft_running: boolean;
   submitted_at: string | null;
   reviewed_at: string | null;
   reviewed_by_name: string | null;

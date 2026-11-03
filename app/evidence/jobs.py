@@ -2,16 +2,21 @@
 draft pack, so the 1:1 starts from what the system already gathered."""
 
 import logging
-from datetime import UTC, date, datetime
+from collections.abc import Callable, Mapping
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.evidence import snapshot
+from app.api.audit import audit
+from app.config import Settings
+from app.crypto import SecretBox
+from app.evidence import draft, snapshot
 from app.insights import INSIGHTS_VERSION
-from app.models import EvidencePack, User
+from app.models import EvidenceItem, EvidencePack, Project, Review, User
 
 log = logging.getLogger(__name__)
 
@@ -95,3 +100,125 @@ def create_drafts_job() -> dict[str, int]:
             snapshot.knowledge_config(settings),
         )
     return {"created": created}
+
+
+# -- AI draft of the lead's note (docs/specs/20 §6.4, 9.11) --------------------------------------
+
+# A draft job dead longer than this (its timeout plus margin) no longer holds the pack.
+DRAFT_STALE = timedelta(minutes=10)
+DraftRunner = Callable[[str, Mapping[str, str], Settings, str], draft.DraftOutcome]
+
+
+def llm_token(session: Session, box: SecretBox, settings: Settings) -> str:
+    """As the reviews pick it (app/review/providers.build_provider)."""
+    from app.review.credentials import stored_claude_token
+
+    stored = stored_claude_token(session, box)
+    return (
+        (stored.token if stored else "")
+        or settings.claude_code_oauth_token.get_secret_value()
+        or settings.llm_api_key.get_secret_value()
+    )
+
+
+def refused_repos(session: Session, snap: Mapping[str, Any]) -> list[int]:
+    """Repos the prompt draws on (MRs, and the reviews behind its findings) that refuse
+    external LLMs (`projects.allow_external_llm = false`)."""
+    from app.api.access import review_repo
+
+    repo_ids = {
+        int(m["project_id"])
+        for key in ("merged", "reviews_given")
+        for m in (snap.get(key) or {}).get("items", [])
+        if m.get("project_id") is not None
+    }
+    for f in (snap.get("quality") or {}).get("items", []):
+        review = session.get(Review, f.get("review_id")) if f.get("review_id") else None
+        repo = review_repo(session, review) if review else None
+        if repo is not None:
+            repo_ids.add(repo.id)
+    if not repo_ids:
+        return []
+    return list(
+        session.scalars(
+            select(Project.id).where(
+                Project.id.in_(repo_ids), Project.allow_external_llm.is_(False)
+            )
+        )
+    )
+
+
+def _run_cli(
+    prompt: str, known: Mapping[str, str], settings: Settings, token: str
+) -> draft.DraftOutcome:
+    from app.admin_settings import effective
+    from app.db import get_sessionmaker
+
+    with get_sessionmaker()() as session:
+        model = str(effective(session, settings)["llm_model"])
+    return draft.run_draft(
+        binary=settings.claude_code_bin, model=model, token=token, prompt=prompt, known=known
+    )
+
+
+def write_draft(
+    session: Session,
+    pack_id: int,
+    actor_id: int,
+    settings: Settings,
+    token: str,
+    runner: DraftRunner = _run_cli,
+) -> draft.DraftOutcome:
+    """Draft one pack's lead note. The row is not locked while the model writes; afterwards the
+    pack must still be open to the lead, else the draft is dropped. The cost is audited whatever
+    the outcome (it was paid)."""
+    pack = session.get(EvidencePack, pack_id)
+    if pack is None:
+        return draft.DraftOutcome(error="evidence pack not found")
+    items = [
+        {"id": i.id, "kind": i.kind, "title": i.title, "note": i.note}
+        for i in session.scalars(select(EvidenceItem).where(EvidenceItem.pack_id == pack.id))
+    ]
+    snap = pack.snapshot or {}
+    known = draft.references(snap, items)
+    prompt = draft.build_prompt(snap, items, pack.self_notes)
+    user_id, period = pack.user_id, str(pack.period_start)
+    session.commit()  # no lock and no open transaction while the model writes
+    outcome = runner(prompt, known, settings, token)
+    pack = session.scalars(
+        select(EvidencePack).where(EvidencePack.id == pack_id).with_for_update()
+    ).first()
+    if pack is None:
+        return outcome
+    kept = outcome.ok and pack.status in ("submitted", "reviewed")
+    if kept:
+        pack.ai_draft = outcome.text
+    pack.ai_draft_started_at = None
+    audit(
+        session,
+        actor_id,
+        "evidence.ai_draft",
+        f"user:{user_id}",
+        period=period,
+        ok=outcome.ok,
+        kept=kept,
+        model=outcome.model,
+        cost_usd=outcome.cost_usd,
+        dropped=outcome.dropped,
+        error=(outcome.error or "")[:300] or None,
+    )
+    session.commit()
+    return outcome
+
+
+def ai_draft_job(pack_id: int, actor_id: int) -> dict[str, Any]:
+    """RQ entry point (queued by POST /evidence/{id}/{yyyy-mm}/ai-draft)."""
+    from app.config import get_settings
+    from app.crypto import secret_box
+    from app.db import get_sessionmaker
+
+    settings = get_settings()
+    with get_sessionmaker()() as session:
+        token = llm_token(session, secret_box(), settings)
+        outcome = write_draft(session, pack_id, actor_id, settings, token)
+    return {"ok": outcome.ok, "cost_usd": outcome.cost_usd, "error": outcome.error}

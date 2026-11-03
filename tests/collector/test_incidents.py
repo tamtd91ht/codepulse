@@ -31,6 +31,7 @@ def issue(
         "web_url": f"https://gitlab.example.com/demo/p/-/issues/{iid}",
         "created_at": "2026-10-05T02:00:00Z",
         "closed_at": "2026-10-05T06:00:00Z" if state == "closed" else None,
+        "issue_type": "incident" if not labels else "issue",
     }
 
 
@@ -74,3 +75,43 @@ def test_issues_off_skips_incidents(db_session: Session) -> None:
         router.get(f"{P}/issues").mock(return_value=httpx.Response(403, json={"message": "403"}))
         run(db_session, project)
     assert db_session.scalars(select(Incident)).all() == []
+
+
+def test_relabelled_incidents_go_and_reopened_ones_lose_their_fix(db_session: Session) -> None:
+    project = make_project(db_session)
+    with respx.mock(assert_all_called=False) as router:
+        mount(router)
+        router.get(f"{P}/issues").mock(
+            side_effect=lambda r: httpx.Response(
+                200,
+                json=[issue(1, 10), issue(2, 11, "closed")]
+                if r.url.params.get("issue_type") == "incident"
+                else [],
+            )
+        )
+        router.get(f"{P}/issues/11/closed_by").mock(
+            return_value=httpx.Response(200, json=[{"iid": 3}])
+        )
+        run(db_session, project)
+    assert {i.iid for i in db_session.scalars(select(Incident))} == {10, 11}
+
+    # Next sync: 10 was relabelled "bug" (not listed by the filters any more), 11 reopened.
+    def later(request: httpx.Request) -> httpx.Response:
+        params = request.url.params
+        if params.get("issue_type") == "incident":
+            reopened = issue(2, 11)
+            reopened["issue_type"] = "incident"
+            return httpx.Response(200, json=[reopened])
+        if params.get_list("iids[]") == ["10"]:
+            relabelled = issue(1, 10, labels=["bug"])
+            relabelled["issue_type"] = "issue"
+            return httpx.Response(200, json=[relabelled])
+        return httpx.Response(200, json=[])
+
+    with respx.mock(assert_all_called=False) as router:
+        mount(router)
+        router.get(f"{P}/issues").mock(side_effect=later)
+        run(db_session, project)
+    left = {i.iid: i for i in db_session.scalars(select(Incident))}
+    assert set(left) == {11}
+    assert left[11].state == "opened" and left[11].fix_mr_iids is None

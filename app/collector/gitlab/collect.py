@@ -13,7 +13,7 @@ from app.collector.base import CollectResult
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.gitlab.diffstat import file_stat
 from app.insights.dora import is_production
-from app.models import MergeRequest, Pipeline, Project, RawGitlab
+from app.models import Incident, MergeRequest, Pipeline, Project, RawGitlab
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +31,9 @@ EP_DEPLOYMENT = "deployment"  # one row per deployment
 EP_DEPLOYMENT_MRS = "deployment_mrs"  # params.id, payload: list of MR iids it shipped
 EP_INCIDENT = "incident"  # one row per incident issue (docs/specs/20 §5.3)
 EP_INCIDENT_FIXES = "incident_fixes"  # params.iid, payload: MR iids that close it
+EP_INCIDENT_GONE = "incidents_gone"  # payload: iids that are no longer incidents
+# GitLab label filter wildcards, never a real incident label.
+LABEL_WILDCARDS = frozenset({"any", "none"})
 
 SYNC_OVERLAP = timedelta(hours=1)
 # docs/specs/20 §5.2: GitLab links the MRs of a deployment asynchronously.
@@ -169,7 +172,16 @@ class GitLabCollector:
         session.flush()
 
         self._collect_deployments(project, deployments_since or since, store, detail)
-        self._collect_incidents(project, incidents_since or since, incident_labels, store, detail)
+        open_iids = list(
+            session.scalars(
+                select(Incident.iid).where(
+                    Incident.project_id == project.id, Incident.state == "opened"
+                )
+            )
+        )
+        self._collect_incidents(
+            project, incidents_since or since, incident_labels, store, detail, open_iids
+        )
         session.flush()
 
         log.info(
@@ -236,17 +248,42 @@ class GitLabCollector:
         labels: Sequence[str],
         store: Callable[..., None],
         detail: Callable[..., Any],
+        open_iids: Sequence[int] = (),
     ) -> None:
         """docs/specs/20 §5.3 (D3): issues of type incident or with an incident label, and the
-        MRs that close each closed one. A repo with issues off (or not readable) has none."""
+        MRs that close each closed one. Incidents stored as open and not listed again are read
+        back: one relabelled, retyped or deleted on GitLab stops being an incident. A repo with
+        issues off (or not readable) has none."""
         pid = project.external_id
+        wanted = [label for label in labels if label and label.lower() not in LABEL_WILDCARDS]
+
+        def qualifies(issue: Any) -> bool:
+            # Checked here too: an older GitLab may ignore the issue_type filter.
+            return issue.get("issue_type") == "incident" or any(
+                label in wanted for label in issue.get("labels") or []
+            )
+
         found: dict[int, Any] = {}
+        gone: list[int] = []
         try:
             for issue in self._client.issues(pid, since, issue_type="incident"):
                 found[int(issue["id"])] = issue
-            for label in labels:
+            for label in wanted:
                 for issue in self._client.issues(pid, since, labels=label):
                     found[int(issue["id"])] = issue
+            seen = {int(i["iid"]) for i in found.values()}
+            recheck = sorted(set(open_iids) - seen)
+            for start in range(0, len(recheck), 100):
+                chunk = recheck[start : start + 100]
+                back = {
+                    int(i["iid"]): i for i in self._client.issues(pid, None, **{"iids[]": chunk})
+                }
+                for iid in chunk:
+                    issue = back.get(iid)
+                    if issue is not None and qualifies(issue):
+                        found[int(issue["id"])] = issue
+                    else:
+                        gone.append(iid)
         except GitLabError as exc:
             if exc.status_code not in (403, 404):
                 raise
@@ -255,7 +292,11 @@ class GitLabCollector:
                 extra={"project_id": project.id, "status": exc.status_code},
             )
             return
+        if gone:
+            store(EP_INCIDENT_GONE, gone)
         for issue in found.values():
+            if not qualifies(issue):
+                continue
             iid = int(issue["iid"])
             store(EP_INCIDENT, issue, iid=iid)
             if issue.get("state") != "closed":

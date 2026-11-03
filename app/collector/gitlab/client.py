@@ -285,7 +285,7 @@ class GitLabClient:
         return self.paginate(f"/projects/{project_id}/deployments", params)
 
     def issues(
-        self, project_id: int, updated_after: datetime | None, **filters: str
+        self, project_id: int, updated_after: datetime | None, **filters: Any
     ) -> Iterator[Any]:
         """Issues of the project matching `filters` (issue_type=incident, labels=...)."""
         params: dict[str, Any] = {"scope": "all", "state": "all", **filters}
