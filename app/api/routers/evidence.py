@@ -225,6 +225,13 @@ def _out(
         if pack is not None
         else []
     )
+    # §6.2b: the person reads the lead's notes and the evidence the lead added once the lead
+    # has finished ("Đã xem" / "Chốt"), not while the lead is still writing, nor after a
+    # "Trả lại" sent it back to draft.
+    status = pack.status if pack else "draft"
+    lead_hidden = role.me and not role.lead and status not in ("reviewed", "shared")
+    if lead_hidden and pack is not None:
+        items = [i for i in items if i.added_by == pack.user_id]
     names = _names(session, {pack.reviewed_by if pack else None, *(i.added_by for i in items)})
     return {
         "user": {"id": user.id, "full_name": user.full_name, "primary_email": user.primary_email},
@@ -233,7 +240,7 @@ def _out(
         "status": pack.status if pack else "draft",
         "snapshot": live if live is not None else (pack.snapshot if pack else None),
         "self_notes": pack.self_notes if pack else None,
-        "lead_notes": pack.lead_notes if pack else None,
+        "lead_notes": pack.lead_notes if pack and not lead_hidden else None,
         "goals_next": pack.goals_next if pack else None,
         # §6.4: the AI draft is the lead's working material only.
         "ai_draft": pack.ai_draft if pack and role.lead else None,

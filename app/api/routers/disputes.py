@@ -9,6 +9,7 @@ from sqlalchemy import ColumnElement, and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.access import (
+    covers_work,
     review_repo,
     reviews_in_projects,
     sees_work,
@@ -192,7 +193,8 @@ def _decider(session: Session, principal: Principal, dispute: FindingDispute, ke
     return (
         dispute.raised_by is not None
         and dispute.raised_by != principal.user_id
-        and principal.covers(key, dispute.raised_by, _bp_of(session, dispute))
+        # covers_work: a repo outside every dự án (or a finding gone) is no one's but admins'.
+        and covers_work(principal, key, dispute.raised_by, _bp_of(session, dispute))
     )
 
 

@@ -404,3 +404,33 @@ def test_ai_draft_guards(
     write_draft(db_session, pack_id, world.lead.id, settings, "tok", fake)
     assert client.get(path(world), headers=lead).json()["ai_draft"] is None
     assert isinstance(db_session.get(Review, world.an_review.id), Review)
+
+
+def test_the_person_reads_the_leads_notes_once_the_lead_has_finished(
+    client: TestClient, world: World, seeded: None, as_user: Any
+) -> None:
+    """§6.2b: lead_notes and the lead's evidence stay hidden from the person while the lead is
+    still writing (submitted) and after a "Trả lại"; shown from reviewed."""
+    me, lead = as_user(world.an), as_user(world.lead)
+    client.patch(path(world), headers=me, json={"self_notes": "Việc ngoài Git"})
+    client.post(f"{path(world)}/submit", headers=me)
+    client.patch(path(world), headers=lead, json={"lead_notes": "NHÁP CỦA LEAD"})
+    added = client.post(
+        f"{path(world)}/items",
+        headers=lead,
+        json={"kind": "other", "title": "Ghi nhận của lead", "note": "nháp"},
+    )
+    assert added.status_code == 201, added.text
+
+    def mine() -> Any:
+        return client.get(path(world), headers=me).json()
+
+    assert mine()["lead_notes"] is None and mine()["items"] == []
+    assert client.get(path(world), headers=lead).json()["lead_notes"] == "NHÁP CỦA LEAD"
+    client.post(f"{path(world)}/return", headers=lead)
+    assert mine()["status"] == "draft" and mine()["lead_notes"] is None
+    client.post(f"{path(world)}/submit", headers=me)
+    client.post(f"{path(world)}/review", headers=lead)
+    seen = mine()
+    assert seen["lead_notes"] == "NHÁP CỦA LEAD"
+    assert [i["title"] for i in seen["items"]] == ["Ghi nhận của lead"]

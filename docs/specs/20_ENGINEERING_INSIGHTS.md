@@ -353,6 +353,7 @@ Một trang cho mỗi người, mỗi tháng, dùng trong buổi 1:1. Trang tr�
 | `reviewed` | Lead/admin và bản thân: sửa `goals_next`; lead/admin vẫn sửa được `lead_notes`, thêm bằng chứng; lead/admin bấm **Chốt sau 1:1** (không trả về nháp được nữa) | `shared` |
 | `shared` | Chỉ đọc; bản thân vẫn **thêm** phản hồi: nối vào cuối `self_notes` kèm ngày, không sửa/xoá được phần đã có (§6.3.5) | — |
 
+- **Người được nhận xét thấy `lead_notes` và bằng chứng lead thêm** từ `reviewed` (lead đã xong phần nhận xét, chuẩn bị cho 1:1). Trong `submitted` (lead còn đang viết) và khi hồ sơ bị trả về `draft`, phần đó bị ẩn. Quyết định ngày 2026-11-03, theo lượt soát an ninh.
 - "Lead trực tiếp" = lead của một team người đó **đang là thành viên thường** (`team_members.role ≠ lead`); hai co-lead của cùng team không duyệt hồ sơ của nhau. Lead tự xem hồ sơ của mình như mọi người; không tự duyệt.
 - Kỳ = tháng theo `REPORT_TZ`; chỉ mở được tháng đã bắt đầu, không quá `min(24, EVIDENCE_RETENTION_MONTHS)` tháng trước.
 - Nháp luôn hiện snapshot tính lại khi mở; gửi thì chốt snapshot tại lúc gửi.
