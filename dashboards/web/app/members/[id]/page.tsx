@@ -5,6 +5,7 @@ import { use, useEffect, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { SubPanel, type SubTab, SubTabs } from "@/components/AdminTabs";
+import { CriteriaSummaryBlock } from "@/components/CriteriaScores";
 import { IconButton } from "@/components/icons";
 import { scoreTone, useUrlRange } from "@/components/Evaluation";
 import { MemberEvaluation } from "@/components/MemberEvaluation";
@@ -495,6 +496,7 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
               )}
             </Card>
           </div>
+          <CriteriaSummaryBlock scope={{ user_id: person.id }} />
         </SubPanel>
       )}
 

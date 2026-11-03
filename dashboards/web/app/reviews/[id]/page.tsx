@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { use, useEffect, useRef, useState } from "react";
 
+import { ReviewCriteriaCard } from "@/components/CriteriaScores";
 import { CloseActions, ClosureNote } from "@/components/FindingClose";
 import { BasisCard, basisSummary, changedRules, previousRun } from "@/components/ReviewBasis";
 import { announceReviewQueued } from "@/components/ReviewActivity";
@@ -493,6 +494,8 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
 
       {review.error && <Alert tone="error">Lý do: {review.error}</Alert>}
 
+      <ReviewCriteriaCard scores={review.criteria_scores} findings={review.findings} />
+
       {review.intent && (review.intent.summary || review.intent.concerns.length > 0) && (
         <Card
           title="Thay đổi làm gì và có đúng hướng không"
@@ -619,7 +622,7 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
           // Newest first: the latest closing (or request) of this finding.
           const closure = closures.data?.find((c) => c.finding_id === f.id);
           return (
-            <article key={f.id} className={`finding ${f.severity}`}>
+            <article key={f.id} id={`finding-${f.id}`} tabIndex={-1} className={`finding ${f.severity}`}>
               <div className="finding-head">
                 <SeverityBadge severity={f.severity} />
                 <strong>{f.title}</strong>
