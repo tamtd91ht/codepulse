@@ -2775,7 +2775,14 @@ textarea.rules {
 .repo-pick .name {
   overflow-wrap: anywhere;
 }
+/* Many repos (Chọn tất cả): one row that scrolls sideways, not a wall of wrapped tabs. */
+.tabs.repo-tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
 .repo-tabs button {
+  flex: 0 0 auto;
   max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;

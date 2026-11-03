@@ -25,7 +25,8 @@ const WINDOWS: { value: Window; label: string }[] = [
 const ALL = "all";
 const POLL_MS = 10_000;
 const POLL_HIDDEN_MS = 60_000; // a tab not shown asks GitLab less often
-const MAX_REPOS = 10;
+// Commit lists fetched at once (each asks GitLab): the next repo starts when one is in.
+const LOAD_AT_ONCE = 4;
 
 function sinceOf(window: Window, from: string, to: string): { since?: string; until?: string } {
   if (window === "custom") {
@@ -97,7 +98,7 @@ const commitsPath = (repoId: number, params: string) => `/repos/${repoId}/commit
 
 type Outcome = ReviewCommitsResult | { error: string };
 
-/** Pick repos (up to 10), a branch, people and a window; see the commits per repo; queue reviews (docs/specs/17). */
+/** Pick repos (any number, all at once if wanted), a branch, people and a window; see the commits per repo; queue reviews (docs/specs/17). */
 export default function RequestReviewPage() {
   const repos = useApi<Repo[]>("/repos");
   const people = useApi<Person[]>("/people?for=review");
@@ -149,10 +150,22 @@ export default function RequestReviewPage() {
   );
   const picked = repoIds.map((id) => byId.get(id)).filter((r): r is Repo => !!r);
   const first = picked[0] ?? null;
-  const full = repoIds.length >= MAX_REPOS;
   const toggleRepo = (r: Repo, on: boolean) => {
     if (on && repoIds.length === 0 && !branch.trim()) setBranch(r.review_branch ?? r.default_branch ?? "");
-    setRepoIds((prev) => (on ? (prev.includes(r.id) || prev.length >= MAX_REPOS ? prev : [...prev, r.id]) : prev.filter((id) => id !== r.id)));
+    setRepoIds((prev) => (on ? (prev.includes(r.id) ? prev : [...prev, r.id]) : prev.filter((id) => id !== r.id)));
+    setBranchSearch("");
+  };
+  // "Chọn tất cả": every reviewable repo the dự án filter and the search show.
+  const selectable = visibleRepos.filter((r) => r.review_enabled);
+  const allShown = selectable.length > 0 && selectable.every((r) => repoIds.includes(r.id));
+  const selectShown = (on: boolean) => {
+    const ids = new Set(selectable.map((r) => r.id));
+    if (on) {
+      if (repoIds.length === 0 && !branch.trim() && selectable[0]) {
+        setBranch(selectable[0].review_branch ?? selectable[0].default_branch ?? "");
+      }
+      setRepoIds((prev) => [...prev, ...selectable.map((r) => r.id).filter((id) => !prev.includes(id))]);
+    } else setRepoIds((prev) => prev.filter((id) => !ids.has(id)));
     setBranchSearch("");
   };
   // Repos whose own review branch differs from the one typed: they are listed on it anyway.
@@ -206,6 +219,8 @@ export default function RequestReviewPage() {
   const againCount = chosen.reduce((n, c) => n + c.rows.filter((r) => r.again).length, 0);
   const tooMany = chosen.filter((c) => c.rows.length > c.max);
   const reposChosen = chosen.filter((c) => c.rows.length > 0).length;
+  // Repos whose commit list is in (or failed): the next ones may start loading.
+  const settled = (scope?.repos ?? []).filter((id) => lists[id] !== undefined || failed[id]).length;
 
   async function queue() {
     if (!scope || total === 0 || tooMany.length) return;
@@ -286,7 +301,7 @@ export default function RequestReviewPage() {
       <PageHeader
         eyebrow="Review"
         title="Yêu cầu review"
-        subtitle="Chọn tối đa 10 repo, một branch, người và khoảng thời gian; review chạy trong nền và lưu vào dashboard như review tự động. Chỉ repo thuộc dự án bạn được cấp quyền; trong đó bạn review được việc của mình; người quản lý dự án và admin review được mọi người."
+        subtitle="Chọn repo (bao nhiêu cũng được, hoặc tất cả), một branch, người và khoảng thời gian; review chạy trong nền và lưu vào dashboard như review tự động. Chỉ repo thuộc dự án bạn được cấp quyền; trong đó bạn review được việc của mình; người quản lý dự án và admin review được mọi người."
       />
 
       <Card title="Phạm vi">
@@ -300,7 +315,8 @@ export default function RequestReviewPage() {
           <form onSubmit={submit} className="request-form" style={{ display: "grid", gap: 14 }}>
             <div style={{ display: "grid", gap: 6 }}>
               <span className="muted small">
-                Repo ({repoIds.length}/{MAX_REPOS}){full ? " · đã đủ, bỏ bớt để chọn repo khác" : ""}
+                Repo đã chọn: {repoIds.length}
+                {repoIds.length > LOAD_AT_ONCE ? ` · danh sách commit tải lần lượt ${LOAD_AT_ONCE} repo một lúc` : ""}
               </span>
               <div className="toolbar" style={{ margin: 0 }}>
                 <select value={bp} onChange={(e) => setBp(e.target.value)} aria-label="Dự án">
@@ -319,6 +335,14 @@ export default function RequestReviewPage() {
                   aria-label="Tìm repo"
                   style={{ flex: "1 1 260px" }}
                 />
+                <button type="button" className="sm" disabled={selectable.length === 0 || allShown} onClick={() => selectShown(true)}>
+                  Chọn tất cả{needle || bp !== ALL ? " đang hiện" : ""} ({selectable.length})
+                </button>
+                {repoIds.length > 0 && (
+                  <button type="button" className="sm ghost" onClick={() => (allShown && (needle || bp !== ALL) ? selectShown(false) : setRepoIds([]))}>
+                    Bỏ chọn{allShown && (needle || bp !== ALL) ? " đang hiện" : " tất cả"}
+                  </button>
+                )}
               </div>
               <div className="repo-pick" role="group" aria-label="Repo">
                 {visibleRepos.length === 0 ? (
@@ -326,7 +350,7 @@ export default function RequestReviewPage() {
                 ) : (
                   visibleRepos.map((r) => {
                     const on = repoIds.includes(r.id);
-                    const disabled = !r.review_enabled || (!on && full);
+                    const disabled = !r.review_enabled;
                     return (
                       <label key={r.id} className={disabled ? "muted" : undefined}>
                         <input type="checkbox" checked={on} disabled={disabled} onChange={(e) => toggleRepo(r, e.target.checked)} />
@@ -533,11 +557,13 @@ export default function RequestReviewPage() {
               );
             })}
           </div>
-          {scope.repos.map((id) => (
+          {scope.repos.map((id, index) => (
             <RepoCommits
               key={`${scope.seq}:${id}`}
               repoId={id}
-              path={commitsPath(id, scope.params)}
+              // A few at a time (LOAD_AT_ONCE), the shown tab always: many repos must not ask
+              // GitLab all at once.
+              path={id === activeTab || index < settled + LOAD_AT_ONCE ? commitsPath(id, scope.params) : null}
               active={id === activeTab}
               selected={selected[id] ?? new Set()}
               setSelected={(update) => setRepoSelected(id, update)}
@@ -560,7 +586,8 @@ function RepoCommits({
   onList,
 }: {
   repoId: number;
-  path: string;
+  /** null: waiting for its turn to load. */
+  path: string | null;
   active: boolean;
   selected: Set<string>;
   setSelected: (update: (prev: Set<string>) => Set<string>) => void;
