@@ -18,6 +18,7 @@ from app.models.identity import Account, Team, TeamMember, User
 from app.models.knowledge import ReviewKnowledge, ReviewKnowledgeEdit
 from app.models.metrics import MetricsTeamPeriod, MetricsUserPeriod
 from app.models.notifications import NotificationWebhook
+from app.models.permissions import PermissionSet, PermissionSetItem, UserPermissionSet
 from app.models.review import FindingClosure, FindingDispute, Review, ReviewFinding
 from app.models.secrets import AppSetting, StoredSecret
 from app.models.source import BusinessProject, Connection, Project, ProjectGrant, RawGitlab
@@ -46,6 +47,8 @@ __all__ = [
     "MrCommit",
     "MrNote",
     "NotificationWebhook",
+    "PermissionSet",
+    "PermissionSetItem",
     "Pipeline",
     "Project",
     "ProjectGrant",
@@ -61,4 +64,5 @@ __all__ = [
     "TelegramBot",
     "TelegramRequest",
     "User",
+    "UserPermissionSet",
 ]

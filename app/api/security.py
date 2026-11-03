@@ -12,12 +12,22 @@ from typing import Annotated, Any
 
 import jwt
 from fastapi import Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_session
 from app.config import Settings, get_settings
-from app.models import BusinessProject, ProjectGrant, Team, TeamMember, User
+from app.models import (
+    BusinessProject,
+    PermissionSet,
+    PermissionSetItem,
+    ProjectGrant,
+    Team,
+    TeamMember,
+    User,
+    UserPermissionSet,
+)
+from app.permissions.catalog import BY_KEY, FLAG, everything, merge
 
 SESSION_COOKIE = "codepulse_session"
 ALGORITHM = "HS256"
@@ -62,6 +72,49 @@ class Principal:
     project_roles: dict[int, str] = field(default_factory=dict)
     # users.manage_all: "manage" on every dự án, granted or not (not admin: no Admin screens).
     manages_all: bool = False
+    # docs/specs/21: the permissions held (catalog key -> scope, or "flag"), the union of the
+    # permission sets of this person's roles and those given to them; admins hold everything.
+    perms: dict[str, str] = field(default_factory=dict)
+    # People in the teams this person manages (sub-teams included): the "team" scope with
+    # lead_members.
+    managed_members: set[int] = field(default_factory=set)
+
+    # -- docs/specs/21 ---------------------------------------------------------------------
+
+    def can(self, key: str) -> bool:
+        """Holds permission `key` at any scope."""
+        return self.is_admin or key in self.perms
+
+    def scope(self, key: str) -> str | None:
+        """The scope `key` is held at ("flag" for a flag); None: not held."""
+        if self.is_admin:
+            perm = BY_KEY.get(key)
+            return None if perm is None else FLAG if perm.is_flag else "all"
+        return self.perms.get(key)
+
+    def covers(self, key: str, user_id: int | None, bp_id: int | None) -> bool:
+        """Holds `key` over the work of `user_id` in dự án `bp_id` (docs/specs/21 §2): own
+        work; with "team" also the people one leads or manages; with "project" also everyone in a
+        dự án one manages; with "all" everyone in a dự án one can access."""
+        if self.is_admin:
+            return True
+        held = self.perms.get(key)
+        if held is None:
+            return False
+        if held == "flag":
+            return True
+        if user_id is not None and user_id == self.user_id:
+            return True
+        if held == "own":
+            return False
+        led = user_id is not None and user_id in (self.lead_members | self.managed_members)
+        if led and (bp_id is None or self.can_view_project(bp_id)):
+            return True
+        if held == "team":
+            return False
+        if held == "project":
+            return self.can_manage_project(bp_id)
+        return self.can_view_project(bp_id)  # "all"
 
     @property
     def is_lead(self) -> bool:
@@ -184,6 +237,22 @@ def load_principal(
                 )
             ).tuples()
         }
+    managed_members: set[int] = set()
+    if managed:
+        managed_members = {
+            m.user_id
+            for m in session.scalars(select(TeamMember).where(TeamMember.team_id.in_(managed)))
+            if m.joined_at <= day and (m.left_at is None or m.left_at > day)
+        } - {user.id}
+    auto_roles = ["member"]
+    if lead:
+        auto_roles.append("lead")
+    if managed_roots:
+        auto_roles.append("manager")
+    if any(role == "manage" for role in roles.values()) and not manages_all:
+        auto_roles.append("project_manager")
+    if manages_all:
+        auto_roles.append("manage_all")
     return Principal(
         user_id=user.id,
         email=user.primary_email,
@@ -194,7 +263,34 @@ def load_principal(
         lead_members=lead_members,
         project_roles=roles,
         manages_all=manages_all,
+        perms=everything() if is_admin else _permissions(session, user.id, auto_roles),
+        managed_members=managed_members,
     )
+
+
+def _permissions(session: Session, user_id: int, auto_roles: list[str]) -> dict[str, str]:
+    """The union of the sets of these roles and the sets given to the person (docs/specs/21)."""
+    given = select(UserPermissionSet.set_id).where(UserPermissionSet.user_id == user_id)
+    rows = session.execute(
+        select(PermissionSetItem.permission, PermissionSetItem.scope)
+        .join(PermissionSet, PermissionSet.id == PermissionSetItem.set_id)
+        .where(or_(PermissionSet.auto_role.in_(auto_roles), PermissionSet.id.in_(given)))
+    ).tuples()
+    return merge([(str(k), str(v)) for k, v in rows])
+
+
+def require(key: str) -> Any:
+    """FastAPI dependency: the principal holding permission `key` (at any scope; endpoints
+    check the scope on the object with `Principal.covers`), else 403."""
+    if key not in BY_KEY:
+        raise ValueError(f"unknown permission {key!r}")  # caught at import, not per request
+
+    def dependency(principal: CurrentPrincipal) -> Principal:
+        if not principal.can(key):
+            raise HTTPException(403, f"thiếu quyền {BY_KEY[key].label.lower()}")
+        return principal
+
+    return Depends(dependency)
 
 
 def current_principal(

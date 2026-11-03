@@ -243,4 +243,6 @@ def me(
         "insights": insights_allowed(principal),
         # Thành viên: lead and above too (app/api/security.require_members_page).
         "members_page": insights_allowed(principal),
+        # docs/specs/21: what this person may do (catalog key -> scope, or "flag").
+        "permissions": principal.perms,
     }
