@@ -421,6 +421,10 @@ export interface Page<T> {
 export interface FindingClosure {
   id: number;
   finding_id: number;
+  /** The viewer may run the check, refuse, or confirm (lead/manager of the author, or admin). */
+  can_decide?: boolean;
+  /** The viewer sent it and it still waits. */
+  can_cancel?: boolean;
   /** auto: a later review's change fixed it; request: the author named the fixing commits; admin: by hand; reopen. */
   kind: "auto" | "request" | "admin" | "reopen";
   /** pending: waiting for a manager/admin; checking: the check runs; proposed: the argument held, waiting for a

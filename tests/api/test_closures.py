@@ -173,9 +173,17 @@ def test_member_asks_manager_runs_the_check_and_it_closes(
     facets = client.get("/api/v1/close-requests/facets", headers=as_user(world.manager)).json()
     assert facets["todo"] == 1 and facets["can_decide"] is True
 
-    # Not the author, not their lead (decisions belong to a manager or an admin).
+    # Not the author nor a peer; their lead, a manager or an admin may (user request 2026-11-03).
     assert run(client, as_user, world.an, body["id"]).status_code == 403
-    assert run(client, as_user, world.lead, body["id"]).status_code == 403
+    assert run(client, as_user, world.binh, body["id"]).status_code == 403
+    # The review page offers the buttons to who may use them.
+    on_page = f"/api/v1/reviews/{world.an_review.id}/closures"
+    (as_lead,) = client.get(on_page, headers=as_user(world.lead)).json()
+    assert as_lead["can_decide"] is True and as_lead["can_cancel"] is False
+    (as_author,) = client.get(on_page, headers=as_user(world.an)).json()
+    assert as_author["can_decide"] is False and as_author["can_cancel"] is True
+    lead_todo = client.get("/api/v1/close-requests/facets", headers=as_user(world.lead)).json()
+    assert lead_todo["todo"] == 1 and lead_todo["can_decide"] is True
     started = run(client, as_user, world.manager, body["id"])
     assert started.status_code == 202
     assert started.json()["status"] == "checking"
@@ -550,10 +558,10 @@ def test_an_argument_proven_by_the_current_code_accepts_the_risk(
     assert world.an_finding.status == "open"
     todo = client.get("/api/v1/close-requests?view=todo", headers=as_user(world.manager)).json()
     assert [(i["status"], i["can_decide"]) for i in todo["items"]] == [("proposed", True)]
-    # Neither the author nor someone outside the team confirms it.
+    # Neither the author nor a peer confirms it.
     confirm = f"/api/v1/close-requests/{closure_id}/confirm"
     assert client.post(confirm, headers=as_user(world.an)).status_code == 403
-    assert client.post(confirm, headers=as_user(world.lead)).status_code == 403
+    assert client.post(confirm, headers=as_user(world.binh)).status_code == 403
     confirmed = client.post(confirm, headers=as_user(world.manager))
     assert confirmed.status_code == 200
     assert (confirmed.json()["status"], confirmed.json()["closed_as"]) == (
@@ -694,3 +702,16 @@ def test_a_name_matches_whole_names_and_the_nearest_first() -> None:
         "svc-b/src/data.py",
     ]
     assert all("hunter22secret" not in text for text in got.shown.values())
+
+
+def test_the_authors_lead_runs_the_check_from_the_review_page(
+    client: TestClient, world: World, as_user: Any, queue: FakeQueue
+) -> None:
+    body = ask(client, world, as_user, world.an, [FIX]).json()
+    started = run(client, as_user, world.lead, body["id"])
+    assert started.status_code == 202 and started.json()["status"] == "checking"
+    assert queue.jobs[-1][0] == "app.workers.closure_jobs.close_request_job"
+    (item,) = client.get(
+        f"/api/v1/reviews/{world.an_review.id}/closures", headers=as_user(world.lead)
+    ).json()
+    assert item["status"] == "checking" and item["can_decide"] is False  # nothing to press now

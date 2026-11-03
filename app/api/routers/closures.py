@@ -33,6 +33,7 @@ from sqlalchemy import ColumnElement, String, and_, cast, func, or_, select, tru
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
+from app.api.access import review_repo
 from app.api.audit import audit
 from app.api.deps import get_queue, get_session
 from app.api.routers.reviews import _visible_review
@@ -141,18 +142,23 @@ class ClosureOut(ORM):
     created_at: datetime
     updated_at: datetime
     decided_at: datetime | None
+    # What the viewer may do with it (the review page's buttons).
+    can_decide: bool = False
+    can_cancel: bool = False
 
 
 # -- who -------------------------------------------------------------------------------------------
 
 
 def _managed_members(session: Session, principal: Principal) -> set[int]:
-    """People in a team this person manages (sub-teams included) today, counted as
-    app/api/security.load_principal counts memberships."""
+    """People whose requests this person decides: in a team they manage (sub-teams included)
+    today, counted as app/api/security.load_principal counts memberships, or that they lead
+    (the same people who decide disputes, user request 2026-11-03)."""
+    leads = set(principal.lead_members) - {principal.user_id}
     if not principal.managed_teams:
-        return set()
+        return leads
     today = datetime.now(UTC).date()
-    return set(
+    return leads | set(
         session.scalars(
             select(TeamMember.user_id).where(
                 TeamMember.team_id.in_(principal.managed_teams),
@@ -166,8 +172,9 @@ def _managed_members(session: Session, principal: Principal) -> set[int]:
 def _may_decide(
     principal: Principal, managed: set[int], author_id: int | None, bp_id: int | None
 ) -> bool:
-    """An admin, or a manager of a team the author is in who is granted the dự án (docs/specs/09:
-    one without a grant does not exist for them); never the author themselves."""
+    """An admin, or a manager or lead of a team the author is in who is granted the dự án
+    (docs/specs/09: one without a grant does not exist for them); never the author
+    themselves."""
     if author_id == principal.user_id:
         return False
     if principal.is_admin:
@@ -518,7 +525,7 @@ def reopen_by_admin(
 @router.get("/reviews/{review_id}/closures", response_model=list[ClosureOut])
 def review_closures(
     review_id: int, principal: CurrentPrincipal, session: SessionDep
-) -> list[FindingClosure]:
+) -> list[dict[str, Any]]:
     """Every closing of this review's findings, newest first."""
     review = _visible_review(session, principal, review_id)
     rows = list(
@@ -534,7 +541,21 @@ def review_closures(
         session.commit()
         for row in rows:
             session.refresh(row)
-    return rows
+    project = review_repo(session, review)
+    decides = _may_decide(
+        principal,
+        _managed_members(session, principal),
+        review.author_user_id,
+        project.business_project_id if project else None,
+    )
+    return [
+        {
+            **ClosureOut.model_validate(row).model_dump(),
+            "can_decide": decides and row.kind == "request" and row.status in TO_DECIDE,
+            "can_cancel": row.status == "pending" and row.requested_by == principal.user_id,
+        }
+        for row in rows
+    ]
 
 
 def _repo_of_review() -> Any:

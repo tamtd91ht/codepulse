@@ -11,7 +11,8 @@ import type { Finding, FindingClosure } from "@/lib/types";
 /**
  * Closing a critical/high finding a later change fixed (app/review/resolve.py), on the review
  * page: how it was closed or where the request stands, and the forms. The author asks with the
- * fixing commits; a manager of their team or an admin runs the check (page "Đóng finding"); an
+ * fixing commits; their lead, a manager of their team or an admin runs the check, here or on the
+ * page "Đóng finding"; an
  * admin may also close or reopen it by hand with a note. Closing keeps the severity and the
  * score: a wrong finding is a dispute instead.
  */
@@ -26,41 +27,119 @@ export const CLOSED_AS: Record<string, string> = { fixed: "Đã sửa", accepted
 export const shortShas = (shas: string[]) => shas.map((s) => s.slice(0, 10)).join(", ");
 
 /** How the finding was closed, or what became of the last request. */
-export function ClosureNote({ closure, onDone }: { closure: FindingClosure | undefined; onDone: () => Promise<unknown> }) {
+/** What the lead/manager/admin does with a request, on the review page: run the AI check (again
+ * when it failed), confirm a proposed acceptance, or refuse with a note the author sees. */
+function DecideBar({ closure, onDone }: { closure: FindingClosure; onDone: () => Promise<unknown> }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const [refusing, setRefusing] = useState(false);
+  const [note, setNote] = useState("");
+  const act = async (path: string, body: unknown, ok: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/close-requests/${closure.id}/${path}`, body);
+      setDone(ok);
+      setRefusing(false);
+      await onDone();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!closure.can_decide && !closure.can_cancel) return null;
+  return (
+    <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {closure.can_decide && closure.status === "proposed" && (
+          <button
+            className="primary sm"
+            disabled={busy}
+            onClick={() => void act("confirm", undefined, "Đã đóng finding: chấp nhận rủi ro.")}
+          >
+            Xác nhận chấp nhận rủi ro
+          </button>
+        )}
+        {closure.can_decide && (closure.status === "pending" || closure.status === "failed") && (
+          <button
+            className="primary sm"
+            disabled={busy}
+            title="AI đọc commit sửa và/hoặc phản biện của tác giả cùng mã hiện tại, rồi đóng finding nếu đủ điều kiện. Tốn một ít ngân sách LLM."
+            onClick={() => void act("run", undefined, "Đã gửi AI review; kết quả hiện ở đây sau ít phút.")}
+          >
+            {closure.status === "failed" ? "Chạy review lại" : "Chạy review"}
+          </button>
+        )}
+        {closure.can_decide && !refusing && (
+          <button className="sm" disabled={busy} onClick={() => setRefusing(true)}>
+            Từ chối
+          </button>
+        )}
+        {closure.can_cancel && (
+          <button className="ghost sm" disabled={busy} onClick={() => void act("cancel", undefined, "Đã rút yêu cầu.")}>
+            Rút yêu cầu
+          </button>
+        )}
+      </div>
+      {refusing && (
+        <form
+          style={{ display: "grid", gap: 6, maxWidth: 520 }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void act("reject", { note: note.trim() }, "Đã từ chối yêu cầu.");
+          }}
+        >
+          <label htmlFor={`refuse-${closure.id}`} className="small" style={{ fontWeight: 600 }}>
+            Lý do từ chối (tác giả sẽ thấy)
+          </label>
+          <textarea id={`refuse-${closure.id}`} rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} />
+          <div style={{ display: "flex", gap: 6 }}>
+            <button type="submit" className="sm" disabled={busy || note.trim().length < 5}>
+              Gửi từ chối
+            </button>
+            <button type="button" className="ghost sm" disabled={busy} onClick={() => setRefusing(false)}>
+              Thôi
+            </button>
+          </div>
+        </form>
+      )}
+      {done && !error && (
+        <span className="small muted" role="status">
+          {done}
+        </span>
+      )}
+      {error && (
+        <span className="error small" role="alert">
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
+const WHO_DECIDES = "lead hoặc manager của tác giả, hoặc admin";
+
+export function ClosureNote({ closure, onDone }: { closure: FindingClosure | undefined; onDone: () => Promise<unknown> }) {
   if (!closure) return null;
   const when = closure.decided_at ? ` · ${date(closure.decided_at)}` : "";
   if (closure.status === "pending")
     return (
-      <div className="small" style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <Pill tone="info">Chờ duyệt</Pill>
-        <span className="muted">
-          Đã gửi yêu cầu đóng {basis(closure)} · {date(closure.created_at)}. Manager hoặc admin sẽ chạy review để kiểm.
-        </span>
-        <button
-          className="ghost sm"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setError(null);
-            try {
-              await api.post(`/close-requests/${closure.id}/cancel`);
-              await onDone();
-            } catch (e) {
-              setError(e instanceof ApiError ? e.message : String(e));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          Rút yêu cầu
-        </button>
-        {error && (
-          <span className="error" role="alert">
-            {error}
+      <div className="small" style={{ marginTop: 8, display: "grid", gap: 4 }}>
+        <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <Pill tone="info">Chờ duyệt</Pill>
+          <span className="muted">
+            Đã gửi yêu cầu đóng {basis(closure)} · {date(closure.created_at)}.{" "}
+            {closure.can_decide
+              ? "Bạn có thể chạy AI review để kiểm, hoặc từ chối."
+              : closure.can_cancel
+                ? `Chờ ${WHO_DECIDES} chạy review; bạn không tự duyệt yêu cầu của mình.`
+                : `Chờ ${WHO_DECIDES} chạy review.`}
           </span>
-        )}
+        </span>
+        {closure.argument && <span className="muted">Phản biện: {closure.argument}</span>}
+        <DecideBar closure={closure} onDone={onDone} />
       </div>
     );
   if (closure.status === "proposed")
@@ -68,7 +147,10 @@ export function ClosureNote({ closure, onDone }: { closure: FindingClosure | und
       <div className="small" style={{ marginTop: 8, display: "grid", gap: 4 }}>
         <span>
           <Pill tone="info">Đề xuất chấp nhận rủi ro</Pill>{" "}
-          <span className="muted">Phản biện được code chứng minh; chờ manager hoặc admin xác nhận.</span>
+          <span className="muted">
+            Phản biện được code chứng minh;{" "}
+            {closure.can_decide ? "hãy mở file bằng chứng trên GitLab rồi xác nhận hoặc từ chối." : `chờ ${WHO_DECIDES} xác nhận.`}
+          </span>
         </span>
         {closure.reason && <span className="muted">{closure.reason}</span>}
         {closure.evidence && (
@@ -76,6 +158,7 @@ export function ClosureNote({ closure, onDone }: { closure: FindingClosure | und
             Bằng chứng: <code>{closure.evidence}</code>
           </span>
         )}
+        <DecideBar closure={closure} onDone={onDone} />
       </div>
     );
   if (closure.status === "checking")
@@ -129,7 +212,7 @@ export function ClosureNote({ closure, onDone }: { closure: FindingClosure | und
       </p>
     );
   return (
-    <p className="small" style={{ marginTop: 8 }} role="status">
+    <div className="small" style={{ marginTop: 8 }} role="status">
       <Pill tone={closure.status === "failed" ? "warn" : "bad"}>
         {closure.status === "failed" ? "Chưa kiểm được" : "Chưa đủ điều kiện đóng"}
       </Pill>{" "}
@@ -137,7 +220,8 @@ export function ClosureNote({ closure, onDone }: { closure: FindingClosure | und
         {basis(closure)}
         {when}: {closure.reason}
       </span>
-    </p>
+      {closure.status === "failed" && <DecideBar closure={closure} onDone={onDone} />}
+    </div>
   );
 }
 

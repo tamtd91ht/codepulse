@@ -113,7 +113,7 @@ export default function ClosuresPage() {
       <PageHeader
         eyebrow="Findings"
         title="Đóng finding"
-        subtitle="Critical/high đã được sửa ở commit sau: thành viên gửi yêu cầu kèm commit, manager hoặc admin chạy review để kiểm; đạt thì đóng (vẫn giữ mức và vẫn tính điểm), không đạt thì ghi lý do. Finding sai thì dùng Khiếu nại."
+        subtitle="Critical/high đã được sửa ở commit sau: thành viên gửi yêu cầu kèm commit, lead hoặc manager của họ (hoặc admin) chạy review để kiểm, ngay tại đây hoặc trên trang review; đạt thì đóng (vẫn giữ mức và vẫn tính điểm), không đạt thì ghi lý do. Finding sai thì dùng Khiếu nại."
         actions={
           f?.can_decide ? (
             <Segmented
@@ -139,7 +139,7 @@ export default function ClosuresPage() {
           link các commit đã sửa.
         </li>
         <li>
-          <strong>2. Manager hoặc admin</strong> xem yêu cầu ở tab “Chờ duyệt”, bấm “Chạy review” (hoặc từ chối kèm lý do).
+          <strong>2. Lead, manager của tác giả hoặc admin</strong> xem yêu cầu ở tab “Chờ duyệt” (hoặc ngay trên finding ở trang review), bấm “Chạy review” (hoặc từ chối kèm lý do). Người gửi không tự duyệt được yêu cầu của mình.
         </li>
         <li>
           <strong>3. Kết quả</strong>: đạt thì finding được đóng; chưa đạt thì lý do hiện ở đây và dưới finding.
@@ -445,7 +445,9 @@ function Detail({
             <div>
               <div className="step-title">
                 {c.status === "pending"
-                  ? "Chờ manager hoặc admin duyệt"
+                  ? c.can_cancel
+                    ? "Chờ lead, manager hoặc admin duyệt (bạn không tự duyệt yêu cầu của mình)"
+                    : "Chờ lead, manager hoặc admin duyệt"
                   : c.status === "cancelled"
                     ? "Người gửi đã rút yêu cầu"
                     : refusedByPerson
