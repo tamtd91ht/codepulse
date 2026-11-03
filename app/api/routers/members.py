@@ -23,7 +23,7 @@ from app.api.schemas import (
     GitLabMembersImported,
     GitLabMembersOut,
 )
-from app.api.security import AdminPrincipal
+from app.api.security import Principal, require
 from app.collector.gitlab.client import GitLabError
 from app.collector.sync import Enqueuer, client_factory
 from app.config import Settings, get_settings
@@ -46,6 +46,18 @@ from app.models import Account, BusinessProject, Connection, Project, User
 
 router = APIRouter(tags=["identity"])
 SessionDep = Annotated[Session, Depends(get_session)]
+
+
+def _importer(principal: Annotated[Principal, require("gitlab_members.import")]) -> Principal:
+    """`gitlab_members.import` (docs/specs/21 §4), and still an admin: these screens were
+    admin-only before spec 21, while the built-in Quản lý dự án / Quản lý tổng sets hold the
+    permission; phase B keeps the behaviour."""
+    if not principal.is_admin:
+        raise HTTPException(403, "admin only")
+    return principal
+
+
+ImporterPrincipal = Annotated[Principal, Depends(_importer)]
 
 REFUSED = {
     "unknown_gitlab_user": (404, "Không tìm thấy tài khoản GitLab {0} nữa; lấy lại danh sách."),
@@ -139,7 +151,7 @@ def _member_out(
 
 @router.get("/gitlab-members/lookup", response_model=GitLabMembersOut)
 def lookup_member(
-    principal: AdminPrincipal,
+    principal: ImporterPrincipal,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -175,7 +187,7 @@ def lookup_member(
 @router.get("/projects/{project_id}/gitlab-members", response_model=GitLabMembersOut)
 def repo_members(
     project_id: int,
-    principal: AdminPrincipal,
+    principal: ImporterPrincipal,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -190,7 +202,7 @@ def repo_members(
 @router.get("/business-projects/{bp_id}/gitlab-members", response_model=GitLabMembersOut)
 def project_members(
     bp_id: int,
-    principal: AdminPrincipal,
+    principal: ImporterPrincipal,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -211,7 +223,7 @@ def project_members(
 @router.post("/gitlab-members/import", response_model=GitLabMembersImported)
 def import_gitlab_members(
     body: GitLabMembersImport,
-    principal: AdminPrincipal,
+    principal: ImporterPrincipal,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -307,7 +319,7 @@ def import_gitlab_members(
 @router.post("/identity/authors", response_model=AccountLinked)
 def link_author(
     body: AuthorLinkIn,
-    principal: AdminPrincipal,
+    principal: ImporterPrincipal,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     queue: Annotated[Enqueuer, Depends(get_queue)],

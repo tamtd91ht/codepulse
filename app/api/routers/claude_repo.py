@@ -12,7 +12,7 @@ from app.admin_settings import effective
 from app.api.audit import audit
 from app.api.deps import get_secret_box, get_session
 from app.api.schemas import ClaudeRepoIn, ClaudeRepoPreviewOut
-from app.api.security import AdminPrincipal
+from app.api.security import Principal, require
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.sync import client_factory
 from app.config import Settings, get_settings
@@ -25,6 +25,18 @@ from app.review.discover import CLIPPED
 router = APIRouter(tags=["admin"])
 SessionDep = Annotated[Session, Depends(get_session)]
 BoxDep = Annotated[SecretBox, Depends(get_secret_box)]
+
+
+def _editor(principal: Annotated[Principal, require("knowledge.edit")]) -> Principal:
+    """`knowledge.edit` (docs/specs/21 §4: "repo .claude dùng chung"), and still an admin: the
+    built-in Quản lý dự án / Quản lý tổng sets hold knowledge.edit for the review knowledge,
+    and this screen was admin-only before spec 21, which phase B keeps."""
+    if not principal.is_admin:
+        raise HTTPException(403, "admin only")
+    return principal
+
+
+EditorPrincipal = Annotated[Principal, Depends(_editor)]
 
 
 def _get[M](session: Session, model: type[M], ident: int, name: str) -> M:
@@ -57,7 +69,7 @@ def _ref_of_link(client: GitLabClient, project_id: int, path: str, words: list[s
 
 @router.put("/business-projects/{bp_id}/claude-repo", status_code=204)
 def set_claude_repo(
-    bp_id: int, body: ClaudeRepoIn, principal: AdminPrincipal, session: SessionDep, box: BoxDep
+    bp_id: int, body: ClaudeRepoIn, principal: EditorPrincipal, session: SessionDep, box: BoxDep
 ) -> None:
     """Check the repo (and branch) on GitLab, then store it for the dự án."""
     bp = _get(session, BusinessProject, bp_id, "dự án")
@@ -91,7 +103,7 @@ def set_claude_repo(
 
 
 @router.delete("/business-projects/{bp_id}/claude-repo", status_code=204)
-def clear_claude_repo(bp_id: int, principal: AdminPrincipal, session: SessionDep) -> None:
+def clear_claude_repo(bp_id: int, principal: EditorPrincipal, session: SessionDep) -> None:
     bp = _get(session, BusinessProject, bp_id, "dự án")
     bp.claude_repo_connection_id = bp.claude_repo_external_id = None
     bp.claude_repo_path = bp.claude_repo_ref = bp.claude_repo_include = None
@@ -102,7 +114,7 @@ def clear_claude_repo(bp_id: int, principal: AdminPrincipal, session: SessionDep
 @router.post("/business-projects/{bp_id}/claude-repo/preview")
 def preview_claude_repo(
     bp_id: int,
-    principal: AdminPrincipal,
+    principal: EditorPrincipal,
     session: SessionDep,
     box: BoxDep,
     settings: Annotated[Settings, Depends(get_settings)],
