@@ -81,7 +81,7 @@ def test_flow_totals_stages_and_deltas(
     client: TestClient, world: World, seeded: dict[str, Any], as_user: Any
 ) -> None:
     body = get(client, f"/api/v1/insights/flow?period=week&start={WEEK}", as_user(world.admin))
-    assert body["insights_version"] == "2"
+    assert body["insights_version"] == "3"
     t = body["totals"]
     assert t["merged"] == 4 and t["merged_without_review"] == 1
     assert t["merged_without_review_rate"] == 25.0

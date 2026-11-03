@@ -56,6 +56,10 @@ class ModuleTotalRow:
     description: str = ""
     kind: str = "code"
     source: str = "auto"
+    # §4.9c: the tree (level 0 = repo), the parent node id and the tier.
+    level: int = 0
+    parent: str | None = None
+    tier: str = "component"
 
 
 @dataclass
@@ -76,6 +80,16 @@ class Module:
     kind: str = "code"
     source: str = "auto"
     unlinked_share: float = 0.0  # % held by accounts not linked to a person
+    # §4.9c, set by `fold_tree`.
+    level: int = 0
+    parent: str | None = None
+    tier: str = "component"
+    weight: float = 0.0
+    contributors: int = 0
+    share_of_parent: float | None = None  # % of the parent's touches
+    inherited: bool = False  # the parent is flagged with the same top holder
+    counted: bool = False  # one of the warnings the team should act on
+    why: str | None = None  # why it is counted, or why not
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -87,6 +101,16 @@ class Module:
             "source": self.source,
             "unattributed": self.unattributed,
             "unlinked_share": round(self.unlinked_share, 1),
+            "level": self.level,
+            "parent": self.parent,
+            "tier": self.tier,
+            "contributors": self.contributors,
+            "share_of_parent": None
+            if self.share_of_parent is None
+            else round(self.share_of_parent, 1),
+            "inherited": self.inherited,
+            "counted": self.counted,
+            "why": self.why,
             "churn": self.churn,
             "commits": self.commits,
             "last_change_at": self.last_change_at.isoformat() if self.last_change_at else None,
@@ -162,6 +186,11 @@ def modules(
             kind=total.kind,
             source=total.source,
             unlinked_share=100.0 * sum(basis(r) for r in rows if r.author.user_id is None) / whole,
+            level=total.level,
+            parent=total.parent,
+            tier=total.tier,
+            weight=whole,
+            contributors=len(rows),
         )
         if total.kind == "docs":
             out.append(m)  # shown, never flagged
@@ -186,3 +215,58 @@ def modules(
         )
     )
     return out
+
+
+# §4.9c: below this share of its parent's touches a node is too small to be a warning.
+MIN_SHARE_OF_PARENT = 0.05
+# A repo with this few contributors in the window depends on them everywhere: warn once.
+SMALL_TEAM = 2
+
+
+def flagged(m: Module) -> bool:
+    return m.single_owner or m.orphaned or m.unattributed
+
+
+def fold_tree(nodes: list[Module]) -> list[Module]:
+    """§4.9c: which flagged nodes are warnings. A warning sits at the highest level it holds:
+    a child flagged for the same top holder as its flagged parent only inherits it; a child
+    held by someone else is a pocket of knowledge of its own. Sub-packages are shown, never
+    counted; a node under 5 % of its parent's touches is too small; in a repo of one or two
+    contributors only the repo itself is a warning. Returns the nodes, parents first."""
+    by_id = {(m.project_id, m.module): m for m in nodes}
+    ordered = sorted(nodes, key=lambda m: m.level)
+    small_team: set[int] = {
+        m.project_id for m in ordered if m.level == 0 and m.contributors <= SMALL_TEAM
+    }
+    # node -> its nearest flagged ancestor (parents come first, so theirs is known).
+    above: dict[tuple[int, str], Module | None] = {}
+    for m in ordered:
+        parent = by_id.get((m.project_id, m.parent)) if m.parent else None
+        if parent is not None and parent.weight > 0:
+            m.share_of_parent = 100.0 * m.weight / parent.weight
+        nearest = None
+        if parent is not None:
+            nearest = parent if flagged(parent) else above.get((parent.project_id, parent.module))
+        above[(m.project_id, m.module)] = nearest
+        if not flagged(m):
+            continue
+        top = m.owners[0][0] if m.owners else None
+        same = nearest is not None and bool(nearest.owners) and nearest.owners[0][0] == top
+        if m.tier == "sub":
+            m.why = "package con: chỉ để tham khảo"
+        elif same:
+            m.inherited = True
+            m.why = "cùng người nắm với cấp trên"
+        elif m.level > 0 and m.project_id in small_team:
+            m.why = f"repo chỉ có ≤ {SMALL_TEAM} người đóng góp: chỉ cảnh báo ở cấp repo"
+        elif m.share_of_parent is not None and m.share_of_parent < 100 * MIN_SHARE_OF_PARENT:
+            m.why = "quá nhỏ so với cấp trên"
+        else:
+            m.counted = True
+            if m.level == 0:
+                m.why = "cả repo phụ thuộc một người"
+            elif nearest is not None:
+                m.why = "người nắm khác cấp trên"
+            elif m.tier == "module":
+                m.why = "cả module phụ thuộc một người"
+    return ordered

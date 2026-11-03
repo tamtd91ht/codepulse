@@ -125,11 +125,17 @@ def test_components_bus_factor_and_flags(
     assert not by_name["(khác)"]["single_owner"]  # too few commits to flag
     assert body["totals"] == {
         "modules": 6,
+        "nodes": 7,  # the repo and its 6 components (one build root: no module level)
+        "warnings": 3,  # core, deploy (orphaned too), pay (unattributed)
         "single_owner": 2,
         "unattributed": 1,
         "orphaned": 1,
+        "inherited": 0,
         "shown": 6,
     }
+    (repo,) = [n for n in body["nodes"] if n["level"] == 0]
+    assert repo["tier"] == "repo" and not repo["counted"]
+    assert {n["parent"] for n in body["nodes"] if n["level"] == 1} == {repo["module"]}
     assert body["orphan_after_days"] == 60
     assert body["modules"][0]["single_owner"] or body["modules"][0]["unattributed"]
     assert body["maps"][str(world.project.id)]["source"] == "auto"
@@ -266,3 +272,74 @@ def test_the_ai_grouping_respects_the_external_llm_switch(
         f"/api/v1/admin/insights/components/{world.project.id}", headers=as_user(world.admin)
     )
     assert res.status_code == 409
+
+
+@pytest.fixture
+def multi_module(db_session: Session, world: World, settings: Settings) -> None:
+    """A Maven repo of two modules: an holds the whole account module, binh holds voip."""
+    settings.knowledge_min_commits = 3
+    world.project.last_synced_at = datetime.now(UTC)
+    s = db_session
+    accounts = {}
+    for user, key in ((world.an, "an@x.vn"), (world.binh, "b@x"), (world.lead, "lead@x")):
+        acc = Account(kind="git_email", external_key=key, user_id=user.id)
+        s.add(acc)
+        s.flush()
+        accounts[key] = acc
+    n = 0
+
+    def commit(author: Account, files: list[str], days_ago: int) -> None:
+        nonlocal n
+        n += 1
+        sha = f"{n:040x}"
+        s.add(
+            Commit(
+                sha=sha,
+                project_id=world.project.id,
+                author_account_id=author.id,
+                authored_at=DAY - timedelta(days=days_ago),
+            )
+        )
+        s.flush()
+        s.add_all(CommitFile(sha=sha, path=p, additions=10, deletions=0) for p in files)
+
+    acct = "svc/account/src/main/java/com/v/account/"
+    voip = "svc/voip/src/main/java/com/v/voip/"
+    s.add_all([])
+    commit(accounts["an@x.vn"], ["svc/pom.xml", "svc/account/pom.xml", "svc/voip/pom.xml"], 9)
+    for i in range(6):  # account: an everywhere, in two features
+        commit(
+            accounts["an@x.vn"],
+            [f"{acct}wallet/{x}.java" for x in "ABC"] + [f"{acct}billing/{x}.java" for x in "DEF"],
+            i + 1,
+        )
+    for i in range(6):  # voip: binh, a pocket of their own
+        commit(
+            accounts["b@x"],
+            [f"{voip}call/{x}.java" for x in "ABC"] + [f"{voip}media/{x}.java" for x in "XYZ"],
+            i + 1,
+        )
+    commit(accounts["lead@x"], [f"{voip}call/A.java"], 1)
+    s.flush()
+
+
+def test_the_tree_counts_a_warning_once_at_its_level(
+    client: TestClient, world: World, multi_module: None, as_user: Any
+) -> None:
+    body = get(client, f"/api/v1/insights/knowledge?end={END}", as_user(world.admin))
+    nodes = {(n["tier"], n["name"]): n for n in body["nodes"]}
+    account, voip = nodes[("module", "account")], nodes[("module", "voip")]
+    wallet, billing = nodes[("component", "wallet")], nodes[("component", "billing")]
+    repo = next(n for n in body["nodes"] if n["level"] == 0)
+    # an holds two thirds of the whole repo: one warning, on the repo.
+    assert repo["contributors"] == 3 and repo["single_owner"] and repo["counted"]
+    assert repo["why"] == "cả repo phụ thuộc một người"
+    for child in (account, wallet, billing):  # an again: inherited, not counted again
+        assert child["single_owner"] and child["inherited"] and not child["counted"]
+    assert wallet["parent"] == account["module"] and account["parent"] == repo["module"]
+    # voip is binh's: a pocket of knowledge of its own, counted.
+    assert voip["single_owner"] and voip["counted"] and voip["why"] == "người nắm khác cấp trên"
+    call = nodes[("component", "call")]
+    assert call["inherited"] and not call["counted"]  # binh again, under voip
+    assert body["totals"]["warnings"] == 2 and body["totals"]["inherited"] == 5
+    assert max(n["level"] for n in body["nodes"]) <= 3

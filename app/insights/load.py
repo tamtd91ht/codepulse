@@ -6,6 +6,7 @@ the Insights API and the evidence packs (app/evidence).
 
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -337,8 +338,14 @@ def component_rows(
     resolvers: dict[int, Resolver],
     half_life_days: int,
     bulk_files: int,
+    tree: bool = False,
+    repo_names: dict[int, str] | None = None,
 ) -> tuple[list[kn.ModuleTotalRow], list[kn.ModuleAuthorRow]]:
-    """§4.9b: each (commit, file) of non-merge commits in [lo, hi) weighs 0.5^(age/half-life),
+    """With `tree` (§4.9c), every node of the path's chain gets the row: the repo (id
+    REPO_NODE), then module/component/sub-package or AI group/component, ids joined by "|";
+    noise and docs count only in their own node. Otherwise only the component (§4.9b).
+
+    §4.9b: each (commit, file) of non-merge commits in [lo, hi) weighs 0.5^(age/half-life),
     and a commit touching n > `bulk_files` files is worth bulk_files^2/n touches in all;
     summed per (repo, component, author). Lines are kept for display only, without bulk
     commits."""
@@ -369,6 +376,24 @@ def component_rows(
         if resolver is None:
             continue
         place = resolver.of(str(path))
+        pid_i = int(pid or 0)
+        nodes: list[tuple[str, Any, int, str | None]]  # (id, placement, level, parent)
+        if tree:
+            chain = resolver.chain(str(path))
+            if chain[-1].measured and place.measured:
+                nodes = [(REPO_NODE, None, 0, None)]
+                parent_id: str = REPO_NODE
+                for level, node in enumerate(chain, start=1):
+                    node_id = f"{parent_id}|{node.id}"
+                    nodes.append((node_id, node, level, parent_id))
+                    parent_id = node_id
+            else:
+                # Noise and docs count in their own node only, right under the repo, never in
+                # the nodes above (same id as `chain_ids` gives them).
+                leaf = replace(chain[-1], tier="component")
+                nodes = [(f"{REPO_NODE}|{leaf.id}", leaf, 1, REPO_NODE)]
+        else:
+            nodes = [(place.id, place, 0, None)]
         bulk = int(n_files) > bulk_files
         age = max(0.0, (hi - at).total_seconds()) if at is not None else 0.0
         # Past `bulk_files` files (import, rename, formatting) each file gets (bulk/n)^2: the
@@ -377,38 +402,114 @@ def component_rows(
         weight = 0.5 ** (age / seconds) * min(1.0, bulk_files / int(n_files)) ** 2
         churn = 0 if bulk else int(lines or 0)
         author = kn.Author(int(uid), None) if uid is not None else kn.Author(None, int(aid or 0))
-        key = (int(pid or 0), place.id)
-        placed[key] = place
-        t = total.setdefault(key, [0.0, 0, set(), None])
-        t[0] += weight
-        t[1] += churn
-        t[2].add(sha)
-        if at is not None and (t[3] is None or at > t[3]):
-            t[3] = at
-        a = per_author.setdefault((key[0], key[1], author), [0.0, 0, set()])
-        a[0] += weight
-        a[1] += churn
-        a[2].add(sha)
-    totals = [
-        kn.ModuleTotalRow(
-            pid,
-            cid,
-            churn,
-            len(shas),
-            last,
-            weight=w,
-            name=placed[(pid, cid)].name,
-            description=placed[(pid, cid)].description,
-            kind=placed[(pid, cid)].kind,
-            source=placed[(pid, cid)].source,
+        for node_id, node, level, parent in nodes:
+            key = (pid_i, node_id)
+            placed[key] = (node, level, parent)
+            t = total.setdefault(key, [0.0, 0, set(), None])
+            t[0] += weight
+            t[1] += churn
+            t[2].add(sha)
+            if at is not None and (t[3] is None or at > t[3]):
+                t[3] = at
+            a = per_author.setdefault((pid_i, node_id, author), [0.0, 0, set()])
+            a[0] += weight
+            a[1] += churn
+            a[2].add(sha)
+    names = repo_names or {}
+    totals = []
+    for (pid, cid), (w, churn, shas, last) in total.items():
+        node, level, parent = placed[(pid, cid)]
+        totals.append(
+            kn.ModuleTotalRow(
+                pid,
+                cid,
+                churn,
+                len(shas),
+                last,
+                weight=w,
+                name=node.name if node else names.get(pid, "repo"),
+                description=node.description if node else "",
+                kind=node.kind if node else "code",
+                source=node.source if node else "auto",
+                level=level,
+                parent=parent,
+                tier=node.tier if node else "repo",
+            )
         )
-        for (pid, cid), (w, churn, shas, last) in total.items()
-    ]
     authors = [
         kn.ModuleAuthorRow(pid, cid, author, churn, len(shas), weight=w)
         for (pid, cid, author), (w, churn, shas) in per_author.items()
     ]
     return totals, authors
+
+
+REPO_NODE = "repo"
+
+
+def chain_ids(resolver: Resolver, path: str) -> list[str]:
+    """The tree node ids of `path` (§4.9c), from the repo down, as `component_rows` builds them."""
+    chain = resolver.chain(path)
+    if not (chain[-1].measured and resolver.of(path).measured):
+        return []  # noise and docs: in no warning's scope
+    ids = [REPO_NODE]
+    for node in chain:
+        ids.append(f"{ids[-1]}|{node.id}")
+    return ids
+
+
+def knowledge_tree(
+    session: Session,
+    repo_ids: list[int],
+    lo: datetime,
+    hi: datetime,
+    *,
+    threshold: float,
+    min_commits: int,
+    half_life_days: int = 90,
+    bulk_files: int = 100,
+    resolvers: dict[int, Resolver] | None = None,
+) -> list[kn.Module]:
+    """§4.9c: every node of every repo's tree (repo, module, component, sub-package) with its
+    bus factor and flags, and which flags are the warnings (`kn.fold_tree`), parents first."""
+    if resolvers is None:
+        resolvers = component_resolvers(session, repo_ids)
+    names = {
+        int(pid): str(path)
+        for pid, path in session.execute(
+            select(Project.id, Project.path_with_namespace).where(Project.id.in_(repo_ids))
+        )
+    }
+    totals, author_rows = component_rows(
+        session,
+        repo_ids,
+        lo,
+        hi,
+        resolvers=resolvers,
+        half_life_days=half_life_days,
+        bulk_files=bulk_files,
+        tree=True,
+        repo_names={pid: path.rsplit("/", 1)[-1] for pid, path in names.items()},
+    )
+    authors = {r.author for r in author_rows}
+    inactive = {
+        int(uid)
+        for uid in session.scalars(
+            select(User.id).where(
+                User.id.in_({a.user_id for a in authors if a.user_id is not None}),
+                User.active.is_(False),
+            )
+        )
+    }
+    nodes = kn.modules(
+        totals,
+        author_rows,
+        threshold=threshold,
+        min_commits=min_commits,
+        end=hi,
+        last_commit=last_commits(session, authors, hi),
+        inactive_users=inactive,
+    )
+    return kn.fold_tree(nodes)
 
 
 def knowledge_modules(

@@ -42,7 +42,7 @@ from app.insights.load import (
     component_resolvers,
     file_coverage,
     first_commits,
-    knowledge_modules,
+    knowledge_tree,
     load_mrs,
 )
 from app.insights.review_load import author_of, review_load
@@ -480,6 +480,26 @@ def insights_review_load(
     }
 
 
+# The tree is cut here (parents come first): a dự án of many large repos stays readable.
+MAX_TREE_NODES = 3000
+
+
+def _cut_tree(tree: list[kn.Module]) -> list[kn.Module]:
+    """The first MAX_TREE_NODES nodes (parents first), plus every warning and its ancestors:
+    the list of warnings is never cut."""
+    if len(tree) <= MAX_TREE_NODES:
+        return tree
+    by_id = {(m.project_id, m.module): m for m in tree}
+    keep = {(m.project_id, m.module) for m in tree[:MAX_TREE_NODES]}
+    for m in tree:
+        if m.counted:
+            node: kn.Module | None = m
+            while node is not None and (node.project_id, node.module) not in keep:
+                keep.add((node.project_id, node.module))
+                node = by_id.get((node.project_id, node.parent)) if node.parent else None
+    return [m for m in tree if (m.project_id, m.module) in keep]
+
+
 @router.get("/insights/knowledge")
 def insights_knowledge(
     principal: CurrentPrincipal,
@@ -500,7 +520,7 @@ def insights_knowledge(
     repos = _repos(session, principal, business_project_id, project_id)
     repo_ids = [r.id for r in repos]
     resolvers = component_resolvers(session, repo_ids)
-    found = knowledge_modules(
+    tree = knowledge_tree(
         session,
         repo_ids,
         lo,
@@ -511,12 +531,32 @@ def insights_knowledge(
         bulk_files=settings.knowledge_bulk_files,
         resolvers=resolvers,
     )
+    # §4.9b's flat list: the component level, warnings first.
+    found = sorted(
+        (m for m in tree if m.tier == "component"),
+        key=lambda m: (not m.counted, not kn.flagged(m), m.kind == "docs", -m.commits, m.module),
+    )
     coverage = file_coverage(session, repo_ids, lo, hi)
     shown = found[:limit]
+    nodes = _cut_tree(tree)
     names = Names.load(
-        session, principal, [Responder(a.user_id) for m in shown for a, _share in m.owners]
+        session,
+        principal,
+        [Responder(a.user_id) for m in [*shown, *nodes] for a, _share in m.owners],
     )
     repo_by_id = {r.id: r for r in repos}
+
+    def view(m: kn.Module) -> dict[str, Any]:
+        repo = repo_by_id[m.project_id]
+        return {
+            **m.as_dict(),
+            "path_with_namespace": repo.path_with_namespace,
+            "owners": [
+                {**names.person(Responder(a.user_id), [repo.business_project_id]), "share": pct}
+                for a, pct in m.owners
+            ],
+        }
+
     c = conf.Confidence()
     as_of = conf.freshness(
         c,
@@ -565,30 +605,21 @@ def insights_knowledge(
         "min_commits": settings.knowledge_min_commits,
         "data_as_of": as_of.isoformat() if as_of else None,
         "confidence": c.as_dict(),
+        # §4.9c: warnings are counted once, at the highest level they hold.
         "totals": {
             "modules": len(found),
-            "single_owner": sum(1 for m in found if m.single_owner),
-            "unattributed": sum(1 for m in found if m.unattributed),
-            "orphaned": sum(1 for m in found if m.orphaned),
+            "nodes": len(tree),
+            "warnings": sum(1 for m in tree if m.counted),
+            "single_owner": sum(1 for m in tree if m.counted and m.single_owner),
+            "unattributed": sum(1 for m in tree if m.counted and m.unattributed),
+            "orphaned": sum(1 for m in tree if m.counted and m.orphaned),
+            "inherited": sum(1 for m in tree if m.inherited),
             "shown": len(shown),
         },
         "orphan_after_days": kn.ORPHAN_AFTER.days,
-        "modules": [
-            {
-                **m.as_dict(),
-                "path_with_namespace": repo_by_id[m.project_id].path_with_namespace,
-                "owners": [
-                    {
-                        **names.person(
-                            Responder(a.user_id), [repo_by_id[m.project_id].business_project_id]
-                        ),
-                        "share": share_pct,
-                    }
-                    for a, share_pct in m.owners
-                ],
-            }
-            for m in shown
-        ],
+        "modules": [view(m) for m in shown],
+        "nodes": [view(m) for m in nodes],
+        "nodes_truncated": len(nodes) < len(tree),
     }
 
 

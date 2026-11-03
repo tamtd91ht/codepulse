@@ -222,6 +222,21 @@ Bản 1 lấy `KNOWLEDGE_MODULE_DEPTH` thư mục đầu, sai với cấu trúc 
 - Định nghĩa thay đổi nên `INSIGHTS_VERSION` = 2.
 - `KNOWLEDGE_MODULE_DEPTH` chỉ còn dùng khi đường dẫn không khớp quy tắc nào.
 
+### 4.9c. Cây thành phần và đếm cảnh báo (bản 3, người dùng 2026-11-03)
+Danh sách phẳng lặp lại một sự thật nhiều lần. Ví dụ, nếu dongnv nắm cả account-service thì danh sách phẳng ra 10–30 dòng "Một người nắm". Danh sách phẳng cũng không cho thấy rủi ro nằm ở cấp nào. Bản 3 dựng cây tối đa 4 cấp và chỉ đếm mỗi rủi ro một lần.
+
+- **Cây:** Repo → Module build (chỉ có khi repo có nhiều gốc build) → Thành phần (§4.9b) → Package con (thư mục ngay dưới tính năng, ≥ 3 file, không phải tên tầng). Khi có nhóm AI, cây là Repo → Nhóm nghiệp vụ → Thành phần tự động.
+- **Mỗi nút** tính số lần chạm, bus factor, phần nắm và các cờ của §4.9/§4.9b trên mọi file bên dưới nó. Nhiễu và tài liệu chỉ tính ở nút của chính chúng, không cộng lên cấp trên.
+- **Cảnh báo** là nút có cờ (`single_owner`, `orphaned`, `unattributed`) **và**:
+  1. không phải package con (cấp đó chỉ để tham khảo);
+  2. không có cấp trên bị cờ với **cùng** người nắm nhiều nhất (nếu có thì nút là *thừa hưởng*);
+  3. repo có hơn 2 người đóng góp trong cửa sổ (nếu không, chỉ cảnh báo ở cấp repo, các cấp dưới thừa hưởng);
+  4. chiếm ≥ 5% số lần chạm của cấp trên.
+- **Lý do** được ghi cho mỗi nút (`why`): "cả repo/module phụ thuộc một người", "người nắm khác cấp trên", "cùng người nắm với cấp trên", "quá nhỏ so với cấp trên", "package con: chỉ để tham khảo".
+- **API** `/insights/knowledge` trả `nodes` (cây, cấp trên trước, tối đa 3000 nút). `totals.warnings` chỉ đếm cảnh báo. `single_owner`, `orphaned` và `unattributed` cũng chỉ đếm trong số cảnh báo; `inherited` là số cờ thừa hưởng. `modules` giữ danh sách cấp thành phần như bản 2.
+- **Hồ sơ tháng:** "MR chạm module chỉ một người nắm" chỉ xét cảnh báo, lấy cấp gần file nhất.
+- `INSIGHTS_VERSION` = 3.
+
 ### 4.10. DORA (`dora.py`; phase 9.8, cần [DECISION D2])
 | Chỉ số | Định nghĩa |
 |---|---|

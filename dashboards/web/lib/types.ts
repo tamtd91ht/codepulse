@@ -1502,6 +1502,17 @@ export interface InsightModule {
   /** The top holder is a git account not linked to a person. */
   unattributed: boolean;
   unlinked_share: number;
+  /** §4.9c: the tree (level 0 = repo; parent = the parent node's `module` id). */
+  level: number;
+  parent: string | null;
+  tier: "repo" | "module" | "component" | "part" | "sub";
+  contributors: number;
+  share_of_parent: number | null;
+  /** Flagged for the same holder as its flagged parent: shown, not counted again. */
+  inherited: boolean;
+  /** One of the warnings, counted once at the highest level it holds. */
+  counted: boolean;
+  why: string | null;
 }
 
 export type ComponentKind = "code" | "config" | "docs" | "noise" | "domain" | "platform" | "integration";
@@ -1549,9 +1560,21 @@ export interface InsightsKnowledge {
   half_life_days?: number;
   bulk_files?: number;
   maps?: Record<string, { source: "auto" | "llm"; components: number; layered: boolean }>;
-  totals: { modules: number; single_owner: number; unattributed?: number; orphaned: number; shown: number };
+  totals: {
+    modules: number;
+    nodes?: number;
+    warnings?: number;
+    single_owner: number;
+    unattributed?: number;
+    orphaned: number;
+    inherited?: number;
+    shown: number;
+  };
   orphan_after_days: number;
   modules: InsightModule[];
+  nodes?: InsightModule[];
+  /** The tree was cut (warnings and their ancestors are always kept). */
+  nodes_truncated?: boolean;
 }
 
 /* ---- Evidence packs (docs/specs/20 §6) ---- */

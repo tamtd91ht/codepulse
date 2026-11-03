@@ -17,7 +17,13 @@ from sqlalchemy.orm import Session
 
 from app.insights import INSIGHTS_VERSION
 from app.insights.flow import STAGES, Flow, flow, size_bucket
-from app.insights.load import chunks, component_resolvers, knowledge_modules, load_mrs
+from app.insights.load import (
+    chain_ids,
+    chunks,
+    component_resolvers,
+    knowledge_tree,
+    load_mrs,
+)
 from app.insights.stats import quantile
 from app.models import (
     Account,
@@ -143,9 +149,10 @@ def _single_owner_touched(
     if not repo_ids:
         return {}
     resolvers = component_resolvers(session, repo_ids)
+    # §4.9c: the warnings only (counted once, at their level), not every inherited flag.
     flagged = {
         (m.project_id, m.module): m.name or m.module
-        for m in knowledge_modules(
+        for m in knowledge_tree(
             session,
             repo_ids,
             hi - timedelta(days=config.window_days),
@@ -156,7 +163,7 @@ def _single_owner_touched(
             bulk_files=config.bulk_files,
             resolvers=resolvers,
         )
-        if m.single_owner
+        if m.counted and m.single_owner
     }
     if not flagged:
         return {}
@@ -172,9 +179,12 @@ def _single_owner_touched(
             resolver = resolvers.get(pid)
             if resolver is None:
                 continue
-            key = (pid, resolver.of(str(path)).id)
-            if key in flagged and int(mr_id) not in out:
-                out[int(mr_id)] = flagged[key]
+            if int(mr_id) in out:
+                continue
+            for node_id in reversed(chain_ids(resolver, str(path))):  # the closest first
+                if (pid, node_id) in flagged:
+                    out[int(mr_id)] = flagged[(pid, node_id)]
+                    break
     return out
 
 

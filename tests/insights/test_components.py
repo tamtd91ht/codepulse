@@ -168,3 +168,14 @@ def test_unknown_paths_go_to_their_roots_other() -> None:
     placed = resolver.of("account/tenant-service/src/main/java/com/v/t/newthing/N.java")
     assert placed.id == f"account/tenant-service::{OTHER}"
     assert resolver.of("account/agent-service/target/x.class").kind == "noise"
+
+
+def test_docs_and_noise_are_in_no_warnings_scope() -> None:
+    from app.insights.load import chain_ids
+
+    resolver = Resolver(auto_map(MAVEN, "account"))
+    assert chain_ids(resolver, "README.md") == []
+    assert chain_ids(resolver, "account/target/classes/X.class") == []
+    ids = chain_ids(resolver, SVC + "controller/AgentController.java")
+    assert ids[0] == "repo" and len(ids) == 3  # repo, module, component
+    assert ids[1].startswith("repo|mod:") and ids[2].startswith(ids[1] + "|")

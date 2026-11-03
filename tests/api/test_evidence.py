@@ -304,7 +304,8 @@ def test_single_owner_module_direct_commits_and_unmapped_accounts(
     db_session.flush()
     snap = client.get(path(world), headers=as_user(world.an)).json()["snapshot"]
     reasons = {n["id"]: n["why"] for n in snap["notable"]}
-    assert reasons[payment.id] == "Chạm module chỉ một người nắm (pay)"
+    # One contributor in the repo: the warning sits on the repo itself (§4.9c).
+    assert reasons[payment.id] == "Chạm module chỉ một người nắm (p)"
     direct = snap["direct_commits"]
     assert direct["count"] == 1 and direct["items"][0]["title"] == "hotfix: typo"
     assert direct["items"][0]["web_url"].endswith("/-/commit/" + "2" * 40)

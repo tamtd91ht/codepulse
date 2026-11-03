@@ -864,107 +864,112 @@ function LoadTab({ query, nav }: { query: Query; nav: SubNav }) {
   );
 }
 
-type KnowledgeSub = "flagged" | "all" | "structure";
+type KnowledgeSub = "warnings" | "tree" | "structure";
+
+const nodeKey = (m: InsightModule) => `${m.project_id}:${m.module}`;
+const parentKey = (m: InsightModule) => (m.parent ? `${m.project_id}:${m.parent}` : null);
+const TIER_LABEL: Record<InsightModule["tier"], string> = {
+  repo: "Repo",
+  module: "Module",
+  component: "Thành phần",
+  part: "Thành phần",
+  sub: "Package con",
+};
+
+function isFlagged(m: InsightModule) {
+  return m.single_owner || m.orphaned || m.unattributed;
+}
+
+/** Owners of a node, compact: "dongnv 70% · truongnd 30%". */
+function Owners({ m }: { m: InsightModule }) {
+  return (
+    <>
+      {m.owners.map((o, i) => (
+        <div key={i} className="small" style={{ whiteSpace: "nowrap" }}>
+          <Person p={o} /> <span className="muted">{num(o.share, 0)}%</span>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function Flags({ m }: { m: InsightModule }) {
+  if (!isFlagged(m)) return null;
+  const pills = (
+    <>
+      {m.orphaned && <Pill tone="bad">Người nắm đã vắng</Pill>} {m.single_owner && <Pill tone="warn">Một người nắm</Pill>}{" "}
+      {m.unattributed && <Pill tone="info">Cần gắn account</Pill>}
+    </>
+  );
+  if (m.counted) return <span title={m.why ?? undefined}>{pills}</span>;
+  return (
+    <span className="muted small" title={m.why ?? undefined} style={{ opacity: 0.75 }}>
+      {m.inherited ? "Thừa hưởng cấp trên" : (m.why ?? "Chỉ để tham khảo")}
+    </span>
+  );
+}
+
+function NodeName({ m }: { m: InsightModule }) {
+  return (
+    <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+      <strong style={{ fontWeight: m.level === 0 ? 700 : 600 }}>{m.name}</strong>
+      {m.tier !== "component" && m.tier !== "part" && <span className="small muted">{TIER_LABEL[m.tier]}</span>}
+      {m.source === "llm" && <Pill tone="info">AI gom</Pill>}
+      {KIND_LABEL[m.kind] && <Pill>{KIND_LABEL[m.kind]}</Pill>}
+    </span>
+  );
+}
 
 function KnowledgeTab({ query, nav }: { query: Query; nav: SubNav }) {
   const { data, error, mutate } = useApi<InsightsKnowledge>(`/insights/knowledge${qs(query)}`, { keepPreviousData: true });
   if (!data) return <Pending error={error} retry={() => void mutate()} />;
-  const flagged = data.modules.filter((m) => m.single_owner || m.orphaned || m.unattributed);
+  const nodes = data.nodes ?? data.modules;
+  const byKey = new Map(nodes.map((m) => [nodeKey(m), m]));
+  const warnings = nodes.filter((m) => m.counted);
   const tabs: SubTab<KnowledgeSub>[] = [
-    { key: "flagged", label: "Có cảnh báo", count: flagged.length, hint: "Thành phần một người nắm, người nắm đã vắng, hoặc account chưa gắn người" },
-    { key: "all", label: "Tất cả thành phần", count: data.modules.length },
+    {
+      key: "warnings",
+      label: "Cảnh báo",
+      count: warnings.length,
+      hint: "Mỗi rủi ro chỉ tính một lần, ở cấp cao nhất nó đúng (repo, module hay thành phần)",
+    },
+    { key: "tree", label: "Cây thành phần", count: nodes.length, hint: "Repo › module › thành phần › package con" },
     { key: "structure", label: "Cấu trúc repo", hint: "Repo được chia thành những thành phần nào, tự động hoặc do AI gom theo nghiệp vụ" },
   ];
-  const view = pickSub(nav, tabs, "flagged");
-  const rows = view === "flagged" ? flagged : data.modules;
+  const view = pickSub(nav, tabs, "warnings");
   const threshold = Math.round(data.bus_threshold * 100);
-  let body: ReactNode;
-  if (data.modules.length === 0)
-    body = (
+  const trail = (m: InsightModule) => {
+    const names: string[] = [];
+    let cur: InsightModule | undefined = m;
+    while (cur) {
+      names.unshift(cur.name);
+      const pk = parentKey(cur);
+      cur = pk ? byKey.get(pk) : undefined;
+    }
+    return names;
+  };
+  const empty = nodes.length === 0 && (
+    <Card>
       <EmptyState icon="folder" title="Chưa có dữ liệu file trong cửa sổ">
         Repo chưa có commit trong {data.window_days} ngày qua, hoặc admin cần chạy <code>codepulse insights backfill-files</code>.
       </EmptyState>
-    );
-  else if (rows.length === 0)
-    body = (
-      <EmptyState icon="checkCircle" tone="good" title="Không có module nào đáng lo">
-        Mọi module có thay đổi đều có nhiều người cùng nắm.
-      </EmptyState>
-    );
-  else
-    body = (
-      <>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Thành phần</th>
-                <th
-                  className="num"
-                  title={`Số người tối thiểu nắm ≥ ${threshold}% số lần chạm file (giảm một nửa sau mỗi ${data.half_life_days ?? 90} ngày; commit hàng loạt tính như một lần)`}
-                >
-                  Bus factor
-                </th>
-                <th>Người nắm nhiều nhất</th>
-                <th className="num">Commit</th>
-                <th className="num" title="Không tính commit hàng loạt (import, đổi tên, format)">Dòng đổi</th>
-                <th>Sửa gần nhất</th>
-                <th>Cảnh báo</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((m) => (
-                <tr key={`${m.project_id}:${m.module}`}>
-                  <td style={{ whiteSpace: "normal", minWidth: 220 }}>
-                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                      <strong>{m.name}</strong>
-                      {m.source === "llm" && <Pill tone="info">AI gom</Pill>}
-                      {KIND_LABEL[m.kind] && <Pill>{KIND_LABEL[m.kind]}</Pill>}
-                    </div>
-                    {m.description && <div className="small">{m.description}</div>}
-                    <div className="small muted">{m.path_with_namespace}</div>
-                  </td>
-                  <td className="num">{m.bus_factor}</td>
-                  <td>
-                    {m.owners.map((o, i) => (
-                      <div key={i} className="small">
-                        <Person p={o} /> <span className="muted">{num(o.share, 0)}%</span>
-                      </div>
-                    ))}
-                  </td>
-                  <td className="num">{m.commits}</td>
-                  <td className="num muted">{num(m.churn, 0)}</td>
-                  <td className="nowrap muted">{date(m.last_change_at)}</td>
-                  <td className="nowrap">
-                    {m.orphaned && <Pill tone="bad">Người nắm đã vắng</Pill>} {m.single_owner && <Pill tone="warn">Một người nắm</Pill>}{" "}
-                    {m.unattributed && (
-                      <span title="Người nắm nhiều nhất là account git chưa gắn với người nào: gắn account (Admin › Tài khoản chưa gắn người) trước khi kết luận">
-                        <Pill tone="info">Cần gắn account</Pill>
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <HiddenNote people={rows.flatMap((m) => m.owners)} />
-        {data.totals.shown < data.totals.modules && (
-          <p className="small muted" style={{ margin: 0, padding: "8px 18px" }}>
-            Hiển thị {data.totals.shown}/{data.totals.modules} module (module có cảnh báo trước). Lọc theo dự án hoặc repo để xem phần
-            còn lại.
-          </p>
-        )}
-      </>
-    );
+    </Card>
+  );
+  const busTitle = `Số người tối thiểu nắm ≥ ${threshold}% số lần chạm file (giảm một nửa sau mỗi ${data.half_life_days ?? 90} ngày; commit hàng loạt nhẹ đi)`;
   return (
     <>
       <ConfidenceNote c={data.confidence} repoId={query.project_id} />
-      <StatStrip label={`Module trong ${data.window_days} ngày qua`}>
-        <StripStat label="Thành phần có thay đổi" value={data.totals.modules} sub="theo cấu trúc repo" />
+      <StatStrip label={`Rủi ro tri thức trong ${data.window_days} ngày qua`}>
+        <StripStat
+          label="Cảnh báo"
+          title="Mỗi rủi ro tính một lần ở cấp cao nhất nó đúng; cấp dưới cùng người nắm chỉ là thừa hưởng"
+          value={data.totals.warnings ?? warnings.length}
+          tone={(data.totals.warnings ?? warnings.length) ? "warn" : undefined}
+          sub={data.totals.inherited ? `${data.totals.inherited} cấp dưới thừa hưởng` : undefined}
+        />
         <StripStat
           label="Một người nắm"
-          title={`Một người viết hơn ${threshold}% thay đổi, module có ≥ ${data.min_commits} commit`}
+          title={`Một người nắm hơn ${threshold}%, có ≥ ${data.min_commits} commit`}
           value={data.totals.single_owner}
           tone={data.totals.single_owner ? "warn" : undefined}
         />
@@ -975,30 +980,214 @@ function KnowledgeTab({ query, nav }: { query: Query; nav: SubNav }) {
           tone={data.totals.orphaned ? "bad" : undefined}
         />
         {!!data.totals.unattributed && (
-          <StripStat
-            label="Cần gắn account"
-            title="Người nắm nhiều nhất là account git chưa gắn người"
-            value={data.totals.unattributed}
-            tone="warn"
-          />
+          <StripStat label="Cần gắn account" title="Người nắm nhiều nhất là account git chưa gắn người" value={data.totals.unattributed} tone="warn" />
         )}
+        <StripStat label="Thành phần" value={data.totals.modules} sub="theo cấu trúc repo" />
       </StatStrip>
-      <SubTabs id="ins-knowledge" label="Module hiển thị" variant="mini" tabs={tabs} value={view} onChange={nav.onSub} />
+      <SubTabs id="ins-knowledge" label="Rủi ro tri thức" variant="mini" tabs={tabs} value={view} onChange={nav.onSub} />
       <SubPanel id="ins-knowledge" tab={view}>
         {view === "structure" ? (
           <RepoStructure repoId={query.project_id ? Number(query.project_id) : null} />
-        ) : (
+        ) : empty ? (
+          empty
+        ) : view === "warnings" ? (
           <Card
-            id="insights-modules"
-            title="Thành phần"
+            id="insights-warnings"
+            title="Cảnh báo"
             subtitle="Rủi ro của team khi kiến thức tập trung ở một người, không phải thành tích hay lỗi của người đó"
             flush
           >
-            {body}
+            {warnings.length === 0 ? (
+              <EmptyState icon="checkCircle" tone="good" title="Không có cảnh báo">
+                Mọi repo, module và thành phần có thay đổi đều có nhiều người cùng nắm.
+              </EmptyState>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Ở đâu</th>
+                      <th className="num" title={busTitle}>
+                        Bus factor
+                      </th>
+                      <th>Người nắm nhiều nhất</th>
+                      <th className="num">Commit</th>
+                      <th>Sửa gần nhất</th>
+                      <th>Cảnh báo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {warnings.map((m) => {
+                      const path = trail(m);
+                      return (
+                        <tr key={nodeKey(m)}>
+                          <td style={{ whiteSpace: "normal", minWidth: 240 }}>
+                            <div className="small muted">{path.slice(0, -1).join(" › ") || TIER_LABEL[m.tier]}</div>
+                            <NodeName m={m} />
+                            {m.why && <div className="small">{m.why}</div>}
+                          </td>
+                          <td className="num">{m.bus_factor}</td>
+                          <td>
+                            <Owners m={m} />
+                          </td>
+                          <td className="num">{m.commits}</td>
+                          <td className="nowrap muted">{date(m.last_change_at)}</td>
+                          <td className="nowrap">
+                            <Flags m={m} />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <HiddenNote people={warnings.flatMap((m) => m.owners)} />
           </Card>
+        ) : (
+          <>
+            <KnowledgeTree nodes={nodes} busTitle={busTitle} />
+            {data.nodes_truncated && (
+              <p className="small muted" style={{ margin: "8px 0 0" }}>
+                Cây quá lớn nên chỉ hiện một phần (luôn giữ mọi cảnh báo và các cấp trên của chúng). Lọc theo dự án hoặc repo để xem đủ.
+              </p>
+            )}
+          </>
         )}
       </SubPanel>
     </>
+  );
+}
+
+/** §4.9c: repo › module › component › sub-package, folded; warnings stand out, inherited
+ * flags are muted. Opens to the second level; flagged branches can be opened on demand. */
+function KnowledgeTree({ nodes, busTitle }: { nodes: InsightModule[]; busTitle: string }) {
+  const children = useMemo(() => {
+    const out = new Map<string | null, InsightModule[]>();
+    for (const m of nodes) {
+      const pk = parentKey(m);
+      const list = out.get(pk) ?? [];
+      list.push(m);
+      out.set(pk, list);
+    }
+    for (const list of out.values())
+      list.sort((x, y) => Number(y.counted) - Number(x.counted) || Number(isFlagged(y)) - Number(isFlagged(x)) || y.commits - x.commits);
+    return out;
+  }, [nodes]);
+  const roots = useMemo(() => {
+    const keys = new Set(nodes.map(nodeKey));
+    return nodes.filter((m) => !m.parent || !keys.has(parentKey(m) ?? "")).sort((x, y) => y.commits - x.commits);
+  }, [nodes]);
+  const [open, setOpen] = useState<Set<string>>(() => new Set(roots.map(nodeKey)));
+  // A new filter brings new repos: open them too, keep what the reader opened.
+  useEffect(() => setOpen((prev) => new Set([...prev, ...roots.map(nodeKey)])), [roots]);
+  const toggle = (k: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  const rows: { m: InsightModule; depth: number }[] = [];
+  const walk = (m: InsightModule, depth: number) => {
+    rows.push({ m, depth });
+    if (open.has(nodeKey(m))) for (const c of children.get(nodeKey(m)) ?? []) walk(c, depth + 1);
+  };
+  for (const r of roots) walk(r, 0);
+  const all = () => setOpen(new Set(nodes.filter((m) => children.has(nodeKey(m))).map(nodeKey)));
+  return (
+    <Card
+      id="insights-tree"
+      title="Cây thành phần"
+      subtitle="Mỗi cấp tính trên mọi file bên dưới nó; cấp dưới cùng người nắm với cấp trên chỉ thừa hưởng cảnh báo"
+      actions={
+        <span style={{ display: "flex", gap: 6 }}>
+          <button type="button" className="sm" onClick={all}>
+            Mở tất cả
+          </button>
+          <button type="button" className="sm" onClick={() => setOpen(new Set(roots.map(nodeKey)))}>
+            Thu gọn
+          </button>
+        </span>
+      }
+      flush
+    >
+      <div className="table-wrap">
+        <table role="treegrid" aria-label="Cây thành phần">
+          <thead>
+            <tr>
+              <th>Thành phần</th>
+              <th className="num" title={busTitle}>
+                Bus factor
+              </th>
+              <th>Người nắm nhiều nhất</th>
+              <th className="num">Commit</th>
+              <th className="num" title="Không tính commit hàng loạt (import, đổi tên, format)">
+                Dòng đổi
+              </th>
+              <th>Sửa gần nhất</th>
+              <th>Cảnh báo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ m, depth }) => {
+              const k = nodeKey(m);
+              const kids = children.get(k)?.length ?? 0;
+              const expanded = open.has(k);
+              return (
+                <tr
+                  key={k}
+                  aria-level={depth + 1}
+                  aria-expanded={kids ? expanded : undefined}
+                  style={m.counted ? { background: "color-mix(in srgb, var(--sev-medium, #d97706) 8%, transparent)" } : undefined}
+                >
+                  <td style={{ whiteSpace: "normal", minWidth: 260 }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "flex-start", paddingLeft: depth * 18 }}>
+                      {kids ? (
+                        <button
+                          type="button"
+                          className="sm ghost"
+                          aria-label={`${expanded ? "Thu gọn" : "Mở"} ${m.name}`}
+                          onClick={() => toggle(k)}
+                          style={{ padding: "0 6px", minWidth: 24 }}
+                        >
+                          {expanded ? "▾" : "▸"}
+                        </button>
+                      ) : (
+                        <span style={{ display: "inline-block", width: 24 }} />
+                      )}
+                      <div>
+                        <NodeName m={m} />
+                        {m.description && <div className="small">{m.description}</div>}
+                        {m.level === 0 && (
+                          <div className="small muted">
+                            {m.path_with_namespace} · {m.contributors} người đóng góp
+                          </div>
+                        )}
+                        {m.level > 0 && m.share_of_parent != null && (
+                          <div className="small muted">{num(m.share_of_parent, 0)}% công việc của cấp trên</div>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="num">{m.bus_factor}</td>
+                  <td>
+                    <Owners m={m} />
+                  </td>
+                  <td className="num">{m.commits}</td>
+                  <td className="num muted">{num(m.churn, 0)}</td>
+                  <td className="nowrap muted">{date(m.last_change_at)}</td>
+                  <td>
+                    <Flags m={m} />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <HiddenNote people={rows.flatMap((r) => r.m.owners)} />
+    </Card>
   );
 }
 

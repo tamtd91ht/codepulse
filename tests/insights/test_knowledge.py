@@ -7,9 +7,11 @@ import pytest
 from app.insights.knowledge import (
     ROOT_MODULE,
     Author,
+    Module,
     ModuleAuthorRow,
     ModuleTotalRow,
     bus_factor,
+    fold_tree,
     module_of,
     modules,
 )
@@ -97,3 +99,73 @@ def test_unmapped_emails_stay_separate_authors_and_renames_are_skipped() -> None
     authors = [ModuleAuthorRow(1, "x", EMAIL, 45, 6), ModuleAuthorRow(1, "x", other_email, 55, 6)]
     got = run(totals, authors, last={EMAIL: END, other_email: END})
     assert len(got) == 1 and got[0]["bus_factor"] == 1 and got[0]["top_share"] == 55.0
+
+
+def _node(
+    module: str,
+    level: int,
+    parent: str | None,
+    owner: Author,
+    *,
+    weight: float = 100,
+    tier: str = "component",
+    contributors: int = 3,
+    flagged: bool = True,
+) -> Module:
+    return Module(
+        project_id=1,
+        module=module,
+        churn=1,
+        commits=20,
+        last_change_at=END,
+        bus_factor=1,
+        owners=[(owner, 90.0)],
+        single_owner=flagged,
+        level=level,
+        parent=parent,
+        tier=tier,
+        weight=weight,
+        contributors=contributors,
+    )
+
+
+def test_fold_tree_counts_each_warning_once() -> None:
+    nodes = [
+        _node("repo", 0, None, AN, weight=1000, tier="repo", flagged=False),
+        _node("repo|a", 1, "repo", AN, weight=500, tier="module"),
+        _node("repo|a|x", 2, "repo|a", AN, weight=300),  # same holder: inherited
+        _node("repo|a|y", 2, "repo|a", BINH, weight=150),  # another holder: counted
+        _node("repo|a|y|s", 3, "repo|a|y", CHI, weight=100, tier="sub"),  # never counted
+        _node("repo|a|tiny", 2, "repo|a", CHI, weight=10),  # 2 % of its module
+    ]
+    folded = {m.module: m for m in fold_tree(nodes)}
+    assert folded["repo|a"].counted and folded["repo|a"].why == "cả module phụ thuộc một người"
+    assert folded["repo|a|x"].inherited and not folded["repo|a|x"].counted
+    assert folded["repo|a|y"].counted and folded["repo|a|y"].why == "người nắm khác cấp trên"
+    assert not folded["repo|a|y|s"].counted and folded["repo|a|y|s"].why
+    assert (
+        not folded["repo|a|tiny"].counted and folded["repo|a|tiny"].why == "quá nhỏ so với cấp trên"
+    )
+    assert folded["repo|a|x"].share_of_parent == 60.0
+
+
+def test_fold_tree_in_a_small_team_warns_at_the_repo_only() -> None:
+    nodes = [
+        _node("repo", 0, None, AN, tier="repo", contributors=2),
+        _node("repo|a", 1, "repo", BINH, weight=50),
+    ]
+    folded = {m.module: m for m in fold_tree(nodes)}
+    assert folded["repo"].counted and folded["repo"].why == "cả repo phụ thuộc một người"
+    assert not folded["repo|a"].counted and not folded["repo|a"].inherited  # binh, not an
+    assert "chỉ cảnh báo ở cấp repo" in (folded["repo|a"].why or "")
+
+
+def test_fold_tree_inherits_from_the_nearest_flagged_ancestor() -> None:
+    nodes = [
+        _node("repo", 0, None, AN, weight=1000, tier="repo"),  # flagged: an
+        _node("repo|m", 1, "repo", AN, weight=800, tier="module", flagged=False),
+        _node("repo|m|c", 2, "repo|m", AN, weight=400),  # an again, two levels down
+    ]
+    folded = {m.module: m for m in fold_tree(nodes)}
+    assert folded["repo"].counted
+    assert folded["repo|m|c"].inherited and not folded["repo|m|c"].counted

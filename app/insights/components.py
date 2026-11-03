@@ -344,6 +344,7 @@ class AutoComponent:
     files: int = 0
     tests: int = 0
     samples: list[str] = field(default_factory=list)
+    feature: str = ""  # the name under its build root ("Agent"), for the tree
 
 
 @dataclass
@@ -352,6 +353,11 @@ class AutoMap:
     placement: dict[str, str]  # path -> component id
     layered_roots: list[str]
     roots: list[str] = field(default_factory=list)  # build roots, deepest first
+    # §4.9c: the tree levels. Several build roots -> a module level; path -> its sub-package
+    # under the component (only those with MIN_FILES files).
+    multi_root: bool = False
+    labels: dict[str, str] = field(default_factory=dict)  # build root -> its name
+    sub: dict[str, str] = field(default_factory=dict)
 
     def of(self, path: str) -> str | None:
         return self.placement.get(path)
@@ -427,6 +433,7 @@ def auto_map(paths: Iterable[str], repo_name: str = "repo") -> AutoMap:
             layered.add(root)
     raw: dict[str, tuple[str, str, Kind]] = dict(fixed)
     test_of: dict[str, bool] = {}
+    sub_of: dict[str, str] = {}
     for path, (root, rest, test, name) in code.items():
         prefix = prefixes[root]
         # A test under the same package drops the prefix; one laid out apart (tests/billing,
@@ -439,6 +446,10 @@ def auto_map(paths: Iterable[str], repo_name: str = "repo") -> AutoMap:
                 feature = tail[0]
         else:
             feature = tail[0]
+            # Feature packaging: the package under the feature is the 4th tree level
+            # (billing/invoice), unless it is a layer (billing/service says little).
+            if len(tail) > 1 and tail[1].lower() not in LAYERS:
+                sub_of[path] = tail[1]
         raw[path] = (root, feature or OTHER, "code")
         test_of[path] = test
     # Fold features, case-insensitively, then fold the small ones into "(khác)".
@@ -459,14 +470,26 @@ def auto_map(paths: Iterable[str], repo_name: str = "repo") -> AutoMap:
         if comp is None:
             label = _root_label(root, repo_name)
             shown = f"{label}{SEP}{name}" if multi_root and root else name
-            comp = components[cid] = AutoComponent(cid, root, shown, kind)
+            comp = components[cid] = AutoComponent(cid, root, shown, kind, feature=name)
         comp.files += 1
         if test_of.get(path):
             comp.tests += 1
         if len(comp.samples) < 15:
             comp.samples.append(path)
         placement[path] = cid
-    return AutoMap(components, placement, sorted(layered), roots)
+    # Sub-packages big enough to stand alone in the tree.
+    sub_files: Counter[tuple[str, str]] = Counter(
+        (placement[p], sub) for p, sub in sub_of.items() if not placement[p].endswith(OTHER)
+    )
+    sub = {
+        p: name
+        for p, name in sub_of.items()
+        if sub_files[(placement[p], name)] >= MIN_FILES
+        # one sub-package holding the whole component adds no level
+        and sub_files[(placement[p], name)] < components[placement[p]].files
+    }
+    labels = {root: _root_label(root, repo_name) for root in {c.root for c in components.values()}}
+    return AutoMap(components, placement, sorted(layered), roots, multi_root, labels, sub)
 
 
 # -- step 1b: business groups by an LLM ------------------------------------------------------------
@@ -604,6 +627,9 @@ def regroup(provider: LLMProvider, prompt: ReviewPrompt, auto: AutoMap) -> Group
 # -- the final placement --------------------------------------------------------------------------
 
 
+Tier = Literal["module", "component", "part", "sub"]
+
+
 @dataclass(frozen=True)
 class Placement:
     id: str
@@ -611,6 +637,8 @@ class Placement:
     description: str
     kind: str  # code|config|docs|noise or a group kind
     source: Literal["auto", "llm"]
+    # §4.9c: where it sits in the tree; "component" is the level §4.9b flags on its own.
+    tier: Tier = "component"
 
     @property
     def measured(self) -> bool:
@@ -626,6 +654,7 @@ class Resolver:
     groups: list[dict[str, Any]] = field(default_factory=list)
     _by_member: dict[str, Placement] = field(default_factory=dict, init=False)
     _unknown: dict[str, Placement] = field(default_factory=dict, init=False)
+    _chains: dict[str, list[Placement]] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         for i, g in enumerate(self.groups):
@@ -671,6 +700,64 @@ class Resolver:
             kind=comp.kind if comp else "code",
             source="auto",
         )
+
+    def chain(self, path: str) -> list[Placement]:
+        """§4.9c: the tree nodes of `path` under its repo, at most 3 (with the repo, 4):
+        module -> component -> sub-package, or AI group -> automatic component."""
+        cached = self._chains.get(path)
+        if cached is None:
+            cached = self._chains[path] = self._chain(path)
+        return cached
+
+    def _chain(self, path: str) -> list[Placement]:
+        place = self.of(path)
+        cid = self.auto.of(path)
+        comp = self.auto.components.get(cid) if cid else None
+        if place.source == "llm":
+            if comp is None:
+                return [place]
+            return [
+                place,
+                Placement(
+                    id=comp.id,
+                    name=comp.name,
+                    description="",
+                    kind=comp.kind,
+                    source="auto",
+                    tier="part",
+                ),
+            ]
+        out: list[Placement] = []
+        root = comp.root if comp else root_of(path, self.auto.roots)
+        if self.auto.multi_root:
+            out.append(
+                Placement(
+                    id=f"mod:{root}",
+                    name=self.auto.labels.get(root) or root or "(gốc repo)",
+                    description=root,
+                    kind="code",
+                    source="auto",
+                    tier="module",
+                )
+            )
+            if comp is not None:  # under its module, the component needs no module prefix
+                place = Placement(
+                    place.id, comp.feature or place.name, "", place.kind, "auto", "component"
+                )
+        out.append(place)
+        sub = self.auto.sub.get(path)
+        if sub and comp is not None:
+            out.append(
+                Placement(
+                    id=f"{comp.id}/{sub}",
+                    name=sub,
+                    description="",
+                    kind=place.kind,
+                    source="auto",
+                    tier="sub",
+                )
+            )
+        return out
 
     def unmapped_share(self) -> float:
         """Share of code files whose automatic component no LLM group took (0 with no groups)."""
