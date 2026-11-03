@@ -93,11 +93,25 @@ class GlPipeline:
 
 
 @dataclass
+class GlDeployment:
+    id: int
+    environment: str
+    status: str
+    sha: str | None
+    ref: str | None
+    created_at: datetime | None
+    finished_at: datetime | None
+    mr_iids: list[int] | None = None  # None until a deployment_mrs row is seen
+
+
+@dataclass
 class Extracted:
     default_branch: str | None = None
     commits: dict[str, GlCommit] = field(default_factory=dict)
     merge_requests: dict[int, GlMergeRequest] = field(default_factory=dict)
     pipelines: dict[int, GlPipeline] = field(default_factory=dict)
+    environment_tiers: dict[str, str | None] = field(default_factory=dict)
+    deployments: dict[int, GlDeployment] = field(default_factory=dict)
 
 
 def _user(raw: dict[str, Any]) -> GlUser:
@@ -144,6 +158,7 @@ def extract(rows: Iterable[RawGitlab]) -> Extracted:
     out = Extracted()
     commit_files: dict[str, list[GlFileStat]] = {}
     mr_parts: dict[int, dict[str, Any]] = {}
+    deployment_mrs: dict[int, list[int]] = {}
 
     for row in rows:
         params = row.params or {}
@@ -170,6 +185,26 @@ def extract(rows: Iterable[RawGitlab]) -> Extracted:
                 )
             case ep.EP_MR_COMMITS | ep.EP_MR_NOTES | ep.EP_MR_DIFFS:
                 mr_parts.setdefault(int(params["iid"]), {})[row.endpoint] = payload
+            case ep.EP_ENVIRONMENTS:
+                for env in payload or []:
+                    if env.get("name"):
+                        out.environment_tiers[str(env["name"])] = env.get("tier")
+            case ep.EP_DEPLOYMENT:
+                status = str(payload.get("status") or "")
+                finished = payload.get("finished_at")
+                if finished is None and status in ("success", "failed", "canceled"):
+                    finished = payload.get("updated_at")  # GitLab before 14 has no finished_at
+                out.deployments[int(payload["id"])] = GlDeployment(
+                    id=int(payload["id"]),
+                    environment=str((payload.get("environment") or {}).get("name") or ""),
+                    status=status,
+                    sha=payload.get("sha"),
+                    ref=payload.get("ref"),
+                    created_at=parse_ts(payload.get("created_at")),
+                    finished_at=parse_ts(finished),
+                )
+            case ep.EP_DEPLOYMENT_MRS:
+                deployment_mrs[int(params["id"])] = [int(i) for i in payload or []]
             case ep.EP_PIPELINE:
                 out.pipelines[int(payload["id"])] = GlPipeline(
                     id=int(payload["id"]),
@@ -181,6 +216,9 @@ def extract(rows: Iterable[RawGitlab]) -> Extracted:
                     finished_at=parse_ts(payload.get("finished_at")),
                 )
 
+    for dep_id, iids in deployment_mrs.items():
+        if dep_id in out.deployments:
+            out.deployments[dep_id].mr_iids = iids
     for sha, files in commit_files.items():
         if sha in out.commits:
             out.commits[sha].files = files

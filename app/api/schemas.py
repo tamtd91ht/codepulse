@@ -124,6 +124,7 @@ class ProjectOut(ORM):
     review_rules_paths: str | None = None
     deep_review: bool = True
     knowledge_auto_refresh: bool = False  # docs/specs/19 §3.4
+    production_environment: str | None = None  # docs/specs/20 D2
     review_branch: str | None = None  # NULL: default branch; "*": every branch
     profile_at: datetime | None = None
 
@@ -222,6 +223,8 @@ class ProjectPatch(BaseModel):
     knowledge_auto_refresh: bool | None = None  # docs/specs/19 §3.4
     # docs/specs/17 §Nhánh review: "" clears (default branch), "*" every branch.
     review_branch: str | None = Field(default=None, max_length=255)
+    # docs/specs/20 D2: the environment DORA treats as production; "" = detect (tier, name).
+    production_environment: str | None = Field(default=None, max_length=255)
 
     @field_validator("review_branch")
     @classmethod

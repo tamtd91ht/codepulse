@@ -10,13 +10,15 @@ import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAx
 
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { Alert, Card, ChartTip, EmptyState, ExternalLink, Loading, PageHeader, Pager, Pill, Segmented, SplitBar, StatStrip, StripStat } from "@/components/ui";
-import { type ApiError, qs, useApi } from "@/lib/api";
+import { ApiError, api, qs, useApi } from "@/lib/api";
 import { date, dateTime, localDay, num, periodLabel, rangeLabel, shiftDays, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
 import type {
   InsightConfidence,
   InsightPerson,
   InsightsFlow,
+  InsightsDora,
   InsightsKnowledge,
+  Me,
   InsightsMrs,
   InsightsReviewLoad,
   InsightStage,
@@ -24,13 +26,14 @@ import type {
 } from "@/lib/types";
 
 type Period = "week" | "month" | "range";
-type Tab = "flow" | "load" | "knowledge";
+type Tab = "flow" | "load" | "dora" | "knowledge";
 type Only = "" | "unreviewed" | "xl";
 type Query = Record<string, string | number | null | undefined>;
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "flow", label: "Luồng làm việc" },
   { key: "load", label: "Tải review" },
+  { key: "dora", label: "Triển khai (DORA)" },
   { key: "knowledge", label: "Rủi ro tri thức" },
 ];
 const STAGES: InsightStage[] = ["coding", "pickup", "review", "time_to_merge"];
@@ -116,7 +119,7 @@ export default function InsightsPage() {
     setCursor(thisWeek());
     try {
       const t = new URLSearchParams(window.location.search).get("tab");
-      if (t === "flow" || t === "load" || t === "knowledge") setTab(t);
+      if (t === "flow" || t === "load" || t === "dora" || t === "knowledge") setTab(t);
     } catch {
       /* no URL: keep the default tab */
     }
@@ -131,7 +134,7 @@ export default function InsightsPage() {
       /* the tab just is not kept in the URL */
     }
   };
-  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ flow: null, load: null, knowledge: null });
+  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ flow: null, load: null, dora: null, knowledge: null });
   const onTabKey = (e: KeyboardEvent<HTMLDivElement>) => {
     const i = TABS.findIndex((t) => t.key === tab);
     const next = e.key === "ArrowRight" ? (i + 1) % TABS.length : e.key === "ArrowLeft" ? (i + TABS.length - 1) % TABS.length : -1;
@@ -270,6 +273,7 @@ export default function InsightsPage() {
         )}
         {tab === "flow" && query && <FlowTab query={query} />}
         {tab === "load" && query && <LoadTab query={query} />}
+        {tab === "dora" && query && <DoraTab query={query} />}
         {tab === "knowledge" && <KnowledgeTab query={scope} />}
       </div>
 
@@ -835,6 +839,212 @@ function KnowledgeTab({ query }: { query: Query }) {
         flush
       >
         {body}
+      </Card>
+    </>
+  );
+}
+
+/** Admin: which environment counts as production for one repo (docs/specs/20 D2). */
+function ProductionEnv({ repo, onSaved }: { repo: InsightsDora["repos"][number]; onSaved: () => void }) {
+  const [value, setValue] = useState(repo.production_environment ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => setValue(repo.production_environment ?? ""), [repo.production_environment]);
+  const dirty = value.trim() !== (repo.production_environment ?? "");
+  return (
+    <form
+      className="toolbar"
+      style={{ gap: 6 }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        setBusy(true);
+        setError(null);
+        setSaved(false);
+        void api
+          .patch(`/projects/${repo.id}`, { production_environment: value.trim() })
+          .then(() => {
+            setSaved(true);
+            onSaved();
+          })
+          .catch((err: unknown) => setError(err instanceof ApiError ? err.message : String(err)))
+          .finally(() => setBusy(false));
+      }}
+    >
+      <input
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="tự nhận (tier production)"
+        aria-label={`Môi trường production của ${repo.path_with_namespace}`}
+        maxLength={255}
+        list={`envs-${repo.id}`}
+        style={{ width: 170 }}
+      />
+      <datalist id={`envs-${repo.id}`}>
+        {repo.environments.map((e) => (
+          <option key={e} value={e} />
+        ))}
+      </datalist>
+      <button type="submit" className="sm" disabled={busy || !dirty}>
+        Lưu
+      </button>
+      {error && <span className="small" style={{ color: "var(--sev-critical)" }}>{error}</span>}
+      {saved && !error && <span className="small muted">Đã lưu; repo đang đồng bộ lại để lấy MR của các deploy cũ.</span>}
+    </form>
+  );
+}
+
+function DoraTab({ query }: { query: Query }) {
+  const { data, error, mutate } = useApi<InsightsDora>(`/insights/dora${qs(query)}`, { keepPreviousData: true });
+  const { data: me } = useApi<Me>("/auth/me");
+  if (!data) return <Pending error={error} retry={() => void mutate()} />;
+  const t = data.totals;
+  const lead = kpiHours(t.lead_time_h.median, t.delta.lead_time_h);
+  const recovery = kpiHours(t.recovery_h.median, t.delta.recovery_h);
+  const trend = data.trend.map((p) => ({
+    period: data.trend_period === "week" ? weekLabel(p.period_start) : `${p.period_start.slice(5, 7)}/${p.period_start.slice(2, 4)}`,
+    deployments: p.deployments,
+  }));
+  return (
+    <>
+      <ConfidenceNote c={data.confidence} />
+      <StatStrip label="Triển khai production trong kỳ">
+        <StripStat
+          label="Deploy thành công"
+          title="Số lần deploy production thành công (tần suất triển khai)"
+          value={t.deployments}
+          change={t.delta.deployments}
+          sub={`${num(t.per_week, 1)} / tuần · ${t.deploy_days} ngày có deploy`}
+        />
+        <StripStat
+          label="Lead time (trung vị)"
+          title={`Commit đầu tiên của MR → deploy production đầu tiên mang MR đó. p75: ${hours(t.lead_time_h.p75)}`}
+          value={lead.value}
+          digits={1}
+          unit={lead.unit}
+          change={lead.change}
+          higherIsBetter={false}
+          sub={`${t.shipped_mrs} MR · merge → deploy ${hours(t.deploy_h.median)}`}
+        />
+        <StripStat
+          label="Tỉ lệ thay đổi lỗi"
+          title="(Deploy thất bại + thay đổi bị rollback) / mọi deploy đã kết thúc"
+          value={t.change_failure_rate}
+          digits={1}
+          unit="%"
+          change={t.delta.change_failure_rate === null ? undefined : t.delta.change_failure_rate}
+          higherIsBetter={false}
+          tone={t.change_failure_rate !== null && t.change_failure_rate > 15 ? "warn" : undefined}
+          sub={`${t.failed} thất bại · ${t.rollbacks} rollback`}
+        />
+        <StripStat
+          label="Khôi phục (trung vị)"
+          title="Từ deploy thất bại (hoặc thay đổi bị rollback) tới deploy thành công kế tiếp"
+          value={recovery.value}
+          digits={1}
+          unit={recovery.unit}
+          change={recovery.change}
+          higherIsBetter={false}
+          sub={`${t.recovery_h.n} lần`}
+        />
+      </StatStrip>
+
+      <div className="grid two">
+        <Card id="dora-trend" title="Deploy production theo kỳ">
+          {data.trend.every((p) => p.deployments === 0) ? (
+            <EmptyState title="Chưa có deploy production nào trong các kỳ này" />
+          ) : (
+            <div className="chart-box">
+              <ResponsiveContainer>
+                <BarChart data={trend} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+                  <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
+                  <XAxis dataKey="period" tickLine={false} axisLine={false} fontSize={12} />
+                  <YAxis allowDecimals={false} tickLine={false} axisLine={false} fontSize={12} />
+                  <Tooltip content={<ChartTip digits={0} />} cursor={{ fill: "var(--surface-2)" }} />
+                  <Bar dataKey="deployments" name="Deploy" fill="var(--chart-1)" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </Card>
+        <Card id="dora-failures" title="Thay đổi lỗi gần nhất" subtitle="Deploy thất bại và thay đổi bị rollback trong kỳ" flush>
+          {data.failures.length === 0 ? (
+            <EmptyState icon="checkCircle" tone="good" title="Không có thay đổi lỗi nào trong kỳ" />
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Repo</th>
+                    <th>Môi trường</th>
+                    <th>Loại</th>
+                    <th>Commit</th>
+                    <th>Lúc</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.failures.map((f) => (
+                    <tr key={f.id}>
+                      <td>{f.path_with_namespace}</td>
+                      <td>{f.environment}</td>
+                      <td>{f.kind === "failed" ? <Pill tone="bad">Deploy thất bại</Pill> : <Pill tone="warn">Bị rollback</Pill>}</td>
+                      <td>
+                        <code>{(f.sha ?? "").slice(0, 8)}</code>
+                      </td>
+                      <td className="nowrap muted">{dateTime(f.finished_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <Card
+        id="dora-repos"
+        title="Theo repo"
+        subtitle="Production = môi trường có tier production trên GitLab, hoặc tên production/prod; admin đặt riêng nếu repo dùng tên khác"
+        flush
+      >
+        {data.repos.length === 0 ? (
+          <EmptyState icon="folder" title="Không có repo nào trong phạm vi" />
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Repo</th>
+                  <th>Môi trường production</th>
+                  <th className="num">Deploy</th>
+                  <th className="num">Lead time</th>
+                  <th className="num">Thay đổi lỗi</th>
+                  <th className="num">Khôi phục</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...data.repos]
+                  .sort((a, b) => b.deployments - a.deployments || a.path_with_namespace.localeCompare(b.path_with_namespace))
+                  .map((r) => (
+                    <tr key={r.id} className={r.deployments ? undefined : "muted"}>
+                      <td>{r.path_with_namespace}</td>
+                      <td>
+                        {me?.is_admin ? (
+                          <ProductionEnv repo={r} onSaved={() => void mutate()} />
+                        ) : (
+                          r.production_environment ?? (r.production_detected.length ? r.production_detected.join(", ") : <span className="faint">—</span>)
+                        )}
+                      </td>
+                      <td className="num">{r.deployments}</td>
+                      <td className="num nowrap">{hours(r.lead_time_h.median)}</td>
+                      <td className="num">{pct(r.change_failure_rate)}</td>
+                      <td className="num nowrap">{hours(r.recovery_h.median)}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
     </>
   );

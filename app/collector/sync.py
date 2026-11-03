@@ -21,7 +21,7 @@ from app.crypto import SecretBox, secret_box
 from app.db import get_redis, get_sessionmaker
 from app.identity.attribution import Attribution, attribute_reviews, rebuild_after_commit
 from app.identity.autolink import PublicEmailLookup, autolink
-from app.models import Connection, Project
+from app.models import Connection, Deployment, Project
 
 log = logging.getLogger(__name__)
 
@@ -129,7 +129,14 @@ def sync_project(
     )
 
     with make_client(connection) as client:
-        collected = GitLabCollector(client, clock=lambda: started).collect(session, project, since)
+        # Repos synced before deployments were collected get their history once (9.8).
+        has_deployments = session.scalar(
+            select(func.count()).select_from(Deployment).where(Deployment.project_id == project.id)
+        )
+        deployments_since = None if has_deployments else started - timedelta(days=backfill_days)
+        collected = GitLabCollector(client, clock=lambda: started).collect(
+            session, project, since, deployments_since=deployments_since
+        )
         rows = session.scalars(raw_rows_query(project, fetched_since=collected.started_at)).all()
         converted = Converter(session, project, ignore_paths).run(extract(rows))
         linked = autolink(session, allowed_email_domains, public_email=public_email_lookup(client))

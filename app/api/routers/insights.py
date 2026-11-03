@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, exists, func, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.access import visible_repo
@@ -22,7 +22,7 @@ from app.api.deps import get_session
 from app.api.routers.overview import RANGE_MIN, OverviewPeriod, Window, _window
 from app.api.security import CurrentPrincipal, Principal
 from app.config import Settings, get_settings
-from app.insights import INSIGHTS_VERSION
+from app.insights import INSIGHTS_VERSION, dora
 from app.insights import confidence as conf
 from app.insights import knowledge as kn
 from app.insights import pipelines as pipes
@@ -38,7 +38,7 @@ from app.insights.flow import (
     waiting,
 )
 from app.insights.knowledge import ROOT_MODULE
-from app.insights.load import chunks, load_mrs
+from app.insights.load import chunks, first_commits, load_mrs
 from app.insights.review_load import author_of, review_load
 from app.models import (
     Account,
@@ -46,11 +46,13 @@ from app.models import (
     Commit,
     CommitFile,
     Connection,
+    Deployment,
+    MergeRequest,
     Pipeline,
     Project,
     User,
 )
-from app.scoring.aggregate import period_start_of
+from app.scoring.aggregate import period_bounds, period_start_of
 
 router = APIRouter(tags=["insights"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -687,3 +689,235 @@ def _last_commits(
             if aid is not None and last is not None:
                 out[kn.Author(None, int(aid))] = last
     return out
+
+
+# -- DORA (docs/specs/20 §4.10, task 9.8) -----------------------------------------------------
+
+# History before the window that the rollback rule may look back on.
+DORA_HISTORY = timedelta(days=90)
+RECENT_FAILURES = 10
+
+
+def _production(
+    session: Session, repos: list[Project], lo: datetime, hi: datetime
+) -> tuple[list[dora.Dep], dict[int, list[int]]]:
+    """Finished production deployments (D2) of `repos` in [lo, hi), and the MR iids each
+    successful one shipped. Production is filtered in SQL (override, tier, name)."""
+    if not repos:
+        return [], {}
+    named = func.lower(Deployment.environment).in_(dora.PRODUCTION_NAMES)
+    clauses = []
+    plain = [r.id for r in repos if not r.production_environment]
+    if plain:
+        clauses.append(
+            and_(
+                Deployment.project_id.in_(plain),
+                or_(
+                    Deployment.environment_tier == "production",
+                    and_(Deployment.environment_tier.is_(None), named),
+                ),
+            )
+        )
+    for r in repos:
+        if r.production_environment:
+            clauses.append(
+                and_(
+                    Deployment.project_id == r.id,
+                    Deployment.environment == r.production_environment,
+                )
+            )
+    rows = session.scalars(
+        select(Deployment).where(
+            or_(*clauses), Deployment.finished_at_src >= lo, Deployment.finished_at_src < hi
+        )
+    )
+    deps: list[dora.Dep] = []
+    iids: dict[int, list[int]] = {}
+    for d in rows:
+        deps.append(dora.Dep(d.id, d.project_id, d.environment, d.status, d.sha, d.finished_at_src))
+        if d.status == "success" and d.mr_iids:
+            iids[d.id] = [int(i) for i in d.mr_iids]
+    return deps, iids
+
+
+def _shipped(
+    session: Session, deps: list[dora.Dep], iids: dict[int, list[int]]
+) -> list[dora.Shipped]:
+    """Each MR the successful deployments in `deps` carried, at its first one of them. The
+    iids resolve to MRs now, so an MR collected after its deployment still counts."""
+    by_id = {d.id: d for d in deps}
+    wanted: dict[int, set[int]] = defaultdict(set)  # repo -> iids
+    for dep_id, numbers in iids.items():
+        wanted[by_id[dep_id].project_id].update(numbers)
+    mr_of: dict[tuple[int, int], int] = {}
+    for repo_id, wanted_iids in wanted.items():
+        for chunk in chunks(sorted(wanted_iids)):
+            for mr_id, iid in session.execute(
+                select(MergeRequest.id, MergeRequest.iid).where(
+                    MergeRequest.project_id == repo_id, MergeRequest.iid.in_(chunk)
+                )
+            ):
+                mr_of[(repo_id, int(iid))] = int(mr_id)
+    links = [
+        (mr_of[key], dep_id, by_id[dep_id].finished_at)
+        for dep_id, numbers in iids.items()
+        for n in numbers
+        if (key := (by_id[dep_id].project_id, n)) in mr_of
+    ]
+    first = dora.first_shipped(links)
+    if not first:
+        return []
+    mr_ids = list(first)
+    merged: dict[int, tuple[int, datetime | None]] = {}
+    for chunk in chunks(mr_ids):
+        for mr_id, repo, merged_at in session.execute(
+            select(MergeRequest.id, MergeRequest.project_id, MergeRequest.merged_at).where(
+                MergeRequest.id.in_(chunk)
+            )
+        ):
+            merged[int(mr_id)] = (int(repo or 0), merged_at)
+    commits = first_commits(session, mr_ids)
+    return [
+        dora.Shipped(
+            mr_id=mr_id,
+            project_id=merged.get(mr_id, (0, None))[0],
+            first_commit_at=commits.get(mr_id),
+            merged_at=merged.get(mr_id, (0, None))[1],
+            deployed_at=at,
+        )
+        for mr_id, (_dep, at) in first.items()
+    ]
+
+
+@router.get("/insights/dora")
+def insights_dora(
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: SettingsDep,
+    business_project_id: int | None = None,
+    project_id: int | None = None,
+    period: OverviewPeriod = "week",
+    start: date | None = None,
+    end: date | None = None,
+) -> dict[str, Any]:
+    """§4.10 for the repos in scope: deployment frequency, lead time for changes, change
+    failure rate, recovery time; with deltas, a trend, per repo and the latest failures."""
+    w = _insights_window(period, start, end, settings)
+    tz = ZoneInfo(settings.report_tz)
+    min_sample = settings.insights_min_sample
+    repos = _repos(session, principal, business_project_id, project_id)
+    deps, iids = _production(session, repos, w.load_lo - DORA_HISTORY, w.hi)
+    shipped = _shipped(session, deps, iids)
+    ev = dora.events(deps)  # once: every window below reads the same history
+    environments: dict[int, list[str]] = defaultdict(list)
+    if repos:
+        for pid, env in session.execute(
+            select(Deployment.project_id, Deployment.environment)
+            .where(Deployment.project_id.in_([r.id for r in repos]))
+            .distinct()
+            .order_by(Deployment.environment)
+        ):
+            environments[int(pid)].append(str(env))
+
+    def over(lo: datetime, hi: datetime) -> dict[str, Any]:
+        return dora.summarise(deps, shipped, lo, hi, tz, min_sample, ev)
+
+    totals = over(w.lo, w.hi)
+    before = over(w.prev_lo, w.prev_hi)
+    trend = []
+    for s in w.trend_starts:
+        lo, hi = period_bounds(s, w.trend_period, tz)
+        point = over(lo, hi)
+        trend.append(
+            {
+                "period_start": s.isoformat(),
+                "deployments": point["deployments"],
+                "change_failure_rate": point["change_failure_rate"],
+                "lead_time_h": point["lead_time_h"]["median"],
+            }
+        )
+    by_repo = []
+    for r in repos:
+        mine = [d for d in deps if d.project_id == r.id]
+        summary = dora.summarise(
+            mine,
+            [x for x in shipped if x.project_id == r.id],
+            w.lo,
+            w.hi,
+            tz,
+            min_sample,
+            {k: v for k, v in ev.items() if k[0] == r.id},
+        )
+        by_repo.append(
+            {
+                "id": r.id,
+                "path_with_namespace": r.path_with_namespace,
+                "production_environment": r.production_environment,
+                # Every environment the repo deployed to, for the admin's choice (D2).
+                "environments": environments.get(r.id, []),
+                "production_detected": sorted({d.environment for d in mine}),
+                **summary,
+            }
+        )
+    rolled = {d.id for e in ev.values() for d in e.rolled_back}
+    paths = {r.id: r.path_with_namespace for r in repos}
+    failures = sorted(
+        (
+            d
+            for d in deps
+            if (d.status == "failed" or d.id in rolled)
+            and d.finished_at is not None
+            and w.lo <= d.finished_at < w.hi
+        ),
+        key=lambda d: d.finished_at or w.lo,
+        reverse=True,
+    )[:RECENT_FAILURES]
+    now = datetime.now(UTC)
+    c = conf.Confidence()
+    as_of = conf.freshness(
+        c,
+        [(r.path_with_namespace, r.last_synced_at) for r in repos],
+        now,
+        settings.insights_stale_sync_hours,
+    )
+    if not deps:
+        c.add(
+            "insufficient",
+            "no_deployments",
+            "Chưa có deployment production nào (GitLab environment tier production, hoặc tên "
+            "production/prod; admin đặt riêng cho repo nếu khác)",
+        )
+    return {
+        "insights_version": INSIGHTS_VERSION,
+        "period_type": period,
+        **_window_info(w),
+        "data_as_of": as_of.isoformat() if as_of else None,
+        "confidence": c.as_dict(),
+        "totals": {
+            **totals,
+            "delta": {
+                "deployments": totals["deployments"] - before["deployments"],
+                "change_failure_rate": _diff(
+                    totals["change_failure_rate"], before["change_failure_rate"]
+                ),
+                "lead_time_h": _diff(
+                    totals["lead_time_h"]["median"], before["lead_time_h"]["median"]
+                ),
+                "recovery_h": _diff(totals["recovery_h"]["median"], before["recovery_h"]["median"]),
+            },
+        },
+        "trend": trend,
+        "repos": by_repo,
+        "failures": [
+            {
+                "id": d.id,
+                "project_id": d.project_id,
+                "path_with_namespace": paths.get(d.project_id),
+                "environment": d.environment,
+                "sha": d.sha,
+                "kind": "failed" if d.status == "failed" else "rolled_back",
+                "finished_at": d.finished_at.isoformat() if d.finished_at else None,
+            }
+            for d in failures
+        ],
+    }

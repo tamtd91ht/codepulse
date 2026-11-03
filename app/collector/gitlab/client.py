@@ -272,6 +272,21 @@ class GitLabClient:
     def pipeline(self, project_id: int, pipeline_id: int) -> Any:
         return self.get(f"/projects/{project_id}/pipelines/{pipeline_id}")
 
+    # -- deployments (docs/specs/20 §5.2, DORA) ----------------------------------------------
+
+    def environments(self, project_id: int) -> Iterator[Any]:
+        """Every environment of the project, with its `tier` (GitLab 13.10+)."""
+        return self.paginate(f"/projects/{project_id}/environments")
+
+    def deployments(self, project_id: int, updated_after: datetime | None) -> Iterator[Any]:
+        params: dict[str, Any] = {"order_by": "updated_at", "sort": "asc"}
+        if updated_after:
+            params["updated_after"] = updated_after.isoformat()
+        return self.paginate(f"/projects/{project_id}/deployments", params)
+
+    def deployment_merge_requests(self, project_id: int, deployment_id: int) -> Iterator[Any]:
+        return self.paginate(f"/projects/{project_id}/deployments/{deployment_id}/merge_requests")
+
     def user(self, user_id: int) -> Any:
         return self.get(f"/users/{user_id}")
 

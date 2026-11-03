@@ -197,7 +197,9 @@ Quy tắc biên:
 | Deployment frequency | Số deployment `success` lên môi trường production trong kỳ (theo ngày/tuần) |
 | Lead time for changes | Trung vị `deployed_at − first_commit_at` của MR được deploy trong kỳ |
 | Change failure rate | Tỉ lệ deployment production dẫn tới sự cố. v1 dùng proxy: deployment `failed`, hoặc bị theo sau bởi một deployment của sha cũ hơn trong 24 giờ (rollback). Khi có issue incident ([DECISION D3]) thì dùng incident có liên kết |
-| Failed deployment recovery time | Từ deployment hỏng tới deployment thành công kế tiếp trên cùng môi trường |
+| Failed deployment recovery time | Từ deployment hỏng (hoặc thay đổi bị rollback) tới deployment thành công kế tiếp trên cùng môi trường |
+
+Chi tiết khi làm 9.8: rollback = deployment thành công của một sha đã từng deploy thành công trên cùng môi trường, khác sha deploy ngay trước nó; deployment ngay trước đó là thay đổi lỗi. Tính rollback cần lịch sử 90 ngày trước kỳ. Lead time chỉ tính MR mà GitLab ghi là được deployment production mang đi (`/deployments/:id/merge_requests`), ở deployment thành công đầu tiên. Repo không có environment / không đọc được deployment (403/404) thì bỏ qua, không làm hỏng lần sync.
 
 DORA chỉ ở cấp repo/dự án và **không bao giờ** gắn cho một người (đúng khuyến cáo của DORA).
 
@@ -220,24 +222,23 @@ CREATE INDEX ix_commit_files_path ON commit_files (path);
 - Chỉ lưu đường dẫn và số dòng, không lưu nội dung (AGENTS.md "Cấm").
 - Backfill từ `raw_gitlab` hiện có (giữ 365 ngày): CLI `codepulse insights backfill-files [--project ID]`, idempotent.
 
-### 5.2. `deployments`, `deployment_mrs` (phase 9.8)
+### 5.2. `deployments` (phase 9.8)
 ```sql
 CREATE TABLE deployments (
   id BIGINT PRIMARY KEY,                       -- GitLab deployment id
-  project_id INT NOT NULL REFERENCES projects(id),
-  environment TEXT NOT NULL, sha TEXT, ref TEXT,
+  project_id INT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  environment TEXT NOT NULL, environment_tier TEXT,   -- tier từ /environments (D2)
+  sha TEXT, ref TEXT,
   status TEXT NOT NULL,                        -- created|running|success|failed|canceled|blocked
-  created_at_src TIMESTAMPTZ, finished_at_src TIMESTAMPTZ
+  created_at_src TIMESTAMPTZ, finished_at_src TIMESTAMPTZ,
+  mr_iids JSONB                                -- MR (iid trong repo) deployment mang đi; NULL = chưa hỏi
 );
-CREATE INDEX ix_deployments_project_env_finished ON deployments (project_id, environment, finished_at_src);
-CREATE TABLE deployment_mrs (
-  deployment_id BIGINT REFERENCES deployments(id) ON DELETE CASCADE,
-  mr_id BIGINT REFERENCES merge_requests(id) ON DELETE CASCADE,
-  PRIMARY KEY (deployment_id, mr_id)
-);
+CREATE INDEX ix_deployments_project_id_finished_at_src ON deployments (project_id, finished_at_src);
+ALTER TABLE projects ADD COLUMN production_environment TEXT;   -- ghi đè D2
 ```
-- API GitLab: `GET /projects/:id/deployments?updated_after=&order_by=updated_at`, `GET /projects/:id/deployments/:id/merge_requests`.
-- Môi trường production xác định bằng `projects.production_environment` (mặc định theo [DECISION D2]).
+- API GitLab: `GET /projects/:id/environments` (tier), `GET /projects/:id/deployments?updated_after=&order_by=updated_at`, `GET /projects/:id/deployments/:id/merge_requests` (chỉ deployment thành công của production).
+- MR lưu dạng iid và nối với `merge_requests` lúc đọc: MR thu thập sau deployment vẫn được tính. Danh sách MR rỗng của deployment vừa xong < 10 phút không lưu (GitLab gắn MR bất đồng bộ), lần sync sau hỏi lại.
+- Repo chưa từng có deployment nào được thu thập: lần sync đầu lấy cả cửa sổ backfill. Đổi `production_environment` → xếp hàng sync đầy đủ repo để lấy MR của các deployment cũ. Tier đổi trên GitLab áp cho cả lịch sử của môi trường đó.
 
 ### 5.3. `issues` (phase 9.9, chỉ làm sau [DECISION D3])
 Thiết kế chốt sau khi biết tracker là gì. Mục đích duy nhất: nối MR ↔ task và incident ↔ MR. **Không** có cột story point dùng cho đánh giá.

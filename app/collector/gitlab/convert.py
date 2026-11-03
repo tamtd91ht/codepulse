@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Select, delete, func, select
+from sqlalchemy import Select, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -24,6 +24,7 @@ from app.models import (
     Account,
     Commit,
     CommitFile,
+    Deployment,
     MergeRequest,
     MrCommit,
     MrNote,
@@ -204,8 +205,41 @@ class Converter:
             }
             self._session.execute(self._upsert(Pipeline, values, ["id"]))
         counts["pipelines"] = len(data.pipelines)
+        self._deployments(data)
+        counts["deployments"] = len(data.deployments)
         self._session.flush()
         return result
+
+    def _deployments(self, data: Extracted) -> None:
+        """docs/specs/20 §5.2. The tier comes from this run's environment list; a deployment of
+        an environment the run did not list keeps the tier stored before."""
+        for dep in data.deployments.values():
+            values: dict[str, Any] = {
+                "id": dep.id,
+                "project_id": self._project.id,
+                "environment": dep.environment,
+                "sha": dep.sha,
+                "ref": dep.ref,
+                "status": dep.status,
+                "created_at_src": dep.created_at,
+                "finished_at_src": dep.finished_at,
+            }
+            if dep.environment in data.environment_tiers:
+                values["environment_tier"] = data.environment_tiers[dep.environment]
+            if dep.mr_iids is not None:  # a run that did not ask keeps what was stored
+                values["mr_iids"] = dep.mr_iids
+            self._session.execute(self._upsert(Deployment, values, ["id"]))
+        # A tier changed on GitLab applies to the environment's whole history.
+        for environment, tier in data.environment_tiers.items():
+            self._session.execute(
+                update(Deployment)
+                .where(
+                    Deployment.project_id == self._project.id,
+                    Deployment.environment == environment,
+                    Deployment.environment_tier.is_distinct_from(tier),
+                )
+                .values(environment_tier=tier)
+            )
 
 
 def raw_rows_query(project: Project, fetched_since: datetime | None = None) -> Select[RawGitlab]:

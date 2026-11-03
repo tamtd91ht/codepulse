@@ -95,7 +95,7 @@
 - [x] 9.6 `knowledge.py` + API `/insights/knowledge` + tab Rủi ro tri thức (20 §4.9)
 - [ ] **Demo**: một dự án thật – 4 chặng 8 tuần gần nhất, top MR chờ, bus factor
 - [ ] 9.7 USER_GUIDE "Insights đo gì và không đo gì" + pilot 2–3 team (20 §12)
-- [ ] 9.8 Deployments collector + DORA (20 §4.10, §5.2; D2 đã chốt: tier production)
+- [x] 9.8 Deployments collector + DORA (20 §4.10, §5.2; D2 đã chốt: tier production)
 - [ ] 9.9 Issues / incident (20 §5.3) – **hoãn** theo D3, xem lại sau pilot
 - [x] 9.10 Hồ sơ bằng chứng: model, job draft, API, UI, audit (20 §6; D1 coaching, D4 bản thân + lead + admin)
 - [ ] 9.10b Hồ sơ: MR chạm module một người nắm, commit thẳng lên nhánh chính, cảnh báo account chưa gắn người (20 §6.2)

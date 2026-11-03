@@ -100,6 +100,9 @@ class Project(TimestampMixin, Base):
     # docs/specs/19 §3.4: a push to the default branch touching `.claude/` queues a rebuild of
     # the review knowledge (default off: the premises only get flagged as stale).
     knowledge_auto_refresh: Mapped[bool] = mapped_column(server_default="false")
+    # docs/specs/20 D2: the environment DORA counts as production; NULL = GitLab's production
+    # tier, else an environment named "production" or "prod".
+    production_environment: Mapped[str | None] = mapped_column(String(255))
 
 
 class RawGitlab(TimestampMixin, Base):

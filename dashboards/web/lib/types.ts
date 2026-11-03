@@ -1591,3 +1591,52 @@ export interface EvidenceList {
   months_back: number;
   packs: { period: string; status: EvidenceStatus; updated_at: string | null }[];
 }
+
+/* ---- DORA (docs/specs/20 §4.10) ---- */
+
+export interface DoraSummary {
+  deployments: number;
+  failed: number;
+  rollbacks: number;
+  per_week: number;
+  deploy_days: number;
+  change_failure_rate: number | null;
+  recovery_h: InsightSpread;
+  lead_time_h: InsightSpread;
+  deploy_h: InsightSpread;
+  shipped_mrs: number;
+}
+
+export interface InsightsDora {
+  insights_version: string;
+  period_type: "week" | "month" | "range";
+  period_start: string;
+  period_end: string;
+  period_range: [string, string];
+  trend_period: "week" | "month";
+  trend_starts: string[];
+  data_as_of: string | null;
+  confidence: InsightConfidence;
+  totals: DoraSummary & {
+    delta: { deployments: number; change_failure_rate: number | null; lead_time_h: number | null; recovery_h: number | null };
+  };
+  trend: { period_start: string; deployments: number; change_failure_rate: number | null; lead_time_h: number | null }[];
+  repos: (DoraSummary & {
+    id: number;
+    path_with_namespace: string;
+    production_environment: string | null;
+    /** Every environment the repo deployed to (the admin picks production among them). */
+    environments: string[];
+    /** Those counted as production in the window. */
+    production_detected: string[];
+  })[];
+  failures: {
+    id: number;
+    project_id: number;
+    path_with_namespace: string | null;
+    environment: string;
+    sha: string | null;
+    kind: "failed" | "rolled_back";
+    finished_at: string | null;
+  }[];
+}

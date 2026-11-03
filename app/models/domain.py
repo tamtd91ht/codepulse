@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -93,3 +94,26 @@ class CommitFile(TimestampMixin, Base):
     path: Mapped[str] = mapped_column(primary_key=True, index=True)
     additions: Mapped[int] = mapped_column(server_default="0")
     deletions: Mapped[int] = mapped_column(server_default="0")
+
+
+class Deployment(TimestampMixin, Base):
+    """A GitLab deployment (docs/specs/20 §5.2): DORA reads the production ones (D2)."""
+
+    __tablename__ = "deployments"
+    __table_args__ = (
+        Index("ix_deployments_project_id_finished_at_src", "project_id", "finished_at_src"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    environment: Mapped[str]
+    environment_tier: Mapped[str | None]  # GitLab's tier: production|staging|testing|...
+    sha: Mapped[str | None]
+    ref: Mapped[str | None]
+    status: Mapped[str]  # created|running|success|failed|canceled|blocked
+    created_at_src: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at_src: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The MRs (iids in this repo) GitLab says the deployment shipped; resolved to MRs when
+    # read, so an MR collected later still links. NULL = not asked (not a success, or not
+    # production when collected).
+    mr_iids: Mapped[list[int] | None] = mapped_column(JSONB)

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.collector.base import CollectResult
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.gitlab.diffstat import file_stat
+from app.insights.dora import is_production
 from app.models import MergeRequest, Pipeline, Project, RawGitlab
 
 log = logging.getLogger(__name__)
@@ -25,8 +26,13 @@ EP_MR_COMMITS = "mr_commits"  # params.iid, payload: list of commits
 EP_MR_NOTES = "mr_notes"  # params.iid, payload: list of notes
 EP_MR_DIFFS = "mr_diffs"  # params.iid, payload: list of file stats
 EP_PIPELINE = "pipeline"  # one row per pipeline
+EP_ENVIRONMENTS = "environments"  # payload: list of environments (name, tier)
+EP_DEPLOYMENT = "deployment"  # one row per deployment
+EP_DEPLOYMENT_MRS = "deployment_mrs"  # params.id, payload: list of MR iids it shipped
 
 SYNC_OVERLAP = timedelta(hours=1)
+# docs/specs/20 §5.2: GitLab links the MRs of a deployment asynchronously.
+MR_LINK_DELAY = timedelta(minutes=10)
 # Per-item detail calls (one MR's diffs, notes...) retry once: a transient blip passes, a
 # diff GitLab can never render (HTTP 500 on huge MRs) is skipped in ~1 s instead of ~30 s.
 ITEM_RETRIES = 1
@@ -64,7 +70,15 @@ class GitLabCollector:
         self._client = client
         self._clock = clock
 
-    def collect(self, session: Session, project: Project, since: datetime | None) -> CollectResult:
+    def collect(
+        self,
+        session: Session,
+        project: Project,
+        since: datetime | None,
+        deployments_since: datetime | None = None,
+    ) -> CollectResult:
+        """`deployments_since`: the deployments window when it differs from `since` (a repo
+        whose deployment history was never collected backfills it, docs/specs/20 §5.2)."""
         result = CollectResult(window_start=since, started_at=self._clock())
         pid = project.external_id
 
@@ -150,11 +164,65 @@ class GitLabCollector:
             store(EP_PIPELINE, {**pipeline, **(extra or {})}, id=pipeline_id)
         session.flush()
 
+        self._collect_deployments(project, deployments_since or since, store, detail)
+        session.flush()
+
         log.info(
             "collected gitlab project",
             extra={"project_id": project.id, "since": since, "counts": result.counts},
         )
         return result
+
+    def _collect_deployments(
+        self,
+        project: Project,
+        since: datetime | None,
+        store: Callable[..., None],
+        detail: Callable[..., Any],
+    ) -> None:
+        """docs/specs/20 §5.2: environments and deployments, and the MRs each successful
+        production deployment shipped (D2). A repo without environments, or one the token may
+        not read them in, simply has none."""
+        pid = project.external_id
+        try:
+            environments = list(self._client.environments(pid))
+            deployments = list(self._client.deployments(pid, since))
+        except GitLabError as exc:
+            if exc.status_code not in (403, 404):
+                raise
+            log.info(
+                "deployments not readable, skipped",
+                extra={"project_id": project.id, "status": exc.status_code},
+            )
+            return
+        if not environments and not deployments:
+            return  # no deployments in this repo: nothing to keep
+        store(EP_ENVIRONMENTS, environments)
+        tiers = {e.get("name"): e.get("tier") for e in environments}
+        for deployment in deployments:
+            store(EP_DEPLOYMENT, deployment, id=deployment["id"])
+            env = (deployment.get("environment") or {}).get("name")
+            if deployment.get("status") != "success" or not is_production(
+                env, tiers.get(env), project.production_environment
+            ):
+                continue
+            dep_id = int(deployment["id"])
+            iids = detail(
+                EP_DEPLOYMENT_MRS,
+                lambda dep_id=dep_id: [
+                    int(m["iid"]) for m in self._client.deployment_merge_requests(pid, dep_id)
+                ],
+                id=dep_id,
+            )
+            finished = deployment.get("finished_at") or deployment.get("updated_at")
+            just_now = (
+                finished is not None
+                and self._clock() - datetime.fromisoformat(finished) < MR_LINK_DELAY
+            )
+            if iids is not None and (iids or not just_now):
+                # GitLab links a deployment's MRs a little after it succeeds: an empty list
+                # that early is asked again by the next sync.
+                store(EP_DEPLOYMENT_MRS, iids, id=dep_id)
 
     def collect_commit(self, session: Session, project: Project, sha: str) -> list[RawGitlab]:
         """One commit (and its diff stats) into raw_gitlab, for a review of a commit the last

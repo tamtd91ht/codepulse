@@ -109,3 +109,5 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | PATCH | `/evidence/{user_id}/{yyyy-mm}` `{self_notes, lead_notes, goals_next}` | Sửa phần được phép ở trạng thái hiện tại (409 nếu không) | như trên |
 | POST | `/evidence/{user_id}/{yyyy-mm}/{refresh\|submit\|return\|review\|share}` | Làm mới số liệu / gửi / trả lại / đã xem / chốt sau 1:1; audit `evidence.<hành động>` | bản thân: refresh, submit; lead, admin: return, review, share (không với hồ sơ của chính mình) |
 | POST/DELETE | `/evidence/{user_id}/{yyyy-mm}/items[/{item_id}]` | Thêm / xoá bằng chứng (chỉ người thêm xoá được) | như trên |
+| GET | `/insights/dora?business_project_id=&project_id=&period=&start=&end=` | DORA cấp repo/dự án (20 §4.10): deploy production, lead time, tỉ lệ thay đổi lỗi, khôi phục, xu hướng, thay đổi lỗi gần nhất | như `/insights/flow` |
+| PATCH | `/projects/{id}` `{production_environment}` | Môi trường production của repo cho DORA ("" = tự nhận theo tier/tên, D2) | admin |

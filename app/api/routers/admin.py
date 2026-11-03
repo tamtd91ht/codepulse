@@ -620,24 +620,46 @@ def import_group(
 
 @router.patch("/projects/{project_id}", response_model=ProjectOut)
 def update_project(
-    project_id: int, body: ProjectPatch, principal: AdminPrincipal, session: SessionDep
+    project_id: int,
+    body: ProjectPatch,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> Project:
     project = _get(session, Project, project_id, "project")
     changes = body.model_dump(exclude_unset=True)
+    production_before = project.production_environment
     if not changes:
         raise HTTPException(422, "nothing to update")
     for key, value in changes.items():
-        if key in ("review_rules", "review_rules_paths", "review_branch"):
+        if key in ("review_rules", "review_rules_paths", "review_branch", "production_environment"):
             value = (value or "").strip() or None  # "" clears (review_branch: default branch)
         elif value is None:
             raise HTTPException(422, f"{key} cannot be null")
         setattr(project, key, value)
     audited = {
-        k: (len(v) if isinstance(v, str) and k != "review_branch" else v)
+        k: (
+            len(v)
+            if isinstance(v, str) and k not in ("review_branch", "production_environment")
+            else v
+        )
         for k, v in changes.items()
     }  # sizes, not text (a branch name is not content)
     audit(session, principal.user_id, "project.update", f"project:{project.id}", **audited)
     session.commit()
+    if project.production_environment != production_before and project.tracked:
+        # docs/specs/20 D2: the MRs of past deployments are only asked for production ones, so a
+        # new production environment needs the backfill window collected again.
+        try:
+            queue.enqueue(
+                "app.collector.sync.sync_project_job",
+                project.id,
+                full=True,
+                job_id=f"sync-project-{project.id}",
+                job_timeout=SYNC_JOB_TIMEOUT,
+            )
+        except Exception:
+            log.exception("could not queue the re-sync", extra={"project_id": project.id})
     return project
 
 
