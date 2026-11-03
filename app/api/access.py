@@ -52,14 +52,6 @@ def review_scope(principal: Principal) -> ColumnElement[bool] | None:
 
 # -- docs/specs/21 phase B1: reviews, findings, closings and disputes on permissions ---------------
 
-# Permissions the built-in sets "Quản lý dự án" / "Quản lý tổng" hold at "project" / "all"
-# although, before spec 21, managing a dự án never decided a close request or a dispute nor
-# lowered a critical to low. Until those defaults are aligned, a scope wider than "team" reaches
-# no further than "team" for them, so every built-in set behaves exactly as before.
-TEAM_AT_MOST = frozenset(
-    {"finding.close_decide", "finding.lower_far", "dispute.decide", "dispute.ai_check"}
-)
-
 
 def covers_work(
     principal: Principal, key: str, author_user_id: int | None, bp_id: int | None
@@ -69,12 +61,9 @@ def covers_work(
     dự án are the admins', docs/specs/09)."""
     if principal.is_admin:
         return True
-    if author_user_id is None or author_user_id != principal.user_id:
-        if not principal.can_view_project(bp_id):
-            return False
-        if key in TEAM_AT_MOST:
-            # bp_id None: `covers` then stops at the team scope (the dự án is checked above).
-            return principal.covers(key, author_user_id, None)
+    others = author_user_id is None or author_user_id != principal.user_id
+    if others and not principal.can_view_project(bp_id):
+        return False
     return principal.covers(key, author_user_id, bp_id)
 
 
@@ -96,11 +85,9 @@ def may_request_review(principal: Principal, author_user_id: int | None, bp_id: 
 
 
 def may_rerun(principal: Principal, author_user_id: int | None, bp_id: int | None) -> bool:
-    """`review.rerun` (and "review again" from Yêu cầu review): it spends LLM budget, so it
-    stays with who manages the dự án, as before spec 21."""
-    return principal.can_manage_project(bp_id) and principal.covers(
-        "review.rerun", author_user_id, bp_id
-    )
+    """`review.rerun` (and "review again" from Yêu cầu review): it spends LLM budget, so its
+    scopes are "project" (a dự án one manages, the built-in Quản lý dự án) and "all"."""
+    return principal.covers("review.rerun", author_user_id, bp_id)
 
 
 def team_reach(principal: Principal, key: str) -> set[int]:
@@ -108,7 +95,7 @@ def team_reach(principal: Principal, key: str) -> set[int]:
     one leads or manages. Admins: use `covers_work`, they reach everyone."""
     if principal.scope(key) in (None, "own"):
         return set()
-    return (principal.lead_members | principal.managed_members) - {principal.user_id}
+    return principal.team_people(key) - {principal.user_id}
 
 
 def whole_projects(principal: Principal, key: str) -> set[int] | None:

@@ -104,7 +104,9 @@ def test_a_set_given_by_hand_lets_a_manager_decide_disputes_of_their_team(
     # The Manager set holds neither dispute.decide nor review.view over the team: refused.
     assert decide(client, an_dispute, manager).status_code == 403
 
-    give(db_session, world.manager, {"review.view": "team", "dispute.decide": "team"})
+    # "team" on disputes reaches the people one leads, never a managed team (Phase 0, spec 21
+    # catalog managed_team): a manager's team is given "all" (within dự án they see).
+    give(db_session, world.manager, {"review.view": "all", "dispute.decide": "all"})
     mine = raise_dispute(client, own_finding(db_session, world, world.manager).id, manager)
     # Never their own dispute (docs/specs/21 §3), whatever the sets say.
     refused = decide(client, mine, manager)

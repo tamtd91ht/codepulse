@@ -45,7 +45,7 @@ from app.api.schemas import (
     encode_cursor,
     encode_cursor_text,
 )
-from app.api.security import Principal, require
+from app.api.security import CurrentPrincipal, Principal, require
 from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.identity.attribution import Attribution, attribute_reviews, rebuild_after_commit
@@ -78,7 +78,9 @@ MODES: dict[str, tuple[str, ...]] = {"fast": ("fast",), "deep": ("agent", "deep"
 
 
 ViewPrincipal = Annotated[Principal, require("review.view")]
-RerunPrincipal = Annotated[Principal, require("review.rerun")]
+# Re-runs are offered per review (`may_rerun`, permission review.rerun): the list endpoints
+# stay open and answer with nothing to run, as before spec 21, rather than 403.
+RerunPrincipal = CurrentPrincipal
 AuthorPrincipal = Annotated[Principal, require("review.author")]
 
 

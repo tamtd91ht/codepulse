@@ -68,24 +68,25 @@ Trong cột Mặc định: **TV** = Thành viên, **L** = Lead, **M** = Manager,
 | `members.view` | Trang Thành viên (danh sách) | flag | L, M, QLDA, QLT |
 | `evaluation.view` | Đánh giá từng người, heatmap | own/team/project/all · sensitive | TV own; L team; QLDA project; QLT all |
 | `metrics.person` | Điểm tuần lưu sẵn của một người | own/team/all · sensitive | TV own; L team |
-| `metrics.team` | Chỉ số team, hotspot, leaderboard, báo cáo | team/all | L team; M team |
+| `metrics.team` | Chỉ số team, hotspot, leaderboard, báo cáo | own/team/all · team gồm cả team manage | TV own (chỉ số team của mình; leaderboard và báo cáo cần team trở lên); L team; M team |
 | `review.view` | Kết quả review, finding | own/team/project/all | TV own; L team; QLDA project; QLT all |
 | `review.request` | Yêu cầu review commit | own/project/all | TV own; QLDA project; QLT all |
-| `review.rerun` | Chạy lại review | own/team/project/all | TV own; L team; QLDA project; QLT all |
+| `review.rerun` | Chạy lại review (tốn ngân sách LLM) | project/all | QLDA project; QLT all |
 | `review.author` | Gắn tác giả cho review | project/all | QLDA project; QLT all |
 | `finding.close_request` | Gửi yêu cầu đóng finding của mình | own | TV |
-| `finding.close_decide` | Chạy review / từ chối / xác nhận yêu cầu đóng | team/project/all | L team; M team; QLDA project; QLT all |
-| `finding.lower_far` | Hạ critical thẳng xuống low | team/project/all | M team; QLDA project; QLT all |
+| `finding.close_decide` | Chạy review / từ chối / xác nhận yêu cầu đóng | team/project/all · team gồm cả team manage | L team; M team |
+| `finding.lower_far` | Hạ critical thẳng xuống low | team/project/all · team gồm cả team manage | M team |
 | `finding.close_manual` | Đóng / mở lại finding thủ công | all | (chỉ admin) |
 | `dispute.raise` | Khiếu nại finding của mình | own | TV |
-| `dispute.decide` | Duyệt khiếu nại | team/project/all | L team; QLDA project; QLT all |
-| `dispute.ai_check` | Nhờ AI phân tích khiếu nại | team/project/all | L team; QLDA project; QLT all |
+| `dispute.decide` | Duyệt khiếu nại | team/project/all | L team |
+| `dispute.ai_check` | Nhờ AI phân tích khiếu nại | team/project/all | L team |
 | `evidence.view` | Hồ sơ tháng | own/team/all · sensitive | TV own; L team |
 | `evidence.edit_self` | Viết phần của mình trong hồ sơ | own | TV |
 | `evidence.lead` | Nhận xét, chốt, bản nháp AI của hồ sơ | team/all | L team |
 | `knowledge.view` | Tiền đề review của repo | flag | TV |
-| `knowledge.edit` | Làm mới, duyệt, sửa Tiền đề review; hồ sơ dự án; repo .claude dùng chung | project/all | QLDA project; QLT all |
-| `gitlab_members.import` | Tra cứu, nhập người từ GitLab | project/all | QLDA project; QLT all |
+| `knowledge.edit` | Làm mới, duyệt, sửa Tiền đề review | project/all | QLDA project; QLT all |
+| `knowledge.shared` | Repo .claude dùng chung, làm mới hồ sơ dự án | flag | — |
+| `gitlab_members.import` | Tra cứu, nhập người từ GitLab | flag | — |
 | `telegram.self` | Liên kết Telegram của mình | flag | TV |
 | `assistant.use` | Trợ lý Stetho | flag | M |
 | `admin.connections` | Kết nối GitLab | flag | — |
@@ -143,3 +144,19 @@ Quyết định (người dùng giao chọn):
 - Không request nào tạo ra admin: admin vẫn chỉ là `ADMIN_EMAILS`; body không nhận `builtin`, `auto_role` (trường lạ bị 422).
 - Mỗi thay đổi ghi `audit_log`: `permission_set.create|update|delete|assign`.
 - Màn Admin › Phân quyền: hai tab con "Bộ quyền" (danh sách + ma trận) và "Quyền hiệu lực". Menu và nút ở các trang khác chuyển sang `can()` ở bước sau.
+
+## 8. Chốt sau giai đoạn B (2026-11-03)
+
+Giai đoạn B tìm thấy những chỗ bản 1 của §4 vượt quá hành vi cũ. Các bộ có sẵn được chỉnh lại theo bảng §4 hiện tại (migration `f8a0b2c4d6e8`), và các chốt tạm bị bỏ:
+
+1. **Quản lý dự án và Quản lý tổng** chưa từng duyệt yêu cầu đóng hay khiếu nại, cũng chưa từng hạ critical xuống low. Bốn quyền đó không còn trong hai bộ này. Chốt `TEAM_AT_MOST` bị bỏ.
+2. **Chạy lại review** luôn cần quản lý dự án, vì tốn ngân sách LLM. Phạm vi hợp lệ chỉ còn project/all. Danh sách "có thể chạy lại" vẫn mở cho mọi người, mỗi review tự trả lời có chạy được hay không.
+3. **Phạm vi "team" cho từng quyền** (cờ `managed_team` trong danh mục):
+   - Phạm vi "team" mặc định chỉ gồm người mình **lead**.
+   - Chỉ những quyền manager vốn đã có mới tính cả người của team mình **manage**: `finding.close_decide`, `finding.lower_far`, `metrics.team`.
+   - Nhờ vậy, người vừa là lead vừa là manager không thấy dữ liệu cá nhân của team mình chỉ manage (Phase 0).
+   - Muốn một manager duyệt khiếu nại thì cấp phạm vi `all`, tức trong các dự án họ được xem.
+4. **Thành viên** xem được chỉ số tổng hợp của chính team mình (`metrics.team` = own). Bảng xếp hạng và báo cáo tuần cần phạm vi team trở lên.
+5. **Ba màn trước chỉ admin dùng** (repo .claude dùng chung, làm mới hồ sơ dự án, nhập người từ GitLab) có quyền riêng: `knowledge.shared` và `gitlab_members.import`. Không bộ có sẵn nào có hai quyền này. Không còn kiểm tra admin cứng, nên bộ tự tạo cũng mở được.
+6. **`/auth/me`**: `insights` và `members_page` lấy từ `can("insights.view")` và `can("members.view")`. Bộ tự tạo nào mở hai trang này thì menu cũng hiện theo.
+7. **Một khác biệt chấp nhận được:** endpoint có `require` trả 403 ngay khi thiếu quyền. Trước đây nó có thể trả 404 vì không thấy repo, hoặc 422 vì body sai. Không làm lộ thông tin gì.

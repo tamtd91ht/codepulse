@@ -167,15 +167,13 @@ def repo_profiles(
 @router.post("/projects/{project_id}/profile/refresh", status_code=202)
 def refresh_profile(
     project_id: int,
-    principal: Annotated[Principal, require("knowledge.edit")],
+    principal: Annotated[Principal, require("knowledge.shared")],
     session: SessionDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> dict[str, str]:
     """Rebuild the profile from the default branch (one LLM call, runs in the worker).
-    `knowledge.edit` (docs/specs/21 §4: "hồ sơ dự án"), and still an admin: it was admin-only
-    before spec 21 and the built-in manager sets hold knowledge.edit, phase B keeps it."""
-    if not principal.is_admin:
-        raise HTTPException(403, "admin only")
+    `knowledge.shared` (docs/specs/21 §4): no built-in set holds it, so as before spec 21 only
+    admins, unless a set gives it."""
     project = _tracked_project(session, project_id)
     if project.allow_external_llm is False:
         raise HTTPException(409, "this repo does not allow sending code to an external LLM")

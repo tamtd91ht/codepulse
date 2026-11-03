@@ -50,6 +50,17 @@ Period = Annotated[Literal["week", "month"], Query()]
 # docs/specs/21: stored per-person scores, team numbers (leaderboard, report), evaluation.
 PersonMetrics = Annotated[Principal, require("metrics.person")]
 TeamMetrics = Annotated[Principal, require("metrics.team")]
+
+
+def _team_wide(principal: Annotated[Principal, require("metrics.team")]) -> Principal:
+    """The leaderboard and the weekly report rank people: `metrics.team` at "team" or wider
+    (a member's "own" scope is their own team's aggregates only)."""
+    if principal.scope("metrics.team") in (None, "own"):
+        raise HTTPException(403, "thiếu quyền xem chỉ số team")
+    return principal
+
+
+TeamWideMetrics = Annotated[Principal, Depends(_team_wide)]
 EvaluationViewer = Annotated[Principal, require("evaluation.view")]
 
 
@@ -144,7 +155,7 @@ def team_metrics(
 @router.get("/leaderboard", response_model=Leaderboard)
 def leaderboard(
     team_id: int,
-    principal: TeamMetrics,
+    principal: TeamWideMetrics,
     session: SessionDep,
     period: Period = "week",
     start: date | None = None,
@@ -339,7 +350,7 @@ def report(
     period: Literal["week", "month"],
     start: date,
     team_id: int,
-    principal: TeamMetrics,
+    principal: TeamWideMetrics,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     format: Literal["md", "html"] = "md",

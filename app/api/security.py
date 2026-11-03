@@ -92,10 +92,19 @@ class Principal:
             return None if perm is None else FLAG if perm.is_flag else "all"
         return self.perms.get(key)
 
+    def team_people(self, key: str) -> set[int]:
+        """Who the "team" scope of `key` reaches: the people one leads, and for the
+        permissions that say so (catalog `managed_team`) the people of the teams one manages."""
+        perm = BY_KEY.get(key)
+        if perm is not None and perm.managed_team:
+            return self.lead_members | self.managed_members
+        return set(self.lead_members)
+
     def covers(self, key: str, user_id: int | None, bp_id: int | None) -> bool:
         """Holds `key` over the work of `user_id` in dự án `bp_id` (docs/specs/21 §2): own
         work; with "team" also the people one leads or manages; with "project" also everyone in a
-        dự án one manages; with "all" everyone in a dự án one can access."""
+        dự án one manages; with "all" everyone in a dự án one can access. "team" is
+        `team_people(key)`."""
         if self.is_admin:
             return True
         held = self.perms.get(key)
@@ -107,7 +116,7 @@ class Principal:
             return True
         if held == "own":
             return False
-        led = user_id is not None and user_id in (self.lead_members | self.managed_members)
+        led = user_id is not None and user_id in self.team_people(key)
         if led and (bp_id is None or self.can_view_project(bp_id)):
             return True
         if held == "team":
@@ -334,7 +343,7 @@ def require_insights(principal: CurrentPrincipal) -> Principal:
     """Luồng làm việc (docs/specs/20 §8): lead and above only: an admin, a lead or a manager of
     a team, or a manager of a dự án (granted, or every one with manage_all). A member, or one
     who only views a dự án, does not see it (user request 2026-11-03)."""
-    if not lead_and_above(principal):
+    if not principal.can("insights.view"):
         raise HTTPException(403, "Luồng làm việc chỉ dành cho lead trở lên")
     return principal
 
@@ -342,7 +351,7 @@ def require_insights(principal: CurrentPrincipal) -> Principal:
 def require_members_page(principal: CurrentPrincipal) -> Principal:
     """Thành viên (the per-person evaluation of a team): lead and above, as Luồng làm việc; a
     member's own numbers are on their own page (/members/{id})."""
-    if not lead_and_above(principal):
+    if not principal.can("members.view"):
         raise HTTPException(403, "Thành viên chỉ dành cho lead trở lên")
     return principal
 

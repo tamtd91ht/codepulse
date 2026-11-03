@@ -52,12 +52,14 @@ def test_admins_hold_everything_at_its_widest() -> None:
     assert all_of["finding.close_request"] == "own"  # its only scope
 
 
-def test_the_migration_seeds_the_builtin_sets_of_the_catalog() -> None:
-    path = next(pathlib.Path("migrations/versions").glob("*_e7f9a1b3c5d7_permission_sets.py"))
-    spec = importlib.util.spec_from_file_location("perm_migration", path)
+def test_the_latest_migration_holds_the_builtin_sets_of_the_catalog() -> None:
+    """The built-in sets are seeded by migrations (literal copies, never imports of the
+    catalog): the newest one that carries them must equal the catalog."""
+    path = sorted(
+        pathlib.Path("migrations/versions").glob("*_f8a0b2c4d6e8_permission_defaults.py")
+    )[-1]
+    spec = importlib.util.spec_from_file_location("perm_defaults", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert [(b["auto_role"], b["items"]) for b in module.BUILTIN] == [
-        (b.auto_role, dict(b.items)) for b in BUILTIN_SETS
-    ]
+    assert {b.auto_role: dict(b.items) for b in BUILTIN_SETS} == module.BUILTIN

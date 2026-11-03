@@ -18,7 +18,6 @@ from app.api.deps import get_session
 from app.api.security import (
     SESSION_COOKIE,
     CurrentPrincipal,
-    insights_allowed,
     issue_token,
     public_user,
 )
@@ -240,9 +239,9 @@ def me(
         # Admin > Chạy command (COMMAND_RUNS_ENABLED); always false for everyone else.
         "command_runs": principal.is_admin and settings.command_runs_enabled,
         # Luồng làm việc: lead and above (app/api/security.require_insights).
-        "insights": insights_allowed(principal),
+        "insights": principal.can("insights.view"),
         # Thành viên: lead and above too (app/api/security.require_members_page).
-        "members_page": insights_allowed(principal),
+        "members_page": principal.can("members.view"),
         # docs/specs/21: what this person may do (catalog key -> scope, or "flag").
         "permissions": principal.perms,
     }

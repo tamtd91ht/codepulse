@@ -24,14 +24,32 @@ class Permission:
     label: str
     scopes: tuple[Scope, ...] = ()  # empty: a flag
     sensitive: bool = False  # touches one person's data: confirmed and audited when granted
+    # Whether "team" also reaches the people of the teams one only manages (role manager), not
+    # just those one leads: a manager sees team aggregates, never per-person data (Phase 0), so
+    # only the close-request decisions a manager made before spec 21 say yes.
+    managed_team: bool = False
 
     @property
     def is_flag(self) -> bool:
         return not self.scopes
 
 
-def _p(key: str, group: str, label: str, scopes: str = "", sensitive: bool = False) -> Permission:
-    return Permission(key, group, label, tuple(scopes.split()) if scopes else (), sensitive)  # type: ignore[arg-type]
+def _p(
+    key: str,
+    group: str,
+    label: str,
+    scopes: str = "",
+    sensitive: bool = False,
+    managed_team: bool = False,
+) -> Permission:
+    return Permission(
+        key,
+        group,
+        label,
+        tuple(scopes.split()) if scopes else (),  # type: ignore[arg-type]
+        sensitive,
+        managed_team,
+    )
 
 
 CATALOG: tuple[Permission, ...] = (
@@ -41,11 +59,15 @@ CATALOG: tuple[Permission, ...] = (
     _p("evaluation.view", "Thành viên", "Xem đánh giá từng người", "own team project all", True),
     _p("metrics.person", "Thành viên", "Xem điểm tuần lưu sẵn của một người", "own team all", True),
     _p(
-        "metrics.team", "Thành viên", "Xem chỉ số team, hotspot, bảng xếp hạng, báo cáo", "team all"
+        "metrics.team",
+        "Thành viên",
+        "Xem chỉ số team, hotspot, bảng xếp hạng, báo cáo",
+        "own team all",
+        managed_team=True,
     ),
     _p("review.view", "Review", "Xem kết quả review và finding", "own team project all"),
     _p("review.request", "Review", "Yêu cầu review commit/MR", "own project all"),
-    _p("review.rerun", "Review", "Chạy lại review", "own team project all"),
+    _p("review.rerun", "Review", "Chạy lại review (tốn ngân sách LLM)", "project all"),
     _p("review.author", "Review", "Gắn tác giả cho review", "project all"),
     _p("finding.close_request", "Đóng finding", "Gửi yêu cầu đóng finding của mình", "own"),
     _p(
@@ -53,8 +75,15 @@ CATALOG: tuple[Permission, ...] = (
         "Đóng finding",
         "Chạy review / từ chối / xác nhận yêu cầu đóng",
         "team project all",
+        managed_team=True,
     ),
-    _p("finding.lower_far", "Đóng finding", "Hạ critical thẳng xuống low", "team project all"),
+    _p(
+        "finding.lower_far",
+        "Đóng finding",
+        "Hạ critical thẳng xuống low",
+        "team project all",
+        managed_team=True,
+    ),
     _p("finding.close_manual", "Đóng finding", "Đóng / mở lại finding thủ công", "all"),
     _p("dispute.raise", "Khiếu nại", "Khiếu nại finding của mình", "own"),
     _p("dispute.decide", "Khiếu nại", "Duyệt khiếu nại", "team project all"),
@@ -69,7 +98,8 @@ CATALOG: tuple[Permission, ...] = (
         "Làm mới, duyệt, sửa Tiền đề review và hồ sơ dự án",
         "project all",
     ),
-    _p("gitlab_members.import", "Người & Team", "Tra cứu, nhập người từ GitLab", "project all"),
+    _p("knowledge.shared", "Tiền đề review", "Repo .claude dùng chung và làm mới hồ sơ dự án"),
+    _p("gitlab_members.import", "Người & Team", "Tra cứu, nhập người từ GitLab"),
     _p("telegram.self", "Telegram", "Liên kết Telegram của mình"),
     _p("assistant.use", "Trợ lý", "Dùng trợ lý Stetho"),
     _p("admin.connections", "Quản trị", "Kết nối GitLab"),
@@ -110,7 +140,7 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "metrics.person": "own",
             "review.view": "own",
             "review.request": "own",
-            "review.rerun": "own",
+            "metrics.team": "own",
             "finding.close_request": "own",
             "dispute.raise": "own",
             "evidence.view": "own",
@@ -130,7 +160,6 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "metrics.person": "team",
             "metrics.team": "team",
             "review.view": "team",
-            "review.rerun": "team",
             "finding.close_decide": "team",
             "dispute.decide": "team",
             "dispute.ai_check": "team",
@@ -163,12 +192,7 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "review.request": "project",
             "review.rerun": "project",
             "review.author": "project",
-            "finding.close_decide": "project",
-            "finding.lower_far": "project",
-            "dispute.decide": "project",
-            "dispute.ai_check": "project",
             "knowledge.edit": "project",
-            "gitlab_members.import": "project",
         },
     ),
     BuiltinSet(
@@ -183,12 +207,7 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "review.request": "all",
             "review.rerun": "all",
             "review.author": "all",
-            "finding.close_decide": "all",
-            "finding.lower_far": "all",
-            "dispute.decide": "all",
-            "dispute.ai_check": "all",
             "knowledge.edit": "all",
-            "gitlab_members.import": "all",
         },
     ),
 )

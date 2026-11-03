@@ -132,9 +132,7 @@ def test_members_still_get_403(
     assert res.status_code != 403
 
 
-def test_a_lead_still_syncs_a_repo_they_see(
-    client: TestClient, world: World, as_user: Any
-) -> None:
+def test_a_lead_still_syncs_a_repo_they_see(client: TestClient, world: World, as_user: Any) -> None:
     path = f"{API}/projects/{world.project.id}/sync"
     assert client.post(path, headers=as_user(world.lead)).status_code == 202
     assert client.post(path, headers=as_user(world.an)).status_code == 403

@@ -82,6 +82,14 @@ def _review_of(session: Session, finding: ReviewFinding) -> Review:
     return review
 
 
+def _bp_of(session: Session, dispute: FindingDispute) -> int | None:
+    """The dự án of the disputed finding's repo (None: outside every dự án)."""
+    finding = session.get(ReviewFinding, dispute.finding_id) if dispute.finding_id else None
+    review = session.get(Review, finding.review_id) if finding and finding.review_id else None
+    repo = review_repo(session, review) if review else None
+    return repo.business_project_id if repo else None
+
+
 def _sees(session: Session, principal: Principal, dispute: FindingDispute) -> bool:
     """`review.view` on the disputed work: a lead sees a member's dispute only in a dự án
     they are granted (docs/specs/09)."""
@@ -173,24 +181,24 @@ def _item(session: Session, principal: Principal, dispute: FindingDispute) -> di
         "review_id": finding.review_id if finding else None,
         "raised_by_name": raiser.full_name if raiser else None,
         "decided_by_name": decider.full_name if decider else None,
-        **_ai_view(principal, dispute),
+        **_ai_view(session, principal, dispute),
     }
 
 
-def _decider(principal: Principal, dispute: FindingDispute, key: str) -> bool:
-    """Who holds `key` (`dispute.decide`, `dispute.ai_check`) over the developer's work: their
-    lead or an admin, never the person who raised it (docs/specs/21 §3). The dự án is checked
-    by `_sees`; no dự án here also keeps a wider scope at "team" (app/api/access.TEAM_AT_MOST)."""
+def _decider(session: Session, principal: Principal, dispute: FindingDispute, key: str) -> bool:
+    """Who holds `key` (`dispute.decide`, `dispute.ai_check`) over the developer's work in the
+    finding's dự án: their lead (built-in), whoever a set gives it at a wider scope, or an
+    admin; never the person who raised it (docs/specs/21 §3)."""
     return (
         dispute.raised_by is not None
         and dispute.raised_by != principal.user_id
-        and principal.covers(key, dispute.raised_by, None)
+        and principal.covers(key, dispute.raised_by, _bp_of(session, dispute))
     )
 
 
-def _ai_view(principal: Principal, dispute: FindingDispute) -> dict[str, Any]:
+def _ai_view(session: Session, principal: Principal, dispute: FindingDispute) -> dict[str, Any]:
     """The AI second look, for who may ask for it only (the developer does not see it)."""
-    if not _decider(principal, dispute, "dispute.ai_check"):
+    if not _decider(session, principal, dispute, "dispute.ai_check"):
         return {}
     live = ai_running(dispute)
     stuck = dispute.ai_status in ("queued", "running") and not live
@@ -227,7 +235,7 @@ def ai_check(
     ).first()
     if dispute is None:
         raise HTTPException(404, "dispute not found")
-    if not _decider(principal, dispute, "dispute.ai_check") or not _sees(
+    if not _decider(session, principal, dispute, "dispute.ai_check") or not _sees(
         session, principal, dispute
     ):
         raise HTTPException(403, "only the developer's lead or an admin can ask for it")
@@ -286,7 +294,7 @@ def decide(
         raise HTTPException(409, "dispute already decided")
     if dispute.raised_by == principal.user_id:
         raise HTTPException(403, "you cannot decide your own dispute")
-    if not _decider(principal, dispute, "dispute.decide"):
+    if not _decider(session, principal, dispute, "dispute.decide"):
         raise HTTPException(403, "only the developer's lead or an admin can decide")
     if not _sees(session, principal, dispute):
         raise HTTPException(403, "this dispute is in a dự án you are not granted")

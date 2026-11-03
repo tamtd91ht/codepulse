@@ -49,11 +49,8 @@ SessionDep = Annotated[Session, Depends(get_session)]
 
 
 def _importer(principal: Annotated[Principal, require("gitlab_members.import")]) -> Principal:
-    """`gitlab_members.import` (docs/specs/21 §4), and still an admin: these screens were
-    admin-only before spec 21, while the built-in Quản lý dự án / Quản lý tổng sets hold the
-    permission; phase B keeps the behaviour."""
-    if not principal.is_admin:
-        raise HTTPException(403, "admin only")
+    """`gitlab_members.import` (docs/specs/21 §4). No built-in set holds it, so as before
+    spec 21 only admins, unless a set gives it."""
     return principal
 
 

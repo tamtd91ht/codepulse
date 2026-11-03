@@ -27,12 +27,9 @@ SessionDep = Annotated[Session, Depends(get_session)]
 BoxDep = Annotated[SecretBox, Depends(get_secret_box)]
 
 
-def _editor(principal: Annotated[Principal, require("knowledge.edit")]) -> Principal:
-    """`knowledge.edit` (docs/specs/21 §4: "repo .claude dùng chung"), and still an admin: the
-    built-in Quản lý dự án / Quản lý tổng sets hold knowledge.edit for the review knowledge,
-    and this screen was admin-only before spec 21, which phase B keeps."""
-    if not principal.is_admin:
-        raise HTTPException(403, "admin only")
+def _editor(principal: Annotated[Principal, require("knowledge.shared")]) -> Principal:
+    """`knowledge.shared` (docs/specs/21 §4): the dự án's shared .claude repo. No built-in set
+    holds it, so as before spec 21 only admins, unless a set gives it."""
     return principal
 
 
