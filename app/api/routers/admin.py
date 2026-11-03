@@ -8,13 +8,16 @@ from typing import Annotated, Any
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from rq import Retry
 from sqlalchemy import ColumnElement, and_, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
+from app import avatars
 from app.admin_settings import monthly_budget_usd
 from app.api.audit import audit
 from app.api.deps import get_queue, get_secret_box, get_session
@@ -47,7 +50,7 @@ from app.api.schemas import (
     UserIn,
     UserPatch,
 )
-from app.api.security import AdminPrincipal, LeadPrincipal
+from app.api.security import AdminPrincipal, CurrentPrincipal, LeadPrincipal
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.removal import REMOVAL_JOB_TIMEOUT, confirmation_phrase, remove_projects
 from app.collector.sync import (
@@ -877,20 +880,32 @@ def backfill_reviews(
 # -- identity -------------------------------------------------------------------------------------
 
 
+def _admin_user(user: User, settings: Settings) -> AdminUserOut:
+    """A model, not a dict: a dict would lose the hidden fields avatar_url is built from."""
+    admins = {e.lower() for e in settings.admin_emails}
+    out = AdminUserOut.model_validate(user)
+    out.is_admin = bool(user.primary_email and user.primary_email.lower() in admins)
+    return out
+
+
 @router.get("/users", response_model=list[AdminUserOut])
 def list_users(
     principal: AdminPrincipal,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
-) -> list[dict[str, Any]]:
-    admins = {e.lower() for e in settings.admin_emails}
-    return [
-        {
-            **AdminUserOut.model_validate(u).model_dump(),
-            "is_admin": bool(u.primary_email and u.primary_email.lower() in admins),
-        }
-        for u in session.scalars(select(User).order_by(User.id))
-    ]
+) -> list[AdminUserOut]:
+    return [_admin_user(u, settings) for u in session.scalars(select(User).order_by(User.id))]
+
+
+@router.get("/users/{user_id}", response_model=AdminUserOut)
+def get_user(
+    user_id: int,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AdminUserOut:
+    """One person's profile (Admin > Người & Team)."""
+    return _admin_user(_get(session, User, user_id, "user"), settings)
 
 
 @router.post("/users", response_model=AdminUserOut, status_code=201)
@@ -911,15 +926,147 @@ def create_user(body: UserIn, principal: AdminPrincipal, session: SessionDep) ->
 
 @router.patch("/users/{user_id}", response_model=AdminUserOut)
 def update_user(
-    user_id: int, body: UserPatch, principal: AdminPrincipal, session: SessionDep
-) -> User:
+    user_id: int,
+    body: UserPatch,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AdminUserOut:
     user = _get(session, User, user_id, "user")
     changes = body.model_dump(exclude_none=True)
+    if "full_name" in changes:
+        changes["full_name"] = changes["full_name"].strip()
+    if "primary_email" in changes:
+        email = changes["primary_email"].strip().lower()
+        changes["primary_email"] = email
+        admins = {e.lower() for e in settings.admin_emails}
+        if user.id == principal.user_id and email not in admins:
+            # Admin rights come from ADMIN_EMAILS: this change would lock you out of Admin.
+            raise HTTPException(409, "changing your own email would remove your admin rights")
+        if email in admins and (user.primary_email or "").lower() not in admins:
+            # An ADMIN_EMAILS address makes its holder admin: grant that in the config, not here.
+            raise HTTPException(
+                409, "this email is in ADMIN_EMAILS and would make the person admin"
+            )
+        if email == (user.primary_email or "").lower():
+            changes.pop("primary_email")
+    before = {key: getattr(user, key) for key in changes}
     for key, value in changes.items():
         setattr(user, key, value)
-    audit(session, principal.user_id, "user.update", f"user:{user.id}", **changes)
+    try:
+        session.flush()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(409, "a user with this email exists") from None
+    audit(
+        session,
+        principal.user_id,
+        "user.update",
+        f"user:{user.id}",
+        **changes,
+        **({"previous_email": before["primary_email"]} if "primary_email" in changes else {}),
+    )
     session.commit()
-    return user
+    session.refresh(user)
+    return _admin_user(user, settings)
+
+
+@router.put("/users/{user_id}/avatar", response_model=AdminUserOut)
+async def upload_avatar(
+    user_id: int,
+    request: Request,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AdminUserOut:
+    """Replace a person's avatar with the request body (the image's raw bytes: PNG, JPEG or
+    WebP, at most AVATAR_MAX_KB). Each person keeps one file (app/avatars.py)."""
+    limit = settings.avatar_max_kb * 1024
+    # Hand the connection back to the pool while a slow client streams the body.
+    await run_in_threadpool(session.commit)  # nothing written yet: only ends the read
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > limit:
+        raise HTTPException(413, f"the image is larger than {settings.avatar_max_kb} KB")
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > limit:
+            raise HTTPException(413, f"the image is larger than {settings.avatar_max_kb} KB")
+    return await run_in_threadpool(
+        _store_avatar, session, principal.user_id, user_id, bytes(data), settings
+    )
+
+
+def _store_avatar(
+    session: Session, actor: int, user_id: int, data: bytes, settings: Settings
+) -> AdminUserOut:
+    user = _get(session, User, user_id, "user")
+    try:
+        name = avatars.save(settings.avatar_dir, user.id, data, settings.avatar_max_kb)
+    except avatars.AvatarError as exc:
+        raise HTTPException(422, str(exc)) from None
+    user.avatar_file = name
+    user.updated_at = datetime.now(UTC)  # new version for the browser cache
+    audit(session, actor, "user.avatar", f"user:{user.id}", bytes=len(data), file=name)
+    session.commit()
+    # Only now the other formats go: the stored name already points at the new file.
+    _remove_avatar_files(settings, user.id, keep=name)
+    session.refresh(user)
+    return _admin_user(user, settings)
+
+
+def _remove_avatar_files(settings: Settings, user_id: int, keep: str | None = None) -> None:
+    """Best effort once the database is committed: a file left behind is harmless (it is
+    never served without its name in users.avatar_file), a 500 after the commit is not."""
+    try:
+        avatars.remove(settings.avatar_dir, user_id, keep=keep)
+    except OSError:
+        log.exception("could not remove avatar files", extra={"user_id": user_id})
+
+
+@router.delete("/users/{user_id}/avatar", response_model=AdminUserOut)
+def delete_avatar(
+    user_id: int,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AdminUserOut:
+    user = _get(session, User, user_id, "user")
+    if user.avatar_file is not None:
+        user.avatar_file = None
+        audit(session, principal.user_id, "user.avatar_remove", f"user:{user.id}")
+        session.commit()
+        session.refresh(user)
+    _remove_avatar_files(settings, user.id)
+    return _admin_user(user, settings)
+
+
+@router.get("/users/{user_id}/avatar")
+def get_avatar(
+    user_id: int,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> FileResponse:
+    """A person's avatar, for anyone signed in (it shows wherever their name does)."""
+    user = session.get(User, user_id)
+    path = (
+        avatars.path_of(settings.avatar_dir, user.avatar_file)
+        if user and user.avatar_file
+        else None
+    )
+    if path is None:
+        raise HTTPException(404, "no avatar")
+    return FileResponse(
+        path,
+        media_type=avatars.MEDIA_TYPES[path.suffix.lstrip(".")],
+        headers={
+            "Cache-Control": "private, max-age=86400",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'",
+            "Content-Disposition": f'inline; filename="avatar{path.suffix}"',
+        },
+    )
 
 
 @router.delete("/users/{user_id}", status_code=204)
@@ -983,6 +1130,7 @@ def delete_user(
     )
     session.delete(user)
     session.commit()
+    _remove_avatar_files(settings, user_id)  # after the commit: the row is really gone
     if first is not None and last is not None:
         tz = ZoneInfo(settings.report_tz)
         try:

@@ -43,7 +43,9 @@ services:
       interval: 15s
       start_period: 60s  # first start runs every migration
       retries: 5
-    volumes: *runs
+    volumes:
+      - command-runs:/tmp/codepulse-runs
+      - avatars:/srv/data/avatars  # AVATAR_DIR (app/avatars.py): kept across rebuilds
 
   worker:
     <<: *app
@@ -132,5 +134,6 @@ services:
       - ${CODEPULSE_BACKUPS:-/opt/codepulse/backups}:/backups
 
 volumes:
+  avatars:
   command-runs:
   command-gate:

@@ -21,10 +21,11 @@ RUN pip install --no-cache-dir .
 
 COPY . .
 
-# The command runs' folder: a volume mounted there starts owned by codepulse (app/commands).
+# The command runs' and the avatars' (AVATAR_DIR) folders: a volume mounted there starts owned
+# by codepulse (app/commands, app/avatars.py).
 RUN useradd --create-home codepulse \
-    && mkdir -p /tmp/codepulse-runs /run/codepulse-gate \
-    && chown codepulse /tmp/codepulse-runs && chmod 755 /run/codepulse-gate
+    && mkdir -p /tmp/codepulse-runs /run/codepulse-gate /srv/data/avatars \
+    && chown codepulse /tmp/codepulse-runs /srv/data/avatars && chmod 755 /run/codepulse-gate
 USER codepulse
 
 CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

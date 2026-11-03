@@ -54,6 +54,9 @@ export const api = {
   put: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  /** PUT a file's raw bytes as the body (an avatar upload): same errors and 401 redirect. */
+  putRaw: <T>(path: string, body: Blob) =>
+    request<T>(path, { method: "PUT", body, headers: { "Content-Type": body.type || "application/octet-stream" } }),
 };
 
 /**

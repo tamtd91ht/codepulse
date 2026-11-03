@@ -53,6 +53,8 @@ export interface Person {
   manage_all?: boolean;
   /** Admin › Người & Team only: in ADMIN_EMAILS (has every right already). */
   is_admin?: boolean;
+  /** The uploaded avatar (Admin › Người & Team); null: initials. */
+  avatar_url?: string | null;
 }
 
 export interface Metrics {
@@ -484,10 +486,16 @@ export interface Dispute {
   reason: string | null;
   decision: string | null;
   decided_at: string | null;
+  created_at?: string | null;
   finding_title: string | null;
   finding_severity: Severity | null;
+  finding_category?: string | null;
+  finding_status?: string | null;
+  finding_file_path?: string | null;
+  finding_line_start?: number | null;
   review_id: number | null;
   raised_by_name: string | null;
+  decided_by_name?: string | null;
 }
 
 export interface Connection {

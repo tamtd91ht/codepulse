@@ -12,3 +12,6 @@ htmlcov/
 .idea/
 tests/eval/results/
 backups/
+
+# Uploaded avatars (AVATAR_DIR, app/avatars.py)
+/data/

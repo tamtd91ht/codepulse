@@ -90,3 +90,13 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | GET | `/insights/flow/mrs?…&stage=&only=unreviewed\|xl&limit=&offset=` | Danh sách MR tạo nên số liệu, chậm nhất trước | như trên |
 | GET | `/insights/review-load?…` | Ai review MR của ai (đếm MR, không đếm comment), độ tập trung | như trên |
 | GET | `/insights/knowledge?business_project_id=&project_id=&end=&limit=` | Rủi ro tri thức: module (N cấp thư mục) trong `KNOWLEDGE_WINDOW_DAYS`, bus factor, một người nắm / người nắm đã vắng, người nắm (tên theo `can_see_work`) | như trên |
+
+## Bổ sung (hồ sơ thành viên & nhật ký khiếu nại, người dùng 2026-11-03)
+| Method | Path | Mô tả | Quyền |
+|---|---|---|---|
+| GET | `/disputes?pending=false&user_id=` | Mọi khiếu nại một người đã gửi (trang thành viên), kèm thời điểm, người duyệt, finding (mức, loại, file:dòng, trạng thái); chỉ những khiếu nại người xem vốn được thấy | như `/disputes` |
+| GET | `/users/{id}` | Hồ sơ một người (Admin › Người & Team) | admin |
+| PATCH | `/users/{id}` `{full_name, primary_email, active, manage_all}` | Sửa tên, email (trùng → 409; admin không tự đổi email ra khỏi ADMIN_EMAILS → 409); audit `user.update` kèm `previous_email` | admin |
+| PUT | `/users/{id}/avatar` (body = bytes ảnh) | Thay ảnh đại diện: PNG/JPEG/WebP nhận theo nội dung file, ≤ `AVATAR_MAX_KB`; mỗi người một file `<id>.<ext>` trong `AVATAR_DIR`; audit `user.avatar` | admin |
+| DELETE | `/users/{id}/avatar` | Xoá ảnh; audit `user.avatar_remove` | admin |
+| GET | `/users/{id}/avatar` | Ảnh đại diện (`nosniff`, cache riêng 1 ngày); mọi `UserOut` có `avatar_url` kèm phiên bản | đăng nhập |

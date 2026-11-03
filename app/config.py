@@ -157,6 +157,11 @@ class Settings(BaseSettings):
     review_commits_list_max: int = Field(default=200, ge=20, le=500)
     review_batch_max: int = Field(default=50, ge=1, le=200)
 
+    # Avatars uploaded in Admin > Người & Team: one file per person in this folder (a volume in
+    # Docker), at most this many KB, PNG / JPEG / WebP only.
+    avatar_dir: str = "data/avatars"
+    avatar_max_kb: int = Field(default=1024, ge=16, le=10_240)
+
     # Engineering Insights (docs/specs/20 §4, §7): fewer merged MRs than this hide medians;
     # a repo synced longer ago than this makes the numbers "low" confidence.
     insights_min_sample: int = Field(default=5, ge=1, le=1000)

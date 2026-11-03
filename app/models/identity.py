@@ -23,6 +23,8 @@ class User(TimestampMixin, Base):
     active: Mapped[bool | None] = mapped_column(server_default="true")
     # Manages every dự án without a grant (below admin, 2026-11-02; app/api/security.py).
     manage_all: Mapped[bool] = mapped_column(server_default=false(), default=False)
+    # Admin > Người & Team (2026-11-03): the one avatar file in AVATAR_DIR ("<id>.<ext>").
+    avatar_file: Mapped[str | None]
 
 
 class TeamMember(TimestampMixin, Base):

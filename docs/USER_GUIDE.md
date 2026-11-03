@@ -41,7 +41,7 @@ tính vào điểm và mọi chỉ số liên quan được tính lại ngay.
 - Đăng nhập dashboard bằng tài khoản GitLab → trang **Của tôi**: điểm và Quality Index 12 tuần, loại lỗi theo
   tuần, MR/commit gần đây, finding đang mở.
 - Trên MR (nếu project bật): một comment tổng hợp của CodePulse, được cập nhật mỗi lần bạn push.
-- **Khiếu nại**: mở review → finding → *Khiếu nại* → ghi lý do. Theo dõi ở trang *Khiếu nại*.
+- **Khiếu nại**: mở review → finding → *Khiếu nại* → ghi lý do. Theo dõi ở trang *Khiếu nại*; trang thành viên (thẻ *Khiếu nại*) lưu lại mọi khiếu nại bạn đã gửi, lý do và kết quả duyệt.
 - Mỗi thứ Hai bạn nhận email báo cáo cá nhân (chỉ dữ liệu của bạn).
 
 ## 3. Lead
@@ -52,6 +52,8 @@ tính vào điểm và mọi chỉ số liên quan được tính lại ngay.
   bảng thành viên với xu hướng 8 tuần. Quality Index chỉ hiện khi một người có từ 3 review trong kỳ.
 - **Critical Board**: mọi finding critical/high còn mở, lọc theo project/người, cũ nhất trước.
 - **Duyệt khiếu nại**: chấp nhận hoặc từ chối; bạn không thể tự duyệt khiếu nại của mình.
+- Trang một thành viên có thẻ **Khiếu nại**: mọi khiếu nại họ đã gửi (finding nào, lý do, chấp nhận/từ chối, ai duyệt, khi nào).
+- Admin: **Admin › Người & Team** → bút ở dòng một người để xem, sửa hồ sơ: tên, email (email dùng để đăng nhập khi chưa gắn GitLab và để gắn commit), ảnh đại diện (PNG/JPEG/WebP ≤ 1 MB, mỗi người một ảnh).
 - Chạy lại review bị lỗi/bị bỏ qua từ trang review.
 - Báo cáo tuần (thứ Hai 08:00) và tháng (ngày 1) qua email; kênh chat của team nhận bản không có điểm từng người.
 

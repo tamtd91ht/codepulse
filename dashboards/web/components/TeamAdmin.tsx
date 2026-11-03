@@ -3,7 +3,8 @@
 import { type FormEvent, useState } from "react";
 
 import { IconButton } from "@/components/icons";
-import { Loading, Message } from "@/components/ui";
+import { ProfileDrawer } from "@/components/ProfileDrawer";
+import { Avatar, Loading, Message } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { localDay } from "@/lib/format";
 import type { Member, Person, Team } from "@/lib/types";
@@ -23,6 +24,7 @@ export function TeamAdmin() {
   const [teamId, setTeamId] = useState<number | null>(null);
   const members = useApi<Member[]>(teamId ? `/teams/${teamId}/members` : null);
   const [message, setMessage] = useState<string | null>(null);
+  const [profileId, setProfileId] = useState<number | null>(null);
 
   async function run(action: () => Promise<unknown>, done: string) {
     try {
@@ -49,6 +51,13 @@ export function TeamAdmin() {
 
   return (
     <section className="card">
+      {profileId !== null && (
+        <ProfileDrawer userId={profileId} onClose={() => setProfileId(null)} onChanged={() => {
+            void users.mutate();
+            if (teamId) void members.mutate();
+          }}
+        />
+      )}
       <div className="card-head">
         <div>
           <h2>Team &amp; thành viên</h2>
@@ -152,13 +161,18 @@ export function TeamAdmin() {
           </p>
           {users.data && users.data.length > 0 && (
             <details open>
-              <summary className="muted">Danh sách người dùng ({users.data.length}) · bấm thùng rác để xoá người khai báo sai</summary>
+              <summary className="muted">Danh sách người dùng ({users.data.length}) · bấm bút để xem, sửa hồ sơ (tên, email, ảnh); thùng rác để xoá người khai báo sai</summary>
               <div className="table-wrap">
                 <table>
                   <tbody>
                     {users.data.map((u) => (
                       <tr key={u.id} className={u.active === false ? "muted" : undefined}>
-                        <td>{u.full_name ?? "—"}</td>
+                        <td>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                            <Avatar name={u.full_name} email={u.primary_email} size="sm" src={u.avatar_url} />
+                            {u.full_name ?? "—"}
+                          </span>
+                        </td>
                         <td>
                           <code>{u.primary_email ?? "—"}</code>
                           {u.active === false ? " · đã tắt" : ""}
@@ -193,7 +207,12 @@ export function TeamAdmin() {
                           </label>
                           )}
                         </td>
-                        <td style={{ textAlign: "right" }}>
+                        <td style={{ textAlign: "right" }} className="nowrap">
+                          <IconButton
+                            icon="edit"
+                            label={`Xem / sửa hồ sơ ${u.full_name ?? u.primary_email ?? ""}`}
+                            onClick={() => setProfileId(u.id)}
+                          />
                           <IconButton
                             icon="remove"
                             label={`Xoá ${u.full_name ?? u.primary_email ?? "người này"}`}

@@ -88,3 +88,38 @@ def test_dispute_list_names_the_finding_and_person(
         "An",
     )
     assert item["review_id"] == world.an_review.id
+
+
+def test_member_dispute_log(client: TestClient, world: World, as_user: Any) -> None:
+    """The member page lists every dispute a person raised, decided ones too."""
+    made = dispute(client, world, as_user(world.an)).json()
+    res = client.post(
+        f"/api/v1/disputes/{made['id']}/decide",
+        headers=as_user(world.lead),
+        json={"decision": "rejected"},
+    )
+    assert res.status_code == 200, res.text
+    path = f"/api/v1/disputes?pending=false&user_id={world.an.id}"
+    (item,) = client.get(path, headers=as_user(world.lead)).json()
+    assert item["decision"] == "rejected" and item["decided_by_name"] == "Lead"
+    assert item["reason"] == "The input is validated by the caller."
+    assert (item["finding_category"], item["finding_file_path"], item["finding_line_start"]) == (
+        "security",
+        "app/a.py",
+        3,
+    )
+    assert item["finding_status"] == "open" and item["created_at"]
+    # Only the person asked for; pending-only still hides the decided one.
+    assert (
+        client.get(
+            f"/api/v1/disputes?pending=false&user_id={world.binh.id}", headers=as_user(world.lead)
+        ).json()
+        == []
+    )
+    assert (
+        client.get(f"/api/v1/disputes?user_id={world.an.id}", headers=as_user(world.lead)).json()
+        == []
+    )
+    # Someone who may not see An's work sees nothing of it.
+    assert client.get(path, headers=as_user(world.outsider)).json() == []
+    assert len(client.get(path, headers=as_user(world.an)).json()) == 1

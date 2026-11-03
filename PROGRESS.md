@@ -160,3 +160,7 @@
 - 9.6 `app/insights/knowledge.py` + `/insights/knowledge`: gom churn theo (repo, module, tác giả) trong một truy vấn SQL (regex module khớp `module_of`); hoà churn thì người đã gắn trước; chia đều 50/50 không phải "một người nắm"; độ tin cậy `partial_file_data` khi < 80% commit trong cửa sổ có dữ liệu file (repo nhàn rỗi không bị báo chạy backfill). Delta cho tỉ lệ XL và pipeline.
 - 9.4 Dashboard `/insights` (menu "Luồng làm việc"): 3 tab (tablist, nhớ `?tab=`), Tuần/Tháng/Khoảng ngày (≤ 366), KPI có delta cùng đơn vị với bảng, nút "Xem MR" mở danh sách theo chặng/không review/XL, MR chờ phản hồi, theo repo, tải review, module rủi ro; trạng thái tải/lỗi-thử lại/trống/độ tin cậy. Xem headless với dữ liệu fixture thật (desktop + 390 px không tràn); chưa xem dark mode.
 - 9.7 (một phần) USER_GUIDE §6 và trang Hướng dẫn §8 "Luồng làm việc: đo gì và không đo gì"; pilot 2–3 team còn chờ.
+
+## Ngoài spec (người dùng 2026-11-03)
+- Nhật ký khiếu nại trên trang thành viên: `GET /disputes?pending=false&user_id=` (giữ nguyên phạm vi xem), thẻ "Khiếu nại" liệt kê lý do, finding, trạng thái, người duyệt và thời điểm.
+- Hồ sơ thành viên ở Admin › Người & Team: sửa tên, email (trùng → 409, admin không tự đổi email ra khỏi ADMIN_EMAILS), ảnh đại diện — một file `<id>.<ext>` trong `AVATAR_DIR` (volume `avatars` trong Docker), nhận PNG/JPEG/WebP theo nội dung, ≤ 1 MB; `UserOut.avatar_url` nên ảnh hiện ở trang thành viên. Migration b8c0d2e4f6a8.

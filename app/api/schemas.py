@@ -14,10 +14,12 @@ from pydantic import (
     Field,
     HttpUrl,
     StringConstraints,
+    computed_field,
     field_validator,
     model_validator,
 )
 
+from app.avatars import avatar_url
 from app.models.source import ALL_BRANCHES
 
 # Git ref characters GitLab accepts in practice; no spaces, no "..", no leading "-".
@@ -253,6 +255,14 @@ class UserOut(ORM):
     full_name: str | None
     primary_email: str | None
     active: bool | None
+    # Only to build avatar_url (Admin > Người & Team uploads, app/avatars.py).
+    avatar_file: str | None = Field(default=None, exclude=True)
+    updated_at: datetime | None = Field(default=None, exclude=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def avatar_url(self) -> str | None:
+        return avatar_url(self.id, self.avatar_file, self.updated_at)
 
 
 # -- notification webhooks (docs/specs/16) --------------------------------------------------------
@@ -324,7 +334,9 @@ class UserIn(BaseModel):
 
 
 class UserPatch(BaseModel):
-    full_name: str | None = None
+    full_name: str | None = Field(default=None, min_length=1, max_length=200)
+    # Changing it changes how sign-in by email and ADMIN_EMAILS find the person.
+    primary_email: str | None = Field(default=None, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     active: bool | None = None
     manage_all: bool | None = None  # manages every dự án without a grant (below admin)
 

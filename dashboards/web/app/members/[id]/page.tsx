@@ -10,10 +10,11 @@ import { MemberEvaluation } from "@/components/MemberEvaluation";
 import { ReviewResults } from "@/components/ReviewResults";
 import { Alert, Avatar, Card, ChartTip, EmptyState, Expander, Loading, PageHeader, Pill, SeverityBadge, StatStrip, StripStat } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
-import { CATEGORY_LABEL, weekLabel } from "@/lib/format";
+import { CATEGORY_LABEL, dateTime, weekLabel } from "@/lib/format";
 import type {
   BoardFinding,
   CategoryWeek,
+  Dispute,
   Me,
   MetricsSeries,
   Page,
@@ -24,6 +25,108 @@ import type {
 } from "@/lib/types";
 
 const TOP = 6;
+/** GET /disputes returns at most this many (newest first). */
+const DISPUTE_CAP = 200;
+
+/** Where a dispute stands: waiting for the lead, or how it was decided. */
+function DisputeState({ d }: { d: Dispute }) {
+  if (d.decision === "accepted")
+    return (
+      <Pill tone="good" icon="check" title="Lead chấp nhận: finding bị loại, điểm review được tính lại">
+        Chấp nhận
+      </Pill>
+    );
+  if (d.decision === "rejected")
+    return (
+      <Pill tone="bad" icon="close" title="Lead từ chối: finding giữ nguyên">
+        Từ chối
+      </Pill>
+    );
+  return <Pill tone="warn">Chờ duyệt</Pill>;
+}
+
+/** Every dispute this person raised (yêu cầu người dùng 2026-11-03): what, why, and the outcome.
+ * The API returns only those the viewer may see (docs/specs/09). */
+function DisputeLog({ userId }: { userId: number }) {
+  const { data, error, mutate } = useApi<Dispute[]>(`/disputes${qs({ pending: "false", user_id: userId })}`);
+  const pending = data?.filter((d) => d.decision === null).length ?? 0;
+  const accepted = data?.filter((d) => d.decision === "accepted").length ?? 0;
+  const rejected = data?.filter((d) => d.decision === "rejected").length ?? 0;
+  return (
+    <Card
+      id="member-disputes"
+      title="Khiếu nại"
+      subtitle={
+        data && data.length
+          ? `${data.length >= DISPUTE_CAP ? `${DISPUTE_CAP}+` : data.length} khiếu nại bạn được xem · ${accepted} chấp nhận · ${rejected} từ chối · ${pending} chờ duyệt`
+          : undefined
+      }
+    >
+      {!data ? (
+        <Loading error={error} rows={3}>
+          {error && (
+            <button type="button" className="sm" onClick={() => void mutate()}>
+              Thử lại
+            </button>
+          )}
+        </Loading>
+      ) : data.length === 0 ? (
+        <EmptyState icon="scale" title="Không có khiếu nại nào bạn được xem">
+          Khiếu nại (dispute) một finding được ghi lại ở đây, kèm lý do và kết quả duyệt; chỉ những khiếu nại trong phạm vi bạn được xem.
+        </EmptyState>
+      ) : (
+        <>
+          <ul className="finding-list">
+            {data.slice(0, TOP).map((d) => (
+              <DisputeItem key={d.id} d={d} />
+            ))}
+          </ul>
+          {data.length > TOP && (
+            <Expander summary={`${data.length - TOP} khiếu nại cũ hơn`}>
+              <ul className="finding-list">
+                {data.slice(TOP).map((d) => (
+                  <DisputeItem key={d.id} d={d} />
+                ))}
+              </ul>
+            </Expander>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function DisputeItem({ d }: { d: Dispute }) {
+  return (
+    <li>
+      {d.finding_severity ? <SeverityBadge severity={d.finding_severity} /> : null}
+      <div className="body">
+        {d.review_id ? <Link href={`/reviews/${d.review_id}`}>{d.finding_title ?? "Finding"}</Link> : (d.finding_title ?? "Finding đã xoá")}{" "}
+        <DisputeState d={d} />
+        {d.reason && <p className="small" style={{ margin: "4px 0", whiteSpace: "pre-wrap" }}>&ldquo;{d.reason}&rdquo;</p>}
+        <div className="meta">
+          {d.finding_file_path && (
+            <>
+              <code>
+                {d.finding_file_path}
+                {d.finding_line_start ? `:${d.finding_line_start}` : ""}
+              </code>{" "}
+              ·{" "}
+            </>
+          )}
+          {d.finding_category && <>{CATEGORY_LABEL[d.finding_category] ?? d.finding_category} · </>}
+          gửi {dateTime(d.created_at ?? null)}
+          {d.decision && (
+            <>
+              {" "}
+              · {d.decision === "accepted" ? "chấp nhận" : "từ chối"} bởi {d.decided_by_name ?? "—"} {dateTime(d.decided_at)}
+            </>
+          )}
+        </div>
+      </div>
+    </li>
+  );
+}
 
 function FindingItem({ f }: { f: BoardFinding }) {
   return (
@@ -228,7 +331,7 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
         eyebrow="Thành viên"
         title={name}
         subtitle={person.primary_email}
-        avatar={<Avatar name={person.full_name} email={person.primary_email} size="lg" />}
+        avatar={<Avatar name={person.full_name} email={person.primary_email} size="lg" src={person.avatar_url} />}
       />
 
       {!series && !seriesHidden && <Loading error={seriesError} rows={3} />}
@@ -330,6 +433,8 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
       </div>
 
       <MemberEvaluation person={person} range={range} />
+
+      <DisputeLog userId={person.id} />
 
       <Card id="member-heatmap" title="Loại lỗi theo tuần" actions={<span className="muted small">12 tuần</span>} defaultCollapsed>
         {heat ? <Heatmap cells={heat} /> : <Loading error={heatError} rows={4} />}

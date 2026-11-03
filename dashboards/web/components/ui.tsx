@@ -354,10 +354,27 @@ export function Pill({
   );
 }
 
-export function Avatar({ name, email, size }: { name: string | null; email?: string | null; size?: "sm" | "lg" }) {
+/** A person's photo when they have one (Admin › Người & Team), else their initials. */
+export function Avatar({
+  name,
+  email,
+  size,
+  src,
+}: {
+  name: string | null;
+  email?: string | null;
+  size?: "sm" | "lg" | "xl";
+  src?: string | null;
+}) {
+  const [failed, setFailed] = useState<string | null>(null);
+  const photo = src && failed !== src ? src : null;
   return (
-    <span className={`avatar${size ? ` ${size}` : ""}`} aria-hidden="true">
-      {initials(name, email ?? null)}
+    <span className={`avatar${size ? ` ${size}` : ""}${photo ? " photo" : ""}`} aria-hidden="true">
+      {photo ? (
+        <img src={photo} alt="" loading="lazy" decoding="async" onError={() => setFailed(photo)} />
+      ) : (
+        initials(name, email ?? null)
+      )}
     </span>
   );
 }

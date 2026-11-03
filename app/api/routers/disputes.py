@@ -43,10 +43,16 @@ class DisputeOut(ORM):
 
 
 class DisputeListItem(DisputeOut):
+    created_at: datetime | None
     finding_title: str | None
     finding_severity: str | None
+    finding_category: str | None
+    finding_status: str | None
+    finding_file_path: str | None
+    finding_line_start: int | None
     review_id: int | None
     raised_by_name: str | None
+    decided_by_name: str | None
 
 
 def _review_of(session: Session, finding: ReviewFinding) -> Review:
@@ -94,12 +100,18 @@ def raise_dispute(
 
 @router.get("/disputes", response_model=list[DisputeListItem])
 def list_disputes(
-    principal: CurrentPrincipal, session: SessionDep, pending: bool = True
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    pending: bool = True,
+    user_id: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Your own disputes, plus those of the people you lead (all for admins)."""
+    """Your own disputes, plus those of the people you lead (all for admins). `user_id`: only
+    the disputes that person raised (their member page's log), among those you may see."""
     query = select(FindingDispute).order_by(FindingDispute.id.desc())
     if pending:
         query = query.where(FindingDispute.decision.is_(None))
+    if user_id is not None:
+        query = query.where(FindingDispute.raised_by == user_id)
     # In SQL, before the limit: your own; those of the people you lead on reviews of dự án you
     # see; every one in a dự án you manage.
     if (allowed := review_scope(principal)) is not None:
@@ -120,13 +132,20 @@ def list_disputes(
     for dispute in session.scalars(query.limit(200)):
         finding = session.get(ReviewFinding, dispute.finding_id) if dispute.finding_id else None
         raiser = session.get(User, dispute.raised_by) if dispute.raised_by else None
+        decider = session.get(User, dispute.decided_by) if dispute.decided_by else None
         items.append(
             {
                 **DisputeOut.model_validate(dispute).model_dump(),
+                "created_at": dispute.created_at,
                 "finding_title": finding.title if finding else None,
                 "finding_severity": finding.severity if finding else None,
+                "finding_category": finding.category if finding else None,
+                "finding_status": finding.status if finding else None,
+                "finding_file_path": finding.file_path if finding else None,
+                "finding_line_start": finding.line_start if finding else None,
                 "review_id": finding.review_id if finding else None,
                 "raised_by_name": raiser.full_name if raiser else None,
+                "decided_by_name": decider.full_name if decider else None,
             }
         )
     return items
