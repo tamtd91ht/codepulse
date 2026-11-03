@@ -13,11 +13,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.access import may_see_person, review_scope, seen_people
+from app.api.access import review_scope
 from app.api.audit import audit
 from app.api.deps import get_session
+from app.api.personal import covers_person, person_scope, sees_team
 from app.api.schemas import MemberEvaluationDetail, MembersEvaluation, UserOut
-from app.api.security import CurrentPrincipal, MembersPagePrincipal, Principal
+from app.api.security import Principal, require
 from app.config import Settings, get_settings
 from app.models import (
     Commit,
@@ -41,6 +42,9 @@ from app.scoring.evaluation import (
 router = APIRouter(tags=["evaluation"])
 SessionDep = Annotated[Session, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+# docs/specs/21: the Thành viên page itself, then whose rows by `evaluation.view`.
+MembersPage = Annotated[Principal, require("members.view")]
+EvaluationViewer = Annotated[Principal, require("evaluation.view")]
 DEFAULT_DAYS = 30
 MAX_DAYS = 366
 MIN_YEAR, MAX_YEAR = 2000, 2100
@@ -193,14 +197,14 @@ def _teams_of(session: Session, user_ids: set[int], end: date) -> dict[int, list
 
 
 def _scope(session: Session, principal: Principal, team_id: int | None) -> set[int] | None:
-    if team_id is not None and not principal.can_see_team(team_id):
+    if team_id is not None and not sees_team(principal, team_id):
         raise HTTPException(403, "not allowed to see this team")
-    return seen_people(session, principal)
+    return person_scope(session, principal, "evaluation.view")
 
 
 @router.get("/members/evaluation", response_model=MembersEvaluation)
 def members_evaluation(
-    principal: MembersPagePrincipal,
+    principal: MembersPage,
     session: SessionDep,
     settings: SettingsDep,
     date_from: Annotated[date | None, Query(alias="from")] = None,
@@ -300,14 +304,14 @@ def _filters(
 @router.get("/members/{user_id}/evaluation", response_model=MemberEvaluationDetail)
 def member_evaluation(
     user_id: int,
-    principal: CurrentPrincipal,
+    principal: EvaluationViewer,
     session: SessionDep,
     settings: SettingsDep,
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
 ) -> dict[str, Any]:
     """One person over the range: summary, per-repo rows, verdict / severity / category mix."""
-    if not may_see_person(session, principal, user_id):
+    if not covers_person(session, principal, "evaluation.view", user_id):
         raise HTTPException(
             403, "individual metrics are visible to the person, their lead and dự án managers"
         )
