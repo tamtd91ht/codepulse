@@ -15,3 +15,6 @@ backups/
 
 # Uploaded avatars (AVATAR_DIR, app/avatars.py)
 /data/
+
+# agent worktrees (Claude Code)
+.claude/worktrees/
