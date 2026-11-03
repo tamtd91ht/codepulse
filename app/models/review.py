@@ -171,6 +171,17 @@ class FindingDispute(TimestampMixin, Base):
     decision: Mapped[str | None]
     decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # An AI second look the lead asked for before deciding (app/review/dispute_check.py).
+    ai_status: Mapped[str | None]  # queued|running|done|failed
+    ai_verdict: Mapped[str | None]  # finding_holds|dispute_holds|unclear
+    ai_confidence: Mapped[Decimal | None] = mapped_column(Numeric(3, 2))
+    ai_reason: Mapped[str | None]
+    ai_evidence: Mapped[str | None]  # "path:12-20"
+    ai_model: Mapped[str | None]
+    ai_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    ai_requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    ai_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ai_finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 CLOSURE_KINDS = ("auto", "request", "admin", "reopen")

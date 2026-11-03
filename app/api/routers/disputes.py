@@ -11,14 +11,16 @@ from sqlalchemy.orm import Session
 
 from app.api.access import review_repo, review_scope, reviews_in_projects
 from app.api.audit import audit
-from app.api.deps import get_session
+from app.api.deps import get_queue, get_session
 from app.api.schemas import ORM
 from app.api.security import CurrentPrincipal, Principal
+from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.models import FindingClosure, FindingDispute, Review, ReviewFinding, User
 from app.models.review import CLOSURE_OPEN
 from app.scoring.aggregate import aggregate, recompute_scores
 from app.scoring.verdict import assess
+from app.workers.dispute_jobs import running as ai_running
 
 router = APIRouter(tags=["disputes"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -53,6 +55,14 @@ class DisputeListItem(DisputeOut):
     review_id: int | None
     raised_by_name: str | None
     decided_by_name: str | None
+    # The AI second look (POST /disputes/{id}/ai-check); only for who may decide.
+    ai_status: str | None = None
+    ai_verdict: str | None = None
+    ai_confidence: float | None = None
+    ai_reason: str | None = None
+    ai_evidence: str | None = None
+    ai_finished_at: datetime | None = None
+    can_ai_check: bool = False
 
 
 def _review_of(session: Session, finding: ReviewFinding) -> Review:
@@ -128,27 +138,7 @@ def list_disputes(
             .outerjoin(Review, Review.id == ReviewFinding.review_id)
             .where(or_(*seen))
         )
-    items = []
-    for dispute in session.scalars(query.limit(200)):
-        finding = session.get(ReviewFinding, dispute.finding_id) if dispute.finding_id else None
-        raiser = session.get(User, dispute.raised_by) if dispute.raised_by else None
-        decider = session.get(User, dispute.decided_by) if dispute.decided_by else None
-        items.append(
-            {
-                **DisputeOut.model_validate(dispute).model_dump(),
-                "created_at": dispute.created_at,
-                "finding_title": finding.title if finding else None,
-                "finding_severity": finding.severity if finding else None,
-                "finding_category": finding.category if finding else None,
-                "finding_status": finding.status if finding else None,
-                "finding_file_path": finding.file_path if finding else None,
-                "finding_line_start": finding.line_start if finding else None,
-                "review_id": finding.review_id if finding else None,
-                "raised_by_name": raiser.full_name if raiser else None,
-                "decided_by_name": decider.full_name if decider else None,
-            }
-        )
-    return items
+    return [_item(session, principal, d) for d in session.scalars(query.limit(200))]
 
 
 def _recompute_for(session: Session, review: Review, settings: Settings) -> None:
@@ -170,6 +160,117 @@ def _recompute_for(session: Session, review: Review, settings: Settings) -> None
     day = moment.astimezone(tz).date()
     aggregate(session, "week", day, tz, settings.scoring_weights, settings.min_sample, threshold)
     aggregate(session, "month", day, tz, settings.scoring_weights, settings.min_sample, threshold)
+
+
+def _item(session: Session, principal: Principal, dispute: FindingDispute) -> dict[str, Any]:
+    finding = session.get(ReviewFinding, dispute.finding_id) if dispute.finding_id else None
+    raiser = session.get(User, dispute.raised_by) if dispute.raised_by else None
+    decider = session.get(User, dispute.decided_by) if dispute.decided_by else None
+    return {
+        **DisputeOut.model_validate(dispute).model_dump(),
+        "created_at": dispute.created_at,
+        "finding_title": finding.title if finding else None,
+        "finding_severity": finding.severity if finding else None,
+        "finding_category": finding.category if finding else None,
+        "finding_status": finding.status if finding else None,
+        "finding_file_path": finding.file_path if finding else None,
+        "finding_line_start": finding.line_start if finding else None,
+        "review_id": finding.review_id if finding else None,
+        "raised_by_name": raiser.full_name if raiser else None,
+        "decided_by_name": decider.full_name if decider else None,
+        **_ai_view(principal, dispute),
+    }
+
+
+def _decider(principal: Principal, dispute: FindingDispute) -> bool:
+    """Who may decide a dispute (and so ask the AI about it): the developer's lead or an
+    admin, never the person who raised it."""
+    return (
+        dispute.raised_by is not None
+        and dispute.raised_by != principal.user_id
+        and (principal.is_admin or dispute.raised_by in principal.lead_members)
+    )
+
+
+def _ai_view(principal: Principal, dispute: FindingDispute) -> dict[str, Any]:
+    """The AI second look, for who may decide only (the developer does not see it)."""
+    if not _decider(principal, dispute):
+        return {}
+    live = ai_running(dispute)
+    stuck = dispute.ai_status in ("queued", "running") and not live
+    return {
+        "ai_status": "failed" if stuck else dispute.ai_status,
+        "ai_verdict": dispute.ai_verdict,
+        "ai_confidence": float(dispute.ai_confidence)
+        if dispute.ai_confidence is not None
+        else None,
+        "ai_reason": "Phân tích dừng giữa chừng (worker khởi động lại?); thử lại."
+        if stuck
+        else dispute.ai_reason,
+        "ai_evidence": dispute.ai_evidence,
+        "ai_finished_at": dispute.ai_finished_at,
+        "can_ai_check": dispute.decision is None and not live,
+    }
+
+
+@router.post("/disputes/{dispute_id}/ai-check", response_model=DisputeListItem, status_code=202)
+def ai_check(
+    dispute_id: int,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+    queue: Annotated[Enqueuer, Depends(get_queue)],
+) -> dict[str, Any]:
+    """Queue an AI second look at a pending dispute (app/review/dispute_check.py): the lead
+    reads it, then decides as before; the AI never decides."""
+    from app.admin_settings import monthly_budget_usd
+    from app.workers.knowledge_jobs import month_spend_usd  # lazy: heavy module
+
+    dispute = session.scalars(
+        select(FindingDispute).where(FindingDispute.id == dispute_id).with_for_update()
+    ).first()
+    if dispute is None:
+        raise HTTPException(404, "dispute not found")
+    if not _decider(principal, dispute) or not _sees(session, principal, dispute):
+        raise HTTPException(403, "only the developer's lead or an admin can ask for it")
+    if dispute.decision is not None:
+        raise HTTPException(409, "dispute already decided")
+    if ai_running(dispute):
+        raise HTTPException(409, "an analysis is already running")
+    finding = session.get(ReviewFinding, dispute.finding_id) if dispute.finding_id else None
+    review = session.get(Review, finding.review_id) if finding and finding.review_id else None
+    repo = review_repo(session, review) if review else None
+    if repo is None:
+        raise HTTPException(404, "the finding's repo is gone")
+    if repo.allow_external_llm is False:
+        raise HTTPException(409, "this repo does not allow sending code to an external LLM")
+    budget = monthly_budget_usd(session, settings)
+    if budget > 0 and month_spend_usd(session) >= budget:
+        raise HTTPException(409, "the month's LLM budget is used up")
+    now = datetime.now(UTC)
+    dispute.ai_status = "queued"
+    dispute.ai_requested_by = principal.user_id
+    dispute.ai_requested_at = now
+    dispute.ai_verdict = dispute.ai_reason = dispute.ai_evidence = dispute.ai_model = None
+    dispute.ai_confidence = dispute.ai_cost_usd = None
+    dispute.ai_finished_at = None
+    audit(session, principal.user_id, "dispute.ai_check", f"dispute:{dispute.id}")
+    session.commit()
+    try:
+        queue.enqueue(
+            "app.workers.dispute_jobs.dispute_check_job",
+            dispute.id,
+            now.isoformat(),
+            job_id=f"dispute-check-{dispute.id}-{int(now.timestamp() * 1000)}",
+            job_timeout=600,
+        )
+    except Exception:
+        dispute.ai_status = "failed"
+        dispute.ai_reason = "Không xếp hàng được; thử lại."
+        dispute.ai_finished_at = datetime.now(UTC)
+        session.commit()
+        raise HTTPException(503, "could not queue the analysis") from None
+    return _item(session, principal, dispute)
 
 
 @router.post("/disputes/{dispute_id}/decide", response_model=DisputeOut)

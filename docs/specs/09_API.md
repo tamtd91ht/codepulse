@@ -18,6 +18,7 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | GET | `/findings?severity=critical&status=open` | Danh sách finding | theo phạm vi |
 | POST | `/findings/{id}/dispute` | Dev khiếu nại | chủ finding |
 | POST | `/disputes/{id}/decide` | Lead duyệt | lead |
+| POST | `/disputes/{id}/ai-check` | Nhờ AI phân tích lại khiếu nại đang chờ (202, job RQ; kết quả ở `ai_*` của `GET /disputes`); AI không quyết định. 409 khi đã duyệt, đang chạy, repo `allow_external_llm = false` hoặc hết ngân sách tháng | lead của người khiếu nại / admin |
 | GET | `/metrics/users/{id}?period=week&from=&to=` | Chuỗi metric cá nhân | bản thân, lead |
 | GET | `/metrics/teams/{id}?period=month` | Metric team | lead, manager |
 | GET | `/leaderboard?team_id=&period=` | Bảng tổng hợp team | lead, manager |

@@ -52,6 +52,7 @@ tính vào điểm và mọi chỉ số liên quan được tính lại ngay.
   bảng thành viên với xu hướng 8 tuần. Quality Index chỉ hiện khi một người có từ 3 review trong kỳ.
 - **Critical Board**: mọi finding critical/high còn mở, lọc theo project/người, cũ nhất trước.
 - **Duyệt khiếu nại**: chấp nhận hoặc từ chối; bạn không thể tự duyệt khiếu nại của mình.
+- **Nhờ AI phân tích (lại)**: trước khi quyết định, bấm nút này để AI đọc lại finding, lý do khiếu nại và đoạn mã (±40 dòng, đã che secret) ở commit đã review, rồi nêu *finding đúng* / *khiếu nại có lý* / *chưa đủ để kết luận*, kèm độ tin cậy, lý do và dòng làm bằng chứng. Chỉ để tham khảo: AI không tự duyệt. Tốn ngân sách LLM tháng; repo không cho gửi mã ra LLM ngoài thì không dùng được. Người khiếu nại không thấy phân tích này.
 - Trang một thành viên có thẻ **Khiếu nại**: mọi khiếu nại họ đã gửi (finding nào, lý do, chấp nhận/từ chối, ai duyệt, khi nào).
 - Admin: **Admin › Người & Team** → bút ở dòng một người để xem, sửa hồ sơ: tên, email (email dùng để đăng nhập khi chưa gắn GitLab và để gắn commit), ảnh đại diện (PNG/JPEG/WebP ≤ 1 MB, mỗi người một ảnh).
 - Chạy lại review bị lỗi/bị bỏ qua từ trang review.

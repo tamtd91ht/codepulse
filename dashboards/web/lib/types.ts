@@ -498,7 +498,18 @@ export interface Dispute {
   review_id: number | null;
   raised_by_name: string | null;
   decided_by_name?: string | null;
+  /** AI second look (POST /disputes/{id}/ai-check); only for who may decide. */
+  ai_status?: DisputeAiStatus | null;
+  ai_verdict?: DisputeAiVerdict | null;
+  ai_confidence?: number | null;
+  ai_reason?: string | null;
+  ai_evidence?: string | null;
+  ai_finished_at?: string | null;
+  can_ai_check?: boolean;
 }
+
+export type DisputeAiStatus = "queued" | "running" | "done" | "failed";
+export type DisputeAiVerdict = "finding_holds" | "dispute_holds" | "unclear";
 
 export interface Connection {
   id: number;
