@@ -127,7 +127,7 @@ function MembersTable({ members, scope }: { members: LeaderboardRow[]; scope: Bo
           {sorted.map((m) => (
             <tr key={m.user.id}>
               <td>
-                <PersonLink id={m.user.id} name={m.user.full_name} email={m.user.primary_email} />
+                <PersonLink id={m.user.id} name={m.user.full_name} email={m.user.primary_email} avatar={m.user.avatar_url} />
               </td>
               <td className="num">{m.reviews_count ?? 0}</td>
               <td className="num">

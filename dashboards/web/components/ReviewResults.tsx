@@ -468,7 +468,7 @@ export function ReviewResults({
                             title={onlySelf || active ? undefined : `Chỉ xem review của ${who}`}
                             disabled={onlySelf || active}
                           >
-                            <Avatar name={r.author.full_name} email={r.author.primary_email} size="sm" />
+                            <Avatar name={r.author.full_name} email={r.author.primary_email} size="sm" src={r.author.avatar_url} />
                             <span>{who}</span>
                           </button>
                         ) : r.author_account ? (

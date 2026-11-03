@@ -633,16 +633,19 @@ export function PersonLink({
   name,
   email,
   search = "",
+  avatar,
 }: {
   id: number;
   name: string | null;
   email?: string | null;
+  /** The person's uploaded photo (Person.avatar_url); initials without it. */
+  avatar?: string | null;
   /** Query string carried to the person's page (e.g. the period being looked at). */
   search?: string;
 }) {
   return (
     <div className="cell-main">
-      <Avatar name={name} email={email} size="sm" />
+      <Avatar name={name} email={email} size="sm" src={avatar} />
       <div className="who">
         <Link href={`/members/${id}${search}`}>{name ?? email ?? `#${id}`}</Link>
       </div>

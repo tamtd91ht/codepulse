@@ -178,7 +178,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="sidebar-foot">
           {me && (
             <div className="user-chip" title={me.email ?? undefined}>
-              <Avatar name={me.full_name} email={me.email} />
+              <Avatar name={me.full_name} email={me.email} src={me.avatar_url} />
               <div className="who">
                 <div className="name">{me.full_name ?? me.email}</div>
                 <div className="role">{role}</div>

@@ -88,6 +88,8 @@ def test_one_avatar_per_person(
     # The member page reads it from /people/{id}; nothing else leaks (the file name stays inside).
     person = client.get(f"/api/v1/people/{world.an.id}", headers=as_user(world.lead)).json()
     assert person["avatar_url"] == url and "avatar_file" not in person
+    # The sidebar shows the signed-in person's own photo.
+    assert client.get("/api/v1/auth/me", headers=as_user(world.an)).json()["avatar_url"] == url
     # Another format replaces it: still one file.
     res = put_avatar(client, world.an.id, JPEG, h)
     assert res.status_code == 200

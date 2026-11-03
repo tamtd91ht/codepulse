@@ -16,6 +16,7 @@ from app.admin_settings import link_base
 from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.security import SESSION_COOKIE, CurrentPrincipal, issue_token, public_user
+from app.avatars import avatar_url
 from app.config import Settings, get_settings
 from app.models import Account, User
 
@@ -221,6 +222,7 @@ def me(
         raise HTTPException(401, "user is not active")
     return {
         **public_user(user),
+        "avatar_url": avatar_url(user.id, user.avatar_file, user.updated_at),
         "is_admin": principal.is_admin,
         # Manages every dự án without a grant (users.manage_all); `projects` lists them all.
         "manage_all": principal.manages_all,

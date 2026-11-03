@@ -7,6 +7,8 @@ export interface Me {
   full_name: string | null;
   email: string | null;
   is_admin: boolean;
+  /** The uploaded avatar (Admin › Người & Team); null: initials. */
+  avatar_url?: string | null;
   /** Manages every dự án without a grant (below admin); `projects` then lists every dự án as "manage". */
   manage_all?: boolean;
   lead_teams: number[];
