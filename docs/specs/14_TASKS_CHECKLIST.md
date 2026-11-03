@@ -94,9 +94,9 @@
 - [x] 9.5 Bảng `commit_files` + converter + CLI `insights backfill-files` (20 §5.1)
 - [x] 9.6 `knowledge.py` + API `/insights/knowledge` + tab Rủi ro tri thức (20 §4.9)
 - [ ] **Demo**: một dự án thật – 4 chặng 8 tuần gần nhất, top MR chờ, bus factor
-- [ ] 9.7 USER_GUIDE "Insights đo gì và không đo gì" + pilot 2–3 team (20 §12)
+- [ ] 9.7 USER_GUIDE "Insights đo gì và không đo gì" + pilot 2–3 team (20 §12) – tài liệu xong (USER_GUIDE §6, §6a; `docs/PILOT.md`: chọn team, chuẩn bị, nhịp tuần, khảo sát, ngưỡng); còn việc tổ chức pilot thật
 - [x] 9.8 Deployments collector + DORA (20 §4.10, §5.2; D2 đã chốt: tier production)
 - [x] 9.9 Incident từ GitLab (20 §5.3; D3 cập nhật: bản tối thiểu, không Jira, không task)
 - [x] 9.10 Hồ sơ bằng chứng: model, job draft, API, UI, audit (20 §6; D1 coaching, D4 bản thân + lead + admin)
 - [x] 9.10b Hồ sơ: MR chạm module một người nắm, commit thẳng lên nhánh chính, cảnh báo account chưa gắn người (20 §6.2)
-- [ ] 9.11 Bản nháp AI cho hồ sơ (20 §6.4; thay 6.3)
+- [x] 9.11 Bản nháp AI cho hồ sơ (20 §6.4; thay 6.3)

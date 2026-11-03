@@ -1571,6 +1571,8 @@ export interface EvidencePack {
   self_notes: string | null;
   lead_notes: string | null;
   goals_next: string | null;
+  /** The lead's AI draft (§6.4); null for the person themselves. */
+  ai_draft: string | null;
   submitted_at: string | null;
   reviewed_at: string | null;
   reviewed_by_name: string | null;
@@ -1585,6 +1587,7 @@ export interface EvidencePack {
     edit_goals: boolean;
     add_item: boolean;
     refresh: boolean;
+    ai_draft: boolean;
     submit: boolean;
     return: boolean;
     review: boolean;

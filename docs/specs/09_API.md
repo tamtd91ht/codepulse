@@ -112,3 +112,4 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | GET | `/insights/dora?business_project_id=&project_id=&period=&start=&end=` | DORA cấp repo/dự án (20 §4.10): deploy production, lead time, tỉ lệ thay đổi lỗi, khôi phục, xu hướng, thay đổi lỗi gần nhất | như `/insights/flow` |
 | PATCH | `/projects/{id}` `{production_environment}` | Môi trường production của repo cho DORA ("" = tự nhận theo tier/tên, D2) | admin |
 | — | `/insights/dora` thêm khối `incidents` (9.9) | Sự cố mới, đã đóng, đang mở, sự cố / deploy, thời gian khôi phục theo incident, 10 sự cố mới nhất | như trên |
+| POST | `/evidence/{user_id}/{yyyy-mm}/ai-draft` | Bản nháp nhận xét bằng AI từ snapshot đã chốt (không gửi mã nguồn); mỗi câu phải dẫn MR/finding/bằng chứng, câu không dẫn bị bỏ; chặn khi hết ngân sách hoặc có repo `allow_external_llm=false`; audit `evidence.ai_draft` kèm chi phí (tính vào ngân sách tháng) | lead trực tiếp, admin; hồ sơ đã gửi |

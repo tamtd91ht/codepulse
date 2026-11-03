@@ -469,7 +469,23 @@ export default function EvidencePage({ params }: { params: Promise<{ id: string 
               }
             />
           )}
+          {(can.ai_draft || pack.ai_draft) && (
+            <AiDraft
+              draft={pack.ai_draft}
+              canRun={can.ai_draft}
+              canUse={can.edit_lead_notes}
+              hasNotes={!!pack.lead_notes}
+              busy={busy}
+              onRun={() =>
+                run(period, () => api.post<EvidencePack>(`/evidence/${id}/${period}/ai-draft`), "Đã tạo bản nháp. Đọc, sửa rồi mới dùng.")
+              }
+              onUse={(text) =>
+                run(period, () => api.patch<EvidencePack>(`/evidence/${id}/${period}`, { lead_notes: text }), "Đã chép bản nháp vào nhận xét của lead.")
+              }
+            />
+          )}
           <NoteBox
+            key={`lead-${pack.lead_notes ?? ""}`}
             label="Nhận xét của lead"
             hint="Ghi nhận và góp ý cụ thể, dẫn tới MR/review làm bằng chứng."
             value={pack.lead_notes}
@@ -488,6 +504,69 @@ export default function EvidencePage({ params }: { params: Promise<{ id: string 
         </div>
       </Card>
     </>
+  );
+}
+
+/** §6.4: a draft from the frozen snapshot, every line cites its evidence; the lead's only. */
+function AiDraft({
+  draft,
+  canRun,
+  canUse,
+  hasNotes,
+  busy,
+  onRun,
+  onUse,
+}: {
+  draft: string | null;
+  canRun: boolean;
+  canUse: boolean;
+  hasNotes: boolean;
+  busy: boolean;
+  onRun: () => Promise<void>;
+  onUse: (text: string) => Promise<void>;
+}) {
+  return (
+    <div className="card" style={{ background: "var(--surface-2)" }}>
+      <div className="toolbar" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+        <strong>Bản nháp AI (chỉ lead thấy)</strong>
+        <span className="toolbar">
+          {canRun && (
+            <button
+              type="button"
+              className="sm"
+              disabled={busy}
+              onClick={() => {
+                if (window.confirm("Tạo bản nháp nhận xét từ số liệu đã chốt? Chỉ số liệu và tiêu đề MR được gửi cho Claude, không gửi mã nguồn; tốn một ít ngân sách LLM của tháng."))
+                  void onRun();
+              }}
+            >
+              {draft ? "Tạo lại" : "Tạo bản nháp"}
+            </button>
+          )}
+          {draft && canUse && (
+            <button
+              type="button"
+              className="sm ghost"
+              disabled={busy}
+              onClick={() => {
+                if (!hasNotes || window.confirm("Thay nhận xét của lead đang có bằng bản nháp này?")) void onUse(draft);
+              }}
+            >
+              Dùng làm nhận xét
+            </button>
+          )}
+        </span>
+      </div>
+      {draft ? (
+        <p className="small" style={{ whiteSpace: "pre-wrap", margin: "8px 0 0" }}>
+          {draft}
+        </p>
+      ) : (
+        <p className="small muted" style={{ margin: "8px 0 0" }}>
+          Mỗi câu trong bản nháp dẫn tới MR, finding hay bằng chứng trong hồ sơ; câu không dẫn được bị bỏ. Bản nháp không tự gửi cho ai.
+        </p>
+      )}
+    </div>
   );
 }
 

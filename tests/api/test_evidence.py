@@ -305,3 +305,49 @@ def test_single_owner_module_direct_commits_and_unmapped_accounts(
     assert direct["count"] == 1 and direct["items"][0]["title"] == "hotfix: typo"
     assert direct["items"][0]["web_url"].endswith("/-/commit/" + "2" * 40)
     assert snap["unmapped_accounts"] == ["Ai đó"]
+
+
+def test_ai_draft_for_the_lead_only(
+    client: TestClient,
+    db_session: Session,
+    world: World,
+    settings: Settings,
+    seeded: None,
+    as_user: Any,
+) -> None:
+    """docs/specs/20 §6.4 (9.11)."""
+    from pydantic import SecretStr
+
+    from app.api.main import app
+    from app.api.routers.evidence import get_draft_runner
+    from app.evidence.draft import DraftOutcome
+
+    settings.llm_provider = "claude_code"
+    settings.claude_code_oauth_token = SecretStr("tok")
+    seen: dict[str, Any] = {}
+
+    def fake(prompt: str, known: Any, s: Any, token: str) -> DraftOutcome:
+        seen.update(prompt=prompt, known=dict(known), token=token)
+        return DraftOutcome(ok=True, text="### Đã làm\n- Việc lớn [MR !101]", cost_usd=0.02)
+
+    app.dependency_overrides[get_draft_runner] = lambda: fake
+    me, lead = as_user(world.an), as_user(world.lead)
+    url = f"{path(world)}/ai-draft"
+    assert client.post(url, headers=lead).status_code == 409  # nothing submitted yet
+    client.post(f"{path(world)}/submit", headers=me)
+    assert client.post(url, headers=me).status_code == 409  # never the person themselves
+    res = client.post(url, headers=lead)
+    assert res.status_code == 200, res.text
+    assert res.json()["ai_draft"].startswith("### Đã làm")
+    assert seen["token"] == "tok" and "<du_lieu>" in seen["prompt"]
+    assert any(k.startswith("mr:") for k in seen["known"])
+    # The person never sees the lead's draft.
+    assert client.get(path(world), headers=me).json()["ai_draft"] is None
+    # Its cost is in the month's one LLM budget.
+    from app.workers.knowledge_jobs import month_spend_breakdown
+
+    assert month_spend_breakdown(db_session)["evidence_drafts_usd"] == 0.02
+    # A repo that refuses external LLMs blocks it.
+    world.project.allow_external_llm = False
+    db_session.flush()
+    assert client.post(url, headers=lead).status_code == 409

@@ -181,6 +181,12 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
             AuditLog.action == "assistant.chat", AuditLog.at >= month_start
         )
     )
+    # Evidence-pack AI drafts (docs/specs/20 §6.4), one audit row each.
+    drafts = session.scalar(
+        select(func.coalesce(func.sum(AuditLog.details["cost_usd"].as_float()), 0)).where(
+            AuditLog.action == "evidence.ai_draft", AuditLog.at >= month_start
+        )
+    )
     # One audit row per paid check of a close request, in the month the call was made.
     closures = session.scalar(
         select(func.coalesce(func.sum(AuditLog.details["cost_usd"].as_float()), 0)).where(
@@ -202,12 +208,14 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
         "knowledge_usd": round(builds, 4),
         "assistant_usd": round(float(assistant or 0), 4),
         "closures_usd": round(float(closures or 0), 4),
+        "evidence_drafts_usd": round(float(drafts or 0), 4),
         "total_usd": round(
             float(reviews or 0)
             + float(commands or 0)
             + builds
             + float(assistant or 0)
-            + float(closures or 0),
+            + float(closures or 0)
+            + float(drafts or 0),
             4,
         ),
     }

@@ -110,6 +110,8 @@ Trang thành viên → **Hồ sơ tháng (1:1)**. Chỉ **bạn, lead trực ti�
 3. **Lead** đọc, viết nhận xét có dẫn chứng, có thể **Trả lại** để bạn bổ sung, rồi bấm **Đã xem**.
 4. Trong **1:1** hai bên ghi **Mục tiêu tháng sau**; lead **Chốt**. Sau đó bạn vẫn ghi được phản hồi của mình.
 
+Lead có thể bấm **Tạo bản nháp** (AI) sau khi hồ sơ được gửi: bản nháp chỉ dùng số liệu đã chốt (không gửi mã nguồn), mỗi câu dẫn tới MR/lỗi/bằng chứng; chỉ lead thấy, phải sửa và bấm **Dùng làm nhận xét** mới thành nhận xét.
+
 Ghi chú và bằng chứng bổ sung được xoá sau 24 tháng, chỉ giữ trạng thái.
 
 ## 6. Luồng làm việc (Insights): đo gì và không đo gì
