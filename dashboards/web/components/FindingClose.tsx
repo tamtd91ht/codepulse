@@ -22,7 +22,157 @@ const SEVERE = new Set(["critical", "high"]);
 export const MIN_ARGUMENT = 50;
 
 /** What a closing made of the finding. */
-export const CLOSED_AS: Record<string, string> = { fixed: "Đã sửa", accepted_risk: "Chấp nhận rủi ro" };
+export const CLOSED_AS: Record<string, string> = {
+  fixed: "Đã sửa",
+  accepted_risk: "Chấp nhận rủi ro",
+  false_positive: "Finding sai",
+};
+
+/** What an accepted argument or a commit-less close makes of the finding (as the API's Settle). */
+export type Settle = "medium" | "low" | "false_positive";
+const RANK: Record<string, number> = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
+const SETTLE_LABEL: Record<Settle, string> = {
+  medium: "Hạ xuống medium",
+  low: "Hạ xuống low",
+  false_positive: "Finding sai (loại khỏi điểm)",
+};
+
+/** Choosing the outcome of a close without a commit: lower to medium or low (never raise; a
+ * critical to low only for a manager or an admin, with a reason), or the finding was wrong.
+ * Re-scores the finding; closing by commits never comes here. */
+export function SettlePicker({
+  severity,
+  suggested,
+  canLowerFar,
+  value,
+  onChange,
+  note,
+  onNote,
+  id,
+  withNote = true,
+}: {
+  severity: string | null | undefined;
+  suggested?: string | null;
+  canLowerFar: boolean;
+  value: Settle | null;
+  onChange: (v: Settle) => void;
+  note: string;
+  onNote: (v: string) => void;
+  id: string;
+  /** False where the form has its own note (the admin close: that note is the reason). */
+  withNote?: boolean;
+}) {
+  const now = RANK[severity ?? "medium"] ?? 2;
+  const allowed = (o: Settle) =>
+    o === "false_positive" || (RANK[o] <= now && !(severity === "critical" && o === "low" && !canLowerFar));
+  const needsReason = severity === "critical" && value === "low";
+  return (
+    <fieldset style={{ border: 0, padding: 0, margin: 0, display: "grid", gap: 4 }}>
+      <legend className="small" style={{ fontWeight: 600 }}>
+        Mức mới của finding (đang {severity ?? "?"}; điểm sẽ được tính lại)
+      </legend>
+      {(["medium", "low", "false_positive"] as Settle[]).map((o) => (
+        <label
+          key={o}
+          className="small"
+          style={{ display: "flex", gap: 6, alignItems: "center", opacity: allowed(o) ? 1 : 0.5 }}
+          title={
+            allowed(o)
+              ? undefined
+              : RANK[o] > now
+                ? "Không nâng mức"
+                : "Chỉ manager của team tác giả hoặc admin được hạ critical xuống low"
+          }
+        >
+          <input
+            type="radio"
+            name={`settle-${id}`}
+            value={o}
+            checked={value === o}
+            disabled={!allowed(o)}
+            onChange={() => onChange(o)}
+          />
+          {SETTLE_LABEL[o]}
+          {suggested === o && <span className="muted">(AI đề xuất)</span>}
+        </label>
+      ))}
+      {withNote && (needsReason || value === "false_positive") && (
+        <>
+          <label htmlFor={`settle-note-${id}`} className="small" style={{ fontWeight: 600 }}>
+            {needsReason ? "Lý do hạ critical xuống low (bắt buộc)" : "Ghi chú (không bắt buộc)"}
+          </label>
+          <textarea id={`settle-note-${id}`} rows={2} maxLength={1000} value={note} onChange={(e) => onNote(e.target.value)} />
+        </>
+      )}
+    </fieldset>
+  );
+}
+
+/** The default choice: the check's suggestion when allowed, else medium if it lowers, else low. */
+export function defaultSettle(severity: string | null | undefined, suggested: string | null | undefined, canLowerFar: boolean): Settle {
+  const now = RANK[severity ?? "medium"] ?? 2;
+  const ok = (o: string) => RANK[o] <= now && !(severity === "critical" && o === "low" && !canLowerFar);
+  if ((suggested === "medium" || suggested === "low") && ok(suggested)) return suggested;
+  return ok("medium") ? "medium" : "low";
+}
+
+/** "Xác nhận" of a proposed acceptance: pick the outcome, then confirm. */
+export function ConfirmSettle({
+  closure,
+  severity,
+  canLowerFar,
+  onDone,
+}: {
+  closure: FindingClosure;
+  severity: string | null | undefined;
+  canLowerFar: boolean;
+  onDone: (message: string) => Promise<unknown>;
+}) {
+  const [value, setValue] = useState<Settle>(() => defaultSettle(severity, closure.suggested_severity, canLowerFar));
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const needsReason = severity === "critical" && value === "low";
+  return (
+    <form
+      style={{ display: "grid", gap: 8, maxWidth: 520 }}
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        setError(null);
+        try {
+          await api.post(`/close-requests/${closure.id}/confirm`, { outcome: value, note: note.trim() || null });
+          await onDone(value === "false_positive" ? "Đã đóng: finding sai, loại khỏi điểm." : `Đã đóng: chấp nhận rủi ro, hạ xuống ${value}.`);
+        } catch (err) {
+          setError(err instanceof ApiError ? err.message : String(err));
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <SettlePicker
+        id={String(closure.id)}
+        severity={severity}
+        suggested={closure.suggested_severity}
+        canLowerFar={canLowerFar}
+        value={value}
+        onChange={setValue}
+        note={note}
+        onNote={setNote}
+      />
+      <div>
+        <button type="submit" className="primary sm" disabled={busy || (needsReason && note.trim().length < 5)}>
+          Xác nhận
+        </button>
+      </div>
+      {error && (
+        <span className="error small" role="alert">
+          {error}
+        </span>
+      )}
+    </form>
+  );
+}
 
 export const shortShas = (shas: string[]) => shas.map((s) => s.slice(0, 10)).join(", ");
 
@@ -52,16 +202,18 @@ function DecideBar({ closure, onDone }: { closure: FindingClosure; onDone: () =>
   if (!closure.can_decide && !closure.can_cancel) return null;
   return (
     <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+      {closure.can_decide && closure.status === "proposed" && !refusing && (
+        <ConfirmSettle
+          closure={closure}
+          severity={closure.finding_severity}
+          canLowerFar={!!closure.can_lower_far}
+          onDone={async (m) => {
+            setDone(m);
+            await onDone();
+          }}
+        />
+      )}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {closure.can_decide && closure.status === "proposed" && (
-          <button
-            className="primary sm"
-            disabled={busy}
-            onClick={() => void act("confirm", undefined, "Đã đóng finding: chấp nhận rủi ro.")}
-          >
-            Xác nhận chấp nhận rủi ro
-          </button>
-        )}
         {closure.can_decide && (closure.status === "pending" || closure.status === "failed") && (
           <button
             className="primary sm"
@@ -148,8 +300,11 @@ export function ClosureNote({ closure, onDone }: { closure: FindingClosure | und
         <span>
           <Pill tone="info">Đề xuất chấp nhận rủi ro</Pill>{" "}
           <span className="muted">
-            Phản biện được code chứng minh;{" "}
-            {closure.can_decide ? "hãy mở file bằng chứng trên GitLab rồi xác nhận hoặc từ chối." : `chờ ${WHO_DECIDES} xác nhận.`}
+            Phản biện được code chứng minh
+            {closure.suggested_severity ? ` (AI đề xuất hạ xuống ${closure.suggested_severity})` : ""};{" "}
+            {closure.can_decide
+              ? "hãy mở file bằng chứng trên GitLab, chọn mức mới rồi xác nhận (hoặc từ chối)."
+              : `chờ ${WHO_DECIDES} xác nhận và chọn mức mới.`}
           </span>
         </span>
         {closure.reason && <span className="muted">{closure.reason}</span>}
@@ -195,6 +350,15 @@ export function ClosureNote({ closure, onDone }: { closure: FindingClosure | und
             Chỗ sửa: <code>{closure.evidence}</code>
           </span>
         )}
+        {closure.closed_as === "accepted_risk" && closure.severity_before && closure.severity_after && (
+          <span>
+            <Pill tone="info">
+              Hạ mức {closure.severity_before} → {closure.severity_after}
+            </Pill>{" "}
+            <span className="muted">điểm đã được tính lại theo mức mới</span>
+          </span>
+        )}
+        {closure.closed_as === "false_positive" && <span className="muted">Finding sai: đã loại khỏi điểm.</span>}
         {closure.note && <span className="muted">Ghi chú: {closure.note}</span>}
       </div>
     );
@@ -243,6 +407,9 @@ const MODE: Record<Mode, { open: string; submit: string; path: string }> = {
 
 function CloseForm({ finding, mode, onDone }: { finding: Finding; mode: Mode; onDone: () => Promise<unknown> }) {
   const [open, setOpen] = useState(false);
+  // An admin's close: "fixed" by commits (severity and score kept) or accepting the risk.
+  const [how, setHow] = useState<"fixed" | "risk">("fixed");
+  const [settle, setSettle] = useState<Settle>(() => defaultSettle(finding.severity, null, true));
   const [commits, setCommits] = useState("");
   const [argument, setArgument] = useState("");
   const [note, setNote] = useState("");
@@ -257,7 +424,9 @@ function CloseForm({ finding, mode, onDone }: { finding: Finding; mode: Mode; on
   const ready =
     mode === "request"
       ? list.length <= 5 && argumentOk && (list.length > 0 || argued >= MIN_ARGUMENT)
-      : note.trim().length >= 5;
+      : mode === "close" && how === "fixed"
+        ? note.trim().length >= 5 && list.length > 0 && list.length <= 5
+        : note.trim().length >= 5;
   const why =
     mode !== "request"
       ? null
@@ -289,7 +458,11 @@ function CloseForm({ finding, mode, onDone }: { finding: Finding; mode: Mode; on
           const body =
             mode === "request"
               ? { commits: list, argument: argument.trim() || null, note: note.trim() || null }
-              : { note: note.trim() };
+              : mode === "close"
+                ? how === "fixed"
+                  ? { note: note.trim(), commits: list }
+                  : { note: note.trim(), outcome: settle }
+                : { note: note.trim() };
           await api.post(`/findings/${finding.id}/${MODE[mode].path}`, body);
           await onDone();
           setOpen(false);
@@ -337,12 +510,53 @@ function CloseForm({ finding, mode, onDone }: { finding: Finding; mode: Mode; on
             {argued}/{MIN_ARGUMENT} ký tự tối thiểu{argued === 0 ? " (bỏ trống nếu chỉ gửi commit)" : ""}
           </span>
           <span id={`${id}-help`} className="muted small">
-            Manager của team bạn hoặc admin sẽ chạy review: hệ thống đối chiếu commit và/hoặc phản biện với code hiện tại
-            của nhánh chính (file của finding và các file bạn nhắc tới; giá trị trong file .env được che). Đạt thì finding
-            được đóng (“Đã sửa” hoặc “Chấp nhận rủi ro”, vẫn giữ mức và vẫn tính điểm); không đạt thì lý do hiện ngay dưới
-            finding.
+            Lead, manager của team bạn hoặc admin sẽ chạy review: hệ thống đối chiếu commit và/hoặc phản biện với code hiện
+            tại của nhánh chính (file của finding và các file bạn nhắc tới; giá trị trong file .env được che). Đóng nhờ
+            commit (“Đã sửa”) thì giữ mức và giữ điểm. Đóng nhờ phản biện (“Chấp nhận rủi ro”) thì finding được hạ xuống
+            medium hoặc low và điểm được tính lại; finding sai hẳn thì nên dùng Khiếu nại. Không đạt thì lý do hiện ngay
+            dưới finding.
           </span>
         </>
+      )}
+      {mode === "close" && (
+        <fieldset style={{ border: 0, padding: 0, margin: 0, display: "grid", gap: 6 }}>
+          <legend className="small" style={{ fontWeight: 600 }}>
+            Đóng vì
+          </legend>
+          <label className="small" style={{ display: "flex", gap: 6 }}>
+            <input type="radio" name={`${id}-how`} checked={how === "fixed"} onChange={() => setHow("fixed")} />
+            Đã sửa bằng commit: giữ mức {finding.severity} và giữ điểm
+          </label>
+          <label className="small" style={{ display: "flex", gap: 6 }}>
+            <input type="radio" name={`${id}-how`} checked={how === "risk"} onChange={() => setHow("risk")} />
+            Chấp nhận rủi ro (không có commit): hạ mức và tính lại điểm
+          </label>
+          {how === "fixed" ? (
+            <>
+              <label htmlFor={`${id}-commits`} className="small" style={{ fontWeight: 600 }}>
+                Commit đã sửa (bắt buộc, tối đa 5)
+              </label>
+              <textarea
+                id={`${id}-commits`}
+                rows={2}
+                value={commits}
+                placeholder="Mã commit hoặc link GitLab, mỗi dòng một"
+                onChange={(e) => setCommits(e.target.value)}
+              />
+            </>
+          ) : (
+            <SettlePicker
+              id={id}
+              severity={finding.severity}
+              canLowerFar
+              value={settle}
+              onChange={setSettle}
+              note=""
+              onNote={() => undefined}
+              withNote={false}
+            />
+          )}
+        </fieldset>
       )}
       <label htmlFor={`${id}-note`} style={{ fontWeight: 600 }}>
         {mode === "request" ? "Ghi chú cho người duyệt (không bắt buộc)" : "Ghi chú (bắt buộc)"}

@@ -1,8 +1,7 @@
 """Dispute flow (docs/specs/01 F11, 09; task 5.2): dispute -> lead decides -> recompute."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -18,7 +17,7 @@ from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.models import FindingClosure, FindingDispute, Review, ReviewFinding, User
 from app.models.review import CLOSURE_OPEN
-from app.scoring.aggregate import aggregate, recompute_scores
+from app.scoring.rescore import rescore_review
 from app.scoring.verdict import assess
 from app.workers.dispute_jobs import running as ai_running
 
@@ -143,23 +142,7 @@ def list_disputes(
 
 def _recompute_for(session: Session, review: Review, settings: Settings) -> None:
     """Re-score the review and re-aggregate the week and month it belongs to."""
-    moment = review.counted_at
-    if moment is None:
-        return
-    tz = ZoneInfo(settings.report_tz)
-    # [moment, moment + 1µs): exactly this review's moment (its change's time).
-    threshold = settings.verify_min_confidence_unverified
-    recompute_scores(
-        session,
-        moment,
-        moment + timedelta(microseconds=1),
-        settings.scoring_weights,
-        threshold,
-        review_ids=[review.id],
-    )
-    day = moment.astimezone(tz).date()
-    aggregate(session, "week", day, tz, settings.scoring_weights, settings.min_sample, threshold)
-    aggregate(session, "month", day, tz, settings.scoring_weights, settings.min_sample, threshold)
+    rescore_review(session, review, settings)
 
 
 def _item(session: Session, principal: Principal, dispute: FindingDispute) -> dict[str, Any]:

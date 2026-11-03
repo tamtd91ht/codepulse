@@ -5,7 +5,7 @@ import { Fragment, useEffect, useState } from "react";
 import useSWRInfinite from "swr/infinite";
 
 import { DateRangePicker } from "@/components/DateRangePicker";
-import { CLOSED_AS, shortShas } from "@/components/FindingClose";
+import { CLOSED_AS, ConfirmSettle, shortShas } from "@/components/FindingClose";
 import { Icon, IconButton } from "@/components/icons";
 import { Card, EmptyState, Loading, Message, PageHeader, Pill, Segmented, SeverityBadge } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
@@ -113,7 +113,7 @@ export default function ClosuresPage() {
       <PageHeader
         eyebrow="Findings"
         title="Đóng finding"
-        subtitle="Critical/high đã được sửa ở commit sau: thành viên gửi yêu cầu kèm commit, lead hoặc manager của họ (hoặc admin) chạy review để kiểm, ngay tại đây hoặc trên trang review; đạt thì đóng (vẫn giữ mức và vẫn tính điểm), không đạt thì ghi lý do. Finding sai thì dùng Khiếu nại."
+        subtitle="Critical/high đã được sửa ở commit sau: thành viên gửi yêu cầu kèm commit, lead hoặc manager của họ (hoặc admin) chạy review để kiểm, ngay tại đây hoặc trên trang review; đạt thì đóng. Đóng nhờ commit thì giữ mức và giữ điểm; đóng nhờ phản biện (chấp nhận rủi ro) thì hạ xuống medium/low và tính lại điểm. Không đạt thì ghi lý do."
         actions={
           f?.can_decide ? (
             <Segmented
@@ -321,6 +321,7 @@ export default function ClosuresPage() {
                           <Pill tone={st.tone}>
                             {c.status === "checking" && <span className="spinner inline" aria-hidden="true" />} {st.label}
                             {c.status === "closed" && c.closed_as ? ` · ${CLOSED_AS[c.closed_as]}` : ""}
+                            {c.severity_before && c.severity_after ? ` (${c.severity_before} → ${c.severity_after})` : ""}
                           </Pill>
                           <div className="muted small">{date(c.decided_at ?? c.created_at)}</div>
                         </td>
@@ -468,6 +469,7 @@ function Detail({
               <Pill tone={st.tone}>
                 {st.label}
                 {c.status === "closed" && c.closed_as ? ` · ${CLOSED_AS[c.closed_as]}` : ""}
+                            {c.severity_before && c.severity_after ? ` (${c.severity_before} → ${c.severity_after})` : ""}
               </Pill>
             </div>
             {c.status === "checking" && <div className="muted small">Đang lấy diff và hỏi model, thường dưới 1 phút…</div>}
@@ -488,17 +490,21 @@ function Detail({
         </li>
       </ol>
 
+      {confirmable && !refusing && (
+        <div style={{ marginTop: 12 }}>
+          <ConfirmSettle
+            closure={c}
+            severity={c.finding.severity}
+            canLowerFar={!!c.can_lower_far}
+            onDone={async (m) => {
+              onMessage(m);
+              await onDone();
+            }}
+          />
+        </div>
+      )}
       {(decidable || confirmable || c.can_cancel) && (
         <div className="toolbar" style={{ marginTop: 12 }}>
-          {confirmable && (
-            <button
-              className="primary"
-              disabled={busy}
-              onClick={() => act(`/close-requests/${c.id}/confirm`, undefined, "Đã đóng finding: chấp nhận rủi ro.")}
-            >
-              Xác nhận chấp nhận rủi ro
-            </button>
-          )}
           {decidable && (
             <button
               className="primary"

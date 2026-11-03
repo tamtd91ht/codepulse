@@ -425,6 +425,14 @@ export interface FindingClosure {
   can_decide?: boolean;
   /** The viewer sent it and it still waits. */
   can_cancel?: boolean;
+  /** May lower a critical straight to low (a manager of the author's team, or an admin). */
+  can_lower_far?: boolean;
+  /** The finding's severity now. */
+  finding_severity?: Severity | null;
+  /** Closing by an argument or a note lowers the finding: before and after; the check's suggestion. */
+  severity_before?: Severity | null;
+  severity_after?: Severity | null;
+  suggested_severity?: "medium" | "low" | null;
   /** auto: a later review's change fixed it; request: the author named the fixing commits; admin: by hand; reopen. */
   kind: "auto" | "request" | "admin" | "reopen";
   /** pending: waiting for a manager/admin; checking: the check runs; proposed: the argument held, waiting for a
@@ -440,7 +448,7 @@ export interface FindingClosure {
   /** The author's case that the finding does not hold (instead of, or with, the commits). */
   argument: string | null;
   /** What the finding became: fixed (a change fixed it) or accepted_risk (the argument held). */
-  closed_as: "fixed" | "accepted_risk" | null;
+  closed_as: "fixed" | "accepted_risk" | "false_positive" | null;
   /** The checker's reason, or why the request was refused. */
   reason: string | null;
   /** file:lines of the fix in the change. */

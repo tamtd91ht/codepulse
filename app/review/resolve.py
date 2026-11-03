@@ -70,7 +70,8 @@ claim, not a fact: answer
   the environment and the flagged value is a placeholder of a local-only profile). Give
   `evidence_file` / `evidence_lines` in CURRENT CODE (or the diff) that prove it. A real secret
   committed to the repository stays exposed in its history whatever profile uses it: that is
-  not "accepted";
+  not "accepted". With "accepted" also give `severity`: "medium" when some of the risk remains
+  (or holds elsewhere), "low" when what remains is minor;
 - "fixed" when the diff fixes it as above (commits may come with an argument);
 - otherwise "not_fixed" (or "partial"), saying in `reason` what the argument lacks (which file
   or line would prove it). Claims about code you were not shown are not proven.
@@ -99,7 +100,8 @@ BEGIN-FINDINGS-{tag}
 END-FINDINGS-{tag}
 
 Return {{"answers": [{{"index": …, "verdict": {verdicts}, "reason": …, "evidence_file": …,
-"evidence_lines": …, "confidence": …}}]}} with one entry per index above."""
+"evidence_lines": …, "confidence": …, "severity": "medium" | "low" | null}}]}} with one entry
+per index above (`severity` only with "accepted")."""
 
 
 class Answer(BaseModel):
@@ -110,6 +112,13 @@ class Answer(BaseModel):
     evidence_file: str | None = None
     evidence_lines: str | None = None
     confidence: float = Field(default=0.0, ge=0, le=1)
+    severity: str | None = None  # with "accepted": medium | low, what the risk really is
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def _lowered(cls, value: object) -> str | None:
+        text = str(value).strip().lower() if value is not None else ""
+        return text if text in ("medium", "low") else None
 
     @field_validator("index", mode="before")
     @classmethod
@@ -168,6 +177,8 @@ class Outcome:
     # The finding's new status: "fixed" (fixed, evidence in the diff) or "accepted_risk" (the
     # argument held, evidence in what was shown), confident; None: it stays open.
     closes_as: str | None
+    # With accepted_risk: the severity the check suggests (medium | low).
+    suggested_severity: str | None = None
 
     @property
     def closes(self) -> bool:
@@ -348,6 +359,9 @@ def check(
             reason=answer.reason,
             evidence=evidence,
             closes_as=closes_as,
+            suggested_severity=(answer.severity or "medium")
+            if closes_as == "accepted_risk"
+            else None,
         )
     return CheckResult([outcomes[i] for i in sorted(outcomes)], call)
 

@@ -4,6 +4,7 @@ refuses), admin close/reopen, the "Đóng finding" page, the auto-close switch."
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -333,13 +334,20 @@ def test_admin_closes_and_reopens_with_a_note(
         f"{url}/close", json={"note": "Đã sửa ở hotfix"}, headers=as_user(world.lead)
     )
     assert lead_close.status_code == 403
-    closed = client.post(f"{url}/close", json={"note": "Đã sửa ở hotfix"}, headers=admin)
+    # A note alone says neither "fixed by …" nor what the risk really is.
+    note_only = client.post(f"{url}/close", json={"note": "Đã sửa ở hotfix"}, headers=admin)
+    assert note_only.status_code == 422
+    closed = client.post(
+        f"{url}/close", json={"note": "Đã sửa ở hotfix", "commits": [LINK]}, headers=admin
+    )
     assert closed.status_code == 200
-    assert closed.json()["kind"] == "admin"
+    assert closed.json()["kind"] == "admin" and closed.json()["shas"] == [FIX]
     answered = db_session.get(FindingClosure, waiting)
     assert answered is not None and answered.status == "rejected"  # the admin answered it
     db_session.refresh(world.an_finding)
-    assert world.an_finding.status == "fixed"
+    # Fixed by a commit: the severity and the score stay.
+    assert (world.an_finding.status, world.an_finding.severity) == ("fixed", "critical")
+    assert closed.json()["severity_before"] is None
 
     reopened = client.post(f"{url}/reopen", json={"note": "Hotfix bị revert"}, headers=admin)
     assert reopened.json()["status"] == "reopened"
@@ -562,14 +570,19 @@ def test_an_argument_proven_by_the_current_code_accepts_the_risk(
     confirm = f"/api/v1/close-requests/{closure_id}/confirm"
     assert client.post(confirm, headers=as_user(world.an)).status_code == 403
     assert client.post(confirm, headers=as_user(world.binh)).status_code == 403
+    db_session.refresh(world.an_review)
+    score_before = world.an_review.score
+    # With no choice the check's suggestion is used (medium when the model gave none).
     confirmed = client.post(confirm, headers=as_user(world.manager))
     assert confirmed.status_code == 200
-    assert (confirmed.json()["status"], confirmed.json()["closed_as"]) == (
-        "closed",
-        "accepted_risk",
-    )
+    body = confirmed.json()
+    assert (body["status"], body["closed_as"]) == ("closed", "accepted_risk")
+    assert (body["severity_before"], body["severity_after"]) == ("critical", "medium")
     db_session.refresh(world.an_finding)
-    assert (world.an_finding.status, world.an_finding.severity) == ("accepted_risk", "critical")
+    assert (world.an_finding.status, world.an_finding.severity) == ("accepted_risk", "medium")
+    db_session.refresh(world.an_review)
+    assert world.an_review.score is not None and score_before is not None
+    assert world.an_review.score > score_before  # re-scored at the lowered severity
     assert client.post(confirm, headers=as_user(world.manager)).status_code == 409
 
     asked = provider.prompts[0].user
@@ -582,13 +595,17 @@ def test_an_argument_proven_by_the_current_code_accepts_the_risk(
     assert "AES_KEY= <ẩn: đọc từ biến môi trường>" in asked
     assert "local debug" not in asked  # comments are hidden too
 
-    # An admin may reopen what an argument closed.
+    # An admin may reopen what an argument closed: the severity found comes back.
     reopened = client.post(
         f"/api/v1/findings/{world.an_finding.id}/reopen",
         json={"note": "Prod vẫn còn dùng key cứng"},
         headers=as_user(world.admin),
     )
     assert reopened.status_code == 200
+    db_session.refresh(world.an_finding)
+    assert (world.an_finding.status, world.an_finding.severity) == ("open", "critical")
+    db_session.refresh(world.an_review)
+    assert world.an_review.score == score_before
 
 
 def test_an_argument_without_proof_in_the_code_shown_stays_open(
@@ -715,3 +732,128 @@ def test_the_authors_lead_runs_the_check_from_the_review_page(
         f"/api/v1/reviews/{world.an_review.id}/closures", headers=as_user(world.lead)
     ).json()
     assert item["status"] == "checking" and item["can_decide"] is False  # nothing to press now
+
+
+def _proposed(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    db_session: Session,
+    settings: Settings,
+    answer: dict[str, Any],
+) -> int:
+    closure_id = ask_with(client, world, as_user, {"argument": ARGUMENT}).json()["id"]
+    run(client, as_user, world.manager, closure_id)
+    assert check(db_session, settings, closure_id, answer) == "proposed"
+    return int(closure_id)
+
+
+def test_the_check_suggests_the_severity_and_a_lead_lowers_critical_one_step_only(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = _proposed(
+        client, world, as_user, db_session, settings, {**ACCEPTED, "severity": "low"}
+    )
+    page = f"/api/v1/reviews/{world.an_review.id}/closures"
+    (as_lead,) = client.get(page, headers=as_user(world.lead)).json()
+    assert as_lead["suggested_severity"] == "low" and as_lead["finding_severity"] == "critical"
+    assert as_lead["can_decide"] and not as_lead["can_lower_far"]
+    confirm = f"/api/v1/close-requests/{closure_id}/confirm"
+    # A lead may not take a critical straight to low (their team's score is at stake) ...
+    lead = as_user(world.lead)
+    assert client.post(confirm, json={"outcome": "low"}, headers=lead).status_code == 403
+    # ... so with no choice the suggestion falls back to what they may do: medium.
+    done = client.post(confirm, headers=lead)
+    assert done.status_code == 200 and done.json()["severity_after"] == "medium"
+
+
+def test_a_manager_lowers_critical_to_low_with_a_reason(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = _proposed(
+        client, world, as_user, db_session, settings, {**ACCEPTED, "severity": "low"}
+    )
+    confirm = f"/api/v1/close-requests/{closure_id}/confirm"
+    manager = as_user(world.manager)
+    assert client.post(confirm, json={"outcome": "low"}, headers=manager).status_code == 422
+    done = client.post(
+        confirm, json={"outcome": "low", "note": "Chỉ là profile dev"}, headers=manager
+    )
+    assert done.status_code == 200 and done.json()["severity_after"] == "low"
+    db_session.refresh(world.an_finding)
+    assert world.an_finding.severity == "low"
+
+
+def test_a_wrong_finding_leaves_the_score(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = _proposed(client, world, as_user, db_session, settings, ACCEPTED)
+    done = client.post(
+        f"/api/v1/close-requests/{closure_id}/confirm",
+        json={"outcome": "false_positive"},
+        headers=as_user(world.lead),
+    )
+    assert done.status_code == 200 and done.json()["closed_as"] == "false_positive"
+    db_session.refresh(world.an_finding)
+    db_session.refresh(world.an_review)
+    assert world.an_finding.status == "false_positive"
+    assert world.an_review.score == Decimal("100.00")  # the only critical is out of the score
+    reopened = client.post(
+        f"/api/v1/findings/{world.an_finding.id}/reopen",
+        json={"note": "Kết luận vội"},
+        headers=as_user(world.admin),
+    )
+    assert reopened.status_code == 200
+    db_session.refresh(world.an_finding)
+    assert world.an_finding.status == "open"
+
+
+def test_an_admin_accepts_the_risk_by_a_note_at_the_severity_chosen(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    url = f"/api/v1/findings/{world.an_finding.id}/close"
+    admin = as_user(world.admin)
+    raised = client.post(
+        url, json={"note": "Không ảnh hưởng prod", "outcome": "high"}, headers=admin
+    )
+    assert raised.status_code == 422  # only medium, low or false_positive
+    closed = client.post(
+        url, json={"note": "Không ảnh hưởng prod", "outcome": "low"}, headers=admin
+    )
+    assert closed.status_code == 200
+    body = closed.json()
+    assert (body["closed_as"], body["severity_before"], body["severity_after"]) == (
+        "accepted_risk",
+        "critical",
+        "low",
+    )
+    db_session.refresh(world.an_finding)
+    assert (world.an_finding.status, world.an_finding.severity) == ("accepted_risk", "low")
+
+
+def test_a_false_positive_set_by_a_dispute_after_a_reopen_is_not_reopened_here(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = _proposed(client, world, as_user, db_session, settings, ACCEPTED)
+    client.post(
+        f"/api/v1/close-requests/{closure_id}/confirm",
+        json={"outcome": "false_positive"},
+        headers=as_user(world.lead),
+    )
+    reopen = f"/api/v1/findings/{world.an_finding.id}/reopen"
+    admin = as_user(world.admin)
+    assert client.post(reopen, json={"note": "Kết luận vội"}, headers=admin).status_code == 200
+    raised = client.post(
+        f"/api/v1/findings/{world.an_finding.id}/dispute",
+        headers=as_user(world.an),
+        json={"reason": "Input đã được validate ở caller."},
+    ).json()
+    client.post(
+        f"/api/v1/disputes/{raised['id']}/decide",
+        headers=as_user(world.lead),
+        json={"decision": "accepted"},
+    )
+    db_session.refresh(world.an_finding)
+    assert world.an_finding.status == "false_positive"
+    # The dispute's decision, not an undone close: not reopened from here.
+    assert client.post(reopen, json={"note": "Thử lại"}, headers=admin).status_code == 409

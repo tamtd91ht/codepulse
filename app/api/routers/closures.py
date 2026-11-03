@@ -39,6 +39,7 @@ from app.api.deps import get_queue, get_session
 from app.api.routers.reviews import _visible_review
 from app.api.schemas import ORM
 from app.api.security import AdminPrincipal, CurrentPrincipal, Principal
+from app.config import Settings, get_settings
 from app.models import (
     BusinessProject,
     Commit,
@@ -52,8 +53,9 @@ from app.models import (
 )
 from app.models.review import CLOSURE_OPEN
 from app.review.masking import looks_secret
-from app.review.resolve import close_finding, mark_fixed
+from app.review.resolve import close_finding
 from app.review.status import SEVERE
+from app.scoring.rescore import rescore_review
 
 router = APIRouter(tags=["closures"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -124,6 +126,38 @@ class NoteIn(BaseModel):
     note: str = Field(min_length=5, max_length=1000)
 
 
+# Closing by an argument or a note, with no commit (user request 2026-11-03): the finding is
+# lowered to medium or low and re-scored, or it was wrong (false_positive, out of the score).
+# Closing by commits keeps its severity and its score.
+Settle = Literal["medium", "low", "false_positive"]
+RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+class ConfirmIn(BaseModel):
+    """What the confirmed argument makes of the finding; default: the check's suggestion."""
+
+    outcome: Settle | None = None
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class AdminCloseIn(BaseModel):
+    """An admin's close: with the fixing commits (kept as is), or accepting the risk with the
+    severity it really has (or the finding was wrong)."""
+
+    note: str = Field(min_length=5, max_length=1000)
+    commits: list[str] = Field(default_factory=list, max_length=MAX_COMMITS)
+    outcome: Settle | None = None
+
+    @field_validator("commits")
+    @classmethod
+    def _commits(cls, value: list[str]) -> list[str]:
+        out: list[str] = []
+        for raw in value:
+            if raw.strip() and (sha := parse_commit(raw)) not in out:
+                out.append(sha)
+        return out
+
+
 class ClosureOut(ORM):
     id: int
     finding_id: int
@@ -142,9 +176,15 @@ class ClosureOut(ORM):
     created_at: datetime
     updated_at: datetime
     decided_at: datetime | None
+    severity_before: str | None = None
+    severity_after: str | None = None
+    suggested_severity: str | None = None
     # What the viewer may do with it (the review page's buttons).
     can_decide: bool = False
     can_cancel: bool = False
+    # May lower a critical straight to low (a manager of the author's team, or an admin).
+    can_lower_far: bool = False
+    finding_severity: str | None = None
 
 
 # -- who -------------------------------------------------------------------------------------------
@@ -154,11 +194,17 @@ def _managed_members(session: Session, principal: Principal) -> set[int]:
     """People whose requests this person decides: in a team they manage (sub-teams included)
     today, counted as app/api/security.load_principal counts memberships, or that they lead
     (the same people who decide disputes, user request 2026-11-03)."""
-    leads = set(principal.lead_members) - {principal.user_id}
+    return (set(principal.lead_members) - {principal.user_id}) | _manager_members(
+        session, principal
+    )
+
+
+def _manager_members(session: Session, principal: Principal) -> set[int]:
+    """People in a team this person manages (role manager, sub-teams included) today."""
     if not principal.managed_teams:
-        return leads
+        return set()
     today = datetime.now(UTC).date()
-    return leads | set(
+    return set(
         session.scalars(
             select(TeamMember.user_id).where(
                 TeamMember.team_id.in_(principal.managed_teams),
@@ -265,7 +311,79 @@ def _owner(session: Session, closure: FindingClosure) -> tuple[int | None, int |
 def _decider(session: Session, principal: Principal, closure: FindingClosure) -> None:
     author, bp_id = _owner(session, closure)
     if not _may_decide(principal, _managed_members(session, principal), author, bp_id):
-        raise HTTPException(403, "chỉ manager của team tác giả hoặc admin được duyệt yêu cầu này")
+        raise HTTPException(
+            403, "chỉ lead, manager của team tác giả hoặc admin được duyệt yêu cầu này"
+        )
+
+
+def _lowers_far(session: Session, principal: Principal, author_id: int | None) -> bool:
+    """Who may lower a critical straight to low: a manager of the author's team or an admin
+    (a lead may lower it one step less: the team's own score is at stake)."""
+    return principal.is_admin or (
+        author_id is not None
+        and author_id != principal.user_id
+        and author_id in _manager_members(session, principal)
+    )
+
+
+def _default_settle(severity: str, suggested: str | None, far: bool) -> str:
+    """With no choice made: the check's suggestion when this decider may use it, else medium
+    when it lowers the finding, else low (as the dashboard's default)."""
+    now = RANK.get(severity, 0)
+
+    def ok(to: str) -> bool:
+        return RANK[to] <= now and not (severity == "critical" and to == "low" and not far)
+
+    if suggested in ("medium", "low") and ok(suggested):
+        return suggested
+    return "medium" if ok("medium") else "low"
+
+
+def _check_settle(finding: ReviewFinding, outcome: str, note: str | None, far: bool) -> None:
+    if outcome == "false_positive":
+        return
+    now, to = RANK.get(finding.severity, 0), RANK[outcome]
+    if to > now:
+        raise HTTPException(422, f"không nâng mức: finding đang là {finding.severity}")
+    if finding.severity == "critical" and outcome == "low":
+        if not far:
+            raise HTTPException(403, "chỉ manager hoặc admin được hạ critical xuống low")
+        if not (note or "").strip() or len((note or "").strip()) < 5:
+            raise HTTPException(422, "hạ critical xuống low cần ghi lý do")
+
+
+def _settle(
+    session: Session,
+    finding: ReviewFinding,
+    closure: FindingClosure,
+    outcome: str,
+    settings: Settings,
+) -> bool:
+    """open -> accepted_risk at the lowered severity, or -> false_positive; in one conditional
+    UPDATE (a dispute or another close may have moved it meanwhile), then re-score the review
+    and its week and month. False when the finding was no longer open."""
+    before = finding.severity
+    wrong = outcome == "false_positive"
+    values: dict[str, Any] = {"status": "false_positive" if wrong else "accepted_risk"}
+    if not wrong:
+        values["severity"] = outcome
+    moved = session.execute(
+        update(ReviewFinding)
+        .where(ReviewFinding.id == finding.id, ReviewFinding.status == "open")
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    if not getattr(moved, "rowcount", 0):
+        return False
+    session.refresh(finding)
+    closure.closed_as = "false_positive" if wrong else "accepted_risk"
+    closure.severity_before = before
+    closure.severity_after = None if wrong else outcome
+    session.flush()
+    review = session.get(Review, finding.review_id) if finding.review_id else None
+    if review is not None:
+        rescore_review(session, review, settings)
+    return True
 
 
 # -- the author ------------------------------------------------------------------------------------
@@ -426,15 +544,25 @@ def reject_request(
 
 @router.post("/close-requests/{closure_id}/confirm", response_model=ClosureOut)
 def confirm_proposal(
-    closure_id: int, principal: CurrentPrincipal, session: SessionDep
+    closure_id: int,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+    body: ConfirmIn | None = None,
 ) -> FindingClosure:
-    """ "Xác nhận chấp nhận rủi ro": the check found the argument holds; a manager or an admin
-    who read its reason and evidence closes the finding as `accepted_risk`."""
+    """ "Xác nhận": the check found the argument holds; the author's lead, a manager or an
+    admin who read its reason and evidence closes the finding, lowered to medium or low (the
+    check's suggestion unless chosen otherwise) and re-scored, or as wrong (false_positive)."""
+    body = body or ConfirmIn()
     closure = _request(session, closure_id)
     _decider(session, principal, closure)
     finding = session.get(ReviewFinding, closure.finding_id)
     if finding is None:
         raise HTTPException(404, "finding not found")
+    author, _bp = _owner(session, closure)
+    far = _lowers_far(session, principal, author)
+    outcome = body.outcome or _default_settle(finding.severity, closure.suggested_severity, far)
+    _check_settle(finding, outcome, body.note, far)
     now = datetime.now(UTC)
     if not _move(
         session,
@@ -445,15 +573,21 @@ def confirm_proposal(
         decided_at=now,
     ):
         raise HTTPException(409, "đề xuất đã được xử lý; tải lại trang")
-    if not mark_fixed(session, finding, "accepted_risk"):
+    if not _settle(session, finding, closure, outcome, settings):
         session.rollback()
         raise HTTPException(409, f"finding đang ở trạng thái {finding.status}, không còn mở")
+    decider_note = (body.note or "").strip()
+    if decider_note:  # the author's note to the decider stays as it was
+        closure.reason = f"{closure.reason or ''}\nNgười duyệt: {decider_note}".strip()[:1000]
     audit(
         session,
         principal.user_id,
         "finding.close_request.confirm",
         f"finding:{closure.finding_id}",
         closure_id=closure.id,
+        outcome=outcome,
+        severity_before=closure.severity_before,
+        note=decider_note or None,
     )
     session.commit()
     return closure
@@ -461,11 +595,25 @@ def confirm_proposal(
 
 @router.post("/findings/{finding_id}/close", response_model=ClosureOut)
 def close_by_admin(
-    finding_id: int, body: NoteIn, principal: AdminPrincipal, session: SessionDep
+    finding_id: int,
+    body: AdminCloseIn,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> FindingClosure:
+    """An admin closes by hand: with the fixing commits, as `fixed` (severity and score kept);
+    without one, accepting the risk at the severity chosen (re-scored), or as wrong."""
     finding, _ = _finding(session, principal, finding_id)
     if finding.status != "open":
         raise HTTPException(409, f"finding đang ở trạng thái {finding.status}")
+    if not body.commits and body.outcome is None:
+        raise HTTPException(
+            422,
+            "dán commit đã sửa, hoặc chọn mức mới (medium/low) / 'finding sai'"
+            " khi chấp nhận rủi ro",
+        )
+    if not body.commits and body.outcome is not None:
+        _check_settle(finding, body.outcome, body.note, far=True)
     waiting = _in_flight(session, finding.id)
     if waiting is not None and waiting.status == "checking":
         raise HTTPException(409, "finding đang được kiểm; chờ kết quả")
@@ -479,30 +627,77 @@ def close_by_admin(
         reason="Admin đã đóng thủ công finding này.",
     ):
         raise HTTPException(409, "yêu cầu đóng vừa được chạy; chờ kết quả")
-    closure = close_finding(
+    if body.commits:
+        closure = close_finding(
+            session,
+            finding,
+            kind="admin",
+            now=datetime.now(UTC),
+            shas=body.commits,
+            requested_by=principal.user_id,
+            decided_by=principal.user_id,
+            note=body.note.strip(),
+        )
+        if closure is None:
+            raise HTTPException(409, "finding vừa đổi trạng thái; tải lại trang")
+    else:
+        closure = FindingClosure(
+            finding_id=finding.id,
+            kind="admin",
+            status="closed",
+            requested_by=principal.user_id,
+            decided_by=principal.user_id,
+            note=body.note.strip(),
+            decided_at=datetime.now(UTC),
+        )
+        session.add(closure)
+        session.flush()
+        if not _settle(session, finding, closure, body.outcome or "medium", settings):
+            session.rollback()
+            raise HTTPException(409, "finding vừa đổi trạng thái; tải lại trang")
+    audit(
         session,
-        finding,
-        kind="admin",
-        now=datetime.now(UTC),
-        requested_by=principal.user_id,
-        decided_by=principal.user_id,
-        note=body.note.strip(),
+        principal.user_id,
+        "finding.close",
+        f"finding:{finding.id}",
+        note=body.note,
+        commits=body.commits,
+        outcome=body.outcome if not body.commits else "fixed",
     )
-    if closure is None:
-        raise HTTPException(409, "finding vừa đổi trạng thái; tải lại trang")
-    audit(session, principal.user_id, "finding.close", f"finding:{finding.id}", note=body.note)
     session.commit()
     return closure
 
 
 @router.post("/findings/{finding_id}/reopen", response_model=ClosureOut)
 def reopen_by_admin(
-    finding_id: int, body: NoteIn, principal: AdminPrincipal, session: SessionDep
+    finding_id: int,
+    body: NoteIn,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> FindingClosure:
     finding, _ = _finding(session, principal, finding_id)
-    if finding.status not in ("fixed", "accepted_risk"):
+    # The newest record of the finding: a close not undone since (a reopen adds its own row).
+    newest = session.scalars(
+        select(FindingClosure)
+        .where(FindingClosure.finding_id == finding.id)
+        .order_by(FindingClosure.id.desc())
+        .limit(1)
+    ).first()
+    last = newest if newest is not None and newest.status == "closed" else None
+    closed_here = finding.status in ("fixed", "accepted_risk") or (
+        # found wrong by a close (not by a dispute: that one is decided there)
+        finding.status == "false_positive"
+        and last is not None
+        and last.closed_as == "false_positive"
+    )
+    if not closed_here:
         raise HTTPException(409, f"chỉ mở lại được finding đã đóng (đang {finding.status})")
+    rescore = finding.status == "false_positive"
     finding.status = "open"
+    if last is not None and last.severity_before and last.severity_before != finding.severity:
+        finding.severity = last.severity_before  # what the review found, before it was lowered
+        rescore = True
     closure = FindingClosure(
         finding_id=finding.id,
         kind="reopen",
@@ -514,6 +709,10 @@ def reopen_by_admin(
     )
     session.add(closure)
     session.flush()
+    if rescore:
+        review = session.get(Review, finding.review_id) if finding.review_id else None
+        if review is not None:
+            rescore_review(session, review, settings)
     audit(session, principal.user_id, "finding.reopen", f"finding:{finding.id}", note=body.note)
     session.commit()
     return closure
@@ -548,11 +747,22 @@ def review_closures(
         review.author_user_id,
         project.business_project_id if project else None,
     )
+    far = decides and _lowers_far(session, principal, review.author_user_id)
+    severity = {
+        int(i): str(sev)
+        for i, sev in session.execute(
+            select(ReviewFinding.id, ReviewFinding.severity).where(
+                ReviewFinding.review_id == review.id
+            )
+        )
+    }
     return [
         {
             **ClosureOut.model_validate(row).model_dump(),
             "can_decide": decides and row.kind == "request" and row.status in TO_DECIDE,
             "can_cancel": row.status == "pending" and row.requested_by == principal.user_id,
+            "can_lower_far": far,
+            "finding_severity": severity.get(row.finding_id),
         }
         for row in rows
     ]
@@ -694,6 +904,7 @@ def list_closures(
         query = query.where(FindingClosure.id < after)
     rows = session.execute(query.order_by(FindingClosure.id.desc()).limit(PAGE + 1)).tuples().all()
     managed = _managed_members(session, principal)
+    managers = _manager_members(session, principal)
     items = []
     for closure, finding, review, project, bp, who, asker, judge in rows[:PAGE]:
         decides = (
@@ -730,6 +941,9 @@ def list_closures(
                 "requested_by_name": (asker.full_name or asker.primary_email) if asker else None,
                 "decided_by_name": (judge.full_name or judge.primary_email) if judge else None,
                 "can_decide": decides,
+                "can_lower_far": decides
+                and (principal.is_admin or review.author_user_id in managers),
+                "finding_severity": finding.severity,
                 "can_cancel": closure.status == "pending"
                 and closure.requested_by == principal.user_id,
                 "can_open_review": principal.can_see_work(

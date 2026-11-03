@@ -365,7 +365,11 @@ def run_close_request(
         # An argument holding is a proposal: the files shown are the requester's to change, so
         # a manager or an admin confirms it with the reason and the evidence in front of them.
         return decide(
-            "proposed", outcome.reason, evidence=outcome.evidence, closed_as="accepted_risk"
+            "proposed",
+            outcome.reason,
+            evidence=outcome.evidence,
+            closed_as="accepted_risk",
+            suggested_severity=outcome.suggested_severity,
         )
     if outcome.closes:
         # One transaction: the request is closed only if this run still owns it, and the

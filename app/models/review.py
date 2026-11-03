@@ -221,7 +221,9 @@ class FindingClosure(TimestampMixin, Base):
             "'reopened')",
             name="status",
         ),
-        CheckConstraint("closed_as IN ('fixed','accepted_risk')", name="closed_as"),
+        CheckConstraint(
+            "closed_as IN ('fixed','accepted_risk','false_positive')", name="closed_as"
+        ),
         Index("ix_finding_closures_created_at", "created_at"),
         # One request in flight per finding: a double click must not pay twice.
         Index(
@@ -247,11 +249,17 @@ class FindingClosure(TimestampMixin, Base):
     note: Mapped[str | None]
     # The author's case that the finding does not hold (instead of, or with, the commits).
     argument: Mapped[str | None]
-    # The finding's status this closing set: fixed (a change fixed it) or accepted_risk (the
-    # argument held against the current code); None while not closed.
+    # The finding's status this closing set: fixed (a change fixed it), accepted_risk (the
+    # argument held: lowered to severity_after) or false_positive (the finding was wrong);
+    # None while not closed.
     closed_as: Mapped[str | None]
     reason: Mapped[str | None]  # the checker's reason, or why the request was refused
     evidence: Mapped[str | None]  # file:lines of the fix in the change
+    # Closing by an argument or a note (no commit) lowers the finding (user request
+    # 2026-11-03): its severity before and after, and what the check suggested (medium|low).
+    severity_before: Mapped[str | None]
+    severity_after: Mapped[str | None]
+    suggested_severity: Mapped[str | None]
     # Every check of this request (a re-run adds); billed by the `finding.close_request.cost`
     # audit rows, one per call, in the month it was made.
     cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
