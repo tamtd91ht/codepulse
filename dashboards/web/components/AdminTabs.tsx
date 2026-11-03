@@ -35,6 +35,7 @@ export function SubTabs<T extends string>({
   value,
   onChange,
   actions,
+  variant = "pill",
 }: {
   id: string;
   label: string;
@@ -43,6 +44,9 @@ export function SubTabs<T extends string>({
   onChange: (key: T) => void;
   /** Shown at the right of the tab row (the area's main action). */
   actions?: ReactNode;
+  /** "pill" (Admin areas), "bar" (a page's main tabs, segmented look) or "mini" (small underline
+   * tabs inside a page tab). */
+  variant?: "pill" | "bar" | "mini";
 }) {
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     const index = tabs.findIndex((t) => t.key === value);
@@ -58,8 +62,8 @@ export function SubTabs<T extends string>({
     document.getElementById(`${id}-tab-${tabs[next].key}`)?.focus();
   };
   return (
-    <div className="sub-tabs-row">
-      <div className="tabs compact sub-tabs" role="tablist" aria-label={label} onKeyDown={onKey}>
+    <div className={variant === "pill" ? "sub-tabs-row" : `sub-tabs-row ${variant}`}>
+      <div className={variant === "pill" ? "tabs compact sub-tabs" : `tabs compact sub-tabs ${variant}`} role="tablist" aria-label={label} onKeyDown={onKey}>
         {tabs.map((t) => (
           <button
             key={t.key}

@@ -595,7 +595,7 @@ ol {
 
 main {
   min-width: 0;
-  padding: 24px clamp(16px, 2.5vw, 36px) 48px;
+  padding: 20px clamp(16px, 2.5vw, 32px) 40px;
 }
 .page {
   max-width: 1480px;
@@ -679,7 +679,7 @@ footer.notice {
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 .page-head .titles {
   min-width: 0;
@@ -4756,4 +4756,175 @@ label.purge-scope:focus-within {
   flex: 1 1 200px;
   min-width: 0;
   max-width: 320px;
+}
+
+/* ---------- Sub-tab variants (components/AdminTabs.tsx) ---------- */
+
+/* "bar": a page's main tabs as one segmented group (Luồng làm việc). */
+.sub-tabs-row.bar {
+  margin: 0;
+  min-width: 0;
+  max-width: 100%;
+}
+.tabs.compact.sub-tabs.bar {
+  flex-wrap: nowrap;
+  gap: 2px;
+  padding: 2px;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-radius: var(--radius-field);
+  background: var(--surface-2);
+}
+.tabs.compact.sub-tabs.bar button {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+  white-space: nowrap;
+  background: none;
+  color: var(--muted);
+}
+.tabs.compact.sub-tabs.bar button:hover:not(:disabled) {
+  background: none;
+  color: var(--text);
+}
+.tabs.compact.sub-tabs.bar button.active,
+.tabs.compact.sub-tabs.bar button.active:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--border-strong);
+}
+/* "mini": small underline tabs inside a page tab, instead of stacking every section. */
+.sub-tabs-row.mini {
+  flex-wrap: nowrap;
+  margin: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.tabs.compact.sub-tabs.mini {
+  flex-wrap: nowrap;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabs.compact.sub-tabs.mini button {
+  height: 34px;
+  padding: 0 10px;
+  margin-bottom: -1px;
+  font-size: 13px;
+  white-space: nowrap;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+}
+.tabs.compact.sub-tabs.mini button:hover:not(:disabled) {
+  background: none;
+  color: var(--text);
+}
+.tabs.compact.sub-tabs.mini button.active,
+.tabs.compact.sub-tabs.mini button.active:hover:not(:disabled) {
+  background: none;
+  color: var(--primary-text);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+.tabs.compact.sub-tabs.bar button:focus-visible,
+.tabs.compact.sub-tabs.mini button:focus-visible {
+  outline-offset: -2px;
+}
+.tabs.compact.sub-tabs.mini .tab-count {
+  background: var(--surface-2);
+}
+.tabs.compact.sub-tabs.mini button.active .tab-count {
+  background: var(--primary-soft);
+  color: var(--primary-text);
+}
+.tabs.compact.sub-tabs.bar .tab-count {
+  background: var(--surface);
+}
+.sub-tabs-row.mini .sub-tabs-actions {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- Insights: one slim sticky bar (title, tabs, filters) ---------- */
+
+.ins-bar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: -8px 0 0;
+  padding: 8px 0;
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+.ins-bar h1 {
+  font-size: 16px;
+  line-height: 24px;
+  white-space: nowrap;
+  cursor: help;
+}
+.ins-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+  min-width: 0;
+}
+.ins-filters select {
+  height: 32px;
+  max-width: 200px;
+  padding: 0 8px;
+  font-size: 13px;
+}
+.ins-filters .pager {
+  height: 32px;
+}
+.ins-filters .pager .icon-btn {
+  width: 26px;
+  height: 26px;
+}
+.ins-filters .segmented button {
+  height: 26px;
+  padding: 0 10px;
+}
+.ins-drill {
+  margin-bottom: 12px;
+}
+.ins-foot {
+  margin: 16px 0 0;
+}
+@media (max-width: 1023px) {
+  .ins-bar {
+    top: var(--topbar-h);
+  }
+}
+/* Phones: the bar wraps to several rows, so it scrolls away instead of covering the content. */
+@media (max-width: 700px) {
+  .ins-bar {
+    position: static;
+    margin-top: -4px;
+  }
+  .ins-bar .sub-tabs-row.bar {
+    width: 100%;
+  }
+  .ins-filters {
+    width: 100%;
+    margin-left: 0;
+  }
+  .ins-filters select {
+    flex: 1 1 140px;
+    max-width: none;
+  }
 }

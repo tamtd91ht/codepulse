@@ -5,11 +5,12 @@
  * Numbers describe a dự án or repo, never rank people; names show only where the API allows.
  */
 
-import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { type SubNav, SubPanel, type SubTab, SubTabs, pickSub } from "@/components/AdminTabs";
 import { DateRangePicker } from "@/components/DateRangePicker";
-import { Alert, Card, ChartTip, EmptyState, ExternalLink, Loading, PageHeader, Pager, Pill, Segmented, SplitBar, StatStrip, StripStat } from "@/components/ui";
+import { Alert, Card, ChartTip, EmptyState, ExternalLink, Loading, Pager, Pill, Segmented, SplitBar, StatStrip, StripStat } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
 import { date, dateTime, localDay, num, periodLabel, rangeLabel, shiftDays, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
 import type {
@@ -211,8 +212,22 @@ function HiddenNote({ people }: { people: InsightPerson[] }) {
   return <p className="small muted" style={{ margin: 0, padding: "8px 18px" }}>&quot;Một thành viên&quot;: người bạn không có quyền xem việc của họ; số liệu vẫn được tính.</p>;
 }
 
+const isTab = (v: string): v is Tab => TABS.some((t) => t.key === v);
+
+/** `#flow/mrs` → ["flow", "mrs"]; the sub-tab part is optional. */
+function readHash(): [string, string | null] {
+  const [key, sub] = window.location.hash.replace("#", "").split("/");
+  return [key ?? "", sub ? decodeURIComponent(sub) : null];
+}
+
+/**
+ * The page tab and its sub-tab live in the URL hash (`#flow/mrs`), like Admin, so a link opens the
+ * exact view and Back/Forward step through them. Filters stay in page state, kept across tabs.
+ */
 export default function InsightsPage() {
-  const [tab, setTab] = useState<Tab>("flow");
+  // null until the hash is read, so a deep link never fetches the wrong tab first.
+  const [tab, setTab] = useState<Tab | null>(null);
+  const [sub, setSub] = useState<string | null>(null);
   const [period, setPeriod] = useState<Period>("week");
   const [cursor, setCursor] = useState<string | null>(null);
   const [range, setRange] = useState<{ from: string; to: string }>({ from: "", to: "" });
@@ -220,32 +235,35 @@ export default function InsightsPage() {
   const [repoId, setRepoId] = useState("");
   useEffect(() => {
     setCursor(thisWeek());
-    try {
-      const t = new URLSearchParams(window.location.search).get("tab");
-      if (t === "flow" || t === "load" || t === "dora" || t === "knowledge") setTab(t);
-    } catch {
-      /* no URL: keep the default tab */
-    }
+    const fromHash = () => {
+      const [key, part] = readHash();
+      if (isTab(key)) {
+        setTab(key);
+        setSub(part);
+        return;
+      }
+      // Older links used ?tab=dora.
+      let legacy: string | null = null;
+      try {
+        legacy = new URLSearchParams(window.location.search).get("tab");
+      } catch {
+        /* no URL: keep the default tab */
+      }
+      setTab(legacy && isTab(legacy) ? legacy : "flow");
+      setSub(null);
+    };
+    fromHash();
+    window.addEventListener("hashchange", fromHash);
+    return () => window.removeEventListener("hashchange", fromHash);
   }, []);
-  const go = (t: Tab) => {
-    setTab(t);
-    try {
-      const url = new URL(window.location.href);
-      url.searchParams.set("tab", t);
-      window.history.replaceState(null, "", url);
-    } catch {
-      /* the tab just is not kept in the URL */
-    }
+  // The hash is the source of truth: setting it fires hashchange and keeps Back/Forward working.
+  const go = (key: Tab, part?: string) => {
+    const hash = part ? `#${key}/${encodeURIComponent(part)}` : `#${key}`;
+    if (window.location.hash === hash) return;
+    window.location.hash = hash;
   };
-  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ flow: null, load: null, dora: null, knowledge: null });
-  const onTabKey = (e: KeyboardEvent<HTMLDivElement>) => {
-    const i = TABS.findIndex((t) => t.key === tab);
-    const next = e.key === "ArrowRight" ? (i + 1) % TABS.length : e.key === "ArrowLeft" ? (i + TABS.length - 1) % TABS.length : -1;
-    if (next < 0) return;
-    e.preventDefault();
-    go(TABS[next].key);
-    tabRefs.current[TABS[next].key]?.focus();
-  };
+  const current: Tab = tab ?? "flow";
+  const nav: SubNav = { sub, onSub: (part) => go(current, part) };
 
   const today = localDay();
   const start = cursor === null ? null : period === "week" ? cursor : `${cursor.slice(0, 7)}-01`;
@@ -282,12 +300,36 @@ export default function InsightsPage() {
 
   return (
     <>
-      <PageHeader
-        eyebrow="Insights"
-        title="Luồng làm việc của team"
-        subtitle={FOOTER}
-        actions={
-          tab === "knowledge" ? null : (
+      {/* One slim sticky bar: title, page tabs and every filter, so the content gets the screen. */}
+      <div className="ins-bar">
+        <h1 title={FOOTER}>Luồng làm việc</h1>
+        <SubTabs id="ins" label="Nội dung Insights" variant="bar" tabs={TABS} value={current} onChange={(k) => go(k)} />
+        <div className="ins-filters" role="group" aria-label="Bộ lọc">
+          <select
+            value={bpId}
+            onChange={(e) => {
+              setBpId(e.target.value);
+              setRepoId("");
+            }}
+            aria-label="Lọc theo dự án"
+            title="Dự án"
+          >
+            <option value="">Mọi dự án</option>
+            {projects.map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <select value={repoId} onChange={(e) => setRepoId(e.target.value)} aria-label="Lọc theo repo" title="Repo">
+            <option value="">Mọi repo</option>
+            {repoOptions.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.path_with_namespace}
+              </option>
+            ))}
+          </select>
+          {current !== "knowledge" && (
             <>
               <Segmented<Period>
                 label="Chu kỳ"
@@ -311,76 +353,25 @@ export default function InsightsPage() {
                 />
               )}
             </>
-          )
-        }
-      />
-
-      <div className="tabs" role="tablist" aria-label="Nội dung Insights" onKeyDown={onTabKey}>
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            ref={(el) => {
-              tabRefs.current[t.key] = el;
-            }}
-            type="button"
-            role="tab"
-            id={`tab-${t.key}`}
-            aria-selected={tab === t.key}
-            aria-controls={`panel-${t.key}`}
-            tabIndex={tab === t.key ? 0 : -1}
-            className={tab === t.key ? "active" : undefined}
-            onClick={() => go(t.key)}
-          >
-            {t.label}
-          </button>
-        ))}
+          )}
+        </div>
       </div>
 
-      <div className="toolbar filters">
-        <label className="filter">
-          <span className="small muted">Dự án</span>
-          <select
-            value={bpId}
-            onChange={(e) => {
-              setBpId(e.target.value);
-              setRepoId("");
-            }}
-            aria-label="Lọc theo dự án"
-          >
-            <option value="">Mọi dự án</option>
-            {projects.map(([id, name]) => (
-              <option key={id} value={id}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="filter">
-          <span className="small muted">Repo</span>
-          <select value={repoId} onChange={(e) => setRepoId(e.target.value)} aria-label="Lọc theo repo">
-            <option value="">Mọi repo</option>
-            {repoOptions.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.path_with_namespace}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      {tab && (
+        <SubPanel id="ins" tab={tab}>
+          {tab !== "knowledge" && period === "range" && !rangeOk && (
+            <Alert tone="info">
+              Chọn khoảng từ {date(RANGE_MIN)} đến hôm nay, dài tối đa {RANGE_MAX_DAYS} ngày.
+            </Alert>
+          )}
+          {tab === "flow" && query && <FlowTab query={query} nav={nav} />}
+          {tab === "load" && query && <LoadTab query={query} nav={nav} />}
+          {tab === "dora" && query && <DoraTab query={query} nav={nav} />}
+          {tab === "knowledge" && <KnowledgeTab query={scope} nav={nav} />}
+        </SubPanel>
+      )}
 
-      <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-        {tab !== "knowledge" && period === "range" && !rangeOk && (
-          <Alert tone="info">
-            Chọn khoảng từ {date(RANGE_MIN)} đến hôm nay, dài tối đa {RANGE_MAX_DAYS} ngày.
-          </Alert>
-        )}
-        {tab === "flow" && query && <FlowTab query={query} />}
-        {tab === "load" && query && <LoadTab query={query} />}
-        {tab === "dora" && query && <DoraTab query={query} />}
-        {tab === "knowledge" && <KnowledgeTab query={scope} />}
-      </div>
-
-      <p className="small muted">
+      <p className="small muted ins-foot">
         {FOOTER} Thời gian tính theo lịch (cả cuối tuần), dùng trung vị và p75 thay vì trung bình. Bấm các nút &quot;Xem MR&quot; để
         ra danh sách MR tạo nên con số.
       </p>
@@ -388,13 +379,14 @@ export default function InsightsPage() {
   );
 }
 
-function FlowTab({ query }: { query: Query }) {
+type FlowSub = "overview" | "waiting" | "repos" | "mrs";
+
+function FlowTab({ query, nav }: { query: Query; nav: SubNav }) {
   const { data, error, mutate } = useApi<InsightsFlow>(`/insights/flow${qs(query)}`, { keepPreviousData: true });
   const [drill, setDrill] = useState<{ stage: InsightStage; only: Only }>({ stage: "time_to_merge", only: "" });
-  const listRef = useRef<HTMLDivElement>(null);
   const open = (stage: InsightStage, only: Only = "") => {
     setDrill({ stage, only });
-    listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    nav.onSub("mrs");
   };
   if (!data) return <Pending error={error} retry={() => void mutate()} />;
   const t = data.totals;
@@ -411,6 +403,13 @@ function FlowTab({ query }: { query: Query }) {
   const repos = [...data.repos].sort((a, b) => b.merged - a.merged || a.path_with_namespace.localeCompare(b.path_with_namespace));
   const label = data.period_type === "range" ? rangeLabel(data.period_start, data.period_end) : periodLabel(data.period_type, data.period_start);
   const mainBranch = data.pipelines.default_branch.success_rate;
+  const tabs: SubTab<FlowSub>[] = [
+    { key: "overview", label: "Tổng quan", hint: "Trung vị từng chặng theo kỳ và cỡ MR" },
+    { key: "waiting", label: "Đang chờ review", count: data.open.waiting_first_response, hint: "MR đang mở chưa có phản hồi đầu tiên" },
+    { key: "repos", label: "Theo repo", count: repos.length, hint: "Trung vị từng chặng của mỗi repo" },
+    { key: "mrs", label: "Danh sách MR", count: t.merged, hint: "MR đã merge trong kỳ, sắp theo chặng" },
+  ];
+  const view = pickSub(nav, tabs, "overview");
 
   return (
     <>
@@ -466,148 +465,165 @@ function FlowTab({ query }: { query: Query }) {
           sub={mainBranch === null ? "nhánh chính: —" : `nhánh chính: ${num(mainBranch, 1)}%`}
         />
       </StatStrip>
-      <div className="toolbar">
-        <span className="small muted">Xem MR:</span>
-        <button type="button" className="sm ghost" onClick={() => open("time_to_merge")}>
-          chậm merge nhất
-        </button>
-        <button type="button" className="sm ghost" onClick={() => open("pickup")}>
-          chờ review lâu nhất
-        </button>
-        <button type="button" className="sm ghost" onClick={() => open("time_to_merge", "unreviewed")} disabled={!t.merged_without_review}>
-          merge không review ({t.merged_without_review})
-        </button>
-        <button type="button" className="sm ghost" onClick={() => open("time_to_merge", "xl")} disabled={!t.size.buckets.XL}>
-          cỡ XL ({t.size.buckets.XL})
-        </button>
-        {data.data_as_of && <span className="small muted">Dữ liệu tới {dateTime(data.data_as_of)}</span>}
-      </div>
 
-      <div className="grid two">
-        <Card id="insights-stages" title="Trung vị từng chặng theo kỳ" subtitle="giờ, theo lịch">
-          {trendEmpty ? (
-            <EmptyState title="Chưa tính được trung vị">Mỗi kỳ có quá ít MR đã merge.</EmptyState>
-          ) : (
-            <div className="chart-box">
-              <ResponsiveContainer>
-                <BarChart data={trend} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
-                  <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
-                  <XAxis dataKey="period" tickLine={false} axisLine={false} fontSize={12} />
-                  <YAxis tickLine={false} axisLine={false} fontSize={12} unit="h" />
-                  <Tooltip content={<ChartTip />} cursor={{ fill: "var(--surface-2)" }} />
-                  <Legend iconType="circle" iconSize={8} />
-                  <Bar dataKey="coding" name={`${STAGE_LABEL.coding} (giờ)`} stackId="s" fill="var(--chart-1)" />
-                  <Bar dataKey="pickup" name={`${STAGE_LABEL.pickup} (giờ)`} stackId="s" fill="var(--chart-3)" />
-                  <Bar dataKey="review" name={`${STAGE_LABEL.review} (giờ)`} stackId="s" fill="var(--chart-2)" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </Card>
-        <Card id="insights-sizes" title="Cỡ MR" subtitle="dòng thay đổi: XS <50 · S <200 · M <500 · L <1000 · XL ≥1000">
-          {t.merged === 0 ? (
-            <EmptyState title="Không có MR nào merge trong kỳ" />
-          ) : (
-            <div className="chart-box">
-              <ResponsiveContainer>
-                <BarChart data={sizes} margin={{ top: 8, right: 8, bottom: 0, left: -16 }} barCategoryGap="30%">
-                  <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
-                  <XAxis dataKey="bucket" tickLine={false} axisLine={false} fontSize={12} />
-                  <YAxis allowDecimals={false} tickLine={false} axisLine={false} fontSize={12} />
-                  <Tooltip content={<ChartTip digits={0} />} cursor={{ fill: "var(--surface-2)" }} />
-                  <Bar dataKey="mrs" name="MR" fill="var(--chart-1)" radius={[4, 4, 0, 0]} maxBarSize={48} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </Card>
-      </div>
+      <SubTabs
+        id="ins-flow"
+        label="Phần của Luồng làm việc"
+        variant="mini"
+        tabs={tabs}
+        value={view}
+        onChange={nav.onSub}
+        actions={data.data_as_of ? <span className="small muted">Dữ liệu tới {dateTime(data.data_as_of)}</span> : undefined}
+      />
 
-      <Card
-        id="insights-waiting"
-        title="MR đang chờ phản hồi đầu tiên"
-        subtitle={`${data.open.waiting_first_response} / ${data.open.opened} MR đang mở (không tính draft), lâu nhất trước`}
-        flush
-      >
-        {data.open.oldest.length === 0 ? (
-          <EmptyState icon="checkCircle" tone="good" title="Không có MR nào đang chờ">
-            Mọi MR đang mở (trừ draft) đã có người phản hồi.
-          </EmptyState>
-        ) : (
+      <SubPanel id="ins-flow" tab={view}>
+        {view === "overview" && (
           <>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>MR</th>
-                    <th>Repo</th>
-                    <th>Tác giả</th>
-                    <th className="num">Đã chờ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.open.oldest.map((m) => (
-                    <tr key={m.id}>
-                      <td>
-                        <MrTitle url={m.web_url} iid={m.iid} title={m.title} />
-                      </td>
-                      <td className="muted">{m.path_with_namespace}</td>
-                      <td>
-                        <Person p={m.author} />
-                      </td>
-                      <td className="num nowrap">{hours(m.waiting_h)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="toolbar ins-drill">
+              <span className="small muted">Xem MR:</span>
+              <button type="button" className="sm ghost" onClick={() => open("time_to_merge")}>
+                chậm merge nhất
+              </button>
+              <button type="button" className="sm ghost" onClick={() => open("pickup")}>
+                chờ review lâu nhất
+              </button>
+              <button type="button" className="sm ghost" onClick={() => open("time_to_merge", "unreviewed")} disabled={!t.merged_without_review}>
+                merge không review ({t.merged_without_review})
+              </button>
+              <button type="button" className="sm ghost" onClick={() => open("time_to_merge", "xl")} disabled={!t.size.buckets.XL}>
+                cỡ XL ({t.size.buckets.XL})
+              </button>
             </div>
-            <HiddenNote people={data.open.oldest.map((m) => m.author)} />
+            <div className="grid two">
+              <Card id="insights-stages" title="Trung vị từng chặng theo kỳ" subtitle="giờ, theo lịch">
+                {trendEmpty ? (
+                  <EmptyState title="Chưa tính được trung vị">Mỗi kỳ có quá ít MR đã merge.</EmptyState>
+                ) : (
+                  <div className="chart-box">
+                    <ResponsiveContainer>
+                      <BarChart data={trend} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+                        <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
+                        <XAxis dataKey="period" tickLine={false} axisLine={false} fontSize={12} />
+                        <YAxis tickLine={false} axisLine={false} fontSize={12} unit="h" />
+                        <Tooltip content={<ChartTip />} cursor={{ fill: "var(--surface-2)" }} />
+                        <Legend iconType="circle" iconSize={8} />
+                        <Bar dataKey="coding" name={`${STAGE_LABEL.coding} (giờ)`} stackId="s" fill="var(--chart-1)" />
+                        <Bar dataKey="pickup" name={`${STAGE_LABEL.pickup} (giờ)`} stackId="s" fill="var(--chart-3)" />
+                        <Bar dataKey="review" name={`${STAGE_LABEL.review} (giờ)`} stackId="s" fill="var(--chart-2)" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </Card>
+              <Card id="insights-sizes" title="Cỡ MR" subtitle="dòng thay đổi: XS <50 · S <200 · M <500 · L <1000 · XL ≥1000">
+                {t.merged === 0 ? (
+                  <EmptyState title="Không có MR nào merge trong kỳ" />
+                ) : (
+                  <div className="chart-box">
+                    <ResponsiveContainer>
+                      <BarChart data={sizes} margin={{ top: 8, right: 8, bottom: 0, left: -16 }} barCategoryGap="30%">
+                        <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
+                        <XAxis dataKey="bucket" tickLine={false} axisLine={false} fontSize={12} />
+                        <YAxis allowDecimals={false} tickLine={false} axisLine={false} fontSize={12} />
+                        <Tooltip content={<ChartTip digits={0} />} cursor={{ fill: "var(--surface-2)" }} />
+                        <Bar dataKey="mrs" name="MR" fill="var(--chart-1)" radius={[4, 4, 0, 0]} maxBarSize={48} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </Card>
+            </div>
           </>
         )}
-      </Card>
 
-      <Card id="insights-repos" title="Theo repo" subtitle="Trung vị từng chặng" flush>
-        {repos.length === 0 ? (
-          <EmptyState icon="folder" title="Không có repo nào trong phạm vi" />
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Repo</th>
-                  <th className="num">Merge</th>
-                  {STAGES.map((s) => (
-                    <th key={s} className="num" title={STAGE_HINT[s]}>
-                      {STAGE_LABEL[s]}
-                    </th>
-                  ))}
-                  <th className="num">Không review</th>
-                  <th className="num">Pipeline</th>
-                </tr>
-              </thead>
-              <tbody>
-                {repos.map((r) => (
-                  <tr key={r.id} className={r.merged ? undefined : "muted"}>
-                    <td>{r.path_with_namespace}</td>
-                    <td className="num">{r.merged}</td>
-                    {STAGES.map((s) => (
-                      <td key={s} className="num nowrap">
-                        {hours(r.stages[s].median)}
-                      </td>
-                    ))}
-                    <td className="num">{pct(r.merged_without_review_rate)}</td>
-                    <td className="num">{pct(r.pipelines.success_rate)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        {view === "waiting" && (
+          <Card
+            id="insights-waiting"
+            title="MR đang chờ phản hồi đầu tiên"
+            subtitle={`${data.open.waiting_first_response} / ${data.open.opened} MR đang mở (không tính draft), lâu nhất trước`}
+            flush
+          >
+            {data.open.oldest.length === 0 ? (
+              <EmptyState icon="checkCircle" tone="good" title="Không có MR nào đang chờ">
+                Mọi MR đang mở (trừ draft) đã có người phản hồi.
+              </EmptyState>
+            ) : (
+              <>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>MR</th>
+                        <th>Repo</th>
+                        <th>Tác giả</th>
+                        <th className="num">Đã chờ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.open.oldest.map((m) => (
+                        <tr key={m.id}>
+                          <td>
+                            <MrTitle url={m.web_url} iid={m.iid} title={m.title} />
+                          </td>
+                          <td className="muted">{m.path_with_namespace}</td>
+                          <td>
+                            <Person p={m.author} />
+                          </td>
+                          <td className="num nowrap">{hours(m.waiting_h)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <HiddenNote people={data.open.oldest.map((m) => m.author)} />
+              </>
+            )}
+          </Card>
         )}
-      </Card>
 
-      <div ref={listRef}>
-        <MrList key={JSON.stringify(query)} query={query} drill={drill} onDrill={setDrill} />
-      </div>
+        {view === "repos" && (
+          <Card id="insights-repos" title="Theo repo" subtitle="Trung vị từng chặng" flush>
+            {repos.length === 0 ? (
+              <EmptyState icon="folder" title="Không có repo nào trong phạm vi" />
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Repo</th>
+                      <th className="num">Merge</th>
+                      {STAGES.map((s) => (
+                        <th key={s} className="num" title={STAGE_HINT[s]}>
+                          {STAGE_LABEL[s]}
+                        </th>
+                      ))}
+                      <th className="num">Không review</th>
+                      <th className="num">Pipeline</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {repos.map((r) => (
+                      <tr key={r.id} className={r.merged ? undefined : "muted"}>
+                        <td>{r.path_with_namespace}</td>
+                        <td className="num">{r.merged}</td>
+                        {STAGES.map((s) => (
+                          <td key={s} className="num nowrap">
+                            {hours(r.stages[s].median)}
+                          </td>
+                        ))}
+                        <td className="num">{pct(r.merged_without_review_rate)}</td>
+                        <td className="num">{pct(r.pipelines.success_rate)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        )}
+
+        {view === "mrs" && <MrList key={JSON.stringify(query)} query={query} drill={drill} onDrill={setDrill} />}
+      </SubPanel>
     </>
   );
 }
@@ -732,9 +748,16 @@ function MrList({
   );
 }
 
-function LoadTab({ query }: { query: Query }) {
+type LoadSub = "reviewers" | "pairs";
+
+function LoadTab({ query, nav }: { query: Query; nav: SubNav }) {
   const { data, error, mutate } = useApi<InsightsReviewLoad>(`/insights/review-load${qs(query)}`, { keepPreviousData: true });
   if (!data) return <Pending error={error} retry={() => void mutate()} />;
+  const tabs: SubTab<LoadSub>[] = [
+    { key: "reviewers", label: "Ai review", count: data.reviewers.length, hint: "Số MR mỗi người có phản hồi" },
+    { key: "pairs", label: "Review cho ai", count: data.pairs.length, hint: "Top cặp người review → tác giả" },
+  ];
+  const view = pickSub(nav, tabs, "reviewers");
   return (
     <>
       <ConfidenceNote c={data.confidence} repoId={query.project_id} />
@@ -756,89 +779,101 @@ function LoadTab({ query }: { query: Query }) {
           tone={data.concentrated ? "warn" : undefined}
         />
       </StatStrip>
-      <div className="grid two">
-        <Card id="insights-reviewers" title="Ai review" subtitle="Số MR có phản hồi (comment hoặc approve), không đếm số comment" flush>
-          {data.reviewers.length === 0 ? (
-            <EmptyState title="Chưa có review nào trong kỳ" />
-          ) : (
-            <>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Người review</th>
-                      <th className="num">MR</th>
-                      <th>Phần MR</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.reviewers.map((r, i) => (
-                      <tr key={`${r.user_id ?? "x"}-${i}`}>
-                        <td>
-                          <Person p={r} />
-                        </td>
-                        <td className="num">{r.reviewed_mrs}</td>
-                        <td style={{ minWidth: 120 }}>
-                          <SplitBar
-                            label={`${num(r.share, 1)}% số MR`}
-                            parts={[
-                              { name: "Đã review", value: r.reviewed_mrs, color: "var(--chart-1)" },
-                              { name: "Còn lại", value: Math.max(0, data.merged - r.reviewed_mrs), color: "var(--surface-2)" },
-                            ]}
-                          />
-                        </td>
+      <SubTabs id="ins-load" label="Phần của Tải review" variant="mini" tabs={tabs} value={view} onChange={nav.onSub} />
+      <SubPanel id="ins-load" tab={view}>
+        {view === "reviewers" && (
+          <Card id="insights-reviewers" title="Ai review" subtitle="Số MR có phản hồi (comment hoặc approve), không đếm số comment" flush>
+            {data.reviewers.length === 0 ? (
+              <EmptyState title="Chưa có review nào trong kỳ" />
+            ) : (
+              <>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Người review</th>
+                        <th className="num">MR</th>
+                        <th>Phần MR</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <HiddenNote people={data.reviewers} />
-            </>
-          )}
-        </Card>
-        <Card id="insights-pairs" title="Review cho ai" subtitle="Top cặp người review → tác giả" flush>
-          {data.pairs.length === 0 ? (
-            <EmptyState title="Chưa có review nào trong kỳ" />
-          ) : (
-            <>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Người review</th>
-                      <th>Tác giả</th>
-                      <th className="num">MR</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.pairs.map((p, i) => (
-                      <tr key={i}>
-                        <td>
-                          <Person p={p.reviewer} />
-                        </td>
-                        <td>
-                          <Person p={p.author} />
-                        </td>
-                        <td className="num">{p.mrs}</td>
+                    </thead>
+                    <tbody>
+                      {data.reviewers.map((r, i) => (
+                        <tr key={`${r.user_id ?? "x"}-${i}`}>
+                          <td>
+                            <Person p={r} />
+                          </td>
+                          <td className="num">{r.reviewed_mrs}</td>
+                          <td style={{ minWidth: 120 }}>
+                            <SplitBar
+                              label={`${num(r.share, 1)}% số MR`}
+                              parts={[
+                                { name: "Đã review", value: r.reviewed_mrs, color: "var(--chart-1)" },
+                                { name: "Còn lại", value: Math.max(0, data.merged - r.reviewed_mrs), color: "var(--surface-2)" },
+                              ]}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <HiddenNote people={data.reviewers} />
+              </>
+            )}
+          </Card>
+        )}
+        {view === "pairs" && (
+          <Card id="insights-pairs" title="Review cho ai" subtitle="Top cặp người review → tác giả" flush>
+            {data.pairs.length === 0 ? (
+              <EmptyState title="Chưa có review nào trong kỳ" />
+            ) : (
+              <>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Người review</th>
+                        <th>Tác giả</th>
+                        <th className="num">MR</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <HiddenNote people={data.pairs.flatMap((p) => [p.reviewer, p.author])} />
-            </>
-          )}
-        </Card>
-      </div>
+                    </thead>
+                    <tbody>
+                      {data.pairs.map((p, i) => (
+                        <tr key={i}>
+                          <td>
+                            <Person p={p.reviewer} />
+                          </td>
+                          <td>
+                            <Person p={p.author} />
+                          </td>
+                          <td className="num">{p.mrs}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <HiddenNote people={data.pairs.flatMap((p) => [p.reviewer, p.author])} />
+              </>
+            )}
+          </Card>
+        )}
+      </SubPanel>
     </>
   );
 }
 
-function KnowledgeTab({ query }: { query: Query }) {
-  const [flaggedOnly, setFlaggedOnly] = useState(true);
+type KnowledgeSub = "flagged" | "all";
+
+function KnowledgeTab({ query, nav }: { query: Query; nav: SubNav }) {
   const { data, error, mutate } = useApi<InsightsKnowledge>(`/insights/knowledge${qs(query)}`, { keepPreviousData: true });
   if (!data) return <Pending error={error} retry={() => void mutate()} />;
-  const rows = flaggedOnly ? data.modules.filter((m) => m.single_owner || m.orphaned) : data.modules;
+  const flagged = data.modules.filter((m) => m.single_owner || m.orphaned);
+  const tabs: SubTab<KnowledgeSub>[] = [
+    { key: "flagged", label: "Có cảnh báo", count: flagged.length, hint: "Module một người nắm hoặc người nắm đã vắng" },
+    { key: "all", label: "Tất cả module", count: data.modules.length },
+  ];
+  const view = pickSub(nav, tabs, "flagged");
+  const rows = view === "flagged" ? flagged : data.modules;
   const threshold = Math.round(data.bus_threshold * 100);
   let body: ReactNode;
   if (data.modules.length === 0)
@@ -924,25 +959,17 @@ function KnowledgeTab({ query }: { query: Query }) {
           tone={data.totals.orphaned ? "bad" : undefined}
         />
       </StatStrip>
-      <Card
-        id="insights-modules"
-        title="Module"
-        subtitle="Rủi ro của team khi kiến thức tập trung ở một người, không phải thành tích hay lỗi của người đó"
-        actions={
-          <Segmented<"flagged" | "all">
-            label="Hiện"
-            value={flaggedOnly ? "flagged" : "all"}
-            onChange={(v) => setFlaggedOnly(v === "flagged")}
-            options={[
-              { value: "flagged", label: "Có cảnh báo" },
-              { value: "all", label: "Tất cả" },
-            ]}
-          />
-        }
-        flush
-      >
-        {body}
-      </Card>
+      <SubTabs id="ins-knowledge" label="Module hiển thị" variant="mini" tabs={tabs} value={view} onChange={nav.onSub} />
+      <SubPanel id="ins-knowledge" tab={view}>
+        <Card
+          id="insights-modules"
+          title="Module"
+          subtitle="Rủi ro của team khi kiến thức tập trung ở một người, không phải thành tích hay lỗi của người đó"
+          flush
+        >
+          {body}
+        </Card>
+      </SubPanel>
     </>
   );
 }
@@ -997,7 +1024,9 @@ function ProductionEnv({ repo, onSaved }: { repo: InsightsDora["repos"][number];
   );
 }
 
-function DoraTab({ query }: { query: Query }) {
+type DoraSub = "trend" | "failures" | "incidents" | "repos";
+
+function DoraTab({ query, nav }: { query: Query; nav: SubNav }) {
   const { data, error, mutate } = useApi<InsightsDora>(`/insights/dora${qs(query)}`, { keepPreviousData: true });
   const { data: me } = useApi<Me>("/auth/me");
   if (!data) return <Pending error={error} retry={() => void mutate()} />;
@@ -1009,6 +1038,13 @@ function DoraTab({ query }: { query: Query }) {
     period: data.trend_period === "week" ? weekLabel(p.period_start) : `${p.period_start.slice(5, 7)}/${p.period_start.slice(2, 4)}`,
     deployments: p.deployments,
   }));
+  const tabs: SubTab<DoraSub>[] = [
+    { key: "trend", label: "Theo kỳ", hint: "Deploy production theo kỳ" },
+    { key: "failures", label: "Thay đổi lỗi", count: data.failures.length, hint: "Deploy thất bại và thay đổi bị rollback" },
+    { key: "incidents", label: "Sự cố", count: data.incidents.opened, hint: "Issue GitLab loại incident" },
+    { key: "repos", label: "Theo repo", count: data.repos.length, hint: "Chỉ số và môi trường production của mỗi repo" },
+  ];
+  const view = pickSub(nav, tabs, "trend");
   return (
     <>
       <ConfidenceNote c={data.confidence} repoId={query.project_id} />
@@ -1053,161 +1089,170 @@ function DoraTab({ query }: { query: Query }) {
         />
       </StatStrip>
 
-      <Card
-        id="dora-incidents"
-        title="Sự cố (incident)"
-        subtitle="Issue GitLab loại incident hoặc có nhãn incident; khôi phục = mở → đóng"
-        flush
-      >
-        <StatStrip label="Sự cố trong kỳ" inline>
-          <StripStat
-            label="Sự cố mới"
-            value={data.incidents.opened}
-            change={data.incidents.delta.opened}
-            higherIsBetter={false}
-            tone={data.incidents.opened ? "warn" : undefined}
-            sub={data.incidents.per_deployment === null ? undefined : `${num(data.incidents.per_deployment, 2)} / lần deploy`}
-          />
-          <StripStat
-            label="Khôi phục (trung vị)"
-            value={incidentRestore.value}
-            digits={1}
-            unit={incidentRestore.unit}
-            change={incidentRestore.change}
-            higherIsBetter={false}
-            sub={`${data.incidents.closed} đã đóng`}
-          />
-          <StripStat label="Đang mở" value={data.incidents.open_now} tone={data.incidents.open_now ? "bad" : undefined} />
-        </StatStrip>
-        {data.incidents.recent.length === 0 ? (
-          <EmptyState icon="checkCircle" tone="good" title="Không có sự cố mới trong kỳ">
-            Chưa dùng issue loại incident? Gắn nhãn incident cho issue sự cố trên GitLab để CodePulse đếm được.
-          </EmptyState>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Sự cố</th>
-                  <th>Repo</th>
-                  <th>Trạng thái</th>
-                  <th>Mở lúc</th>
-                  <th className="num">MR sửa</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.incidents.recent.map((i) => (
-                  <tr key={i.id}>
-                    <td>{i.web_url ? <ExternalLink href={i.web_url}>{`#${i.iid} ${i.title ?? ""}`}</ExternalLink> : `#${i.iid} ${i.title ?? ""}`}</td>
-                    <td className="muted">{i.path_with_namespace}</td>
-                    <td>{i.state === "closed" ? <Pill tone="good">Đã đóng</Pill> : <Pill tone="bad">Đang mở</Pill>}</td>
-                    <td className="nowrap muted">{dateTime(i.opened_at)}</td>
-                    <td className="num">{i.fix_mrs}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      <div className="grid two">
-        <Card id="dora-trend" title="Deploy production theo kỳ">
-          {data.trend.every((p) => p.deployments === 0) ? (
-            <EmptyState title="Chưa có deploy production nào trong các kỳ này" />
-          ) : (
-            <div className="chart-box">
-              <ResponsiveContainer>
-                <BarChart data={trend} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
-                  <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
-                  <XAxis dataKey="period" tickLine={false} axisLine={false} fontSize={12} />
-                  <YAxis allowDecimals={false} tickLine={false} axisLine={false} fontSize={12} />
-                  <Tooltip content={<ChartTip digits={0} />} cursor={{ fill: "var(--surface-2)" }} />
-                  <Bar dataKey="deployments" name="Deploy" fill="var(--chart-1)" radius={[4, 4, 0, 0]} maxBarSize={40} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </Card>
-        <Card id="dora-failures" title="Thay đổi lỗi gần nhất" subtitle="Deploy thất bại và thay đổi bị rollback trong kỳ" flush>
-          {data.failures.length === 0 ? (
-            <EmptyState icon="checkCircle" tone="good" title="Không có thay đổi lỗi nào trong kỳ" />
-          ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Repo</th>
-                    <th>Môi trường</th>
-                    <th>Loại</th>
-                    <th>Commit</th>
-                    <th>Lúc</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.failures.map((f) => (
-                    <tr key={f.id}>
-                      <td>{f.path_with_namespace}</td>
-                      <td>{f.environment}</td>
-                      <td>{f.kind === "failed" ? <Pill tone="bad">Deploy thất bại</Pill> : <Pill tone="warn">Bị rollback</Pill>}</td>
-                      <td>
-                        <code>{(f.sha ?? "").slice(0, 8)}</code>
-                      </td>
-                      <td className="nowrap muted">{dateTime(f.finished_at)}</td>
+      <SubTabs id="ins-dora" label="Phần của Triển khai" variant="mini" tabs={tabs} value={view} onChange={nav.onSub} />
+      <SubPanel id="ins-dora" tab={view}>
+        {view === "incidents" && (
+          <Card
+            id="dora-incidents"
+            title="Sự cố (incident)"
+            subtitle="Issue GitLab loại incident hoặc có nhãn incident; khôi phục = mở → đóng"
+            flush
+          >
+            <StatStrip label="Sự cố trong kỳ" inline>
+              <StripStat
+                label="Sự cố mới"
+                value={data.incidents.opened}
+                change={data.incidents.delta.opened}
+                higherIsBetter={false}
+                tone={data.incidents.opened ? "warn" : undefined}
+                sub={data.incidents.per_deployment === null ? undefined : `${num(data.incidents.per_deployment, 2)} / lần deploy`}
+              />
+              <StripStat
+                label="Khôi phục (trung vị)"
+                value={incidentRestore.value}
+                digits={1}
+                unit={incidentRestore.unit}
+                change={incidentRestore.change}
+                higherIsBetter={false}
+                sub={`${data.incidents.closed} đã đóng`}
+              />
+              <StripStat label="Đang mở" value={data.incidents.open_now} tone={data.incidents.open_now ? "bad" : undefined} />
+            </StatStrip>
+            {data.incidents.recent.length === 0 ? (
+              <EmptyState icon="checkCircle" tone="good" title="Không có sự cố mới trong kỳ">
+                Chưa dùng issue loại incident? Gắn nhãn incident cho issue sự cố trên GitLab để CodePulse đếm được.
+              </EmptyState>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Sự cố</th>
+                      <th>Repo</th>
+                      <th>Trạng thái</th>
+                      <th>Mở lúc</th>
+                      <th className="num">MR sửa</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-      </div>
-
-      <Card
-        id="dora-repos"
-        title="Theo repo"
-        subtitle="Production = môi trường có tier production trên GitLab, hoặc tên production/prod; admin đặt riêng nếu repo dùng tên khác"
-        flush
-      >
-        {data.repos.length === 0 ? (
-          <EmptyState icon="folder" title="Không có repo nào trong phạm vi" />
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Repo</th>
-                  <th>Môi trường production</th>
-                  <th className="num">Deploy</th>
-                  <th className="num">Lead time</th>
-                  <th className="num">Thay đổi lỗi</th>
-                  <th className="num">Khôi phục</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...data.repos]
-                  .sort((a, b) => b.deployments - a.deployments || a.path_with_namespace.localeCompare(b.path_with_namespace))
-                  .map((r) => (
-                    <tr key={r.id} className={r.deployments ? undefined : "muted"}>
-                      <td>{r.path_with_namespace}</td>
-                      <td>
-                        {me?.is_admin ? (
-                          <ProductionEnv repo={r} onSaved={() => void mutate()} />
-                        ) : (
-                          r.production_environment ?? (r.production_detected.length ? r.production_detected.join(", ") : <span className="faint">—</span>)
-                        )}
-                      </td>
-                      <td className="num">{r.deployments}</td>
-                      <td className="num nowrap">{hours(r.lead_time_h.median)}</td>
-                      <td className="num">{pct(r.change_failure_rate)}</td>
-                      <td className="num nowrap">{hours(r.recovery_h.median)}</td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
+                  </thead>
+                  <tbody>
+                    {data.incidents.recent.map((i) => (
+                      <tr key={i.id}>
+                        <td>{i.web_url ? <ExternalLink href={i.web_url}>{`#${i.iid} ${i.title ?? ""}`}</ExternalLink> : `#${i.iid} ${i.title ?? ""}`}</td>
+                        <td className="muted">{i.path_with_namespace}</td>
+                        <td>{i.state === "closed" ? <Pill tone="good">Đã đóng</Pill> : <Pill tone="bad">Đang mở</Pill>}</td>
+                        <td className="nowrap muted">{dateTime(i.opened_at)}</td>
+                        <td className="num">{i.fix_mrs}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
         )}
-      </Card>
+
+        {view === "trend" && (
+          <Card id="dora-trend" title="Deploy production theo kỳ">
+            {data.trend.every((p) => p.deployments === 0) ? (
+              <EmptyState title="Chưa có deploy production nào trong các kỳ này" />
+            ) : (
+              <div className="chart-box">
+                <ResponsiveContainer>
+                  <BarChart data={trend} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+                    <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
+                    <XAxis dataKey="period" tickLine={false} axisLine={false} fontSize={12} />
+                    <YAxis allowDecimals={false} tickLine={false} axisLine={false} fontSize={12} />
+                    <Tooltip content={<ChartTip digits={0} />} cursor={{ fill: "var(--surface-2)" }} />
+                    <Bar dataKey="deployments" name="Deploy" fill="var(--chart-1)" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </Card>
+        )}
+        {view === "failures" && (
+          <Card id="dora-failures" title="Thay đổi lỗi gần nhất" subtitle="Deploy thất bại và thay đổi bị rollback trong kỳ" flush>
+            {data.failures.length === 0 ? (
+              <EmptyState icon="checkCircle" tone="good" title="Không có thay đổi lỗi nào trong kỳ" />
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Repo</th>
+                      <th>Môi trường</th>
+                      <th>Loại</th>
+                      <th>Commit</th>
+                      <th>Lúc</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.failures.map((f) => (
+                      <tr key={f.id}>
+                        <td>{f.path_with_namespace}</td>
+                        <td>{f.environment}</td>
+                        <td>{f.kind === "failed" ? <Pill tone="bad">Deploy thất bại</Pill> : <Pill tone="warn">Bị rollback</Pill>}</td>
+                        <td>
+                          <code>{(f.sha ?? "").slice(0, 8)}</code>
+                        </td>
+                        <td className="nowrap muted">{dateTime(f.finished_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        )}
+
+        {view === "repos" && (
+          <Card
+            id="dora-repos"
+            title="Theo repo"
+            subtitle="Production = môi trường có tier production trên GitLab, hoặc tên production/prod; admin đặt riêng nếu repo dùng tên khác"
+            flush
+          >
+            {data.repos.length === 0 ? (
+              <EmptyState icon="folder" title="Không có repo nào trong phạm vi" />
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Repo</th>
+                      <th>Môi trường production</th>
+                      <th className="num">Deploy</th>
+                      <th className="num">Lead time</th>
+                      <th className="num">Thay đổi lỗi</th>
+                      <th className="num">Khôi phục</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...data.repos]
+                      .sort((a, b) => b.deployments - a.deployments || a.path_with_namespace.localeCompare(b.path_with_namespace))
+                      .map((r) => (
+                        <tr key={r.id} className={r.deployments ? undefined : "muted"}>
+                          <td>{r.path_with_namespace}</td>
+                          <td>
+                            {me?.is_admin ? (
+                              <ProductionEnv repo={r} onSaved={() => void mutate()} />
+                            ) : (
+                              r.production_environment ?? (r.production_detected.length ? r.production_detected.join(", ") : <span className="faint">—</span>)
+                            )}
+                          </td>
+                          <td className="num">{r.deployments}</td>
+                          <td className="num nowrap">{hours(r.lead_time_h.median)}</td>
+                          <td className="num">{pct(r.change_failure_rate)}</td>
+                          <td className="num nowrap">{hours(r.recovery_h.median)}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        )}
+      </SubPanel>
     </>
   );
 }
