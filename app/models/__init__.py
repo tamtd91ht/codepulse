@@ -2,6 +2,7 @@ from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.commands import CommandRun
 from app.models.domain import Commit, CommitFile, MergeRequest, MrCommit, MrNote, Pipeline
+from app.models.evidence import EvidenceItem, EvidencePack
 from app.models.identity import Account, Team, TeamMember, User
 from app.models.knowledge import ReviewKnowledge, ReviewKnowledgeEdit
 from app.models.metrics import MetricsTeamPeriod, MetricsUserPeriod
@@ -21,6 +22,8 @@ __all__ = [
     "Commit",
     "CommitFile",
     "Connection",
+    "EvidenceItem",
+    "EvidencePack",
     "FindingClosure",
     "FindingDispute",
     "MergeRequest",

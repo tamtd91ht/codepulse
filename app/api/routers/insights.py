@@ -7,14 +7,14 @@ everyone else reads "a member" (§8, P1).
 """
 
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, case, exists, func, literal, or_, select
+from sqlalchemy import and_, exists, func, select
 from sqlalchemy.orm import Session
 
 from app.api.access import visible_repo
@@ -27,11 +27,8 @@ from app.insights import confidence as conf
 from app.insights import knowledge as kn
 from app.insights import pipelines as pipes
 from app.insights.flow import (
-    BOT_MARKER,
     STAGES,
     Flow,
-    MrFacts,
-    Note,
     Responder,
     Stage,
     flow,
@@ -41,6 +38,7 @@ from app.insights.flow import (
     waiting,
 )
 from app.insights.knowledge import ROOT_MODULE
+from app.insights.load import chunks, load_mrs
 from app.insights.review_load import author_of, review_load
 from app.models import (
     Account,
@@ -48,9 +46,6 @@ from app.models import (
     Commit,
     CommitFile,
     Connection,
-    MergeRequest,
-    MrCommit,
-    MrNote,
     Pipeline,
     Project,
     User,
@@ -60,7 +55,6 @@ from app.scoring.aggregate import period_start_of
 router = APIRouter(tags=["insights"])
 SessionDep = Annotated[Session, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
-CHUNK = 1000  # ids per IN list
 OLDEST_WAITING = 10
 HIDDEN_NAME = "Một thành viên"
 UNMAPPED_NAME = "Chưa gắn người"
@@ -92,123 +86,7 @@ def _repos(
     return list(session.scalars(query))
 
 
-def _chunks(ids: Sequence[int]) -> Iterable[Sequence[int]]:
-    for i in range(0, len(ids), CHUNK):
-        yield ids[i : i + CHUNK]
-
-
 # -- loading facts ---------------------------------------------------------------------------
-
-
-def _load_mrs(
-    session: Session,
-    repo_ids: list[int],
-    *,
-    merged_between: tuple[datetime, datetime] | None = None,
-    open_only: bool = False,
-) -> list[MrFacts]:
-    """Merged MRs in [lo, hi) of `merged_between`, or the open ones, with what §4.2 needs."""
-    if not repo_ids:
-        return []
-    query = (
-        select(MergeRequest, Account.user_id)
-        .outerjoin(Account, Account.id == MergeRequest.author_account_id)
-        .where(MergeRequest.project_id.in_(repo_ids))
-    )
-    if merged_between is not None:
-        lo, hi = merged_between
-        query = query.where(
-            MergeRequest.state == "merged",
-            MergeRequest.merged_at >= lo,
-            MergeRequest.merged_at < hi,
-        )
-    if open_only:
-        query = query.where(MergeRequest.state == "opened")
-    rows = session.execute(query).all()
-    ids = [mr.id for mr, _u in rows]
-    notes = _load_notes(session, ids)
-    first_commits = _first_commits(session, ids)
-    return [
-        MrFacts(
-            id=mr.id,
-            project_id=int(mr.project_id or 0),
-            iid=mr.iid,
-            title=mr.title,
-            author_account_id=mr.author_account_id,
-            author_user_id=user_id,
-            state=mr.state,
-            target_branch=mr.target_branch,
-            opened_at=mr.created_at_src,
-            merged_at=mr.merged_at,
-            additions=mr.additions,
-            deletions=mr.deletions,
-            review_rounds=mr.review_rounds,
-            first_commit_at=first_commits.get(mr.id),
-            notes=tuple(notes.get(mr.id, ())),
-        )
-        for mr, user_id in rows
-    ]
-
-
-def _first_commits(session: Session, mr_ids: list[int]) -> dict[int, datetime]:
-    """mr id -> its earliest non-merge commit's author date, for these MRs only."""
-    out: dict[int, datetime] = {}
-    for chunk in _chunks(mr_ids):
-        rows = session.execute(
-            select(MrCommit.mr_id, func.min(Commit.authored_at))
-            .join(Commit, Commit.sha == MrCommit.sha)
-            .where(MrCommit.mr_id.in_(chunk), Commit.is_merge.is_not(True))
-            .group_by(MrCommit.mr_id)
-        ).all()
-        for mr_id, first_at in rows:
-            if first_at is not None:
-                out[int(mr_id)] = first_at
-    return out
-
-
-def _load_notes(session: Session, mr_ids: list[int]) -> dict[int, list[Note]]:
-    """Notes that can be a response or a ready mark (§4.2.1). Other system notes (most of the
-    rows) and CodePulse's own review comments are dropped in SQL; a comment's text is never
-    read, only system notes need theirs."""
-    out: dict[int, list[Note]] = defaultdict(list)
-    body = func.lower(MrNote.body)
-    system = MrNote.is_system.is_(True)
-    for chunk in _chunks(mr_ids):
-        rows = session.execute(
-            select(
-                MrNote.mr_id,
-                MrNote.author_account_id,
-                Account.user_id,
-                case((system, MrNote.body), else_=literal("")),
-                system,
-                MrNote.created_at_src,
-            )
-            .outerjoin(Account, Account.id == MrNote.author_account_id)
-            .where(
-                MrNote.mr_id.in_(chunk),
-                or_(
-                    and_(
-                        MrNote.is_system.is_not(True),
-                        func.coalesce(MrNote.body, "").not_like(f"%{BOT_MARKER}%"),
-                    ),
-                    and_(
-                        system,
-                        or_(
-                            body.contains("approved this merge request"),
-                            body.contains("as **ready**"),
-                            body.contains("as ready"),
-                            body.contains("work in progress"),
-                        ),
-                    ),
-                ),
-            )
-        ).all()
-        for mr_id, account_id, user_id, text, is_system, created in rows:
-            if mr_id is not None:
-                out[int(mr_id)].append(
-                    Note(account_id, user_id, text or "", bool(is_system), created)
-                )
-    return out
 
 
 @dataclass
@@ -222,7 +100,7 @@ class Names:
     def load(cls, session: Session, principal: Principal, keys: Iterable[Responder]) -> "Names":
         user_ids = sorted({k.user_id for k in keys if k.user_id is not None})
         names = cls(principal)
-        for chunk in _chunks(user_ids):
+        for chunk in chunks(user_ids):
             for uid, full, email in session.execute(
                 select(User.id, User.full_name, User.primary_email).where(User.id.in_(chunk))
             ):
@@ -330,7 +208,7 @@ def insights_flow(
     min_sample = settings.insights_min_sample
     repos = _repos(session, principal, business_project_id, project_id)
     repo_ids = [r.id for r in repos]
-    flows = [flow(m) for m in _load_mrs(session, repo_ids, merged_between=(w.load_lo, w.hi))]
+    flows = [flow(m) for m in load_mrs(session, repo_ids, merged_between=(w.load_lo, w.hi))]
     current = _in(flows, w.lo, w.hi)
     previous = _in(flows, w.prev_lo, w.prev_hi)
     totals = summarise(current, min_sample)
@@ -391,7 +269,7 @@ def insights_flow(
     urls = _web_urls(session, repos)
     bp_of = {r.id: r.business_project_id for r in repos}
     open_mrs = [
-        m for m in _load_mrs(session, repo_ids, open_only=True) if not is_draft_title(m.title)
+        m for m in load_mrs(session, repo_ids, open_only=True) if not is_draft_title(m.title)
     ]
     waits = waiting(open_mrs, now)
     names = Names.load(
@@ -483,9 +361,7 @@ def insights_flow_mrs(
     w = _insights_window(period, start, end, settings)
     repos = _repos(session, principal, business_project_id, project_id)
     repo_by_id = {r.id: r for r in repos}
-    flows = [
-        flow(m) for m in _load_mrs(session, [r.id for r in repos], merged_between=(w.lo, w.hi))
-    ]
+    flows = [flow(m) for m in load_mrs(session, [r.id for r in repos], merged_between=(w.lo, w.hi))]
     if only == "unreviewed":
         flows = [f for f in flows if not f.reviewed]
     elif only == "xl":
@@ -559,9 +435,7 @@ def insights_review_load(
     now = datetime.now(UTC)
     repos = _repos(session, principal, business_project_id, project_id)
     bp_of = {r.id: r.business_project_id for r in repos}
-    flows = [
-        flow(m) for m in _load_mrs(session, [r.id for r in repos], merged_between=(w.lo, w.hi))
-    ]
+    flows = [flow(m) for m in load_mrs(session, [r.id for r in repos], merged_between=(w.lo, w.hi))]
     load = review_load(flows)
     # The dự án each person's counted MRs lie in: their name shows only if all allow it.
     reviewer_bps: dict[Responder, set[int | None]] = defaultdict(set)
@@ -795,7 +669,7 @@ def _last_commits(
     out: dict[kn.Author, datetime] = {}
     users = sorted({a.user_id for a in authors if a.user_id is not None})
     accounts = sorted({a.account_id for a in authors if a.account_id is not None})
-    for chunk in _chunks(users):
+    for chunk in chunks(users):
         for uid, last in session.execute(
             select(Account.user_id, func.max(Commit.authored_at))
             .join(Commit, Commit.author_account_id == Account.id)
@@ -804,7 +678,7 @@ def _last_commits(
         ):
             if uid is not None and last is not None:
                 out[kn.Author(int(uid), None)] = last
-    for chunk in _chunks(accounts):
+    for chunk in chunks(accounts):
         for aid, last in session.execute(
             select(Commit.author_account_id, func.max(Commit.authored_at))
             .where(Commit.author_account_id.in_(chunk), Commit.authored_at < hi)

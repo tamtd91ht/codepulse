@@ -1496,3 +1496,98 @@ export interface InsightsKnowledge {
   orphan_after_days: number;
   modules: InsightModule[];
 }
+
+/* ---- Evidence packs (docs/specs/20 §6) ---- */
+
+export type EvidenceStatus = "draft" | "submitted" | "reviewed" | "shared";
+export type EvidenceKind = "mr" | "commit" | "review_given" | "finding_fixed" | "incident" | "design" | "mentoring" | "other";
+
+export interface EvidenceMr extends Record<InsightStage, number | null> {
+  id: number;
+  iid: number;
+  title: string | null;
+  project_id: number;
+  path_with_namespace: string | null;
+  web_url: string | null;
+  merged_at: string | null;
+  size: number | null;
+  size_bucket: "XS" | "S" | "M" | "L" | "XL" | null;
+  review_rounds: number | null;
+  reviewed: boolean;
+}
+
+export interface EvidenceSnapshot {
+  version: string;
+  built_at: string;
+  period: string;
+  window: [string, string];
+  merged: { count: number; items: EvidenceMr[] };
+  notable: { id: number; why: string }[];
+  reviews_given: { count: number; authors: number; items: EvidenceMr[] };
+  quality: {
+    confirmed_severe: number;
+    fixed: number;
+    items: {
+      id: number;
+      review_id: number;
+      title: string | null;
+      severity: Severity;
+      category: string;
+      status: string | null;
+      file_path: string | null;
+      line_start: number | null;
+    }[];
+    disputes_raised: number;
+    disputes_accepted: number;
+  };
+  waiting: { id: number; pickup: number | null; repo_p75: number | null }[];
+  stale_repos: string[];
+}
+
+export interface EvidenceItem {
+  id: number;
+  kind: EvidenceKind;
+  ref: string | null;
+  title: string;
+  note: string | null;
+  added_by: number | null;
+  added_by_name: string | null;
+  mine: boolean;
+}
+
+export interface EvidencePack {
+  user: { id: number; full_name: string | null; primary_email: string | null };
+  period: string;
+  persisted: boolean;
+  status: EvidenceStatus;
+  snapshot: EvidenceSnapshot;
+  self_notes: string | null;
+  lead_notes: string | null;
+  goals_next: string | null;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  reviewed_by_name: string | null;
+  shared_at: string | null;
+  items: EvidenceItem[];
+  role: "self" | "lead";
+  can: {
+    edit_self_notes: boolean;
+    /** After the 1:1: an answer appended to the self notes, never replacing them. */
+    reply: boolean;
+    edit_lead_notes: boolean;
+    edit_goals: boolean;
+    add_item: boolean;
+    refresh: boolean;
+    submit: boolean;
+    return: boolean;
+    review: boolean;
+    share: boolean;
+  };
+  insights_version: string;
+}
+
+export interface EvidenceList {
+  user: { id: number; full_name: string | null };
+  months_back: number;
+  packs: { period: string; status: EvidenceStatus; updated_at: string | null }[];
+}

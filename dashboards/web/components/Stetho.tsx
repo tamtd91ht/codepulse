@@ -50,6 +50,7 @@ const DETAIL: [RegExp, string][] = [
   [/^\/projects\/\d+\/knowledge$/, "Tri thức review"],
   [/^\/projects\/\d+$/, "Dự án"],
   [/^\/teams\/\d+$/, "Team"],
+  [/^\/members\/\d+\/evidence$/, "Hồ sơ tháng"],
   [/^\/members\/\d+$/, "Thành viên"],
   [/^\/reviews\/\d+$/, "Review"],
 ];

@@ -285,6 +285,23 @@ Một trang cho mỗi người, mỗi tháng, dùng trong buổi 1:1. Trang tr�
 | Vướng mắc | MR của họ có pickup > p75 của dự án (chờ người khác, không phải lỗi của họ) | §4.3 |
 | Độ tin cậy | Account chưa gắn người, repo sync cũ, mẫu nhỏ | §7 |
 
+### 6.2b. Trạng thái và quyền thao tác (chi tiết hoá khi làm 9.10)
+| Trạng thái | Ai làm gì | Chuyển sang |
+|---|---|---|
+| (chưa có) | Hồ sơ "ảo" tính trực tiếp khi mở; lần sửa đầu tiên hoặc job ngày 1 tạo bản ghi | `draft` |
+| `draft` | **Bản thân**: sửa `self_notes`, thêm/xoá `evidence_items`, làm mới snapshot, bấm **Gửi** | `submitted` (snapshot chốt) |
+| `submitted` | **Lead/admin**: viết `lead_notes`, thêm bằng chứng, **Trả lại** (→ `draft`) hoặc **Đã xem** | `reviewed` |
+| `reviewed` | Lead/admin và bản thân: sửa `goals_next`; lead/admin vẫn sửa được `lead_notes`, thêm bằng chứng; lead/admin bấm **Chốt sau 1:1** (không trả về nháp được nữa) | `shared` |
+| `shared` | Chỉ đọc; bản thân vẫn **thêm** phản hồi: nối vào cuối `self_notes` kèm ngày, không sửa/xoá được phần đã có (§6.3.5) | — |
+
+- "Lead trực tiếp" = lead của một team người đó **đang là thành viên thường** (`team_members.role ≠ lead`); hai co-lead của cùng team không duyệt hồ sơ của nhau. Lead tự xem hồ sơ của mình như mọi người; không tự duyệt.
+- Kỳ = tháng theo `REPORT_TZ`; chỉ mở được tháng đã bắt đầu, không quá `min(24, EVIDENCE_RETENTION_MONTHS)` tháng trước.
+- Nháp luôn hiện snapshot tính lại khi mở; gửi thì chốt snapshot tại lúc gửi.
+- Mọi thao tác ghi khoá dòng hồ sơ (`SELECT … FOR UPDATE`): hai người thao tác cùng lúc thì người sau thấy trạng thái mới và nhận 409.
+- Mọi lần mở hồ sơ hay danh sách tháng của người khác ghi `evidence.view` / `evidence.list`; mọi chuyển trạng thái/sửa ghi `evidence.<hành động>`, sửa sau khi gửi lưu cả nội dung cũ trong audit.
+- Job tạo nháp chạy ngày 1–3 hằng tháng (bù lần chạy lỡ), từng người riêng rẽ: một hồ sơ lỗi không làm mất nháp của người khác.
+- Chưa làm (theo dõi ở 14): MR chạm module một người nắm trong "MR đáng chú ý", commit thẳng lên nhánh chính, cảnh báo account chưa gắn người.
+
 ### 6.3. Quy trình hàng tháng
 1. **Ngày 1–3:** job tạo `draft` cho mỗi người có hoạt động trong tháng trước (scheduler, `REPORT_TZ`).
 2. **Dev** đọc, thêm `self_notes` và `evidence_items` (việc ngoài Git: incident, thiết kế, mentoring), rồi bấm **Gửi** → `submitted`. Snapshot được chốt tại lúc này.
@@ -340,9 +357,10 @@ Mọi lần mở hồ sơ bằng chứng của người khác đều ghi `audit_
 | GET | `/insights/review-load?…cùng bộ lọc…` | §4.7 |
 | GET | `/insights/knowledge?business_project_id=&project_id=&end=` | §4.9 |
 | GET | `/insights/dora?…` | §4.10 (phase 9.8) |
-| GET/PATCH | `/evidence/{user_id}/{period_start}` | Phân hệ B (phase 9.10) |
-| POST | `/evidence/{id}/submit`, `/evidence/{id}/review`, `/evidence/{id}/share` | Chuyển trạng thái, có audit |
-| POST/DELETE | `/evidence/{id}/items` | Thêm hoặc xoá bằng chứng |
+| GET | `/evidence/{user_id}` | Các tháng có hồ sơ và trạng thái (9.10) |
+| GET/PATCH | `/evidence/{user_id}/{yyyy-mm}` | Hồ sơ một tháng (ảo nếu chưa có); PATCH `self_notes` / `lead_notes` / `goals_next` theo §6.2b |
+| POST | `/evidence/{user_id}/{yyyy-mm}/{refresh\|submit\|return\|review\|share}` | Làm mới snapshot (draft) và chuyển trạng thái, có audit |
+| POST/DELETE | `/evidence/{user_id}/{yyyy-mm}/items[/{item_id}]` | Thêm hoặc xoá bằng chứng |
 
 Quy ước chung:
 - Thiếu cả `business_project_id` lẫn `project_id` thì tính trên mọi dự án người xem được thấy.
@@ -417,14 +435,14 @@ Thứ tự này đảm bảo: có giá trị cấp team trước (9.2–9.6, kh�
 
 ---
 
-## 14. `[DECISION]` cần người dùng chốt
-- [ ] **D1** Mục đích phân hệ B: chỉ coaching (đề xuất), hay sẽ thành căn cứ lương thưởng? Nếu là căn cứ lương thưởng thì phải có §11 trước khi làm 9.10.
-- [ ] **D2** Môi trường production trên GitLab đặt tên thế nào (`production`? `prod`? khác nhau theo repo)? Đề xuất: mặc định `production`, admin sửa được theo repo.
-- [ ] **D3** Tracker task: GitLab Issues, Jira hay chưa có quy ước? Incident được ghi ở đâu (label `incident`, issue type incident, công cụ khác)?
-- [ ] **D4** Ai xem hồ sơ bằng chứng: bản thân + lead trực tiếp + admin (đề xuất), hay thêm Quản lý tổng/HR?
-- [ ] **D5** Độ sâu module cho rủi ro tri thức: 2 thư mục (đề xuất) hay khác theo repo (monorepo cần sâu hơn)?
+## 14. `[DECISION]` – đã chốt (người dùng giao chọn phương án tối ưu về quản lý, 2026-11-03)
+- [x] **D1** Phân hệ B **chỉ dùng cho coaching / 1:1** ở v1: không điểm, không xếp loại, màn hình ghi rõ "không dùng làm căn cứ lương thưởng". Muốn dùng cho lương thưởng phải có đủ §11 (quy chế, HR, pháp chế) và một quyết định mới. *Lý do:* dev chỉ khai thật việc ngoài Git và vướng mắc khi tin rằng hồ sơ không bị dùng để phạt; gắn lương ngay sẽ biến hồ sơ thành chỗ tô vẽ.
+- [x] **D2** Môi trường production = environment có **`tier = production`** của GitLab (GitLab tự gán theo tên `production`/`prod`/`live`…); không có tier thì so tên `production`, `prod`. Admin ghi đè theo repo bằng `projects.production_environment`. *Lý do:* không bắt ai cấu hình trước, vẫn sửa được ngoại lệ.
+- [x] **D3** **Hoãn 9.9** (issue / incident). CFR v1 dùng tín hiệu deployment (§4.10: failed, rollback). Không làm tích hợp tracker trước khi pilot cho thấy cần; nếu làm thì chỉ để nối incident ↔ MR, không bao giờ đếm task/story point. *Lý do:* chưa có quy ước tracker chung; đếm task là đúng cái spec loại (§1.3.4).
+- [x] **D4** Hồ sơ bằng chứng: **bản thân + lead trực tiếp (lead của team người đó đang thuộc) + admin**. Quản lý dự án, Quản lý tổng, HR **không** xem. *Lý do:* hồ sơ gộp việc ở mọi dự án và chứa nhận xét 1:1; càng ít người đọc, nội dung càng thật. Mở rộng cho HR chỉ khi D1 đổi.
+- [x] **D5** Độ sâu module mặc định 2 (`KNOWLEDGE_MODULE_DEPTH`).
 
-D5 có giá trị mặc định nên không chặn 9.5–9.6. D2, D3, D1, D4 chặn lần lượt 9.8, 9.9 và 9.10.
+Thứ tự làm sau khi chốt: 9.10 (hồ sơ) → 9.8 (DORA) → 9.11 (bản nháp AI, sau pilot vì tốn LLM và cần hồ sơ thật để đánh giá).
 
 ---
 

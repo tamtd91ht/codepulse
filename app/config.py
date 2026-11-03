@@ -75,6 +75,8 @@ class Settings(BaseSettings):
     # "emails": ["x@company.vn"]}}. Leads and managers are emailed automatically.
     report_channels: dict[str, dict[str, Any]] = {}
     retention_days: int = Field(default=365, gt=0)
+    # Evidence packs (docs/specs/20 §11): notes and items go after this many months.
+    evidence_retention_months: int = Field(default=24, ge=3, le=120)
 
     # Telegram bots (configured per dự án in Admin; tokens live in the DB, encrypted).
     telegram_api_base: str = "https://api.telegram.org"

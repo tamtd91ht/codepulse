@@ -7,6 +7,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from app.collector.sync import enqueue_syncs_job
 from app.commands.store import enqueue_cleanup_job
 from app.config import get_settings
+from app.evidence.jobs import create_drafts_job
 from app.logging import configure_logging
 from app.reporting.jobs import send_reports_job
 from app.retention import purge_job
@@ -74,6 +75,10 @@ def build_scheduler(
         minute=0,
         id="report-month",
         **common,
+    )
+    # docs/specs/20 §6.3: last month's evidence-pack drafts on the 1st, after the night's syncs.
+    scheduler.add_job(
+        create_drafts_job, "cron", day="1-3", hour=1, minute=30, id="evidence-drafts", **common
     )
     # docs/specs/11: data retention, daily at night.
     scheduler.add_job(purge_job, "cron", hour=3, minute=0, id="retention-purge", **common)

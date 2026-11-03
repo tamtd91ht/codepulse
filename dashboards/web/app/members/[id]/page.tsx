@@ -15,6 +15,7 @@ import type {
   BoardFinding,
   CategoryWeek,
   Dispute,
+  EvidenceList,
   Me,
   MetricsSeries,
   Page,
@@ -314,6 +315,8 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
   // One period for the evaluation and the review results: changing either card moves both. It
   // comes from the URL, so the Thành viên page's period follows a click on a name.
   const range = useUrlRange("30");
+  // Evidence packs: the person, their lead and admins only (docs/specs/20 D4); a 403 hides the link.
+  const { data: packs } = useApi<EvidenceList>(`/evidence/${id}`);
   const { data: open, error: openError } = useApi<Page<BoardFinding>>(`/findings${qs({ user_id: id, limit: 50 })}`);
 
   if (!person) return <Loading error={error} rows={4} />;
@@ -332,6 +335,13 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
         title={name}
         subtitle={person.primary_email}
         avatar={<Avatar name={person.full_name} email={person.primary_email} size="lg" src={person.avatar_url} />}
+        actions={
+          packs && (
+            <Link href={`/members/${person.id}/evidence`} className="button">
+              Hồ sơ tháng (1:1)
+            </Link>
+          )
+        }
       />
 
       {!series && !seriesHidden && <Loading error={seriesError} rows={3} />}

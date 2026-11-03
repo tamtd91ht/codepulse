@@ -101,6 +101,17 @@ Trên điện thoại chỉ cần gõ `/review` rồi bấm nút: chọn Commit 
 | Fix rate | Tỉ lệ lỗi critical/high biến mất ở lần review sau của cùng MR |
 | Quality Index | 50% điểm TB + 20% (mật độ lỗi thấp) + 15% build thành công + 15% fix rate; phần không có dữ liệu được bỏ qua |
 
+## 6a. Hồ sơ tháng cho 1:1
+
+Trang thành viên → **Hồ sơ tháng (1:1)**. Chỉ **bạn, lead trực tiếp của bạn và admin** xem được; quản lý dự án và HR không xem. Hồ sơ **không có điểm** và không dùng làm căn cứ lương thưởng: nó giúp buổi 1:1 bắt đầu từ việc thật.
+
+1. Đầu tháng hệ thống tạo nháp cho tháng trước: MR bạn đã merge (đáng chú ý trước), MR của đồng đội bạn đã review, lỗi critical/high đã được kiểm chứng trên việc của bạn, MR phải chờ review lâu bất thường.
+2. **Bạn** bổ sung việc ngoài Git (sự cố, thiết kế, hướng dẫn đồng đội…) và tự nhận xét, rồi bấm **Gửi cho lead**. Số liệu được chốt lúc gửi.
+3. **Lead** đọc, viết nhận xét có dẫn chứng, có thể **Trả lại** để bạn bổ sung, rồi bấm **Đã xem**.
+4. Trong **1:1** hai bên ghi **Mục tiêu tháng sau**; lead **Chốt**. Sau đó bạn vẫn ghi được phản hồi của mình.
+
+Ghi chú và bằng chứng bổ sung được xoá sau 24 tháng, chỉ giữ trạng thái.
+
 ## 6. Luồng làm việc (Insights): đo gì và không đo gì
 
 Menu **Luồng làm việc** cho thấy công việc chảy qua team thế nào. Đây là chỉ số **của dự án/repo** để cải thiện quy trình (đặt SLA review, tách MR nhỏ, giảm phụ thuộc một người), **không** dùng để chấm điểm hay xếp hạng ai. Không có điểm tổng cho từng người.

@@ -100,3 +100,12 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | PUT | `/users/{id}/avatar` (body = bytes ảnh) | Thay ảnh đại diện: PNG/JPEG/WebP nhận theo nội dung file, ≤ `AVATAR_MAX_KB`; mỗi người một file `<id>.<ext>` trong `AVATAR_DIR`; audit `user.avatar` | admin |
 | DELETE | `/users/{id}/avatar` | Xoá ảnh; audit `user.avatar_remove` | admin |
 | GET | `/users/{id}/avatar` | Ảnh đại diện (`nosniff`, cache riêng 1 ngày); mọi `UserOut` có `avatar_url` kèm phiên bản | đăng nhập |
+
+## Bổ sung (hồ sơ bằng chứng, docs/specs/20 §6, task 9.10, 2026-11-03)
+| Method | Path | Mô tả | Quyền |
+|---|---|---|---|
+| GET | `/evidence/{user_id}` | Các tháng đã có hồ sơ và trạng thái | bản thân, lead trực tiếp, admin (D4) |
+| GET | `/evidence/{user_id}/{yyyy-mm}` | Hồ sơ một tháng (chưa lưu thì tính trực tiếp), kèm `can` theo §6.2b; xem hồ sơ người khác ghi audit `evidence.view` | như trên |
+| PATCH | `/evidence/{user_id}/{yyyy-mm}` `{self_notes, lead_notes, goals_next}` | Sửa phần được phép ở trạng thái hiện tại (409 nếu không) | như trên |
+| POST | `/evidence/{user_id}/{yyyy-mm}/{refresh\|submit\|return\|review\|share}` | Làm mới số liệu / gửi / trả lại / đã xem / chốt sau 1:1; audit `evidence.<hành động>` | bản thân: refresh, submit; lead, admin: return, review, share (không với hồ sơ của chính mình) |
+| POST/DELETE | `/evidence/{user_id}/{yyyy-mm}/items[/{item_id}]` | Thêm / xoá bằng chứng (chỉ người thêm xoá được) | như trên |
