@@ -14,13 +14,15 @@ import {
   YAxis,
 } from "recharts";
 
+import { CriteriaSummaryBlock } from "@/components/CriteriaScores";
+import { ProjectCriteria } from "@/components/ProjectCriteria";
 import { ProjectRepos } from "@/components/ProjectRepos";
 import { ReviewResults } from "@/components/ReviewResults";
-import { Card, ChartTip, EmptyState, Loading, PageHeader, Pager, Segmented, SplitBar, StatStrip, StripStat } from "@/components/ui";
+import { Card, ChartTip, Drawer, EmptyState, Loading, PageHeader, Pager, Segmented, SplitBar, StatStrip, StripStat } from "@/components/ui";
 import { scoreTone } from "@/components/Evaluation";
-import { type BoardScope, boardLink, qs, useApi } from "@/lib/api";
+import { type BoardScope, boardLink, can, qs, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, periodLabel, shiftDays, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
-import type { ProjectDetail } from "@/lib/types";
+import type { Me, ProjectDetail } from "@/lib/types";
 
 type Period = "week" | "month";
 
@@ -28,6 +30,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const { id } = use(params);
   const [period, setPeriod] = useState<Period>("week");
   const [cursor, setCursor] = useState<string | null>(null);
+  const [criteriaOpen, setCriteriaOpen] = useState(false);
+  const { data: me } = useApi<Me>("/auth/me");
   useEffect(() => {
     setCursor(thisWeek());
   }, []);
@@ -164,6 +168,17 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           )}
         </Card>
       </div>
+
+      <CriteriaSummaryBlock
+        scope={{ business_project_id: data.project.id }}
+        to={days.to}
+        onConfigure={can(me, "criteria.assign") ? () => setCriteriaOpen(true) : undefined}
+      />
+      {criteriaOpen && (
+        <Drawer title={`Bộ tiêu chí · ${data.project.name}`} width={640} onClose={() => setCriteriaOpen(false)}>
+          <ProjectCriteria projectId={data.project.id} projectName={data.project.name} />
+        </Drawer>
+      )}
 
       <ProjectRepos repos={data.repos} businessProjectId={data.project.id} scope={scope} period={days} />
 

@@ -1,10 +1,11 @@
 "use client";
 
-import { type FormEvent, type KeyboardEvent, useEffect, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { type SubNav, SubPanel, type SubTab, SubTabs, pickSub } from "@/components/AdminTabs";
 import { ClaudeLogin } from "@/components/ClaudeLogin";
 import { CommandRunner } from "@/components/CommandRunner";
+import { CriteriaAdmin } from "@/components/CriteriaAdmin";
 import { GitLabMembers } from "@/components/GitLabMembers";
 import { Icon, type IconName, IconButton } from "@/components/icons";
 import { LlmCheck } from "@/components/LlmCheck";
@@ -16,14 +17,16 @@ import { TeamsAdmin, UsersAdmin } from "@/components/TeamAdmin";
 import { TelegramAdmin } from "@/components/TelegramAdmin";
 import { Card, Drawer, EmptyState, Loading, Message, PageHeader, Segmented, StatStrip } from "@/components/ui";
 import { WebhookAdmin } from "@/components/WebhookAdmin";
-import { ApiError, api, useApi } from "@/lib/api";
+import { ApiError, api, can, useApi } from "@/lib/api";
+import { confirmLeave } from "@/lib/criteria";
 import { attributedText } from "@/lib/format";
 import type { Account, AccountLinked, Connection, LlmCosts, Me, Person, Team } from "@/lib/types";
 
-type Tab = "gitlab" | "repos" | "people" | "permissions" | "telegram" | "webhooks" | "llm" | "commands" | "data";
+type Tab = "gitlab" | "repos" | "criteria" | "people" | "permissions" | "telegram" | "webhooks" | "llm" | "commands" | "data";
 const TABS: { key: Tab; label: string; icon: IconName; hint: string }[] = [
   { key: "gitlab", label: "Kết nối GitLab", icon: "gitlab", hint: "Token bot và máy chủ GitLab" },
   { key: "repos", label: "Dự án & Repo", icon: "folder", hint: "Dự án, group, repo, review theo repo" },
+  { key: "criteria", label: "Bộ tiêu chí", icon: "scale", hint: "Bộ tiêu chí có trọng số để chấm điểm review, gán cho dự án" },
   { key: "people", label: "Người & Team", icon: "members", hint: "Tài khoản, người dùng, team, vai trò" },
   { key: "permissions", label: "Phân quyền", icon: "scale", hint: "Bộ quyền theo chức năng và phạm vi, gán cho người" },
   { key: "telegram", label: "Telegram", icon: "pulse", hint: "Bot nhận lệnh review theo dự án" },
@@ -54,13 +57,25 @@ export default function AdminPage() {
   const { data: me, error: meError } = useApi<Me>("/auth/me");
   const ready = me !== undefined || meError !== undefined;
   const commands = !!me?.command_runs;
-  const tabs = commands ? TABS : TABS.filter((t) => t.key !== "commands");
+  // Bộ tiêu chí (docs/specs/22 §5): who may manage sets, or assign them to a dự án.
+  const criteria = can(me, "criteria.manage") || can(me, "criteria.assign");
+  const tabs = TABS.filter((t) => (t.key !== "commands" || commands) && (t.key !== "criteria" || criteria));
+  // The hash last shown, to put back when the user keeps unsaved criteria changes (Back button).
+  const shownHash = useRef("");
+  const asked = useRef(false);
 
   useEffect(() => {
     if (!ready) return;
     const fromHash = () => {
+      // go() already asked; a Back / Forward or a typed hash asks here.
+      if (!asked.current && shownHash.current && window.location.hash !== shownHash.current && !confirmLeave()) {
+        window.history.replaceState(null, "", shownHash.current);
+        return;
+      }
+      asked.current = false;
+      shownHash.current = window.location.hash;
       const [key, part] = readHash();
-      const next = isTab(key) && (key !== "commands" || commands) ? key : "gitlab";
+      const next = isTab(key) && (key !== "commands" || commands) && (key !== "criteria" || criteria) ? key : "gitlab";
       setTab(next);
       // Dự án & Repo links here with ?members=bp:3: that list lives under Người & Team › Từ GitLab.
       const members = next === "people" && !part && new URLSearchParams(window.location.search).has("members");
@@ -69,12 +84,14 @@ export default function AdminPage() {
     fromHash();
     window.addEventListener("hashchange", fromHash);
     return () => window.removeEventListener("hashchange", fromHash);
-  }, [ready, commands]);
+  }, [ready, commands, criteria]);
 
   // The hash is the source of truth: setting it fires hashchange and keeps Back/Forward working.
   const go = (key: Tab, part?: string) => {
     const hash = part ? `#${key}/${encodeURIComponent(part)}` : `#${key}`;
     if (window.location.hash === hash) return;
+    if (!confirmLeave()) return;
+    asked.current = true;
     window.location.hash = hash;
   };
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -119,6 +136,7 @@ export default function AdminPage() {
         {tab === null && <Loading rows={3} />}
         {tab === "gitlab" && <ConnectionsTab />}
         {tab === "repos" && <ReposTab />}
+        {tab === "criteria" && <CriteriaAdmin nav={nav} me={me} />}
         {tab === "people" && <PeopleTab nav={nav} />}
         {tab === "permissions" && <PermissionsAdmin nav={nav} />}
         {tab === "telegram" && <TelegramAdmin />}

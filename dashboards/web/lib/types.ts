@@ -459,6 +459,144 @@ export interface ReviewDetail extends Review {
   web_url: string | null;
   history: ReviewRound[];
   can_rerun: boolean;
+  /** docs/specs/22 §6: one score per criteria set of the review's dự án (absent before 22.2). */
+  criteria_scores?: ReviewCriteriaScore[];
+}
+
+/* ---- weighted criteria sets (docs/specs/22) ---- */
+
+/** One part of a criteria set: its weight (%) and the finding categories that fall in it. */
+export interface CriteriaComponent {
+  key: string;
+  name: string;
+  description: string;
+  weight: number;
+  categories: string[];
+}
+
+/** An immutable version of a set (docs/specs/22 §1 "Phiên bản"). */
+export interface CriteriaVersion {
+  id: number;
+  version: number;
+  components: CriteriaComponent[];
+  apply_caps: boolean;
+  note: string | null;
+  created_at: string;
+  created_by?: number | null;
+  created_by_name?: string | null;
+}
+
+/** A version as the set detail lists it (components optional). */
+export interface CriteriaVersionRow {
+  id: number;
+  version: number;
+  note: string | null;
+  created_at: string;
+  created_by?: number | null;
+  created_by_name?: string | null;
+}
+
+export interface CriteriaSetProject {
+  id: number;
+  name: string;
+  is_primary: boolean;
+}
+
+/** GET /criteria-sets (list) and /criteria-sets/{id} (with `versions`). */
+export interface CriteriaSet {
+  id: number;
+  name: string;
+  description: string | null;
+  archived: boolean;
+  current_version: CriteriaVersion | null;
+  projects: CriteriaSetProject[];
+  versions?: CriteriaVersionRow[];
+  /** Has scores already: only an unused set can be deleted (the server has the last word). */
+  used?: boolean;
+}
+
+export interface CriteriaTemplate {
+  key: string;
+  name: string;
+  description: string;
+  components: CriteriaComponent[];
+}
+
+/** GET /criteria/meta. */
+export interface CriteriaMeta {
+  categories: { key: string; label: string }[];
+  limits: { min_components: number; max_components: number; name_max: number; description_max: number };
+  templates: CriteriaTemplate[];
+}
+
+export interface CriteriaBreakdownComponent {
+  key: string;
+  name: string;
+  weight: number;
+  score: number;
+  penalty: number;
+  findings: { id: number; source: "ai" | "category" }[];
+}
+
+export interface CriteriaBreakdown {
+  capped: boolean;
+  components: CriteriaBreakdownComponent[];
+}
+
+/** GET /reviews/{id} criteria_scores[]. */
+export interface ReviewCriteriaScore {
+  set_id: number;
+  set_name: string;
+  version: number;
+  is_primary: boolean;
+  score: number | string;
+  breakdown: CriteriaBreakdown;
+}
+
+/** A finding as the preview names it, so a breakdown can say what took points off. */
+export interface CriteriaPreviewFinding {
+  id: number;
+  severity: Severity;
+  category: string;
+  title: string | null;
+}
+
+/** POST /criteria/preview: one recent review scored by the set being edited (nothing saved). */
+export interface CriteriaPreviewRow {
+  review_id: number;
+  /** MR title, commit subject or repo path: whatever names the review. */
+  title?: string | null;
+  project?: string | null;
+  finished_at: string | null;
+  /** The review's own score (docs/specs/08). */
+  score: number | string | null;
+  /** The score by the draft set. */
+  criteria_score: number | string;
+  breakdown: CriteriaBreakdown;
+  findings?: CriteriaPreviewFinding[];
+}
+
+/** GET/PUT /business-projects/{bp}/criteria-sets, in `position` order. */
+export interface ProjectCriteriaSet {
+  set_id: number;
+  name: string;
+  is_primary: boolean;
+  position: number;
+  archived?: boolean;
+  version?: number | null;
+  components?: CriteriaComponent[];
+}
+
+/** GET /criteria/summary: LOC-weighted averages over the reviews in scope, and the weekly trend. */
+export interface CriteriaSummary {
+  /** The sets the scope can pick from (primary first); the picker shows when there are several. */
+  sets?: { set_id: number; name: string; is_primary: boolean }[];
+  set_id: number | null;
+  set_name?: string | null;
+  reviews: number;
+  score: number | string | null;
+  components: { key: string; name: string; weight: number; score: number | string | null }[];
+  weeks: { week_start: string; score: number | string | null; reviews: number }[];
 }
 
 export interface Page<T> {

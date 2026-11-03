@@ -5,6 +5,7 @@ import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 
 import { ClaudeRepoEditor } from "@/components/ClaudeRepoEditor";
 import { Icon, IconButton } from "@/components/icons";
+import { ProjectCriteria } from "@/components/ProjectCriteria";
 import { ProjectGrants } from "@/components/ProjectGrants";
 import { BulkBranch, type RepoActions, repoName, RepoTable, UNASSIGNED } from "@/components/RepoTable";
 import { Drawer, EmptyState, Pill, Segmented } from "@/components/ui";
@@ -358,6 +359,11 @@ export function ProjectDrawer({
       {project && (
         <div className="drawer-section">
           <ProjectGrants key={project.id} project={project} busy={busy} />
+        </div>
+      )}
+      {project && (
+        <div className="drawer-section">
+          <ProjectCriteria key={project.id} projectId={project.id} projectName={project.name} />
         </div>
       )}
       {project && (
