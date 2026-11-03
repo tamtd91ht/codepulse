@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from app.admin_settings import effective, monthly_budget_usd
 from app.api.audit import audit
 from app.api.deps import get_secret_box, get_session
-from app.api.security import CurrentPrincipal, Principal
+from app.api.security import Principal, require
 from app.assistant.chat import (
     LOGIN_PLACE,
     MAX_QUESTION,
@@ -61,13 +61,8 @@ _busy_lock = threading.Lock()
 _slots = threading.BoundedSemaphore(MAX_RUNNING)
 
 
-def require_assistant(principal: CurrentPrincipal) -> Principal:
-    if not (principal.is_admin or principal.is_manager):
-        raise HTTPException(403, f"{NAME} chỉ dành cho admin và manager")
-    return principal
-
-
-AssistantPrincipal = Annotated[Principal, Depends(require_assistant)]
+# `assistant.use` (docs/specs/21): by default the Manager set, i.e. admins and managers.
+AssistantPrincipal = Annotated[Principal, require("assistant.use")]
 
 
 class TurnIn(BaseModel):

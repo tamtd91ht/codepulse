@@ -24,7 +24,7 @@ from starlette.background import BackgroundTask
 from app.admin_settings import effective
 from app.api.audit import audit
 from app.api.deps import get_secret_box, get_session
-from app.api.security import AdminPrincipal
+from app.api.security import Principal, require
 from app.collector.gitlab.client import GitLabClient
 from app.commands import catalog
 from app.commands.jobs import job_id, job_timeout_s
@@ -49,6 +49,8 @@ def require_enabled(settings: SettingsDep) -> None:
 router = APIRouter(tags=["admin"], dependencies=[Depends(require_enabled)])
 SessionDep = Annotated[Session, Depends(get_session)]
 BoxDep = Annotated[SecretBox, Depends(get_secret_box)]
+# docs/specs/21: `admin.commands`; COMMAND_RUNS_ENABLED (require_enabled) stays a hard gate.
+CommandsPrincipal = Annotated[Principal, require("admin.commands")]
 
 REQUEST_TIMEOUT_S = 30.0
 MAX_ARGUMENTS = 4000
@@ -168,7 +170,7 @@ def _check_ref(ref: str) -> str:
 
 @router.get("/admin/commands")
 def list_commands(
-    principal: AdminPrincipal,
+    principal: CommandsPrincipal,
     session: SessionDep,
     settings: SettingsDep,
     box: BoxDep,
@@ -268,7 +270,7 @@ def _download_name(run: CommandRun, stored: str) -> str:
 @router.post("/admin/command-runs", status_code=202)
 def start_run(
     body: CommandRunIn,
-    principal: AdminPrincipal,
+    principal: CommandsPrincipal,
     session: SessionDep,
     settings: SettingsDep,
     queue: QueueDep,
@@ -347,7 +349,7 @@ def start_run(
 
 @router.get("/admin/command-runs")
 def list_runs(
-    principal: AdminPrincipal,
+    principal: CommandsPrincipal,
     session: SessionDep,
     limit: Annotated[int, Query(ge=1, le=200)] = 30,
 ) -> list[CommandRunOut]:
@@ -365,7 +367,7 @@ def _run(session: Session, run_id: int) -> CommandRun:
 @router.get("/admin/command-runs/{run_id}")
 def get_run(
     run_id: int,
-    principal: AdminPrincipal,
+    principal: CommandsPrincipal,
     session: SessionDep,
     store: StoreDep,
     after: Annotated[int, Query(ge=0)] = 0,
@@ -383,7 +385,7 @@ def get_run(
 
 @router.post("/admin/command-runs/{run_id}/cancel")
 def cancel_run(
-    run_id: int, principal: AdminPrincipal, session: SessionDep, store: StoreDep
+    run_id: int, principal: CommandsPrincipal, session: SessionDep, store: StoreDep
 ) -> CommandRunOut:
     run = _run(session, run_id)
     if run.status not in ("queued", "running"):
@@ -404,7 +406,7 @@ def cancel_run(
 
 @router.get("/admin/command-runs/{run_id}/download")
 def download(
-    run_id: int, principal: AdminPrincipal, session: SessionDep, settings: SettingsDep
+    run_id: int, principal: CommandsPrincipal, session: SessionDep, settings: SettingsDep
 ) -> FileResponse:
     """The run's output (the only file, or a zip of them all), then it is deleted."""
     run = _run(session, run_id)

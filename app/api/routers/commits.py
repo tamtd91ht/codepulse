@@ -31,7 +31,7 @@ from app.api.schemas import (
     ReviewCommitsOut,
     UserOut,
 )
-from app.api.security import AdminPrincipal, CurrentPrincipal, Principal
+from app.api.security import CurrentPrincipal, Principal, require
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.gitlab.convert import Converter
 from app.collector.gitlab.extract import _commit as gl_commit
@@ -128,12 +128,13 @@ def list_repos(principal: CurrentPrincipal, session: SessionDep) -> list[RepoOut
 
 @router.get("/repos/profiles", response_model=list[RepoProfileOut])
 def repo_profiles(
-    principal: CurrentPrincipal,
+    principal: Annotated[Principal, require("knowledge.view")],
     session: SessionDep,
     business_project_id: int | None = None,
 ) -> list[RepoProfileOut]:
     """Project profiles (docs/specs/18): what each repo is, its stack and security model.
-    Built from the repository's own documents, so anyone who sees the dự án may read them."""
+    Built from the repository's own documents, so anyone who sees the dự án may read them,
+    like the review knowledge (`knowledge.view`, docs/specs/21)."""
     query = select(Project).where(Project.tracked).order_by(Project.path_with_namespace)
     visible = principal.visible_projects()
     if visible is not None:
@@ -157,11 +158,15 @@ def repo_profiles(
 @router.post("/projects/{project_id}/profile/refresh", status_code=202)
 def refresh_profile(
     project_id: int,
-    principal: AdminPrincipal,
+    principal: Annotated[Principal, require("knowledge.edit")],
     session: SessionDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> dict[str, str]:
-    """Rebuild the profile from the default branch (one LLM call, runs in the worker)."""
+    """Rebuild the profile from the default branch (one LLM call, runs in the worker).
+    `knowledge.edit` (docs/specs/21 §4: "hồ sơ dự án"), and still an admin: it was admin-only
+    before spec 21 and the built-in manager sets hold knowledge.edit, phase B keeps it."""
+    if not principal.is_admin:
+        raise HTTPException(403, "admin only")
     project = _tracked_project(session, project_id)
     if project.allow_external_llm is False:
         raise HTTPException(409, "this repo does not allow sending code to an external LLM")

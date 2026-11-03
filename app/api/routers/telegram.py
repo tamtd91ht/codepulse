@@ -20,7 +20,7 @@ from app.api.schemas import (
     TelegramLinkCodeOut,
     TelegramRequestOut,
 )
-from app.api.security import AdminPrincipal, CurrentPrincipal
+from app.api.security import Principal, require
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
 from app.db import get_redis
@@ -31,6 +31,9 @@ from app.telegram.service import LINK_CODE_TTL_S, TELEGRAM_KIND, LinkCodes, Redi
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["telegram"])
 SessionDep = Annotated[Session, Depends(get_session)]
+# docs/specs/21: managing bots is `admin.notifications`; one's own link is `telegram.self`.
+BotAdminPrincipal = Annotated[Principal, require("admin.notifications")]
+SelfPrincipal = Annotated[Principal, require("telegram.self")]
 
 TelegramClientFactory = Callable[[str], TelegramClient]
 
@@ -79,14 +82,14 @@ def _out(bot: TelegramBot) -> TelegramBotOut:
 
 
 @router.get("/telegram/bots", response_model=list[TelegramBotOut])
-def list_bots(principal: AdminPrincipal, session: SessionDep) -> list[TelegramBotOut]:
+def list_bots(principal: BotAdminPrincipal, session: SessionDep) -> list[TelegramBotOut]:
     return [_out(b) for b in session.scalars(select(TelegramBot).order_by(TelegramBot.id))]
 
 
 @router.post("/telegram/bots", response_model=TelegramBotOut, status_code=201)
 def create_bot(
     body: TelegramBotIn,
-    principal: AdminPrincipal,
+    principal: BotAdminPrincipal,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
     make_client: Annotated[TelegramClientFactory, Depends(get_telegram_client_factory)],
@@ -125,7 +128,7 @@ def create_bot(
 def update_bot(
     bot_id: int,
     body: TelegramBotPatch,
-    principal: AdminPrincipal,
+    principal: BotAdminPrincipal,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
     make_client: Annotated[TelegramClientFactory, Depends(get_telegram_client_factory)],
@@ -167,7 +170,7 @@ def update_bot(
 
 
 @router.delete("/telegram/bots/{bot_id}", status_code=204)
-def delete_bot(bot_id: int, principal: AdminPrincipal, session: SessionDep) -> None:
+def delete_bot(bot_id: int, principal: BotAdminPrincipal, session: SessionDep) -> None:
     bot = _get(session, TelegramBot, bot_id, "bot")
     session.delete(bot)
     audit(session, principal.user_id, "telegram.bot.delete", f"telegram_bot:{bot_id}")
@@ -177,7 +180,7 @@ def delete_bot(bot_id: int, principal: AdminPrincipal, session: SessionDep) -> N
 @router.post("/telegram/bots/{bot_id}/test")
 def test_bot(
     bot_id: int,
-    principal: AdminPrincipal,
+    principal: BotAdminPrincipal,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
     make_client: Annotated[TelegramClientFactory, Depends(get_telegram_client_factory)],
@@ -206,7 +209,7 @@ def test_bot(
 @router.get("/telegram/bots/{bot_id}/requests", response_model=list[TelegramRequestOut])
 def list_requests(
     bot_id: int,
-    principal: AdminPrincipal,
+    principal: BotAdminPrincipal,
     session: SessionDep,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[TelegramRequestOut]:
@@ -238,7 +241,7 @@ def list_requests(
 
 
 @router.get("/me/telegram", response_model=list[TelegramAccountOut])
-def my_telegram(principal: CurrentPrincipal, session: SessionDep) -> list[Account]:
+def my_telegram(principal: SelfPrincipal, session: SessionDep) -> list[Account]:
     return list(
         session.scalars(
             select(Account)
@@ -250,7 +253,7 @@ def my_telegram(principal: CurrentPrincipal, session: SessionDep) -> list[Accoun
 
 @router.post("/me/telegram/link-code", response_model=TelegramLinkCodeOut)
 def my_link_code(
-    principal: CurrentPrincipal,
+    principal: SelfPrincipal,
     session: SessionDep,
     codes: Annotated[LinkCodes, Depends(get_link_codes)],
 ) -> TelegramLinkCodeOut:
@@ -262,7 +265,7 @@ def my_link_code(
 
 
 @router.delete("/me/telegram/{account_id}", status_code=204)
-def my_unlink(account_id: int, principal: CurrentPrincipal, session: SessionDep) -> None:
+def my_unlink(account_id: int, principal: SelfPrincipal, session: SessionDep) -> None:
     account = _get(session, Account, account_id, "account")
     if account.kind != TELEGRAM_KIND or account.user_id != principal.user_id:
         raise HTTPException(404, "account not found")

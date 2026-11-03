@@ -18,7 +18,7 @@ from app.api.schemas import (
     NotificationWebhookOut,
     NotificationWebhookPatch,
 )
-from app.api.security import AdminPrincipal
+from app.api.security import Principal, require
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
 from app.models import BusinessProject, NotificationWebhook, Project
@@ -28,6 +28,7 @@ from app.notifications.jobs import send_test
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["notifications"])
 SessionDep = Annotated[Session, Depends(get_session)]
+NotificationsPrincipal = Annotated[Principal, require("admin.notifications")]  # docs/specs/21
 
 
 def get_http_client() -> httpx.Client:
@@ -72,7 +73,9 @@ def _out(hook: NotificationWebhook) -> NotificationWebhookOut:
 
 
 @router.get("/webhooks", response_model=list[NotificationWebhookOut])
-def list_webhooks(principal: AdminPrincipal, session: SessionDep) -> list[NotificationWebhookOut]:
+def list_webhooks(
+    principal: NotificationsPrincipal, session: SessionDep
+) -> list[NotificationWebhookOut]:
     rows = session.scalars(select(NotificationWebhook).order_by(NotificationWebhook.id))
     return [_out(h) for h in rows]
 
@@ -80,7 +83,7 @@ def list_webhooks(principal: AdminPrincipal, session: SessionDep) -> list[Notifi
 @router.post("/webhooks", response_model=NotificationWebhookOut, status_code=201)
 def create_webhook(
     body: NotificationWebhookIn,
-    principal: AdminPrincipal,
+    principal: NotificationsPrincipal,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
 ) -> NotificationWebhookOut:
@@ -116,7 +119,7 @@ def create_webhook(
 def update_webhook(
     webhook_id: int,
     body: NotificationWebhookPatch,
-    principal: AdminPrincipal,
+    principal: NotificationsPrincipal,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
 ) -> NotificationWebhookOut:
@@ -155,7 +158,7 @@ def update_webhook(
 
 
 @router.delete("/webhooks/{webhook_id}", status_code=204)
-def delete_webhook(webhook_id: int, principal: AdminPrincipal, session: SessionDep) -> None:
+def delete_webhook(webhook_id: int, principal: NotificationsPrincipal, session: SessionDep) -> None:
     hook = _get(session, NotificationWebhook, webhook_id, "webhook")
     session.delete(hook)
     audit(
@@ -172,7 +175,7 @@ def delete_webhook(webhook_id: int, principal: AdminPrincipal, session: SessionD
 @router.post("/webhooks/{webhook_id}/test")
 def test_webhook(
     webhook_id: int,
-    principal: AdminPrincipal,
+    principal: NotificationsPrincipal,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
     settings: Annotated[Settings, Depends(get_settings)],
