@@ -293,14 +293,18 @@ def test_single_owner_module_direct_commits_and_unmapped_accounts(
     db_session.add_all(
         [
             MrCommit(mr_id=payment.id, sha="1" * 40),
-            CommitFile(sha="1" * 40, path="core/pay/a.py", additions=40, deletions=2),
+            *(
+                CommitFile(sha="1" * 40, path=f"core/pay/{n}.py", additions=40, deletions=2)
+                for n in ("a", "b", "c")
+            ),
             CommitFile(sha="2" * 40, path="docs/x.md", additions=1, deletions=0),
+            CommitFile(sha="2" * 40, path="core/auth/x.py", additions=1, deletions=0),
         ]
     )
     db_session.flush()
     snap = client.get(path(world), headers=as_user(world.an)).json()["snapshot"]
     reasons = {n["id"]: n["why"] for n in snap["notable"]}
-    assert reasons[payment.id] == "Chạm module chỉ một người nắm (core/pay)"
+    assert reasons[payment.id] == "Chạm module chỉ một người nắm (pay)"
     direct = snap["direct_commits"]
     assert direct["count"] == 1 and direct["items"][0]["title"] == "hotfix: typo"
     assert direct["items"][0]["web_url"].endswith("/-/commit/" + "2" * 40)

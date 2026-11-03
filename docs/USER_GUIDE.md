@@ -127,7 +127,7 @@ Menu **Luồng làm việc** cho thấy công việc chảy qua team thế nào.
 | Merge không review | MR merge khi chưa có ai khác phản hồi | Quy trình |
 | Cỡ MR | Dòng thay đổi (bỏ file lock, vendor…); XL ≥ 1000 dòng là khó review kỹ, không phải lỗi của ai | — |
 | Tải review | Mỗi người review bao nhiêu MR (không đếm số comment, không chấm comment hay dở) | Team |
-| Rủi ro tri thức | Module nào chỉ một người nắm (bus factor 1) hoặc người nắm đã vắng; là rủi ro của team | Team |
+| Rủi ro tri thức | Thành phần nào chỉ một người nắm (bus factor 1), người nắm đã vắng, hoặc người nắm là account chưa gắn người; là rủi ro của team. Thành phần được nhận từ **cấu trúc repo**: module build (pom.xml, package.json…), package tính năng, hoặc tên file khi mã tổ chức theo tầng (WalletController, WalletService → Wallet). Test đi cùng mã nó kiểm tra; mã sinh ra, thư viện, lockfile bị bỏ. Phần nắm tính theo số lần chạm file, giảm một nửa sau mỗi 90 ngày; commit hàng loạt (import, đổi tên, format) chỉ tính một lần. Thẻ con **Cấu trúc repo** cho xem repo được chia thế nào; admin có thể bấm **Phân tích cấu trúc bằng AI** để gom thành thành phần nghiệp vụ (AI chỉ đọc đường dẫn, không đọc mã nguồn) | Team |
 | Triển khai (DORA) | Số lần deploy production, lead time (commit đầu → lên production), tỉ lệ thay đổi lỗi (deploy hỏng + bị rollback), thời gian khôi phục. Production = môi trường tier production của GitLab, hoặc tên production/prod; admin đặt riêng cho repo ở tab này. Sự cố = issue GitLab loại incident hoặc có nhãn `incident`: số sự cố / deploy và thời gian khôi phục (mở → đóng) | Team |
 
 - Thời gian tính theo lịch (cả cuối tuần), dùng **trung vị** và p75; ít hơn 5 MR trong kỳ thì không hiện trung vị.

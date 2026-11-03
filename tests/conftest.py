@@ -56,3 +56,13 @@ def db_session(migrated_engine: Engine) -> Iterator[Session]:
         finally:
             session.close()
             transaction.rollback()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_component_maps() -> Iterator[None]:
+    """Each test's repos are new: no automatic component map cached from another test."""
+    from app.insights import load
+
+    load._AUTO_CACHE.clear()
+    yield
+    load._AUTO_CACHE.clear()

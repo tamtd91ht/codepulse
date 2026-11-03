@@ -90,7 +90,9 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | GET | `/insights/flow?business_project_id=&project_id=&period=week\|month\|range&start=&end=` | Luồng làm việc cấp dự án/repo: MR đã merge, 4 chặng (median/p75), merge không review, cỡ MR, xu hướng, MR đang chờ phản hồi, pipeline; `confidence`, `data_as_of` | được cấp dự án (admin: cả repo chưa gán); tên tác giả theo `can_see_work` |
 | GET | `/insights/flow/mrs?…&stage=&only=unreviewed\|xl&limit=&offset=` | Danh sách MR tạo nên số liệu, chậm nhất trước | như trên |
 | GET | `/insights/review-load?…` | Ai review MR của ai (đếm MR, không đếm comment), độ tập trung | như trên |
-| GET | `/insights/knowledge?business_project_id=&project_id=&end=&limit=` | Rủi ro tri thức: module (N cấp thư mục) trong `KNOWLEDGE_WINDOW_DAYS`, bus factor, một người nắm / người nắm đã vắng, người nắm (tên theo `can_see_work`) | như trên |
+| GET | `/insights/knowledge?business_project_id=&project_id=&end=&limit=` | Rủi ro tri thức: thành phần (bản đồ thành phần, spec 20 §4.9b) trong `KNOWLEDGE_WINDOW_DAYS`, bus factor theo số lần chạm file có phai dần, một người nắm / người nắm đã vắng / cần gắn account, người nắm (tên theo `can_see_work`) | như trên |
+| GET | `/insights/components?project_id=` | Cấu trúc một repo: thành phần (tên, loại, số file, test, đường dẫn mẫu), nguồn auto/llm, trạng thái lần gom bằng AI | xem được repo |
+| POST / DELETE | `/admin/insights/components/{project_id}` | Xếp hàng AI gom thành phần theo nghiệp vụ (202; chỉ đường dẫn, không mã nguồn; 409 khi đang chạy, `allow_external_llm = false`, hết ngân sách) / quay về bản tự động (204) | admin |
 
 ## Bổ sung (hồ sơ thành viên & nhật ký khiếu nại, người dùng 2026-11-03)
 | Method | Path | Mô tả | Quyền |

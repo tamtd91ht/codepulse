@@ -1450,6 +1450,80 @@ def insights_backfill(
     return result
 
 
+@router.post("/admin/insights/components/{project_id}", status_code=202)
+def insights_components_rebuild(
+    project_id: int,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+    queue: Annotated[Any, Depends(get_queue)],
+) -> dict[str, Any]:
+    """Queue the AI grouping of a repo's components (docs/specs/20 §4.9b): paths only, no
+    source; gated like every LLM call (allow_external_llm, the month's budget)."""
+    from app.admin_settings import monthly_budget_usd
+    from app.models import RepoComponentMap
+    from app.workers.component_jobs import running
+    from app.workers.knowledge_jobs import month_spend_usd
+
+    project = session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project not found")
+    if project.allow_external_llm is False:
+        raise HTTPException(409, "this repo does not allow an external LLM")
+    budget = monthly_budget_usd(session, settings)
+    if budget > 0 and month_spend_usd(session) >= budget:
+        raise HTTPException(409, "the month's LLM budget is used up")
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    # The row exists before it is locked: two first presses cannot both insert it.
+    session.execute(
+        pg_insert(RepoComponentMap)
+        .values(project_id=project_id, status="new")
+        .on_conflict_do_nothing(index_elements=["project_id"])
+    )
+    row = session.scalars(
+        select(RepoComponentMap).where(RepoComponentMap.project_id == project_id).with_for_update()
+    ).one()
+    if running(row):
+        raise HTTPException(409, "a grouping is already running")
+    now = datetime.now(UTC)
+    row.status, row.error, row.requested_by, row.requested_at = (
+        "queued",
+        None,
+        principal.user_id,
+        now,
+    )
+    audit(session, principal.user_id, "insights.components", f"project:{project_id}")
+    session.commit()
+    try:
+        queue.enqueue(
+            "app.workers.component_jobs.component_map_job",
+            project_id,
+            now.isoformat(),
+            job_id=f"component-map-{project_id}-{int(now.timestamp() * 1000)}",
+            job_timeout=900,
+        )
+    except Exception:
+        row.status, row.error = "failed", "Không xếp hàng được; thử lại."
+        session.commit()
+        raise HTTPException(503, "could not queue the grouping") from None
+    return {"status": "queued", "requested_at": now.isoformat()}
+
+
+@router.delete("/admin/insights/components/{project_id}", status_code=204)
+def insights_components_reset(
+    project_id: int, principal: AdminPrincipal, session: SessionDep
+) -> None:
+    """Back to the automatic map (drops the AI grouping)."""
+    from app.models import RepoComponentMap
+
+    row = session.get(RepoComponentMap, project_id)
+    if row is not None:
+        session.delete(row)
+        audit(session, principal.user_id, "insights.components.reset", f"project:{project_id}")
+        session.commit()
+
+
 @router.get("/admin/insights/backfill")
 def insights_backfill_progress(
     principal: AdminPrincipal, session: SessionDep, project_id: int | None = None

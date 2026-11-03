@@ -13,8 +13,19 @@ from sqlalchemy import and_, case, exists, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.insights import knowledge as kn
+from app.insights.components import AutoMap, Resolver, auto_map
 from app.insights.flow import BOT_MARKER, MrFacts, Note
-from app.models import Account, Commit, CommitFile, MergeRequest, MrCommit, MrNote, User
+from app.models import (
+    Account,
+    Commit,
+    CommitFile,
+    MergeRequest,
+    MrCommit,
+    MrNote,
+    Project,
+    RepoComponentMap,
+    User,
+)
 
 CHUNK = 1000  # ids per IN list
 
@@ -245,18 +256,186 @@ def last_commits(
     return out
 
 
+# Paths read per repo to build its component map (the touched files, newest first).
+MAX_MAP_PATHS = 100_000
+
+
+def repo_paths(session: Session, repo_id: int) -> list[str]:
+    """Every path the repo's commits touched (commit_files): what its component map is built
+    from (§4.9b). Paths only, never source."""
+    return [
+        str(path)
+        for path in session.scalars(
+            select(CommitFile.path)
+            .join(Commit, Commit.sha == CommitFile.sha)
+            .where(Commit.project_id == repo_id)
+            .group_by(CommitFile.path)
+            .order_by(func.max(Commit.authored_at).desc())
+            .limit(MAX_MAP_PATHS)
+        )
+    ]
+
+
+# repo -> ((commits, latest commit), its automatic map): rebuilt only when the repo got new
+# commits. Per process; a handful of maps is a few MB.
+_AUTO_CACHE: dict[int, tuple[tuple[int, Any], AutoMap]] = {}
+_AUTO_CACHE_SIZE = 64
+
+
+def _auto_maps(session: Session, names: dict[int, str]) -> dict[int, AutoMap]:
+    keys = {
+        int(pid or 0): (int(n), last)
+        for pid, n, last in session.execute(
+            select(Commit.project_id, func.count(), func.max(Commit.authored_at))
+            .where(Commit.project_id.in_(list(names)))
+            .group_by(Commit.project_id)
+        )
+    }
+    out: dict[int, AutoMap] = {}
+    for pid, name in names.items():
+        key = keys.get(pid, (0, None))
+        cached = _AUTO_CACHE.get(pid)
+        if cached is not None and cached[0] == key:
+            out[pid] = cached[1]
+            continue
+        built = auto_map(repo_paths(session, pid), name)
+        if len(_AUTO_CACHE) >= _AUTO_CACHE_SIZE:
+            _AUTO_CACHE.pop(next(iter(_AUTO_CACHE)))
+        _AUTO_CACHE[pid] = (key, built)
+        out[pid] = built
+    return out
+
+
+def component_resolvers(session: Session, repo_ids: Sequence[int]) -> dict[int, Resolver]:
+    """repo -> where each of its paths belongs (§4.9b): the automatic map (cached until the
+    repo gets new commits), regrouped by the stored AI grouping when there is one."""
+    if not repo_ids:
+        return {}
+    names = {
+        int(pid): str(path).rsplit("/", 1)[-1]
+        for pid, path in session.execute(
+            select(Project.id, Project.path_with_namespace).where(Project.id.in_(repo_ids))
+        )
+    }
+    grouped = {
+        m.project_id: m.groups
+        for m in session.scalars(
+            select(RepoComponentMap).where(RepoComponentMap.project_id.in_(repo_ids))
+        )
+        if m.groups
+    }
+    autos = _auto_maps(session, {pid: names.get(pid, "repo") for pid in repo_ids})
+    return {pid: Resolver(autos[pid], grouped.get(pid) or []) for pid in repo_ids}
+
+
+def component_rows(
+    session: Session,
+    repo_ids: list[int],
+    lo: datetime,
+    hi: datetime,
+    *,
+    resolvers: dict[int, Resolver],
+    half_life_days: int,
+    bulk_files: int,
+) -> tuple[list[kn.ModuleTotalRow], list[kn.ModuleAuthorRow]]:
+    """§4.9b: each (commit, file) of non-merge commits in [lo, hi) weighs 0.5^(age/half-life),
+    and a commit touching n > `bulk_files` files is worth bulk_files^2/n touches in all;
+    summed per (repo, component, author). Lines are kept for display only, without bulk
+    commits."""
+    if not repo_ids:
+        return [], []
+    files_in_commit = func.count().over(partition_by=CommitFile.sha)
+    total: dict[tuple[int, str], list[Any]] = {}
+    per_author: dict[tuple[int, str, kn.Author], list[Any]] = {}
+    placed: dict[tuple[int, str], Any] = {}
+    seconds = half_life_days * 86400.0
+    for pid, sha, uid, aid, path, lines, at, n_files in session.execute(
+        select(
+            Commit.project_id,
+            Commit.sha,
+            Account.user_id,
+            Commit.author_account_id,
+            CommitFile.path,
+            CommitFile.additions + CommitFile.deletions,
+            Commit.authored_at,
+            files_in_commit,
+        )
+        .select_from(CommitFile)
+        .join(Commit, Commit.sha == CommitFile.sha)
+        .outerjoin(Account, Account.id == Commit.author_account_id)
+        .where(_in_window(repo_ids, lo, hi), Commit.author_account_id.is_not(None))
+    ):
+        resolver = resolvers.get(int(pid or 0))
+        if resolver is None:
+            continue
+        place = resolver.of(str(path))
+        bulk = int(n_files) > bulk_files
+        age = max(0.0, (hi - at).total_seconds()) if at is not None else 0.0
+        # Past `bulk_files` files (import, rename, formatting) each file gets (bulk/n)^2: the
+        # commit is worth bulk^2/n touches, continuous at the threshold and lighter the larger
+        # it is (1000 files ~ 10 touches with the default 100).
+        weight = 0.5 ** (age / seconds) * min(1.0, bulk_files / int(n_files)) ** 2
+        churn = 0 if bulk else int(lines or 0)
+        author = kn.Author(int(uid), None) if uid is not None else kn.Author(None, int(aid or 0))
+        key = (int(pid or 0), place.id)
+        placed[key] = place
+        t = total.setdefault(key, [0.0, 0, set(), None])
+        t[0] += weight
+        t[1] += churn
+        t[2].add(sha)
+        if at is not None and (t[3] is None or at > t[3]):
+            t[3] = at
+        a = per_author.setdefault((key[0], key[1], author), [0.0, 0, set()])
+        a[0] += weight
+        a[1] += churn
+        a[2].add(sha)
+    totals = [
+        kn.ModuleTotalRow(
+            pid,
+            cid,
+            churn,
+            len(shas),
+            last,
+            weight=w,
+            name=placed[(pid, cid)].name,
+            description=placed[(pid, cid)].description,
+            kind=placed[(pid, cid)].kind,
+            source=placed[(pid, cid)].source,
+        )
+        for (pid, cid), (w, churn, shas, last) in total.items()
+    ]
+    authors = [
+        kn.ModuleAuthorRow(pid, cid, author, churn, len(shas), weight=w)
+        for (pid, cid, author), (w, churn, shas) in per_author.items()
+    ]
+    return totals, authors
+
+
 def knowledge_modules(
     session: Session,
     repo_ids: list[int],
     lo: datetime,
     hi: datetime,
     *,
-    depth: int,
     threshold: float,
     min_commits: int,
+    half_life_days: int = 90,
+    bulk_files: int = 100,
+    resolvers: dict[int, Resolver] | None = None,
 ) -> list[kn.Module]:
-    """§4.9 for `repo_ids` over [lo, hi): every module with churn, its bus factor and flags."""
-    totals, author_rows = module_rows(session, repo_ids, lo, hi, depth)
+    """§4.9/§4.9b for `repo_ids` over [lo, hi): every component with work, its bus factor and
+    flags."""
+    if resolvers is None:
+        resolvers = component_resolvers(session, repo_ids)
+    totals, author_rows = component_rows(
+        session,
+        repo_ids,
+        lo,
+        hi,
+        resolvers=resolvers,
+        half_life_days=half_life_days,
+        bulk_files=bulk_files,
+    )
     authors = {r.author for r in author_rows}
     inactive = {
         int(uid)

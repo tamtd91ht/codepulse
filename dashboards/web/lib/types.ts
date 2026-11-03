@@ -1494,6 +1494,47 @@ export interface InsightModule {
   single_owner: boolean;
   orphaned: boolean;
   owners: (InsightPerson & { share: number })[];
+  /** §4.9b: the component as shown, what it is, its kind, automatic or AI-grouped. */
+  name: string;
+  description: string;
+  kind: ComponentKind;
+  source: "auto" | "llm";
+  /** The top holder is a git account not linked to a person. */
+  unattributed: boolean;
+  unlinked_share: number;
+}
+
+export type ComponentKind = "code" | "config" | "docs" | "noise" | "domain" | "platform" | "integration";
+
+export interface InsightComponents {
+  project_id: number;
+  path_with_namespace: string;
+  source: "auto" | "llm";
+  paths: number;
+  layered_roots: string[];
+  unmapped_share: number;
+  ai: {
+    status: "queued" | "running" | "done" | "failed";
+    error: string | null;
+    built_at: string | null;
+    requested_at: string | null;
+    confidence: number | null;
+    model: string | null;
+    stale: boolean;
+  } | null;
+  allow_external_llm: boolean;
+  can_rebuild: boolean;
+  components: {
+    id: string;
+    name: string;
+    description: string;
+    kind: ComponentKind;
+    source: "auto" | "llm";
+    files: number;
+    tests: number;
+    parts: string[];
+    samples: string[];
+  }[];
 }
 
 export interface InsightsKnowledge {
@@ -1505,7 +1546,10 @@ export interface InsightsKnowledge {
   min_commits: number;
   data_as_of: string | null;
   confidence: InsightConfidence;
-  totals: { modules: number; single_owner: number; orphaned: number; shown: number };
+  half_life_days?: number;
+  bulk_files?: number;
+  maps?: Record<string, { source: "auto" | "llm"; components: number; layered: boolean }>;
+  totals: { modules: number; single_owner: number; unattributed?: number; orphaned: number; shown: number };
   orphan_after_days: number;
   modules: InsightModule[];
 }

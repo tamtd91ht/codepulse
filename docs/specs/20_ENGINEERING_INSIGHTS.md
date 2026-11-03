@@ -191,6 +191,37 @@ Quy tắc biên:
 - Tác giả = người (user) nếu đã gắn; chưa gắn thì theo từng account email git (gộp chung sẽ che mất module một người nắm).
 - Diễn giải: một người nắm module **không phải** thành tích của họ, mà là rủi ro của team (P8).
 
+### 4.9b. Thành phần thay cho "N thư mục đầu" (bản 2, người dùng 2026-11-03)
+Bản 1 lấy `KNOWLEDGE_MODULE_DEPTH` thư mục đầu, sai với cấu trúc thật. Repo Maven/Spring một module ra `src/main` và `src/test`, tức cả service chứ không phải một module. Repo nhiều module ra `x-service/src`. Ngoài ra, cân theo số dòng đổi thì người import ban đầu, người chạy codegen hay format hàng loạt thành "người nắm". Bản 2 làm theo hai bước: hiểu cấu trúc repo trước, rồi mới đo.
+
+**Bước 1 – Bản đồ thành phần** (`app/insights/components.py`). Mỗi repo một bản, dựng từ các đường dẫn đã có trong `commit_files`. Chỉ dùng đường dẫn, không đọc mã nguồn.
+
+1. Lọc nhiễu, gán `kind=noise` và không tính rủi ro:
+   - thư mục build hoặc vendor: `target/`, `build/`, `dist/`, `out/`, `node_modules/`, `vendor/`, `.gradle/`, `.idea/`, `generated/`, `__generated__`;
+   - lockfile: `*.lock`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `go.sum`;
+   - file `*.min.*`, `*.map`, ảnh, font.
+2. Gốc build: thư mục chứa `pom.xml`, `build.gradle(.kts)`, `package.json`, `go.mod`, `pyproject.toml`, `setup.py`, `Cargo.toml`, `*.csproj` hoặc `composer.json`. Một file thuộc gốc build sâu nhất chứa nó. Không có gốc nào thì gốc là cả repo.
+3. Bỏ bố cục quy ước nằm sau gốc build: `src/main/<ngôn ngữ>/`, `src/test/<ngôn ngữ>/`, `src/main/resources/`, `src/`, `lib/`, `app/`, `internal/`, `pkg/`, `test(s)/`. Sau đó bỏ tiền tố package chung của gốc đó (ví dụ `com/vihat/omicx/account/`). Test được gộp vào **cùng** thành phần với mã nó kiểm tra.
+4. Đoạn đầu còn lại là thành phần (tổ chức theo tính năng). Nếu đoạn đó là tên tầng (`controller`, `service`, `repository`, `dto`, `entity`, `model`, `mapper`, `config`, `util`, `impl`, `handler`, `api`, `web`…), tức tổ chức theo tầng, thì thành phần là **tính năng suy ra từ tên file**: bỏ hậu tố tầng, ví dụ `WalletController`, `WalletServiceImpl` và `WalletRepository` đều là `Wallet`.
+5. Thành phần có ít hơn 3 file gộp vào "`<gốc>` (khác)". Tên hiển thị là `<tên gốc build> › <thành phần>`.
+
+**Bước 1b – AI gom lại theo nghiệp vụ** (tuỳ chọn; admin bấm theo từng repo):
+- Model nhận danh sách thành phần tự động (tên, số file, tối đa 15 đường dẫn mẫu) và tóm tắt hồ sơ dự án nếu có. Model trả về các nhóm nghiệp vụ, mỗi nhóm gồm tên, mô tả, loại (`domain|platform|integration|config|noise`) và **danh sách id thành phần tự động**.
+- Model chỉ được gom lại những thành phần đã có, không được tạo đường dẫn mới. Id lạ bị bỏ. Thành phần chưa được nhóm nào nhận thì giữ như bản tự động.
+- Điều kiện chạy: `allow_external_llm` của repo khác `false`; còn ngân sách tháng. Chi phí ghi audit với action `insights.components.cost`.
+- Kết quả lưu ở `repo_component_maps`. Dựng lại khi admin bấm. Trang báo "cũ" khi số đường dẫn mới chưa có trong bản đồ vượt 20%.
+
+**Bước 2 – Đo**
+- Trọng số của mỗi (commit, file) là `0.5^(tuổi_ngày / KNOWLEDGE_HALF_LIFE_DAYS)` (mặc định 90): hiểu biết phai dần theo thời gian.
+- Commit chạm hơn `KNOWLEDGE_BULK_FILES` file (mặc định 100) là commit hàng loạt (import, đổi tên, format): mỗi file nhận `(B/n)²` (B = `KNOWLEDGE_BULK_FILES`, n = số file của commit), nên cả commit tính `B²/n` lần chạm. Trọng số liên tục tại ngưỡng, và commit càng lớn càng nhẹ: 1.000 file ≈ 10 lần chạm, 10.000 file ≈ 1.
+- **Không dùng số dòng để chia phần nắm.** "Dòng đổi" chỉ để hiển thị, đã bỏ commit hàng loạt và nhiễu.
+- Phần nắm của một người = tổng trọng số của họ / tổng trọng số của thành phần. Bus factor, `single_owner` và `orphaned` tính như §4.9 trên phần nắm này.
+- Account chưa gắn người vẫn đứng riêng. Nếu người nắm nhiều nhất là account chưa gắn thì không bật cờ `single_owner` mà bật cờ `unattributed` ("gắn account trước khi kết luận").
+- File trong `src/main/resources` (migration SQL, template) gom thành một thành phần tài nguyên của module build đó. Tiền tố package chung tính trên mã không phải test. Test đặt riêng (`tests/billing`, `tests/test_billing.py`) được ghép theo thư mục tính năng hoặc tên file.
+- AI không được xếp mã vào `noise`: nhóm AI gắn `noise` được coi là `platform` và vẫn được đo. Chỉ quy tắc cố định mới quyết định nhiễu.
+- Định nghĩa thay đổi nên `INSIGHTS_VERSION` = 2.
+- `KNOWLEDGE_MODULE_DEPTH` chỉ còn dùng khi đường dẫn không khớp quy tắc nào.
+
 ### 4.10. DORA (`dora.py`; phase 9.8, cần [DECISION D2])
 | Chỉ số | Định nghĩa |
 |---|---|
@@ -374,7 +405,9 @@ Mọi lần mở hồ sơ bằng chứng của người khác đều ghi `audit_
 | GET | `/insights/flow?business_project_id=&project_id=&period=week\|month\|range&start=&end=` | §4.3–4.6, §4.8: totals, theo repo, xu hướng, MR đang mở, pipeline |
 | GET | `/insights/flow/mrs?…cùng bộ lọc…&stage=coding\|pickup\|review\|time_to_merge&only=unreviewed\|xl&limit=&offset=` | Danh sách MR tạo nên số liệu, chặng `stage` chậm nhất trước (MR thiếu chặng đó xuống cuối), mỗi dòng có 4 chặng, cỡ, link GitLab (P3) |
 | GET | `/insights/review-load?…cùng bộ lọc…` | §4.7 |
-| GET | `/insights/knowledge?business_project_id=&project_id=&end=` | §4.9 |
+| GET | `/insights/knowledge?business_project_id=&project_id=&end=` | §4.9, §4.9b |
+| GET | `/insights/components?project_id=` | §4.9b: cấu trúc repo |
+| POST / DELETE | `/admin/insights/components/{project_id}` | §4.9b: AI gom thành phần / về bản tự động (admin) |
 | GET | `/insights/dora?…` | §4.10 (phase 9.8) |
 | GET | `/evidence/{user_id}` | Các tháng có hồ sơ và trạng thái (9.10) |
 | GET/PATCH | `/evidence/{user_id}/{yyyy-mm}` | Hồ sơ một tháng (ảo nếu chưa có); PATCH `self_notes` / `lead_notes` / `goals_next` theo §6.2b |
@@ -459,7 +492,7 @@ Thứ tự này đảm bảo: có giá trị cấp team trước (9.2–9.6, kh�
 - [x] **D2** Môi trường production = environment có **`tier = production`** của GitLab (GitLab tự gán theo tên `production`/`prod`/`live`…); không có tier thì so tên `production`, `prod`. Admin ghi đè theo repo bằng `projects.production_environment`. *Lý do:* không bắt ai cấu hình trước, vẫn sửa được ngoại lệ.
 - [x] **D3** (cập nhật 2026-11-03, người dùng yêu cầu làm đủ) 9.9 làm **bản tối thiểu, chỉ incident trên GitLab**: issue có type `incident` hoặc nhãn trong `INCIDENT_LABELS` (mặc định `incident`); MR sửa = MR GitLab ghi là đóng issue (`closed_by`). Không tích hợp Jira, không đếm task. Trước đó: hoãn 9.9. CFR v1 dùng tín hiệu deployment (§4.10: failed, rollback). Không làm tích hợp tracker trước khi pilot cho thấy cần; nếu làm thì chỉ để nối incident ↔ MR, không bao giờ đếm task/story point. *Lý do:* chưa có quy ước tracker chung; đếm task là đúng cái spec loại (§1.3.4).
 - [x] **D4** Hồ sơ bằng chứng: **bản thân + lead trực tiếp (lead của team người đó đang thuộc) + admin**. Quản lý dự án, Quản lý tổng, HR **không** xem. *Lý do:* hồ sơ gộp việc ở mọi dự án và chứa nhận xét 1:1; càng ít người đọc, nội dung càng thật. Mở rộng cho HR chỉ khi D1 đổi.
-- [x] **D5** Độ sâu module mặc định 2 (`KNOWLEDGE_MODULE_DEPTH`).
+- [x] **D5** Độ sâu module mặc định 2 (`KNOWLEDGE_MODULE_DEPTH`). Bản 2 (2026-11-03): thay bằng bản đồ thành phần §4.9b; độ sâu chỉ còn là dự phòng.
 
 Thứ tự làm sau khi chốt: 9.10 (hồ sơ) → 9.8 (DORA) → 9.11 (bản nháp AI, sau pilot vì tốn LLM và cần hồ sơ thật để đánh giá).
 

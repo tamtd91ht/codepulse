@@ -17,8 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.insights import INSIGHTS_VERSION
 from app.insights.flow import STAGES, Flow, flow, size_bucket
-from app.insights.knowledge import module_of
-from app.insights.load import chunks, knowledge_modules, load_mrs
+from app.insights.load import chunks, component_resolvers, knowledge_modules, load_mrs
 from app.insights.stats import quantile
 from app.models import (
     Account,
@@ -116,9 +115,11 @@ class KnowledgeConfig:
     """How §4.9 is computed (KNOWLEDGE_* settings)."""
 
     window_days: int = 180
-    depth: int = 2
+    depth: int = 2  # bản 1; §4.9b places paths by the component map
     threshold: float = 0.5
     min_commits: int = 10
+    half_life_days: int = 90
+    bulk_files: int = 100
 
 
 def knowledge_config(settings: Any) -> KnowledgeConfig:
@@ -128,6 +129,8 @@ def knowledge_config(settings: Any) -> KnowledgeConfig:
         depth=settings.knowledge_module_depth,
         threshold=settings.knowledge_bus_threshold,
         min_commits=settings.knowledge_min_commits,
+        half_life_days=settings.knowledge_half_life_days,
+        bulk_files=settings.knowledge_bulk_files,
     )
 
 
@@ -139,16 +142,19 @@ def _single_owner_touched(
     repo_ids = sorted({f.mr.project_id for f in mine})
     if not repo_ids:
         return {}
+    resolvers = component_resolvers(session, repo_ids)
     flagged = {
-        (m.project_id, m.module)
+        (m.project_id, m.module): m.name or m.module
         for m in knowledge_modules(
             session,
             repo_ids,
             hi - timedelta(days=config.window_days),
             hi,
-            depth=config.depth,
             threshold=config.threshold,
             min_commits=config.min_commits,
+            half_life_days=config.half_life_days,
+            bulk_files=config.bulk_files,
+            resolvers=resolvers,
         )
         if m.single_owner
     }
@@ -162,9 +168,13 @@ def _single_owner_touched(
             .join(CommitFile, CommitFile.sha == MrCommit.sha)
             .where(MrCommit.mr_id.in_(chunk))
         ):
-            key = (project_of[int(mr_id)], module_of(str(path), config.depth))
+            pid = project_of[int(mr_id)]
+            resolver = resolvers.get(pid)
+            if resolver is None:
+                continue
+            key = (pid, resolver.of(str(path)).id)
             if key in flagged and int(mr_id) not in out:
-                out[int(mr_id)] = key[1]
+                out[int(mr_id)] = flagged[key]
     return out
 
 

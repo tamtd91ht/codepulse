@@ -5,4 +5,4 @@ review score or finding ever feeds these numbers. Bump INSIGHTS_VERSION whenever
 in §4 changes, and record the change in the spec.
 """
 
-INSIGHTS_VERSION = "1"
+INSIGHTS_VERSION = "2"  # 2: knowledge risk by component map (docs/specs/20 §4.9b)

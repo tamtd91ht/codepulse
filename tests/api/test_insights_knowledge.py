@@ -5,10 +5,10 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.insights.knowledge import module_of
 from app.models import Account, Commit, CommitFile, User
 from tests.api.conftest import World
 
@@ -56,21 +56,34 @@ def seeded(db_session: Session, world: World, settings: Settings) -> None:
         s.flush()
         s.add_all(CommitFile(sha=sha, path=p, additions=c, deletions=0) for p, c in files.items())
 
-    # src/core: an (two e-mails, one person) holds 91 % over 4 commits -> single owner.
+    core = {"src/core/a.py": 100, "src/core/b.py": 50, "src/core/c.py": 10}
+    # core: an (two e-mails, one person) holds ~91 % of the touches over 5 commits.
     for i in range(3):
-        commit(an, {"src/core/a.py": 100, "src/core/b.py": 50}, days_ago=i + 1)
+        commit(an, core, days_ago=i + 1)
     commit(an2, {"src/core/a.py": 75})
     commit(binh, {"src/core/a.py": 50})
-    # docs at the root: binh alone, 3 commits, binh now inactive -> orphaned too.
+    # A bulk commit by binh (an import, a rename): one touch in all, lines not shown.
+    commit(binh, {f"src/core/gen{i}.py": 100 for i in range(2000)})
+    # Deploy configuration: binh alone, 3 commits, binh now inactive -> orphaned too.
+    deploy = {"deploy/a.yaml": 10, "deploy/b.yaml": 10, "deploy/c.yaml": 10}
+    for i in range(3):
+        commit(binh, deploy, days_ago=i + 1)
+    # Docs: shown, never flagged.
     for i in range(3):
         commit(binh, {"README.md": 10}, days_ago=i + 1)
-    # src/web: shared by an and the unmapped stranger.
+    # web: shared by an and the unmapped stranger.
     for i in range(3):
-        commit(an, {"src/web/x.ts": 30}, days_ago=i + 1)
-        commit(stranger, {"src/web/y.ts": 30}, days_ago=i + 1)
-    # Shallower and deeper than the module depth (2): "src" and "a/b".
+        commit(an, {"src/web/x.ts": 30, "src/web/w.ts": 1}, days_ago=i + 1)
+        commit(stranger, {"src/web/y.ts": 30, "src/web/v.ts": 1}, days_ago=i + 1)
+    # pay: only the unmapped stranger: link the account before calling it a single owner.
+    for i in range(3):
+        commit(stranger, {"src/pay/p.py": 5, "src/pay/q.py": 5, "src/pay/r.py": 5}, days_ago=i + 1)
+    # Lone files fold into "(khác)": too few commits to flag.
     commit(an, {"src/a.py": 5})
     commit(an, {"a/b/c/d.py": 5})
+    # Generated code is noise.
+    for i in range(3):
+        commit(binh, {"target/x.class": 1, "package-lock.json": 9}, days_ago=i + 1)
     # Ignored: a merge commit, work outside the 180-day window, and a commit at the instant the
     # window ends (midnight after END in Asia/Ho_Chi_Minh).
     commit(binh, {"src/edge/a.py": 10}, at=datetime(2026, 10, 31, 17, tzinfo=UTC))
@@ -86,28 +99,40 @@ def get(client: TestClient, path: str, headers: dict[str, str]) -> Any:
     return res.json()
 
 
-def test_modules_bus_factor_and_flags(
+def test_components_bus_factor_and_flags(
     client: TestClient, world: World, seeded: None, as_user: Any
 ) -> None:
     body = get(client, f"/api/v1/insights/knowledge?end={END}", as_user(world.admin))
-    by_module = {m["module"]: m for m in body["modules"]}
-    seeded_paths = ("src/core/a.py", "README.md", "src/web/x.ts", "src/a.py", "a/b/c/d.py")
-    assert set(by_module) == {module_of(p, 2) for p in seeded_paths}  # SQL twin of module_of
-    assert set(by_module) == {"src/core", "(root)", "src/web", "src", "a/b"}
-    core = by_module["src/core"]
-    assert core["churn"] == 3 * 150 + 75 + 50 and core["commits"] == 5
+    by_name = {m["name"]: m for m in body["modules"]}
+    assert set(by_name) == {"core", "web", "pay", "(khác)", "(build & cấu hình)", "(tài liệu)"}
+    assert "target" not in str(by_name) and "lock" not in str(by_name)  # noise is not shown
+    core = by_name["core"]
+    assert core["churn"] == 3 * 160 + 75 + 50  # the bulk commit's lines are not counted
+    assert core["commits"] == 6
     assert core["bus_factor"] == 1 and core["single_owner"] and not core["orphaned"]
-    assert core["owners"][0]["name"] == "An" and core["owners"][0]["share"] == 91.3
-    root = by_module["(root)"]
-    assert root["single_owner"] and root["orphaned"]  # binh is switched off
-    web = by_module["src/web"]
+    assert core["owners"][0]["name"] == "An" and core["owners"][0]["share"] > 55
+    deploy = by_name["(build & cấu hình)"]
+    assert deploy["kind"] == "config" and deploy["single_owner"] and deploy["orphaned"]
+    docs = by_name["(tài liệu)"]
+    assert docs["kind"] == "docs" and not docs["single_owner"] and not docs["orphaned"]
+    web = by_name["web"]
     assert web["bus_factor"] == 1 and web["top_share"] == 50.0
     assert not web["single_owner"]  # an even split is two owners
     assert [o["name"] for o in web["owners"]] == ["An", "Chưa gắn người"]  # mapped first on a tie
-    assert not by_module["src"]["single_owner"]  # too few commits to flag
-    assert body["totals"] == {"modules": 5, "single_owner": 2, "orphaned": 1, "shown": 5}
+    assert web["unlinked_share"] == 50.0
+    pay = by_name["pay"]
+    assert pay["unattributed"] and not pay["single_owner"]
+    assert not by_name["(khác)"]["single_owner"]  # too few commits to flag
+    assert body["totals"] == {
+        "modules": 6,
+        "single_owner": 2,
+        "unattributed": 1,
+        "orphaned": 1,
+        "shown": 6,
+    }
     assert body["orphan_after_days"] == 60
-    assert body["modules"][0]["single_owner"]  # flagged modules first
+    assert body["modules"][0]["single_owner"] or body["modules"][0]["unattributed"]
+    assert body["maps"][str(world.project.id)]["source"] == "auto"
     assert body["confidence"]["level"] == "ok"
 
 
@@ -115,16 +140,16 @@ def test_owner_names_follow_work_visibility(
     client: TestClient, world: World, seeded: None, as_user: Any
 ) -> None:
     lead = get(client, f"/api/v1/insights/knowledge?end={END}", as_user(world.lead))
-    core = next(m for m in lead["modules"] if m["module"] == "src/core")
+    core = next(m for m in lead["modules"] if m["name"] == "core")
     assert core["owners"][0]["name"] == "An"
     outsider = get(client, f"/api/v1/insights/knowledge?end={END}", as_user(world.outsider))
-    core = next(m for m in outsider["modules"] if m["module"] == "src/core")
+    core = next(m for m in outsider["modules"] if m["name"] == "core")
     assert core["owners"][0] == {
         "user_id": None,
         "name": "Một thành viên",
         "hidden": True,
         "mapped": None,
-        "share": 91.3,
+        "share": 62.3,
     }
     assert core["bus_factor"] == 1  # the risk itself is the team's to see
 
@@ -168,3 +193,76 @@ def test_partial_file_data_and_scope(
         "/api/v1/insights/knowledge?business_project_id=999999", headers=as_user(world.outsider)
     )
     assert hidden.status_code == 404
+
+
+def test_component_map_and_the_ai_grouping(
+    client: TestClient,
+    world: World,
+    seeded: None,
+    as_user: Any,
+    db_session: Session,
+    settings: Settings,
+    queue: Any,
+) -> None:
+    from app.models import AuditLog, RepoComponentMap
+    from app.review.providers import FakeLLMProvider
+    from app.workers.component_jobs import run_component_map
+    from app.workers.knowledge_jobs import month_spend_breakdown
+
+    pid = world.project.id
+    url = f"/api/v1/insights/components?project_id={pid}"
+    auto = get(client, url, as_user(world.lead))
+    assert auto["source"] == "auto" and auto["ai"] is None and auto["can_rebuild"] is False
+    by_name = {c["name"]: c for c in auto["components"]}
+    assert {"core", "web", "pay"} <= set(by_name)
+    assert by_name["core"]["files"] == 2003 and by_name["core"]["samples"]
+
+    rebuild = f"/api/v1/admin/insights/components/{pid}"
+    assert client.post(rebuild, headers=as_user(world.lead)).status_code == 403
+    assert client.post(rebuild, headers=as_user(world.admin)).status_code == 202
+    assert client.post(rebuild, headers=as_user(world.admin)).status_code == 409  # running
+    assert queue.jobs[-1][0] == "app.workers.component_jobs.component_map_job"
+
+    core_id, web_id = by_name["core"]["id"], by_name["web"]["id"]
+    answer = {
+        "groups": [
+            {
+                "name": "Lõi giao dịch",
+                "description": "Xử lý giao dịch và giao diện web",
+                "kind": "domain",
+                "members": [core_id, web_id, "invented::x"],
+            }
+        ],
+        "confidence": 0.7,
+    }
+    provider = FakeLLMProvider(lambda p: answer)
+    assert run_component_map(db_session, pid, provider, settings) == "done"
+    (prompt,) = provider.prompts
+    assert "src/core/a.py" in prompt.user and "x.class" not in prompt.user  # paths only, no noise
+
+    grouped = get(client, url, as_user(world.admin))
+    assert grouped["source"] == "llm" and grouped["ai"]["status"] == "done"
+    grouped_core = next(c for c in grouped["components"] if c["name"] == "Lõi giao dịch")
+    assert grouped_core["source"] == "llm" and set(grouped_core["parts"]) == {"core", "web"}
+    body = get(client, f"/api/v1/insights/knowledge?end={END}", as_user(world.admin))
+    names = {m["name"] for m in body["modules"]}
+    assert "Lõi giao dịch" in names and "core" not in names and "pay" in names
+    assert body["maps"][str(pid)]["source"] == "llm"
+    assert "insights.components.cost" in set(db_session.scalars(select(AuditLog.action)))
+    assert month_spend_breakdown(db_session, datetime.now(UTC))["component_maps_usd"] > 0
+
+    # Back to the automatic map.
+    assert client.delete(rebuild, headers=as_user(world.admin)).status_code == 204
+    assert db_session.get(RepoComponentMap, pid) is None
+    assert get(client, url, as_user(world.admin))["source"] == "auto"
+
+
+def test_the_ai_grouping_respects_the_external_llm_switch(
+    client: TestClient, world: World, seeded: None, as_user: Any, db_session: Session
+) -> None:
+    world.project.allow_external_llm = False
+    db_session.commit()
+    res = client.post(
+        f"/api/v1/admin/insights/components/{world.project.id}", headers=as_user(world.admin)
+    )
+    assert res.status_code == 409

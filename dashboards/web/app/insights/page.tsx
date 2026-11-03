@@ -20,6 +20,8 @@ import type {
   BackfillProgress,
   BackfillStatus,
   InsightsDora,
+  InsightComponents,
+  InsightModule,
   InsightsKnowledge,
   Me,
   InsightsMrs,
@@ -862,15 +864,16 @@ function LoadTab({ query, nav }: { query: Query; nav: SubNav }) {
   );
 }
 
-type KnowledgeSub = "flagged" | "all";
+type KnowledgeSub = "flagged" | "all" | "structure";
 
 function KnowledgeTab({ query, nav }: { query: Query; nav: SubNav }) {
   const { data, error, mutate } = useApi<InsightsKnowledge>(`/insights/knowledge${qs(query)}`, { keepPreviousData: true });
   if (!data) return <Pending error={error} retry={() => void mutate()} />;
-  const flagged = data.modules.filter((m) => m.single_owner || m.orphaned);
+  const flagged = data.modules.filter((m) => m.single_owner || m.orphaned || m.unattributed);
   const tabs: SubTab<KnowledgeSub>[] = [
-    { key: "flagged", label: "Có cảnh báo", count: flagged.length, hint: "Module một người nắm hoặc người nắm đã vắng" },
-    { key: "all", label: "Tất cả module", count: data.modules.length },
+    { key: "flagged", label: "Có cảnh báo", count: flagged.length, hint: "Thành phần một người nắm, người nắm đã vắng, hoặc account chưa gắn người" },
+    { key: "all", label: "Tất cả thành phần", count: data.modules.length },
+    { key: "structure", label: "Cấu trúc repo", hint: "Repo được chia thành những thành phần nào, tự động hoặc do AI gom theo nghiệp vụ" },
   ];
   const view = pickSub(nav, tabs, "flagged");
   const rows = view === "flagged" ? flagged : data.modules;
@@ -895,13 +898,16 @@ function KnowledgeTab({ query, nav }: { query: Query; nav: SubNav }) {
           <table>
             <thead>
               <tr>
-                <th>Module</th>
-                <th className="num" title={`Số người tối thiểu viết ≥ ${threshold}% thay đổi`}>
+                <th>Thành phần</th>
+                <th
+                  className="num"
+                  title={`Số người tối thiểu nắm ≥ ${threshold}% số lần chạm file (giảm một nửa sau mỗi ${data.half_life_days ?? 90} ngày; commit hàng loạt tính như một lần)`}
+                >
                   Bus factor
                 </th>
                 <th>Người nắm nhiều nhất</th>
                 <th className="num">Commit</th>
-                <th className="num">Dòng đổi</th>
+                <th className="num" title="Không tính commit hàng loạt (import, đổi tên, format)">Dòng đổi</th>
                 <th>Sửa gần nhất</th>
                 <th>Cảnh báo</th>
               </tr>
@@ -909,8 +915,13 @@ function KnowledgeTab({ query, nav }: { query: Query; nav: SubNav }) {
             <tbody>
               {rows.map((m) => (
                 <tr key={`${m.project_id}:${m.module}`}>
-                  <td>
-                    <code>{m.module}</code>
+                  <td style={{ whiteSpace: "normal", minWidth: 220 }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <strong>{m.name}</strong>
+                      {m.source === "llm" && <Pill tone="info">AI gom</Pill>}
+                      {KIND_LABEL[m.kind] && <Pill>{KIND_LABEL[m.kind]}</Pill>}
+                    </div>
+                    {m.description && <div className="small">{m.description}</div>}
                     <div className="small muted">{m.path_with_namespace}</div>
                   </td>
                   <td className="num">{m.bus_factor}</td>
@@ -925,7 +936,12 @@ function KnowledgeTab({ query, nav }: { query: Query; nav: SubNav }) {
                   <td className="num muted">{num(m.churn, 0)}</td>
                   <td className="nowrap muted">{date(m.last_change_at)}</td>
                   <td className="nowrap">
-                    {m.orphaned && <Pill tone="bad">Người nắm đã vắng</Pill>} {m.single_owner && <Pill tone="warn">Một người nắm</Pill>}
+                    {m.orphaned && <Pill tone="bad">Người nắm đã vắng</Pill>} {m.single_owner && <Pill tone="warn">Một người nắm</Pill>}{" "}
+                    {m.unattributed && (
+                      <span title="Người nắm nhiều nhất là account git chưa gắn với người nào: gắn account (Admin › Tài khoản chưa gắn người) trước khi kết luận">
+                        <Pill tone="info">Cần gắn account</Pill>
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -945,7 +961,7 @@ function KnowledgeTab({ query, nav }: { query: Query; nav: SubNav }) {
     <>
       <ConfidenceNote c={data.confidence} repoId={query.project_id} />
       <StatStrip label={`Module trong ${data.window_days} ngày qua`}>
-        <StripStat label="Module có thay đổi" value={data.totals.modules} sub={`${data.module_depth} cấp thư mục`} />
+        <StripStat label="Thành phần có thay đổi" value={data.totals.modules} sub="theo cấu trúc repo" />
         <StripStat
           label="Một người nắm"
           title={`Một người viết hơn ${threshold}% thay đổi, module có ≥ ${data.min_commits} commit`}
@@ -958,19 +974,191 @@ function KnowledgeTab({ query, nav }: { query: Query; nav: SubNav }) {
           value={data.totals.orphaned}
           tone={data.totals.orphaned ? "bad" : undefined}
         />
+        {!!data.totals.unattributed && (
+          <StripStat
+            label="Cần gắn account"
+            title="Người nắm nhiều nhất là account git chưa gắn người"
+            value={data.totals.unattributed}
+            tone="warn"
+          />
+        )}
       </StatStrip>
       <SubTabs id="ins-knowledge" label="Module hiển thị" variant="mini" tabs={tabs} value={view} onChange={nav.onSub} />
       <SubPanel id="ins-knowledge" tab={view}>
-        <Card
-          id="insights-modules"
-          title="Module"
-          subtitle="Rủi ro của team khi kiến thức tập trung ở một người, không phải thành tích hay lỗi của người đó"
-          flush
-        >
-          {body}
-        </Card>
+        {view === "structure" ? (
+          <RepoStructure repoId={query.project_id ? Number(query.project_id) : null} />
+        ) : (
+          <Card
+            id="insights-modules"
+            title="Thành phần"
+            subtitle="Rủi ro của team khi kiến thức tập trung ở một người, không phải thành tích hay lỗi của người đó"
+            flush
+          >
+            {body}
+          </Card>
+        )}
       </SubPanel>
     </>
+  );
+}
+
+const KIND_LABEL: Partial<Record<InsightModule["kind"], string>> = {
+  config: "Cấu hình & build",
+  docs: "Tài liệu",
+  platform: "Nền tảng",
+  integration: "Tích hợp",
+};
+
+/** §4.9b: what one repo is made of, as knowledge risk measures it; admins may have an AI group
+ * the automatic components by business (paths only, never source). */
+function RepoStructure({ repoId }: { repoId: number | null }) {
+  const { data, error, mutate } = useApi<InsightComponents>(repoId ? `/insights/components?project_id=${repoId}` : null, {
+    refreshInterval: (latest) => (latest?.ai && (latest.ai.status === "queued" || latest.ai.status === "running") ? 4000 : 0),
+  });
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  if (!repoId)
+    return (
+      <Card>
+        <EmptyState icon="folder" title="Chọn một repo">
+          Chọn repo ở bộ lọc phía trên để xem repo được chia thành những thành phần nào.
+        </EmptyState>
+      </Card>
+    );
+  if (!data) return <Pending error={error} retry={() => void mutate()} />;
+  const ai = data.ai;
+  const working = !!ai && (ai.status === "queued" || ai.status === "running");
+  const act = (method: "post" | "delete") => {
+    if (
+      method === "post" &&
+      !window.confirm(
+        "Nhờ AI gom các thành phần tự động thành thành phần nghiệp vụ? AI chỉ đọc đường dẫn file (không đọc mã nguồn) và hồ sơ dự án; tốn một ít ngân sách LLM.",
+      )
+    )
+      return;
+    setBusy(true);
+    setNote(null);
+    const call = method === "post" ? api.post(`/admin/insights/components/${repoId}`, {}) : api.delete(`/admin/insights/components/${repoId}`);
+    void call
+      .then(() => {
+        setNote(method === "post" ? "Đã xếp hàng; kết quả hiện ở đây sau ít phút." : "Đã quay về bản tự động.");
+        return mutate();
+      })
+      .catch((e: unknown) => setNote(`Lỗi: ${e instanceof ApiError ? e.message : String(e)}`))
+      .finally(() => setBusy(false));
+  };
+  const shown = data.components.filter((c) => c.kind !== "noise");
+  const noise = data.components.filter((c) => c.kind === "noise").reduce((n, c) => n + c.files, 0);
+  return (
+    <Card
+      title="Cấu trúc repo"
+      subtitle={`${data.path_with_namespace} · ${data.paths} file từng được sửa · ${data.source === "llm" ? "AI gom theo nghiệp vụ" : "tự nhận từ cấu trúc thư mục và tên file"}`}
+      actions={
+        data.can_rebuild || (ai && data.source === "llm") ? (
+          <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {data.can_rebuild && (
+              <button
+                type="button"
+                className="sm primary"
+                disabled={busy || working || !data.allow_external_llm}
+                title={data.allow_external_llm ? undefined : "Repo này không cho dùng LLM bên ngoài"}
+                onClick={() => act("post")}
+              >
+                {working ? "AI đang phân tích…" : data.source === "llm" ? "Phân tích lại bằng AI" : "Phân tích cấu trúc bằng AI"}
+              </button>
+            )}
+            {data.can_rebuild && data.source === "llm" && (
+              <button type="button" className="sm" disabled={busy || working} onClick={() => act("delete")}>
+                Về bản tự động
+              </button>
+            )}
+          </span>
+        ) : undefined
+      }
+      flush
+    >
+      <div style={{ display: "grid", gap: 6, padding: "10px 18px" }}>
+        {note && (
+          <span className="small" role="status">
+            {note}
+          </span>
+        )}
+        {ai && (
+          <span className="small" role="status" aria-live="polite">
+            {working ? (
+              <Pill tone="info">{ai.status === "queued" ? "Đang chờ AI" : "AI đang gom thành phần"}</Pill>
+            ) : ai.status === "failed" ? (
+              <>
+                <Pill tone="bad">AI chưa gom được</Pill> <span className="muted">{ai.error}</span>
+              </>
+            ) : (
+              <>
+                <Pill tone="good">AI đã gom</Pill>{" "}
+                <span className="muted">
+                  {ai.built_at ? dateTime(ai.built_at) : ""}
+                  {ai.confidence != null ? ` · độ tin cậy ${Math.round(ai.confidence * 100)}%` : ""}
+                  {data.unmapped_share ? ` · ${num(data.unmapped_share, 0)}% file AI để nguyên bản tự động` : ""}
+                </span>
+                {ai.stale && (
+                  <>
+                    {" "}
+                    <Pill tone="warn">Đã cũ: repo thêm nhiều file mới, nên phân tích lại</Pill>
+                  </>
+                )}
+              </>
+            )}
+          </span>
+        )}
+        {!ai && data.layered_roots.length > 0 && (
+          <span className="small muted">
+            Mã tổ chức theo tầng (controller/service/repository…) ở {data.layered_roots.length} module build: thành phần được suy ra từ tên
+            file (WalletController, WalletService → Wallet). AI có thể gom lại theo nghiệp vụ chính xác hơn.
+          </span>
+        )}
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Thành phần</th>
+              <th className="num">File</th>
+              <th>Gồm</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((c) => (
+              <tr key={c.id}>
+                <td style={{ whiteSpace: "normal", minWidth: 200 }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    <strong>{c.name}</strong>
+                    {c.source === "llm" && <Pill tone="info">AI gom</Pill>}
+                    {KIND_LABEL[c.kind] && <Pill>{KIND_LABEL[c.kind]}</Pill>}
+                  </div>
+                  {c.description && <div className="small">{c.description}</div>}
+                </td>
+                <td className="num">
+                  {c.files}
+                  {c.tests > 0 && <div className="small muted">{c.tests} test</div>}
+                </td>
+                <td style={{ whiteSpace: "normal" }}>
+                  {c.parts.length > 0 && <div className="small">{c.parts.join(", ")}</div>}
+                  {c.samples.slice(0, 3).map((s) => (
+                    <div key={s} className="small muted" style={{ wordBreak: "break-all" }}>
+                      <code>{s}</code>
+                    </div>
+                  ))}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {noise > 0 && (
+        <p className="small muted" style={{ margin: 0, padding: "8px 18px" }}>
+          Bỏ qua {noise} file mã sinh ra, thư viện hoặc lockfile (target/, node_modules/, *.lock…): không ai cần nắm chúng.
+        </p>
+      )}
+    </Card>
   );
 }
 

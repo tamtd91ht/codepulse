@@ -39,11 +39,11 @@ from app.insights.flow import (
 )
 from app.insights.load import (
     chunks,
+    component_resolvers,
     file_coverage,
     first_commits,
-    last_commits,
+    knowledge_modules,
     load_mrs,
-    module_rows,
 )
 from app.insights.review_load import author_of, review_load
 from app.models import (
@@ -54,6 +54,7 @@ from app.models import (
     MergeRequest,
     Pipeline,
     Project,
+    RepoComponentMap,
     User,
 )
 from app.scoring.aggregate import period_bounds, period_start_of
@@ -498,27 +499,19 @@ def insights_knowledge(
     lo = hi - timedelta(days=settings.knowledge_window_days)
     repos = _repos(session, principal, business_project_id, project_id)
     repo_ids = [r.id for r in repos]
-    totals, author_rows = module_rows(session, repo_ids, lo, hi, settings.knowledge_module_depth)
-    coverage = file_coverage(session, repo_ids, lo, hi)
-    authors = {r.author for r in author_rows}
-    inactive = {
-        int(uid)
-        for uid in session.scalars(
-            select(User.id).where(
-                User.id.in_({a.user_id for a in authors if a.user_id is not None}),
-                User.active.is_(False),
-            )
-        )
-    }
-    found = kn.modules(
-        totals,
-        author_rows,
+    resolvers = component_resolvers(session, repo_ids)
+    found = knowledge_modules(
+        session,
+        repo_ids,
+        lo,
+        hi,
         threshold=settings.knowledge_bus_threshold,
         min_commits=settings.knowledge_min_commits,
-        end=hi,
-        last_commit=last_commits(session, authors, hi),
-        inactive_users=inactive,
+        half_life_days=settings.knowledge_half_life_days,
+        bulk_files=settings.knowledge_bulk_files,
+        resolvers=resolvers,
     )
+    coverage = file_coverage(session, repo_ids, lo, hi)
     shown = found[:limit]
     names = Names.load(
         session, principal, [Responder(a.user_id) for m in shown for a, _share in m.owners]
@@ -558,6 +551,16 @@ def insights_knowledge(
         "window": [lo.isoformat(), hi.isoformat()],
         "window_days": settings.knowledge_window_days,
         "module_depth": settings.knowledge_module_depth,
+        "half_life_days": settings.knowledge_half_life_days,
+        "bulk_files": settings.knowledge_bulk_files,
+        "maps": {
+            str(pid): {
+                "source": "llm" if r.groups else "auto",
+                "components": sum(1 for c in r.auto.components.values() if c.kind != "noise"),
+                "layered": bool(r.auto.layered_roots),
+            }
+            for pid, r in resolvers.items()
+        },
         "bus_threshold": settings.knowledge_bus_threshold,
         "min_commits": settings.knowledge_min_commits,
         "data_as_of": as_of.isoformat() if as_of else None,
@@ -565,6 +568,7 @@ def insights_knowledge(
         "totals": {
             "modules": len(found),
             "single_owner": sum(1 for m in found if m.single_owner),
+            "unattributed": sum(1 for m in found if m.unattributed),
             "orphaned": sum(1 for m in found if m.orphaned),
             "shown": len(shown),
         },
@@ -585,6 +589,74 @@ def insights_knowledge(
             }
             for m in shown
         ],
+    }
+
+
+@router.get("/insights/components")
+def insights_components(
+    principal: CurrentPrincipal, session: SessionDep, project_id: int
+) -> dict[str, Any]:
+    """§4.9b: what a repo is made of, as knowledge risk measures it (the automatic map,
+    regrouped by the AI grouping when there is one), and the state of that grouping."""
+    from app.workers.component_jobs import running
+
+    repos = _repos(session, principal, None, project_id)
+    if not repos:
+        raise HTTPException(404, "repo not found")
+    repo = repos[0]
+    resolver = component_resolvers(session, [repo.id])[repo.id]
+    row = session.get(RepoComponentMap, repo.id)
+    shown: dict[str, dict[str, Any]] = {}
+    for comp in sorted(resolver.auto.components.values(), key=lambda c: -c.files):
+        place = resolver.of(comp.samples[0]) if comp.samples else None
+        if place is None:
+            continue
+        item = shown.setdefault(
+            place.id,
+            {
+                "id": place.id,
+                "name": place.name,
+                "description": place.description,
+                "kind": place.kind,
+                "source": place.source,
+                "files": 0,
+                "tests": 0,
+                "parts": [],
+                "samples": [],
+            },
+        )
+        item["files"] += comp.files
+        item["tests"] += comp.tests
+        if place.source == "llm":
+            item["parts"].append(comp.name)
+        item["samples"] += comp.samples[: max(0, 5 - len(item["samples"]))]
+    paths = sum(c.files for c in resolver.auto.components.values())
+    live = running(row)
+    stuck = row is not None and row.status in ("queued", "running") and not live
+    return {
+        "project_id": repo.id,
+        "path_with_namespace": repo.path_with_namespace,
+        "source": "llm" if resolver.groups else "auto",
+        "paths": paths,
+        "layered_roots": resolver.auto.layered_roots,
+        "unmapped_share": round(100 * resolver.unmapped_share(), 1),
+        "ai": None
+        if row is None
+        else {
+            "status": "failed" if stuck else row.status,
+            "error": "Phân tích dừng giữa chừng; thử lại." if stuck else row.error,
+            "built_at": row.built_at.isoformat() if row.built_at else None,
+            "requested_at": row.requested_at.isoformat() if row.requested_at else None,
+            "confidence": row.confidence,
+            "model": row.model if principal.is_admin else None,
+            # Paths new since the grouping: past 20 % it no longer describes the repo well.
+            "stale": bool(row.groups and row.paths_seen and paths > 1.2 * row.paths_seen),
+        },
+        "allow_external_llm": repo.allow_external_llm is not False,
+        "can_rebuild": principal.is_admin and not live,
+        "components": sorted(
+            shown.values(), key=lambda c: (c["kind"] in ("noise", "docs"), -c["files"])
+        ),
     }
 
 

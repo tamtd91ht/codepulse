@@ -174,6 +174,10 @@ class Settings(BaseSettings):
     knowledge_module_depth: int = Field(default=2, ge=1, le=6)
     knowledge_bus_threshold: float = Field(default=0.5, gt=0, le=1)
     knowledge_min_commits: int = Field(default=10, ge=1, le=10_000)
+    # §4.9b: knowledge fades (half-life) and bulk commits (imports, renames, formatting)
+    # past knowledge_bulk_files files weigh less the larger they are (bulk^2/n touches).
+    knowledge_half_life_days: int = Field(default=90, ge=7, le=3650)
+    knowledge_bulk_files: int = Field(default=100, ge=5, le=100_000)
     # Incidents (docs/specs/20 §5.3, D3): GitLab issues of type incident, or with one of
     # these labels.
     incident_labels: CommaList = ["incident"]

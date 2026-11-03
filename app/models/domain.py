@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
@@ -161,3 +162,24 @@ class InsightsBackfill(TimestampMixin, Base):
     queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RepoComponentMap(TimestampMixin, Base):
+    """The AI grouping of a repo's automatic components into business components
+    (docs/specs/20 §4.9b, app/insights/components.py), and the state of its last build."""
+
+    __tablename__ = "repo_component_maps"
+
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    status: Mapped[str]  # queued|running|done|failed
+    groups: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    confidence: Mapped[float | None]
+    paths_seen: Mapped[int | None]  # paths the map was built from
+    model: Mapped[str | None]
+    cost_usd: Mapped[float | None]
+    error: Mapped[str | None]
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

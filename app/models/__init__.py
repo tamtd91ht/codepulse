@@ -11,6 +11,7 @@ from app.models.domain import (
     MrCommit,
     MrNote,
     Pipeline,
+    RepoComponentMap,
 )
 from app.models.evidence import EvidenceItem, EvidencePack
 from app.models.identity import Account, Team, TeamMember, User
@@ -49,6 +50,7 @@ __all__ = [
     "Project",
     "ProjectGrant",
     "RawGitlab",
+    "RepoComponentMap",
     "Review",
     "ReviewFinding",
     "ReviewKnowledge",
