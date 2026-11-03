@@ -9,11 +9,12 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import ColumnElement, Select, and_, exists, func, or_, select
+from sqlalchemy import ColumnElement, Select, and_, exists, false, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.api.security import Principal
 from app.models import Account, Commit, MergeRequest, Project, ProjectGrant, Review, User
+from app.permissions.catalog import FLAG
 
 
 def reviews_in_projects(bp_ids: Iterable[int]) -> ColumnElement[bool]:
@@ -46,6 +47,97 @@ def review_scope(principal: Principal) -> ColumnElement[bool] | None:
     led = principal.lead_members - {principal.user_id}
     if viewed and led:
         allowed.append(and_(Review.author_user_id.in_(led), reviews_in_projects(viewed)))
+    return or_(*allowed)
+
+
+# -- docs/specs/21 phase B1: reviews, findings, closings and disputes on permissions ---------------
+
+# Permissions the built-in sets "Quản lý dự án" / "Quản lý tổng" hold at "project" / "all"
+# although, before spec 21, managing a dự án never decided a close request or a dispute nor
+# lowered a critical to low. Until those defaults are aligned, a scope wider than "team" reaches
+# no further than "team" for them, so every built-in set behaves exactly as before.
+TEAM_AT_MOST = frozenset(
+    {"finding.close_decide", "finding.lower_far", "dispute.decide", "dispute.ai_check"}
+)
+
+
+def covers_work(
+    principal: Principal, key: str, author_user_id: int | None, bp_id: int | None
+) -> bool:
+    """`Principal.covers` on a review, its findings or a commit in a repo of dự án `bp_id`:
+    one's own work wherever it is; anyone else's only in a dự án one sees (repos outside every
+    dự án are the admins', docs/specs/09)."""
+    if principal.is_admin:
+        return True
+    if author_user_id is None or author_user_id != principal.user_id:
+        if not principal.can_view_project(bp_id):
+            return False
+        if key in TEAM_AT_MOST:
+            # bp_id None: `covers` then stops at the team scope (the dự án is checked above).
+            return principal.covers(key, author_user_id, None)
+    return principal.covers(key, author_user_id, bp_id)
+
+
+def sees_work(principal: Principal, author_user_id: int | None, bp_id: int | None) -> bool:
+    """`review.view` on a review, its findings or a commit (was `Principal.can_see_work`)."""
+    return covers_work(principal, "review.view", author_user_id, bp_id)
+
+
+def may_request_review(principal: Principal, author_user_id: int | None, bp_id: int | None) -> bool:
+    """`review.request` on a commit / MR of a dự án one sees (was `Principal.may_review_work`):
+    one's own work; anyone else's, and work whose author is not mapped to a person, by the
+    dự án-wide scopes only (the permission has no "team" scope: leading a team gives no review
+    right)."""
+    if not principal.can_view_project(bp_id):
+        return False
+    if author_user_id is not None and author_user_id == principal.user_id:
+        return principal.can("review.request")
+    return principal.covers("review.request", None, bp_id)
+
+
+def may_rerun(principal: Principal, author_user_id: int | None, bp_id: int | None) -> bool:
+    """`review.rerun` (and "review again" from Yêu cầu review): it spends LLM budget, so it
+    stays with who manages the dự án, as before spec 21."""
+    return principal.can_manage_project(bp_id) and principal.covers(
+        "review.rerun", author_user_id, bp_id
+    )
+
+
+def team_reach(principal: Principal, key: str) -> set[int]:
+    """Other people whose work `key` covers through its "team" scope (or a wider one): those
+    one leads or manages. Admins: use `covers_work`, they reach everyone."""
+    if principal.scope(key) in (None, "own"):
+        return set()
+    return (principal.lead_members | principal.managed_members) - {principal.user_id}
+
+
+def whole_projects(principal: Principal, key: str) -> set[int] | None:
+    """Dự án in which `key` covers everyone's work: those one manages ("project"), every one
+    one sees ("all"). None: every dự án (admin)."""
+    if principal.is_admin:
+        return None
+    held = principal.scope(key)
+    if held == "project":
+        return principal.managed_projects() or set()
+    if held in ("all", FLAG):
+        return principal.visible_projects() or set()
+    return set()
+
+
+def work_scope(principal: Principal, key: str = "review.view") -> ColumnElement[bool] | None:
+    """`covers_work(key, …)` as a filter on `reviews`; None when nothing is hidden."""
+    if principal.is_admin:
+        return None
+    if principal.scope(key) is None:
+        return false()
+    allowed: list[ColumnElement[bool]] = [Review.author_user_id == principal.user_id]
+    whole = whole_projects(principal, key) or set()
+    if whole:
+        allowed.append(reviews_in_projects(whole))
+    viewed = (principal.visible_projects() or set()) - whole
+    people = team_reach(principal, key)
+    if viewed and people:
+        allowed.append(and_(Review.author_user_id.in_(people), reviews_in_projects(viewed)))
     return or_(*allowed)
 
 
@@ -142,14 +234,17 @@ def may_see_person(session: Session, principal: Principal, user_id: int) -> bool
 def reviewable_people(
     session: Session, principal: Principal, bp_ids: Iterable[int] | None, since: datetime
 ) -> list[User]:
-    """People whose work `principal` may ask a review for (`Principal.may_review_work`) in
+    """People whose work `principal` may ask a review for (`may_request_review`) in
     dự án `bp_ids` (None: every dự án), yourself first, then the most recently active.
 
     Not a manager there: only yourself. A manager: also everyone granted those dự án and every
     mapped author of a commit in their repos since `since` (who actually works there). Admin
     with no dự án given: every active person."""
     me = session.get(User, principal.user_id)
-    managed = principal.managed_projects()  # None = every dự án (admin)
+    if not principal.can("review.request"):
+        return []
+    # Where `review.request` covers everyone's work (`may_request_review`); None = every dự án.
+    managed = whole_projects(principal, "review.request")
     scope: set[int] | None
     if bp_ids is None:
         scope = managed

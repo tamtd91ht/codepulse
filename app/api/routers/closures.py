@@ -33,12 +33,12 @@ from sqlalchemy import ColumnElement, String, and_, cast, func, or_, select, tru
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
-from app.api.access import review_repo
+from app.api.access import covers_work, review_repo, sees_work, team_reach, whole_projects
 from app.api.audit import audit
 from app.api.deps import get_queue, get_session
 from app.api.routers.reviews import _visible_review
 from app.api.schemas import ORM
-from app.api.security import AdminPrincipal, CurrentPrincipal, Principal
+from app.api.security import Principal, require
 from app.config import Settings, get_settings
 from app.models import (
     BusinessProject,
@@ -48,7 +48,6 @@ from app.models import (
     Project,
     Review,
     ReviewFinding,
-    TeamMember,
     User,
 )
 from app.models.review import CLOSURE_OPEN
@@ -71,6 +70,10 @@ MAX_REQUESTS_PER_DAY = 20  # per author: each one may cost a check
 CHECK_STALE = timedelta(minutes=30)  # a check begun this long ago was lost (worker killed)
 QUEUE_STALE = timedelta(hours=3)  # "Chạy review" this long ago and never begun: job lost
 PAGE = 50
+ViewPrincipal = Annotated[Principal, require("review.view")]
+RequestPrincipal = Annotated[Principal, require("finding.close_request")]
+DeciderPrincipal = Annotated[Principal, require("finding.close_decide")]
+ManualPrincipal = Annotated[Principal, require("finding.close_manual")]
 
 
 def parse_commit(raw: str) -> str:
@@ -190,42 +193,20 @@ class ClosureOut(ORM):
 # -- who -------------------------------------------------------------------------------------------
 
 
-def _managed_members(session: Session, principal: Principal) -> set[int]:
-    """People whose requests this person decides: in a team they manage (sub-teams included)
-    today, counted as app/api/security.load_principal counts memberships, or that they lead
-    (the same people who decide disputes, user request 2026-11-03)."""
-    return (set(principal.lead_members) - {principal.user_id}) | _manager_members(
-        session, principal
-    )
+def _managed_members(principal: Principal) -> set[int]:
+    """People whose requests this person decides (`finding.close_decide`, docs/specs/21): in a
+    team they manage (sub-teams included) or lead (the same people who decide disputes, user
+    request 2026-11-03). Admins: everyone, see `_may_decide`."""
+    return team_reach(principal, "finding.close_decide")
 
 
-def _manager_members(session: Session, principal: Principal) -> set[int]:
-    """People in a team this person manages (role manager, sub-teams included) today."""
-    if not principal.managed_teams:
-        return set()
-    today = datetime.now(UTC).date()
-    return set(
-        session.scalars(
-            select(TeamMember.user_id).where(
-                TeamMember.team_id.in_(principal.managed_teams),
-                TeamMember.joined_at <= today,
-                or_(TeamMember.left_at.is_(None), TeamMember.left_at > today),
-            )
-        )
-    )
-
-
-def _may_decide(
-    principal: Principal, managed: set[int], author_id: int | None, bp_id: int | None
-) -> bool:
-    """An admin, or a manager or lead of a team the author is in who is granted the dự án
-    (docs/specs/09: one without a grant does not exist for them); never the author
-    themselves."""
+def _may_decide(principal: Principal, author_id: int | None, bp_id: int | None) -> bool:
+    """`finding.close_decide` over the author's work in a dự án one is granted (docs/specs/09:
+    one without a grant does not exist for them); never the author themselves (docs/specs/21
+    §3, whatever the permission sets)."""
     if author_id == principal.user_id:
         return False
-    if principal.is_admin:
-        return True
-    return author_id is not None and author_id in managed and principal.can_view_project(bp_id)
+    return covers_work(principal, "finding.close_decide", author_id, bp_id)
 
 
 def _finding(
@@ -310,19 +291,19 @@ def _owner(session: Session, closure: FindingClosure) -> tuple[int | None, int |
 
 def _decider(session: Session, principal: Principal, closure: FindingClosure) -> None:
     author, bp_id = _owner(session, closure)
-    if not _may_decide(principal, _managed_members(session, principal), author, bp_id):
+    if not _may_decide(principal, author, bp_id):
         raise HTTPException(
             403, "chỉ lead, manager của team tác giả hoặc admin được duyệt yêu cầu này"
         )
 
 
-def _lowers_far(session: Session, principal: Principal, author_id: int | None) -> bool:
-    """Who may lower a critical straight to low: a manager of the author's team or an admin
-    (a lead may lower it one step less: the team's own score is at stake)."""
+def _lowers_far(principal: Principal, author_id: int | None, bp_id: int | None) -> bool:
+    """`finding.lower_far`, lowering a critical straight to low: a manager of the author's team
+    or an admin (a lead may lower it one step less: the team's own score is at stake)."""
     return principal.is_admin or (
         author_id is not None
         and author_id != principal.user_id
-        and author_id in _manager_members(session, principal)
+        and covers_work(principal, "finding.lower_far", author_id, bp_id)
     )
 
 
@@ -391,7 +372,7 @@ def _settle(
 
 @router.post("/findings/{finding_id}/close-requests", response_model=ClosureOut, status_code=201)
 def request_close(
-    finding_id: int, body: CloseRequestIn, principal: CurrentPrincipal, session: SessionDep
+    finding_id: int, body: CloseRequestIn, principal: RequestPrincipal, session: SessionDep
 ) -> FindingClosure:
     finding, review = _finding(session, principal, finding_id)
     if review.author_user_id != principal.user_id:
@@ -440,7 +421,7 @@ def request_close(
 
 @router.post("/close-requests/{closure_id}/cancel", response_model=ClosureOut)
 def cancel_request(
-    closure_id: int, principal: CurrentPrincipal, session: SessionDep
+    closure_id: int, principal: RequestPrincipal, session: SessionDep
 ) -> FindingClosure:
     closure = _request(session, closure_id)
     if closure.requested_by != principal.user_id:
@@ -460,7 +441,7 @@ def cancel_request(
 @router.post("/close-requests/{closure_id}/run", response_model=ClosureOut, status_code=202)
 def run_request(
     closure_id: int,
-    principal: CurrentPrincipal,
+    principal: DeciderPrincipal,
     session: SessionDep,
     queue: Annotated[Any, Depends(get_queue)],
 ) -> FindingClosure:
@@ -520,7 +501,7 @@ def run_request(
 
 @router.post("/close-requests/{closure_id}/reject", response_model=ClosureOut)
 def reject_request(
-    closure_id: int, body: NoteIn, principal: CurrentPrincipal, session: SessionDep
+    closure_id: int, body: NoteIn, principal: DeciderPrincipal, session: SessionDep
 ) -> FindingClosure:
     closure = _request(session, closure_id)
     _decider(session, principal, closure)
@@ -545,7 +526,7 @@ def reject_request(
 @router.post("/close-requests/{closure_id}/confirm", response_model=ClosureOut)
 def confirm_proposal(
     closure_id: int,
-    principal: CurrentPrincipal,
+    principal: DeciderPrincipal,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     body: ConfirmIn | None = None,
@@ -559,8 +540,8 @@ def confirm_proposal(
     finding = session.get(ReviewFinding, closure.finding_id)
     if finding is None:
         raise HTTPException(404, "finding not found")
-    author, _bp = _owner(session, closure)
-    far = _lowers_far(session, principal, author)
+    author, bp_id = _owner(session, closure)
+    far = _lowers_far(principal, author, bp_id)
     outcome = body.outcome or _default_settle(finding.severity, closure.suggested_severity, far)
     _check_settle(finding, outcome, body.note, far)
     now = datetime.now(UTC)
@@ -597,7 +578,7 @@ def confirm_proposal(
 def close_by_admin(
     finding_id: int,
     body: AdminCloseIn,
-    principal: AdminPrincipal,
+    principal: ManualPrincipal,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> FindingClosure:
@@ -672,7 +653,7 @@ def close_by_admin(
 def reopen_by_admin(
     finding_id: int,
     body: NoteIn,
-    principal: AdminPrincipal,
+    principal: ManualPrincipal,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> FindingClosure:
@@ -723,7 +704,7 @@ def reopen_by_admin(
 
 @router.get("/reviews/{review_id}/closures", response_model=list[ClosureOut])
 def review_closures(
-    review_id: int, principal: CurrentPrincipal, session: SessionDep
+    review_id: int, principal: ViewPrincipal, session: SessionDep
 ) -> list[dict[str, Any]]:
     """Every closing of this review's findings, newest first."""
     review = _visible_review(session, principal, review_id)
@@ -741,13 +722,9 @@ def review_closures(
         for row in rows:
             session.refresh(row)
     project = review_repo(session, review)
-    decides = _may_decide(
-        principal,
-        _managed_members(session, principal),
-        review.author_user_id,
-        project.business_project_id if project else None,
-    )
-    far = decides and _lowers_far(session, principal, review.author_user_id)
+    bp_id = project.business_project_id if project else None
+    decides = _may_decide(principal, review.author_user_id, bp_id)
+    far = decides and _lowers_far(principal, review.author_user_id, bp_id)
     severity = {
         int(i): str(sev)
         for i, sev in session.execute(
@@ -779,20 +756,20 @@ def _repo_of_review() -> Any:
     return mr.union_all(commit).subquery("review_repo")
 
 
-def _visible(session: Session, principal: Principal, repo: Any) -> ColumnElement[bool]:
+def _visible(principal: Principal, repo: Any) -> ColumnElement[bool]:
     """Whose closings this person sees: everyone's (admin), their own work anywhere, every one in
-    a dự án they manage (project_grants "manage"), and that of the teams they manage in the dự án
-    they are granted (they decide those requests)."""
+    a dự án whose reviews they all see (`review.view` at "project": the dự án they manage), and
+    that of the people whose requests they decide, in the dự án they are granted."""
     if principal.is_admin:
         return true()
     seen: list[ColumnElement[bool]] = [Review.author_user_id == principal.user_id]
-    if managed_bps := principal.managed_projects() or set():
+    if managed_bps := whole_projects(principal, "review.view") or set():
         seen.append(
             repo.c.project_id.in_(
                 select(Project.id).where(Project.business_project_id.in_(managed_bps))
             )
         )
-    managed = _managed_members(session, principal)
+    managed = _managed_members(principal)
     granted = principal.visible_projects() or set()
     if managed and granted:
         in_granted = repo.c.project_id.in_(
@@ -821,7 +798,7 @@ def _after(cursor: str | None) -> int | None:
 
 @router.get("/close-requests")
 def list_closures(
-    principal: CurrentPrincipal,
+    principal: ViewPrincipal,
     session: SessionDep,
     view: Literal["todo", "history"] = "history",
     status: Annotated[list[str] | None, Query()] = None,
@@ -863,7 +840,7 @@ def list_closures(
         .outerjoin(author, author.id == Review.author_user_id)
         .outerjoin(requester, requester.id == FindingClosure.requested_by)
         .outerjoin(decider, decider.id == FindingClosure.decided_by)
-        .where(_visible(session, principal, repo))
+        .where(_visible(principal, repo))
     )
     if view == "todo":
         query = query.where(
@@ -872,7 +849,7 @@ def list_closures(
             Review.author_user_id != principal.user_id,
         )
         if not principal.is_admin:
-            query = query.where(Review.author_user_id.in_(_managed_members(session, principal)))
+            query = query.where(Review.author_user_id.in_(_managed_members(principal)))
     if status:
         query = query.where(FindingClosure.status.in_(status))
     if kind:
@@ -903,19 +880,13 @@ def list_closures(
     if (after := _after(cursor)) is not None:
         query = query.where(FindingClosure.id < after)
     rows = session.execute(query.order_by(FindingClosure.id.desc()).limit(PAGE + 1)).tuples().all()
-    managed = _managed_members(session, principal)
-    managers = _manager_members(session, principal)
     items = []
     for closure, finding, review, project, bp, who, asker, judge in rows[:PAGE]:
+        bp_id = project.business_project_id if project else None
         decides = (
             closure.kind == "request"
             and closure.status in TO_DECIDE
-            and _may_decide(
-                principal,
-                managed,
-                review.author_user_id,
-                project.business_project_id if project else None,
-            )
+            and _may_decide(principal, review.author_user_id, bp_id)
         )
         items.append(
             {
@@ -941,14 +912,11 @@ def list_closures(
                 "requested_by_name": (asker.full_name or asker.primary_email) if asker else None,
                 "decided_by_name": (judge.full_name or judge.primary_email) if judge else None,
                 "can_decide": decides,
-                "can_lower_far": decides
-                and (principal.is_admin or review.author_user_id in managers),
+                "can_lower_far": decides and _lowers_far(principal, review.author_user_id, bp_id),
                 "finding_severity": finding.severity,
                 "can_cancel": closure.status == "pending"
                 and closure.requested_by == principal.user_id,
-                "can_open_review": principal.can_see_work(
-                    review.author_user_id, project.business_project_id if project else None
-                ),
+                "can_open_review": sees_work(principal, review.author_user_id, bp_id),
             }
         )
     return {
@@ -958,7 +926,7 @@ def list_closures(
 
 
 @router.get("/close-requests/facets")
-def closure_facets(principal: CurrentPrincipal, session: SessionDep) -> dict[str, Any]:
+def closure_facets(principal: ViewPrincipal, session: SessionDep) -> dict[str, Any]:
     """The filter choices of the page (only what this person may see) and the to-do count."""
     _sweep(session)
     session.commit()
@@ -968,7 +936,7 @@ def closure_facets(principal: CurrentPrincipal, session: SessionDep) -> dict[str
         .join(ReviewFinding, ReviewFinding.id == FindingClosure.finding_id)
         .join(Review, Review.id == ReviewFinding.review_id)
         .outerjoin(repo, repo.c.review_id == Review.id)
-        .where(_visible(session, principal, repo))
+        .where(_visible(principal, repo))
     )
     authors = session.execute(
         select(User.id, User.full_name, User.primary_email)
@@ -981,7 +949,7 @@ def closure_facets(principal: CurrentPrincipal, session: SessionDep) -> dict[str
         .where(Project.id.in_(base.with_only_columns(repo.c.project_id)))
         .order_by(Project.path_with_namespace)
     ).all()
-    managed = _managed_members(session, principal)
+    managed = _managed_members(principal)
     todo = select(func.count()).select_from(
         base.where(
             FindingClosure.kind == "request",

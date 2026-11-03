@@ -12,7 +12,15 @@ from sqlalchemy import cast as sql_cast
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.access import require_manage, review_repo, review_scope, reviewable_people
+from app.api.access import (
+    covers_work,
+    may_rerun,
+    review_repo,
+    reviewable_people,
+    sees_work,
+    whole_projects,
+    work_scope,
+)
 from app.api.audit import audit
 from app.api.deps import get_queue, get_session
 from app.api.schemas import (
@@ -37,7 +45,7 @@ from app.api.schemas import (
     encode_cursor,
     encode_cursor_text,
 )
-from app.api.security import CurrentPrincipal, Principal
+from app.api.security import Principal, require
 from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.identity.attribution import Attribution, attribute_reviews, rebuild_after_commit
@@ -69,15 +77,22 @@ ReviewMode = Literal["fast", "deep"]
 MODES: dict[str, tuple[str, ...]] = {"fast": ("fast",), "deep": ("agent", "deep")}
 
 
+ViewPrincipal = Annotated[Principal, require("review.view")]
+RerunPrincipal = Annotated[Principal, require("review.rerun")]
+AuthorPrincipal = Annotated[Principal, require("review.author")]
+
+
 def scoped[Q: Select[Any] | Select[Any, Any, Any]](query: Q, principal: Principal) -> Q:
-    allowed = review_scope(principal)
+    allowed = work_scope(principal, "review.view")
     return query if allowed is None else cast(Q, query.where(allowed))
 
 
 def _may_filter_by(principal: Principal, user_id: int) -> bool:
-    """A person filter: someone you see everywhere, or anyone when you manage a dự án (the
-    scope then keeps the reviews of the dự án you manage)."""
-    return principal.can_see_user(user_id) or bool(principal.managed_projects())
+    """A person filter: someone whose work `review.view` covers everywhere, or anyone when it
+    covers a whole dự án (the scope then keeps the reviews of that dự án)."""
+    return principal.covers("review.view", user_id, None) or bool(
+        whole_projects(principal, "review.view")
+    )
 
 
 def _encode_changed_cursor(changed_at: datetime, review_id: int) -> str:
@@ -175,7 +190,7 @@ def _filtered(
 
 @router.get("/reviews", response_model=Page[ReviewListItem])
 def list_reviews(
-    principal: CurrentPrincipal,
+    principal: ViewPrincipal,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     user_id: int | None = None,
@@ -249,7 +264,7 @@ def list_reviews(
             _account_out(
                 account,
                 linked.get(account.user_id) if account.user_id else None,
-                principal.can_manage_project(project.business_project_id if project else None),
+                _may_link(principal, project.business_project_id if project else None),
             )
             if account is not None
             else None
@@ -266,7 +281,7 @@ def list_reviews(
                 if review.changed_at == CHANGE_TIME_UNKNOWN
                 else review.changed_at,
                 "can_rerun": _can_rerun(session, review, project)
-                and principal.can_manage_project(project.business_project_id if project else None),
+                and _reruns(principal, review, project),
             }
         )
     next_cursor = (
@@ -277,7 +292,7 @@ def list_reviews(
 
 @router.get("/reviews/rerunnable", response_model=RerunnableOut)
 def rerunnable_reviews(
-    principal: CurrentPrincipal,
+    principal: RerunPrincipal,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     user_id: int | None = None,
@@ -310,7 +325,7 @@ def rerunnable_reviews(
     if user_id is not None and user_id != principal.user_id:
         audit(session, principal.user_id, "reviews.read", f"user:{user_id}")
         session.commit()
-    managed = principal.managed_projects()
+    managed = principal.managed_projects()  # `may_rerun`: within the dự án one manages
     if managed is not None and not managed:
         return {"ids": [], "done": 0, "truncated": False}
     # _can_rerun and the manage check in SQL, so the scan stops after RERUNNABLE_MAX + 1 rows.
@@ -339,10 +354,7 @@ def rerunnable_reviews(
     truncated = False
     for review in rows:
         project = review_repo(session, review)
-        if not (
-            _can_rerun(session, review, project)
-            and principal.can_manage_project(project.business_project_id if project else None)
-        ):
+        if not (_can_rerun(session, review, project) and _reruns(principal, review, project)):
             continue
         if len(ids) == RERUNNABLE_MAX:
             truncated = True
@@ -358,7 +370,7 @@ def _visible_review(session: Session, principal: Principal, review_id: int) -> R
         raise HTTPException(404, "review not found")
     project = review_repo(session, review)
     bp_id = project.business_project_id if project else None
-    if not principal.can_see_work(review.author_user_id, bp_id):
+    if not sees_work(principal, review.author_user_id, bp_id):
         # A dự án you are not granted does not exist for you (docs/specs/09).
         if not principal.can_view_project(bp_id):
             raise HTTPException(404, "review not found")
@@ -367,7 +379,7 @@ def _visible_review(session: Session, principal: Principal, review_id: int) -> R
 
 
 @router.get("/reviews/{review_id}", response_model=ReviewDetail)
-def get_review(review_id: int, principal: CurrentPrincipal, session: SessionDep) -> dict[str, Any]:
+def get_review(review_id: int, principal: ViewPrincipal, session: SessionDep) -> dict[str, Any]:
     review = _visible_review(session, principal, review_id)
     findings = list(
         session.scalars(
@@ -386,8 +398,7 @@ def get_review(review_id: int, principal: CurrentPrincipal, session: SessionDep)
         "project": project.path_with_namespace if project else None,
         "web_url": url,
         "history": _history(session, review),
-        "can_rerun": _can_rerun(session, review, project)
-        and principal.can_manage_project(project.business_project_id if project else None),
+        "can_rerun": _can_rerun(session, review, project) and _reruns(principal, review, project),
     }
 
 
@@ -419,6 +430,18 @@ def _history(session: Session, review: Review) -> list[dict[str, Any]]:
     ]
 
 
+def _reruns(principal: Principal, review: Review, project: Project | None) -> bool:
+    return may_rerun(
+        principal, review.author_user_id, project.business_project_id if project else None
+    )
+
+
+def _may_link(principal: Principal, bp_id: int | None) -> bool:
+    """`review.author`: tying the author of a change to a person is about the dự án, not
+    about anyone's work."""
+    return covers_work(principal, "review.author", None, bp_id)
+
+
 def _can_rerun(session: Session, review: Review, project: Project | None) -> bool:
     """A finished commit review may always run again; an MR review only while the MR is open
     and this review is of its current head (older heads are history). Never on a repo whose
@@ -438,7 +461,7 @@ def _can_rerun(session: Session, review: Review, project: Project | None) -> boo
 @router.post("/reviews/{review_id}/rerun", status_code=202)
 def rerun_review(
     review_id: int,
-    principal: CurrentPrincipal,
+    principal: RerunPrincipal,
     session: SessionDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
     body: RerunIn | None = None,
@@ -463,7 +486,7 @@ def rerun_review(
 @router.post("/reviews/rerun", status_code=202, response_model=RerunManyOut)
 def rerun_reviews(
     body: RerunManyIn,
-    principal: CurrentPrincipal,
+    principal: RerunPrincipal,
     session: SessionDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> dict[str, Any]:
@@ -503,7 +526,8 @@ def _queue_rerun(
     """Checks and enqueues one re-run (HTTPException when it may not run); the caller commits.
     Nothing is changed before every check passed, so a refused one leaves the review as it was."""
     repo = review_repo(session, review)
-    require_manage(principal, repo.business_project_id if repo else None)
+    if not _reruns(principal, review, repo):
+        raise HTTPException(403, "only a manager of this dự án or an admin can do this")
     if review.status not in ("failed", "skipped") and not (force and review.status == "done"):
         raise HTTPException(
             409, f"review is {review.status}; only failed or skipped can be re-run (force for done)"
@@ -585,7 +609,7 @@ def _queue_rerun(
 
 @router.get("/findings", response_model=Page[BoardFindingOut])
 def list_findings(
-    principal: CurrentPrincipal,
+    principal: ViewPrincipal,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     severity: Annotated[list[str] | None, Query()] = None,
@@ -743,7 +767,7 @@ def _review_author(
     review = _visible_review(session, principal, review_id)
     project = review_repo(session, review)
     bp_id = project.business_project_id if project else None
-    if not principal.can_manage_project(bp_id):
+    if not _may_link(principal, bp_id):
         raise HTTPException(403, "only a manager of this dự án or an admin can link authors")
     account_id = _author_account_ids(session, [review]).get(review.id)
     account = session.get(Account, account_id) if account_id else None
@@ -780,7 +804,7 @@ def _pending_reviews(session: Session, account_id: int) -> int:
 
 @router.get("/reviews/{review_id}/author", response_model=ReviewAuthorOut)
 def review_author(
-    review_id: int, principal: CurrentPrincipal, session: SessionDep
+    review_id: int, principal: AuthorPrincipal, session: SessionDep
 ) -> ReviewAuthorOut:
     """The "Gắn" form of a review without a person: its author, who it may go to."""
     _, bp_id, account = _review_author(session, principal, review_id)
@@ -800,7 +824,7 @@ def review_author(
 def link_review_author(
     review_id: int,
     body: ReviewAuthorLink,
-    principal: CurrentPrincipal,
+    principal: AuthorPrincipal,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     queue: Annotated[Enqueuer, Depends(get_queue)],

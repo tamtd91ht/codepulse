@@ -8,11 +8,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy import ColumnElement, and_, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.access import review_repo, review_scope, reviews_in_projects
+from app.api.access import (
+    review_repo,
+    reviews_in_projects,
+    sees_work,
+    team_reach,
+    whole_projects,
+    work_scope,
+)
 from app.api.audit import audit
 from app.api.deps import get_queue, get_session
 from app.api.schemas import ORM
-from app.api.security import CurrentPrincipal, Principal
+from app.api.security import Principal, require
 from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.models import FindingClosure, FindingDispute, Review, ReviewFinding, User
@@ -23,6 +30,10 @@ from app.workers.dispute_jobs import running as ai_running
 
 router = APIRouter(tags=["disputes"])
 SessionDep = Annotated[Session, Depends(get_session)]
+RaisePrincipal = Annotated[Principal, require("dispute.raise")]
+ViewPrincipal = Annotated[Principal, require("review.view")]
+DecidePrincipal = Annotated[Principal, require("dispute.decide")]
+AiCheckPrincipal = Annotated[Principal, require("dispute.ai_check")]
 
 
 class DisputeIn(BaseModel):
@@ -72,18 +83,19 @@ def _review_of(session: Session, finding: ReviewFinding) -> Review:
 
 
 def _sees(session: Session, principal: Principal, dispute: FindingDispute) -> bool:
-    """A lead sees a member's dispute only in a dự án they are granted (docs/specs/09)."""
+    """`review.view` on the disputed work: a lead sees a member's dispute only in a dự án
+    they are granted (docs/specs/09)."""
     if principal.is_admin or dispute.raised_by == principal.user_id:
         return True
     finding = session.get(ReviewFinding, dispute.finding_id) if dispute.finding_id else None
     review = session.get(Review, finding.review_id) if finding and finding.review_id else None
     repo = review_repo(session, review) if review else None
-    return principal.can_see_work(dispute.raised_by, repo.business_project_id if repo else None)
+    return sees_work(principal, dispute.raised_by, repo.business_project_id if repo else None)
 
 
 @router.post("/findings/{finding_id}/dispute", response_model=DisputeOut, status_code=201)
 def raise_dispute(
-    finding_id: int, body: DisputeIn, principal: CurrentPrincipal, session: SessionDep
+    finding_id: int, body: DisputeIn, principal: RaisePrincipal, session: SessionDep
 ) -> FindingDispute:
     finding = session.get(ReviewFinding, finding_id)
     if finding is None:
@@ -109,7 +121,7 @@ def raise_dispute(
 
 @router.get("/disputes", response_model=list[DisputeListItem])
 def list_disputes(
-    principal: CurrentPrincipal,
+    principal: ViewPrincipal,
     session: SessionDep,
     pending: bool = True,
     user_id: int | None = None,
@@ -121,14 +133,14 @@ def list_disputes(
         query = query.where(FindingDispute.decision.is_(None))
     if user_id is not None:
         query = query.where(FindingDispute.raised_by == user_id)
-    # In SQL, before the limit: your own; those of the people you lead on reviews of dự án you
-    # see; every one in a dự án you manage.
-    if (allowed := review_scope(principal)) is not None:
-        visible = principal.visible_users() or set()
-        managed = principal.managed_projects() or set()
+    # In SQL, before the limit (`review.view`): your own; those of the people you lead on
+    # reviews of dự án you see; every one in a dự án you manage.
+    if (allowed := work_scope(principal, "review.view")) is not None:
+        people = team_reach(principal, "review.view")
+        managed = whole_projects(principal, "review.view") or set()
         seen: list[ColumnElement[bool]] = [
             FindingDispute.raised_by == principal.user_id,
-            and_(FindingDispute.raised_by.in_(visible), allowed),
+            and_(FindingDispute.raised_by.in_(people), allowed),
         ]
         if managed:
             seen.append(reviews_in_projects(managed))
@@ -165,19 +177,20 @@ def _item(session: Session, principal: Principal, dispute: FindingDispute) -> di
     }
 
 
-def _decider(principal: Principal, dispute: FindingDispute) -> bool:
-    """Who may decide a dispute (and so ask the AI about it): the developer's lead or an
-    admin, never the person who raised it."""
+def _decider(principal: Principal, dispute: FindingDispute, key: str) -> bool:
+    """Who holds `key` (`dispute.decide`, `dispute.ai_check`) over the developer's work: their
+    lead or an admin, never the person who raised it (docs/specs/21 §3). The dự án is checked
+    by `_sees`; no dự án here also keeps a wider scope at "team" (app/api/access.TEAM_AT_MOST)."""
     return (
         dispute.raised_by is not None
         and dispute.raised_by != principal.user_id
-        and (principal.is_admin or dispute.raised_by in principal.lead_members)
+        and principal.covers(key, dispute.raised_by, None)
     )
 
 
 def _ai_view(principal: Principal, dispute: FindingDispute) -> dict[str, Any]:
-    """The AI second look, for who may decide only (the developer does not see it)."""
-    if not _decider(principal, dispute):
+    """The AI second look, for who may ask for it only (the developer does not see it)."""
+    if not _decider(principal, dispute, "dispute.ai_check"):
         return {}
     live = ai_running(dispute)
     stuck = dispute.ai_status in ("queued", "running") and not live
@@ -199,7 +212,7 @@ def _ai_view(principal: Principal, dispute: FindingDispute) -> dict[str, Any]:
 @router.post("/disputes/{dispute_id}/ai-check", response_model=DisputeListItem, status_code=202)
 def ai_check(
     dispute_id: int,
-    principal: CurrentPrincipal,
+    principal: AiCheckPrincipal,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
     queue: Annotated[Enqueuer, Depends(get_queue)],
@@ -214,7 +227,9 @@ def ai_check(
     ).first()
     if dispute is None:
         raise HTTPException(404, "dispute not found")
-    if not _decider(principal, dispute) or not _sees(session, principal, dispute):
+    if not _decider(principal, dispute, "dispute.ai_check") or not _sees(
+        session, principal, dispute
+    ):
         raise HTTPException(403, "only the developer's lead or an admin can ask for it")
     if dispute.decision is not None:
         raise HTTPException(409, "dispute already decided")
@@ -260,7 +275,7 @@ def ai_check(
 def decide(
     dispute_id: int,
     body: DecisionIn,
-    principal: CurrentPrincipal,
+    principal: DecidePrincipal,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> FindingDispute:
@@ -271,9 +286,7 @@ def decide(
         raise HTTPException(409, "dispute already decided")
     if dispute.raised_by == principal.user_id:
         raise HTTPException(403, "you cannot decide your own dispute")
-    if dispute.raised_by is None or not (
-        principal.is_admin or dispute.raised_by in principal.lead_members
-    ):
+    if not _decider(principal, dispute, "dispute.decide"):
         raise HTTPException(403, "only the developer's lead or an admin can decide")
     if not _sees(session, principal, dispute):
         raise HTTPException(403, "this dispute is in a dự án you are not granted")
