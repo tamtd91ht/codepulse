@@ -118,6 +118,39 @@ def _guard_self(principal: Principal, user_id: int, what: str) -> None:
         raise HTTPException(403, f"you cannot change your own {what}")
 
 
+def _privileged(session: Session, settings: Settings, user: User) -> bool:
+    """An admin, a Quản lý tổng, or a holder of an admin.* permission by a set given to them:
+    a delegated admin right (docs/specs/21 §3) must not act on such a person."""
+    if _is_admin_email(user.primary_email, settings) or user.manage_all:
+        return True
+    from app.models import PermissionSetItem, UserPermissionSet
+
+    return bool(
+        session.scalar(
+            select(PermissionSetItem.permission)
+            .join(UserPermissionSet, UserPermissionSet.set_id == PermissionSetItem.set_id)
+            .where(
+                UserPermissionSet.user_id == user.id,
+                PermissionSetItem.permission.like("admin.%"),
+            )
+            .limit(1)
+        )
+    )
+
+
+def _guard_delegated(
+    session: Session, principal: Principal, settings: Settings, user: User, what: str
+) -> None:
+    """docs/specs/21 §3: a non-admin holding an admin.* permission changes neither their own
+    rights nor those of anyone holding power (an admin, a Quản lý tổng, another delegated
+    admin): otherwise a delegated right could reach above itself."""
+    if principal.is_admin:
+        return
+    _guard_self(principal, user.id, what)
+    if _privileged(session, settings, user):
+        raise HTTPException(403, f"chỉ admin đổi được {what} của người này")
+
+
 def _keeps_an_admin(session: Session, settings: Settings, leaving: int) -> bool:
     """docs/specs/21 §3 rule 5: at least one active admin must remain once `leaving` is no
     longer one (deactivated, re-emailed or removed)."""
@@ -370,7 +403,11 @@ def list_grants(bp_id: int, principal: ProjectsAdmin, session: SessionDep) -> li
 
 @router.put("/business-projects/{bp_id}/grants", response_model=list[ProjectGrantOut])
 def set_grants(
-    bp_id: int, body: ProjectGrantsIn, principal: ProjectsAdmin, session: SessionDep
+    bp_id: int,
+    body: ProjectGrantsIn,
+    principal: ProjectsAdmin,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> list[ProjectGrantOut]:
     """Replace the whole list: people left out lose access, the rest get the role given."""
     # The row lock serialises two admins saving the same dự án (no duplicate-key 500).
@@ -390,6 +427,27 @@ def set_grants(
         known = set(session.scalars(select(User.id).where(User.id.in_(wanted))))
         if missing := sorted(set(wanted) - known):
             raise HTTPException(422, f"unknown user ids: {missing[:20]}")
+    current_roles = {
+        g.user_id: g.role
+        for g in session.scalars(
+            select(ProjectGrant).where(ProjectGrant.business_project_id == bp.id)
+        )
+    }
+    if not principal.is_admin:
+        touched = {
+            uid
+            for uid in set(wanted) | set(current_roles)
+            if wanted.get(uid) != current_roles.get(uid)
+        }
+        # "manage" gives the Quản lý dự án set: only one who manages this dự án hands it out.
+        if any(wanted.get(uid) == "manage" for uid in touched) and not principal.can_manage_project(
+            bp.id
+        ):
+            raise HTTPException(403, "chỉ người quản lý dự án này cấp được quyền manage")
+        for uid in sorted(touched):
+            person = session.get(User, uid)
+            if person is not None:
+                _guard_delegated(session, principal, settings, person, "quyền dự án")
     current = {
         g.user_id: g
         for g in session.scalars(
@@ -440,6 +498,17 @@ def assign_repos(body: RepoAssignment, principal: ProjectsAdmin, session: Sessio
     """Put repos into a dự án (or take them out with business_project_id=null)."""
     if body.business_project_id is not None:
         _get(session, BusinessProject, body.business_project_id, "dự án")
+    if not principal.is_admin:
+        # A repo's dự án decides who sees its work: a delegated admin.projects must not move
+        # repos into, or out of, a dự án they hold a grant on (docs/specs/21 §3).
+        mine = set(principal.project_roles)
+        sources = set(
+            session.scalars(
+                select(Project.business_project_id).where(Project.id.in_(body.project_ids))
+            )
+        )
+        if body.business_project_id in mine or any(bp in mine for bp in sources):
+            raise HTTPException(403, "không chuyển repo vào hay ra dự án mình có quyền")
     session.execute(
         update(Project)
         .where(Project.id.in_(body.project_ids))
@@ -1018,9 +1087,17 @@ def update_user(
 ) -> AdminUserOut:
     user = _get(session, User, user_id, "user")
     _guard_admin_target(principal, user, settings)
+    if (
+        not principal.is_admin
+        and user.id != principal.user_id
+        and _privileged(session, settings, user)
+    ):
+        raise HTTPException(403, "chỉ admin sửa được người này")
     changes = body.model_dump(exclude_none=True)
-    if "manage_all" in changes and changes["manage_all"] != bool(user.manage_all):
-        _guard_self(principal, user.id, "manage_all")
+    # Quản lý tổng holds what no delegated right may hand out (docs/specs/21 §3).
+    moves_manage_all = "manage_all" in changes and changes["manage_all"] != bool(user.manage_all)
+    if moves_manage_all and not principal.is_admin:
+        raise HTTPException(403, "chỉ admin cấp hoặc thu Quản lý tổng")
     if "full_name" in changes:
         changes["full_name"] = changes["full_name"].strip()
     if "primary_email" in changes:
@@ -1262,6 +1339,11 @@ def list_teams(principal: PeopleAdmin, session: SessionDep) -> list[Team]:
 def create_team(body: TeamIn, principal: PeopleAdmin, session: SessionDep) -> Team:
     if body.parent_id is not None:
         _get(session, Team, body.parent_id, "parent team")
+        # A sub-team of a team one manages widens one's reach (docs/specs/21 §3).
+        if not principal.is_admin and body.parent_id in (
+            principal.lead_teams | principal.managed_teams | principal.own_teams
+        ):
+            raise HTTPException(403, "không tạo team con trong team của chính mình")
     team = Team(name=body.name, parent_id=body.parent_id)
     session.add(team)
     try:
@@ -1298,11 +1380,22 @@ def list_members(team_id: int, principal: PeopleAdmin, session: SessionDep) -> l
 
 
 @router.put("/teams/{team_id}/members", status_code=204)
-def set_member(team_id: int, body: MemberIn, principal: PeopleAdmin, session: SessionDep) -> None:
+def set_member(
+    team_id: int,
+    body: MemberIn,
+    principal: PeopleAdmin,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> None:
     _get(session, Team, team_id, "team")
-    _get(session, User, body.user_id, "user")
-    # A team role decides the Lead / Manager sets: never by one's own hand (docs/specs/21 §3).
+    person = _get(session, User, body.user_id, "user")
+    # A team role decides the Lead / Manager sets and who a lead sees: a delegated admin.people
+    # changes neither their own teams nor anyone holding power (docs/specs/21 §3).
     _guard_self(principal, body.user_id, "team membership")
+    if not principal.is_admin:
+        if team_id in principal.lead_teams | principal.managed_teams | principal.own_teams:
+            raise HTTPException(403, "không đổi thành viên team của chính mình")
+        _guard_delegated(session, principal, settings, person, "team")
     member = session.get(TeamMember, (team_id, body.user_id, body.joined_at))
     if member is None:
         member = TeamMember(team_id=team_id, user_id=body.user_id, joined_at=body.joined_at)
@@ -1335,11 +1428,17 @@ def link_account(
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> AccountLinked:
     account = _get(session, Account, account_id, "account")
-    # An account acts as its person (sign-in, Telegram): a non-admin must not move one onto or
-    # off an admin (docs/specs/21 §3).
-    for owner_id in (account.user_id, body.user_id):
-        if owner_id is not None:
-            _guard_admin_target(principal, _get(session, User, owner_id, "user"), settings)
+    # An account acts as its person (sign-in, Telegram): a GitLab sign-in account would log its
+    # new owner in as that person, so only admins move one; other accounts never onto or off
+    # oneself or anyone holding power (docs/specs/21 §3).
+    if not principal.is_admin:
+        if account.kind == "gitlab_user":
+            raise HTTPException(403, "chỉ admin gắn lại tài khoản đăng nhập GitLab")
+        for owner_id in (account.user_id, body.user_id):
+            if owner_id is not None:
+                owner = _get(session, User, owner_id, "user")
+                _guard_admin_target(principal, owner, settings)
+                _guard_delegated(session, principal, settings, owner, "tài khoản")
     account.user_id = body.user_id
     session.flush()
     # Unlinking never touches reviews: they keep the person they were counted for.

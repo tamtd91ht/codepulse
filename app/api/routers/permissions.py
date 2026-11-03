@@ -494,6 +494,8 @@ def delete_permission_set(
     row = _get_set(session, set_id)
     if row.builtin or row.auto_role is not None:
         raise HTTPException(409, "bộ có sẵn không xoá được")
+    # Taking rights away is handing them out the other way: only within what one holds.
+    _within_own(principal, _items(session, row.id))
     given = sorted(_given(session, row.id))
     audit(
         session,
@@ -534,6 +536,9 @@ def set_permission_set_users(
                 raise HTTPException(403, "không tự gán bộ quyền cho mình")
             _within_own(principal, items)
         _confirm_sensitive(items, body.confirm_sensitive)
+    if removed and not principal.is_admin:
+        # Taking a set away is handing rights out the other way: only within what one holds.
+        _within_own(principal, items)
     if removed:
         session.execute(
             delete(UserPermissionSet).where(

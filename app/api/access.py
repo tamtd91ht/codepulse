@@ -87,7 +87,8 @@ def may_request_review(principal: Principal, author_user_id: int | None, bp_id: 
 def may_rerun(principal: Principal, author_user_id: int | None, bp_id: int | None) -> bool:
     """`review.rerun` (and "review again" from Yêu cầu review): it spends LLM budget, so its
     scopes are "project" (a dự án one manages, the built-in Quản lý dự án) and "all"."""
-    return principal.covers("review.rerun", author_user_id, bp_id)
+    # Not exempt for one's own work: a rerun spends the dự án's LLM budget (§8.2).
+    return principal.covers("review.rerun", None, bp_id)
 
 
 def team_reach(principal: Principal, key: str) -> set[int]:

@@ -54,15 +54,22 @@ def test_admin_projects_cannot_change_its_own_grant(
         headers=as_user(world.an),
     )
     assert res.status_code == 403
-    # Others' grants are theirs to set, as long as their own stays as it was.
+    # Others' grants are theirs to set, as long as their own stays as it was; "manage" only
+    # by one who manages the dự án (docs/specs/21 §8 review fixes).
+    grants = [
+        {"user_id": world.an.id, "role": "view"},
+        {"user_id": world.binh.id, "role": "manage"},
+    ]
     res = client.put(
         f"{API}/business-projects/{bp_id}/grants",
-        json={
-            "grants": [
-                {"user_id": world.an.id, "role": "view"},
-                {"user_id": world.binh.id, "role": "manage"},
-            ]
-        },
+        json={"grants": grants},
+        headers=as_user(world.an),
+    )
+    assert res.status_code == 403
+    grants[1]["role"] = "view"
+    res = client.put(
+        f"{API}/business-projects/{bp_id}/grants",
+        json={"grants": grants},
         headers=as_user(world.an),
     )
     assert res.status_code == 200, res.text

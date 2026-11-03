@@ -160,3 +160,16 @@ Giai đoạn B tìm thấy những chỗ bản 1 của §4 vượt quá hành vi
 5. **Ba màn trước chỉ admin dùng** (repo .claude dùng chung, làm mới hồ sơ dự án, nhập người từ GitLab) có quyền riêng: `knowledge.shared` và `gitlab_members.import`. Không bộ có sẵn nào có hai quyền này. Không còn kiểm tra admin cứng, nên bộ tự tạo cũng mở được.
 6. **`/auth/me`**: `insights` và `members_page` lấy từ `can("insights.view")` và `can("members.view")`. Bộ tự tạo nào mở hai trang này thì menu cũng hiện theo.
 7. **Một khác biệt chấp nhận được:** endpoint có `require` trả 403 ngay khi thiếu quyền. Trước đây nó có thể trả 404 vì không thấy repo, hoặc 422 vì body sai. Không làm lộ thông tin gì.
+8. **Chặn leo quyền khi giao quyền quản trị cho người không phải admin** (theo lượt soát an ninh):
+   - Tài khoản đăng nhập GitLab chỉ admin được gắn lại. Lý do: gắn tài khoản đăng nhập của mình vào người khác thì lần sau đăng nhập sẽ thành người đó.
+   - Các loại tài khoản khác không được gắn vào hay gỡ khỏi chính mình, admin, Quản lý tổng, hoặc người đang giữ quyền `admin.*`.
+   - `admin.people`:
+     - không đổi thành viên của team mình đang thuộc, lead hoặc manage;
+     - không tạo team con trong các team đó;
+     - không sửa người đang giữ quyền như trên.
+   - Cấp hoặc thu Quản lý tổng: chỉ admin.
+   - `admin.projects`:
+     - chỉ cấp quyền `manage` dự án nếu chính mình quản lý dự án đó;
+     - không chuyển repo vào hay ra một dự án mình có quyền.
+   - Chạy lại review cần quyền trên **dự án** chứa review, kể cả review của chính mình, vì việc này tiêu ngân sách LLM.
+   - `admin.permissions`: cả việc thu quyền (gỡ người khỏi bộ, xoá bộ) cũng chỉ được trong phạm vi quyền mình đang có.
