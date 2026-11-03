@@ -17,16 +17,17 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select, tuple_
 from sqlalchemy.orm import Session
 
-from app.api.access import review_repo
+from app.api.access import review_repo, sees_work
 from app.api.deps import get_queue, get_session
 from app.api.schemas import ActivityItem, ActivityOut, LiveReviewOut
-from app.api.security import CurrentPrincipal, Principal
+from app.api.security import Principal, require
 from app.db import get_redis
 from app.models import Account, Commit, Connection, MergeRequest, Project, Review, User
 from app.review.progress import ProgressReader, RedisProgress, queued_reviews
 
 router = APIRouter(tags=["reviews"])
 SessionDep = Annotated[Session, Depends(get_session)]
+ViewPrincipal = Annotated[Principal, require("review.view")]
 MAX_QUEUED_SHOWN = 20
 RECENT_WINDOW = timedelta(minutes=15)
 
@@ -53,7 +54,7 @@ def get_backlog() -> Backlog:
 
 @router.get("/activity/reviews", response_model=ActivityOut)
 def review_activity(
-    principal: CurrentPrincipal,
+    principal: ViewPrincipal,
     session: SessionDep,
     progress: Annotated[ProgressReader, Depends(get_progress)],
     backlog: Annotated[Backlog, Depends(get_backlog)],
@@ -135,7 +136,7 @@ def review_activity(
 @router.get("/activity/reviews/{review_id}/live", response_model=LiveReviewOut)
 def live_review(
     review_id: int,
-    principal: CurrentPrincipal,
+    principal: ViewPrincipal,
     session: SessionDep,
     progress: Annotated[ProgressReader, Depends(get_progress)],
 ) -> LiveReviewOut:
@@ -155,7 +156,7 @@ def live_review(
         repo = review_repo(session, review)
     # Whoever may see the review may follow it (managers: unmapped authors too).
     bp_id = repo.business_project_id if repo else None
-    if repo is None or not principal.can_see_work(author, bp_id):
+    if repo is None or not sees_work(principal, author, bp_id):
         raise HTTPException(404, "review not found")
     return LiveReviewOut(review_id=review_id, running=running, events=progress.live(review_id))
 
@@ -165,15 +166,16 @@ def _may_see_record(principal: Principal, item: dict[str, Any], project: Project
     dự án, like the repo's knowledge page (docs/specs/19 §3.5). Reviews follow their author."""
     if item.get("kind") == "knowledge":
         return principal.can_view_project(project.business_project_id)
-    return principal.can_see_work(item.get("author_user_id"), project.business_project_id)
+    return sees_work(principal, item.get("author_user_id"), project.business_project_id)
 
 
 def _may_see_queued(principal: Principal, item: dict[str, Any], project: Project) -> bool:
     if item["kind"] == "knowledge":
         return _may_see_record(principal, item, project)
     if not item["found"]:  # not synced yet: its author is unknown, not "unmapped"
-        return principal.can_manage_project(project.business_project_id)
-    return principal.can_see_work(item["author_user_id"], project.business_project_id)
+        # Who sees every review of the dự án (`review.view` at "project": its managers).
+        return sees_work(principal, None, project.business_project_id)
+    return sees_work(principal, item["author_user_id"], project.business_project_id)
 
 
 def _from_record(

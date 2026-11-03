@@ -18,7 +18,14 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.api.access import reviewable_people, seen_people, visible_repo
+from app.api.access import (
+    may_request_review,
+    may_rerun,
+    reviewable_people,
+    seen_people,
+    sees_work,
+    visible_repo,
+)
 from app.api.audit import audit
 from app.api.deps import get_queue, get_secret_box, get_session
 from app.api.schemas import (
@@ -31,7 +38,7 @@ from app.api.schemas import (
     ReviewCommitsOut,
     UserOut,
 )
-from app.api.security import AdminPrincipal, CurrentPrincipal, Principal
+from app.api.security import AdminPrincipal, CurrentPrincipal, Principal, require
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.gitlab.convert import Converter
 from app.collector.gitlab.extract import _commit as gl_commit
@@ -48,6 +55,8 @@ router = APIRouter(tags=["review-requests"])
 SessionDep = Annotated[Session, Depends(get_session)]
 BoxDep = Annotated[SecretBox, Depends(get_secret_box)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+# Yêu cầu review (docs/specs/21): the branches, commits and the request itself.
+RequestPrincipal = Annotated[Principal, require("review.request")]
 
 SHA = re.compile(r"^[0-9a-f]{7,40}$")
 # Request-path GitLab calls: short timeout, one retry; a slow GitLab must not pin API workers.
@@ -199,7 +208,7 @@ def list_people(
 @router.get("/repos/{project_id}/branches", response_model=list[BranchOut])
 def list_branches(
     project_id: int,
-    principal: CurrentPrincipal,
+    principal: RequestPrincipal,
     session: SessionDep,
     box: BoxDep,
     search: Annotated[str | None, Query(max_length=100)] = None,
@@ -286,7 +295,7 @@ def _row(
 ) -> CommitRowOut:
     user_id, user_name = author
     # Its state shows (it blocks a second request); the result only to whoever may see it.
-    seen = review if principal.can_see_work(user_id, project.business_project_id) else None
+    seen = review if sees_work(principal, user_id, project.business_project_id) else None
     is_merge = len(raw.get("parent_ids") or []) > 1
     stats = raw.get("stats") or {}
     title = raw.get("title") if isinstance(raw.get("title"), str) else ""
@@ -301,7 +310,7 @@ def _row(
     elif (
         review is not None
         and review.status == "done"
-        and principal.can_manage_project(project.business_project_id)
+        and may_rerun(principal, user_id, project.business_project_id)
     ):
         again = True  # pickable, as a new round: the page warns before it is sent
     elif review is not None and review.status in TAKEN:
@@ -309,7 +318,7 @@ def _row(
             "done": "đã review",
             "skipped": "đã bỏ qua (quá lớn hoặc không có file review được)",
         }.get(review.status, "đang trong hàng đợi")
-    elif not principal.may_review_work(user_id, project.business_project_id):
+    elif not may_request_review(principal, user_id, project.business_project_id):
         reason = "không thuộc quyền review của bạn"
     return CommitRowOut(
         sha=str(raw["id"]),
@@ -339,7 +348,7 @@ def _row(
 @router.get("/repos/{project_id}/commits", response_model=CommitListOut)
 def list_commits(
     project_id: int,
-    principal: CurrentPrincipal,
+    principal: RequestPrincipal,
     session: SessionDep,
     box: BoxDep,
     settings: SettingsDep,
@@ -377,7 +386,7 @@ def list_commits(
         if wanted is not None and uid not in wanted:
             continue
         # Other people's commits are not even listed for members; managers/admins see all.
-        if not principal.may_review_work(uid, project.business_project_id):
+        if not may_request_review(principal, uid, project.business_project_id):
             hidden += 1
             continue
         rows.append(_row(c, author, reviews.get(str(c["id"])), principal, project))
@@ -394,7 +403,7 @@ def list_commits(
 def review_commits(
     project_id: int,
     body: ReviewCommitsIn,
-    principal: CurrentPrincipal,
+    principal: RequestPrincipal,
     session: SessionDep,
     box: BoxDep,
     settings: SettingsDep,
@@ -433,7 +442,7 @@ def review_commits(
                 continue
             account_id = converter.email_account(commit.author_email, commit.author_name)
             author_user = session.get(Account, account_id).user_id if account_id else None  # type: ignore[union-attr]
-            if not principal.may_review_work(author_user, project.business_project_id):
+            if not may_request_review(principal, author_user, project.business_project_id):
                 skipped.append({"sha": commit.sha, "reason": "không thuộc quyền review của bạn"})
                 continue
             existing = _latest_reviews(session, [commit.sha]).get(commit.sha)
@@ -441,7 +450,7 @@ def review_commits(
             if existing is not None and existing.status in TAKEN and not redo:
                 skipped.append({"sha": commit.sha, "reason": f"đã có review ({existing.status})"})
                 continue
-            if redo and not principal.can_manage_project(project.business_project_id):
+            if redo and not may_rerun(principal, author_user, project.business_project_id):
                 skipped.append(
                     {"sha": commit.sha, "reason": "chỉ quản lý dự án hoặc admin được review lại"}
                 )
