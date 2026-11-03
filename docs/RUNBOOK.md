@@ -217,3 +217,13 @@ Lưu ý vận hành:
   1. Khi code cũ còn chạy: `docker compose run --rm api alembic downgrade a7c3e9d1f2b4` (xoá bảng `command_runs`, tức lịch sử chạy command; dữ liệu review không bị đụng). Nếu đã có migration mới chồng lên thì không downgrade được nữa: viết migration mới xoá bảng.
   2. Deploy code đã revert, `docker compose up -d --remove-orphans` (gỡ `command-gate`, `command-worker`).
   3. `docker volume rm <project>_command-runs <project>_command-gate`, `docker network rm codepulse-commands`, xoá container sót (`docker ps -aq --filter label=codepulse.command_run | xargs -r docker rm -f`), gỡ các luật iptables của `cp-commands` ở trên.
+
+## 16. Dữ liệu cho Luồng làm việc / Hồ sơ tháng trên hệ thống đã chạy từ trước (spec 20)
+
+Các tab mới (Rủi ro tri thức, DORA, sự cố, "Commit chưa thuộc MR nào") đọc những bảng mới thêm. Repo đã sync từ trước còn trống các bảng này nên trang báo **Chưa đủ dữ liệu**.
+
+- **Tự động:** lần đầu scheduler khởi động sau khi nâng cấp, mọi repo đang theo dõi được xếp hàng một lần (cờ `insights_backfill_v1` trong `app_settings`).
+- **Bấm tay (admin):** trên trang Luồng làm việc, cảnh báo "Chưa đủ dữ liệu" có nút **Đồng bộ lại cho Insights** (repo đang chọn, hoặc mọi repo). API: `POST /api/v1/admin/insights/backfill {project_id?}`.
+- **CLI:** `codepulse insights backfill [--project ID]` (chạy ngay, không qua hàng đợi), rồi `codepulse projects resync` cho deployment/sự cố.
+
+Mỗi repo: dựng lại dữ liệu từ các lần sync đã lưu trong `raw_gitlab` (giữ `RETENTION_DAYS`, mặc định 365 ngày; không gọi GitLab, không tốn LLM), rồi sync đầy đủ cửa sổ `BACKFILL_DAYS` để lấy deployment và sự cố. Chạy lại bao nhiêu lần cũng được. Dữ liệu cũ hơn `raw_gitlab` còn giữ thì không dựng lại được; khi đó trang vẫn báo thiếu cho phần đó.

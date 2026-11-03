@@ -24,7 +24,7 @@ Chọn 2–3 team **khác kiểu việc**, để thấy chỗ số liệu lệch
 ## 2. Chuẩn bị kỹ thuật (tuần 0, admin)
 
 - [ ] Repo của các team đã `tracked`, sync xong (Admin › Dự án & Repo).
-- [ ] Chạy `codepulse insights backfill-files` (dựng `commit_files` từ dữ liệu đã có) để tab Rủi ro tri thức có lịch sử.
+- [ ] Dữ liệu Insights của repo cũ: tự chạy một lần sau nâng cấp; nếu trang còn báo **Chưa đủ dữ liệu**, admin bấm **Đồng bộ lại cho Insights** (hoặc `codepulse insights backfill`), xem RUNBOOK §16.
 - [ ] Token GitLab của CodePulse có quyền **Reporter** trở lên trên các repo (đọc deployments, issues).
 - [ ] DORA: mở tab Triển khai (DORA), kiểm tra cột "Môi trường production" của từng repo; repo dùng tên lạ thì admin đặt tay (CodePulse tự đồng bộ lại).
 - [ ] Sự cố: thống nhất với team gắn nhãn `incident` (hoặc dùng issue loại Incident) cho mọi sự cố production. Nhãn khác thì đặt `INCIDENT_LABELS`.

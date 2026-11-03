@@ -149,3 +149,24 @@ def test_incidents_in_dora(
     assert [r["title"] for r in inc["recent"]] == ["Slow", "API down"]
     assert inc["recent"][0]["web_url"] is None  # only http(s) links go out
     assert inc["recent"][1]["fix_mrs"] == 1
+
+
+def test_admin_queues_the_insights_backfill(
+    client: TestClient, world: World, queue: Any, as_user: Any
+) -> None:
+    res = client.post("/api/v1/admin/insights/backfill", headers=as_user(world.admin), json={})
+    assert res.status_code == 202 and res.json() == {"queued": 1}
+    assert queue.jobs[-1][0] == "app.insights.backfill.backfill_job"
+    assert queue.jobs[-1][1] == (world.project.id,)
+    one = client.post(
+        "/api/v1/admin/insights/backfill",
+        headers=as_user(world.admin),
+        json={"project_id": world.project.id},
+    )
+    assert one.json() == {"queued": 1}
+    assert (
+        client.post(
+            "/api/v1/admin/insights/backfill", headers=as_user(world.lead), json={}
+        ).status_code
+        == 403
+    )

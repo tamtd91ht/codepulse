@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from rq import Retry
 from sqlalchemy import ColumnElement, and_, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -1411,3 +1412,36 @@ def llm_costs(
         "budget_usd": monthly_budget_usd(session, settings),
         "months": sorted(by_month.values(), key=lambda r: r["month"], reverse=True)[:months],
     }
+
+
+class InsightsBackfillIn(BaseModel):
+    project_id: int | None = None  # None = every tracked repo
+
+
+@router.post("/admin/insights/backfill", status_code=202)
+def insights_backfill(
+    body: InsightsBackfillIn,
+    principal: AdminPrincipal,
+    session: SessionDep,
+    queue: Annotated[Enqueuer, Depends(get_queue)],
+) -> dict[str, int]:
+    """docs/specs/20 (9.12): fill the Insights data of repos synced before Phase 9 — convert
+    their stored GitLab rows again, then a full sync (deployments, incidents)."""
+    from app.insights.backfill import enqueue_backfill
+
+    if body.project_id is not None:
+        project = _get(session, Project, body.project_id, "project")
+        if not project.tracked:
+            raise HTTPException(409, "the repo is not tracked")
+    queued = enqueue_backfill(
+        session, queue, None if body.project_id is None else [body.project_id]
+    )
+    audit(
+        session,
+        principal.user_id,
+        "insights.backfill",
+        f"project:{body.project_id}" if body.project_id else "projects",
+        queued=queued,
+    )
+    session.commit()
+    return {"queued": queued}

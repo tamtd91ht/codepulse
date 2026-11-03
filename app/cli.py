@@ -290,6 +290,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="fill commit_files from the commit diffs already collected (docs/specs/20 §5.1)",
     )
     backfill.add_argument("--project", type=int, help="CodePulse project id; default: all tracked")
+    rebuild = insights.add_parser(
+        "backfill",
+        help="fill the Insights data of repos synced before it existed: convert the stored "
+        "GitLab rows again (docs/specs/20); run a full sync afterwards for deployments/incidents",
+    )
+    rebuild.add_argument("--project", type=int, help="CodePulse project id; default: all tracked")
 
     rm = sub.add_parser(
         "review-metrics",
@@ -391,6 +397,26 @@ def run(
                     f"{repo.path_with_namespace}: {filled.commits} commits, "
                     f"{filled.skipped} diffs without a stored commit\n"
                 )
+        case ("insights", "backfill"):
+            from app.insights.backfill import reconvert
+
+            if args.project is not None:
+                repos = [_project(session, args.project)]
+            else:
+                repos = list(
+                    session.scalars(select(Project).where(Project.tracked).order_by(Project.id))
+                )
+            for repo in repos:
+                path = repo.path_with_namespace
+                done = reconvert(session, repo, settings.ignore_paths)
+                if done.skipped:
+                    out.write(f"{path}: a sync is running, skipped\n")
+                    continue
+                files = done.counts.get("commits", 0)
+                out.write(f"{path}: {done.runs} sync runs converted again ({files} commits)\n")
+            out.write(
+                "next: `codepulse projects resync` (or Admin) for deployments and incidents\n"
+            )
         case ("metrics", "recompute"):
             if args.date_to < args.date_from:
                 raise CliError("--to must not be before --from")

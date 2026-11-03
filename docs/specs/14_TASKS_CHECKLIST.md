@@ -99,4 +99,5 @@
 - [x] 9.9 Incident từ GitLab (20 §5.3; D3 cập nhật: bản tối thiểu, không Jira, không task)
 - [x] 9.10 Hồ sơ bằng chứng: model, job draft, API, UI, audit (20 §6; D1 coaching, D4 bản thân + lead + admin)
 - [x] 9.10b Hồ sơ: MR chạm module một người nắm, commit thẳng lên nhánh chính, cảnh báo account chưa gắn người (20 §6.2)
+- [x] 9.12 Lấp dữ liệu Insights cho repo đã sync trước Phase 9 (tự chạy một lần, nút admin, CLI; RUNBOOK §16)
 - [x] 9.11 Bản nháp AI cho hồ sơ (20 §6.4; thay 6.3)

@@ -80,13 +80,57 @@ function Person({ p }: { p: InsightPerson }) {
   return <>{p.name}</>;
 }
 
-function ConfidenceNote({ c }: { c: InsightConfidence | undefined }) {
+/** Gaps a re-sync fills (repos synced before Insights existed, or not synced lately). */
+const FIXABLE = new Set(["no_file_data", "partial_file_data", "no_deployments", "stale_sync"]);
+
+function ConfidenceNote({ c, repoId }: { c: InsightConfidence | undefined; repoId?: string | number | null }) {
+  const { data: me } = useApi<Me>("/auth/me");
   if (!c || c.level === "ok") return null;
+  const fixable = !!me?.is_admin && c.reasons.some((r) => FIXABLE.has(r.code));
   return (
     <Alert tone={c.level === "insufficient" ? "warning" : "info"}>
       <strong>{c.level === "insufficient" ? "Chưa đủ dữ liệu" : "Độ tin cậy thấp"}:</strong>{" "}
       {c.reasons.map((r) => r.message + (r.repos?.length ? ` (${r.repos.join(", ")})` : "")).join(" · ")}
+      {fixable && <BackfillAction repoId={repoId ? Number(repoId) : null} />}
     </Alert>
+  );
+}
+
+/** Admin: fill the Insights data of repos synced before it existed (docs/specs/20, 9.12). */
+function BackfillAction({ repoId }: { repoId: number | null }) {
+  const [state, setState] = useState<"idle" | "busy" | "done" | "error">("idle");
+  const [note, setNote] = useState("");
+  const run = () => {
+    const what = repoId ? "repo đang chọn" : "mọi repo đang theo dõi";
+    if (
+      !window.confirm(
+        `Đồng bộ lại dữ liệu cho Insights (${what})? CodePulse dựng lại dữ liệu từ những gì đã thu thập rồi sync đầy đủ từ GitLab (deployment, sự cố); chạy nền, repo lớn có thể mất vài phút. Không tốn ngân sách LLM.`,
+      )
+    )
+      return;
+    setState("busy");
+    void api
+      .post<{ queued: number }>("/admin/insights/backfill", repoId ? { project_id: repoId } : {})
+      .then((r) => {
+        setState("done");
+        setNote(`Đã xếp hàng ${r.queued} repo. Mở lại trang sau vài phút.`);
+      })
+      .catch((e: unknown) => {
+        setState("error");
+        setNote(e instanceof ApiError ? e.message : String(e));
+      });
+  };
+  return (
+    <div className="toolbar" style={{ marginTop: 8 }}>
+      <button type="button" className="sm" disabled={state === "busy" || state === "done"} onClick={run}>
+        {state === "busy" ? "Đang xếp hàng…" : "Đồng bộ lại cho Insights"}
+      </button>
+      {note && (
+        <span className="small" role="status">
+          {note}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -311,7 +355,7 @@ function FlowTab({ query }: { query: Query }) {
 
   return (
     <>
-      <ConfidenceNote c={data.confidence} />
+      <ConfidenceNote c={data.confidence} repoId={query.project_id} />
       <StatStrip label={`Luồng làm việc · ${label}`}>
         <StripStat label="MR đã merge" value={t.merged} change={t.delta.merged} />
         <StripStat
@@ -634,7 +678,7 @@ function LoadTab({ query }: { query: Query }) {
   if (!data) return <Pending error={error} retry={() => void mutate()} />;
   return (
     <>
-      <ConfidenceNote c={data.confidence} />
+      <ConfidenceNote c={data.confidence} repoId={query.project_id} />
       {data.concentrated && (
         <Alert tone="warning">
           Một người tham gia review {num(data.top_reviewer_share, 1)}% số MR đã merge: team đang phụ thuộc vào một reviewer.
@@ -805,7 +849,7 @@ function KnowledgeTab({ query }: { query: Query }) {
     );
   return (
     <>
-      <ConfidenceNote c={data.confidence} />
+      <ConfidenceNote c={data.confidence} repoId={query.project_id} />
       <StatStrip label={`Module trong ${data.window_days} ngày qua`}>
         <StripStat label="Module có thay đổi" value={data.totals.modules} sub={`${data.module_depth} cấp thư mục`} />
         <StripStat
@@ -908,7 +952,7 @@ function DoraTab({ query }: { query: Query }) {
   }));
   return (
     <>
-      <ConfidenceNote c={data.confidence} />
+      <ConfidenceNote c={data.confidence} repoId={query.project_id} />
       <StatStrip label="Triển khai production trong kỳ">
         <StripStat
           label="Deploy thành công"

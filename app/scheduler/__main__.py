@@ -1,6 +1,6 @@
 """Scheduler service: runs periodic jobs (sync, aggregation, reports)."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 
@@ -8,6 +8,7 @@ from app.collector.sync import enqueue_syncs_job
 from app.commands.store import enqueue_cleanup_job
 from app.config import get_settings
 from app.evidence.jobs import create_drafts_job
+from app.insights.backfill import backfill_once_job
 from app.logging import configure_logging
 from app.reporting.jobs import send_reports_job
 from app.retention import purge_job
@@ -100,6 +101,14 @@ def build_scheduler(
         id="telegram-tick",
         max_instances=1,
         coalesce=True,
+    )
+    # docs/specs/20 (9.12): after the upgrade, fill the Insights data of existing repos once.
+    scheduler.add_job(
+        backfill_once_job,
+        "date",
+        run_date=datetime.now(UTC) + timedelta(minutes=1),
+        id="insights-backfill-once",
+        misfire_grace_time=3600,
     )
     return scheduler
 
