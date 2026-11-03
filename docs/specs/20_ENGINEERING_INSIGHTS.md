@@ -185,8 +185,10 @@ Quy tắc biên:
 - `churn(author, module) = Σ (additions + deletions)`.
 - **Bus factor** của module = số người tối thiểu mà tổng churn của họ ≥ 50% churn của module (cách định nghĩa phổ biến; ngưỡng `KNOWLEDGE_BUS_THRESHOLD`).
 - Cờ:
-  - `single_owner`: bus factor = 1 **và** module có ≥ `KNOWLEDGE_MIN_COMMITS` (mặc định 10) commit trong cửa sổ.
-  - `orphaned`: người nắm nhiều nhất `users.active=false` hoặc không có commit nào trong 60 ngày gần nhất.
+  - `single_owner`: một người viết **hơn** `KNOWLEDGE_BUS_THRESHOLD` churn (chia đều 50/50 là hai người nắm) **và** module có ≥ `KNOWLEDGE_MIN_COMMITS` (mặc định 10) commit trong cửa sổ. Hoà churn: người đã gắn đứng trước account chưa gắn.
+- Độ tin cậy: repo có commit trong cửa sổ nhưng < 80% số commit đó có dữ liệu file → `low` (`partial_file_data`); không repo nào có → `insufficient`.
+  - `orphaned`: module cũng có ≥ `KNOWLEDGE_MIN_COMMITS` commit, và người nắm nhiều nhất `users.active=false` hoặc không có commit nào (ở bất kỳ repo nào) trong 60 ngày tính đến hết kỳ.
+- Tác giả = người (user) nếu đã gắn; chưa gắn thì theo từng account email git (gộp chung sẽ che mất module một người nắm).
 - Diễn giải: một người nắm module **không phải** thành tích của họ, mà là rủi ro của team (P8).
 
 ### 4.10. DORA (`dora.py`; phase 9.8, cần [DECISION D2])

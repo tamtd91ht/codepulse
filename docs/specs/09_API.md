@@ -89,3 +89,4 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | GET | `/insights/flow?business_project_id=&project_id=&period=week\|month\|range&start=&end=` | Luồng làm việc cấp dự án/repo: MR đã merge, 4 chặng (median/p75), merge không review, cỡ MR, xu hướng, MR đang chờ phản hồi, pipeline; `confidence`, `data_as_of` | được cấp dự án (admin: cả repo chưa gán); tên tác giả theo `can_see_work` |
 | GET | `/insights/flow/mrs?…&stage=&only=unreviewed\|xl&limit=&offset=` | Danh sách MR tạo nên số liệu, chậm nhất trước | như trên |
 | GET | `/insights/review-load?…` | Ai review MR của ai (đếm MR, không đếm comment), độ tập trung | như trên |
+| GET | `/insights/knowledge?business_project_id=&project_id=&end=&limit=` | Rủi ro tri thức: module (N cấp thư mục) trong `KNOWLEDGE_WINDOW_DAYS`, bus factor, một người nắm / người nắm đã vắng, người nắm (tên theo `can_see_work`) | như trên |

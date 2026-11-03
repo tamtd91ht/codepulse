@@ -90,9 +90,9 @@
 - [x] 9.1 Spec 20 + mục lục 00 + checklist
 - [x] 9.2 `app/insights/flow.py`, `pipelines.py`, `confidence.py` – hàm thuần + test bảng (20 §4.2–4.8, §7)
 - [x] 9.3 API `/insights/flow`, `/insights/flow/mrs`, `/insights/review-load` + test quyền (20 §8–9)
-- [ ] 9.4 Dashboard `/insights`: Luồng làm việc, Tải review (20 §10)
+- [x] 9.4 Dashboard `/insights`: Luồng làm việc, Tải review (20 §10)
 - [x] 9.5 Bảng `commit_files` + converter + CLI `insights backfill-files` (20 §5.1)
-- [ ] 9.6 `knowledge.py` + API `/insights/knowledge` + tab Rủi ro tri thức (20 §4.9)
+- [x] 9.6 `knowledge.py` + API `/insights/knowledge` + tab Rủi ro tri thức (20 §4.9)
 - [ ] **Demo**: một dự án thật – 4 chặng 8 tuần gần nhất, top MR chờ, bus factor
 - [ ] 9.7 USER_GUIDE "Insights đo gì và không đo gì" + pilot 2–3 team (20 §12)
 - [ ] 9.8 `[DECISION D2]` Deployments collector + DORA (20 §4.10, §5.2)

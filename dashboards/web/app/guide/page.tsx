@@ -11,6 +11,7 @@ const SECTIONS = [
   { id: "admin", label: "Admin" },
   { id: "telegram", label: "Bot Telegram" },
   { id: "metrics", label: "Đọc các chỉ số" },
+  { id: "insights", label: "Luồng làm việc" },
 ];
 
 /** The dashboard copy of docs/USER_GUIDE.md, plus the Admin screen; readable without signing in. */
@@ -535,6 +536,60 @@ export default function GuidePage() {
           </table>
         </div>
         <p className="muted">Câu hỏi về cách tính hoặc dữ liệu của bạn: liên hệ admin CodePulse của công ty.</p>
+      </section>
+
+      <section id="insights" className="card">
+        <h2>8. Luồng làm việc: đo gì và không đo gì</h2>
+        <p>
+          Menu <strong>Luồng làm việc</strong> cho thấy công việc chảy qua team thế nào. Đây là chỉ số <strong>của dự án/repo</strong>{" "}
+          để cải thiện quy trình (đặt SLA review, tách MR nhỏ, giảm phụ thuộc một người), <strong>không</strong> dùng để chấm
+          điểm hay xếp hạng ai. Không có điểm tổng cho từng người.
+        </p>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Chỉ số</th>
+                <th>Cách tính</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Viết code</td>
+                <td>Commit đầu tiên → mở MR (tác giả)</td>
+              </tr>
+              <tr>
+                <td>Chờ review</td>
+                <td>MR sẵn sàng (hết draft) → phản hồi đầu tiên của người khác, comment hoặc approve (reviewer/team)</td>
+              </tr>
+              <tr>
+                <td>Review → merge</td>
+                <td>Phản hồi đầu tiên → merge</td>
+              </tr>
+              <tr>
+                <td>Merge không review</td>
+                <td>MR merge khi chưa có ai khác phản hồi</td>
+              </tr>
+              <tr>
+                <td>Cỡ MR</td>
+                <td>Dòng thay đổi; XL ≥ 1000 dòng là khó review kỹ, không phải lỗi của ai</td>
+              </tr>
+              <tr>
+                <td>Tải review</td>
+                <td>Mỗi người review bao nhiêu MR; không đếm số comment, không chấm comment hay dở</td>
+              </tr>
+              <tr>
+                <td>Rủi ro tri thức</td>
+                <td>Module chỉ một người nắm (bus factor 1) hoặc người nắm đã vắng: rủi ro của team</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="muted">
+          Thời gian tính theo lịch (cả cuối tuần), dùng trung vị và p75; ít hơn 5 MR thì không hiện trung vị. Comment tóm tắt của
+          CodePulse không tính là review. Tên người chỉ hiện với ai được xem việc của người đó; người khác thấy &quot;Một thành
+          viên&quot;.
+        </p>
       </section>
 
       <p style={{ marginTop: 16 }}>

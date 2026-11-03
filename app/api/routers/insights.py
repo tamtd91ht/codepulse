@@ -9,12 +9,12 @@ everyone else reads "a member" (§8, P1).
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, case, func, literal, or_, select
+from sqlalchemy import and_, case, exists, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.access import visible_repo
@@ -24,6 +24,7 @@ from app.api.security import CurrentPrincipal, Principal
 from app.config import Settings, get_settings
 from app.insights import INSIGHTS_VERSION
 from app.insights import confidence as conf
+from app.insights import knowledge as kn
 from app.insights import pipelines as pipes
 from app.insights.flow import (
     BOT_MARKER,
@@ -39,11 +40,13 @@ from app.insights.flow import (
     summarise,
     waiting,
 )
+from app.insights.knowledge import ROOT_MODULE
 from app.insights.review_load import author_of, review_load
 from app.models import (
     Account,
     BusinessProject,
     Commit,
+    CommitFile,
     Connection,
     MergeRequest,
     MrCommit,
@@ -62,6 +65,8 @@ OLDEST_WAITING = 10
 HIDDEN_NAME = "Một thành viên"
 UNMAPPED_NAME = "Chưa gắn người"
 MAX_RANGE_DAYS = 366
+# Below this share of a repo's commits with file rows, knowledge risk is "low" confidence.
+FILE_COVERAGE_MIN = 0.8
 
 
 # -- scope -----------------------------------------------------------------------------------
@@ -352,9 +357,15 @@ def insights_flow(
         by_repo[f.mr.project_id].append(f)
     pipeline_rows = (
         session.execute(
-            select(Pipeline.project_id, Pipeline.status, Pipeline.duration_sec, Pipeline.ref).where(
+            select(
+                Pipeline.project_id,
+                Pipeline.status,
+                Pipeline.duration_sec,
+                Pipeline.ref,
+                Pipeline.created_at_src,
+            ).where(
                 Pipeline.project_id.in_(repo_ids),
-                Pipeline.created_at_src >= w.lo,
+                Pipeline.created_at_src >= w.prev_lo,
                 Pipeline.created_at_src < w.hi,
             )
         ).all()
@@ -363,12 +374,19 @@ def insights_flow(
     )
     default_branch = {r.id: r.default_branch for r in repos}
     facts_by_repo: dict[int, list[pipes.PipelineFact]] = defaultdict(list)
-    for pid, status, duration, ref in pipeline_rows:
-        if pid is None:
+    facts_before: list[pipes.PipelineFact] = []
+    for pid, status, duration, ref, created in pipeline_rows:
+        if pid is None or created is None:
             continue
-        facts_by_repo[int(pid)].append(
-            pipes.PipelineFact(status, duration, ref is not None and ref == default_branch[pid])
-        )
+        fact = pipes.PipelineFact(status, duration, ref is not None and ref == default_branch[pid])
+        if w.lo <= created < w.hi:
+            facts_by_repo[int(pid)].append(fact)
+        elif w.prev_lo <= created < w.prev_hi:
+            facts_before.append(fact)
+    pipelines_now = pipes.summarise(
+        [p for facts in facts_by_repo.values() for p in facts], min_sample
+    )
+    pipelines_before = pipes.summarise(facts_before, min_sample)
 
     urls = _web_urls(session, repos)
     bp_of = {r.id: r.business_project_id for r in repos}
@@ -397,6 +415,10 @@ def insights_flow(
                 "merged_without_review_rate": _diff(
                     totals["merged_without_review_rate"], before["merged_without_review_rate"]
                 ),
+                "xl_share": _diff(totals["size"]["xl_share"], before["size"]["xl_share"]),
+                "pipeline_success_rate": _diff(
+                    pipelines_now["success_rate"], pipelines_before["success_rate"]
+                ),
             },
         },
         "trend": trend,
@@ -411,9 +433,7 @@ def insights_flow(
             }
             for r in repos
         ],
-        "pipelines": pipes.summarise(
-            [p for facts in facts_by_repo.values() for p in facts], min_sample
-        ),
+        "pipelines": pipelines_now,
         "open": {
             "opened": len(open_mrs),
             "waiting_first_response": len(waits),
@@ -577,3 +597,219 @@ def insights_review_load(
             for reviewer, author, n in load.pairs
         ],
     }
+
+
+def _module_sql(depth: int) -> Any:
+    """SQL twin of `knowledge.module_of`: the first `depth` directories, or ROOT_MODULE."""
+    first_dirs = func.substring(CommitFile.path, f"^((?:[^/]+/){{1,{depth}}})")
+    return func.coalesce(func.rtrim(first_dirs, "/"), ROOT_MODULE)
+
+
+@router.get("/insights/knowledge")
+def insights_knowledge(
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: SettingsDep,
+    business_project_id: int | None = None,
+    project_id: int | None = None,
+    end: date | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+) -> dict[str, Any]:
+    """§4.9: modules of the repos in scope over the KNOWLEDGE_WINDOW_DAYS up to `end` (default
+    today), their bus factor and flags; owners named only to whoever may see their work."""
+    tz = ZoneInfo(settings.report_tz)
+    today = datetime.now(UTC).astimezone(tz).date()
+    last_day = min(end or today, today)
+    hi = datetime.combine(last_day + timedelta(days=1), time.min, tz)
+    lo = hi - timedelta(days=settings.knowledge_window_days)
+    repos = _repos(session, principal, business_project_id, project_id)
+    repo_ids = [r.id for r in repos]
+    totals, author_rows = _module_rows(session, repo_ids, lo, hi, settings.knowledge_module_depth)
+    coverage = _file_coverage(session, repo_ids, lo, hi)
+    authors = {r.author for r in author_rows}
+    inactive = {
+        int(uid)
+        for uid in session.scalars(
+            select(User.id).where(
+                User.id.in_({a.user_id for a in authors if a.user_id is not None}),
+                User.active.is_(False),
+            )
+        )
+    }
+    found = kn.modules(
+        totals,
+        author_rows,
+        threshold=settings.knowledge_bus_threshold,
+        min_commits=settings.knowledge_min_commits,
+        end=hi,
+        last_commit=_last_commits(session, authors, hi),
+        inactive_users=inactive,
+    )
+    shown = found[:limit]
+    names = Names.load(
+        session, principal, [Responder(a.user_id) for m in shown for a, _share in m.owners]
+    )
+    repo_by_id = {r.id: r for r in repos}
+    c = conf.Confidence()
+    as_of = conf.freshness(
+        c,
+        [(r.path_with_namespace, r.last_synced_at) for r in repos],
+        datetime.now(UTC),
+        settings.insights_stale_sync_hours,
+    )
+    # Repos with commits in the window but file rows for too few of them (synced before
+    # commit_files existed, backfill not run): their bus factor covers less than the window.
+    active = {pid: n for pid, (n, _with) in coverage.items() if n}
+    partial = sorted(
+        repo_by_id[pid].path_with_namespace
+        for pid, (n, with_files) in coverage.items()
+        if n and with_files < FILE_COVERAGE_MIN * n
+    )
+    if active and not found:
+        c.add(
+            "insufficient",
+            "no_file_data",
+            "Chưa có dữ liệu file cho các commit trong cửa sổ "
+            "(admin chạy `codepulse insights backfill-files`)",
+        )
+    elif partial:
+        c.add(
+            "low",
+            "partial_file_data",
+            f"{len(partial)} repo thiếu dữ liệu file cho nhiều commit trong cửa sổ",
+            repos=partial[:10],
+        )
+    return {
+        "insights_version": INSIGHTS_VERSION,
+        "window": [lo.isoformat(), hi.isoformat()],
+        "window_days": settings.knowledge_window_days,
+        "module_depth": settings.knowledge_module_depth,
+        "bus_threshold": settings.knowledge_bus_threshold,
+        "min_commits": settings.knowledge_min_commits,
+        "data_as_of": as_of.isoformat() if as_of else None,
+        "confidence": c.as_dict(),
+        "totals": {
+            "modules": len(found),
+            "single_owner": sum(1 for m in found if m.single_owner),
+            "orphaned": sum(1 for m in found if m.orphaned),
+            "shown": len(shown),
+        },
+        "orphan_after_days": kn.ORPHAN_AFTER.days,
+        "modules": [
+            {
+                **m.as_dict(),
+                "path_with_namespace": repo_by_id[m.project_id].path_with_namespace,
+                "owners": [
+                    {
+                        **names.person(
+                            Responder(a.user_id), [repo_by_id[m.project_id].business_project_id]
+                        ),
+                        "share": share_pct,
+                    }
+                    for a, share_pct in m.owners
+                ],
+            }
+            for m in shown
+        ],
+    }
+
+
+def _in_window(repo_ids: list[int], lo: datetime, hi: datetime) -> Any:
+    return and_(
+        Commit.project_id.in_(repo_ids),
+        Commit.is_merge.is_not(True),
+        Commit.authored_at >= lo,
+        Commit.authored_at < hi,
+    )
+
+
+def _module_rows(
+    session: Session, repo_ids: list[int], lo: datetime, hi: datetime, depth: int
+) -> tuple[list[kn.ModuleTotalRow], list[kn.ModuleAuthorRow]]:
+    """commit_files of non-merge commits authored in [lo, hi), summed per (repo, module,
+    author) in one SQL pass; the per-module totals add those up (a commit has one author)."""
+    if not repo_ids:
+        return [], []
+    module = _module_sql(depth).label("module")
+    # One person writing from two e-mails is one author: their rows are folded here.
+    folded: dict[tuple[int, str, kn.Author], list[Any]] = {}
+    for pid, mod, uid, aid, total, n, last in session.execute(
+        select(
+            Commit.project_id,
+            module,
+            Account.user_id,
+            Commit.author_account_id,
+            func.sum(CommitFile.additions + CommitFile.deletions),
+            func.count(func.distinct(Commit.sha)),
+            func.max(Commit.authored_at),
+        )
+        .select_from(CommitFile)
+        .join(Commit, Commit.sha == CommitFile.sha)
+        .outerjoin(Account, Account.id == Commit.author_account_id)
+        .where(_in_window(repo_ids, lo, hi), Commit.author_account_id.is_not(None))
+        .group_by(Commit.project_id, module, Account.user_id, Commit.author_account_id)
+    ):
+        author = kn.Author(uid, None) if uid is not None else kn.Author(None, aid)
+        slot = folded.setdefault((int(pid), str(mod), author), [0, 0, None])
+        slot[0] += int(total or 0)
+        slot[1] += int(n)
+        if last is not None and (slot[2] is None or last > slot[2]):
+            slot[2] = last
+    authors = [kn.ModuleAuthorRow(p, m, a, c, n) for (p, m, a), (c, n, _l) in folded.items()]
+    sums: dict[tuple[int, str], list[Any]] = {}
+    for (p, m, _a), (c, n, last) in folded.items():
+        slot = sums.setdefault((p, m), [0, 0, None])
+        slot[0] += c
+        slot[1] += n
+        if last is not None and (slot[2] is None or last > slot[2]):
+            slot[2] = last
+    totals = [kn.ModuleTotalRow(p, m, c, n, last) for (p, m), (c, n, last) in sums.items()]
+    return totals, authors
+
+
+def _file_coverage(
+    session: Session, repo_ids: list[int], lo: datetime, hi: datetime
+) -> dict[int, tuple[int, int]]:
+    """repo -> (non-merge commits in the window, how many of them have file rows)."""
+    if not repo_ids:
+        return {}
+    has_files = exists().where(CommitFile.sha == Commit.sha)
+    return {
+        int(pid or 0): (int(n), int(with_files or 0))
+        for pid, n, with_files in session.execute(
+            select(
+                Commit.project_id,
+                func.count(),
+                func.count().filter(has_files),
+            )
+            .where(_in_window(repo_ids, lo, hi))
+            .group_by(Commit.project_id)
+        )
+    }
+
+
+def _last_commits(
+    session: Session, authors: set[kn.Author], hi: datetime
+) -> dict[kn.Author, datetime]:
+    """Each author's latest commit in any repo before `hi` (§4.9 `orphaned`)."""
+    out: dict[kn.Author, datetime] = {}
+    users = sorted({a.user_id for a in authors if a.user_id is not None})
+    accounts = sorted({a.account_id for a in authors if a.account_id is not None})
+    for chunk in _chunks(users):
+        for uid, last in session.execute(
+            select(Account.user_id, func.max(Commit.authored_at))
+            .join(Commit, Commit.author_account_id == Account.id)
+            .where(Account.user_id.in_(chunk), Commit.authored_at < hi)
+            .group_by(Account.user_id)
+        ):
+            if uid is not None and last is not None:
+                out[kn.Author(int(uid), None)] = last
+    for chunk in _chunks(accounts):
+        for aid, last in session.execute(
+            select(Commit.author_account_id, func.max(Commit.authored_at))
+            .where(Commit.author_account_id.in_(chunk), Commit.authored_at < hi)
+            .group_by(Commit.author_account_id)
+        ):
+            if aid is not None and last is not None:
+                out[kn.Author(None, int(aid))] = last
+    return out

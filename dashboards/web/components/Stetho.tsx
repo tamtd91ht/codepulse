@@ -35,6 +35,7 @@ const MAX_QUESTION = 4000;
 
 const TITLES: Record<string, string> = {
   "/overview": "Tổng quan",
+  "/insights": "Luồng làm việc",
   "/teams": "Team",
   "/members": "Thành viên",
   "/reviews": "Kết quả review",

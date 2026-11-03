@@ -99,4 +99,23 @@ Trên điện thoại chỉ cần gõ `/review` rồi bấm nút: chọn Commit 
 | Fix rate | Tỉ lệ lỗi critical/high biến mất ở lần review sau của cùng MR |
 | Quality Index | 50% điểm TB + 20% (mật độ lỗi thấp) + 15% build thành công + 15% fix rate; phần không có dữ liệu được bỏ qua |
 
+## 6. Luồng làm việc (Insights): đo gì và không đo gì
+
+Menu **Luồng làm việc** cho thấy công việc chảy qua team thế nào. Đây là chỉ số **của dự án/repo** để cải thiện quy trình (đặt SLA review, tách MR nhỏ, giảm phụ thuộc một người), **không** dùng để chấm điểm hay xếp hạng ai. Không có điểm tổng cho từng người.
+
+| Chỉ số | Cách tính | Ai "cầm bóng" |
+|---|---|---|
+| Viết code | Commit đầu tiên → mở MR | Tác giả |
+| Chờ review | MR sẵn sàng (hết draft) → phản hồi đầu tiên của người khác (comment hoặc approve) | Reviewer / team |
+| Review → merge | Phản hồi đầu tiên → merge | Tác giả + reviewer |
+| Merge không review | MR merge khi chưa có ai khác phản hồi | Quy trình |
+| Cỡ MR | Dòng thay đổi (bỏ file lock, vendor…); XL ≥ 1000 dòng là khó review kỹ, không phải lỗi của ai | — |
+| Tải review | Mỗi người review bao nhiêu MR (không đếm số comment, không chấm comment hay dở) | Team |
+| Rủi ro tri thức | Module nào chỉ một người nắm (bus factor 1) hoặc người nắm đã vắng; là rủi ro của team | Team |
+
+- Thời gian tính theo lịch (cả cuối tuần), dùng **trung vị** và p75; ít hơn 5 MR trong kỳ thì không hiện trung vị.
+- Comment tóm tắt do CodePulse đăng lên MR không được tính là review.
+- Mọi con số bấm xuống được danh sách MR tạo nên nó. Tên người chỉ hiện với ai được xem việc của người đó (bản thân, lead, quản lý dự án, admin); người khác thấy "Một thành viên".
+- Khi dữ liệu sync cũ hoặc quá ít, trang hiện cảnh báo thay vì đưa số trông như chắc chắn.
+
 Câu hỏi về cách tính hoặc dữ liệu của bạn: liên hệ admin CodePulse của công ty.

@@ -177,6 +177,8 @@ def test_flow_totals_stages_and_deltas(
     # time to merge: 30, 5, 2, 40 -> median 17.5; last week 10
     assert t["stages"]["time_to_merge"]["median"] == 17.5
     assert t["delta"]["time_to_merge"] == 7.5
+    assert t["delta"]["xl_share"] == 25.0  # 1 of 4 now, none last week
+    assert t["delta"]["pipeline_success_rate"] is None  # no pipeline last week
     assert body["trend"][-1]["merged"] == 4 and body["trend"][-2]["merged"] == 1
     assert body["confidence"]["level"] == "ok"
     assert body["data_as_of"] is not None

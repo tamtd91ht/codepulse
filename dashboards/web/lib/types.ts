@@ -1332,3 +1332,159 @@ export interface CommandRunDetail extends CommandRun {
   log_next: number;
   result: string | null;
 }
+
+/* ---- Engineering Insights (docs/specs/20) ---- */
+
+export type InsightStage = "coding" | "pickup" | "review" | "time_to_merge";
+
+export interface InsightConfidence {
+  level: "ok" | "low" | "insufficient";
+  reasons: { code: string; level: string; message: string; repos?: string[] }[];
+}
+
+export interface InsightSpread {
+  n: number;
+  median: number | null;
+  p75: number | null;
+}
+
+export interface FlowSummary {
+  merged: number;
+  merged_without_review: number;
+  merged_without_review_rate: number | null;
+  stages: Record<InsightStage, InsightSpread>;
+  size: InsightSpread & { buckets: Record<"XS" | "S" | "M" | "L" | "XL", number>; xl_share: number | null };
+  review_rounds: InsightSpread;
+}
+
+export interface PipelineGroup {
+  total: number;
+  finished: number;
+  success: number;
+  failed: number;
+  success_rate: number | null;
+  duration_min: InsightSpread;
+}
+
+export interface PipelineSummary extends PipelineGroup {
+  default_branch: PipelineGroup;
+  other_branches: PipelineGroup;
+}
+
+export interface InsightPerson {
+  user_id: number | null;
+  name: string;
+  hidden: boolean;
+  mapped: boolean | null;
+}
+
+interface InsightWindow {
+  insights_version: string;
+  period_type: "week" | "month" | "range";
+  period_start: string;
+  period_end: string;
+  period_range: [string, string];
+  trend_period: "week" | "month";
+  trend_starts: string[];
+  data_as_of: string | null;
+  confidence: InsightConfidence;
+}
+
+export interface InsightsFlow extends InsightWindow {
+  totals: FlowSummary & {
+    delta: {
+      merged: number;
+      time_to_merge: number | null;
+      pickup: number | null;
+      merged_without_review_rate: number | null;
+      xl_share: number | null;
+      pipeline_success_rate: number | null;
+    };
+  };
+  trend: ({ period_start: string; merged: number; merged_without_review_rate: number | null } & Record<InsightStage, number | null>)[];
+  repos: (FlowSummary & {
+    id: number;
+    path_with_namespace: string;
+    business_project_id: number | null;
+    last_synced_at: string | null;
+    pipelines: PipelineSummary;
+  })[];
+  pipelines: PipelineSummary;
+  open: {
+    opened: number;
+    waiting_first_response: number;
+    oldest: {
+      id: number;
+      iid: number;
+      title: string | null;
+      project_id: number;
+      path_with_namespace: string | null;
+      web_url: string | null;
+      waiting_h: number;
+      author: InsightPerson;
+    }[];
+  };
+}
+
+export interface InsightMr extends Record<InsightStage, number | null> {
+  id: number;
+  iid: number;
+  title: string | null;
+  project_id: number;
+  path_with_namespace: string;
+  target_branch: string | null;
+  web_url: string | null;
+  opened_at: string | null;
+  merged_at: string | null;
+  size: number | null;
+  size_bucket: "XS" | "S" | "M" | "L" | "XL" | null;
+  review_rounds: number | null;
+  reviewed: boolean;
+  reviewers: number;
+  author: InsightPerson;
+}
+
+export interface InsightsMrs extends InsightWindow {
+  stage: InsightStage;
+  only: "unreviewed" | "xl" | null;
+  total: number;
+  items: InsightMr[];
+}
+
+export interface InsightsReviewLoad extends InsightWindow {
+  merged: number;
+  reviewed: number;
+  reviewers_count: number;
+  top_reviewer_share: number | null;
+  concentrated: boolean;
+  reviewers: (InsightPerson & { reviewed_mrs: number; share: number | null })[];
+  pairs: { reviewer: InsightPerson; author: InsightPerson; mrs: number }[];
+}
+
+export interface InsightModule {
+  project_id: number;
+  path_with_namespace: string;
+  module: string;
+  churn: number;
+  commits: number;
+  last_change_at: string | null;
+  bus_factor: number;
+  top_share: number | null;
+  single_owner: boolean;
+  orphaned: boolean;
+  owners: (InsightPerson & { share: number })[];
+}
+
+export interface InsightsKnowledge {
+  insights_version: string;
+  window: [string, string];
+  window_days: number;
+  module_depth: number;
+  bus_threshold: number;
+  min_commits: number;
+  data_as_of: string | null;
+  confidence: InsightConfidence;
+  totals: { modules: number; single_owner: number; orphaned: number; shown: number };
+  orphan_after_days: number;
+  modules: InsightModule[];
+}
