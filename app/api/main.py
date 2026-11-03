@@ -34,6 +34,7 @@ from app.api.routers import (
     metrics,
     notifications,
     overview,
+    permissions,
     purge,
     review_reports,
     reviews,
@@ -90,6 +91,7 @@ for api_router in (
     closures.router,
     insights.router,
     evidence.router,
+    permissions.router,
 ):
     app.include_router(api_router, prefix="/api/v1")
 # docs/specs/11: CORS for the dashboard origin only; cookies need credentials.

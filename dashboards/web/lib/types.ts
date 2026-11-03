@@ -22,6 +22,55 @@ export interface Me {
   insights?: boolean;
   /** Thành viên (per-person evaluation of a team): lead and above too. */
   members_page?: boolean;
+  /** docs/specs/21: permission key -> scope ("own" | "team" | "project" | "all") or "flag"; read with can(). */
+  permissions?: Record<string, string>;
+}
+
+/* ---- permission sets (docs/specs/21, Admin › Phân quyền) ---- */
+
+export type PermissionScope = "own" | "team" | "project" | "all";
+
+export interface CatalogPermission {
+  key: string;
+  label: string;
+  /** Empty for a flag. */
+  scopes: PermissionScope[];
+  flag: boolean;
+  sensitive: boolean;
+}
+
+export interface PermissionCatalog {
+  groups: { name: string; permissions: CatalogPermission[] }[];
+  scopes: { key: PermissionScope; label: string }[];
+  roles: { key: string; label: string }[];
+}
+
+export interface PermissionItem {
+  permission: string;
+  /** A scope, or "flag". */
+  scope: string;
+}
+
+export interface PermissionSetRow {
+  id: number;
+  name: string;
+  description: string | null;
+  builtin: boolean;
+  /** Built-in sets: the role that holds it without being given it. */
+  auto_role: string | null;
+  items: PermissionItem[];
+  member_count: number;
+  /** Custom sets: the people given it. */
+  members: { id: number; full_name: string | null; email: string | null }[];
+}
+
+export interface UserPermissions {
+  user: { id: number; full_name: string | null; email: string | null };
+  is_admin: boolean;
+  active: boolean;
+  roles: string[];
+  sets: { id: number; name: string; auto_role: string | null; via: "role" | "given" }[];
+  permissions: { key: string; scope: string; sources: { set_id: number | null; name: string; scope: string }[] }[];
 }
 
 export type ProjectRole = "view" | "manage";

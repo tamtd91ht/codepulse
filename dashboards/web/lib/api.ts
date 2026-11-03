@@ -114,6 +114,13 @@ export function canManageProject(me: Me | undefined, bpId: number | null | undef
   return bpId != null && me.projects?.[String(bpId)] === "manage";
 }
 
+/** Holds permission `key` at any scope (docs/specs/21); an admin holds every one. Buttons on a
+ * specific person's work still need the server's answer: the scope decides there. */
+export function can(me: Me | undefined, key: string): boolean {
+  if (!me) return false;
+  return me.is_admin || Boolean(me.permissions && key in me.permissions);
+}
+
 /** Manager ("manage" grant) of at least one dự án: sees everyone in it (people, reviews, closings, disputes). */
 export function managesAnyProject(me: Me | undefined): boolean {
   return !!me && (me.is_admin || Object.values(me.projects ?? {}).includes("manage"));

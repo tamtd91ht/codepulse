@@ -121,3 +121,25 @@ Dấu "—" nghĩa là không bộ có sẵn nào có quyền đó: chỉ admin,
 | **C** | API quản lý bộ quyền (`/admin/permission-sets`, gán người, xem trước quyền hiệu lực); trang Admin › Phân quyền (ma trận chức năng × phạm vi, nhân bản, gán hàng loạt, cảnh báo quyền nhạy cảm); frontend chuyển sang `can()` | admin bắt đầu tuỳ biến |
 
 Mỗi giai đoạn: lint, mypy, toàn bộ test qua, rồi commit và push. Giai đoạn B thêm **test ma trận**: với mỗi bộ có sẵn, kết quả cho phép/từ chối của các endpoint chính phải đúng như trước.
+
+## 7. Giai đoạn C: API và màn Phân quyền
+
+Mọi endpoint cần `admin.permissions` (mặc định chỉ admin):
+
+| Endpoint | Việc |
+|---|---|
+| `GET /admin/permissions/catalog` | danh mục theo nhóm chức năng (nhãn, phạm vi, flag, sensitive), nhãn phạm vi |
+| `GET /admin/permission-sets` | các bộ kèm items và số người (bộ có sẵn: người có vai trò đó, trừ admin; bộ tự tạo: người được gán còn hoạt động) |
+| `POST /admin/permission-sets` | tạo; `from_set_id` để nhân bản (lấy items và mô tả của bộ nguồn) |
+| `PATCH /admin/permission-sets/{id}` | tên, mô tả, items (thay cả danh sách) |
+| `DELETE /admin/permission-sets/{id}` | chỉ bộ tự tạo |
+| `PUT /admin/permission-sets/{id}/users` | thay người được gán; chỉ bộ tự tạo |
+| `GET /admin/users/{id}/permissions` | xem trước quyền hiệu lực và bộ nào cho mỗi quyền |
+
+Quyết định (người dùng giao chọn):
+- Bộ có sẵn: sửa được items và mô tả; không đổi tên, không đổi `auto_role`, không xoá, không gán tay.
+- Quyền `sensitive` cần `confirm_sensitive=true` khi **cấp mới hoặc nới phạm vi** (tạo, sửa, gán người mới), không thì 422 kèm danh sách. Nhân bản không cần, vì bản sao chưa cấp cho ai.
+- Người giữ `admin.permissions` mà không phải admin: không cấp quyền mình không có (hoặc rộng hơn mình), không cấp `admin.permissions`, không thêm quyền vào bộ mình đang giữ, không tự gán mình.
+- Không request nào tạo ra admin: admin vẫn chỉ là `ADMIN_EMAILS`; body không nhận `builtin`, `auto_role` (trường lạ bị 422).
+- Mỗi thay đổi ghi `audit_log`: `permission_set.create|update|delete|assign`.
+- Màn Admin › Phân quyền: hai tab con "Bộ quyền" (danh sách + ma trận) và "Quyền hiệu lực". Menu và nút ở các trang khác chuyển sang `can()` ở bước sau.
