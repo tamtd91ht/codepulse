@@ -8,6 +8,7 @@ import { CommandRunner } from "@/components/CommandRunner";
 import { GitLabMembers } from "@/components/GitLabMembers";
 import { Icon, type IconName, IconButton } from "@/components/icons";
 import { LlmCheck } from "@/components/LlmCheck";
+import { PermissionsAdmin } from "@/components/PermissionSets";
 import { PurgeData } from "@/components/PurgeData";
 import { RepoAdmin } from "@/components/RepoAdmin";
 import { ReviewSettings } from "@/components/ReviewSettings";
@@ -19,11 +20,12 @@ import { ApiError, api, useApi } from "@/lib/api";
 import { attributedText } from "@/lib/format";
 import type { Account, AccountLinked, Connection, LlmCosts, Me, Person, Team } from "@/lib/types";
 
-type Tab = "gitlab" | "repos" | "people" | "telegram" | "webhooks" | "llm" | "commands" | "data";
+type Tab = "gitlab" | "repos" | "people" | "permissions" | "telegram" | "webhooks" | "llm" | "commands" | "data";
 const TABS: { key: Tab; label: string; icon: IconName; hint: string }[] = [
   { key: "gitlab", label: "Kết nối GitLab", icon: "gitlab", hint: "Token bot và máy chủ GitLab" },
   { key: "repos", label: "Dự án & Repo", icon: "folder", hint: "Dự án, group, repo, review theo repo" },
   { key: "people", label: "Người & Team", icon: "members", hint: "Tài khoản, người dùng, team, vai trò" },
+  { key: "permissions", label: "Phân quyền", icon: "scale", hint: "Bộ quyền theo chức năng và phạm vi, gán cho người" },
   { key: "telegram", label: "Telegram", icon: "pulse", hint: "Bot nhận lệnh review theo dự án" },
   { key: "webhooks", label: "Webhook thông báo", icon: "webhook", hint: "POST kết quả review tới endpoint của bạn" },
   { key: "llm", label: "LLM & Chi phí", icon: "activity", hint: "Kết nối LLM, chi phí theo tháng" },
@@ -118,6 +120,7 @@ export default function AdminPage() {
         {tab === "gitlab" && <ConnectionsTab />}
         {tab === "repos" && <ReposTab />}
         {tab === "people" && <PeopleTab nav={nav} />}
+        {tab === "permissions" && <PermissionsAdmin nav={nav} />}
         {tab === "telegram" && <TelegramAdmin />}
         {tab === "webhooks" && <WebhookAdmin />}
         {tab === "llm" && <LlmTab nav={nav} />}
