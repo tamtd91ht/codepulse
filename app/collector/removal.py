@@ -19,6 +19,7 @@ from app.collector.gitlab.client import GitLabError
 from app.collector.sync import WEBHOOK_PATH, client_factory
 from app.models import (
     Commit,
+    CommitFile,
     Connection,
     FindingDispute,
     MergeRequest,
@@ -120,6 +121,7 @@ def remove_projects(session: Session, project_ids: list[int], tz: ZoneInfo) -> R
         ),
         ("pipelines", delete(Pipeline).where(Pipeline.project_id.in_(ids))),
         ("merge_requests", delete(MergeRequest).where(MergeRequest.project_id.in_(ids))),
+        ("commit_files", delete(CommitFile).where(CommitFile.sha.in_(shas))),
         ("commits", delete(Commit).where(Commit.sha.in_(shas))),
         ("raw_gitlab", delete(RawGitlab).where(RawGitlab.project_id.in_(ids))),
     ]

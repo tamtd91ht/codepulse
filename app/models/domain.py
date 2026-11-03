@@ -79,3 +79,17 @@ class Pipeline(TimestampMixin, Base):
     duration_sec: Mapped[int | None]
     created_at_src: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at_src: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CommitFile(TimestampMixin, Base):
+    """Paths a commit changed, with line counts, after IGNORE_PATHS (docs/specs/20 §5.1): the
+    input of knowledge risk. Never the content (docs/specs/AGENTS.md)."""
+
+    __tablename__ = "commit_files"
+
+    sha: Mapped[str] = mapped_column(
+        ForeignKey("commits.sha", ondelete="CASCADE"), primary_key=True
+    )
+    path: Mapped[str] = mapped_column(primary_key=True, index=True)
+    additions: Mapped[int] = mapped_column(server_default="0")
+    deletions: Mapped[int] = mapped_column(server_default="0")

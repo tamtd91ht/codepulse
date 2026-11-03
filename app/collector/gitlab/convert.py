@@ -5,22 +5,25 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from app.collector.gitlab import collect as ep
 from app.collector.gitlab.diffstat import is_ignored
 from app.collector.gitlab.extract import (
     Extracted,
     GlCommit,
     GlFileStat,
     GlUser,
+    _files,
     first_review_at,
     review_rounds,
 )
 from app.models import (
     Account,
     Commit,
+    CommitFile,
     MergeRequest,
     MrCommit,
     MrNote,
@@ -104,6 +107,36 @@ class Converter:
         else:
             stmt = self._upsert(Commit, values, ["sha"])
         self._session.execute(stmt)
+        if commit.files is not None and not only_if_missing:
+            self.commit_files(commit.sha, commit.files)
+
+    def commit_files(self, sha: str, files: list[GlFileStat]) -> None:
+        """docs/specs/20 §5.1: the commit's paths after IGNORE_PATHS, replacing what was stored
+        (a later diff of the same commit wins). A path listed twice is summed."""
+        kept: dict[str, tuple[int, int]] = {}
+        for f in files:
+            if f.path and not is_ignored(f.path, self._ignore):
+                a, d = kept.get(f.path, (0, 0))
+                kept[f.path] = (a + f.additions, d + f.deletions)
+        stale = delete(CommitFile).where(CommitFile.sha == sha)
+        if kept:
+            stale = stale.where(CommitFile.path.not_in(list(kept)))
+        self._session.execute(stale)
+        if not kept:
+            return
+        stmt = insert(CommitFile).values(
+            [{"sha": sha, "path": p, "additions": a, "deletions": d} for p, (a, d) in kept.items()]
+        )
+        self._session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=["sha", "path"],
+                set_={
+                    "additions": stmt.excluded.additions,
+                    "deletions": stmt.excluded.deletions,
+                    "updated_at": func.now(),
+                },
+            )
+        )
 
     def run(self, data: Extracted) -> ConvertResult:
         result = ConvertResult()
@@ -181,3 +214,43 @@ def raw_rows_query(project: Project, fetched_since: datetime | None = None) -> S
     if fetched_since is not None:
         query = query.where(RawGitlab.fetched_at >= fetched_since)
     return query
+
+
+@dataclass
+class BackfillResult:
+    commits: int = 0
+    skipped: int = 0  # diffs of commits the domain layer does not hold (purged, other repo)
+
+
+def backfill_commit_files(
+    session: Session, project: Project, ignore_paths: list[str], batch: int = 500
+) -> BackfillResult:
+    """docs/specs/20 §5.1: fill commit_files from the commit diffs already in raw_gitlab, in
+    insertion order so the latest diff of a commit wins. Idempotent; never calls GitLab."""
+
+    result = BackfillResult()
+    converter = Converter(session, project, ignore_paths)
+    rows = session.execute(
+        select(RawGitlab.params, RawGitlab.payload)
+        .where(RawGitlab.project_id == project.id, RawGitlab.endpoint == ep.EP_COMMIT_DIFF)
+        .order_by(RawGitlab.id)
+        .execution_options(yield_per=batch)
+    )
+    latest: dict[str, list[GlFileStat]] = {}
+    for params, payload in rows:
+        sha = (params or {}).get("sha")
+        if isinstance(sha, str) and isinstance(payload, list):
+            latest[sha] = _files(payload)
+    known: set[str] = set()
+    shas = list(latest)
+    for i in range(0, len(shas), batch):
+        chunk = shas[i : i + batch]
+        known.update(session.scalars(select(Commit.sha).where(Commit.sha.in_(chunk))))
+    for sha, files in latest.items():
+        if sha not in known:
+            result.skipped += 1
+            continue
+        converter.commit_files(sha, files)
+        result.commits += 1
+    session.flush()
+    return result

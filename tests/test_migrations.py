@@ -19,6 +19,7 @@ SPEC_TABLES = {
     "team_members",
     "accounts",
     "commits",
+    "commit_files",
     "merge_requests",
     "mr_commits",
     "mr_notes",

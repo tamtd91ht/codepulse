@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.collector.gitlab.client import GitLabError
+from app.collector.gitlab.convert import backfill_commit_files
 from app.collector.sync import ClientFactory, client_factory, register_webhook, sync_project
 from app.config import get_settings
 from app.crypto import SecretBox, secret_box
@@ -283,6 +284,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="only re-aggregate the periods (keep every review's score as it is)",
     )
 
+    insights = sub.add_parser("insights").add_subparsers(dest="command", required=True)
+    backfill = insights.add_parser(
+        "backfill-files",
+        help="fill commit_files from the commit diffs already collected (docs/specs/20 §5.1)",
+    )
+    backfill.add_argument("--project", type=int, help="CodePulse project id; default: all tracked")
+
     rm = sub.add_parser(
         "review-metrics",
         help="cost / duration / turns / disputes / score drift per mode and rubric (spec 19 §5)",
@@ -370,6 +378,19 @@ def run(
             return identity_import(session, out, args.teams, args.users, args.accounts)
         case ("identity", "unmapped"):
             identity_unmapped(session, out)
+        case ("insights", "backfill-files"):
+            if args.project is not None:
+                repos = [_project(session, args.project)]
+            else:
+                repos = list(
+                    session.scalars(select(Project).where(Project.tracked).order_by(Project.id))
+                )
+            for repo in repos:
+                filled = backfill_commit_files(session, repo, settings.ignore_paths)
+                out.write(
+                    f"{repo.path_with_namespace}: {filled.commits} commits, "
+                    f"{filled.skipped} diffs without a stored commit\n"
+                )
         case ("metrics", "recompute"):
             if args.date_to < args.date_from:
                 raise CliError("--to must not be before --from")

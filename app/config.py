@@ -157,6 +157,17 @@ class Settings(BaseSettings):
     review_commits_list_max: int = Field(default=200, ge=20, le=500)
     review_batch_max: int = Field(default=50, ge=1, le=200)
 
+    # Engineering Insights (docs/specs/20 §4, §7): fewer merged MRs than this hide medians;
+    # a repo synced longer ago than this makes the numbers "low" confidence.
+    insights_min_sample: int = Field(default=5, ge=1, le=1000)
+    insights_stale_sync_hours: int = Field(default=48, ge=1, le=24 * 30)
+    # Knowledge risk (§4.9): trailing window, module = first N directories, the churn share
+    # the fewest authors must reach, and the commits a module needs before it is flagged.
+    knowledge_window_days: int = Field(default=180, ge=7, le=730)
+    knowledge_module_depth: int = Field(default=2, ge=1, le=6)
+    knowledge_bus_threshold: float = Field(default=0.5, gt=0, le=1)
+    knowledge_min_commits: int = Field(default=10, ge=1, le=10_000)
+
     @field_validator(
         "ignore_paths",
         "sensitive_paths",

@@ -82,3 +82,10 @@ Base: `/api/v1`. Auth: SSO (OIDC với GitLab) – đã chốt ở Phase 0. Open
 | POST | `/admin/command-runs/{id}/cancel` | Huỷ (đang chờ: ngay; đang chạy: ở sự kiện kế tiếp) | admin |
 | — | `COMMAND_RUNS_ENABLED=false` | Mọi route ở bảng này trả 404; `/auth/me` có `command_runs: false` (dashboard ẩn tab) | — |
 | GET | `/admin/command-runs/{id}/download` | File duy nhất hoặc `.zip` của mọi file; tải một lần rồi xoá khỏi server (lần sau 410); audit `command.download` | admin |
+
+## Bổ sung (Engineering Insights, docs/specs/20 §8–9, người dùng 2026-11-03)
+| Method | Path | Mô tả | Quyền |
+|---|---|---|---|
+| GET | `/insights/flow?business_project_id=&project_id=&period=week\|month\|range&start=&end=` | Luồng làm việc cấp dự án/repo: MR đã merge, 4 chặng (median/p75), merge không review, cỡ MR, xu hướng, MR đang chờ phản hồi, pipeline; `confidence`, `data_as_of` | được cấp dự án (admin: cả repo chưa gán); tên tác giả theo `can_see_work` |
+| GET | `/insights/flow/mrs?…&stage=&only=unreviewed\|xl&limit=&offset=` | Danh sách MR tạo nên số liệu, chậm nhất trước | như trên |
+| GET | `/insights/review-load?…` | Ai review MR của ai (đếm MR, không đếm comment), độ tập trung | như trên |

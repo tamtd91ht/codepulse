@@ -85,3 +85,17 @@
 - [x] 8.11 Thống kê theo rule (chết/nhiễu), tab So với bản trước, tầng thăm dò mã, tự biên dịch theo cờ (19 §3.2, §5)
 - [x] 8.12 Đo trước/sau trên DB thật (chi phí, thời gian, ignored_verifications, dispute, lệch điểm) và chỉnh trần (19 §5)
 - [ ] **Demo**: cùng 30 commit chạy luồng cũ và v2 → precision theo severity, chi phí/review, lệch điểm khi review lại
+
+## Phase 9 – Engineering Insights & hồ sơ bằng chứng (20) – người dùng yêu cầu 2026-11-03
+- [x] 9.1 Spec 20 + mục lục 00 + checklist
+- [x] 9.2 `app/insights/flow.py`, `pipelines.py`, `confidence.py` – hàm thuần + test bảng (20 §4.2–4.8, §7)
+- [x] 9.3 API `/insights/flow`, `/insights/flow/mrs`, `/insights/review-load` + test quyền (20 §8–9)
+- [ ] 9.4 Dashboard `/insights`: Luồng làm việc, Tải review (20 §10)
+- [x] 9.5 Bảng `commit_files` + converter + CLI `insights backfill-files` (20 §5.1)
+- [ ] 9.6 `knowledge.py` + API `/insights/knowledge` + tab Rủi ro tri thức (20 §4.9)
+- [ ] **Demo**: một dự án thật – 4 chặng 8 tuần gần nhất, top MR chờ, bus factor
+- [ ] 9.7 USER_GUIDE "Insights đo gì và không đo gì" + pilot 2–3 team (20 §12)
+- [ ] 9.8 `[DECISION D2]` Deployments collector + DORA (20 §4.10, §5.2)
+- [ ] 9.9 `[DECISION D3]` Issues / incident (20 §5.3)
+- [ ] 9.10 `[DECISION D1, D4]` Hồ sơ bằng chứng: model, job draft, API, UI, audit (20 §6)
+- [ ] 9.11 Bản nháp AI cho hồ sơ (20 §6.4; thay 6.3)

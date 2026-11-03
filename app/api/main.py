@@ -25,6 +25,7 @@ from app.api.routers import (
     commits,
     disputes,
     evaluation,
+    insights,
     knowledge,
     knowledge_stats,
     llm,
@@ -86,6 +87,7 @@ for api_router in (
     evaluation.router,
     assistant.router,
     closures.router,
+    insights.router,
 ):
     app.include_router(api_router, prefix="/api/v1")
 # docs/specs/11: CORS for the dashboard origin only; cookies need credentials.
