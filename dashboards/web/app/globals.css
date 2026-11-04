@@ -6351,3 +6351,92 @@ button.crit-info-btn:focus-visible {
   }
 }
 
+/* Báo cáo nhóm (So sánh nhóm, docs/specs/23 §8) */
+.report-mode {
+  margin: 0 0 10px;
+}
+.people-picker {
+  position: relative;
+}
+.people-picker > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-field);
+  background: var(--surface);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.people-picker > summary::-webkit-details-marker {
+  display: none;
+}
+.people-picker > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.people-picker-pop {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 260px;
+  max-width: min(360px, 90vw);
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  background: var(--surface);
+  box-shadow: var(--shadow-md, var(--shadow-sm));
+  display: grid;
+  gap: 6px;
+}
+.people-picker-pop ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.people-picker-pop li {
+  padding: 3px 2px;
+}
+.team-levels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+.team-level {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 14px;
+  border-left: 4px solid var(--border-strong);
+}
+.team-level.tone-good {
+  border-left-color: var(--good);
+  color: inherit;
+}
+.team-level.tone-warn {
+  border-left-color: var(--warn);
+}
+.team-level.tone-bad {
+  border-left-color: var(--bad);
+}
+.team-level-n {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.heat-table td.heat {
+  font-variant-numeric: tabular-nums;
+}
+.heat-table tr.heat-total td {
+  font-weight: 600;
+  border-top: 2px solid var(--border-strong);
+}
+.tone-bad-text {
+  color: var(--bad-text);
+}
+

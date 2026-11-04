@@ -8,11 +8,12 @@ import { SubPanel, type SubTab, SubTabs } from "@/components/AdminTabs";
 import { FormulaHelp } from "@/components/CriteriaScores";
 import { Score, SeverityRow, VerdictMix, RangePicker, scoreTone, useUrlRange } from "@/components/Evaluation";
 import { Icon } from "@/components/icons";
-import { Alert, Card, ChartTip, EmptyState, Loading, PageHeader, Pill, StatStrip, StripStat } from "@/components/ui";
+import { type TeamReport, TeamReportView } from "@/components/TeamReport";
+import { Alert, Card, ChartTip, EmptyState, Loading, PageHeader, Pill, Segmented, StatStrip, StripStat } from "@/components/ui";
 import { qs, useApi } from "@/lib/api";
 import { toNum } from "@/lib/criteria";
 import { VERDICT_LABEL, dateTime, num, weekLabel } from "@/lib/format";
-import type { CriteriaSummary, EvaluationBucket, Person, Repo, Verdict } from "@/lib/types";
+import type { CriteriaSummary, EvaluationBucket, Me, Person, Repo, Team, Verdict } from "@/lib/types";
 
 /* ---- API shapes (GET /members/{id}/report, docs/specs/23) ---- */
 
@@ -101,6 +102,17 @@ export default function MemberReportPage() {
   const [repo, setRepo] = useUrlParam("repo");
   const [tabParam, setTabParam] = useUrlParam("tab");
   const tab: Tab = tabParam === "criteria" ? "criteria" : "overview";
+  // ?mode=team: several people side by side (docs/specs/23 §8).
+  const [modeParam, setModeParam] = useUrlParam("mode");
+  const me = useApi<Me>("/auth/me");
+  // Comparing people is the Thành viên page's job: only who sees that page gets the switch.
+  const canCompare = !!me.data?.members_page;
+  const team = modeParam === "team" && canCompare;
+  const [teamId, setTeamId] = useUrlParam("team");
+  const [picked, setPicked] = useUrlParam("people");
+  const [setParam, setSetParam] = useUrlParam("set");
+  const pickedIds = picked.split(",").filter(Boolean);
+  const teams = useApi<Team[]>(team ? "/teams/visible" : null);
 
   const people = useApi<Person[]>("/people");
   const repos = useApi<Repo[]>("/repos");
@@ -114,11 +126,22 @@ export default function MemberReportPage() {
     .sort((a, b) => a.path_with_namespace.localeCompare(b.path_with_namespace));
 
   const filters = range ? { from: range.from, to: range.to, business_project_id: bp || null, project_id: repo || null } : null;
-  const path = user && filters ? `/members/${user}/report${qs(filters)}` : null;
+  const path = !team && user && filters ? `/members/${user}/report${qs(filters)}` : null;
   const report = useApi<MemberReport>(path, { keepPreviousData: true });
   const data = report.data && String(report.data.user.id) === user ? report.data : undefined;
   const name = data ? (data.user.full_name ?? data.user.primary_email ?? "") : "";
   const exportHref = path ? `/api/v1/members/${user}/report.xlsx${qs(filters ?? {})}` : undefined;
+
+  const teamFilters = filters
+    ? { ...filters, team_id: teamId || null, user_ids: picked || null, set_id: setParam || null }
+    : null;
+  const teamPath = team && teamFilters ? `/members/team-report${qs(teamFilters)}` : null;
+  const teamReport = useApi<TeamReport>(teamPath, { keepPreviousData: true });
+  const teamExport = teamPath ? `/api/v1/members/team-report.xlsx${qs(teamFilters ?? {})}` : undefined;
+  const personHref = (id: number) =>
+    `/members/report?user=${id}${range ? (range.preset === "custom" ? `&from=${range.from}&to=${range.to}` : `&range=${range.preset}`) : ""}${bp ? `&bp=${bp}` : ""}${repo ? `&repo=${repo}` : ""}`;
+  const teamTitle =
+    teamReport.data?.filters.team_name ?? (pickedIds.length ? `${pickedIds.length} người được chọn` : "mọi người trong phạm vi");
 
   const tabs: SubTab<Tab>[] = [
     { key: "overview", label: "Tổng quan", hint: "Đánh giá chung, xu hướng, mức lỗi, loại lỗi, repo, review cần xem" },
@@ -134,15 +157,23 @@ export default function MemberReportPage() {
     <>
       <PageHeader
         eyebrow={<Link href="/members">Thành viên</Link>}
-        title={data ? `Báo cáo: ${name}` : "Báo cáo thành viên"}
-        subtitle="Chất lượng code của một người trong khoảng thời gian, so với kỳ trước và với mặt bằng những người bạn xem được cùng bộ lọc."
+        title={team ? `So sánh nhóm: ${teamTitle}` : data ? `Báo cáo: ${name}` : "Báo cáo thành viên"}
+        subtitle={
+          team
+            ? "Nhiều người cạnh nhau trong cùng khoảng thời gian: ai cần chú ý, ai hay mắc lỗi gì, ai yếu ở thành phần nào."
+            : "Chất lượng code của một người trong khoảng thời gian, so với kỳ trước và với mặt bằng những người bạn xem được cùng bộ lọc."
+        }
         foldable={false}
         actions={
           <span className="no-print report-actions">
-            <button type="button" onClick={() => window.print()} disabled={!data}>
+            <button type="button" onClick={() => window.print()} disabled={team ? !teamReport.data : !data}>
               <Icon name="printer" size={14} /> In / PDF
             </button>
-            {exportHref && data ? (
+            {team && teamExport && teamReport.data ? (
+              <a className="button primary" href={teamExport} download>
+                <Icon name="download" size={14} /> Xuất Excel
+              </a>
+            ) : !team && exportHref && data ? (
               <a className="button primary" href={exportHref} download>
                 <Icon name="download" size={14} /> Xuất Excel
               </a>
@@ -155,18 +186,48 @@ export default function MemberReportPage() {
         }
       />
 
+      {canCompare && (
+      <div className="report-mode no-print">
+        <Segmented<"one" | "team">
+          label="Kiểu báo cáo"
+          value={team ? "team" : "one"}
+          onChange={(m) => setModeParam(m === "team" ? "team" : "")}
+          options={[
+            { value: "one", label: "Một người" },
+            { value: "team", label: "So sánh nhóm" },
+          ]}
+        />
+      </div>
+      )}
       <section className="card report-filters no-print" aria-label="Bộ lọc báo cáo">
-        <label className="adm-field">
-          <span className="small muted">Thành viên</span>
-          <select value={user} onChange={(e) => setUser(e.target.value)} aria-label="Chọn thành viên">
-            <option value="">{people.data ? "Chọn người…" : "Đang tải…"}</option>
-            {(people.data ?? []).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.full_name ?? p.primary_email ?? `#${p.id}`}
-              </option>
-            ))}
-          </select>
-        </label>
+        {team ? (
+          <>
+            <label className="adm-field">
+              <span className="small muted">Team</span>
+              <select value={teamId} onChange={(e) => setTeamId(e.target.value)} aria-label="Chọn team">
+                <option value="">{teams.data ? "Mọi người trong phạm vi" : "Đang tải…"}</option>
+                {(teams.data ?? []).map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <PeoplePicker people={people.data ?? []} value={pickedIds} onChange={(ids) => setPicked(ids.join(","))} />
+          </>
+        ) : (
+          <label className="adm-field">
+            <span className="small muted">Thành viên</span>
+            <select value={user} onChange={(e) => setUser(e.target.value)} aria-label="Chọn thành viên">
+              <option value="">{people.data ? "Chọn người…" : "Đang tải…"}</option>
+              {(people.data ?? []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.full_name ?? p.primary_email ?? `#${p.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="adm-field">
           <span className="small muted">Dự án</span>
           <select
@@ -202,7 +263,28 @@ export default function MemberReportPage() {
         </div>
       </section>
 
-      {!user ? (
+      {team ? (
+        !teamReport.data ? (
+          <Card collapsible={false}>
+            <Loading error={teamReport.error} rows={6} />
+          </Card>
+        ) : (
+          <div className={teamReport.isLoading ? "eval-dim" : undefined}>
+            {teamReport.error && <Alert tone="error">Không tải được bộ lọc mới: {teamReport.error.message}.</Alert>}
+            <p className="muted small report-scope">
+              {teamReport.data.from} → {teamReport.data.to} · {teamReport.data.filters.business_project_name ?? "Mọi dự án"}
+              {teamReport.data.filters.project_path ? ` / ${teamReport.data.filters.project_path}` : ""} · kỳ trước{" "}
+              {teamReport.data.previous.from} → {teamReport.data.previous.to}
+            </p>
+            <TeamReportView
+              data={teamReport.data}
+              personHref={personHref}
+              setId={setParam ? Number(setParam) : null}
+              onSetId={(id) => setSetParam(String(id))}
+            />
+          </div>
+        )
+      ) : !user ? (
         <Card collapsible={false}>
           <EmptyState icon="user" title="Chọn một thành viên để xem báo cáo">
             Báo cáo cho biết người đó viết code tốt tới đâu: điểm review, tỉ lệ được duyệt, lỗi nghiêm trọng, loại lỗi hay
@@ -592,5 +674,53 @@ function CriteriaTab({ data }: { data: MemberReport }) {
         )}
       </Card>
     </>
+  );
+}
+
+/** Several people to compare: a filterable checklist in a dropdown; none = the whole team / scope. */
+function PeoplePicker({ people, value, onChange }: { people: Person[]; value: string[]; onChange: (ids: string[]) => void }) {
+  const [query, setQuery] = useState("");
+  const chosen = new Set(value);
+  const q = query.trim().toLowerCase();
+  const shown = people.filter((p) => !q || `${p.full_name ?? ""} ${p.primary_email ?? ""}`.toLowerCase().includes(q));
+  const label = value.length
+    ? people
+        .filter((p) => chosen.has(String(p.id)))
+        .map((p) => p.full_name ?? p.primary_email)
+        .slice(0, 3)
+        .join(", ") + (value.length > 3 ? ` +${value.length - 3}` : "")
+    : "Cả team / mọi người";
+  return (
+    <div className="adm-field">
+      <span className="small muted">Người so sánh</span>
+      <details className="people-picker">
+        <summary>{label}</summary>
+        <div className="people-picker-pop">
+          <input type="search" placeholder="Tìm người…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Tìm người" />
+          <ul>
+            {shown.map((p) => {
+              const id = String(p.id);
+              return (
+                <li key={p.id}>
+                  <label className="inline-check">
+                    <input
+                      type="checkbox"
+                      checked={chosen.has(id)}
+                      onChange={(e) => onChange(e.target.checked ? [...value, id] : value.filter((x) => x !== id))}
+                    />
+                    {p.full_name ?? p.primary_email ?? `#${p.id}`}
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+          {value.length > 0 && (
+            <button type="button" className="ghost sm" onClick={() => onChange([])}>
+              Bỏ chọn ({value.length})
+            </button>
+          )}
+        </div>
+      </details>
+    </div>
   );
 }

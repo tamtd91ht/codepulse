@@ -41,6 +41,7 @@ from app.api.routers import (
     review_reports,
     reviews,
     settings,
+    team_report,
     telegram,
 )
 from app.collector.gitlab.client import GitLabError
@@ -89,6 +90,7 @@ for api_router in (
     knowledge.router,
     knowledge_stats.router,
     evaluation.router,
+    team_report.router,
     member_report.router,
     assistant.router,
     closures.router,

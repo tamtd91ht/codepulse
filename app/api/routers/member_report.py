@@ -55,29 +55,20 @@ MIN_YEAR, MAX_YEAR = 2000, 2100
 LIST_LIMIT = 8  # reviews to look at, in the JSON (the workbook lists every review)
 
 
-class Filters:
-    """The report's filters, checked once: the period in whole REPORT_TZ days, the dự án and repo
-    the viewer may see."""
+class ScopeFilters:
+    """The filters every report shares, checked once: the period in whole REPORT_TZ days, the
+    dự án and repo the viewer may see."""
 
     def __init__(
         self,
         session: Session,
         principal: Principal,
         settings: Settings,
-        user_id: int,
         date_from: date | None,
         date_to: date | None,
         business_project_id: int | None,
         project_id: int | None,
     ) -> None:
-        if not covers_person(session, principal, "evaluation.view", user_id):
-            raise HTTPException(
-                403, "individual metrics are visible to the person, their lead and dự án managers"
-            )
-        user = session.get(User, user_id)
-        if user is None:
-            raise HTTPException(404, "person not found")
-        self.user = user
         self.tz = ZoneInfo(settings.report_tz)
         for day in (date_from, date_to):
             if day is not None and not MIN_YEAR <= day.year <= MAX_YEAR:
@@ -136,10 +127,37 @@ class Filters:
         }
 
 
+class Filters(ScopeFilters):
+    """One person's report: the shared filters, and that person, if the viewer covers them."""
+
+    def __init__(
+        self,
+        session: Session,
+        principal: Principal,
+        settings: Settings,
+        user_id: int,
+        date_from: date | None,
+        date_to: date | None,
+        business_project_id: int | None,
+        project_id: int | None,
+    ) -> None:
+        if not covers_person(session, principal, "evaluation.view", user_id):
+            raise HTTPException(
+                403, "individual metrics are visible to the person, their lead and dự án managers"
+            )
+        user = session.get(User, user_id)
+        if user is None:
+            raise HTTPException(404, "person not found")
+        self.user = user
+        super().__init__(
+            session, principal, settings, date_from, date_to, business_project_id, project_id
+        )
+
+
 def _facts(
     session: Session,
     principal: Principal,
-    f: Filters,
+    f: ScopeFilters,
     users: set[int] | None,
     start: date,
     end: date,
@@ -195,9 +213,9 @@ def _labels(session: Session, ids: list[int]) -> dict[int, dict[str, Any]]:
 
 
 def _criteria_sets(
-    session: Session, user_id: int, f: Filters, facts: list[ReviewFacts]
+    session: Session, f: ScopeFilters, facts: list[ReviewFacts]
 ) -> list[dict[str, Any]]:
-    """The criteria sets the person's reviews of the period have a score under (the dự án's
+    """The criteria sets the reviews of the period have a score under (the dự án's
     primary first when a dự án is chosen)."""
     ids = [r.id for r in facts]
     if not ids:
@@ -289,7 +307,7 @@ def build_report(
         "categories": categories(mine, everyone),
         "lowest_reviews": lowest,
         "severe_reviews": severe,
-        "criteria_sets": _criteria_sets(session, uid, f, mine),
+        "criteria_sets": _criteria_sets(session, f, mine),
         "_facts": mine,  # the workbook lists every review; dropped from the JSON
     }
 
@@ -321,6 +339,24 @@ def member_report(
 # -- the workbook --------------------------------------------------------------------------------
 
 
+def xlsx_row(ws: Any, values: list[Any]) -> None:
+    """Append a row of user-supplied values safely: control characters openpyxl refuses are
+    dropped, and nothing ever becomes a formula: "=WEBSERVICE(...)" in a title stays text."""
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+
+    ws.append([ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v for v in values])
+    for cell in ws[ws.max_row]:
+        if cell.data_type == "f":
+            cell.data_type = "s"
+
+
+def sheet_title(name: str) -> str:
+    """A sheet title Excel accepts: no \\ / ? * : [ ], at most 31 characters."""
+    import re
+
+    return re.sub(r"[\\/*?:\[\]]", "-", name)[:31].strip("'") or "Sheet"
+
+
 def _num(value: Any) -> Any:
     return float(value) if value is not None else None
 
@@ -340,16 +376,13 @@ def workbook(session: Session, principal: Principal, settings: Settings, f: Filt
 
     def sheet(title: str, header: list[str], rows: list[list[Any]], first: bool = False) -> Any:
         ws: Worksheet = wb.active if first else wb.create_sheet()  # type: ignore[assignment]
-        ws.title = title
-        ws.append(header)
+        ws.title = sheet_title(title)
+        xlsx_row(ws, header)
         for cell in ws[1]:
             cell.font = bold
             cell.fill = head_fill
         for row in rows:
-            ws.append(row)
-            for cell in ws[ws.max_row]:
-                if cell.data_type == "f":  # a commit title "=WEBSERVICE(...)" stays text
-                    cell.data_type = "s"
+            xlsx_row(ws, row)
         for i, _ in enumerate(header, start=1):
             width = max(
                 [len(str(header[i - 1]))] + [len(str(r[i - 1])) for r in rows if i - 1 < len(r)]

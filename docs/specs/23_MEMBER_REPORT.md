@@ -63,3 +63,17 @@ Lead / quản lý xem báo cáo để trả lời ba câu, theo thứ tự:
 - `GET /api/v1/members/{user_id}/report?from&to&business_project_id&project_id` trả JSON gồm: `user`, `from`, `to`, `filters`, `summary`, `previous{from,to,summary}`, `peers` (kèm `members`), `assessment{level,label,reasons,thin}`, `weeks`, `trend`, `trend_reviews`, `peer_trend`, `by_repo`, `categories[{category,label,count,share,peer_share}]`, `lowest_reviews`, `severe_reviews`, `criteria_sets`.
 - `GET /api/v1/members/{user_id}/report.xlsx`: cùng tham số.
 - Code: `app/api/routers/member_report.py`, `app/scoring/member_report.py`, `dashboards/web/app/members/report/page.tsx`.
+
+## 8. So sánh nhóm (người dùng 2026-11-04: "thêm báo cáo cho cả team, so sánh nhiều thành viên")
+- Cùng trang, công tắc **Một người | So sánh nhóm** (`?mode=team`), chỉ hiện cho ai thấy trang Thành viên (`members.view`). Nút **So sánh & export** ở trang Thành viên mở thẳng chế độ này với team và khoảng thời gian đang lọc.
+- Chọn ai: **team** (người trong team vào bất kỳ lúc nào trong kỳ), và/hoặc **chọn từng người** (danh sách có ô tìm); bỏ trống cả hai = mọi người mình xem được. Dùng chung bộ lọc thời gian / dự án / repo. Tối đa 100 người.
+- **[Quyết định]** Thứ tự đọc: phân bố mức (Cần hỗ trợ / Cần cải thiện / Tốt / Chưa có dữ liệu) → chỉ số cả nhóm so với kỳ trước → ba tab:
+  1. **So sánh**: biểu đồ thanh điểm TB từng người (màu theo mức, vạch điểm TB cả nhóm); bảng mỗi người một dòng, **người cần chú ý trước** (mức, rồi điểm thấp), sắp được theo mọi cột: mức (lý do khi rê chuột), review, điểm TB, so với kỳ trước, APPROVE, critical / high, lỗi / 100 LOC, loại lỗi hay mắc nhất. Bấm tên → báo cáo một người với cùng bộ lọc.
+  2. **Loại lỗi**: bảng nhiệt người × 8 loại lỗi nhiều nhất của nhóm; ô = tỉ trọng loại đó trong lỗi của người đó, dòng **Cả nhóm** để so. Ô đậm hơn hẳn dòng nhóm = điểm cần kèm riêng.
+  3. **Theo tiêu chí**: bảng nhiệt người × thành phần của bộ đã chọn (điểm TB theo LOC; xanh ≥ 80, vàng 65–80, đỏ < 65), điểm cuối, dòng Cả nhóm.
+- Mức của từng người tính như §3 nhưng **mặt bằng = cả nhóm đang so sánh** (không phải mọi người trong phạm vi).
+- Người có tên trong team / danh sách nhưng không có review vẫn có dòng (mức Chưa có dữ liệu): lead cần biết ai không được review.
+- **Export Excel** (`GET /members/team-report.xlsx`): Tổng quan nhóm (chỉ số kỳ này / kỳ trước, số người theo mức), So sánh thành viên (kèm lý do), Loại lỗi (ma trận), Tiêu chí – <bộ> (ma trận), Review (mọi review của nhóm, có cột thành viên). In / PDF như §5.
+- Quyền: `members.view`; người được so sánh ∩ `person_scope(evaluation.view)`; team phải `sees_team`; nêu id người ngoài phạm vi → 403. Nội dung review và điểm tiêu chí chỉ từ review mở được bằng `review.view`. Audit `member_report.team_read`, `member_report.team_export`.
+- API: `GET /api/v1/members/team-report?from&to&team_id&user_ids=1,2&business_project_id&project_id&set_id` → `summary`, `previous`, `levels`, `weeks`, `trend`, `members[]` (chỉ số, `previous_avg_score`, `assessment`, `trend`, `categories{key: %}`, `top_category`, `criteria{reviews,score,components}`), `categories[]`, `criteria_sets[]`, `criteria{set_id,name,version,components[],group}`. Code: `app/api/routers/team_report.py`, `dashboards/web/components/TeamReport.tsx`.
+

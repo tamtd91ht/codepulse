@@ -167,6 +167,13 @@ export default function GuidePage() {
             <strong>In / PDF</strong> in trang. Link của trang giữ nguyên bộ lọc nên gửi được cho người khác.
           </li>
           <li>
+            <strong>So sánh nhóm</strong> (công tắc trên trang Báo cáo thành viên, hoặc nút{" "}
+            <strong>So sánh &amp; export</strong> ở trang Thành viên): chọn team hoặc từng người. Đầu trang là số người ở
+            mỗi mức, rồi ba tab: <strong>So sánh</strong> (điểm TB từng người so với cả nhóm, bảng xếp người cần chú ý
+            trước), <strong>Loại lỗi</strong> (ai hay mắc loại lỗi nào hơn cả nhóm) và <strong>Theo tiêu chí</strong> (ai yếu
+            ở thành phần nào). Bấm tên một người để mở báo cáo riêng; Xuất Excel có đủ các bảng và danh sách review.
+          </li>
+          <li>
             <strong>Duyệt khiếu nại</strong>: chấp nhận hoặc từ chối. Bạn không thể tự duyệt khiếu nại của mình.
           </li>
           <li>Review bị lỗi hoặc bị bỏ qua có thể chạy lại ngay từ trang review.</li>

@@ -250,8 +250,11 @@ function MembersEvaluationBody() {
         actions={
           <>
             <RangePicker value={range} onChange={setRange} />
-            <Link href={`/members/report${rangeSearch(range)}`} className="button">
-              <Icon name="book" size={14} /> Báo cáo &amp; export
+            <Link
+              href={`/members/report${rangeSearch(range) || "?"}${rangeSearch(range) ? "&" : ""}mode=team${teamId ? `&team=${teamId}` : ""}`}
+              className="button"
+            >
+              <Icon name="book" size={14} /> So sánh &amp; export
             </Link>
           </>
         }
