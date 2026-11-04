@@ -205,6 +205,12 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
             AuditLog.action == "finding.close_request.cost", AuditLog.at >= month_start
         )
     )
+    # Claude placements of findings when criteria scores are redone (docs/specs/22 §10).
+    rescores = session.scalar(
+        select(func.coalesce(func.sum(AuditLog.details["cost_usd"].as_float()), 0)).where(
+            AuditLog.action == "criteria.rescore.cost", AuditLog.at >= month_start
+        )
+    )
     builds = 0.0
     for data in session.scalars(
         select(ReviewKnowledge.data).where(ReviewKnowledge.created_at >= month_start)
@@ -223,6 +229,7 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
         "evidence_drafts_usd": round(float(drafts or 0), 4),
         "dispute_checks_usd": round(float(dispute_checks or 0), 4),
         "component_maps_usd": round(float(component_maps or 0), 4),
+        "criteria_rescore_usd": round(float(rescores or 0), 4),
         "total_usd": round(
             float(reviews or 0)
             + float(commands or 0)
@@ -231,7 +238,8 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
             + float(closures or 0)
             + float(drafts or 0)
             + float(dispute_checks or 0)
-            + float(component_maps or 0),
+            + float(component_maps or 0)
+            + float(rescores or 0),
             4,
         ),
     }

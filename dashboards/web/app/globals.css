@@ -6523,3 +6523,41 @@ button.crit-info-btn:focus-visible {
   background: var(--surface);
 }
 
+/* Chấm lại điểm theo tiêu chí (docs/specs/22 §10) */
+.rescore fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  padding: 8px 12px 10px;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+.rescore-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: 10px;
+}
+.rescore-facts {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+.rescore-ack {
+  padding: 8px 10px;
+  border-radius: var(--radius-field);
+  background: var(--warn-soft);
+}
+.rescore-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.rescore-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.3s ease;
+}
+

@@ -221,6 +221,14 @@ export default function GuidePage() {
           </li>
           <li>Xoá dự án chỉ bỏ cách nhóm; repo và lịch sử review vẫn giữ.</li>
         </ul>
+        <h3>Chấm lại điểm theo tiêu chí</h3>
+        <p>
+          Admin → Dự án &amp; Repo → bấm dự án → tab <strong>Tiêu chí chấm</strong> → <strong>Chấm lại điểm…</strong>. Chọn bộ
+          tiêu chí, repo, người và khoảng thời gian, bấm <strong>Xem trước</strong> để biết bao nhiêu review sẽ đổi điểm, bao
+          nhiêu finding chưa được xếp vào thành phần và bao nhiêu kết quả quá sơ sài; đọc cảnh báo, tick xác nhận rồi bấm{" "}
+          <strong>Chấm lại</strong>. Điểm được tính lại từ kết quả review đã có, không review lại code. Tuỳ chọn: để Claude xếp
+          các finding chưa được xếp (tốn một ít ngân sách), và review lại thật các kết quả quá sơ sài (tốn như review mới).
+        </p>
         <h3>Quy tắc review theo dự án</h3>
         <p>
           Trong ngăn chi tiết của một dự án (Admin → Dự án &amp; Repo → bấm ô dự án) có tab <strong>Quy tắc review</strong>:

@@ -149,3 +149,43 @@ Vị trí: **Admin › Bộ tiêu chí**, một tab của Admin.
 | **22.3** | UI §7 |
 
 Mỗi giai đoạn: lint, mypy, toàn bộ test, build frontend; commit và push.
+
+## 10. Chấm lại điểm theo tiêu chí, có bộ lọc (người dùng 2026-11-04)
+> "Chấm điểm lại toàn bộ theo tiêu chí đang được gán cho dự án; có cảnh báo và nút xác nhận; lọc theo dự án, repo, thời gian, user…; căn cứ kết quả review đã chạy so với tiêu chí hiện tại, không review lại; riêng kết quả quá sơ sài thì cho phép review lại; dùng Claude để tổng hợp cho chính xác."
+
+- **Ở đâu**: Admin › Dự án & Repo › tab **Tiêu chí chấm** (và chỗ nào hiện khối gán bộ cho QLDA), nút **Chấm lại điểm…**. Quyền: `criteria.assign` trên dự án; tuỳ chọn review lại cần thêm `review.rerun` trên dự án.
+- **Bộ lọc**: bộ tiêu chí (mặc định mọi bộ của dự án), repo của dự án, người (nhiều), khoảng thời gian (theo ngày `REPORT_TZ`, bỏ trống = mọi lúc). Chỉ review `done`.
+- **Cách tính** (không gọi LLM): mỗi review được chấm lại từ **finding đã có** theo **phiên bản hiện tại** của từng bộ (`store_scores`), ghi đè điểm cũ. Finding đã được model xếp vào một thành phần (`criteria[set_id]`) thì giữ chỗ đó; chưa xếp thì đi theo loại lỗi. Điểm review 0–100 và kết luận merge không đổi.
+- **Tuỳ chọn 1, Claude xếp finding** (mặc định bật trong hộp thoại):
+  - Với mỗi review có finding **chưa được xếp hợp lệ** vào bộ, gọi Claude một lượt nhỏ, không có tool. Đầu vào là các thành phần (mã, tên, mô tả) và finding (mức, loại, file, tiêu đề + nội dung ≤ 400 ký tự, đã redact, ghi rõ là dữ liệu, không phải chỉ dẫn).
+  - Chỉ nhận mã thành phần thuộc bộ; kết quả ghi vào `review_findings.criteria`, nên lần chấm sau không gọi lại.
+  - Mỗi lượt gọi xếp tối đa 60 finding; review có nhiều hơn thì gọi thêm lượt.
+  - Chi phí ghi vào audit `criteria.rescore.cost` **theo từng lô 100 review, trong cùng transaction với kết quả xếp**, nên job chết giữa chừng vẫn đã ghi phần đã tiêu. Khoản này tính vào ngân sách LLM tháng.
+  - Trước mỗi lượt gọi, đọc lại mức đã tiêu của tháng (gồm các job khác). Chạm ngân sách thì dừng gọi; phần còn lại đi theo loại lỗi, còn điểm vẫn được chấm.
+  - Dừng gọi khi: 5 lượt lỗi liên tiếp (Claude không trả lời), hoặc chạm **1.500 lượt gọi mỗi lần chạy** (khoảng 30 USD; muốn hơn thì thu hẹp bộ lọc rồi chạy tiếp).
+  - **[Quyết định]** Nội dung finding (do model viết, có thể trích code của tác giả) gửi dạng JSON trong thẻ, ghi rõ là dữ liệu, không làm theo chỉ dẫn bên trong; chỉ nhận id finding và mã thành phần hợp lệ.
+- **Tuỳ chọn 2, review lại kết quả quá sơ sài** (mặc định tắt):
+  - **[Quyết định]** "Sơ sài" = thay đổi ≥ 30 dòng mà không có finding nào và nhận xét < 40 ký tự, ở rubric hiện tại, và là vòng mới nhất. Review theo rubric cũ **không** tính (Chạy lại cũng từ chối: cần yêu cầu review mới).
+  - Review lại thật (vào hàng `reviews`), như nút Chạy lại: `force` + `expected_round` (một vòng mới, vòng cũ giữ lịch sử), cùng dạng job id `…-rerun-<review>-<vòng>` nên hiện trong hàng đợi đang chạy.
+  - Vòng mới mang trigger `criteria_rescore` và **không bao giờ bị coi là sơ sài nữa**, nên một thay đổi thật sự không có lỗi chỉ trả tiền review lại một lần.
+  - MR chỉ review lại khi còn mở và chưa có commit mới; repo phải đang theo dõi và bật review. Không review lại được thì đếm là "bỏ qua".
+- **Xem trước (dry run, không ghi gì)**, trả về:
+  - số review, số finding;
+  - theo từng bộ: chưa có điểm / đang ở phiên bản cũ / sẽ đổi điểm (≥ 0,5) / mức đổi trung bình;
+  - số finding chưa được xếp, ở bao nhiêu review, và ước tính chi phí Claude;
+  - số review sơ sài theo lý do, có vài ví dụ.
+- **Cảnh báo và xác nhận**: hộp thoại cảnh báo điểm tiêu chí của N review sẽ bị ghi đè (và chi phí Claude, số review chạy lại nếu có). Phải tick "Tôi hiểu…" thì nút **Chấm lại N review** mới bật. API bắt buộc `confirm: true`.
+- **Giới hạn**: tối đa 20.000 review mỗi lần xem trước hoặc chạy (quá thì 422, yêu cầu thu hẹp bộ lọc). Truy vấn theo lô 1.000 id.
+- **Chạy nền**:
+  - Job `rescore_job` chạy trên hàng `reviews` (việc LLM, không chặn sync ở hàng `default`).
+  - Mỗi dự án một lượt một lúc: khoá Redis `SET NX` lấy khi bấm, job nhả khi xong; đang chạy thì trả 409.
+  - Kết quả giữ 1 ngày; lỗi thì trả về dòng lỗi cuối.
+  - Commit theo lô 100 review, tiến độ ở `job.meta`; hộp thoại hỏi lại mỗi 2 giây, đóng đi job vẫn chạy.
+  - Kết quả: số review đã chấm, số finding Claude đã xếp, số lượt gọi và chi phí, có dừng vì ngân sách không, số review đã xếp hàng chạy lại / bỏ qua.
+  - Audit: `criteria.rescore` (lúc bấm), `criteria.rescore.done`.
+- API:
+  - `POST /business-projects/{bp}/criteria-rescore/preview` với `{set_ids, project_id, user_ids, from, to}`;
+  - `POST /business-projects/{bp}/criteria-rescore` với `{…, classify, rereview_thin, confirm: true}` → 202;
+  - `GET /business-projects/{bp}/criteria-rescore` (trạng thái lượt gần nhất).
+  - Code: `app/scoring/criteria_rescore.py`, `app/workers/criteria_jobs.py`, `app/api/routers/criteria_rescore.py`, `dashboards/web/components/CriteriaRescore.tsx`.
+

@@ -3,6 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { ReorderControls, WeightBar, useDragList, useRefreshSets } from "@/components/CriteriaParts";
+import { CriteriaRescore } from "@/components/CriteriaRescore";
 import { Icon, IconButton } from "@/components/icons";
 import { Alert, Loading, Pill } from "@/components/ui";
 import { ApiError, api, can, useApi } from "@/lib/api";
@@ -110,6 +111,9 @@ export function ProjectCriteria({ projectId, projectName }: { projectId: number;
             tự hiển thị. Tạo và sửa bộ ở tab <a href="#criteria">Bộ tiêu chí</a>.
           </p>
         </div>
+        {editable && saved.data && (
+          <CriteriaRescore projectId={projectId} projectName={projectName} sets={saved.data} />
+        )}
       </div>
       <p className="visually-hidden" aria-live="polite">
         {announce}
