@@ -159,19 +159,13 @@ export default function GuidePage() {
             trước.
           </li>
           <li>
-            <strong>Báo cáo thành viên</strong>: chọn một người, khoảng thời gian, dự án và repo. Tab{" "}
-            <strong>Tổng quan</strong> cho mức đánh giá (Tốt / Cần cải thiện / Cần hỗ trợ) kèm lý do, so với kỳ trước và
-            với mặt bằng những người bạn xem được; xu hướng, mức lỗi, loại lỗi hay gặp, repo và các review cần mở ra
-            xem. Tab <strong>Theo tiêu chí</strong> cho điểm từng thành phần của bộ tiêu chí so với mặt bằng, điểm mạnh và
-            điểm cần cải thiện. <strong>Xuất Excel</strong> tải file nhiều sheet (kể cả danh sách mọi review);{" "}
-            <strong>In / PDF</strong> in trang. Link của trang giữ nguyên bộ lọc nên gửi được cho người khác.
-          </li>
-          <li>
-            <strong>So sánh nhóm</strong> (công tắc trên trang Báo cáo thành viên, hoặc nút{" "}
-            <strong>So sánh &amp; export</strong> ở trang Thành viên): chọn team hoặc từng người. Đầu trang là số người ở
-            mỗi mức, rồi ba tab: <strong>So sánh</strong> (điểm TB từng người so với cả nhóm, bảng xếp người cần chú ý
-            trước), <strong>Loại lỗi</strong> (ai hay mắc loại lỗi nào hơn cả nhóm) và <strong>Theo tiêu chí</strong> (ai yếu
-            ở thành phần nào). Bấm tên một người để mở báo cáo riêng; Xuất Excel có đủ các bảng và danh sách review.
+            <strong>Báo cáo thành viên</strong> có hai tab. <strong>Tổng quan</strong> (mở sẵn): mỗi thành viên một thanh
+            ngang, số in ngay trên thanh, người yếu nhất ở trên; đổi chỉ số (điểm TB, APPROVE, critical/high, lỗi/100 dòng,
+            số review, điểm tiêu chí); lọc theo dự án, repo, team hoặc chọn người; bên phải là số cả nhóm và danh sách
+            cần chú ý; tab con Bảng / Loại lỗi / Theo tiêu chí. Bấm một thanh hoặc tên để mở <strong>Chi tiết</strong> người
+            đó: mức đánh giá kèm lý do, loại lỗi và repo, review cần xem, điểm theo tiêu chí. <strong>Xuất Excel</strong> và{" "}
+            <strong>In / PDF</strong> theo tab đang xem. Quyền: &ldquo;Xem báo cáo thành viên&rdquo; (theo phạm vi) và
+            &ldquo;Xuất Excel báo cáo thành viên&rdquo; trong Admin › Phân quyền.
           </li>
           <li>
             <strong>Duyệt khiếu nại</strong>: chấp nhận hoặc từ chối. Bạn không thể tự duyệt khiếu nại của mình.

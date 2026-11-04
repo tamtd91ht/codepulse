@@ -65,11 +65,10 @@ def test_who_may_be_compared(
         ).status_code
         == 422
     )
-    # A plain member has no Thành viên page, so no comparison either.
-    assert (
-        client.get(f"{API}/members/team-report", params=OCT, headers=as_user(world.an)).status_code
-        == 403
-    )
+    # A plain member holds report.member over their own work: the overview is just them.
+    own = client.get(f"{API}/members/team-report", params=OCT, headers=as_user(world.an))
+    assert own.status_code == 200
+    assert {m["user"]["id"] for m in own.json()["members"]} == {world.an.id}
     named = client.get(
         f"{API}/members/team-report",
         params={**OCT, "user_ids": str(world.binh.id)},
@@ -191,3 +190,35 @@ def test_a_hidden_team_is_refused(
         headers=as_user(world.lead),
     )
     assert res.status_code == 403
+
+
+def test_a_project_lists_its_members_and_export_needs_its_own_right(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    from sqlalchemy import delete
+
+    from app.models import PermissionSetItem
+
+    lead = as_user(world.lead)
+    # Filtered by dự án: Binh is granted Demo but has no finished review; he is still listed.
+    body = client.get(
+        f"{API}/members/team-report",
+        params={**OCT, "business_project_id": bp(world)},
+        headers=lead,
+    ).json()
+    binh = next(m for m in body["members"] if m["user"]["id"] == world.binh.id)
+    assert binh["assessment"]["level"] == "none"
+    # Without report.export (taken out of every built-in set: Thành viên holds it too, for one's
+    # own report) the views work, the files do not.
+    db_session.execute(
+        delete(PermissionSetItem).where(PermissionSetItem.permission == "report.export")
+    )
+    db_session.flush()
+    assert client.get(f"{API}/members/team-report", params=OCT, headers=lead).status_code == 200
+    assert (
+        client.get(f"{API}/members/team-report.xlsx", params=OCT, headers=lead).status_code == 403
+    )
+    assert (
+        client.get(f"{API}/members/{world.an.id}/report.xlsx", params=OCT, headers=lead).status_code
+        == 403
+    )

@@ -101,6 +101,8 @@ Trong cột Mặc định: **TV** = Thành viên, **L** = Lead, **M** = Manager,
 | `admin.permissions` | Tạo, sửa, gán bộ quyền | flag | — |
 | `criteria.manage` | Tạo, sửa, nhân bản, lưu trữ bộ tiêu chí (spec 22) | flag | — |
 | `criteria.assign` | Gán bộ tiêu chí cho dự án, tính lại (spec 22, migration b0c2d4e6f8a1) | project/all | QLDA project; QLT all |
+| `report.member` | Báo cáo thành viên: tổng quan nhiều người và chi tiết một người (spec 23 §9, migration d2e4f6a8b0c3); phạm vi = số liệu của ai | own/team/project/all, nhạy cảm | TV own; Lead team; QLDA project; QLT all; Manager không |
+| `report.export` | Xuất Excel báo cáo thành viên (cần thêm `report.member`) | flag | như `report.member` |
 
 Dấu "—" nghĩa là không bộ có sẵn nào có quyền đó: chỉ admin, hoặc bộ do admin tạo.
 

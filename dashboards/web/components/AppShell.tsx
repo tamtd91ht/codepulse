@@ -9,7 +9,7 @@ import { ReviewActivity } from "@/components/ReviewActivity";
 import { Stetho } from "@/components/Stetho";
 import { RAIL_KEY, ThemeToggle } from "@/components/theme";
 import { Avatar } from "@/components/ui";
-import { api, managesAnyProject, useApi } from "@/lib/api";
+import { api, can, managesAnyProject, useApi } from "@/lib/api";
 import type { Me } from "@/lib/types";
 
 const NARROW = "(max-width: 1023px)";
@@ -92,8 +92,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         // Per-person evaluation: lead and above (app/api/security.require_members_page); a member
         // sees only themselves, on "Của tôi".
         ...(me.members_page ? [{ href: "/members", label: "Thành viên", icon: "pulse" } as Item] : []),
-        // Báo cáo thành viên (docs/specs/23): one person's quality report and its Excel export.
-        ...(me.members_page ? [{ href: "/members/report", label: "Báo cáo thành viên", icon: "book" } as Item] : []),
+        // Báo cáo thành viên (docs/specs/23 §9): whoever holds report.member (a member: their own).
+        ...(can(me, "report.member") ? [{ href: "/members/report", label: "Báo cáo thành viên", icon: "book" } as Item] : []),
         { href: `/members/${me.id}`, label: "Của tôi", icon: "user" },
         { href: "/reviews", label: "Kết quả review", icon: "inbox" },
         { href: "/reviews/request", label: "Yêu cầu review", icon: "review" },

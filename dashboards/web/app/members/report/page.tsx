@@ -10,7 +10,7 @@ import { Score, SeverityRow, VerdictMix, RangePicker, scoreTone, useUrlRange } f
 import { Icon } from "@/components/icons";
 import { type TeamReport, TeamReportView } from "@/components/TeamReport";
 import { Alert, Card, ChartTip, EmptyState, Loading, PageHeader, Pill, Segmented, StatStrip, StripStat } from "@/components/ui";
-import { qs, useApi } from "@/lib/api";
+import { can, qs, useApi } from "@/lib/api";
 import { toNum } from "@/lib/criteria";
 import { VERDICT_LABEL, dateTime, num, weekLabel } from "@/lib/format";
 import type { CriteriaSummary, EvaluationBucket, Me, Person, Repo, Team, Verdict } from "@/lib/types";
@@ -60,19 +60,25 @@ interface MemberReport {
   criteria_sets: { set_id: number; name: string; version: number | null; is_primary: boolean; reviews: number }[];
 }
 
-type Tab = "overview" | "criteria";
 const LEVEL_TONE = { good: "good", fair: "warn", support: "bad", none: undefined } as const;
 
-/* ---- URL state: ?user=&bp=&repo=&tab= (the range is useUrlRange's) ---- */
+/* ---- URL state: ?view=&user=&bp=&repo=&team=&people=&set= (the range is useUrlRange's) ---- */
 
 function readParam(name: string): string {
   if (typeof window === "undefined") return "";
   return new URLSearchParams(window.location.search).get(name) ?? "";
 }
 
+/** One query parameter as state: read on arrival and again on Back / Forward (and on a link to
+ * this same page, which changes the URL without remounting it), written with replaceState. */
 function useUrlParam(name: string): [string, (v: string) => void] {
   const [value, setValue] = useState("");
-  useEffect(() => setValue(readParam(name)), [name]);
+  useEffect(() => {
+    const read = () => setValue(readParam(name));
+    read();
+    window.addEventListener("popstate", read);
+    return () => window.removeEventListener("popstate", read);
+  }, [name]);
   const update = useCallback(
     (next: string) => {
       setValue(next);
@@ -89,33 +95,38 @@ function useUrlParam(name: string): [string, (v: string) => void] {
 const diff = (a: number | null | undefined, b: number | null | undefined) =>
   a === null || a === undefined || b === null || b === undefined ? null : Math.round((a - b) * 10) / 10;
 
+type View = "overview" | "detail";
+
 /**
- * Báo cáo thành viên: for a lead or manager judging how good one person's code is. Filters on
- * top (person, period, dự án, repo) live in the URL so a report can be shared; the verdict with
- * its reasons comes first, the evidence (trend, levels, kinds of mistakes, repos, reviews to
- * open) after; the criteria tab compares each component with everyone in scope.
+ * Báo cáo thành viên (docs/specs/23). Two tabs: **Tổng quan** (everyone the viewer may see, one
+ * horizontal bar per member with the number on it; filter by dự án, team, repo, people) and
+ * **Chi tiết** (one member: verdict and reasons, mistakes, reviews to open, criteria). Each tab
+ * shows one panel at a time instead of a long page. A bar or a name in Tổng quan opens that
+ * member's Chi tiết with the same filters. Rights: `report.member` (whose numbers, by scope) and
+ * `report.export` (the Excel files).
  */
 export default function MemberReportPage() {
   const [range, setRange] = useUrlRange("30");
+  const [viewParam, setViewParam] = useUrlParam("view");
   const [user, setUser] = useUrlParam("user");
   const [bp, setBp] = useUrlParam("bp");
   const [repo, setRepo] = useUrlParam("repo");
-  const [tabParam, setTabParam] = useUrlParam("tab");
-  const tab: Tab = tabParam === "criteria" ? "criteria" : "overview";
-  // ?mode=team: several people side by side (docs/specs/23 §8).
-  const [modeParam, setModeParam] = useUrlParam("mode");
-  const me = useApi<Me>("/auth/me");
-  // Comparing people is the Thành viên page's job: only who sees that page gets the switch.
-  const canCompare = !!me.data?.members_page;
-  const team = modeParam === "team" && canCompare;
   const [teamId, setTeamId] = useUrlParam("team");
   const [picked, setPicked] = useUrlParam("people");
   const [setParam, setSetParam] = useUrlParam("set");
   const pickedIds = picked.split(",").filter(Boolean);
-  const teams = useApi<Team[]>(team ? "/teams/visible" : null);
 
-  const people = useApi<Person[]>("/people");
+  const me = useApi<Me>("/auth/me");
+  const scope = me.data?.is_admin ? "all" : me.data?.permissions?.["report.member"];
+  // Only one's own numbers: Tổng quan would be a single bar, so the page is Chi tiết about oneself.
+  const ownOnly = scope === "own";
+  const canExport = can(me.data, "report.export");
+  const view: View = ownOnly ? "detail" : viewParam === "detail" || (!viewParam && user) ? "detail" : "overview";
+  const shownUser = ownOnly ? String(me.data?.id ?? "") : user;
+
+  const people = useApi<Person[]>(!ownOnly && me.data ? "/people" : null);
   const repos = useApi<Repo[]>("/repos");
+  const teams = useApi<Team[]>(!ownOnly && me.data ? "/teams/visible" : null);
   const projects = useMemo(() => {
     const seen = new Map<number, string>();
     for (const r of repos.data ?? []) if (r.business_project_id !== null) seen.set(r.business_project_id, r.business_project ?? `#${r.business_project_id}`);
@@ -126,169 +137,158 @@ export default function MemberReportPage() {
     .sort((a, b) => a.path_with_namespace.localeCompare(b.path_with_namespace));
 
   const filters = range ? { from: range.from, to: range.to, business_project_id: bp || null, project_id: repo || null } : null;
-  const path = !team && user && filters ? `/members/${user}/report${qs(filters)}` : null;
-  const report = useApi<MemberReport>(path, { keepPreviousData: true });
-  const data = report.data && String(report.data.user.id) === user ? report.data : undefined;
+  const detailPath = view === "detail" && shownUser && filters ? `/members/${shownUser}/report${qs(filters)}` : null;
+  const report = useApi<MemberReport>(detailPath, { keepPreviousData: true });
+  const data = report.data && String(report.data.user.id) === shownUser ? report.data : undefined;
+
+  const ovFilters = filters ? { ...filters, team_id: teamId || null, user_ids: picked || null, set_id: setParam || null } : null;
+  const ovPath = view === "overview" && ovFilters && scope ? `/members/team-report${qs(ovFilters)}` : null;
+  const overview = useApi<TeamReport>(ovPath, { keepPreviousData: true });
+
+  const exportHref =
+    view === "overview"
+      ? ovPath && overview.data
+        ? `/api/v1/members/team-report.xlsx${qs(ovFilters ?? {})}`
+        : undefined
+      : detailPath && data
+        ? `/api/v1/members/${shownUser}/report.xlsx${qs(filters ?? {})}`
+        : undefined;
+
+  const openMember = (id: number) => {
+    setUser(String(id));
+    setViewParam("detail");
+    window.scrollTo({ top: 0 });
+  };
+
+  const views: SubTab<View>[] = ownOnly
+    ? []
+    : [
+        { key: "overview", label: "Tổng quan", count: overview.data?.members.length, hint: "Mọi thành viên trên một biểu đồ" },
+        { key: "detail", label: "Chi tiết", hint: "Báo cáo của một thành viên" },
+      ];
   const name = data ? (data.user.full_name ?? data.user.primary_email ?? "") : "";
-  const exportHref = path ? `/api/v1/members/${user}/report.xlsx${qs(filters ?? {})}` : undefined;
 
-  const teamFilters = filters
-    ? { ...filters, team_id: teamId || null, user_ids: picked || null, set_id: setParam || null }
-    : null;
-  const teamPath = team && teamFilters ? `/members/team-report${qs(teamFilters)}` : null;
-  const teamReport = useApi<TeamReport>(teamPath, { keepPreviousData: true });
-  const teamExport = teamPath ? `/api/v1/members/team-report.xlsx${qs(teamFilters ?? {})}` : undefined;
-  const personHref = (id: number) =>
-    `/members/report?user=${id}${range ? (range.preset === "custom" ? `&from=${range.from}&to=${range.to}` : `&range=${range.preset}`) : ""}${bp ? `&bp=${bp}` : ""}${repo ? `&repo=${repo}` : ""}`;
-  const teamTitle =
-    teamReport.data?.filters.team_name ?? (pickedIds.length ? `${pickedIds.length} người được chọn` : "mọi người trong phạm vi");
-
-  const tabs: SubTab<Tab>[] = [
-    { key: "overview", label: "Tổng quan", hint: "Đánh giá chung, xu hướng, mức lỗi, loại lỗi, repo, review cần xem" },
-    {
-      key: "criteria",
-      label: "Theo tiêu chí",
-      count: data?.criteria_sets.length || undefined,
-      hint: "Điểm từng thành phần của bộ tiêu chí, so với mặt bằng",
-    },
-  ];
+  if (me.data && !scope) {
+    return (
+      <>
+        <PageHeader title="Báo cáo thành viên" foldable={false} />
+        <Card collapsible={false}>
+          <EmptyState icon="alert" title="Bạn chưa có quyền xem báo cáo thành viên">
+            Quyền &ldquo;Xem báo cáo thành viên&rdquo; (report.member) do admin cấp ở Admin › Phân quyền.
+          </EmptyState>
+        </Card>
+      </>
+    );
+  }
 
   return (
     <>
       <PageHeader
         eyebrow={<Link href="/members">Thành viên</Link>}
-        title={team ? `So sánh nhóm: ${teamTitle}` : data ? `Báo cáo: ${name}` : "Báo cáo thành viên"}
-        subtitle={
-          team
-            ? "Nhiều người cạnh nhau trong cùng khoảng thời gian: ai cần chú ý, ai hay mắc lỗi gì, ai yếu ở thành phần nào."
-            : "Chất lượng code của một người trong khoảng thời gian, so với kỳ trước và với mặt bằng những người bạn xem được cùng bộ lọc."
-        }
+        title={view === "detail" && data ? `Báo cáo: ${name}` : "Báo cáo thành viên"}
         foldable={false}
         actions={
           <span className="no-print report-actions">
-            <button type="button" onClick={() => window.print()} disabled={team ? !teamReport.data : !data}>
+            <button type="button" onClick={() => window.print()} disabled={view === "overview" ? !overview.data : !data}>
               <Icon name="printer" size={14} /> In / PDF
             </button>
-            {team && teamExport && teamReport.data ? (
-              <a className="button primary" href={teamExport} download>
-                <Icon name="download" size={14} /> Xuất Excel
-              </a>
-            ) : !team && exportHref && data ? (
-              <a className="button primary" href={exportHref} download>
-                <Icon name="download" size={14} /> Xuất Excel
-              </a>
-            ) : (
-              <button type="button" className="primary" disabled>
-                <Icon name="download" size={14} /> Xuất Excel
-              </button>
-            )}
+            {canExport &&
+              (exportHref ? (
+                <a className="button primary" href={exportHref} download>
+                  <Icon name="download" size={14} /> Xuất Excel
+                </a>
+              ) : (
+                <button type="button" className="primary" disabled>
+                  <Icon name="download" size={14} /> Xuất Excel
+                </button>
+              ))}
           </span>
         }
       />
 
-      {canCompare && (
-      <div className="report-mode no-print">
-        <Segmented<"one" | "team">
-          label="Kiểu báo cáo"
-          value={team ? "team" : "one"}
-          onChange={(m) => setModeParam(m === "team" ? "team" : "")}
-          options={[
-            { value: "one", label: "Một người" },
-            { value: "team", label: "So sánh nhóm" },
-          ]}
-        />
-      </div>
-      )}
-      <section className="card report-filters no-print" aria-label="Bộ lọc báo cáo">
-        {team ? (
-          <>
-            <label className="adm-field">
-              <span className="small muted">Team</span>
-              <select value={teamId} onChange={(e) => setTeamId(e.target.value)} aria-label="Chọn team">
-                <option value="">{teams.data ? "Mọi người trong phạm vi" : "Đang tải…"}</option>
-                {(teams.data ?? []).map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
+      <div className="report-bar no-print">
+        {views.length > 0 && <SubTabs<View> id="rp-view" label="Kiểu báo cáo" variant="bar" tabs={views} value={view} onChange={setViewParam} />}
+        <div className="report-filters" role="group" aria-label="Bộ lọc báo cáo">
+          {view === "detail" && !ownOnly && (
+            <label className="report-filter">
+              <span className="small muted">Thành viên</span>
+              <select value={user} onChange={(e) => setUser(e.target.value)} aria-label="Chọn thành viên">
+                <option value="">{people.data ? "Chọn người…" : "Đang tải…"}</option>
+                {(people.data ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.full_name ?? p.primary_email ?? `#${p.id}`}
                   </option>
                 ))}
               </select>
             </label>
-            <PeoplePicker people={people.data ?? []} value={pickedIds} onChange={(ids) => setPicked(ids.join(","))} />
-          </>
-        ) : (
-          <label className="adm-field">
-            <span className="small muted">Thành viên</span>
-            <select value={user} onChange={(e) => setUser(e.target.value)} aria-label="Chọn thành viên">
-              <option value="">{people.data ? "Chọn người…" : "Đang tải…"}</option>
-              {(people.data ?? []).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.full_name ?? p.primary_email ?? `#${p.id}`}
+          )}
+          <label className="report-filter">
+            <span className="small muted">Dự án</span>
+            <select
+              value={bp}
+              onChange={(e) => {
+                setBp(e.target.value);
+                setRepo("");
+              }}
+              aria-label="Lọc theo dự án"
+            >
+              <option value="">Mọi dự án</option>
+              {projects.map(([id, label]) => (
+                <option key={id} value={id}>
+                  {label}
                 </option>
               ))}
             </select>
           </label>
-        )}
-        <label className="adm-field">
-          <span className="small muted">Dự án</span>
-          <select
-            value={bp}
-            onChange={(e) => {
-              setBp(e.target.value);
-              setRepo("");
-            }}
-            aria-label="Lọc theo dự án"
-          >
-            <option value="">Mọi dự án</option>
-            {projects.map(([id, label]) => (
-              <option key={id} value={id}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="adm-field">
-          <span className="small muted">Repo</span>
-          <select value={repo} onChange={(e) => setRepo(e.target.value)} aria-label="Lọc theo repo">
-            <option value="">{bp ? "Mọi repo của dự án" : "Mọi repo"}</option>
-            {repoOptions.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.path_with_namespace}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="adm-field report-range">
-          <span className="small muted">Thời gian</span>
-          <RangePicker value={range} onChange={setRange} />
+          <label className="report-filter">
+            <span className="small muted">Repo</span>
+            <select value={repo} onChange={(e) => setRepo(e.target.value)} aria-label="Lọc theo repo">
+              <option value="">{bp ? "Mọi repo của dự án" : "Mọi repo"}</option>
+              {repoOptions.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.path_with_namespace}
+                </option>
+              ))}
+            </select>
+          </label>
+          {view === "overview" && (
+            <>
+              <label className="report-filter">
+                <span className="small muted">Team</span>
+                <select value={teamId} onChange={(e) => setTeamId(e.target.value)} aria-label="Lọc theo team">
+                  <option value="">Mọi team</option>
+                  {(teams.data ?? []).map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <PeoplePicker people={people.data ?? []} value={pickedIds} onChange={(ids) => setPicked(ids.join(","))} />
+            </>
+          )}
+          <div className="report-filter report-range">
+            <span className="small muted">Thời gian</span>
+            <RangePicker value={range} onChange={setRange} />
+          </div>
         </div>
-      </section>
+      </div>
 
-      {team ? (
-        !teamReport.data ? (
+      {view === "overview" ? (
+        !overview.data ? (
           <Card collapsible={false}>
-            <Loading error={teamReport.error} rows={6} />
+            <Loading error={overview.error} rows={6} />
           </Card>
         ) : (
-          <div className={teamReport.isLoading ? "eval-dim" : undefined}>
-            {teamReport.error && <Alert tone="error">Không tải được bộ lọc mới: {teamReport.error.message}.</Alert>}
-            <p className="muted small report-scope">
-              {teamReport.data.from} → {teamReport.data.to} · {teamReport.data.filters.business_project_name ?? "Mọi dự án"}
-              {teamReport.data.filters.project_path ? ` / ${teamReport.data.filters.project_path}` : ""} · kỳ trước{" "}
-              {teamReport.data.previous.from} → {teamReport.data.previous.to}
-            </p>
-            <TeamReportView
-              data={teamReport.data}
-              personHref={personHref}
-              setId={setParam ? Number(setParam) : null}
-              onSetId={(id) => setSetParam(String(id))}
-            />
+          <div className={overview.isLoading ? "eval-dim" : undefined}>
+            {overview.error && <Alert tone="error">Không tải được bộ lọc mới: {overview.error.message}.</Alert>}
+            <TeamReportView data={overview.data} onOpen={openMember} setId={setParam ? Number(setParam) : null} onSetId={(id) => setSetParam(String(id))} />
           </div>
         )
-      ) : !user ? (
+      ) : !shownUser ? (
         <Card collapsible={false}>
-          <EmptyState icon="user" title="Chọn một thành viên để xem báo cáo">
-            Báo cáo cho biết người đó viết code tốt tới đâu: điểm review, tỉ lệ được duyệt, lỗi nghiêm trọng, loại lỗi hay
-            gặp và điểm theo bộ tiêu chí, so với kỳ trước và với mặt bằng.
+          <EmptyState icon="user" title="Chọn một thành viên">
+            Chọn ở ô Thành viên phía trên, hoặc bấm tên / thanh của một người ở tab Tổng quan.
           </EmptyState>
         </Card>
       ) : !data ? (
@@ -303,16 +303,7 @@ export default function MemberReportPage() {
             {data.filters.project_path ? ` / ${data.filters.project_path}` : ""} · kỳ trước {data.previous.from} → {data.previous.to}
             {" · "}mặt bằng: {data.peers.members} người
           </p>
-          <SubTabs<Tab> id="mr-tabs" label="Phần của báo cáo" variant="bar" tabs={tabs} value={tab} onChange={setTabParam} />
-          {tab === "overview" ? (
-            <SubPanel id="mr-tabs" tab="overview">
-              <Overview data={data} />
-            </SubPanel>
-          ) : (
-            <SubPanel id="mr-tabs" tab="criteria">
-              <CriteriaTab data={data} />
-            </SubPanel>
-          )}
+          <Overview data={data} />
         </div>
       )}
     </>
@@ -321,7 +312,11 @@ export default function MemberReportPage() {
 
 /* ---- Tổng quan ---- */
 
+type DetailTab = "assess" | "mistakes" | "reviews" | "criteria";
+
+/** Chi tiết: one member, one panel at a time. */
 function Overview({ data }: { data: MemberReport }) {
+  const [sub, setSub] = useState<DetailTab>("assess");
   const s = data.summary;
   const p = data.previous.summary;
   const peers = data.peers;
@@ -343,6 +338,21 @@ function Overview({ data }: { data: MemberReport }) {
   }));
   return (
     <>
+      <SubTabs<DetailTab>
+        id="dt-tabs"
+        label="Phần của báo cáo chi tiết"
+        variant="mini"
+        tabs={[
+          { key: "assess", label: "Đánh giá", hint: "Mức đánh giá, lý do, chỉ số, xu hướng, kết luận" },
+          { key: "mistakes", label: "Loại lỗi & repo", hint: "Loại lỗi hay gặp so với mặt bằng, theo repo" },
+          { key: "reviews", label: "Review cần xem", count: data.severe_reviews.length || undefined, hint: "Review có critical/high, review điểm thấp nhất" },
+          { key: "criteria", label: "Theo tiêu chí", count: data.criteria_sets.length || undefined, hint: "Điểm từng thành phần so với mặt bằng" },
+        ]}
+        value={sub}
+        onChange={setSub}
+      />
+      {sub === "assess" && (
+        <SubPanel id="dt-tabs" tab="assess">
       <section className={`card report-verdict tone-${LEVEL_TONE[a.level] ?? "none"}`} aria-labelledby="report-verdict">
         <div className="report-verdict-head">
           <span className="muted small">Đánh giá chung</span>
@@ -428,7 +438,10 @@ function Overview({ data }: { data: MemberReport }) {
           </p>
         </Card>
       </div>
-
+        </SubPanel>
+      )}
+      {sub === "mistakes" && (
+        <SubPanel id="dt-tabs" tab="mistakes">
       <div className="grid two">
         <Card title="Loại lỗi hay gặp" id="report-categories" subtitle="Tỉ trọng trong lỗi của người này, so với mặt bằng: cột cao hơn mặt bằng là điểm cần kèm">
           {data.categories.length === 0 ? (
@@ -489,11 +502,21 @@ function Overview({ data }: { data: MemberReport }) {
           </div>
         </Card>
       </div>
-
+        </SubPanel>
+      )}
+      {sub === "reviews" && (
+        <SubPanel id="dt-tabs" tab="reviews">
       <div className="grid two">
         <ReviewList title="Review có critical / high" rows={data.severe_reviews} empty="Không có review nào có critical hoặc high." />
         <ReviewList title="Review điểm thấp nhất" rows={data.lowest_reviews} empty="Không có review nào có điểm." />
       </div>
+        </SubPanel>
+      )}
+      {sub === "criteria" && (
+        <SubPanel id="dt-tabs" tab="criteria">
+          <CriteriaTab data={data} />
+        </SubPanel>
+      )}
     </>
   );
 }
@@ -691,8 +714,8 @@ function PeoplePicker({ people, value, onChange }: { people: Person[]; value: st
         .join(", ") + (value.length > 3 ? ` +${value.length - 3}` : "")
     : "Cả team / mọi người";
   return (
-    <div className="adm-field">
-      <span className="small muted">Người so sánh</span>
+    <div className="report-filter">
+      <span className="small muted">Người</span>
       <details className="people-picker">
         <summary>{label}</summary>
         <div className="people-picker-pop">

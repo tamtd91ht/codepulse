@@ -1,16 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import { type ReactNode, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, LabelList, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { SubPanel, type SubTab, SubTabs } from "@/components/AdminTabs";
 import { Score, scoreTone } from "@/components/Evaluation";
-import { Card, ChartTip, EmptyState, Pill, SortTh, StatStrip, StripStat, useSort } from "@/components/ui";
+import { Card, ChartTip, EmptyState, Pill, Segmented, SortTh, useSort } from "@/components/ui";
 import { num } from "@/lib/format";
 import type { EvaluationBucket, Person } from "@/lib/types";
 
-/* GET /members/team-report (docs/specs/23 §8) */
+/* GET /members/team-report (docs/specs/23 §8–9) */
 
 type Level = "good" | "fair" | "support" | "none";
 
@@ -52,12 +51,218 @@ export interface TeamReport {
 
 const LEVEL_TONE: Record<Level, "good" | "warn" | "bad" | undefined> = { good: "good", fair: "warn", support: "bad", none: undefined };
 const LEVEL_LABEL: Record<Level, string> = { good: "Tốt", fair: "Cần cải thiện", support: "Cần hỗ trợ", none: "Chưa có dữ liệu" };
-type Tab = "overview" | "categories" | "criteria";
+const LEVEL_ORDER: Level[] = ["support", "fair", "good", "none"];
 
 const diff = (a: number | null, b: number | null) => (a === null || b === null ? null : Math.round((a - b) * 10) / 10);
 const nameOf = (p: Person) => p.full_name ?? p.primary_email ?? `#${p.id}`;
 
-/** A cell shaded by how far it sits from the group: the heat maps of mistakes and criteria. */
+/* ---- the chart: one horizontal bar per member, the number printed on it ---- */
+
+type Metric = "score" | "pass" | "severe" | "density" | "reviews" | "criteria";
+
+interface MetricDef {
+  label: string;
+  get: (r: TeamReportRow) => number | null;
+  digits: number;
+  unit?: string;
+  /** Lower is better: sorted ascending, coloured by the person's level instead of the value. */
+  lowerBetter?: boolean;
+  max?: number;
+  group: (d: TeamReport) => number | null;
+  hint: string;
+}
+
+const METRICS: Record<Metric, MetricDef> = {
+  score: {
+    label: "Điểm TB",
+    get: (r) => r.avg_score,
+    digits: 1,
+    max: 100,
+    group: (d) => d.summary.avg_score,
+    hint: "Điểm review trung bình theo số dòng code (0–100)",
+  },
+  pass: {
+    label: "APPROVE %",
+    get: (r) => r.pass_rate,
+    digits: 0,
+    unit: "%",
+    max: 100,
+    group: (d) => d.summary.pass_rate,
+    hint: "Phần trăm thay đổi được kết luận APPROVE",
+  },
+  severe: {
+    label: "Critical + High",
+    get: (r) => (r.reviews ? r.critical + r.high : null),
+    digits: 0,
+    lowerBetter: true,
+    group: () => null,
+    hint: "Số finding critical và high được tính điểm",
+  },
+  density: {
+    label: "Lỗi / 100 LOC",
+    get: (r) => r.findings_per_100_loc,
+    digits: 2,
+    lowerBetter: true,
+    group: (d) => d.summary.findings_per_100_loc,
+    hint: "Số lỗi được tính điểm trên 100 dòng code",
+  },
+  reviews: {
+    label: "Số review",
+    get: (r) => (r.reviews ? r.reviews : null),
+    digits: 0,
+    group: () => null,
+    hint: "Số MR và commit đã review xong",
+  },
+  criteria: {
+    label: "Điểm tiêu chí",
+    get: (r) => r.criteria?.score ?? null,
+    digits: 1,
+    max: 100,
+    group: (d) => d.criteria?.group.score ?? null,
+    hint: "Điểm cuối theo bộ tiêu chí (tab Tiêu chí để đổi bộ)",
+  },
+};
+
+function barColor(metric: Metric, row: TeamReportRow, value: number): string {
+  const def = METRICS[metric];
+  if (metric === "reviews") return "var(--chart-1)";
+  if (def.lowerBetter) return `var(--${LEVEL_TONE[row.assessment.level] ?? "chart-1"})`;
+  const tone = scoreTone(metric === "pass" ? (value >= 60 ? 80 : value >= 40 ? 70 : 0) : value);
+  return `var(--${tone ?? "chart-1"})`;
+}
+
+function MemberChart({ data, onOpen }: { data: TeamReport; onOpen: (userId: number) => void }) {
+  const [metric, setMetric] = useState<Metric>("score");
+  const def = METRICS[metric];
+  const rows = data.members
+    .map((r) => ({ row: r, value: def.get(r) }))
+    .filter((x): x is { row: TeamReportRow; value: number } => x.value !== null)
+    .sort((a, b) => (def.lowerBetter ? b.value - a.value : a.value - b.value)); // weakest on top
+  const chart = rows.map(({ row, value }) => ({ id: row.user.id, name: nameOf(row.user), value, row }));
+  const missing = data.members.length - chart.length;
+  const group = def.group(data);
+  const options = (Object.keys(METRICS) as Metric[])
+    .filter((k) => k !== "criteria" || data.criteria)
+    .map((k) => ({ value: k, label: METRICS[k].label }));
+  return (
+    <Card
+      title={`${def.label} từng người`}
+      id="report-chart"
+      collapsible={false}
+      subtitle={`${def.hint} · người yếu nhất ở trên · bấm một thanh để xem chi tiết người đó${group !== null ? ` · vạch đứt: cả nhóm ${num(group, def.digits)}${def.unit ?? ""}` : ""}`}
+      actions={<Segmented<Metric> label="Chỉ số" value={metric} onChange={setMetric} options={options} />}
+    >
+      {chart.length === 0 ? (
+        <p className="muted small">Không ai có số liệu này trong khoảng đã chọn.</p>
+      ) : (
+        <div className="member-chart" style={{ height: Math.max(140, chart.length * 32 + 36) }}>
+          <ResponsiveContainer>
+            <BarChart data={chart} layout="vertical" margin={{ top: 4, right: 56, bottom: 4, left: 4 }} barCategoryGap={6}>
+              <CartesianGrid horizontal={false} stroke="var(--chart-grid)" />
+              <XAxis type="number" domain={[0, def.max ?? "auto"]} tickLine={false} axisLine={false} fontSize={12} />
+              <YAxis type="category" dataKey="name" width={150} tickLine={false} axisLine={false} fontSize={12} interval={0} />
+              <Tooltip content={<ChartTip />} cursor={{ fill: "var(--surface-2)" }} />
+              {group !== null && <ReferenceLine x={group} stroke="var(--text)" strokeDasharray="4 4" />}
+              <Bar
+                dataKey="value"
+                name={def.label}
+                radius={[0, 4, 4, 0]}
+                isAnimationActive={false}
+                cursor="pointer"
+                onClick={(entry) => {
+                  // The bar item carries its data row as `payload` (the member's id).
+                  const id = (entry as { payload?: { id?: number } }).payload?.id;
+                  if (id !== undefined) onOpen(id);
+                }}
+              >
+                {chart.map((c) => (
+                  <Cell key={c.id} fill={barColor(metric, c.row, c.value)} />
+                ))}
+                <LabelList
+                  dataKey="value"
+                  position="right"
+                  fontSize={12}
+                  fill="var(--text)"
+                  formatter={(v: unknown) => `${num(Number(v), def.digits)}${def.unit ?? ""}`}
+                />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+      {missing > 0 && (
+        <p className="muted small" style={{ margin: "6px 0 0" }}>
+          {missing} người không có số liệu này trong khoảng đã chọn (xem tab Bảng).
+        </p>
+      )}
+    </Card>
+  );
+}
+
+/** The side panel: who needs help, with the reason, one click away. */
+function Attention({ data, onOpen }: { data: TeamReport; onOpen: (userId: number) => void }) {
+  const list = data.members.filter((m) => m.assessment.level === "support" || m.assessment.level === "fair").slice(0, 8);
+  const s = data.summary;
+  const p = data.previous.summary;
+  const d = diff(s.avg_score, p.avg_score);
+  return (
+    <div className="report-side">
+      <Card title="Cả nhóm" id="report-group" collapsible={false}>
+        <dl className="report-facts">
+          <div>
+            <dt>Điểm TB</dt>
+            <dd>
+              <Score value={s.avg_score} strong />
+              {d !== null && <span className={`small ${d >= 0 ? "tone-good" : "tone-bad-text"}`}> {d > 0 ? "+" : ""}{num(d, 1)}</span>}
+            </dd>
+          </div>
+          <div>
+            <dt>APPROVE</dt>
+            <dd>{s.pass_rate === null ? "—" : `${num(s.pass_rate, 0)}%`}</dd>
+          </div>
+          <div>
+            <dt>Review</dt>
+            <dd>
+              {s.reviews} <span className="muted small">({s.mrs} MR · {s.commits} commit)</span>
+            </dd>
+          </div>
+          <div>
+            <dt>Critical / High</dt>
+            <dd>
+              <span className={s.critical ? "tone-bad-text" : undefined}>{s.critical}</span> / {s.high}
+            </dd>
+          </div>
+          <div>
+            <dt>Lỗi / 100 LOC</dt>
+            <dd>{num(s.findings_per_100_loc, 2)}</dd>
+          </div>
+        </dl>
+        <p className="muted small" style={{ margin: "6px 0 0" }}>
+          Số so với kỳ trước {data.previous.from} → {data.previous.to}.
+        </p>
+      </Card>
+      <Card title="Cần chú ý" id="report-attention" collapsible={false} flush>
+        {list.length === 0 ? (
+          <p className="muted small adm-pad">Không ai ở mức Cần hỗ trợ hay Cần cải thiện.</p>
+        ) : (
+          <ul className="report-attention">
+            {list.map((m) => (
+              <li key={m.user.id}>
+                <button type="button" className="link" onClick={() => onOpen(m.user.id)}>
+                  {nameOf(m.user)}
+                </button>
+                <Pill tone={LEVEL_TONE[m.assessment.level]}>{m.assessment.label}</Pill>
+                <span className="muted small report-attention-why">{m.assessment.reasons[0]}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+/** A cell shaded by its value: the heat maps of mistakes and criteria. */
 function Heat({ value, tone, children }: { value: number; tone: "bad" | "good" | "warn"; children: ReactNode }) {
   const strength = Math.max(0, Math.min(value, 100));
   return (
@@ -67,76 +272,94 @@ function Heat({ value, tone, children }: { value: number; tone: "bad" | "good" |
   );
 }
 
+type Tab = "chart" | "table" | "categories" | "criteria";
+
 /**
- * Báo cáo nhóm: everyone side by side. The order answers "who needs attention" (weakest first);
- * the chart puts each person against the group average; the mistakes heat map says who makes
- * which kind of mistake more than the group; the criteria heat map says who is weak where.
+ * Tổng quan: everyone in one view. A row of level counts, then one panel at a time: the bar
+ * chart (one bar per member, the number on it, weakest on top) beside the group's numbers and
+ * who needs attention; the sortable table; who makes which mistake; who is weak where under a
+ * criteria set. Clicking a name or a bar opens that member's Chi tiết.
  */
 export function TeamReportView({
   data,
-  personHref,
+  onOpen,
   setId,
   onSetId,
 }: {
   data: TeamReport;
-  personHref: (userId: number) => string;
+  onOpen: (userId: number) => void;
   setId: number | null;
   onSetId: (id: number) => void;
 }) {
-  const [tab, setTab] = useState<Tab>("overview");
-  const s = data.summary;
-  const p = data.previous.summary;
+  const [tab, setTab] = useState<Tab>("chart");
   const tabs: SubTab<Tab>[] = [
-    { key: "overview", label: "So sánh", count: data.members.length, hint: "Mỗi người một dòng, người cần chú ý trước" },
+    { key: "chart", label: "Biểu đồ", hint: "Mỗi người một thanh, số trên thanh" },
+    { key: "table", label: "Bảng", count: data.members.length, hint: "Mỗi người một dòng, sắp được theo mọi cột" },
     { key: "categories", label: "Loại lỗi", hint: "Ai hay mắc loại lỗi nào, so với cả nhóm" },
     { key: "criteria", label: "Theo tiêu chí", count: data.criteria_sets.length || undefined, hint: "Điểm từng thành phần của từng người" },
   ];
+  if (!data.members.length) {
+    return (
+      <Card collapsible={false}>
+        <EmptyState icon="members" title="Không có ai trong phạm vi này">
+          Đổi dự án, team hoặc khoảng thời gian; hoặc chọn người cần xem.
+        </EmptyState>
+      </Card>
+    );
+  }
   return (
     <>
       <div className="team-levels" aria-label="Số người theo mức đánh giá">
-        {(["support", "fair", "good", "none"] as Level[]).map((k) => (
-          <div key={k} className={`card team-level tone-${LEVEL_TONE[k] ?? "none"}`}>
+        {LEVEL_ORDER.map((k) => (
+          <div key={k} className={`card team-level tone-${LEVEL_TONE[k] ?? "none"}`} title={k === "good" ? "Điểm TB ≥ 80, không critical, ≥ 60% APPROVE" : k === "support" ? "Có critical hoặc điểm TB dưới 65" : undefined}>
             <span className="team-level-n">{data.levels[k] ?? 0}</span>
             <span className="muted small">{LEVEL_LABEL[k]}</span>
           </div>
         ))}
       </div>
-      <StatStrip label="Cả nhóm trong kỳ, so với kỳ trước">
-        <StripStat label="Người có review" value={s.members} />
-        <StripStat label="Review" value={s.reviews} change={p.reviews ? s.reviews - p.reviews : null} sub={`${s.mrs} MR · ${s.commits} commit`} />
-        <StripStat label="Điểm TB" value={s.avg_score} digits={1} tone={scoreTone(s.avg_score)} change={diff(s.avg_score, p.avg_score)} />
-        <StripStat label="Tỉ lệ APPROVE" unit="%" value={s.pass_rate} change={diff(s.pass_rate, p.pass_rate)} />
-        <StripStat label="Critical + High" value={s.critical + s.high} tone={s.critical ? "bad" : s.high ? "warn" : undefined} change={p.reviews ? s.critical + s.high - (p.critical + p.high) : null} higherIsBetter={false} />
-        <StripStat label="Lỗi / 100 LOC" value={s.findings_per_100_loc} digits={2} change={diff(s.findings_per_100_loc, p.findings_per_100_loc)} higherIsBetter={false} />
-      </StatStrip>
-      <SubTabs<Tab> id="team-tabs" label="Phần của báo cáo nhóm" variant="mini" tabs={tabs} value={tab} onChange={setTab} />
-      {tab === "overview" && (
-        <SubPanel id="team-tabs" tab="overview">
-          <Compare data={data} personHref={personHref} />
+      <SubTabs<Tab> id="ov-tabs" label="Phần của tổng quan" variant="mini" tabs={tabs} value={tab} onChange={setTab} />
+      {tab === "chart" && (
+        <SubPanel id="ov-tabs" tab="chart">
+          <div className="report-split">
+            <MemberChart data={data} onOpen={onOpen} />
+            <Attention data={data} onOpen={onOpen} />
+          </div>
+        </SubPanel>
+      )}
+      {tab === "table" && (
+        <SubPanel id="ov-tabs" tab="table">
+          <Compare data={data} onOpen={onOpen} />
         </SubPanel>
       )}
       {tab === "categories" && (
-        <SubPanel id="team-tabs" tab="categories">
-          <Categories data={data} personHref={personHref} />
+        <SubPanel id="ov-tabs" tab="categories">
+          <Categories data={data} onOpen={onOpen} />
         </SubPanel>
       )}
       {tab === "criteria" && (
-        <SubPanel id="team-tabs" tab="criteria">
-          <Criteria data={data} personHref={personHref} setId={setId} onSetId={onSetId} />
+        <SubPanel id="ov-tabs" tab="criteria">
+          <Criteria data={data} onOpen={onOpen} setId={setId} onSetId={onSetId} />
         </SubPanel>
       )}
     </>
   );
 }
 
-function Compare({ data, personHref }: { data: TeamReport; personHref: (id: number) => string }) {
-  const rows = data.members;
+function PersonButton({ person, onOpen }: { person: Person; onOpen: (id: number) => void }) {
+  return (
+    <button type="button" className="link" onClick={() => onOpen(person.id)} title="Mở báo cáo chi tiết">
+      {nameOf(person)}
+    </button>
+  );
+}
+
+function Compare({ data, onOpen }: { data: TeamReport; onOpen: (id: number) => void }) {
   const cell = (r: TeamReportRow, key: string): number | string | null => {
     switch (key) {
       case "name":
         return nameOf(r.user);
       case "level":
-        return { support: 0, fair: 1, good: 2, none: 3 }[r.assessment.level];
+        return LEVEL_ORDER.indexOf(r.assessment.level);
       case "reviews":
         return r.reviews;
       case "score":
@@ -153,99 +376,64 @@ function Compare({ data, personHref }: { data: TeamReport; personHref: (id: numb
         return null;
     }
   };
-  const { sorted, sort, toggle } = useSort(rows, { key: "level", dir: "asc" }, cell);
-  const chart = rows
-    .filter((r) => r.avg_score !== null)
-    .map((r) => ({ name: nameOf(r.user), "Điểm TB": r.avg_score, level: r.assessment.level }))
-    .sort((a, b) => (b["Điểm TB"] ?? 0) - (a["Điểm TB"] ?? 0));
-  if (!rows.length) {
-    return (
-      <Card collapsible={false}>
-        <EmptyState icon="members" title="Không có ai trong phạm vi này">
-          Chọn team khác, hoặc chọn người cần so sánh.
-        </EmptyState>
-      </Card>
-    );
-  }
+  const { sorted, sort, toggle } = useSort(data.members, { key: "level", dir: "asc" }, cell);
   return (
-    <>
-      {chart.length > 0 && (
-        <Card title="Điểm TB từng người" id="team-chart" subtitle={`Vạch: điểm TB cả nhóm ${num(data.summary.avg_score, 1)} · màu theo mức đánh giá`}>
-          <div className="chart-box" style={{ height: Math.max(160, chart.length * 30 + 40) }} role="img" aria-label={chart.map((c) => `${c.name} ${num(c["Điểm TB"], 0)}`).join(", ")}>
-            <ResponsiveContainer>
-              <BarChart data={chart} layout="vertical" margin={{ top: 4, right: 24, bottom: 0, left: 8 }}>
-                <CartesianGrid horizontal={false} stroke="var(--chart-grid)" />
-                <XAxis type="number" domain={[0, 100]} tickLine={false} axisLine={false} fontSize={12} />
-                <YAxis type="category" dataKey="name" width={140} tickLine={false} axisLine={false} fontSize={12} />
-                <Tooltip content={<ChartTip />} cursor={{ fill: "var(--surface-2)" }} />
-                {data.summary.avg_score !== null && <ReferenceLine x={data.summary.avg_score} stroke="var(--text)" strokeDasharray="4 4" />}
-                <Bar dataKey="Điểm TB" radius={[0, 4, 4, 0]} isAnimationActive={false}>
-                  {chart.map((c) => (
-                    <Cell key={c.name} fill={`var(--${LEVEL_TONE[c.level as Level] ?? "chart-1"})`} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-      )}
-      <Card title="So sánh thành viên" id="team-compare" flush subtitle="Bấm tên để mở báo cáo riêng của người đó với cùng bộ lọc">
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <SortTh id="name" sort={sort} onSort={toggle}>Thành viên</SortTh>
-                <SortTh id="level" sort={sort} onSort={toggle}>Mức</SortTh>
-                <SortTh id="reviews" sort={sort} onSort={toggle} num>Review</SortTh>
-                <SortTh id="score" sort={sort} onSort={toggle} num>Điểm TB</SortTh>
-                <SortTh id="delta" sort={sort} onSort={toggle} num>So kỳ trước</SortTh>
-                <SortTh id="pass" sort={sort} onSort={toggle} num>APPROVE</SortTh>
-                <SortTh id="severe" sort={sort} onSort={toggle} num>Crit / High</SortTh>
-                <SortTh id="density" sort={sort} onSort={toggle} num>Lỗi/100 LOC</SortTh>
-                <th>Hay mắc</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((r) => {
-                const d = diff(r.avg_score, r.previous_avg_score);
-                return (
-                  <tr key={r.user.id}>
-                    <td>
-                      <Link href={personHref(r.user.id)}>{nameOf(r.user)}</Link>
-                    </td>
-                    <td title={r.assessment.reasons.join(" ")}>
-                      <Pill tone={LEVEL_TONE[r.assessment.level]}>{r.assessment.label}</Pill>
-                      {r.assessment.thin && r.reviews > 0 && <span className="muted small"> ít dữ liệu</span>}
-                    </td>
-                    <td className="num">{r.reviews}</td>
-                    <td className="num">
-                      <Score value={r.avg_score} strong />
-                    </td>
-                    <td className={`num ${d === null ? "" : d >= 0 ? "tone-good" : "tone-bad-text"}`}>{d === null ? "—" : `${d > 0 ? "+" : ""}${num(d, 1)}`}</td>
-                    <td className="num">{r.pass_rate === null ? "—" : `${num(r.pass_rate, 0)}%`}</td>
-                    <td className="num">
-                      <span className={r.critical ? "tone-bad-text" : undefined}>{r.critical}</span> / {r.high}
-                    </td>
-                    <td className="num">{num(r.findings_per_100_loc, 2)}</td>
-                    <td className="small">{r.top_category ?? <span className="faint">—</span>}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </>
+    <Card title="So sánh thành viên" id="team-compare" flush collapsible={false} subtitle="Rê chuột vào mức để xem lý do; bấm tên để xem chi tiết">
+      <div className="table-wrap report-table">
+        <table>
+          <thead>
+            <tr>
+              <SortTh id="name" sort={sort} onSort={toggle}>Thành viên</SortTh>
+              <SortTh id="level" sort={sort} onSort={toggle}>Mức</SortTh>
+              <SortTh id="reviews" sort={sort} onSort={toggle} num>Review</SortTh>
+              <SortTh id="score" sort={sort} onSort={toggle} num>Điểm TB</SortTh>
+              <SortTh id="delta" sort={sort} onSort={toggle} num>So kỳ trước</SortTh>
+              <SortTh id="pass" sort={sort} onSort={toggle} num>APPROVE</SortTh>
+              <SortTh id="severe" sort={sort} onSort={toggle} num>Crit / High</SortTh>
+              <SortTh id="density" sort={sort} onSort={toggle} num>Lỗi/100 LOC</SortTh>
+              <th>Hay mắc</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r) => {
+              const d = diff(r.avg_score, r.previous_avg_score);
+              return (
+                <tr key={r.user.id}>
+                  <td>
+                    <PersonButton person={r.user} onOpen={onOpen} />
+                  </td>
+                  <td title={r.assessment.reasons.join(" ")}>
+                    <Pill tone={LEVEL_TONE[r.assessment.level]}>{r.assessment.label}</Pill>
+                    {r.assessment.thin && r.reviews > 0 && <span className="muted small"> ít dữ liệu</span>}
+                  </td>
+                  <td className="num">{r.reviews}</td>
+                  <td className="num">
+                    <Score value={r.avg_score} strong />
+                  </td>
+                  <td className={`num ${d === null ? "" : d >= 0 ? "tone-good" : "tone-bad-text"}`}>{d === null ? "—" : `${d > 0 ? "+" : ""}${num(d, 1)}`}</td>
+                  <td className="num">{r.pass_rate === null ? "—" : `${num(r.pass_rate, 0)}%`}</td>
+                  <td className="num">
+                    <span className={r.critical ? "tone-bad-text" : undefined}>{r.critical}</span> / {r.high}
+                  </td>
+                  <td className="num">{num(r.findings_per_100_loc, 2)}</td>
+                  <td className="small">{r.top_category ?? <span className="faint">—</span>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }
 
-function Categories({ data, personHref }: { data: TeamReport; personHref: (id: number) => string }) {
+function Categories({ data, onOpen }: { data: TeamReport; onOpen: (id: number) => void }) {
   const cats = data.categories;
   const rows = data.members.filter((m) => m.findings > 0);
   if (!cats.length) {
     return (
       <Card collapsible={false}>
-        <EmptyState icon="checkCircle" title="Không có finding nào được tính điểm">Trong khoảng này nhóm không có lỗi nào được tính.</EmptyState>
+        <EmptyState icon="checkCircle" title="Không có finding nào được tính điểm">Trong khoảng này không có lỗi nào được tính.</EmptyState>
       </Card>
     );
   }
@@ -254,9 +442,10 @@ function Categories({ data, personHref }: { data: TeamReport; personHref: (id: n
       title="Ai hay mắc loại lỗi nào"
       id="team-categories"
       flush
-      subtitle="Mỗi ô: tỉ trọng loại lỗi đó trong lỗi của người đó. Đậm hơn hẳn dòng Cả nhóm = điểm cần kèm riêng người đó."
+      collapsible={false}
+      subtitle="Mỗi ô: tỉ trọng loại lỗi đó trong lỗi của người đó. Ô đậm hơn hẳn dòng Cả nhóm = điểm cần kèm riêng."
     >
-      <div className="table-wrap">
+      <div className="table-wrap report-table">
         <table className="heat-table">
           <thead>
             <tr>
@@ -272,7 +461,7 @@ function Categories({ data, personHref }: { data: TeamReport; personHref: (id: n
             {rows.map((m) => (
               <tr key={m.user.id}>
                 <td>
-                  <Link href={personHref(m.user.id)}>{nameOf(m.user)}</Link> <span className="muted small">{m.findings} lỗi</span>
+                  <PersonButton person={m.user} onOpen={onOpen} /> <span className="muted small">{m.findings} lỗi</span>
                 </td>
                 {cats.map((c) => {
                   const v = m.categories[c.category] ?? 0;
@@ -301,12 +490,12 @@ function Categories({ data, personHref }: { data: TeamReport; personHref: (id: n
 
 function Criteria({
   data,
-  personHref,
+  onOpen,
   setId,
   onSetId,
 }: {
   data: TeamReport;
-  personHref: (id: number) => string;
+  onOpen: (id: number) => void;
   setId: number | null;
   onSetId: (id: number) => void;
 }) {
@@ -327,7 +516,8 @@ function Criteria({
       title={`Theo tiêu chí · ${crit.name}${crit.version ? ` v${crit.version}` : ""}`}
       id="team-criteria"
       flush
-      subtitle="Mỗi ô: điểm TB (theo LOC) của thành phần đó. Màu theo mức: xanh ≥ 80, vàng 65–80, đỏ dưới 65."
+      collapsible={false}
+      subtitle="Mỗi ô: điểm TB (theo LOC) của thành phần. Xanh ≥ 80, vàng 65–80, đỏ dưới 65."
       actions={
         data.criteria_sets.length > 1 && (
           <select className="compact" value={setId ?? crit.set_id} onChange={(e) => onSetId(Number(e.target.value))} aria-label="Chọn bộ tiêu chí">
@@ -341,7 +531,7 @@ function Criteria({
         )
       }
     >
-      <div className="table-wrap">
+      <div className="table-wrap report-table">
         <table className="heat-table">
           <thead>
             <tr>
@@ -359,7 +549,7 @@ function Criteria({
             {rows.map((m) => (
               <tr key={m.user.id}>
                 <td>
-                  <Link href={personHref(m.user.id)}>{nameOf(m.user)}</Link>
+                  <PersonButton person={m.user} onOpen={onOpen} />
                 </td>
                 <td className="num">{m.criteria?.reviews}</td>
                 <td className="num">
@@ -369,7 +559,9 @@ function Criteria({
                   const v = m.criteria?.components[c.key] ?? null;
                   const tone = scoreTone(v);
                   return v === null ? (
-                    <td key={c.key} className="num faint">—</td>
+                    <td key={c.key} className="num faint">
+                      —
+                    </td>
                   ) : (
                     <Heat key={c.key} value={tone === "good" ? 35 : tone === "warn" ? 55 : 70} tone={tone ?? "bad"}>
                       {num(v, 0)}

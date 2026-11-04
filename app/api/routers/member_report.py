@@ -47,7 +47,15 @@ from app.scoring.verdict import VERDICT_LABEL
 router = APIRouter(tags=["member-report"])
 SessionDep = Annotated[Session, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
-Viewer = Annotated[Principal, require("evaluation.view")]
+# docs/specs/23 §9: the report has rights of its own (app/permissions/catalog.py).
+Viewer = Annotated[Principal, require("report.member")]
+
+
+def require_export(principal: Principal) -> None:
+    """The Excel files need `report.export` on top of seeing the report."""
+    if not principal.can("report.export"):
+        raise HTTPException(403, "xuất Excel báo cáo thành viên cần quyền report.export")
+
 
 DEFAULT_DAYS = 30
 MAX_DAYS = 366
@@ -141,7 +149,7 @@ class Filters(ScopeFilters):
         business_project_id: int | None,
         project_id: int | None,
     ) -> None:
-        if not covers_person(session, principal, "evaluation.view", user_id):
+        if not covers_person(session, principal, "report.member", user_id):
             raise HTTPException(
                 403, "individual metrics are visible to the person, their lead and dự án managers"
             )
@@ -176,7 +184,7 @@ def _facts(
 
 def _detail_ids(session: Session, principal: Principal, ids: list[int]) -> set[int]:
     """The reviews among `ids` whose content the viewer may open (`review.view`): the report's
-    numbers come from `evaluation.view`, but titles, links and per-review scores are review
+    numbers come from `report.member`, but titles, links and per-review scores are review
     content."""
     if not ids:
         return set()
@@ -601,6 +609,7 @@ def member_report_xlsx(
     business_project_id: int | None = None,
     project_id: int | None = None,
 ) -> Response:
+    require_export(principal)
     f = Filters(
         session, principal, settings, user_id, date_from, date_to, business_project_id, project_id
     )

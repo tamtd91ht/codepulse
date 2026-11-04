@@ -22,13 +22,21 @@ from app.api.routers.member_report import (
     _facts,
     _labels,
     _num,
+    require_export,
     sheet_title,
     xlsx_row,
 )
 from app.api.schemas import UserOut
 from app.api.security import Principal, require
 from app.config import Settings, get_settings
-from app.models import CriteriaSet, CriteriaSetVersion, ReviewCriteriaScore, Team, User
+from app.models import (
+    CriteriaSet,
+    CriteriaSetVersion,
+    ProjectGrant,
+    ReviewCriteriaScore,
+    Team,
+    User,
+)
 from app.scoring.criteria import CATEGORY_LABELS
 from app.scoring.evaluation import Bucket, ReviewFacts
 from app.scoring.member_report import LEVELS, assess, review_row, summarize, weekly, weeks_of
@@ -37,8 +45,8 @@ from app.scoring.verdict import VERDICT_LABEL
 router = APIRouter(tags=["member-report"])
 SessionDep = Annotated[Session, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
-# The Thành viên page's permission: people side by side is that page's job.
-Viewer = Annotated[Principal, require("members.view")]
+# docs/specs/23 §9: whose rows one sees is the scope of `report.member`.
+Viewer = Annotated[Principal, require("report.member")]
 
 MAX_PEOPLE = 100
 TOO_MANY = f"so sánh tối đa {MAX_PEOPLE} người; chọn team hoặc chọn ít người hơn"
@@ -64,7 +72,7 @@ class TeamFilters(ScopeFilters):
         super().__init__(
             session, principal, settings, date_from, date_to, business_project_id, project_id
         )
-        scope = person_scope(session, principal, "evaluation.view")
+        scope = person_scope(session, principal, "report.member")
         self.team: Team | None = None
         people: set[int] | None = scope
         if team_id is not None:
@@ -179,8 +187,16 @@ def build_team_report(
         by_person[r.user_id].append(r)
     for r in before:
         prev_person[r.user_id].append(r)
-    # Everyone named (a team, a list) gets a row, reviewed or not; otherwise those with reviews.
+    # Everyone named (a team, a list) gets a row, reviewed or not; otherwise those with reviews,
+    # plus, with a dự án chosen, the people granted it (its members, even without a review).
     ids = set(by_person) | (f.people or set() if f.explicit else set())
+    if f.bp_id is not None and not f.explicit:
+        granted = set(
+            session.scalars(
+                select(ProjectGrant.user_id).where(ProjectGrant.business_project_id == f.bp_id)
+            )
+        )
+        ids |= granted if f.people is None else granted & f.people
     users = {
         u.id: u
         for u in session.scalars(select(User).where(User.id.in_(ids), User.active.is_not(False)))
@@ -363,6 +379,7 @@ def team_report_xlsx(
     user_ids: str | None = None,
     set_id: int | None = None,
 ) -> Response:
+    require_export(principal)
     f = _filters(
         session,
         principal,

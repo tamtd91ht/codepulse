@@ -77,3 +77,29 @@ Lead / quản lý xem báo cáo để trả lời ba câu, theo thứ tự:
 - Quyền: `members.view`; người được so sánh ∩ `person_scope(evaluation.view)`; team phải `sees_team`; nêu id người ngoài phạm vi → 403. Nội dung review và điểm tiêu chí chỉ từ review mở được bằng `review.view`. Audit `member_report.team_read`, `member_report.team_export`.
 - API: `GET /api/v1/members/team-report?from&to&team_id&user_ids=1,2&business_project_id&project_id&set_id` → `summary`, `previous`, `levels`, `weeks`, `trend`, `members[]` (chỉ số, `previous_avg_score`, `assessment`, `trend`, `categories{key: %}`, `top_category`, `criteria{reviews,score,components}`), `categories[]`, `criteria_sets[]`, `criteria{set_id,name,version,components[],group}`. Code: `app/api/routers/team_report.py`, `dashboards/web/components/TeamReport.tsx`.
 
+## 9. Tổng quan / Chi tiết và phân quyền (người dùng 2026-11-04)
+> "Báo cáo nên có một báo cáo tổng quan khi vào, cho toàn bộ member, chart ngang theo member, mỗi member một cột / một ô, con số hiện luôn trên chart; lọc member theo dự án; tách 2 tab Tổng quan (nhiều member) và Chi tiết (1 member); hạn chế tối đa cuộn kiểu landing; tổ chức phân quyền, đưa vào bộ quyền." Thay §2 và §8 về cách vào trang.
+
+- **Hai tab đầu trang**: **Tổng quan** (mặc định khi vào) và **Chi tiết**. Link có `?user=` mở thẳng Chi tiết người đó. Người chỉ có phạm vi `own` chỉ thấy Chi tiết của chính mình, không có tab.
+- **Thanh lọc gọn một hàng** dưới tab:
+  - Tổng quan: dự án, repo, team, người (chọn nhiều), thời gian.
+  - Chi tiết: thành viên, dự án, repo, thời gian.
+- **Lọc theo dự án** ở Tổng quan liệt kê người có review trong dự án, cộng người được cấp quyền vào dự án (có dòng "Chưa có dữ liệu" nếu chưa có review).
+- **Tổng quan**: hàng số người theo mức, rồi **một khung một lúc** (tab con):
+  - **Biểu đồ** (mặc định):
+    - **Biểu đồ thanh ngang**: mỗi thành viên một thanh, **con số in ngay trên thanh**, người yếu nhất ở trên, màu theo mức, vạch đứt là giá trị cả nhóm.
+    - Chọn chỉ số: Điểm TB, APPROVE %, Critical + High, Lỗi / 100 LOC, Số review, Điểm tiêu chí.
+    - **Bấm một thanh** để mở Chi tiết người đó.
+    - Bên phải: khung **Cả nhóm** (điểm TB so với kỳ trước, APPROVE, review, critical / high, lỗi / 100 LOC) và **Cần chú ý** (người ở mức Cần hỗ trợ / Cần cải thiện, kèm lý do đầu tiên, bấm để mở).
+    - Đông người thì biểu đồ và danh sách tự cuộn bên trong khung; trang không dài ra.
+  - **Bảng**: bảng so sánh sắp xếp được, tiêu đề cột dính.
+  - **Loại lỗi** và **Theo tiêu chí**: các bảng nhiệt như §8.
+- **Chi tiết**: tab con **Đánh giá** (mức, lý do, chỉ số, xu hướng, kết luận và mức lỗi), **Loại lỗi & repo**, **Review cần xem**, **Theo tiêu chí**.
+- **Sửa lỗi**: bấm tên ở bảng so sánh trước đây không mở được báo cáo riêng (link về cùng trang, trang không đọc lại URL). Nay bấm tên hoặc thanh là chuyển sang tab Chi tiết; trang đọc lại URL khi Back / Forward.
+- **Quyền** (spec 21, migration `d2e4f6a8b0c3`):
+  - **`report.member`** (own / team / project / all, nhạy cảm): xem báo cáo. Phạm vi quyết định số liệu của ai hiện ở Tổng quan và ai mở được ở Chi tiết.
+  - **`report.export`** (flag): xuất Excel. Thiếu quyền này thì không có nút và API trả 403.
+  - Bộ có sẵn: Thành viên own, Lead team, Quản lý dự án project, Quản lý tổng all (đều kèm export). Manager không có (Phase 0: manager chỉ xem số tổng hợp của team).
+  - Menu "Báo cáo thành viên" hiện cho ai có `report.member`.
+  - Thay cho `evaluation.view` / `members.view` ở các endpoint báo cáo.
+
