@@ -94,6 +94,7 @@ SEVERE = ("critical", "high")
 # The "whose?" step lists the dự án's people who committed this recently (managers only).
 PEOPLE_ACTIVE_DAYS = 90
 PEOPLE_BUTTONS = 12
+SHOW_REVIEWED_HINT = "\nThêm <code>include_reviewed=1</code> để xem cả mục đã review (kèm kết quả)."
 OWN_ONLY = (
     "Bạn chỉ review được commit / MR của chính mình."
     " Review việc của người khác cần quyền quản lý dự án hoặc admin."
@@ -523,13 +524,17 @@ class BotService:
             "",
             "<b>Review</b>",
             "<b>/review</b> - menu bấm nút: chọn commit / MR trong danh sách, không cần mở GitLab",
-            "<b>/review type=mr|commit [id=…] [repo=…] [branch=…] [user=…] [range=…] [all=1]</b>",
+            "<b>/review type=mr|commit [id=…] [repo=…] [branch=…] [user=…] [range=…] [all=1]"
+            " [include_reviewed=1]</b>",
             "  type=commit [repo=…] - danh sách commit 7 ngày qua của mọi người, tick rồi review",
             "  type=mr [repo=…] - danh sách MR đang mở để chọn",
             "  type=mr id=412 repo=global-api - review MR !412 của repo …global-api",
             "  type=commit user=tamtd - commit gần nhất của tamtd",
             "  type=commit user=tamtd range=7d - commit 7 ngày qua của tamtd",
+            "  type=commit repo=wallet,customer range=09-2026,10-2026 - commit của 2 repo"
+            " từ 01/09 đến 31/10 (range=01-09-2026,15-10-2026 theo ngày; tối đa 92 ngày)",
             "  type=mr user=an - MR gần nhất của An (bỏ user = của bạn)",
+            "  mặc định chỉ hiện mục chưa review; include_reviewed=1 để hiện cả mục đã review",
             "  thêm again=1 để review lại mục đã review (mặc định không; quản lý dự án/admin)",
             "  repo/user viết tắt được; bot tự chọn, hỏi lại khi còn mơ hồ",
             "Dạng cũ vẫn dùng được: /review mr &lt;số|link&gt; [repo],",
@@ -601,6 +606,16 @@ class BotService:
         return f"<b>Repo của {esc(self._scope_label())}</b>\n" + "\n".join(rows)
 
     def _pick_repos(self, hint: str | None, *, one: bool) -> list[Project]:
+        parts = [h.strip() for h in (hint or "").split(",") if h.strip()]
+        if len(parts) > 1:
+            # repo=a,b: each hint names one repo (the resolver picks among abbreviations).
+            if one:
+                raise Denied("Lệnh này cần đúng một repo; bỏ bớt repo trong repo=.")
+            found: dict[int, Project] = {}
+            for part in parts:
+                for project in self._pick_repos(part, one=True):
+                    found.setdefault(project.id, project)
+            return list(found.values())
         scope = self._scope()
         repos = match_repo(scope, hint, lambda p: p.path_with_namespace)
         if not repos:
@@ -804,7 +819,7 @@ class BotService:
             mine = not self._manages(me)
             self.pending_markup = menu_keyboard(mine=mine)
             return "Review commit / MR nào của bạn?" if mine else "Bạn muốn review gì?"
-        parsed = parse_review(command.args)
+        parsed = parse_review(command.args, self._clock().astimezone(self._tz).date())
         if isinstance(parsed, str):
             return esc(parsed)
         if parsed.again and not self._manages(me):
@@ -913,18 +928,24 @@ class BotService:
         repos = self._pick_repos(args.repo_hint, one=False)
         people = self._people(args.people, me)
         accounts = self._accounts_of(people)
-        commit = self._s.scalars(
-            select(Commit)
-            .where(
-                Commit.project_id.in_([p.id for p in repos]),
-                Commit.author_account_id.in_(accounts),
-                Commit.is_merge.is_not(True),
+        query = select(Commit).where(
+            Commit.project_id.in_([p.id for p in repos]),
+            Commit.author_account_id.in_(accounts),
+            Commit.is_merge.is_not(True),
+        )
+        shown = args.include_reviewed or args.again
+        if not shown:
+            reviewed = select(Review.commit_sha).where(
+                Review.commit_sha.is_not(None),
+                Review.status.in_(("done", "queued", "running")),
+                Review.rubric_version == RUBRIC_VERSION,
             )
-            .order_by(Commit.authored_at.desc())
-            .limit(1)
-        ).first()
+            query = query.where(Commit.sha.not_in(reviewed))
+        commit = self._s.scalars(query.order_by(Commit.authored_at.desc()).limit(1)).first()
         if commit is None or commit.project_id is None:
-            return [], [self._nothing_for(people, "commit")]
+            if shown:
+                return [], [self._nothing_for(people, "commit")]
+            return [], [self._nothing_for(people, "commit chưa review") + SHOW_REVIEWED_HINT]
         project = self._s.get(Project, commit.project_id)
         if project is None:
             return [], ["Repo của commit không còn."]
@@ -941,18 +962,28 @@ class BotService:
         repos = self._pick_repos(args.repo_hint, one=False)
         people = self._people(args.people, me)
         accounts = self._accounts_of(people)
-        mr = self._s.scalars(
-            select(MergeRequest)
-            .where(
-                MergeRequest.project_id.in_([p.id for p in repos]),
-                MergeRequest.author_account_id.in_(accounts),
-                MergeRequest.head_sha.is_not(None),
+        query = select(MergeRequest).where(
+            MergeRequest.project_id.in_([p.id for p in repos]),
+            MergeRequest.author_account_id.in_(accounts),
+            MergeRequest.head_sha.is_not(None),
+        )
+        shown = args.include_reviewed or args.again
+        if not shown:
+            reviewed = select(Review.mr_id).where(
+                Review.mr_id.is_not(None),
+                Review.status.in_(("done", "queued", "running")),
+                Review.rubric_version == RUBRIC_VERSION,
             )
-            .order_by(MergeRequest.created_at_src.desc().nulls_last(), MergeRequest.id.desc())
-            .limit(1)
+            query = query.where(MergeRequest.id.not_in(reviewed))
+        mr = self._s.scalars(
+            query.order_by(
+                MergeRequest.created_at_src.desc().nulls_last(), MergeRequest.id.desc()
+            ).limit(1)
         ).first()
         if mr is None or mr.project_id is None or mr.head_sha is None:
-            return [], [self._nothing_for(people, "merge request")]
+            if shown:
+                return [], [self._nothing_for(people, "merge request")]
+            return [], [self._nothing_for(people, "merge request chưa review") + SHOW_REVIEWED_HINT]
         project = self._s.get(Project, mr.project_id)
         if project is None:
             return [], ["Repo của MR không còn."]
@@ -962,6 +993,37 @@ class BotService:
         target = Target("mr", project.id, str(mr.iid), mr.head_sha, label)
         return self._settle(target, mr.id, args.again)
 
+    def _period_bounds(self, period: Period) -> tuple[datetime, datetime]:
+        """A period's whole days in REPORT_TZ: [start, end)."""
+        start = datetime.combine(period.start, day_start.min, self._tz)
+        return start, datetime.combine(period.end + timedelta(days=1), day_start.min, self._tz)
+
+    def _list_window(self, args: ReviewArgs) -> tuple[datetime, datetime | None]:
+        """The window of a commit list: range=<period>, else the rolling `days` up to now."""
+        if args.period is not None:
+            return self._period_bounds(args.period)
+        return self._clock() - timedelta(days=max(args.days, 1)), None
+
+    @staticmethod
+    def _window_label(args: ReviewArgs) -> str:
+        return args.period.label() if args.period is not None else f"{args.days} ngày"
+
+    def _settle_all(
+        self, targets: list[Target], mr_ids: dict[str, int] | None, again: bool
+    ) -> tuple[list[Target], list[str]]:
+        """include_reviewed / again on a list: finished items answer with their result (or,
+        with again, become a new round); at most 10 such answers, then a count."""
+        out: list[Target] = []
+        answers: list[str] = []
+        for target in targets:
+            mr_id = (mr_ids or {}).get(f"{target.project_id}:{target.ref}")
+            queued, said = self._settle(target, mr_id, again)
+            out += queued
+            answers += said
+        if len(answers) > 10:
+            answers = [*answers[:10], f"… và {len(answers) - 10} mục đã review nữa"]
+        return out, answers
+
     def _target_today(self, args: ReviewArgs, me: Principal) -> tuple[list[Target], list[str]]:
         repos = self._pick_repos(args.repo_hint, one=False)
         people = self._people(args.people, me)
@@ -969,8 +1031,12 @@ class BotService:
         today = self._clock().astimezone(self._tz).date()
         end = datetime.combine(today, datetime.min.time(), self._tz) + timedelta(days=1)
         start = end - timedelta(days=max(args.days, 1))
-        # again=1: finished ones too (a new round each); never what is queued / running now.
-        taken = ("queued", "running") if args.again else TAKEN
+        if args.period is not None:
+            start, end = self._period_bounds(args.period)
+        # include_reviewed / again: finished ones too (their result / a new round each); never
+        # what is queued / running now.
+        shown = args.again or args.include_reviewed
+        taken = ("queued", "running") if shown else TAKEN
         active = select(Review.commit_sha).where(
             Review.commit_sha.is_not(None), Review.status.in_(taken)
         )
@@ -1000,24 +1066,28 @@ class BotService:
         ]
         notes: list[str] = []
         if not targets:
+            when = (
+                f"trong {args.period.label()}"
+                if args.period is not None
+                else f"hôm nay ({today:%d/%m})"
+                if args.days <= 1
+                else f"trong {args.days} ngày qua"
+            )
             notes.append(
-                self._nothing_for(
-                    people,
-                    f"commit mới hôm nay ({today:%d/%m}, chưa review)"
-                    if args.days <= 1
-                    else f"commit mới trong {args.days} ngày qua (chưa review)",
-                )
+                self._nothing_for(people, f"commit {when}" + ("" if shown else " chưa review"))
                 + "\nDữ liệu theo lần sync gần nhất; /sync để lấy mới."
             )
+        answers: list[str] = []
+        if shown:
+            targets, answers = self._settle_all(targets, None, args.again)
         targets, notes = self._cap(targets, notes)
-        if args.again:
-            targets = [t for target in targets for t in self._settle(target, None, True)[0]]
-        return targets, notes
+        return targets, notes + answers
 
     def _target_open(self, args: ReviewArgs, me: Principal) -> tuple[list[Target], list[str]]:
         """Open MRs without a review: everyone's for a manager, the sender's own otherwise."""
         repos = self._pick_repos(args.repo_hint, one=False)
-        taken = ("queued", "running") if args.again else TAKEN
+        shown = args.again or args.include_reviewed
+        taken = ("queued", "running") if shown else TAKEN
         reviewed = select(Review.mr_id).where(Review.mr_id.is_not(None), Review.status.in_(taken))
         query = select(MergeRequest).where(
             MergeRequest.project_id.in_([p.id for p in repos]),
@@ -1056,14 +1126,11 @@ class BotService:
             notes.append(
                 f"Không có MR đang mở nào{whose} chưa được review (theo lần sync gần nhất)."
             )
+        answers: list[str] = []
+        if shown:
+            targets, answers = self._settle_all(targets, mr_of, args.again)
         targets, notes = self._cap(targets, notes)
-        if args.again:
-            targets = [
-                t
-                for target in targets
-                for t in self._settle(target, mr_of[f"{target.project_id}:{target.ref}"], True)[0]
-            ]
-        return targets, notes
+        return targets, notes + answers
 
     def _cap(self, targets: list[Target], notes: list[str]) -> tuple[list[Target], list[str]]:
         limit = self._settings.telegram_max_targets
@@ -1120,7 +1187,10 @@ class BotService:
 
     # -- existing reviews and queueing ---------------------------------------------------------
 
-    def _existing(self, target: Target, mr_id: int | None) -> Review | None:
+    def _existing(self, target: Target, mr_id: int | None, *, reset: bool = True) -> Review | None:
+        """The newest review of this target under the current rubric. `reset`: a failed or
+        skipped one is set back to queued (the caller is about to queue it) and None returned;
+        without it (listing only) the review comes back untouched."""
         query = select(Review).where(
             Review.target_type == target.kind,
             Review.reviewed_sha == target.sha,
@@ -1136,6 +1206,8 @@ class BotService:
         if review is None:
             return None
         if review.status in ("failed", "skipped"):
+            if not reset:
+                return review
             # Like POST /reviews/{id}/rerun: a failed or skipped review may run again.
             review.status, review.error = "queued", None
             return None
@@ -1219,50 +1291,92 @@ class BotService:
 
     def _start_picker(self, args: ReviewArgs, msg: Incoming, me: Principal, raw: str) -> str:
         kind = "commit" if args.action in ("today", "last", "commit") else "mr"
-        project = self._pick_repos(args.repo_hint, one=True)[0]
+        projects = self._pick_repos(args.repo_hint, one="," not in (args.repo_hint or ""))
+        project = projects[0]
         people = self._people(args.people, me) if args.people else []
-        state = self._build_picker(kind, project, args, people, me, msg, raw)
-        if state is None:
+        state = self._build_picker(kind, projects, args, people, me, msg, raw)
+        if not state.items:
             whose = "" if self._manages(me) else " của bạn"
+            hidden = self._hidden_note(state)
+            fresh = "" if state.include_reviewed else " (chưa review)"
+            names, *rest = state.scope_label.split(" · ")
             if kind == "commit":
                 branch = self._list_branch(project, args.branch, me)
-                if branch != ALL_BRANCHES and len(people) <= 1:
+                if (
+                    branch != ALL_BRANCHES
+                    and len(people) <= 1
+                    and len(projects) == 1
+                    and args.period is None
+                ):
                     who = people[0].id if people else 0
                     self.pending_markup = {
                         "inline_keyboard": [all_branches_row(project.id, who, args.days)]
                     }
                 hint = "\n" + BRANCH_HINT if branch != ALL_BRANCHES else ""
+                window = args.period.label() if args.period else f"{args.days} ngày qua"
+                on = branch_label(branch) if len(projects) == 1 else rest[0]
                 return (
-                    f"{esc(project.path_with_namespace)}: không có commit nào{whose}"
-                    f" trong {args.days} ngày qua trên {esc(branch_label(branch))}.{hint}"
+                    f"{esc(names)}: không có commit nào{whose} trong {window}"
+                    f" trên {esc(on)}{fresh}.{hidden}{hint}"
                 )
-            return f"{esc(project.path_with_namespace)}: không có MR đang mở nào{whose}."
+            return f"{esc(names)}: không có MR đang mở nào{whose}{fresh}.{hidden}"
         self._picker.save(state)
         self.pending_markup = keyboard(state)
         return render_text(state)
 
+    @staticmethod
+    def _hidden_note(state: PickerState) -> str:
+        if not state.hidden_reviewed:
+            return ""
+        return (
+            f" Đã ẩn {state.hidden_reviewed} mục đã review; thêm"
+            " <code>include_reviewed=1</code> để hiện."
+        )
+
     def _build_picker(
         self,
         kind: str,
-        project: Project,
+        projects: list[Project],
         args: ReviewArgs,
         people: list[User],
         me: Principal,
         msg: Incoming,
         raw: str,
-    ) -> PickerState | None:
+    ) -> PickerState:
+        """The list to tick; `items` empty when nothing fits (the caller says so)."""
         manages = self._manages(me)
         # A member's list is their own work only: nothing they could not tick, no "whose?".
         only = ({u.id for u in people} or None) if manages else {me.user_id}
+        shown = args.include_reviewed or args.again
+        items: list[Item] = []
+        branches: set[str] = set()
+        since, until = self._list_window(args)
+        for project in projects:
+            if kind == "commit":
+                branch = self._list_branch(project, args.branch, me)
+                branches.add(branch)
+                # Finished ones are left out below: scan deeper so the list still fills up.
+                items += self._commit_items(project, branch, since, until, only, me, deep=not shown)
+            else:
+                items += self._mr_items(project, only, me)
+        if len(projects) > 1:
+            items.sort(key=lambda it: it.at, reverse=True)  # newest first across the repos
+        hidden = 0
+        if not shown:
+            hidden = sum(1 for it in items if it.state == "done")
+            items = [it for it in items if it.state != "done"]
+        names = (
+            projects[0].path_with_namespace
+            if len(projects) == 1
+            else ", ".join(p.path_with_namespace.rsplit("/", 1)[-1] for p in projects)
+        )
         if kind == "commit":
-            branch = self._list_branch(project, args.branch, me)
-            items = self._commit_items(project, branch, args.days, only, me)
-            scope = f"{project.path_with_namespace} · {branch_label(branch)} · {args.days} ngày"
+            where = branch_label(branches.pop()) if len(branches) == 1 else "nhánh review"
+            scope = f"{names} · {where} · {self._window_label(args)}"
         else:
-            items = self._mr_items(project, only, me)
-            scope = project.path_with_namespace
-        if not items:
-            return None
+            scope = names
+        if len(items) > MAX_ITEMS:
+            scope += f" · {MAX_ITEMS}/{len(items)} mục mới nhất"
         if not manages:
             scope += " · của bạn"
         elif people:
@@ -1277,10 +1391,15 @@ class BotService:
             scope_label=scope,
             items=items[:MAX_ITEMS],
             raw=raw,
-            project_id=project.id,
+            project_id=projects[0].id,
+            project_ids=[p.id for p in projects] if len(projects) > 1 else [],
             person_id=people[0].id if len(people) == 1 else None,
-            branch=args.branch or ("" if manages else ALL_BRANCHES),
+            branch=args.branch if args.branch is not None else ("" if manages else ALL_BRANCHES),
             days=args.days,
+            since=args.period.start.isoformat() if args.period is not None else "",
+            until=args.period.end.isoformat() if args.period is not None else "",
+            include_reviewed=shown,
+            hidden_reviewed=hidden,
             may_force=manages,
             may_others=manages,
             again=args.again and manages,
@@ -1302,12 +1421,12 @@ class BotService:
                     MergeRequest.project_id == project_id, MergeRequest.iid == int(ref)
                 )
             )
-        review = self._existing(target, mr_id)
+        review = self._existing(target, mr_id, reset=False)
         if review is None:
             return "open", ""
         if review.status in ("queued", "running"):
             return "running", ""
-        if review.status == "failed":
+        if review.status in ("failed", "skipped"):
             return "failed", ""
         score = f"{review.score:.0f}" if review.score is not None else ""
         verdict = VERDICT_LABEL.get(review.verdict or "", "")
@@ -1334,10 +1453,24 @@ class BotService:
         return (user.id, user.full_name or "") if user else (None, "")
 
     def _commit_items(
-        self, project: Project, branch: str, days: int, only: set[int] | None, me: Principal
+        self,
+        project: Project,
+        branch: str,
+        since: datetime,
+        until: datetime | None,
+        only: set[int] | None,
+        me: Principal,
+        *,
+        deep: bool = False,
     ) -> list[Item]:
-        since = self._clock() - timedelta(days=max(days, 1))
+        """Newest first, only `only`'s work. `deep`: finished items will be hidden, so look a
+        bit further back (3 pages' worth) and stop once MAX_ITEMS unfinished ones are found."""
+        limit = MAX_SCAN if only is not None else MAX_ITEMS * 3 if deep else MAX_ITEMS
         raw: list[dict[str, Any]] = []
+
+        def full() -> bool:
+            return deep and sum(1 for i in items if i.state != "done") >= MAX_ITEMS
+
         fetched = False
         connection = self._connection(project)
         if connection is not None:
@@ -1345,8 +1478,7 @@ class BotService:
                 with self._make_client(connection) as client:
                     # One person's commits: scan deeper, else a busy branch's newest MAX_ITEMS
                     # (everyone's) push theirs out before the filter below.
-                    limit = MAX_ITEMS if only is None else MAX_SCAN
-                    raw = client.commits_on_ref(project.external_id, branch, since, None, limit)
+                    raw = client.commits_on_ref(project.external_id, branch, since, until, limit)
                 fetched = True
             except GitLabError as exc:
                 log.warning("picker: gitlab commits failed", extra={"status": exc.status_code})
@@ -1357,6 +1489,10 @@ class BotService:
                     continue
                 sha = str(c.get("id") or "")
                 uid, name = self._user_by_email(str(c.get("author_email") or ""))
+                if only is not None and uid not in only:
+                    continue  # someone else's: no review lookup at all
+                if full():
+                    break
                 items.append(
                     self._item(
                         "commit",
@@ -1380,12 +1516,17 @@ class BotService:
                 .where(
                     Commit.project_id == project.id,
                     Commit.authored_at >= since,
+                    Commit.authored_at < (until or datetime.max.replace(tzinfo=UTC)),
                     Commit.is_merge.is_not(True),
                 )
                 .order_by(Commit.authored_at.desc())
-                .limit(MAX_ITEMS if only is None else MAX_SCAN)
+                .limit(limit)
             ):
                 uid = self._user_of_account(commit.author_account_id)
+                if only is not None and uid not in only:
+                    continue
+                if full():
+                    break
                 user = self._s.get(User, uid) if uid else None
                 title = (commit.message or "").strip().splitlines()[:1] or [commit.sha[:8]]
                 items.append(
@@ -1401,8 +1542,6 @@ class BotService:
                         me,
                     )
                 )
-        if only is not None:
-            items = [i for i in items if i.author_user_id in only]
         return items
 
     def _mr_items(self, project: Project, only: set[int] | None, me: Principal) -> list[Item]:
@@ -1499,6 +1638,7 @@ class BotService:
             when=relative_time(when, self._clock()),
             state=state,
             result=result,
+            at=when.astimezone(UTC).isoformat() if when is not None else "",
         )
 
     def handle_callback(self, cb: Callback) -> CallbackOutcome:
@@ -1660,19 +1800,19 @@ class BotService:
         on = " branch=all" if every else ""
         state = self._build_picker(
             op,
-            project,
+            [project],
             args,
             people,
             me,
             msg,
             f"/review (menu) {op} {project.path_with_namespace}{who}{on}",
         )
-        if state is None:
+        if not state.items:
             branch = self._list_branch(project, args.branch, me)
             what = (
-                f"commit nào trong {days} ngày qua trên {esc(branch_label(branch))}"
+                f"commit nào trong {days} ngày qua trên {esc(branch_label(branch))} (chưa review)"
                 if op == "commit"
-                else "MR nào đang mở"
+                else "MR nào đang mở (chưa review)"
             )
             whose = (
                 " của bạn"
@@ -1697,7 +1837,8 @@ class BotService:
                 # The usual reason: the work is on a feature branch. One tap to look there.
                 markup["inline_keyboard"].insert(0, all_branches_row(project.id, user_id, days))
             return CallbackOutcome(
-                text=f"{esc(project.path_with_namespace)}: không có {what}{whose}.{hint}",
+                text=f"{esc(project.path_with_namespace)}: không có {what}{whose}."
+                f"{self._hidden_note(state)}{hint}",
                 markup=markup,
             )
         state.message_id = cb.message_id
@@ -1740,6 +1881,11 @@ class BotService:
                     me=me.user_id,
                 ),
             )
+        if op == "br" and (state.custom or state.include_reviewed):
+            # Several repos / a fixed period / finished items shown: rebuild from the list
+            # itself (the per-repo buttons cannot carry those).
+            other = "" if state.branch == ALL_BRANCHES else ALL_BRANCHES
+            return self._rebuild(state, cb, me, branch=other)
         if op == "br":
             # Same repo, person and window; the other branch scope (every branch <-> review).
             self._picker.delete(token)
@@ -1772,6 +1918,9 @@ class BotService:
                 return CallbackOutcome(
                     answer="Chỉ người quản lý dự án hoặc admin được review lại.", alert=True
                 )
+            if not state.again and state.hidden_reviewed:
+                # The finished items were left out of the list: list them now, tickable.
+                return self._rebuild(state, cb, me, include_reviewed=True, again=True)
             state.again = not state.again
             if not state.again:
                 state.selected = [i for i in state.selected if state.items[i].selectable]
@@ -1801,6 +1950,58 @@ class BotService:
         if op == "go":
             return self._picker_go(state, cb, me)
         return CallbackOutcome(answer="Nút này không còn hiệu lực.")
+
+    def _rebuild(
+        self,
+        state: PickerState,
+        cb: Callback,
+        me: Principal,
+        *,
+        branch: str | None = None,
+        include_reviewed: bool | None = None,
+        again: bool | None = None,
+    ) -> CallbackOutcome:
+        """The same list (repos, person, window) again with one setting changed."""
+        in_scope = {p.id: p for p in self._scope()}
+        ids = state.project_ids or [state.project_id]
+        projects = [in_scope[i] for i in ids if i in in_scope]
+        if not projects:
+            return CallbackOutcome(answer="Repo không còn trong phạm vi bot.", alert=True)
+        people: list[User] = []
+        if state.person_id:
+            person = self._s.get(User, state.person_id)
+            if person is None or not me.may_review_work(person.id, self._bot.business_project_id):
+                return CallbackOutcome(answer=OWN_ONLY, alert=True)
+            people = [person]
+        period = (
+            Period(date.fromisoformat(state.since), date.fromisoformat(state.until))
+            if state.since
+            else None
+        )
+        args = ReviewArgs(
+            "today" if state.kind == "commit" else "open",
+            days=state.days,
+            period=period,
+            branch=state.branch if branch is None else branch,
+            pick=True,
+            again=(state.again if again is None else again) and state.may_force,
+            include_reviewed=(
+                state.include_reviewed if include_reviewed is None else include_reviewed
+            ),
+        )
+        msg = Incoming(cb.update_id, cb.chat_id, "", cb.message_id, cb.from_id, cb.username, "", "")
+        new = self._build_picker(state.kind, projects, args, people, me, msg, state.raw)
+        new.token = state.token  # the buttons already on screen keep working
+        if not new.items:
+            self._picker.delete(state.token)
+            what = "commit" if state.kind == "commit" else "MR đang mở"
+            return CallbackOutcome(
+                text=f"{esc(new.scope_label)}: không có {what} nào.{self._hidden_note(new)}",
+                markup={"inline_keyboard": [[{"text": "✖ Đóng", "callback_data": "mn||x"}]]},
+            )
+        new.message_id = cb.message_id
+        self._picker.save(new)
+        return CallbackOutcome(text=render_text(new), markup=keyboard(new))
 
     def _latest_round(self, item: Item) -> int | None:
         return self._round_of(item.kind, item.project_id, item.ref, item.sha)

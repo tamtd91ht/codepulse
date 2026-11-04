@@ -121,4 +121,51 @@ def test_parse_review_keyed_form() -> None:
     assert isinstance(parse_review(["type=commit", "range=soon"]), str)
     assert "Không hiểu" in str(parse_review(["type=commit", "extra"]))
     assert "bỏ user=" in str(parse_review(["type=mr", "id=5", "user=an"]))
-    assert parse_review(["type=commit", "range=999d", "user=me"]).days == 90  # type: ignore[union-attr]
+    assert parse_review(["type=commit", "range=999d", "user=me"]).days == 92  # type: ignore[union-attr]
+
+
+def test_parse_review_period_and_several_repos() -> None:
+    from datetime import date
+
+    from app.telegram.report import Period
+
+    today = date(2026, 11, 4)
+    args = parse_review(
+        ["type=commit", "repo=wallet-service,customer-service", "range=09-2026,10-2026"], today
+    )
+    assert isinstance(args, ReviewArgs)
+    assert args.repo_hint == "wallet-service,customer-service"
+    assert args.period == Period(date(2026, 9, 1), date(2026, 10, 31))
+    assert args.days == 61 and args.pick and args.action == "today"
+    # Days, and a space after the comma (two words on the phone).
+    args = parse_review(["type=commit", "range=01-09-2026,", "15-10-2026", "repo=a,", "b"], today)
+    assert isinstance(args, ReviewArgs)
+    assert args.period == Period(date(2026, 9, 1), date(2026, 10, 15))
+    assert args.repo_hint == "a,b"
+    # One month, one day; the end is clipped to today.
+    one = parse_review(["type=commit", "range=11-2026"], today)
+    assert isinstance(one, ReviewArgs)
+    assert one.period == Period(date(2026, 11, 1), today)
+    # Relative windows keep the rolling form.
+    rolling = parse_review(["type=commit", "range=7d"], today)
+    assert isinstance(rolling, ReviewArgs) and rolling.period is None and rolling.days == 7
+    # Errors: too long, backwards, a period on MRs, several repos for one item.
+    assert "92" in str(parse_review(["type=commit", "range=01-2026,06-2026"], today))
+    assert isinstance(parse_review(["type=commit", "range=10-2026,09-2026"], today), str)
+    assert "range" in str(parse_review(["type=mr", "range=09-2026"], today))
+    assert "một repo" in str(parse_review(["type=mr", "id=5", "repo=a,b"], today))
+    assert "một repo" in str(parse_review(["type=commit", "user=an", "repo=a,b"], today))
+
+
+def test_parse_review_include_reviewed() -> None:
+    plain = parse_review(["type=commit", "repo=api"])
+    assert isinstance(plain, ReviewArgs) and plain.include_reviewed is False
+    for word in ("include_reviewed=1", "includeReviewed=true", "hasReviewed=yes"):
+        args = parse_review(["type=commit", "repo=api", word])
+        assert isinstance(args, ReviewArgs) and args.include_reviewed, word
+    off = parse_review(["type=mr", "includeReviewed=false"])
+    assert isinstance(off, ReviewArgs) and off.include_reviewed is False
+    # again=1 needs the finished items listed.
+    again = parse_review(["type=mr", "user=an", "again=1"])
+    assert isinstance(again, ReviewArgs) and again.include_reviewed and again.again
+    assert "include_reviewed" in str(parse_review(["type=commit", "include_reviewed=maybe"]))

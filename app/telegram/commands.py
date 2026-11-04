@@ -2,12 +2,15 @@
 
 Preferred form (order-free key=value pairs; every key but type is optional):
 
-    /review type=mr|merge-request|commit [id=<iid|sha|url>] [repo=<hint>] [user=<hint>]
-            [range=today|3d|7d|30d] [again=1]
+    /review type=mr|merge-request|commit [id=<iid|sha|url>] [repo=<hint>[,<hint>...]]
+            [user=<hint>] [range=today|3d|7d|<period>] [again=1]
 
     type=mr id=412 repo=global-api        review MR !412 of cloud-saas-global-api
     type=commit user=tamtd                the latest commit of tamtd (in the bot's scope)
     type=commit user=tamtd range=7d       tamtd's commits of the last 7 days
+    type=commit repo=wallet,customer range=09-2026,10-2026
+                                          commits of two repos from 1 Sep to 31 Oct 2026
+                                          (a period as in /report: 01-09-2026,15-10-2026 ...)
     type=mr user=an                       the latest MR of An
     ... again=1                           also review again what already has a finished review
                                           (a new round; default: answer with the old result)
@@ -34,10 +37,12 @@ A repo is named by its GitLab path or any suffix of it ("api", "omicrm/api"); a 
 import re
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from datetime import date
 from typing import Literal
 from urllib.parse import urlsplit
 
 from app.models.source import ALL_BRANCHES
+from app.telegram.report import SEP, Period, parse_period
 from app.telegram.resolve import rank
 
 Action = Literal["mr", "commit", "last", "lastmr", "today", "open"]
@@ -96,9 +101,13 @@ def parse(text: str, bot_username: str | None = None) -> Command | None:
 class ReviewArgs:
     action: Action
     ref: str | None = None  # MR iid or commit sha when given directly
-    repo_hint: str | None = None  # repo path hint (argument or taken from a URL)
+    # repo path hint (argument or taken from a URL); "a,b" names several repos (lists only)
+    repo_hint: str | None = None
     people: tuple[str, ...] = ()  # user hints ("me", "@name", email, name part)
     days: int = 1  # window of the "today" action (range=7d -> 7)
+    # range=09-2026,10-2026: whole days in REPORT_TZ, end inclusive (clipped to today); None =
+    # the rolling `days` window.
+    period: Period | None = None
     branch: str | None = None  # branch= (default: repo's review branch, else default; * = all)
     # Keyed form without a single explicit target: show the picker (buttons) instead of queuing
     # everything; all=1 queues everything at once like the legacy actions.
@@ -106,8 +115,13 @@ class ReviewArgs:
     # again=1: also take items that already have a finished review (each becomes a new round).
     # Default no: a done item answers with its result instead of spending the LLM budget again.
     again: bool = False
+    # include_reviewed=1: lists (and "the latest item") also show what already has a review,
+    # with its result; default no: only what still needs one. again=1 implies it.
+    include_reviewed: bool = False
 
 
+# include_reviewed: the canonical name; includeReviewed / hasReviewed arrive casefolded.
+INCLUDE_REVIEWED_KEYS = ("include_reviewed", "includereviewed", "hasreviewed", "has_reviewed")
 KEYS = {
     "type",
     "id",
@@ -125,6 +139,7 @@ KEYS = {
     "auto",
     "again",
     "rereview",
+    *INCLUDE_REVIEWED_KEYS,
 }
 TRUE_WORDS = {"1", "true", "yes", "y", "on", "có"}
 FALSE_WORDS = {"0", "false", "no", "n", "off", "không", "khong"}
@@ -136,14 +151,21 @@ TYPES = {
     "commit": "commit",
 }
 RANGE = re.compile(r"^(?:(?P<today>today|hôm nay|homnay)|(?P<n>\d{1,3})\s*d(?:ays?)?)$", re.I)
-MAX_RANGE_DAYS = 90
+MAX_RANGE_DAYS = 92  # a quarter: range=07-2026,09-2026
+RANGE_HELP = (
+    "range: today, 7d, một tháng 09-2026, một ngày 15-10-2026, hoặc khoảng"
+    " range=09-2026,10-2026 / range=01-09-2026,15-10-2026"
+)
 
 
-def parse_keyed(args: Sequence[str]) -> ReviewArgs | str | None:
-    """`key=value` form; None when the words are not in that form at all."""
+def parse_keyed(args: Sequence[str], today: date | None = None) -> ReviewArgs | str | None:
+    """`key=value` form; None when the words are not in that form at all.
+
+    `today` (REPORT_TZ) anchors an absolute range=; the caller passes it, tests may too."""
     pairs: dict[str, str] = {}
     free: list[str] = []
-    for word in args:
+    # "range=09-2026, 10-2026" / "repo=a, b" arrive as two words: glue the separators back.
+    for word in SEP.sub(lambda m: m.group(0).strip(), " ".join(args)).split():
         key, sep, value = word.partition("=")
         if sep and key.casefold() in KEYS:
             pairs[key.casefold()] = value.strip().strip("\"'")
@@ -154,8 +176,8 @@ def parse_keyed(args: Sequence[str]) -> ReviewArgs | str | None:
     if free:
         return (
             f"Không hiểu '{' '.join(free)}'."
-            " Cú pháp: /review type=mr|commit [id=] [repo=] [branch=] [user=] [range=] [all=1]"
-            " [again=1]"
+            " Cú pháp: /review type=mr|commit [id=] [repo=a,b] [branch=] [user=] [range=] [all=1]"
+            " [include_reviewed=1] [again=1]"
         )
     kind_name = TYPES.get(pairs.get("type", "").casefold())
     if kind_name is None:
@@ -173,11 +195,25 @@ def parse_keyed(args: Sequence[str]) -> ReviewArgs | str | None:
     if again_word and again_word not in TRUE_WORDS and again_word not in FALSE_WORDS:
         return "again chỉ nhận 1/0 (yes/no): again=1 để review lại mục đã review."
     again = again_word in TRUE_WORDS
+    shown_word = next((pairs[k] for k in INCLUDE_REVIEWED_KEYS if k in pairs), "").casefold()
+    if shown_word and shown_word not in TRUE_WORDS and shown_word not in FALSE_WORDS:
+        return (
+            "include_reviewed chỉ nhận 1/0 (true/false):"
+            " include_reviewed=1 để hiện cả mục đã review."
+        )
+    include_reviewed = again or shown_word in TRUE_WORDS
     if ref and (from_url := parse_gitlab_url(ref)):
         url_kind, path, value = from_url
         if url_kind != kind:
             return f"Link đó là {url_kind}, không phải {kind}."
         ref, repo = value, repo or path
+    repos = [r for r in (repo or "").split(",") if r.strip()]
+    if len(repos) > 1 and (ref or (user and not window)):
+        return (
+            "Nhiều repo (repo=a,b) chỉ dùng cho danh sách commit/MR;"
+            " id= hay mục gần nhất cần một repo."
+        )
+    repo = ",".join(r.strip() for r in repos) or None
     if ref and user:
         return (
             "id= đã chỉ rõ một MR/commit; bỏ user= (hoặc bỏ id= để lấy mục gần nhất của người đó)."
@@ -188,23 +224,42 @@ def parse_keyed(args: Sequence[str]) -> ReviewArgs | str | None:
             return "id của merge request phải là số (ví dụ id=412) hoặc link."
         if kind == "commit" and not SHA.match(ref):
             return "id của commit phải là 7-40 ký tự hex hoặc link commit."
-        return ReviewArgs(kind, ref=ref, repo_hint=repo, again=again)
+        return ReviewArgs(
+            kind, ref=ref, repo_hint=repo, again=again, include_reviewed=include_reviewed
+        )
     people = (user,) if user else ()
     days = 7
+    period: Period | None = None
     if window:
-        m = RANGE.match(window)
-        if not m:
-            return "range phải là today hoặc số ngày, ví dụ range=7d."
-        days = 1 if m["today"] else max(1, min(int(m["n"]), MAX_RANGE_DAYS))
         if kind == "mr":
             return (
                 "range chỉ dùng với type=commit; với MR hãy dùng id= hoặc bỏ trống để chọn"
                 " trong danh sách MR đang mở."
             )
+        if m := RANGE.match(window):
+            days = 1 if m["today"] else max(1, min(int(m["n"]), MAX_RANGE_DAYS))
+        else:
+            parsed = parse_period(window, today or date.today())
+            if isinstance(parsed, str):
+                if "tương lai" in parsed:
+                    return "range nằm trong tương lai; chưa có commit nào."
+                if "tối đa" in parsed:
+                    return f"range tối đa {MAX_RANGE_DAYS} ngày (một quý); hãy chia nhỏ khoảng."
+                return f"{parsed.split(' Thời gian:')[0]} {RANGE_HELP}"
+            if parsed.days > MAX_RANGE_DAYS:
+                return f"range tối đa {MAX_RANGE_DAYS} ngày (một quý); hãy chia nhỏ khoảng."
+            period, days = parsed, parsed.days
     # One person, no window: their latest item, queued at once (one tap on the phone).
     if user and not window:
         action: Action = "last" if kind == "commit" else "lastmr"
-        return ReviewArgs(action, repo_hint=repo, people=people, branch=branch, again=again)
+        return ReviewArgs(
+            action,
+            repo_hint=repo,
+            people=people,
+            branch=branch,
+            again=again,
+            include_reviewed=include_reviewed,
+        )
     # Otherwise a list: the picker, unless all=1 asks for everything right away.
     if kind == "commit":
         return ReviewArgs(
@@ -212,20 +267,28 @@ def parse_keyed(args: Sequence[str]) -> ReviewArgs | str | None:
             repo_hint=repo,
             people=people,
             days=days,
+            period=period,
             branch=branch,
             pick=not auto,
             again=again,
+            include_reviewed=include_reviewed,
         )
     return ReviewArgs(
-        "open", repo_hint=repo, people=people, branch=branch, pick=not auto, again=again
+        "open",
+        repo_hint=repo,
+        people=people,
+        branch=branch,
+        pick=not auto,
+        again=again,
+        include_reviewed=include_reviewed,
     )
 
 
-def parse_review(args: Sequence[str]) -> ReviewArgs | str:
+def parse_review(args: Sequence[str], today: date | None = None) -> ReviewArgs | str:
     """Interpret the words after /review; returns an error message on bad usage."""
     if not args:
         return "Thiếu loại review. Dùng /help để xem cú pháp."
-    keyed = parse_keyed(args)
+    keyed = parse_keyed(args, today)
     if keyed is not None:
         return keyed
     action = args[0].casefold()

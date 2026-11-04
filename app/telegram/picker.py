@@ -12,7 +12,7 @@ import json
 import secrets
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Literal, Protocol
 
 from redis import Redis
@@ -46,6 +46,7 @@ class Item:
     when: str = ""  # "2 giờ trước"
     state: str = "open"  # open | done | running | failed | blocked (not allowed for this person)
     result: str = ""  # "APPROVE 82" when done
+    at: str = ""  # ISO time (UTC) of the commit / MR: merges lists of several repos in order
 
     @property
     def selectable(self) -> bool:
@@ -70,6 +71,13 @@ class PickerState:
     person_id: int | None = None  # list filtered to this CodePulse user, None = everyone
     branch: str = ""  # commits: the branch asked for ("*" every branch), "" = the review branch
     days: int = 7  # commits: the window of the list
+    # range=<period>: ISO dates (end inclusive) of the window instead of the rolling `days`
+    since: str = ""
+    until: str = ""
+    # repo=a,b: every repo of the list ([] = just `project_id`)
+    project_ids: list[int] = field(default_factory=list)
+    include_reviewed: bool = False  # finished items are listed (default: left out)
+    hidden_reviewed: int = 0  # finished items left out of the list
     again: bool = False  # finished items may be ticked (each becomes a new review round)
     may_force: bool = False  # manager of the dự án/admin: nobody else re-rolls a score
     # manager of the dự án/admin: may switch the list to another person ("👤 Người"); a
@@ -86,8 +94,17 @@ class PickerState:
     @classmethod
     def from_json(cls, text: str) -> "PickerState":
         data = json.loads(text)
-        data["items"] = [Item(**i) for i in data.get("items", [])]
-        return cls(**data)
+        item_keys = {f.name for f in fields(Item)}
+        data["items"] = [
+            Item(**{k: v for k, v in i.items() if k in item_keys}) for i in data.get("items", [])
+        ]
+        state_keys = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in state_keys})
+
+    @property
+    def custom(self) -> bool:
+        """Several repos or a fixed period: the per-repo menu buttons cannot carry that."""
+        return len(self.project_ids) > 1 or bool(self.since)
 
     @property
     def pages(self) -> int:
@@ -181,10 +198,17 @@ def decode(data: str) -> Action | None:
 
 
 def render_text(state: PickerState) -> str:
-    what = "Commit gần đây" if state.kind == "commit" else "MR đang mở"
+    what = (
+        ("Commit" if state.since else "Commit gần đây") if state.kind == "commit" else "MR đang mở"
+    )
     lines = [f"<b>{what}</b> · {esc(state.scope_label)} · {len(state.items)} mục"]
     if state.pages > 1:
         lines[0] += f" · trang {state.page + 1}/{state.pages}"
+    if state.hidden_reviewed:
+        lines.append(
+            f"Đã ẩn {state.hidden_reviewed} mục đã review"
+            " (thêm <code>include_reviewed=1</code> để hiện)."
+        )
     for i, it in state.page_items():
         icon = STATE_ICON.get(it.state, "⬜")
         mark = "☑" if i in state.selected else icon
@@ -243,13 +267,13 @@ def keyboard(state: PickerState) -> dict[str, Any]:
     rows.append(controls)
     extras: list[dict[str, str]] = []
     if state.project_id:
-        if state.may_others:
+        if state.may_others and not state.custom:
             extras.append({"text": "👤 Người", "callback_data": encode("pk", state.token, "who")})
         if state.kind == "commit":
             # Work often sits on a feature branch, not the review branch the list starts on.
             label = "🌿 Nhánh review" if state.branch == ALL_BRANCHES else "🌿 Mọi nhánh"
             extras.append({"text": label, "callback_data": encode("pk", state.token, "br")})
-    if state.may_force and any(it.state == "done" for it in state.items):
+    if state.may_force and (state.hidden_reviewed or any(it.state == "done" for it in state.items)):
         extras.append(
             {
                 "text": "↩ Chỉ mục mới" if state.again else "↻ Cho chọn mục đã review",

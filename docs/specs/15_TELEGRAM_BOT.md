@@ -26,11 +26,25 @@ Dạng ưu tiên (2026-10-26): các cặp `key=value`, không cần đúng thứ
 /review type=mr id=412 repo=global-api      # MR !412 của …cloud-saas-global-api
 /review type=commit user=tamtd              # commit gần nhất của tamtd
 /review type=commit user=tamtd range=7d     # commit 7 ngày qua của tamtd (tối đa TELEGRAM_MAX_TARGETS)
+/review type=commit repo=wallet-service,customer-service range=09-2026,10-2026   # 2 repo, 01/09–31/10
+/review type=commit repo=api include_reviewed=1   # hiện cả commit đã review (mặc định ẩn)
 /review type=mr user=an                     # MR gần nhất của An; bỏ user = của bạn
 ```
 
 - **Viết tắt**: `repo` khớp đường dẫn, hậu tố, chuỗi con, rồi theo token ở cuối tên (`global-api` → `vihat/cloud-saas-global-api`); `user` khớp `@username`, email, phần trước `@` của email (`tamtd`), một phần tên, hoặc tài khoản git/GitLab đã gắn. Còn nhiều kết quả → **LLM chọn** (`app/telegram/resolve.py`: một lời gọi nhỏ, không tool, timeout 20 s không thử lại để không nghẽn poller, chỉ gửi danh sách tên trong phạm vi bot và trong phạm vi người gửi được xem, cần độ tin cậy ≥ 0.6); không chọn được → bot liệt kê và hỏi lại. Không có LLM (provider lỗi) → luôn hỏi lại.
 - `range` chỉ dùng với `type=commit`.
+- **Khoảng thời gian cố định và nhiều repo** (người dùng 2026-11-04): `/review type=commit repo=wallet-service,customer-service range=09-2026,10-2026`.
+  - `range` nhận thêm mốc tuyệt đối theo cú pháp thời gian của `/report` (`app/telegram/report.py`): một tháng `09-2026`, một ngày `15-10-2026`, hoặc khoảng hai mốc nối bằng `,` / `..` / `~` (`09-2026,10-2026` = 01/09 đến 31/10; `01-09-2026,15-10-2026`). Ngày tính trọn theo `REPORT_TZ`, cuối khoảng cắt về hôm nay, khoảng tương lai hoặc ngược bị từ chối. `today` / `7d` giữ nghĩa cũ (cửa sổ trượt).
+  - **[Quyết định]** tối đa **92 ngày** (một quý) cho mọi `range` (trước là 90 ngày): danh sách chỉ hiện 40 mục mới nhất và `all=1` vẫn bị chặn `TELEGRAM_MAX_TARGETS`, khoảng dài hơn chỉ gây hiểu nhầm; muốn dài hơn thì chia nhỏ.
+  - `repo=a,b` (dấu phẩy, có cách cũng được): mỗi gợi ý phải ra **đúng một** repo (LLM chọn khi viết tắt mơ hồ, không thì hỏi lại). Chỉ dùng cho danh sách / `all=1`; `id=` hay "mục gần nhất" (`user=` không `range`) cần một repo → báo lỗi.
+  - Danh sách gộp các repo, mới nhất trước, tiêu đề ghi tên ngắn các repo, nhánh và khoảng (`Commit · wallet-service, customer-service · nhánh review · tháng 09/2026 - …`); quá 40 mục thì ghi `40/N mục mới nhất`. **[Quyết định]** danh sách nhiều repo hoặc theo khoảng cố định không có nút 👤 (bước "của ai?" gắn với một repo và cửa sổ trượt; gõ `user=` để lọc); nút 🌿 dựng lại đúng các repo và khoảng đó.
+- **Mục đã review** (người dùng 2026-11-04): tham số `include_reviewed` (nhận cả `includeReviewed`, `hasReviewed`, `has_reviewed`; giá trị `1/0`, `true/false`, `yes/no`), **mặc định không** cho mọi trường hợp:
+  - Danh sách chọn (gõ lệnh hay đi bằng nút): mục đã có review `done` bị ẩn, dòng đầu ghi "Đã ẩn N mục đã review"; GitLab được quét sâu hơn (tối đa 400 commit/repo) để danh sách vẫn đủ mục chưa review. Bật lên → hiện kèm ✅ và kết quả như trước.
+  - `all=1` (commit theo khoảng, MR đang mở): mặc định chỉ lấy mục chưa review; bật lên → mục đã review trả lời ngay bằng kết quả cũ (tối đa 10 dòng, còn lại đếm), mục khác vào hàng đợi.
+  - Mục gần nhất (`user=` không `range`): mặc định là commit / MR **gần nhất chưa review**; bật lên → mục gần nhất bất kể đã review (trả kết quả cũ như trước).
+  - `id=` chỉ rõ một mục nên không đổi: đã review thì trả kết quả.
+  - `again=1` kéo theo `include_reviewed=1`. Nút ↻ trên danh sách đang ẩn mục đã review sẽ dựng lại danh sách có cả các mục đó và cho chọn.
+  - Tên: **[Quyết định]** `include_reviewed` thay cho `hasReviewed` người dùng gợi ý: tham số nói điều người gửi muốn danh sách làm ("gồm cả mục đã review"), còn `hasReviewed` đọc như một thuộc tính của mục; viết snake_case như các khoá khác. Hai cách viết kia vẫn được nhận.
 - **Review lại** (2026-11-01): `again=1` (mặc định không) cho phép lấy cả mục đã có review `done` cùng sha; mỗi mục thành một lần review mới (`force`, `expected_round` như nút ↻ của danh sách chọn), lần cũ giữ trong lịch sử. Dùng được với `id=`, `user=` (mục gần nhất), danh sách chọn (mở sẵn chế độ ↻) và `all=1`. Chỉ người quản lý dự án/admin (như nút ↻); mục đang `queued`/`running` không bao giờ bị xếp lại.
 - Dạng cũ bên dưới vẫn dùng được.
 

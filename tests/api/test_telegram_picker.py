@@ -163,10 +163,10 @@ def test_commit_picker_lists_everyone_and_queues_the_ticked_ones(
     (listing,) = tg.sent
     text = listing["text"]
     assert (
-        "<b>Commit gần đây</b> · demo/p · nhánh main · 7 ngày · 3 mục" in text
-    )  # merge + 20-day-old left out
+        "<b>Commit gần đây</b> · demo/p · nhánh main · 7 ngày · 2 mục" in text
+    )  # merge + 20-day-old left out; the reviewed one is hidden by default
     assert "feat: one · An" in text and "fix: two · Binh" in text
-    assert "✅ <b>3.</b> chore: three" in text and "đã review: APPROVE 82" in text
+    assert "chore: three" not in text and "Đã ẩn 1 mục đã review" in text
     kb = buttons(listing["markup"])
     assert set(kb) >= {"☐ 1", "☐ 2", "☑ Chọn hết", "▶ Review đã chọn (0)", "✖ Huỷ"}
     assert "☐ 3" not in kb  # already reviewed: no toggle
@@ -256,7 +256,8 @@ def test_a_members_list_holds_only_their_own_work(
     run(db_session, bot, settings, queue, tg, store)
     text = tg.sent[0]["text"]
     # Binh's commit is not even listed (no 🚫 rows): An's two, every branch by default.
-    assert "Binh" not in text and "🚫" not in text and "2 mục" in text
+    assert "Binh" not in text and "🚫" not in text and "1 mục" in text
+    assert "Đã ẩn 1 mục đã review" in text  # 3333 is done: left out unless include_reviewed=1
     assert "mọi nhánh" in text.splitlines()[0] and "của bạn" in text.splitlines()[0]
     kb = buttons(tg.sent[0]["markup"])
     assert "☐ 1" in kb and "👤 Người" not in kb  # no switching to someone else's list
@@ -302,9 +303,9 @@ def test_bare_review_opens_the_menu_and_mr_picker_lists_open_mrs(
     tg.updates = [tap(20, who["👥 Mọi người"])]
     run(db_session, bot, settings, queue, tg, store)
     listed = tg.edited[-1]
-    assert "<b>MR đang mở</b> · demo/p · 2 mục" in listed["text"]
+    assert "<b>MR đang mở</b> · demo/p · 1 mục" in listed["text"]
     assert "!9 Fix auth" in listed["text"]
-    assert "✅" in listed["text"]  # !7 already has a done review for its head
+    assert "Đã ẩn 1 mục đã review" in listed["text"]  # !7 has a done review for its head
     kb = buttons(listed["markup"])
     toggle = next(v for k, v in kb.items() if k.startswith("☐"))
     token = toggle.split("|")[1]
@@ -601,3 +602,138 @@ def test_an_empty_typed_list_offers_every_branch_too(
     )
     (reply,) = tg.sent
     assert buttons(reply["markup"])["🌿 Xem mọi nhánh"].endswith(f"{world.project.id}:0:*:3")
+
+
+def test_include_reviewed_lists_the_finished_items_too(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    seed_commits(db_session, world)
+    world.project.default_branch = "main"
+    link_manager(db_session, world)
+    db_session.commit()
+    tg = FakeTelegram()
+    store = MemoryPickerStore()
+    tg.updates = [message_update(1, "/review type=commit repo=demo/p includeReviewed=true")]
+    run(db_session, bot, settings, queue, tg, store)
+    text = tg.sent[0]["text"]
+    assert "3 mục" in text and "Đã ẩn" not in text
+    assert "✅ <b>3.</b> chore: three" in text and "đã review: APPROVE 82" in text
+    # all=1 + include_reviewed: the finished one answers with its result, the rest is queued.
+    tg.updates = [
+        message_update(
+            2, "/review type=commit repo=demo/p user=an range=7d all=1 include_reviewed=1"
+        )
+    ]
+    run(db_session, bot, settings, queue, tg, store)
+    assert "đã được review" in tg.sent[-1]["text"]
+    assert [args[1] for _, args, _ in queue.jobs] == ["1" * 40]
+
+
+def test_a_period_and_several_repos_make_one_list(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    seed_commits(db_session, world)
+    world.project.default_branch = "main"
+    other = Project(
+        external_id=4242,
+        connection_id=world.project.connection_id,
+        path_with_namespace="demo/wallet-service",
+        default_branch="main",
+        business_project_id=world.project.business_project_id,
+    )
+    db_session.add(other)
+    db_session.flush()
+    an = db_session.scalars(select(Account).where(Account.external_key == "an@x.vn")).one()
+    db_session.add(
+        Commit(
+            sha="6" * 40,
+            project_id=other.id,
+            author_account_id=an.id,
+            authored_at=NOW - timedelta(days=3),
+            message="feat: wallet\n",
+        )
+    )
+    link_manager(db_session, world)
+    db_session.commit()
+    tg = FakeTelegram()
+    store = MemoryPickerStore()
+    start = (NOW - timedelta(days=25)).strftime("%d-%m-%Y")
+    end = NOW.strftime("%d-%m-%Y")
+    tg.updates = [
+        message_update(1, f"/review type=commit repo=demo/p, wallet-service range={start}, {end}")
+    ]
+    run(db_session, bot, settings, queue, tg, store)
+    text = tg.sent[0]["text"]
+    first = text.splitlines()[0]
+    assert first.startswith("<b>Commit</b> · p, wallet-service · nhánh main ·"), first
+    # Both repos, newest first; the 20-day-old commit is inside the period now.
+    assert "feat: wallet" in text and "feat: one" in text and "<b>4.</b> old" in text
+    assert text.index("feat: one") < text.index("feat: wallet") < text.index("<b>4.</b> old")
+    kb = buttons(tg.sent[0]["markup"])
+    assert "👤 Người" not in kb  # the per-repo people step cannot carry two repos
+    # The branch button keeps both repos and the period.
+    tg.updates = [tap(2, kb["🌿 Mọi nhánh"])]
+    run(db_session, bot, settings, queue, tg, store)
+    again = tg.edited[-1]["text"].splitlines()[0]
+    assert "p, wallet-service · mọi nhánh" in again
+    token = kb["☐ 1"].split("|")[1]
+    tg.updates = [tap(3, f"pk|{token}|all"), tap(4, f"pk|{token}|go")]
+    run(db_session, bot, settings, queue, tg, store)
+    assert {args[0] for _, args, _ in queue.jobs} == {world.project.id, other.id}
+
+
+def test_the_latest_item_skips_reviewed_work_unless_include_reviewed(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    seed_commits(db_session, world)
+    db_session.add(
+        Review(
+            target_type="commit",
+            commit_sha="1" * 40,
+            reviewed_sha="1" * 40,
+            status="done",
+            rubric_version=RUBRIC_VERSION,
+            score=70,
+            verdict="approve",
+        )
+    )
+    link_manager(db_session, world)
+    db_session.commit()
+    tg = FakeTelegram()
+    store = MemoryPickerStore()
+    # 1111 and 3333 are done: An's latest commit still to review is the old 4444.
+    tg.updates = [message_update(1, "/review type=commit user=an")]
+    run(db_session, bot, settings, queue, tg, store)
+    assert [args[1] for _, args, _ in queue.jobs] == ["4" * 40]
+    # include_reviewed=1: the latest one whatever its state, answered with its result.
+    tg.updates = [message_update(2, "/review type=commit user=an include_reviewed=1")]
+    run(db_session, bot, settings, queue, tg, store)
+    assert "đã được review" in tg.sent[-1]["text"] and len(queue.jobs) == 1
+    # Several repos only make sense for a list.
+    tg.updates = [message_update(3, "/review type=commit user=an repo=demo/p,other")]
+    run(db_session, bot, settings, queue, tg, store)
+    assert "một repo" in tg.sent[-1]["text"]
+
+
+def test_listing_never_changes_a_failed_review(
+    db_session: Session, bot: TelegramBot, world: World, settings: Settings, queue: FakeQueue
+) -> None:
+    seed_commits(db_session, world)
+    failed = Review(
+        target_type="commit",
+        commit_sha="2" * 40,
+        reviewed_sha="2" * 40,
+        status="failed",
+        rubric_version=RUBRIC_VERSION,
+    )
+    db_session.add(failed)
+    world.project.default_branch = "main"
+    link_manager(db_session, world)
+    db_session.commit()
+    tg = FakeTelegram()
+    store = MemoryPickerStore()
+    tg.updates = [message_update(1, "/review type=commit repo=demo/p")]
+    run(db_session, bot, settings, queue, tg, store)
+    assert "lần trước lỗi" in tg.sent[0]["text"]
+    db_session.refresh(failed)
+    assert failed.status == "failed" and not queue.jobs
