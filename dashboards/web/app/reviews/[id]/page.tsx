@@ -8,7 +8,7 @@ import { CloseActions, ClosureNote } from "@/components/FindingClose";
 import { BasisCard, basisSummary, changedRules, previousRun } from "@/components/ReviewBasis";
 import { announceReviewQueued } from "@/components/ReviewActivity";
 import { Alert, Card, EmptyState, ExternalLink, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
-import { ApiError, api, useApi } from "@/lib/api";
+import { ApiError, api, can, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, TRIGGER_LABEL, VERDICT_LABEL, date, num } from "@/lib/format";
 import type { Finding, FindingClosure, Me, Repo, ReviewDetail } from "@/lib/types";
 
@@ -389,7 +389,11 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
   const st = REVIEW_STATUS[review.status] ?? { label: review.status };
   const newer = review.history.find((h) => h.id === review.superseded_by);
   const bySeverity = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
-  for (const f of review.findings) bySeverity[f.severity] += 1;
+  let notCounted = 0;
+  for (const f of review.findings) {
+    if (f.status === "false_positive" || f.verified === "rejected") notCounted += 1;
+    else bySeverity[f.severity] += 1;
+  }
 
   return (
     <>
@@ -487,6 +491,11 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
             {bySeverity.high > 0 && <span className="sev high">{bySeverity.high}</span>}
             {bySeverity.medium > 0 && <span className="sev medium">{bySeverity.medium}</span>}
             {bySeverity.low > 0 && <span className="sev low">{bySeverity.low}</span>}
+            {notCounted > 0 && (
+              <span className="muted" title="Không phải lỗi (đã duyệt) hoặc bị kiểm chứng bác bỏ: không tính vào điểm và kết luận">
+                {notCounted} không tính
+              </span>
+            )}
             {review.findings.length === 0 && <span className="muted">Không có vấn đề</span>}
           </div>
         </div>
@@ -622,14 +631,25 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
           // Newest first: the latest closing (or request) of this finding.
           const closure = closures.data?.find((c) => c.finding_id === f.id);
           return (
-            <article key={f.id} id={`finding-${f.id}`} tabIndex={-1} className={`finding ${f.severity}`}>
+            <article
+              key={f.id}
+              id={`finding-${f.id}`}
+              tabIndex={-1}
+              className={`finding ${f.severity}${status === "false_positive" ? " not-counted" : ""}`}
+            >
               <div className="finding-head">
-                <SeverityBadge severity={f.severity} />
+                <span title={status === "false_positive" ? "Mức ban đầu; finding không còn tính vào điểm" : undefined}>
+                  <SeverityBadge severity={f.severity} />
+                </span>
                 <strong>{f.title}</strong>
                 {status !== "open" && <Pill tone={FINDING_TONE[status]}>{STATUS_LABEL[status] ?? status}</Pill>}
                 {f.verified && VERIFIED_LABEL[f.verified] && (
                   <span title={f.verification?.reason ?? undefined}>
-                    <Pill tone={VERIFIED_LABEL[f.verified].tone}>{VERIFIED_LABEL[f.verified].label}</Pill>
+                    {status === "false_positive" && f.verified === "confirmed" ? (
+                      <Pill title="AI kiểm chứng từng xác nhận; sau đó lead duyệt finding là không phải lỗi">AI từng xác nhận</Pill>
+                    ) : (
+                      <Pill tone={VERIFIED_LABEL[f.verified].tone}>{VERIFIED_LABEL[f.verified].label}</Pill>
+                    )}
                   </span>
                 )}
               </div>
@@ -654,12 +674,13 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
                 )}
                 {f.code_excerpt && <pre className="excerpt">{f.code_excerpt}</pre>}
               </div>
-              <ClosureNote closure={closure} onDone={() => Promise.all([mutate(), closures.mutate()])} />
+              <ClosureNote closure={closure} findingStatus={status} onDone={() => Promise.all([mutate(), closures.mutate()])} />
               <CloseActions
                 finding={f}
                 closure={closure}
                 isAuthor={isAuthor}
                 isAdmin={!!me?.is_admin}
+                canSettle={!!me && (me.is_admin || can(me, "finding.close_manual") || can(me, "finding.close_decide"))}
                 onDone={() => Promise.all([mutate(), closures.mutate()])}
               />
               {isAuthor && status === "open" && !["pending", "checking", "proposed"].includes(closure?.status ?? "") && (

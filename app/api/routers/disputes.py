@@ -26,7 +26,7 @@ from app.config import Settings, get_settings
 from app.models import FindingClosure, FindingDispute, Review, ReviewFinding, User
 from app.models.review import CLOSURE_OPEN
 from app.notifications import inbox
-from app.review.status import carry_decision
+from app.review.status import carry_decision, settle_open_requests
 from app.scoring.rescore import rescore_copies, rescore_review
 from app.scoring.verdict import assess
 from app.workers.dispute_jobs import running as ai_running
@@ -340,6 +340,13 @@ def decide(
     session.flush()
     _recompute_for(session, _review_of(session, finding), settings)
     if body.decision == "accepted":
+        settle_open_requests(
+            session,
+            [finding.id],
+            closed_as="false_positive",
+            reason="Finding được duyệt là không phải lỗi (khiếu nại được chấp nhận).",
+            decided_by=principal.user_id,
+        )
         rescore_copies(session, carry_decision(session, finding), settings)
     audit(
         session,

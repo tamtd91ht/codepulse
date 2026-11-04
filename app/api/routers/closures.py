@@ -38,12 +38,13 @@ from app.api.audit import audit
 from app.api.deps import get_queue, get_session
 from app.api.routers.reviews import _visible_review
 from app.api.schemas import ORM
-from app.api.security import Principal, require
+from app.api.security import CurrentPrincipal, Principal, require
 from app.config import Settings, get_settings
 from app.models import (
     BusinessProject,
     Commit,
     FindingClosure,
+    FindingDispute,
     MergeRequest,
     Project,
     Review,
@@ -54,7 +55,7 @@ from app.models.review import CLOSURE_OPEN
 from app.notifications import inbox
 from app.review.masking import looks_secret
 from app.review.resolve import close_finding, mark_fixed
-from app.review.status import SEVERE, carry_decision
+from app.review.status import SEVERE, carry_decision, settle_open_requests
 from app.scoring.rescore import rescore_copies, rescore_review
 
 router = APIRouter(tags=["closures"])
@@ -746,6 +747,80 @@ def close_by_admin(
     return closure
 
 
+class SettleIn(BaseModel):
+    note: str = Field(default="", max_length=1000)
+
+
+@router.post("/findings/{finding_id}/close-decided", response_model=ClosureOut)
+def close_decided(
+    finding_id: int,
+    body: SettleIn,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+) -> FindingClosure:
+    """Close by hand a finding already decided not an error (user 2026-11-04: "đã xác định
+    không phải lỗi thì cho phép đóng thủ công"): its waiting request is closed with that
+    decision, or, when only an old refused request is left, a closing is recorded. The score
+    does not change (the finding is already out of it). An admin, or who decides the author's
+    close requests."""
+    finding, review = _finding(session, principal, finding_id)
+    if finding.status != "false_positive":
+        raise HTTPException(
+            409, f"chỉ dùng cho finding đã duyệt là không phải lỗi (đang {finding.status})"
+        )
+    repo = review_repo(session, review)
+    author, bp_id = review.author_user_id, (repo.business_project_id if repo else None)
+    if not (principal.can("finding.close_manual") or _may_decide(principal, author, bp_id)):
+        raise HTTPException(403, "chỉ admin hoặc người duyệt yêu cầu đóng của tác giả")
+    note = body.note.strip()
+    reason = "Finding được duyệt là không phải lỗi: đóng thủ công." + (f" {note}" if note else "")
+    settled = settle_open_requests(
+        session,
+        [finding.id],
+        closed_as="false_positive",
+        reason=reason,
+        decided_by=principal.user_id,
+    )
+    if settled:
+        closure = session.scalars(
+            select(FindingClosure)
+            .where(FindingClosure.finding_id == finding.id)
+            .order_by(FindingClosure.id.desc())
+            .limit(1)
+        ).one()
+    else:
+        newest = session.scalars(
+            select(FindingClosure)
+            .where(FindingClosure.finding_id == finding.id)
+            .order_by(FindingClosure.id.desc())
+            .limit(1)
+        ).first()
+        if newest is not None and newest.status == "closed":
+            raise HTTPException(409, "finding đã đóng")
+        closure = FindingClosure(
+            finding_id=finding.id,
+            kind="admin",
+            status="closed",
+            closed_as="false_positive",
+            requested_by=principal.user_id,
+            decided_by=principal.user_id,
+            note=note or None,
+            reason=reason,
+            decided_at=datetime.now(UTC),
+        )
+        session.add(closure)
+        session.flush()
+    audit(
+        session,
+        principal.user_id,
+        "finding.close_decided",
+        f"finding:{finding.id}",
+        note=note or None,
+    )
+    session.commit()
+    return closure
+
+
 @router.post("/findings/{finding_id}/reopen", response_model=ClosureOut)
 def reopen_by_admin(
     finding_id: int,
@@ -771,6 +846,15 @@ def reopen_by_admin(
     )
     if not closed_here:
         raise HTTPException(409, f"chỉ mở lại được finding đã đóng (đang {finding.status})")
+    accepted_dispute = session.scalar(
+        select(FindingDispute.id).where(
+            FindingDispute.finding_id == finding.id, FindingDispute.decision == "accepted"
+        )
+    )
+    if finding.status == "false_positive" and accepted_dispute is not None:
+        raise HTTPException(
+            409, "finding được duyệt là không phải lỗi qua khiếu nại: quyết định ở trang khiếu nại"
+        )
     rescore = finding.status == "false_positive"
     finding.status = "open"
     if last is not None and last.severity_before and last.severity_before != finding.severity:

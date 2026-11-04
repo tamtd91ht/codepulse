@@ -7252,3 +7252,10 @@ button.crit-info-btn:focus-visible {
 .dpi-rubric-editor input:not([type="number"]) {
   width: 100%;
 }
+
+/* A finding judged not an error: its severity no longer counts. */
+.finding.not-counted .finding-head .sev {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+

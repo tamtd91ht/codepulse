@@ -95,12 +95,61 @@ def carry_decision(session: Session, finding: ReviewFinding) -> list[int]:
             ReviewFinding.review_id.in_(select(Review.id).where(_same_target(review))),
         )
         .values(**values)
-        .returning(ReviewFinding.review_id)
+        .returning(ReviewFinding.id, ReviewFinding.review_id)
         # "fetch": copies already loaded in this session see the new status, or the re-score
         # that follows would read them as still open.
         .execution_options(synchronize_session="fetch")
     )
-    return sorted({int(rid) for rid in result.scalars() if rid is not None})
+    rows = result.all()
+    settle_open_requests(
+        session,
+        [int(fid) for fid, _rid in rows],
+        closed_as=finding.status,
+        reason=f"Finding {DECIDED_AS[finding.status]} (quyết định ở review khác cùng thay đổi).",
+    )
+    return sorted({int(rid) for _fid, rid in rows if rid is not None})
+
+
+# A close request still waiting is moot once its finding was decided another way: it is closed
+# with that decision, so the page never shows "chưa đủ điều kiện đóng" next to "không phải lỗi"
+# (user report 2026-11-04). `checking` belongs to its worker (run token), never swept.
+WAITING = ("pending", "proposed", "unmet", "failed")
+DECIDED_AS = {
+    "false_positive": "được duyệt là không phải lỗi",
+    "accepted_risk": "được chấp nhận rủi ro",
+    "fixed": "đã được sửa",
+}
+
+
+def settle_open_requests(
+    session: Session,
+    finding_ids: Iterable[int],
+    *,
+    closed_as: str,
+    reason: str,
+    decided_by: int | None = None,
+) -> int:
+    """Close the waiting requests of these findings as `closed_as`; returns how many."""
+    ids = list(finding_ids)
+    if not ids or closed_as not in DECIDED_AS:
+        return 0
+    from datetime import UTC, datetime
+
+    from app.models import FindingClosure
+
+    result = session.execute(
+        update(FindingClosure)
+        .where(FindingClosure.finding_id.in_(ids), FindingClosure.status.in_(WAITING))
+        .values(
+            status="closed",
+            closed_as=closed_as,
+            reason=reason[:1000],
+            decided_by=decided_by,
+            decided_at=datetime.now(UTC),
+        )
+        .execution_options(synchronize_session="fetch")
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 def decided_before(session: Session, review: Review) -> dict[str, tuple[str, str]]:

@@ -80,3 +80,10 @@ quality_index = 0.50 × avg_score
 - Tuổi finding đang mở (báo cáo tuần, Telegram, Critical Board) tính từ thời gian thay đổi.
 - Sau khi deploy: tính lại số liệu đã lưu `python -m app.cli metrics recompute --from <ngày đầu> --to <hôm nay>`, và bấm "Chạy lại dữ liệu DPI".
 
+## Finding đã duyệt "không phải lỗi" và yêu cầu đóng (người dùng 2026-11-04)
+> "Finding báo CRITICAL nhưng vào xem thì là Không phải lỗi (đã duyệt), tích đã kiểm chứng, ở dưới lại ghi Chưa đủ điều kiện đóng, trên đầu Kết luận merge APPROVE: quá mâu thuẫn"; "nếu đã xác định không phải lỗi thì cho phép đóng thủ công".
+- Khi finding được quyết định (khiếu nại được chấp nhận, mang quyết định sang bản sao ở review khác), các **yêu cầu đóng đang chờ** của nó (pending / proposed / unmet / failed; không đụng `checking` của worker) được **đóng theo quyết định đó** (`closed`, `closed_as` = quyết định, lý do ghi rõ). Migration `d7f9b1c3e5a7` dọn các yêu cầu như vậy có từ trước.
+- Trang review: yêu cầu đóng cũ bị từ chối của một finding đã được quyết định hiện là **lịch sử** ("không còn hiệu lực"), không hiện nhãn đỏ "Chưa đủ điều kiện đóng".
+- Đầu trang review đếm finding theo mức **chỉ trên finding còn tính điểm**; finding không phải lỗi hoặc bị kiểm chứng bác bỏ ghi "n không tính". Mức của finding không phải lỗi bị gạch, dấu kiểm chứng đổi thành "AI từng xác nhận".
+- **Đóng thủ công** (`POST /findings/{id}/close-decided`): finding đã duyệt là không phải lỗi được admin hoặc người duyệt yêu cầu đóng của tác giả đóng hẳn (không đổi điểm). Finding được duyệt sai qua khiếu nại **không mở lại được** bằng nút mở lại của luồng đóng (quyết định ở trang khiếu nại).
+

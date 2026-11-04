@@ -397,9 +397,31 @@ function DecideBar({ closure, onDone }: { closure: FindingClosure; onDone: () =>
 
 const WHO_DECIDES = "lead hoặc manager của tác giả, hoặc admin";
 
-export function ClosureNote({ closure, onDone }: { closure: FindingClosure | undefined; onDone: () => Promise<unknown> }) {
+const DECIDED: Record<string, string> = {
+  false_positive: "đã được duyệt là không phải lỗi",
+  accepted_risk: "đã được chấp nhận rủi ro",
+  fixed: "đã được sửa",
+};
+
+export function ClosureNote({
+  closure,
+  onDone,
+  findingStatus = "open",
+}: {
+  closure: FindingClosure | undefined;
+  onDone: () => Promise<unknown>;
+  /** The finding's own status: an old refused request of a finding decided since is history. */
+  findingStatus?: string;
+}) {
   if (!closure) return null;
   const when = closure.decided_at ? ` · ${date(closure.decided_at)}` : "";
+  if (findingStatus in DECIDED && ["rejected", "failed", "unmet"].includes(closure.status))
+    return (
+      <p className="small muted" style={{ marginTop: 8 }}>
+        Yêu cầu đóng trước đó ({basis(closure)}
+        {when}) không được duyệt; finding {DECIDED[findingStatus]} nên yêu cầu này không còn hiệu lực.
+      </p>
+    );
   if (closure.status === "pending")
     return (
       <div className="small" style={{ marginTop: 8, display: "grid", gap: 4 }}>
@@ -556,6 +578,53 @@ export function basis(closure: FindingClosure): string {
 }
 
 type Mode = "request" | "close" | "reopen";
+
+/** "Đóng thủ công" a finding already judged not an error (user 2026-11-04): its waiting
+ * request is closed with that decision, or a closing is recorded. */
+function CloseDecided({ finding, onDone }: { finding: Finding; onDone: () => Promise<unknown> }) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!open)
+    return (
+      <button type="button" className="sm" onClick={() => setOpen(true)}>
+        Đóng thủ công
+      </button>
+    );
+  const send = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/findings/${finding.id}/close-decided`, { note });
+      setOpen(false);
+      await onDone();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="small" style={{ display: "grid", gap: 6, width: "100%" }}>
+      <span className="muted">Finding đã được duyệt là không phải lỗi: đóng hẳn (không đổi điểm, đã loại khỏi điểm từ trước).</span>
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ghi chú (tuỳ chọn)" aria-label="Ghi chú khi đóng" />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button type="button" className="primary sm" disabled={busy} onClick={() => void send()}>
+          {busy ? "Đang đóng…" : "Xác nhận đóng"}
+        </button>
+        <button type="button" className="ghost sm" onClick={() => setOpen(false)}>
+          Huỷ
+        </button>
+      </div>
+      {error && (
+        <span className="error small" role="alert">
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
 
 const MODE: Record<Mode, { open: string; submit: string; path: string }> = {
   request: { open: "Yêu cầu đóng", submit: "Gửi yêu cầu", path: "close-requests" },
@@ -756,15 +825,24 @@ export function CloseActions({
   closure,
   isAuthor,
   isAdmin,
+  canSettle = false,
   onDone,
 }: {
   finding: Finding;
   closure: FindingClosure | undefined;
   isAuthor: boolean;
   isAdmin: boolean;
+  /** May close by hand a finding already judged not an error (admin, or who decides requests). */
+  canSettle?: boolean;
   onDone: () => Promise<unknown>;
 }) {
   const status = finding.status ?? "open";
+  if (status === "false_positive" && canSettle && closure?.status !== "closed" && closure?.status !== "checking")
+    return (
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+        <CloseDecided finding={finding} onDone={onDone} />
+      </div>
+    );
   const inFlight = ["pending", "checking", "proposed", "unmet"].includes(closure?.status ?? "");
   const actions: Mode[] = [];
   if (isAuthor && status === "open" && !inFlight && SEVERE.has(finding.severity)) actions.push("request");
