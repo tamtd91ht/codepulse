@@ -349,6 +349,13 @@ def _row(
     )
 
 
+# "Bỏ commit đã review": a latest review in these states counts as reviewed; GitLab is read up
+# to EXCLUDE_READ_FACTOR times the list size (at most EXCLUDE_READ_MAX) to fill the list.
+REVIEWED_OR_RUNNING = ("done", "queued", "running")
+EXCLUDE_READ_FACTOR = 5
+EXCLUDE_READ_MAX = 5000
+
+
 @router.get("/repos/{project_id}/commits", response_model=CommitListOut)
 def list_commits(
     project_id: int,
@@ -360,27 +367,49 @@ def list_commits(
     since: datetime | None = None,
     until: datetime | None = None,
     user_id: Annotated[list[int] | None, Query()] = None,
-    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    limit: Annotated[int | None, Query(ge=1, le=2000)] = None,
+    exclude_reviewed: bool = False,
 ) -> CommitListOut:
     """Recent commits of a branch, straight from GitLab, with who wrote them and whether a
-    review exists. People outside your scope are left out (and counted in `hidden`)."""
+    review exists. People outside your scope are left out (and counted in `hidden`).
+    `limit`: at most REVIEW_COMMITS_LIST_MAX (Admin > Cấu hình review), its default.
+    `exclude_reviewed`: commits already reviewed or being reviewed are left out (counted in
+    `reviewed_hidden`), and more are read from GitLab to fill the list."""
     project = visible_repo(session, principal, project_id)
     connection = _connection(session, project)
-    limit = min(limit, settings.review_commits_list_max)
+    from app.admin_settings import effective
+
+    configured = effective(session, settings).get("review_commits_list_max")
+    most = int(configured or settings.review_commits_list_max)
+    limit = min(limit or most, most)
     since, until = _aware(since), _aware(until)
     if since is None and until is None:
         since = datetime.now(UTC) - DEFAULT_WINDOW
     if since and until and until < since:
         raise HTTPException(422, "`until` is before `since`")
+    # Leaving reviewed commits out, read further back so the list still fills (bounded).
+    fetch = min(limit * EXCLUDE_READ_FACTOR, EXCLUDE_READ_MAX) if exclude_reviewed else limit
     try:
         with _client(box, connection) as client:
-            raw = client.commits_on_ref(project.external_id, ref, since, until, limit + 1)
+            raw = client.commits_on_ref(project.external_id, ref, since, until, fetch + 1)
     except GitLabError as exc:
         raise _gitlab_error(exc, "branch") from None
-    truncated = len(raw) > limit
+    more_on_gitlab = len(raw) > fetch
+    raw = raw[:fetch]
+    reviews = _latest_reviews(session, [str(c["id"]) for c in raw])
+    reviewed_hidden = 0
+    if exclude_reviewed:
+        kept = []
+        for c in raw:
+            latest = reviews.get(str(c["id"]))
+            if latest is not None and latest.status in REVIEWED_OR_RUNNING:
+                reviewed_hidden += 1
+            else:
+                kept.append(c)
+        raw = kept
+    truncated = more_on_gitlab or len(raw) > limit
     raw = raw[:limit]
     authors = _authors(session, {str(c.get("author_email") or "").lower() for c in raw})
-    reviews = _latest_reviews(session, [str(c["id"]) for c in raw])
     wanted = set(user_id) if user_id else None
     rows: list[CommitRowOut] = []
     hidden = 0
@@ -400,6 +429,8 @@ def list_commits(
         hidden=hidden,
         truncated=truncated,
         batch_max=settings.review_batch_max,
+        limit=limit,
+        reviewed_hidden=reviewed_hidden,
     )
 
 

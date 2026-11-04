@@ -878,6 +878,8 @@ export interface CommitList {
   hidden: number;
   truncated: boolean;
   batch_max: number; // how many commits one request may queue
+  limit?: number; // commits listed per repo at most (Admin › Cấu hình review)
+  reviewed_hidden?: number; // left out by "Bỏ commit đã review"
 }
 
 export interface ReviewCommitsResult {
@@ -1096,6 +1098,7 @@ export interface ReviewSetting {
     | "command_max_output_mb"
     | "command_file_ttl_hours"
     | "monthly_llm_budget_usd"
+    | "review_commits_list_max"
     | "auto_close_findings"
     | "auto_close_days";
   env: string;

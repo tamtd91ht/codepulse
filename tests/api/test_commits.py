@@ -435,3 +435,37 @@ def test_repo_profiles_are_readable_and_admins_can_refresh(
         f"/api/v1/projects/{world.project.id}/profile/refresh", headers=as_user(world.admin)
     )
     assert refused.status_code == 409
+
+
+def test_reviewed_commits_can_be_left_out_and_the_list_size_is_an_admin_setting(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    db_session.add(Commit(sha=A, project_id=world.project.id))
+    db_session.flush()
+    db_session.add(
+        Review(
+            target_type="commit",
+            commit_sha=A,
+            reviewed_sha=A,
+            status="done",
+            rubric_version="v1",
+        )
+    )
+    db_session.flush()
+    path = f"/api/v1/repos/{world.project.id}/commits"
+    admin = as_user(world.admin)
+    with respx.mock(assert_all_called=False) as router:
+        gitlab(router)
+        everything = client.get(path, params={"ref": "main"}, headers=admin).json()
+        fresh = client.get(path, params={"ref": "main", "exclude_reviewed": "true"}, headers=admin)
+        saved = client.put(
+            "/api/v1/admin/review-settings", headers=admin, json={"review_commits_list_max": 20}
+        )
+        capped = client.get(path, params={"ref": "main", "limit": 500}, headers=admin).json()
+    shas = [c["sha"] for c in everything["commits"]]
+    assert A in shas and everything["limit"] == 200
+    body = fresh.json()
+    # A (done) is gone; B's latest review failed: still listed.
+    assert A not in [c["sha"] for c in body["commits"]] and B in [c["sha"] for c in body["commits"]]
+    assert body["reviewed_hidden"] == 1
+    assert saved.status_code == 200 and capped["limit"] == 20  # never above the admin's cap

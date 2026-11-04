@@ -64,6 +64,8 @@ EDITABLE: dict[str, Editable] = {
     # how many days back each review looks; on needs the days (check_auto_close).
     "auto_close_findings": Editable("AUTO_CLOSE_FINDINGS", "bool"),
     "auto_close_days": Editable("AUTO_CLOSE_DAYS", "int", 1, 90),
+    # "Yêu cầu review": how many commits per repo the list fetches from GitLab at most.
+    "review_commits_list_max": Editable("REVIEW_COMMITS_LIST_MAX", "int", 20, 2000),
 }
 
 
@@ -86,6 +88,7 @@ def defaults(settings: Settings) -> dict[str, Value]:
         "monthly_llm_budget_usd": settings.monthly_llm_budget_usd,
         "auto_close_findings": settings.auto_close_findings,
         "auto_close_days": settings.auto_close_days,
+        "review_commits_list_max": settings.review_commits_list_max,
     }
 
 

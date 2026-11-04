@@ -167,7 +167,7 @@ class Settings(BaseSettings):
     command_file_ttl_hours: int = Field(default=24, ge=1, le=720)
 
     # Dashboard "Yêu cầu review": commits listed per request, and queued per request.
-    review_commits_list_max: int = Field(default=200, ge=20, le=500)
+    review_commits_list_max: int = Field(default=200, ge=20, le=2000)
     review_batch_max: int = Field(default=50, ge=1, le=200)
 
     # Avatars uploaded in Admin > Người & Team: one file per person in this folder (a volume in

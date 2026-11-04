@@ -52,6 +52,7 @@ export function ReviewSettings() {
   const budget = find("monthly_llm_budget_usd");
   const autoClose = find("auto_close_findings");
   const autoDays = find("auto_close_days");
+  const listMax = find("review_commits_list_max");
 
   async function save(key: Key, value: number | string | boolean | null) {
     await saveAll({ [key]: value });
@@ -302,6 +303,43 @@ export function ReviewSettings() {
             {loc.overridden && (
               <button type="button" onClick={() => save("max_review_loc", null)} disabled={busy}>
                 Về mặc định ({String(loc.default)})
+              </button>
+            )}
+          </div>
+        </form>
+      )}
+
+      {listMax && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            save("review_commits_list_max", Number(field(e, "review_commits_list_max")));
+          }}
+          className="setting-tile"
+        >
+          <label style={{ display: "grid", gap: 4, maxWidth: 320 }}>
+            <span className="small muted">Số commit tối đa mỗi repo ở Yêu cầu review ({listMax.env})</span>
+            <input
+              key={String(listMax.value)}
+              name="review_commits_list_max"
+              type="number"
+              required
+              min={listMax.minimum ?? undefined}
+              max={listMax.maximum ?? undefined}
+              defaultValue={Number(listMax.value)}
+            />
+          </label>
+          <p className="muted small">
+            Danh sách commit lấy thẳng từ GitLab; số lớn hơn thì mở danh sách chậm hơn (GitLab trả 100 commit mỗi trang).{" "}
+            {listMax.overridden ? `Mặc định trong .env: ${listMax.default}.` : "Đang dùng giá trị trong .env."}
+          </p>
+          <div className="toolbar">
+            <button type="submit" disabled={busy}>
+              Lưu
+            </button>
+            {listMax.overridden && (
+              <button type="button" onClick={() => save("review_commits_list_max", null)} disabled={busy}>
+                Về mặc định ({String(listMax.default)})
               </button>
             )}
           </div>

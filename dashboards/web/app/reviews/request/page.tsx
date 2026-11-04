@@ -110,11 +110,14 @@ export default function RequestReviewPage() {
   const [branchSearch, setBranchSearch] = useState("");
   const [who, setWho] = useState<Set<number>>(new Set()); // empty = everyone I may review
   const [window_, setWindow] = useState<Window>("7");
+  const [excludeReviewed, setExcludeReviewed] = useState(false);
   const [from, setFrom] = useState(localDay(new Date(Date.now() - 6 * 86400000)));
   const [to, setTo] = useState(localDay(new Date()));
   const [scope, setScope] = useState<Scope | null>(null);
   const [tab, setTab] = useState<number | null>(null);
   const [lists, setLists] = useState<Record<number, CommitList | undefined>>({});
+  // The per-repo cap the server applied (REVIEW_COMMITS_LIST_MAX, Admin › Cấu hình review).
+  const listLimit = Object.values(lists).find((l) => l?.limit)?.limit;
   const [failed, setFailed] = useState<Record<number, boolean>>({});
   const [selected, setSelected] = useState<Record<number, Set<string>>>({});
   const [outcomes, setOutcomes] = useState<Record<number, Outcome> | null>(null);
@@ -189,7 +192,7 @@ export default function RequestReviewPage() {
     if (since) params.set("since", since);
     if (until) params.set("until", until);
     for (const id of who) params.append("user_id", String(id));
-    params.set("limit", "200");
+    if (excludeReviewed) params.set("exclude_reviewed", "true");
     const next: Scope = { seq: (scope?.seq ?? 0) + 1, ref: branch.trim(), params: params.toString(), repos: picked.map((r) => r.id) };
     if (scope && next.params === scope.params && next.repos.join() === scope.repos.join()) {
       // Same scope again = refresh every tab.
@@ -453,6 +456,9 @@ export default function RequestReviewPage() {
                 <span className="muted small">Khoảng thời gian (theo ngày commit)</span>
                 <div className="toolbar" style={{ margin: 0 }}>
                   <Segmented label="Khoảng thời gian" value={window_} onChange={setWindow} options={WINDOWS} />
+                  <label className="small" title="Bỏ commit đã có review xong hoặc đang chờ / đang review">
+                    <input type="checkbox" checked={excludeReviewed} onChange={(e) => setExcludeReviewed(e.target.checked)} /> Bỏ commit đã review
+                  </label>
                   {window_ === "custom" && (
                     <DateRangePicker
                       label="Ngày commit"
@@ -472,7 +478,9 @@ export default function RequestReviewPage() {
               <button className={scope ? undefined : "primary ink"} type="submit" disabled={busy || picked.length === 0 || !branch.trim()}>
                 Xem commit
               </button>
-              <span className="muted small">Danh sách lấy thẳng từ GitLab, tối đa 200 commit mỗi repo.</span>
+              <span className="muted small">
+                Danh sách lấy thẳng từ GitLab, {listLimit ? `tối đa ${listLimit}` : "số"} commit mỗi repo theo cấu hình (Admin › Cấu hình review).
+              </span>
             </div>
           </form>
         )}
@@ -654,7 +662,7 @@ function RepoCommits({
         <>
           <div className="toolbar" style={{ margin: 0, padding: "0 18px 10px" }}>
             <span className="muted small">
-              {`${list.commits.length} commit${list.truncated ? " (còn nữa, thu hẹp khoảng thời gian)" : ""} · ${reviewed} đã review · ${reviewable.length} chọn được · tối đa ${batchMax} mỗi lần${list.hidden ? ` · ${list.hidden} của người ngoài phạm vi của bạn` : ""}${chosen.length > batchMax ? ` · đang chọn ${chosen.length}, bỏ bớt để gửi` : ""}`}
+              {`${list.commits.length} commit${list.truncated ? " (còn nữa, thu hẹp khoảng thời gian)" : ""}${list.reviewed_hidden ? ` · bỏ ${list.reviewed_hidden} đã review` : ""} · ${reviewed} đã review · ${reviewable.length} chọn được · tối đa ${batchMax} mỗi lần${list.hidden ? ` · ${list.hidden} của người ngoài phạm vi của bạn` : ""}${chosen.length > batchMax ? ` · đang chọn ${chosen.length}, bỏ bớt để gửi` : ""}`}
             </span>
             <span className="spacer" />
             {unreviewed.length > 0 && (

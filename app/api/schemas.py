@@ -685,6 +685,8 @@ class CommitListOut(BaseModel):
     hidden: int  # commits by people outside the caller's scope
     truncated: bool  # more commits exist in the window than `limit`
     batch_max: int  # REVIEW_BATCH_MAX: how many may be queued in one request
+    limit: int = 200  # commits listed per repo at most (Admin > Cấu hình review)
+    reviewed_hidden: int = 0  # left out by `exclude_reviewed` (reviewed or being reviewed)
 
 
 class ReviewCommitsIn(BaseModel):
@@ -950,6 +952,7 @@ class ReviewSettingsIn(BaseModel):
     monthly_llm_budget_usd: Annotated[int, Field(strict=True)] | None = None
     auto_close_findings: Annotated[bool, Field(strict=True)] | None = None
     auto_close_days: Annotated[int, Field(strict=True)] | None = None
+    review_commits_list_max: Annotated[int, Field(strict=True)] | None = None
 
 
 class LiveEvent(BaseModel):
