@@ -178,3 +178,26 @@ def test_member_breakdown_by_repo_and_category() -> None:
     assert out["categories"] == [{"category": "style", "count": 2}, {"category": "bug", "count": 1}]
     assert out["trend"] == [round((70 * 100 + 90 * 100 + 100 * 50) / 250, 1)]
     assert out["trend_reviews"] == [3]
+
+
+def test_critical_and_high_rates_count_reviews_not_findings() -> None:
+    """docs/specs/23 §10: a busy person has more findings; the share of reviews with one is the
+    fair comparison. Three criticals in one review are one review with a critical."""
+    at = datetime(2026, 10, 6, 9, tzinfo=UTC)
+    crit = FindingFacts(
+        severity="critical", category="security", confidence=1, status="open", verified="confirmed"
+    )
+    high = FindingFacts(
+        severity="high", category="bug", confidence=1, status="open", verified="confirmed"
+    )
+    rows = [
+        review(1, 7, 40, 100, at, findings=[crit, crit, crit, high]),
+        review(2, 7, 90, 100, at),
+        review(3, 7, 70, 100, at, findings=[high]),
+        review(4, 7, 95, 100, at),
+    ]
+    s = evaluate_member(rows, date(2026, 10, 1), date(2026, 10, 31), TZ)["summary"]
+    assert (s["critical"], s["critical_reviews"], s["critical_rate"]) == (3, 1, 25.0)
+    assert (s["high"], s["high_reviews"], s["high_rate"]) == (2, 2, 50.0)
+    empty = evaluate_member([], date(2026, 10, 1), date(2026, 10, 31), TZ)["summary"]
+    assert empty["critical_rate"] is None and empty["high_rate"] is None

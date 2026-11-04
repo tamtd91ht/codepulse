@@ -415,7 +415,9 @@ def workbook(session: Session, principal: Principal, settings: Settings, f: Filt
         ("Điểm thấp nhất", "min_score"),
         ("Tỉ lệ APPROVE (%)", "pass_rate"),
         ("Critical", "critical"),
+        ("% review có critical", "critical_rate"),
         ("High", "high"),
+        ("% review có high", "high_rate"),
         ("Medium", "medium"),
         ("Low", "low"),
         ("Lỗi / 100 LOC", "findings_per_100_loc"),
@@ -470,7 +472,9 @@ def workbook(session: Session, principal: Principal, settings: Settings, f: Filt
             "Điểm TB",
             "Tỉ lệ APPROVE (%)",
             "Critical",
+            "% review có critical",
             "High",
+            "% review có high",
             "Lỗi / 100 LOC",
         ],
         [
@@ -483,7 +487,9 @@ def workbook(session: Session, principal: Principal, settings: Settings, f: Filt
                 _num(r["avg_score"]),
                 _num(r["pass_rate"]),
                 r["critical"],
+                _num(r["critical_rate"]),
                 r["high"],
+                _num(r["high_rate"]),
                 _num(r["findings_per_100_loc"]),
             ]
             for r in report["by_repo"]

@@ -391,12 +391,22 @@ function Overview({ data }: { data: MemberReport }) {
           sub={peers.pass_rate !== null ? `mặt bằng ${num(peers.pass_rate, 0)}%` : undefined}
         />
         <StripStat
-          label="Critical + High"
-          value={s.critical + s.high}
-          tone={s.critical ? "bad" : s.high ? "warn" : undefined}
-          change={p.reviews ? s.critical + s.high - (p.critical + p.high) : null}
+          label="Critical"
+          value={s.critical}
+          tone={s.critical ? "bad" : undefined}
+          change={p.reviews ? s.critical - p.critical : null}
           higherIsBetter={false}
-          sub={`${s.critical} critical · ${s.high} high`}
+          sub={`${num(s.critical_rate ?? null, 0)}% review có critical${peers.critical_rate != null ? ` · mặt bằng ${num(peers.critical_rate, 0)}%` : ""}`}
+          title="Số finding critical được tính điểm; dòng dưới: % review có ít nhất một critical"
+        />
+        <StripStat
+          label="High"
+          value={s.high}
+          tone={s.high ? "warn" : undefined}
+          change={p.reviews ? s.high - p.high : null}
+          higherIsBetter={false}
+          sub={`${num(s.high_rate ?? null, 0)}% review có high${peers.high_rate != null ? ` · mặt bằng ${num(peers.high_rate, 0)}%` : ""}`}
+          title="Số finding high được tính điểm; dòng dưới: % review có ít nhất một high"
         />
         <StripStat
           label="Lỗi / 100 LOC"
@@ -478,7 +488,10 @@ function Overview({ data }: { data: MemberReport }) {
                   <th className="num">Review</th>
                   <th className="num">Điểm TB</th>
                   <th className="num">APPROVE</th>
-                  <th className="num">Crit/High</th>
+                  <th className="num">Critical</th>
+                  <th className="num">% có critical</th>
+                  <th className="num">High</th>
+                  <th className="num">% có high</th>
                 </tr>
               </thead>
               <tbody>
@@ -493,8 +506,13 @@ function Overview({ data }: { data: MemberReport }) {
                     </td>
                     <td className="num">{r.pass_rate === null ? "—" : `${num(r.pass_rate, 0)}%`}</td>
                     <td className="num">
-                      <span className={r.critical ? "tone-bad" : undefined}>{r.critical}</span>/<span className={r.high ? "tone-warn" : undefined}>{r.high}</span>
+                      <span className={r.critical ? "tone-bad" : undefined}>{r.critical}</span>
                     </td>
+                    <td className="num">{num(r.critical_rate ?? null, 0)}%</td>
+                    <td className="num">
+                      <span className={r.high ? "tone-warn" : undefined}>{r.high}</span>
+                    </td>
+                    <td className="num">{num(r.high_rate ?? null, 0)}%</td>
                   </tr>
                 ))}
               </tbody>

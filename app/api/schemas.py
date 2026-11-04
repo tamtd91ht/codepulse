@@ -792,6 +792,10 @@ class EvaluationBucket(BaseModel):
     info: int = 0
     findings: int = 0
     findings_per_100_loc: float | None = None
+    critical_reviews: int = 0  # reviews with at least one counted critical
+    high_reviews: int = 0
+    critical_rate: float | None = None  # % of the reviews with a critical
+    high_rate: float | None = None
     disputed: int = 0  # findings a lead accepted as false positive
     rejected: int = 0  # findings the verification refuted
     needs_attention: bool = False  # any critical, or average below 65

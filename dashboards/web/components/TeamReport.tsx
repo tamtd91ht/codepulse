@@ -58,7 +58,7 @@ const nameOf = (p: Person) => p.full_name ?? p.primary_email ?? `#${p.id}`;
 
 /* ---- the chart: one horizontal bar per member, the number printed on it ---- */
 
-type Metric = "score" | "pass" | "severe" | "density" | "reviews" | "criteria";
+type Metric = "score" | "pass" | "critical" | "high" | "density" | "reviews" | "criteria";
 
 interface MetricDef {
   label: string;
@@ -70,6 +70,8 @@ interface MetricDef {
   max?: number;
   group: (d: TeamReport) => number | null;
   hint: string;
+  /** A count shown as a second bar beside the rate (critical / high): the pair of columns. */
+  pair?: (r: TeamReportRow) => number;
 }
 
 const METRICS: Record<Metric, MetricDef> = {
@@ -90,13 +92,27 @@ const METRICS: Record<Metric, MetricDef> = {
     group: (d) => d.summary.pass_rate,
     hint: "Phần trăm thay đổi được kết luận APPROVE",
   },
-  severe: {
-    label: "Critical + High",
-    get: (r) => (r.reviews ? r.critical + r.high : null),
+  critical: {
+    label: "Critical",
+    get: (r) => (r.reviews ? (r.critical_rate ?? null) : null),
     digits: 0,
+    unit: "%",
     lowerBetter: true,
-    group: () => null,
-    hint: "Số finding critical và high được tính điểm",
+    max: 100,
+    group: (d) => d.summary.critical_rate ?? null,
+    hint: "Cặp thanh: số finding critical, và % review có critical (khách quan hơn khi số review khác nhau)",
+    pair: (r) => r.critical,
+  },
+  high: {
+    label: "High",
+    get: (r) => (r.reviews ? (r.high_rate ?? null) : null),
+    digits: 0,
+    unit: "%",
+    lowerBetter: true,
+    max: 100,
+    group: (d) => d.summary.high_rate ?? null,
+    hint: "Cặp thanh: số finding high, và % review có high (khách quan hơn khi số review khác nhau)",
+    pair: (r) => r.high,
   },
   density: {
     label: "Lỗi / 100 LOC",
@@ -138,7 +154,14 @@ function MemberChart({ data, onOpen }: { data: TeamReport; onOpen: (userId: numb
     .map((r) => ({ row: r, value: def.get(r) }))
     .filter((x): x is { row: TeamReportRow; value: number } => x.value !== null)
     .sort((a, b) => (def.lowerBetter ? b.value - a.value : a.value - b.value)); // weakest on top
-  const chart = rows.map(({ row, value }) => ({ id: row.user.id, name: nameOf(row.user), value, row }));
+  const chart = rows.map(({ row, value }) => ({
+    id: row.user.id,
+    name: nameOf(row.user),
+    value,
+    count: def.pair ? def.pair(row) : null,
+    row,
+  }));
+  const paired = Boolean(def.pair);
   const missing = data.members.length - chart.length;
   const group = def.group(data);
   const options = (Object.keys(METRICS) as Metric[])
@@ -155,17 +178,24 @@ function MemberChart({ data, onOpen }: { data: TeamReport; onOpen: (userId: numb
       {chart.length === 0 ? (
         <p className="muted small">Không ai có số liệu này trong khoảng đã chọn.</p>
       ) : (
-        <div className="member-chart" style={{ height: Math.max(140, chart.length * 32 + 36) }}>
+        <div className="member-chart" style={{ height: Math.max(140, chart.length * (paired ? 46 : 32) + 44) }}>
           <ResponsiveContainer>
             <BarChart data={chart} layout="vertical" margin={{ top: 4, right: 56, bottom: 4, left: 4 }} barCategoryGap={6}>
               <CartesianGrid horizontal={false} stroke="var(--chart-grid)" />
-              <XAxis type="number" domain={[0, def.max ?? "auto"]} tickLine={false} axisLine={false} fontSize={12} />
+              <XAxis xAxisId="value" type="number" domain={[0, def.max ?? "auto"]} tickLine={false} axisLine={false} fontSize={12} unit={def.unit} />
+              {paired && <XAxis xAxisId="count" type="number" orientation="top" allowDecimals={false} tickLine={false} axisLine={false} fontSize={12} />}
               <YAxis type="category" dataKey="name" width={150} tickLine={false} axisLine={false} fontSize={12} interval={0} />
               <Tooltip content={<ChartTip />} cursor={{ fill: "var(--surface-2)" }} />
-              {group !== null && <ReferenceLine x={group} stroke="var(--text)" strokeDasharray="4 4" />}
+              {group !== null && <ReferenceLine xAxisId="value" x={group} stroke="var(--text)" strokeDasharray="4 4" />}
+              {paired && (
+                <Bar xAxisId="count" dataKey="count" name={`Số ${def.label}`} fill="var(--chart-grid)" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                  <LabelList dataKey="count" position="right" fontSize={12} fill="var(--muted)" formatter={(v: unknown) => `${num(Number(v), 0)} lỗi`} />
+                </Bar>
+              )}
               <Bar
+                xAxisId="value"
                 dataKey="value"
-                name={def.label}
+                name={paired ? `% review có ${def.label}` : def.label}
                 radius={[0, 4, 4, 0]}
                 isAnimationActive={false}
                 cursor="pointer"
@@ -227,9 +257,16 @@ function Attention({ data, onOpen }: { data: TeamReport; onOpen: (userId: number
             </dd>
           </div>
           <div>
-            <dt>Critical / High</dt>
+            <dt>Critical</dt>
             <dd>
-              <span className={s.critical ? "tone-bad-text" : undefined}>{s.critical}</span> / {s.high}
+              <span className={s.critical ? "tone-bad-text" : undefined}>{s.critical}</span>{" "}
+              <span className="muted small">· {num(s.critical_rate ?? null, 0)}% review</span>
+            </dd>
+          </div>
+          <div>
+            <dt>High</dt>
+            <dd>
+              {s.high} <span className="muted small">· {num(s.high_rate ?? null, 0)}% review</span>
             </dd>
           </div>
           <div>
@@ -368,8 +405,14 @@ function Compare({ data, onOpen }: { data: TeamReport; onOpen: (id: number) => v
         return diff(r.avg_score, r.previous_avg_score);
       case "pass":
         return r.pass_rate;
-      case "severe":
-        return r.critical * 1000 + r.high;
+      case "critical":
+        return r.critical;
+      case "critical_rate":
+        return r.critical_rate ?? null;
+      case "high":
+        return r.high;
+      case "high_rate":
+        return r.high_rate ?? null;
       case "density":
         return r.findings_per_100_loc;
       default:
@@ -389,7 +432,10 @@ function Compare({ data, onOpen }: { data: TeamReport; onOpen: (id: number) => v
               <SortTh id="score" sort={sort} onSort={toggle} num>Điểm TB</SortTh>
               <SortTh id="delta" sort={sort} onSort={toggle} num>So kỳ trước</SortTh>
               <SortTh id="pass" sort={sort} onSort={toggle} num>APPROVE</SortTh>
-              <SortTh id="severe" sort={sort} onSort={toggle} num>Crit / High</SortTh>
+              <SortTh id="critical" sort={sort} onSort={toggle} num>Critical</SortTh>
+              <SortTh id="critical_rate" sort={sort} onSort={toggle} num>% review có critical</SortTh>
+              <SortTh id="high" sort={sort} onSort={toggle} num>High</SortTh>
+              <SortTh id="high_rate" sort={sort} onSort={toggle} num>% review có high</SortTh>
               <SortTh id="density" sort={sort} onSort={toggle} num>Lỗi/100 LOC</SortTh>
               <th>Hay mắc</th>
             </tr>
@@ -413,8 +459,11 @@ function Compare({ data, onOpen }: { data: TeamReport; onOpen: (id: number) => v
                   <td className={`num ${d === null ? "" : d >= 0 ? "tone-good" : "tone-bad-text"}`}>{d === null ? "—" : `${d > 0 ? "+" : ""}${num(d, 1)}`}</td>
                   <td className="num">{r.pass_rate === null ? "—" : `${num(r.pass_rate, 0)}%`}</td>
                   <td className="num">
-                    <span className={r.critical ? "tone-bad-text" : undefined}>{r.critical}</span> / {r.high}
+                    <span className={r.critical ? "tone-bad-text" : undefined}>{r.critical}</span>
                   </td>
+                  <td className="num">{r.reviews ? `${num(r.critical_rate ?? null, 0)}%` : "—"}</td>
+                  <td className="num">{r.high}</td>
+                  <td className="num">{r.reviews ? `${num(r.high_rate ?? null, 0)}%` : "—"}</td>
                   <td className="num">{num(r.findings_per_100_loc, 2)}</td>
                   <td className="small">{r.top_category ?? <span className="faint">—</span>}</td>
                 </tr>

@@ -1436,6 +1436,12 @@ export interface EvaluationBucket {
   pass_rate: number | null;
   critical: number;
   high: number;
+  /** Reviews with at least one critical / high finding that counts, and their share of the
+   * reviews in % (docs/specs/23 §10): the count grows with the work, the share does not. */
+  critical_reviews?: number;
+  high_reviews?: number;
+  critical_rate?: number | null;
+  high_rate?: number | null;
   medium: number;
   low: number;
   info: number;

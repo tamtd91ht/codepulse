@@ -68,6 +68,10 @@ class Bucket:
     verdicts: Counter[str] = field(default_factory=Counter)
     severity: Counter[str] = field(default_factory=Counter)
     categories: Counter[str] = field(default_factory=Counter)
+    # Reviews with at least one counted critical / high: the share of the work that had one,
+    # beside the counts (docs/specs/23 §10: a busy person has more findings, not a worse rate).
+    critical_reviews: int = 0
+    high_reviews: int = 0
     disputed: int = 0  # findings a lead accepted as false positive
     rejected: int = 0  # findings the verification refuted
     repos: set[int] = field(default_factory=set)
@@ -95,6 +99,7 @@ class Bucket:
         if review.project_id is not None:
             self.repos.add(review.project_id)
         rule = rule_for(review.rubric_version)
+        had: set[str] = set()
         for f in review.findings:
             if f.status == "false_positive":
                 self.disputed += 1
@@ -104,6 +109,9 @@ class Bucket:
             if counts_for_score(scored, rule, MIN_CONFIDENCE_UNVERIFIED):
                 self.severity[f.severity] += 1
                 self.categories[f.category] += 1
+                had.add(f.severity)
+        self.critical_reviews += "critical" in had
+        self.high_reviews += "high" in had
 
     @property
     def avg_score(self) -> float | None:
@@ -126,6 +134,10 @@ class Bucket:
         judged = sum(self.verdicts.values())
         return round(100.0 * self.verdicts["approve"] / judged, 1) if judged else None
 
+    def rate(self, reviews_with: int) -> float | None:
+        """% of the reviews that had at least one finding of a level."""
+        return round(100.0 * reviews_with / self.reviews, 1) if self.reviews else None
+
     @property
     def needs_attention(self) -> bool:
         avg = self.avg_score
@@ -145,6 +157,10 @@ class Bucket:
             "pass_rate": self.pass_rate,
             **{s: self.severity[s] for s in SEVERITIES},
             "findings": self.findings,
+            "critical_reviews": self.critical_reviews,
+            "high_reviews": self.high_reviews,
+            "critical_rate": self.rate(self.critical_reviews),
+            "high_rate": self.rate(self.high_reviews),
             "findings_per_100_loc": self.findings_per_100_loc,
             "disputed": self.disputed,
             "rejected": self.rejected,

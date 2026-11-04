@@ -103,3 +103,12 @@ Lead / quản lý xem báo cáo để trả lời ba câu, theo thứ tự:
   - Menu "Báo cáo thành viên" hiện cho ai có `report.member`.
   - Thay cho `evaluation.view` / `members.view` ở các endpoint báo cáo.
 
+## 10. Critical và High tách riêng, mỗi loại một cặp số lượng + tỉ lệ (người dùng 2026-11-04)
+> "Không nên gộp Critical + High; mỗi loại là một cặp cột: số lượng và tỉ lệ, vì số lượng lớn nhưng số review cũng lớn thì tỉ lệ nhỏ; tỉ lệ khách quan hơn."
+
+- **[Quyết định]** Tỉ lệ = **% review có ít nhất một finding ở mức đó** (được tính điểm như số lượng): số review có critical ÷ số review. Thang 0–100%, dễ đọc ("cứ 100 thay đổi thì bao nhiêu thay đổi có critical"), và một review nhiều lỗi không kéo lệch tỉ lệ. `Bucket` (app/scoring/evaluation.py) có thêm `critical_reviews`, `high_reviews`, `critical_rate`, `high_rate`. Các nơi dùng `Bucket` đều có (báo cáo, Đánh giá trong kỳ, trang Thành viên).
+- **Biểu đồ Tổng quan**: thay chỉ số "Critical + High" bằng hai chỉ số **Critical** và **High**. Mỗi người một **cặp thanh**: thanh tỉ lệ (% review có lỗi đó, trục dưới, có màu theo mức, có vạch cả nhóm) và thanh số lượng (trục trên, màu nhạt, nhãn "n lỗi"). Người có tỉ lệ cao nhất ở trên.
+- **Bảng so sánh**: bốn cột Critical, % review có critical, High, % review có high; sắp được từng cột.
+- **Khung Cả nhóm** và **Chi tiết**: Critical và High là hai ô riêng; ô ghi số lượng (có mũi tên so với kỳ trước), dòng dưới là % review có lỗi đó và mặt bằng. Bảng theo repo cũng tách bốn cột.
+- **Excel**: thêm hàng / cột "% review có critical", "% review có high" ở Tổng quan, Theo repo (một người) và Tổng quan nhóm, So sánh thành viên (nhiều người).
+
