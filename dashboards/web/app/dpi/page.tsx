@@ -133,7 +133,7 @@ function Rebuild({ onDone }: { onDone: () => void }) {
           <p className="muted small">Có thể rời trang; việc chạy nền. Đồng bộ lại toàn bộ repo có thể mất vài chục phút.</p>
         </div>
       ) : (
-        <div className="row">
+        <div className="dpi-row">
           <label>
             Tính lại{" "}
             <select value={months} onChange={(e) => setMonths(Number(e.target.value))}>
@@ -153,7 +153,7 @@ function Rebuild({ onDone }: { onDone: () => void }) {
         </div>
       )}
       {!live && s?.status === "finished" && s.result && (
-        <p className="small muted" style={{ marginTop: 8 }}>
+        <p className="small muted">
           Lần gần nhất xong {s.ended_at ? new Date(s.ended_at).toLocaleString("vi-VN", { hour12: false }) : ""}: đồng bộ {s.result.synced} repo
           {s.result.sync_failed.length > 0 && `, lỗi ${s.result.sync_failed.length} (${s.result.sync_failed.slice(0, 3).join(", ")})`}; tính{" "}
           {s.result.months.map((m) => `${m.month.slice(0, 7)}: ${m.scorecards?.scored ?? 0} người`).join(" · ")}.
@@ -180,7 +180,7 @@ function OverviewTab({ month, me }: { month: string; me: Me }) {
   if (!data) return <Loading rows={5} />;
   return (
     <>
-      <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
+      <div className="dpi-row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
         <label>
           Team{" "}
           <select value={team} onChange={(e) => setTeam(e.target.value)}>
@@ -214,7 +214,8 @@ function OverviewTab({ month, me }: { month: string; me: Me }) {
             ))}
           </select>
         </label>
-        <span className="row">
+        <span className="dpi-spacer" />
+        <span className="dpi-row">
           <Link href={`/dpi/${me.id}?month=${month}`} className="button">
             Scorecard của tôi
           </Link>
@@ -487,7 +488,7 @@ function DefectRow({ d, onSaved }: { d: Defect; onSaved: (msg: string) => void }
           ))}
         </ul>
       )}
-      <div className="row">
+      <div className="dpi-row">
         <label>
           Người chịu trách nhiệm{" "}
           <select value={who} onChange={(e) => setWho(e.target.value ? Number(e.target.value) : "")}>
@@ -513,7 +514,7 @@ function DefectRow({ d, onSaved }: { d: Defect; onSaved: (msg: string) => void }
         ))}
       </div>
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ghi chú RCA" style={{ width: "100%", marginTop: 8 }} />
-      <div className="row" style={{ marginTop: 8 }}>
+      <div className="dpi-row">
         <button type="button" className="primary" disabled={!who} onClick={() => void save("confirmed")}>
           Xác nhận RCA
         </button>
@@ -532,7 +533,7 @@ function DefectsTab() {
   if (error) return <Loading error={error} />;
   return (
     <>
-      <div className="row" style={{ marginBottom: 8 }}>
+      <div className="dpi-row">
         <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Trạng thái RCA">
           <option value="pending">Chưa xác nhận</option>
           <option value="confirmed">Đã xác nhận</option>
@@ -657,7 +658,7 @@ function QualityTab({ month }: { month: string }) {
   if (!data) return <Loading rows={5} />;
   return (
     <>
-      <div className="row" style={{ marginBottom: 8 }}>
+      <div className="dpi-row">
         <ProjectFilter value={bp} onChange={setBp} />
         <span className="muted small">{data.repos} repo</span>
       </div>
@@ -795,7 +796,7 @@ function DeliveryTab() {
   if (!data) return <Loading rows={4} />;
   return (
     <>
-      <div className="row" style={{ marginBottom: 8 }}>
+      <div className="dpi-row">
         <ProjectFilter value={bp} onChange={setBp} />
         <span className="muted small">
           Hiện tại. DORA và các chặng của luồng (coding / pickup / review / deploy): xem <Link href="/insights">Luồng làm việc</Link>.
@@ -932,7 +933,7 @@ function RubricEditor({ current, onSaved }: { current: SettingsView["rubric"]; o
         {auto + manager !== 100 && <span className="tone-warn"> (nên là 100)</span>}
       </p>
       {error && <Alert tone="error">{error}</Alert>}
-      <div className="row">
+      <div className="dpi-row">
         <button type="button" className="primary" onClick={() => void save()}>
           Tạo phiên bản
         </button>
@@ -1069,7 +1070,7 @@ function SettingsTab() {
       </Card>
       {data.can_admin && (
         <Card title="Level của từng người" collapsible={false} subtitle="Có hiệu lực từ đầu tháng chọn; giữ lịch sử. Người chưa gán dùng Middle.">
-          <div className="row">
+          <div className="dpi-row">
             <select value={level.user} onChange={(e) => setLevel({ ...level, user: e.target.value })} aria-label="Người">
               <option value="">Chọn người…</option>
               {(people.data ?? []).map((p) => (
@@ -1244,7 +1245,7 @@ function ReadinessTab({ me }: { me: Me }) {
                           )}
                           {c.note && <div className="muted">{c.note}</div>}
                           {can(me, "admin.projects") && (
-                            <div className="row" style={{ marginTop: 4 }}>
+                            <div className="dpi-row">
                               {c.default_protected === false && (
                                 <button type="button" className="sm" onClick={() => setConfirm({ id: r.project.id, path: r.project.path, action: "protect" })}>
                                   Bảo vệ nhánh chính
@@ -1292,7 +1293,7 @@ export default function DpiPage() {
   ];
   const current = tabs.some((t) => t.key === tab) ? tab : tabs[0].key;
   return (
-    <>
+    <div className="dpi-page stack">
       <PageHeader
         eyebrow="DPI"
         title="Đánh giá hiệu suất hàng tháng"
@@ -1302,6 +1303,7 @@ export default function DpiPage() {
       />
       <SubTabs id="dpi" label="DPI" tabs={tabs} value={current} onChange={setTab} variant="bar" />
       <SubPanel id="dpi" tab={current}>
+        <div className="stack">
         {current === "overview" && <OverviewTab month={month} me={me} />}
         {current === "distribution" && <DistributionTab month={month} />}
         {current === "calibration" && <CalibrationTab month={month} />}
@@ -1311,8 +1313,9 @@ export default function DpiPage() {
         {current === "peer" && <PeerTab key={month} month={month} />}
         {current === "settings" && <SettingsTab />}
         {current === "readiness" && <ReadinessTab me={me} />}
+        </div>
       </SubPanel>
-    </>
+    </div>
   );
 }
 

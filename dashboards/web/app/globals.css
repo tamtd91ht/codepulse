@@ -6889,7 +6889,44 @@ button.crit-info-btn:focus-visible {
   padding-top: 10px;
 }
 
-/* DPI (docs/specs/25): scorecard and hub. */
+/* DPI (docs/specs/25): scorecard and hub. Everything wraps: no fixed column is wider than a
+   phone, rows break into lines instead of overlapping. */
+.dpi-page {
+  min-width: 0;
+}
+.dpi-page .card {
+  min-width: 0;
+  overflow-x: auto; /* a wide table scrolls inside its card, never under the next one */
+}
+.dpi-page h4 {
+  margin: 16px 0 8px;
+  font-size: 14px;
+}
+.dpi-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+.dpi-row > label {
+  flex-wrap: wrap;
+}
+.dpi-filters {
+  align-items: flex-end;
+}
+.dpi-filters select {
+  max-width: 240px;
+}
+.dpi-spacer {
+  flex: 1 1 0;
+}
+.dpi-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 .dpi-month {
   display: inline-flex;
   align-items: center;
@@ -6898,7 +6935,7 @@ button.crit-info-btn:focus-visible {
 .dpi-bar {
   display: inline-block;
   width: 100%;
-  min-width: 60px;
+  min-width: 48px;
   height: 8px;
   border-radius: 999px;
   background: var(--surface-2);
@@ -6919,14 +6956,17 @@ button.crit-info-btn:focus-visible {
 .dpi-bar-fill.bad {
   background: var(--danger);
 }
+
+/* Hero: total | meta, groups below; three columns only on wide screens; one on phones. */
 .dpi-hero {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(220px, 320px);
-  gap: 20px;
-  align-items: center;
-  margin-bottom: 12px;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "total meta" "groups groups";
+  gap: 16px 28px;
+  align-items: start;
 }
 .dpi-total {
+  grid-area: total;
   display: flex;
   align-items: baseline;
   gap: 4px;
@@ -6937,31 +6977,61 @@ button.crit-info-btn:focus-visible {
   line-height: 1;
   color: var(--text);
 }
-.dpi-hero-meta .row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.dpi-hero-meta {
+  grid-area: meta;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+.dpi-hero-meta p {
+  margin: 0;
 }
 .dpi-groups {
+  grid-area: groups;
   display: grid;
-  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  gap: 8px 20px;
+  min-width: 0;
 }
 .dpi-group-mini {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 90px 60px;
+  grid-template-columns: minmax(0, 1.4fr) minmax(48px, 1fr) auto;
   gap: 8px;
   align-items: center;
+  min-width: 0;
+}
+@media (min-width: 1360px) {
+  .dpi-hero {
+    grid-template-columns: auto minmax(0, 1fr) minmax(260px, 340px);
+    grid-template-areas: "total meta groups";
+  }
+  .dpi-groups {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 640px) {
+  .dpi-hero {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "total" "meta" "groups";
+  }
+  .dpi-total-value {
+    font-size: 36px;
+  }
 }
 .dpi-steps {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 14px;
-  margin: 8px 0 0;
+  gap: 6px 16px;
+  margin: 0;
   padding: 0;
   list-style: none;
   font-size: 13px;
 }
 .dpi-steps li {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
   color: var(--faint);
 }
 .dpi-steps li.done {
@@ -6971,10 +7041,15 @@ button.crit-info-btn:focus-visible {
   color: var(--text);
   font-weight: 600;
 }
+
+/* Scorecard groups and metric rows. */
 .dpi-group-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr));
+  gap: 16px;
+}
+.dpi-group-grid > .card + .card {
+  margin-top: 0;
 }
 .dpi-metric {
   border-top: 1px solid var(--border);
@@ -6984,13 +7059,15 @@ button.crit-info-btn:focus-visible {
 }
 .dpi-metric-head {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 70px 90px auto 16px;
-  gap: 8px;
+  grid-template-columns: 30px minmax(0, 1fr) auto 18px;
+  grid-template-areas: "key label points chev" "key bar bar chev";
+  gap: 4px 10px;
   align-items: center;
   width: 100%;
   height: auto;
-  padding: 10px 2px;
+  padding: 10px 4px;
   border: 0;
+  border-radius: var(--radius);
   background: none;
   box-shadow: none;
   text-align: left;
@@ -7001,95 +7078,154 @@ button.crit-info-btn:focus-visible {
   background: var(--surface-hover);
 }
 .dpi-key {
+  grid-area: key;
+  align-self: start;
   font-weight: 700;
   color: var(--muted);
 }
+.dpi-metric-label {
+  grid-area: label;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
 .dpi-points {
+  grid-area: points;
   text-align: right;
   font-weight: 600;
+  white-space: nowrap;
+}
+.dpi-chev {
+  grid-area: chev;
+  color: var(--muted);
+  display: inline-flex;
+}
+.dpi-metric-bar {
+  grid-area: bar;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.dpi-metric-bar .dpi-bar {
+  flex: 1 1 auto;
+}
+.dpi-metric-bar > .muted {
+  flex: none;
+  white-space: nowrap;
 }
 .dpi-metric-body {
-  padding: 0 4px 12px 42px;
+  padding: 0 4px 12px 44px;
+  overflow-wrap: anywhere;
 }
 .dpi-evidence {
   margin: 4px 0;
   padding-left: 16px;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
+.dpi-evidence li + li {
+  margin-top: 2px;
+}
+
+/* Two blocks side by side on wide screens only. */
 .dpi-two {
   display: grid;
-  grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr);
-  gap: 12px;
-  margin-top: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 16px;
 }
+.dpi-two > .card + .card {
+  margin-top: 0;
+}
+@media (max-width: 1180px) {
+  .dpi-two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Monthly cycle. */
 .dpi-cycle {
   display: grid;
-  gap: 12px;
+  gap: 16px;
+}
+.dpi-cycle > .card + .card {
+  margin-top: 0;
 }
 .dpi-assess {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 10px;
-  margin: 8px 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 12px;
+  margin: 12px 0;
 }
 .dpi-assess-item {
   display: grid;
   gap: 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 8px 10px;
+  padding: 10px 12px;
   margin: 0;
+  min-width: 0;
+}
+.dpi-assess-item legend {
+  padding: 0 4px;
+  font-weight: 600;
 }
 .dpi-assess-item textarea {
   width: 100%;
 }
 .dpi-final {
   display: grid;
-  gap: 8px;
+  gap: 10px;
+  max-width: 640px;
 }
 .dpi-dispute {
-  border-top: 1px solid var(--border);
-  padding: 8px 0;
-}
-.dpi-rubric {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  padding: 10px 0;
 }
-@media (max-width: 900px) {
-  .dpi-hero,
-  .dpi-two {
-    grid-template-columns: 1fr;
-  }
-  .dpi-metric-head {
-    grid-template-columns: 30px minmax(0, 1fr) 60px 16px;
-  }
-  .dpi-metric-head .dpi-bar,
-  .dpi-metric-head > .muted {
-    display: none;
-  }
+.dpi-dispute:first-child {
+  border-top: 0;
 }
 .dpi-items {
   margin: 8px 0;
   padding-left: 18px;
   display: grid;
-  gap: 6px;
+  gap: 8px;
+}
+.dpi-items li {
+  overflow-wrap: anywhere;
 }
 .dpi-item-actions {
   display: inline-flex;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-left: 6px;
 }
+
+/* Growth and contribution. */
 .dpi-axes {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   margin-bottom: 8px;
 }
 .dpi-axis {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) minmax(80px, 2fr) 80px;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(60px, 2fr) auto;
+  gap: 10px;
   align-items: center;
+}
+@media (max-width: 640px) {
+  .dpi-axis {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .dpi-axis .dpi-bar {
+    grid-column: 1 / -1;
+    order: 3;
+  }
 }
 .dpi-split {
   display: flex;
@@ -7097,14 +7233,22 @@ button.crit-info-btn:focus-visible {
   border-radius: 999px;
   overflow: hidden;
   background: var(--surface-2);
+  margin-bottom: 8px;
 }
 .dpi-split > span {
   display: block;
   min-width: 2px;
 }
+.dpi-rubric {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 12px;
+}
 .dpi-rubric-editor {
   display: grid;
-  gap: 8px;
-  max-width: 560px;
+  gap: 10px;
+  max-width: 600px;
 }
-
+.dpi-rubric-editor input:not([type="number"]) {
+  width: 100%;
+}

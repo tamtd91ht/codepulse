@@ -9,6 +9,7 @@ import { use, useEffect, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { SubPanel, type SubTab, SubTabs } from "@/components/AdminTabs";
+import { Modal } from "@/components/CriteriaParts";
 import { ConfidencePill, MonthPicker, RatingPill, ScoreBar, ShadowBanner, useMonth } from "@/components/DpiParts";
 import { Icon } from "@/components/icons";
 import { Alert, Card, ChartTip, EmptyState, Loading, Message, PageHeader, Pill } from "@/components/ui";
@@ -108,9 +109,17 @@ function MetricRow({ k, m, onDispute }: { k: string; m: MetricView; onDispute?: 
           {m.points === null ? <span className="muted">—</span> : m.points.toFixed(1)}
           <span className="muted small"> / {m.max}</span>
         </span>
-        <ScoreBar value={m.value === null ? null : m.value * 100} label={m.label} />
-        {m.value !== null && m.confidence !== "high" && <span className="muted small">{m.confidence === "low" ? "ít dữ liệu" : "vừa"}</span>}
-        <Icon name={open ? "chevronUp" : "chevronDown"} size={14} />
+        <span className="dpi-chev" aria-hidden="true">
+          <Icon name={open ? "chevronUp" : "chevronDown"} size={14} />
+        </span>
+        <span className="dpi-metric-bar">
+          <ScoreBar value={m.value === null ? null : m.value * 100} label={m.label} />
+          {m.value === null ? (
+            <span className="muted small">không có dữ liệu</span>
+          ) : (
+            m.confidence !== "high" && <span className="muted small">{m.confidence === "low" ? "ít dữ liệu" : "tin cậy vừa"}</span>
+          )}
+        </span>
       </button>
       {open && (
         <div className="dpi-metric-body">
@@ -174,7 +183,7 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
   const base = `/dpi/people/${userId}/months/${dataMonth}`;
 
   return (
-    <>
+    <div className="dpi-page stack">
       <PageHeader
         eyebrow={<Link href="/dpi">DPI hàng tháng</Link>}
         title={data.user.name ?? `#${userId}`}
@@ -186,12 +195,12 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
       <Message text={message} onClose={() => setMessage(null)} />
 
       <section className="card dpi-hero" aria-label="Tổng điểm">
-        <div className="dpi-total">
+        <div className="dpi-total" aria-label="Tổng điểm">
           <span className="dpi-total-value">{c.total === null ? "—" : c.total.toFixed(1)}</span>
           <span className="muted small">/ 100</span>
         </div>
         <div className="dpi-hero-meta">
-          <div className="row">
+          <div className="dpi-row">
             <RatingPill rating={c.rating} />
             <ConfidencePill value={c.confidence} />
             {c.provisional && <Pill tone="warn" title="30 điểm của quản lý chưa chấm">Tạm tính</Pill>}
@@ -207,7 +216,7 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
         <div className="dpi-groups">
           {GROUPS.map((g) => (
             <div key={g} className="dpi-group-mini">
-              <span className="small">
+              <span className="small dpi-ellipsis" title={GROUP_LABEL[g]}>
                 {g} · {GROUP_LABEL[g]}
               </span>
               <ScoreBar value={c.groups[g]?.ratio === null || c.groups[g]?.ratio === undefined ? null : (c.groups[g].ratio ?? 0) * 100} label={GROUP_LABEL[g]} />
@@ -227,6 +236,7 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
       <SubTabs id="dpi-card" label="Scorecard" tabs={tabs} value={tab} onChange={setTab} variant="bar" />
       {tab === "card" && (
         <SubPanel id="dpi-card" tab="card">
+          <div className="stack">
           {c.contribution && c.contribution.new_work + c.contribution.refactor + c.contribution.help_others > 0 && (
             <Contribution c={c.contribution} />
           )}
@@ -241,10 +251,12 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
               </Card>
             ))}
           </div>
+          </div>
         </SubPanel>
       )}
       {tab === "trend" && (
         <SubPanel id="dpi-card" tab="trend">
+          <div className="stack">
           <Growth g={data.growth} />
           <Card title="Xu hướng (R6 Competency & Growth)" collapsible={false} subtitle="Tổng điểm và tỉ lệ đạt của 5 nhóm, 6 tháng gần nhất">
             {data.trend.every((t) => t.total === null) ? (
@@ -294,6 +306,7 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
               </tbody>
             </table>
           </Card>
+          </div>
         </SubPanel>
       )}
       {tab === "cycle" && (
@@ -303,7 +316,7 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
         </SubPanel>
       )}
       {disputeFor && data.can.dispute && (
-        <DisputeForm
+        <DisputeModal
           metric={disputeFor}
           onClose={() => setDisputeFor(null)}
           onSend={(reason) =>
@@ -311,7 +324,7 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
           }
         />
       )}
-    </>
+    </div>
   );
 }
 
@@ -376,10 +389,23 @@ function Contribution({ c }: { c: NonNullable<ScorecardView["card"]["contributio
   );
 }
 
-function DisputeForm({ metric, onClose, onSend }: { metric: string; onClose: () => void; onSend: (reason: string) => void }) {
+function DisputeModal({ metric, onClose, onSend }: { metric: string; onClose: () => void; onSend: (reason: string) => void }) {
   const [reason, setReason] = useState("");
   return (
-    <Card title={`Khiếu nại chỉ số ${metric}`} collapsible={false} actions={<button type="button" className="ghost" onClick={onClose}>Huỷ</button>}>
+    <Modal
+      title={`Khiếu nại chỉ số ${metric}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="ghost" onClick={onClose}>
+            Huỷ
+          </button>
+          <button type="button" className="primary" disabled={reason.trim().length < 10} onClick={() => onSend(reason.trim())}>
+            Gửi khiếu nại
+          </button>
+        </>
+      }
+    >
       <textarea
         rows={3}
         aria-label={`Lý do khiếu nại ${metric}`}
@@ -388,12 +414,7 @@ function DisputeForm({ metric, onClose, onSend }: { metric: string; onClose: () 
         placeholder="Vì sao chỉ số này chưa đúng? (ít nhất 10 ký tự)"
         style={{ width: "100%" }}
       />
-      <div className="row" style={{ marginTop: 8 }}>
-        <button type="button" className="primary" disabled={reason.trim().length < 10} onClick={() => onSend(reason.trim())}>
-          Gửi khiếu nại
-        </button>
-      </div>
-    </Card>
+    </Modal>
   );
 }
 
@@ -458,7 +479,7 @@ function Cycle({
         {r.submitted_at ? (
           <p className="muted small">Đã gửi {date(r.submitted_at)} · nghỉ {r.leave_days} ngày.</p>
         ) : data.can.self ? (
-          <div className="row">
+          <div className="dpi-row">
             <label>
               Ngày nghỉ trong tháng <input type="number" min={0} max={23} step={0.5} value={leave} onChange={(e) => setLeave(e.target.value)} style={{ width: 80 }} />
             </label>
@@ -544,7 +565,7 @@ function Cycle({
 
       <Card title="3. Hiệu chỉnh" collapsible={false} subtitle="Người có quyền hiệu chỉnh điều chỉnh ±10 điểm trên tổng, bắt buộc ghi lý do.">
         {data.can.calibrate ? (
-          <div className="row">
+          <div className="dpi-row">
             <input type="number" min={-10} max={10} step={0.5} value={adjust.value} onChange={(e) => setAdjust({ ...adjust, value: e.target.value })} style={{ width: 80 }} aria-label="Điểm hiệu chỉnh" />
             <input value={adjust.reason} onChange={(e) => setAdjust({ ...adjust, reason: e.target.value })} placeholder="Lý do (≥ 10 ký tự)" style={{ flex: 1, minWidth: 200 }} />
             <button type="button" disabled={adjust.reason.trim().length < 10} onClick={() => run(() => api.post(`${base}/calibrate`, { adjustment: Number(adjust.value) || 0, reason: adjust.reason.trim() }), "Đã hiệu chỉnh.")}>
@@ -570,7 +591,7 @@ function Cycle({
                   {d.decision === "accepted" ? "Chấp nhận" : "Từ chối"}: {d.answer}
                 </p>
               ) : data.can.decide ? (
-                <div className="row">
+                <div className="dpi-row">
                   <input aria-label={`Trả lời khiếu nại ${d.metric}`} placeholder="Trả lời" value={answers[d.id]?.answer ?? ""} onChange={(e) => setAnswers({ ...answers, [d.id]: { answer: e.target.value, value: answers[d.id]?.value ?? "" } })} style={{ flex: 1, minWidth: 180 }} />
                   <input aria-label={`Giá trị mới ${d.metric}`} placeholder="Giá trị mới 0–1" value={answers[d.id]?.value ?? ""} onChange={(e) => setAnswers({ ...answers, [d.id]: { answer: answers[d.id]?.answer ?? "", value: e.target.value } })} style={{ width: 120 }} />
                   <button type="button" onClick={() => run(() => api.post(`/dpi/disputes/${d.id}/decide`, { decision: "accepted", answer: answers[d.id]?.answer ?? "", value: answers[d.id]?.value ? Number(answers[d.id].value) : null }), "Đã chấp nhận khiếu nại.")}>
