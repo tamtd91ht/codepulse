@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -10,7 +10,6 @@ from sqlalchemy import (
     Index,
     Numeric,
     UniqueConstraint,
-    and_,
     case,
     text,
 )
@@ -24,9 +23,6 @@ from app.models.base import Base, TimestampMixin
 SEVERITIES = ("critical", "high", "medium", "low", "info")
 # reviews.changed_at of a change whose time is not known: sorts last.
 CHANGE_TIME_UNKNOWN = datetime(1970, 1, 1, tzinfo=UTC)
-# A commit's time is set by its author (`git commit --date`): it places a review in a period only
-# when it lies at most this long before the review finished (user, 2026-10-29).
-COMMIT_TIME_MAX_LAG = timedelta(days=30)
 
 
 class Review(TimestampMixin, Base):
@@ -69,22 +65,24 @@ class Review(TimestampMixin, Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # When the reviewed change was made: the commit's time, or when the MR was opened
-    # (CHANGE_TIME_UNKNOWN when neither is known). "Kết quả review" is sorted by it.
+    # (CHANGE_TIME_UNKNOWN when neither is known). Every period and report counts by it.
     changed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("'1970-01-01 00:00:00+00'")
     )
 
     @hybrid_property
     def counted_at(self) -> datetime | None:
-        """The moment that puts the review in a period for scores, cards and reports (user,
-        2026-10-29): when the change was made, if that is known and lies within
-        COMMIT_TIME_MAX_LAG before the review finished; otherwise when the review finished."""
+        """The moment that puts the review in a period for every score, card and report: when
+        the change was made, the commit's time or the MR's opening (user, 2026-11-04: "time là
+        time commit hoặc time MR; time review chỉ là thông tin"), however long before. The
+        review's time is used only when that time is unknown, or lies after the review (a clock
+        off or a forged date: a change cannot be reviewed before it exists)."""
         changed, finished = self.changed_at, self.finished_at
         if changed is None or changed == CHANGE_TIME_UNKNOWN:
             return finished
         if finished is None:
             return changed  # not finished yet: counts nowhere, only the list shows it
-        return changed if finished - COMMIT_TIME_MAX_LAG <= changed <= finished else finished
+        return changed if changed <= finished else finished
 
     @counted_at.inplace.expression
     @classmethod
@@ -92,13 +90,7 @@ class Review(TimestampMixin, Base):
         return case(
             (cls.changed_at == CHANGE_TIME_UNKNOWN, cls.finished_at),
             (cls.finished_at.is_(None), cls.changed_at),
-            (
-                and_(
-                    cls.changed_at >= cls.finished_at - COMMIT_TIME_MAX_LAG,
-                    cls.changed_at <= cls.finished_at,
-                ),
-                cls.changed_at,
-            ),
+            (cls.changed_at <= cls.finished_at, cls.changed_at),
             else_=cls.finished_at,
         )
 

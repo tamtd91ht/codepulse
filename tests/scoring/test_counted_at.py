@@ -25,16 +25,18 @@ def review(changed_at: datetime | None, finished_at: datetime | None = FINISHED)
     ("changed", "counted"),
     [
         (FINISHED - timedelta(days=3), FINISHED - timedelta(days=3)),  # the commit's week
-        (FINISHED - timedelta(days=30), FINISHED - timedelta(days=30)),  # at the limit
-        (FINISHED - timedelta(days=31), FINISHED),  # older: back-dated, the finish counts
+        (FINISHED - timedelta(days=31), FINISHED - timedelta(days=31)),  # a month before
+        (FINISHED - timedelta(days=400), FINISHED - timedelta(days=400)),  # a backfilled commit
+        (
+            datetime(2026, 6, 10, tzinfo=UTC),
+            datetime(2026, 6, 10, tzinfo=UTC),
+        ),  # June, asked in Oct
         (FINISHED + timedelta(hours=1), FINISHED),  # after the review: future-dated
         (CHANGE_TIME_UNKNOWN, FINISHED),
         (None, FINISHED),
     ],
 )
-def test_the_commit_time_counts_within_30_days_before_the_review(
-    changed: datetime | None, counted: datetime
-) -> None:
+def test_the_commit_time_always_counts(changed: datetime | None, counted: datetime) -> None:
     assert review(changed).counted_at == counted
 
 

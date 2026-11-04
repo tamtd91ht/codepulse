@@ -704,7 +704,7 @@ def list_findings(
     items = []
     for finding, review, user in rows[:limit]:
         project, url, label = _target(session, review)
-        opened = review.finished_at or now
+        opened = review.counted_at or now  # open since the change was committed
         items.append(
             {
                 **FindingOut.model_validate(finding).model_dump(),

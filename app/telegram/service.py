@@ -2148,11 +2148,11 @@ class BotService:
         if not total:
             return "Không có finding critical/high nào đang mở trong phạm vi bạn xem được."
         crit = int(counts.get("critical", 0))
-        rows = self._s.execute(query.order_by(Review.finished_at).limit(8)).all()
+        rows = self._s.execute(query.order_by(Review.counted_at).limit(8)).all()
         lines = [f"<b>{crit} critical · {total - crit} high</b> đang mở (cũ nhất trước)"]
         now = self._clock()
         for finding, review in rows:
-            age = (now - (review.finished_at or now)).days
+            age = (now - (review.counted_at or now)).days
             lines.append(
                 f"• [{finding.severity}] {esc(finding.title or '')}"
                 f" · <code>{esc(finding.file_path or '')}</code>"

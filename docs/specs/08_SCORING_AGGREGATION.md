@@ -73,3 +73,10 @@ quality_index = 0.50 × avg_score
 - "Đã sửa" không mang sang: lỗi bị báo lại nghĩa là chưa sửa. Khiếu nại bị từ chối cũng không đổi gì.
 - Dữ liệu có từ trước: chạy một lần `python -m app.cli findings carry-decisions`.
 
+## Thời điểm tính kỳ: thời gian commit / mở MR, không phải thời gian review (người dùng 2026-11-04)
+> "Thời gian dùng cho tính toán, báo cáo, mọi thứ là thời gian commit … time review chỉ là thông tin"; "MR lấy thời gian mở MR cũng hợp lý"; "ví dụ commit tháng 6 nhưng tới tháng 11 mới yêu cầu review".
+- `Review.counted_at` = thời điểm thay đổi được tạo: thời gian commit, hoặc lúc mở MR. **Bỏ** quy tắc cũ (2026-10-29) "commit cách lúc review quá 30 ngày thì tính theo lúc review": commit tháng 6 review tháng 11 vẫn tính vào tháng 6.
+- Thời gian review chỉ còn dùng khi không biết thời gian thay đổi, hoặc thời gian commit nằm sau lúc review (đồng hồ sai / ngày bị sửa). Ngoài ra chỉ để hiển thị, và cho chi phí LLM theo tháng (tiền tiêu lúc review chạy).
+- Tuổi finding đang mở (báo cáo tuần, Telegram, Critical Board) tính từ thời gian thay đổi.
+- Sau khi deploy: tính lại số liệu đã lưu `python -m app.cli metrics recompute --from <ngày đầu> --to <hôm nay>`, và bấm "Chạy lại dữ liệu DPI".
+

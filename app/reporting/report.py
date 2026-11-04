@@ -168,7 +168,7 @@ def build_team_report(
             ReviewFinding.severity.in_(("critical", "high")),
             *([] if projects is None else [reviews_in_projects(projects)]),
         )
-        .order_by(Review.finished_at)
+        .order_by(Review.counted_at)
         .limit(20)
     ).tuples()
     open_issues = [
@@ -177,7 +177,7 @@ def build_team_report(
             "title": f.title,
             "where": f"{f.file_path}:{f.line_start}",
             "who": names.get(r.author_user_id or 0, "—"),
-            "days": max(0, (moment - (r.finished_at or moment)).days),
+            "days": max(0, (moment - (r.counted_at or moment)).days),
         }
         for f, r in open_rows
     ]
@@ -349,7 +349,7 @@ def build_personal_report(
             ReviewFinding.severity.in_(("critical", "high", "medium")),
         )
         # Alphabetical happens to be most severe first for these three.
-        .order_by(ReviewFinding.severity, Review.finished_at)
+        .order_by(ReviewFinding.severity, Review.counted_at)
         .limit(10)
     ).tuples()
     open_issues = [
@@ -357,7 +357,7 @@ def build_personal_report(
             "severity": f.severity,
             "title": f.title,
             "where": f"{f.file_path}:{f.line_start}",
-            "days": max(0, (moment - (r.finished_at or moment)).days),
+            "days": max(0, (moment - (r.counted_at or moment)).days),
             "review_id": r.id,
         }
         for f, r in open_rows
