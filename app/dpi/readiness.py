@@ -5,7 +5,7 @@ its dự án, a protected default branch, the standard labels."""
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.collector.gitlab.client import GitLabError
@@ -29,10 +29,16 @@ def _share(part: int, whole: int) -> float | None:
     return round(100.0 * part / whole, 1) if whole else None
 
 
+def _per_repo(session: Session, query: Any) -> dict[int, Any]:
+    """{project id: value} of a `select(project_id, aggregate) … group_by(project_id)`."""
+    return {int(pid): value for pid, value in session.execute(query) if pid is not None}
+
+
 def repo_readiness(session: Session, since: datetime) -> dict[str, Any]:
     repos = session.scalars(
         select(Project).where(Project.tracked.is_(True)).order_by(Project.path_with_namespace)
     ).all()
+    ids = [r.id for r in repos] or [0]
     bps = {b.id: b.name for b in session.scalars(select(BusinessProject))}
     with_sets = set(session.scalars(select(ProjectCriteriaSet.business_project_id).distinct()))
     in_mr = select(MrCommit.sha).where(MrCommit.sha == Commit.sha)
@@ -42,118 +48,81 @@ def repo_readiness(session: Session, since: datetime) -> dict[str, Any]:
             MergeRequest.squash_commit_sha == Commit.sha,
         )
     )
+    recent = and_(
+        Commit.project_id.in_(ids), Commit.is_merge.is_not(True), Commit.authored_at >= since
+    )
+    commits = _per_repo(
+        session,
+        select(
+            Commit.project_id,
+            func.count(),
+        )
+        .where(recent)
+        .group_by(Commit.project_id),
+    )
+    through = _per_repo(
+        session,
+        select(Commit.project_id, func.count())
+        .where(recent, exists(in_mr) | exists(made_by_mr))
+        .group_by(Commit.project_id),
+    )
+    merged_rows = session.execute(
+        select(
+            MergeRequest.project_id,
+            func.count(),
+            func.count().filter(MergeRequest.tasks_total > 0),
+        )
+        .where(
+            MergeRequest.project_id.in_(ids),
+            MergeRequest.state == "merged",
+            MergeRequest.merged_at >= since,
+        )
+        .group_by(MergeRequest.project_id)
+    ).all()
+    merged = {int(p): (int(n), int(t)) for p, n, t in merged_rows if p is not None}
+    pipe_rows = session.execute(
+        select(
+            Pipeline.project_id,
+            func.count(),
+            func.count().filter(Pipeline.status == "success"),
+            func.count().filter(Pipeline.coverage.is_not(None)),
+            func.avg(Pipeline.coverage),
+        )
+        .where(Pipeline.project_id.in_(ids), Pipeline.created_at_src >= since)
+        .group_by(Pipeline.project_id)
+    ).all()
+    pipes = {int(p): (int(n), int(ok), int(cov), avg) for p, n, ok, cov, avg in pipe_rows if p}
+    issue_rows = session.execute(
+        select(
+            Issue.project_id,
+            func.count(),
+            func.count().filter(Issue.complexity_points.is_not(None)),
+        )
+        .where(Issue.project_id.in_(ids), Issue.closed_at_src >= since)
+        .group_by(Issue.project_id)
+    ).all()
+    issues = {int(p): (int(n), int(c)) for p, n, c in issue_rows if p is not None}
     rows: list[dict[str, Any]] = []
     for repo in repos:
-        commits = (
-            session.scalar(
-                select(func.count()).where(
-                    Commit.project_id == repo.id,
-                    Commit.is_merge.is_not(True),
-                    Commit.authored_at >= since,
-                )
-            )
-            or 0
-        )
-        through_mr = (
-            session.scalar(
-                select(func.count()).where(
-                    Commit.project_id == repo.id,
-                    Commit.is_merge.is_not(True),
-                    Commit.authored_at >= since,
-                    exists(in_mr) | exists(made_by_mr),
-                )
-            )
-            or 0
-        )
-        merged = (
-            session.scalar(
-                select(func.count()).where(
-                    MergeRequest.project_id == repo.id,
-                    MergeRequest.state == "merged",
-                    MergeRequest.merged_at >= since,
-                )
-            )
-            or 0
-        )
-        with_checklist = (
-            session.scalar(
-                select(func.count()).where(
-                    MergeRequest.project_id == repo.id,
-                    MergeRequest.state == "merged",
-                    MergeRequest.merged_at >= since,
-                    MergeRequest.tasks_total > 0,
-                )
-            )
-            or 0
-        )
-        pipelines = (
-            session.scalar(
-                select(func.count()).where(
-                    Pipeline.project_id == repo.id, Pipeline.created_at_src >= since
-                )
-            )
-            or 0
-        )
-        passed = (
-            session.scalar(
-                select(func.count()).where(
-                    Pipeline.project_id == repo.id,
-                    Pipeline.created_at_src >= since,
-                    Pipeline.status == "success",
-                )
-            )
-            or 0
-        )
-        covered = (
-            session.scalar(
-                select(func.count()).where(
-                    Pipeline.project_id == repo.id,
-                    Pipeline.created_at_src >= since,
-                    Pipeline.coverage.is_not(None),
-                )
-            )
-            or 0
-        )
-        avg_coverage = session.scalar(
-            select(func.avg(Pipeline.coverage)).where(
-                Pipeline.project_id == repo.id,
-                Pipeline.created_at_src >= since,
-                Pipeline.coverage.is_not(None),
-            )
-        )
-        closed = (
-            session.scalar(
-                select(func.count()).where(
-                    Issue.project_id == repo.id, Issue.closed_at_src >= since
-                )
-            )
-            or 0
-        )
-        pointed = (
-            session.scalar(
-                select(func.count()).where(
-                    Issue.project_id == repo.id,
-                    Issue.closed_at_src >= since,
-                    Issue.complexity_points.is_not(None),
-                )
-            )
-            or 0
-        )
+        n_commits = int(commits.get(repo.id, 0))
+        n_merged, n_checklist = merged.get(repo.id, (0, 0))
+        n_pipes, n_ok, n_cov, avg_coverage = pipes.get(repo.id, (0, 0, 0, None))
+        n_closed, n_pointed = issues.get(repo.id, (0, 0))
         rows.append(
             {
                 "project": {"id": repo.id, "path": repo.path_with_namespace},
                 "business_project": bps.get(repo.business_project_id or 0),
                 "criteria_assigned": repo.business_project_id in with_sets,
-                "commits": commits,
-                "through_mr_pct": _share(through_mr, commits),
-                "merged_mrs": merged,
-                "checklist_pct": _share(with_checklist, merged),
-                "pipelines": pipelines,
-                "pipeline_pass_pct": _share(passed, pipelines),
-                "coverage_pct": _share(covered, pipelines),
+                "commits": n_commits,
+                "through_mr_pct": _share(int(through.get(repo.id, 0)), n_commits),
+                "merged_mrs": n_merged,
+                "checklist_pct": _share(n_checklist, n_merged),
+                "pipelines": n_pipes,
+                "pipeline_pass_pct": _share(n_ok, n_pipes),
+                "coverage_pct": _share(n_cov, n_pipes),
                 "avg_coverage": round(float(avg_coverage), 1) if avg_coverage is not None else None,
-                "issues_closed": closed,
-                "complexity_pct": _share(pointed, closed),
+                "issues_closed": n_closed,
+                "complexity_pct": _share(n_pointed, n_closed),
             }
         )
     total = len(rows) or 1

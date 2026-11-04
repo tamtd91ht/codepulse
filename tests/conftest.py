@@ -75,3 +75,13 @@ def _no_live_push(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.notifications import inbox
 
     monkeypatch.setattr(inbox, "publisher", lambda messages: None)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_dpi_caches() -> Iterator[None]:
+    """DPI caches bots and repo baselines per process (app/dpi/facts.py): each test starts empty."""
+    from app.dpi.facts import clear_caches
+
+    clear_caches()
+    yield
+    clear_caches()

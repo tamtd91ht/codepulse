@@ -843,10 +843,20 @@ def distribution(
     if teams is not None:
         query = query.where(Team.id.in_(teams or {0}))
     out = []
-    for team in session.scalars(query.order_by(Team.name)):
+    listed = list(session.scalars(query.order_by(Team.name)))
+    members: dict[int, set[int]] = defaultdict(set)
+    for team_id, user_id in session.execute(
+        select(TeamMember.team_id, TeamMember.user_id).where(
+            TeamMember.team_id.in_([t.id for t in listed] or [0]), _in_month(m)
+        )
+    ):
         # The viewer is left out: knowing one's own score must not reveal the others'.
-        members = _team_people(session, team.id, m) - {principal.user_id}
-        cards = list(_latest_cards(session, m, members).values())
+        if int(user_id) != principal.user_id:
+            members[int(team_id)].add(int(user_id))
+    everyone = set().union(*members.values()) if members else set()
+    all_cards = _latest_cards(session, m, everyone)
+    for team in listed:
+        cards = [all_cards[u] for u in members.get(team.id, set()) if u in all_cards]
         agg = _aggregates(cards)
         hidden = agg["people"] < MIN_GROUP
         out.append(
@@ -1063,7 +1073,7 @@ def defects(
 ) -> dict[str, Any]:
     if not principal.can("dpi.defects"):
         raise HTTPException(403, "cần quyền xác nhận RCA")
-    from app.dpi.defects import suggest
+    from app.dpi.defects import Authors, suggest
     from app.models import Project
 
     query = (
@@ -1078,6 +1088,7 @@ def defects(
         query = query.where(ProdDefect.rca_status == status)
     rows = session.execute(query.order_by(Issue.created_at_src.desc()).limit(100)).all()
     in_scope = person_scope(session, principal, "dpi.defects")
+    authors = Authors(session)  # one lookup per author across the page
     users = {
         u.id: _name(u)
         for u in session.scalars(
@@ -1121,7 +1132,7 @@ def defects(
                     or in_scope is None
                     or int(s["author"]["user_id"]) in in_scope
                     else {**s, "author": None}
-                    for s in suggest(session, d, i)
+                    for s in suggest(session, d, i, authors)
                 ],
             }
             for d, i in rows

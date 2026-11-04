@@ -222,7 +222,19 @@ class Calculator:
                 "profile": profile.key,
                 "weights": profile.weights,
                 "target": profile.a1_target,
-                "metrics": {k: v["value"] for k, v in card["metrics"].items()},
+                # What each metric was computed from, not only its value: a change in the
+                # evidence (another MR, a defect) makes a new snapshot even at the same score.
+                "metrics": {
+                    k: {
+                        "value": v["value"],
+                        "detail": v.get("detail"),
+                        "evidence": sorted(
+                            f"{e.get('kind')}:{e.get('id') or e.get('ref')}"
+                            for e in v.get("evidence") or []
+                        ),
+                    }
+                    for k, v in card["metrics"].items()
+                },
                 "adjustment": float(review.adjustment or 0),
             }
         )

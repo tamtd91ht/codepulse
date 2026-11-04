@@ -5,13 +5,14 @@ label it when the monthly classification has not labelled it yet (§4.5).
 """
 
 import re
+import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from statistics import median
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy import and_, case, exists, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.dpi.labels import blocked
@@ -66,16 +67,38 @@ RULE_WORDS = re.compile(
 )
 
 
+# Per-process caches (opening a scorecard must not rescan every account or recompute a
+# repo's 90-day baseline each time). Bots: refreshed after BOT_TTL_S or when accounts are added;
+# baselines: per (repo, month), BASELINE_TTL_S.
+BOT_TTL_S = 300.0
+BASELINE_TTL_S = 3600.0
+_BOTS: dict[str, tuple[float, int, frozenset[int]]] = {}
+_BASELINES: dict[tuple[int, date], tuple[float, float]] = {}
+
+
+def clear_caches() -> None:
+    _BOTS.clear()
+    _BASELINES.clear()
+
+
 def bot_accounts(session: Session, pattern: str | None) -> set[int]:
     """Accounts that look like bots (§4.3): never counted."""
-    regex = re.compile(pattern or DEFAULT_BOT_PATTERN, re.IGNORECASE)
-    return {
+    key = pattern or DEFAULT_BOT_PATTERN
+    count = int(session.scalar(select(func.max(Account.id))) or 0)
+    cached = _BOTS.get(key)
+    now = time.monotonic()
+    if cached is not None and cached[0] > now and cached[1] == count:
+        return set(cached[2])
+    regex = re.compile(key, re.IGNORECASE)
+    found = frozenset(
         int(aid)
-        for aid, key, name in session.execute(
+        for aid, ext, name in session.execute(
             select(Account.id, Account.external_key, Account.display_name)
         )
-        if regex.search(key or "") or regex.search(name or "")
-    }
+        if regex.search(ext or "") or regex.search(name or "")
+    )
+    _BOTS[key] = (now + BOT_TTL_S, count, found)
+    return set(found)
 
 
 def classify_rule(body: str | None) -> str:
@@ -204,14 +227,26 @@ class Loader:
                 lasts[int(mr_id)] = last
         ready_at: dict[int, datetime] = {}
         notes: dict[int, list[tuple[datetime, bool, bool]]] = defaultdict(list)
+        system = MrNote.is_system.is_(True)
+        lower_body = func.lower(MrNote.body)
         for note_mr, author, is_system, body, at in self.s.execute(
             select(
                 MrNote.mr_id,
                 MrNote.author_account_id,
                 MrNote.is_system,
-                MrNote.body,
+                # Only system notes need their text (push / ready marks): comments stay unread.
+                case((system, MrNote.body), else_=literal("")),
                 MrNote.created_at_src,
-            ).where(MrNote.mr_id.in_(mr_ids), MrNote.created_at_src.is_not(None))
+            ).where(
+                MrNote.mr_id.in_(mr_ids),
+                MrNote.created_at_src.is_not(None),
+                or_(
+                    MrNote.is_system.is_not(True),
+                    lower_body.like("added %"),
+                    lower_body.contains("as ready"),
+                    lower_body.contains("as **ready**"),
+                ),
+            )
         ):
             mr = mrs.get(int(note_mr or 0))
             if mr is None:
@@ -239,6 +274,13 @@ class Loader:
 
     def baseline(self, project_id: int) -> float | None:
         """The repo's median author hours over BASELINE_DAYS up to the month's end."""
+        cached = _BASELINES.get((project_id, self.month))
+        if (
+            project_id not in self._baselines
+            and cached is not None
+            and cached[0] > time.monotonic()
+        ):
+            self._baselines[project_id] = cached[1]
         if project_id not in self._baselines:
             ids = list(
                 self.s.scalars(
@@ -252,6 +294,10 @@ class Loader:
             )
             hours = list(self._mr_hours(ids).values())
             self._baselines[project_id] = median(hours) if len(hours) >= 3 else 0.0
+            _BASELINES[(project_id, self.month)] = (
+                time.monotonic() + BASELINE_TTL_S,
+                self._baselines[project_id],
+            )
         value = self._baselines[project_id]
         return value or None
 
