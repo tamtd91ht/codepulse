@@ -3,8 +3,9 @@ is given to a dự án or by "Tính lại". Every finished review of the dự á
 set's current version; findings the model never placed go by their category. No LLM call."""
 
 import logging
+import time
 from collections.abc import Callable, Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -86,6 +87,7 @@ RESCORE_JOB = "app.workers.criteria_jobs.rescore_job"
 RESCORE_TIMEOUT = 2 * 60 * 60  # MAX_CLASSIFY_CALLS small calls fit well inside
 RESCORE_KEEP_S = 24 * 60 * 60  # the dialog shows the last run's result for a day
 CLASSIFY_TIMEOUT_S = 120.0
+PROGRESS_EVERY_S = 1.5  # the dialog polls every 2 s
 
 
 def rescore_job_id(bp_id: int) -> str:
@@ -179,7 +181,7 @@ def rescore_job(params: dict[str, Any]) -> dict[str, Any]:
     from app.api.audit import audit
     from app.db import get_redis
     from app.review.providers import build_provider
-    from app.scoring.criteria_rescore import Scope, TooMany, run
+    from app.scoring.criteria_rescore import Outcome, Scope, TooMany, run
     from app.scoring.criteria_store import project_sets
     from app.workers.knowledge_jobs import month_spend_usd
 
@@ -187,10 +189,32 @@ def rescore_job(params: dict[str, Any]) -> dict[str, Any]:
     bp_id = int(params["bp_id"])
     redis = get_redis()
 
-    def progress(done: int, total: int) -> None:
-        if job is not None:
-            job.meta["progress"] = {"done": done, "total": total}
-            job.save_meta()  # type: ignore[no-untyped-call]
+    started_at = datetime.now(UTC).isoformat()
+    saved: dict[str, Any] = {"at": 0.0, "phase": ""}
+
+    def progress(phase: str, out: Outcome) -> None:
+        """What the dashboard polls (docs/specs/22 §10): the phase, reviews scored of the total,
+        Claude's calls and cost so far, and when it last moved. Saved at most every
+        PROGRESS_EVERY_S, and always when the phase changes."""
+        now = time.monotonic()
+        if job is None:
+            return
+        if phase == saved["phase"] and now - float(saved["at"]) < PROGRESS_EVERY_S:
+            return
+        saved.update(at=now, phase=phase)
+        job.meta["progress"] = {
+            "phase": phase,
+            "done": out.scored,
+            "total": out.reviews,
+            "llm_calls": out.calls,
+            "failed_calls": out.failed_calls,
+            "cost_usd": round(out.cost_usd, 4),
+            "classified_findings": out.classified_findings,
+            "rereview_queued": out.rereview_queued,
+            "started_at": started_at,
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        job.save_meta()  # type: ignore[no-untyped-call]
 
     result: dict[str, Any] = {}
     try:

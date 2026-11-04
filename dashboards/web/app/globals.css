@@ -6560,6 +6560,332 @@ button.crit-info-btn:focus-visible {
   background: var(--primary);
   transition: width 0.3s ease;
 }
+.rescore-bar.mini {
+  display: inline-block;
+  width: 64px;
+  height: 6px;
+  vertical-align: middle;
+}
+.rescore-entry {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.rescore-chip {
+  height: 28px;
+  padding: 0 10px;
+  gap: 8px;
+  border-radius: 999px;
+  border-color: var(--border);
+  background: var(--info-soft);
+  color: var(--info);
+  font-size: 12px;
+  font-weight: 500;
+}
+.rescore-chip.good {
+  background: var(--good-soft);
+  color: var(--good);
+}
+.rescore-chip.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.rescore-chip.bad {
+  background: var(--bad-soft);
+  color: var(--bad-text);
+}
+.rescore-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+.rescore-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--faint);
+}
+.rescore-steps li.done {
+  color: var(--good);
+}
+.rescore-steps li.now {
+  color: var(--text);
+  font-weight: 600;
+}
+.rescore-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px 16px;
+  margin: 12px 0 0;
+}
+.rescore-stats dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.rescore-stats dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+}
 
 .chart-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .chart-legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+
+/* In-app notifications (docs/specs/24): the bell, its panel, the toasts, the history. */
+.bell {
+  position: relative;
+  display: inline-flex;
+}
+.bell-count {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: var(--on-danger);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  pointer-events: none;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.bell-panel {
+  position: fixed;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  max-height: min(560px, calc(100dvh - 24px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.bell-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.bell-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+}
+.bell-loading {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+}
+.bell-empty {
+  margin: 0;
+  padding: 24px 14px;
+  text-align: center;
+}
+.bell-foot {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: 13px;
+}
+.note-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  height: auto;
+  padding: 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text);
+  text-align: left;
+  font-weight: 400;
+  justify-content: flex-start;
+  box-shadow: none;
+}
+.note-row:hover,
+.note-row:focus-visible {
+  background: var(--surface-hover);
+  text-decoration: none;
+}
+.note-row.unread {
+  background: var(--info-soft);
+}
+.note-row.unread:hover {
+  background: var(--surface-hover);
+}
+.note-mark {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.note-mark.tone-good {
+  background: var(--good-soft);
+  color: var(--good);
+}
+.note-mark.tone-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.note-mark.tone-bad {
+  background: var(--bad-soft);
+  color: var(--bad-text);
+}
+.note-mark.tone-info {
+  background: var(--info-soft);
+  color: var(--info);
+}
+.note-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.note-title {
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.note-row.unread .note-title {
+  font-weight: 700;
+}
+.note-body {
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.note-body.clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.note-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.note-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.toasts {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 8px 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--info);
+  border-radius: var(--radius-field);
+  box-shadow: var(--shadow-lg);
+  animation: toast-in var(--duration-fast, 0.15s) var(--ease-standard, ease-out);
+}
+.toast.tone-good {
+  border-left-color: var(--good);
+}
+.toast.tone-warn {
+  border-left-color: var(--warning);
+}
+.toast.tone-bad {
+  border-left-color: var(--danger);
+}
+.toast-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  text-align: left;
+  font-weight: 400;
+  cursor: pointer;
+}
+.toast-main:hover:not(:disabled) {
+  background: none;
+}
+.toast-main:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.toast-kind {
+  color: var(--muted);
+  font-size: 12px;
+}
+.toast-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.toast-body {
+  color: var(--text-2);
+  font-size: 13px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+.inbox-filters {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.inbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.inbox-more {
+  display: flex;
+  justify-content: center;
+  padding-top: 10px;
+}
+

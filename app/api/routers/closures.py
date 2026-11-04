@@ -51,6 +51,7 @@ from app.models import (
     User,
 )
 from app.models.review import CLOSURE_OPEN
+from app.notifications import inbox
 from app.review.masking import looks_secret
 from app.review.resolve import close_finding
 from app.review.status import SEVERE
@@ -570,6 +571,7 @@ def confirm_proposal(
         severity_before=closure.severity_before,
         note=decider_note or None,
     )
+    inbox.finding_closed(session, finding, closure, principal.user_id)
     session.commit()
     return closure
 
@@ -645,6 +647,8 @@ def close_by_admin(
         commits=body.commits,
         outcome=body.outcome if not body.commits else "fixed",
     )
+    session.refresh(finding)
+    inbox.finding_closed(session, finding, closure, principal.user_id)
     session.commit()
     return closure
 

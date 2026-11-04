@@ -25,6 +25,7 @@ from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.models import FindingClosure, FindingDispute, Review, ReviewFinding, User
 from app.models.review import CLOSURE_OPEN
+from app.notifications import inbox
 from app.scoring.rescore import rescore_review
 from app.scoring.verdict import assess
 from app.workers.dispute_jobs import running as ai_running
@@ -104,7 +105,11 @@ def _sees(session: Session, principal: Principal, dispute: FindingDispute) -> bo
 
 @router.post("/findings/{finding_id}/dispute", response_model=DisputeOut, status_code=201)
 def raise_dispute(
-    finding_id: int, body: DisputeIn, principal: RaisePrincipal, session: SessionDep
+    finding_id: int,
+    body: DisputeIn,
+    principal: RaisePrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> FindingDispute:
     finding = session.get(ReviewFinding, finding_id)
     if finding is None:
@@ -124,6 +129,7 @@ def raise_dispute(
     session.add(dispute)
     session.flush()
     audit(session, principal.user_id, "dispute.raise", f"finding:{finding.id}")
+    inbox.dispute_raised(session, dispute, settings)
     session.commit()
     return dispute
 
@@ -327,5 +333,6 @@ def decide(
         decision=body.decision,
         finding_id=finding.id,
     )
+    inbox.dispute_decided(session, dispute)
     session.commit()
     return dispute

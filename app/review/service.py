@@ -37,6 +37,7 @@ from app.models import (
     User,
 )
 from app.models.review import CHANGE_TIME_UNKNOWN
+from app.notifications import inbox
 from app.review import claude_kit, comment, knowledge
 from app.review.agent import (
     agent_findings,
@@ -303,7 +304,8 @@ class ReviewService:
             supersede_mr_reviews(self._session, project, mr.iid, head_sha)
             # A re-judgment of the same head is not a fix: only a new push can fix findings.
             if review.round == 1:
-                mark_fixed_findings(self._session, mr.id, result.id)
+                fixed = mark_fixed_findings(self._session, mr.id, result.id)
+                inbox.findings_closed_by_review(self._session, result, fixed)
             if post:
                 findings = list(
                     self._session.scalars(
@@ -444,6 +446,7 @@ class ReviewService:
                         )
                     ):
                         closed.append(finding.id)
+                inbox.findings_closed_by_review(self._session, review, closed)
                 review.basis = {
                     **(review.basis or {}),
                     "auto_close": {

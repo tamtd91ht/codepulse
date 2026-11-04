@@ -135,6 +135,12 @@ export default function GuidePage() {
             Thấy finding sai: bấm <strong>Khiếu nại</strong> trên finding đó, ghi lý do và gửi. Theo dõi kết quả ở
             trang <strong>Khiếu nại</strong>.
           </li>
+          <li>
+            <strong>Chuông thông báo</strong> (chân thanh bên, hoặc thanh trên trên điện thoại) báo ngay khi review của
+            bạn xong, finding được đóng, khiếu nại của bạn được xử lý, và với lead / admin: khi có khiếu nại mới cần
+            duyệt. Thông báo mới hiện thêm một toast ở góc trên phải; lịch sử 180 ngày ở trang{" "}
+            <Link href="/notifications">Thông báo</Link>.
+          </li>
         </ol>
         <p className="muted">
           Nếu repo bật tính năng này, CodePulse đăng một comment tổng hợp lên MR và cập nhật mỗi lần bạn push. Mỗi

@@ -18,6 +18,7 @@ from app.config import Settings, get_settings
 from app.crypto import secret_box
 from app.db import get_redis, get_sessionmaker
 from app.models import Commit, Connection, MergeRequest, Project, Review
+from app.notifications import inbox
 from app.notifications.jobs import enqueue_review_notifications
 from app.review.checkout import checkout
 from app.review.discover import discover
@@ -278,7 +279,33 @@ def _noting_failure(
         yield
     except Exception as exc:
         _note_failure(settings, project_id, trigger, requested_by, exc, sha=sha, iid=iid)
+        if REVIEW_REPORTED in getattr(exc, "__notes__", ()) and _last_attempt():
+            _inbox_crashed(project_id, sha, iid)
         raise
+
+
+def _latest_review(session: Session, project_id: int, sha: str, iid: int | None) -> Review | None:
+    query = select(Review).where(Review.reviewed_sha == sha)
+    if iid is not None:
+        mr_ids = select(MergeRequest.id).where(
+            MergeRequest.project_id == project_id, MergeRequest.iid == iid
+        )
+        query = query.where(Review.target_type == "mr", Review.mr_id.in_(mr_ids))
+    else:
+        query = query.where(Review.target_type == "commit", Review.commit_sha == sha)
+    return session.scalars(query.order_by(Review.id.desc()).limit(1)).first()
+
+
+def _inbox_crashed(project_id: int, sha: str, iid: int | None) -> None:
+    """A review that started and broke (marked failed by the service, then re-raised): no
+    `after` ran, so who asked for it hears here, once RQ will not try again."""
+    try:
+        with get_sessionmaker()() as session, session.begin():
+            review = _latest_review(session, project_id, sha, iid)
+            if review is not None and review.status == "failed":
+                inbox.review_finished(session, review)
+    except Exception:
+        log.exception("in-app failure notification failed")
 
 
 def _note_failure(
@@ -348,20 +375,13 @@ def _give_up(
             project = session.get(Project, project_id)
             if project is None:
                 return
-            query = select(Review).where(Review.reviewed_sha == sha)
-            if iid is not None:
-                mr_ids = select(MergeRequest.id).where(
-                    MergeRequest.project_id == project_id, MergeRequest.iid == iid
-                )
-                query = query.where(Review.target_type == "mr", Review.mr_id.in_(mr_ids))
-            else:
-                query = query.where(Review.target_type == "commit", Review.commit_sha == sha)
-            review = session.scalars(query.order_by(Review.id.desc()).limit(1)).first()
+            review = _latest_review(session, project_id, sha, iid)
             if review is None or review.status == "running":
                 return
             if review.status == "queued":
                 review.status, review.error = status, reason[:500]
                 review.finished_at = datetime.now(UTC)
+                inbox.review_finished(session, review)  # who asked hears why it did not run
                 session.commit()
             log.info("asked review given up", extra={"review_id": review.id, "reason": reason})
             RedisProgress(progress_redis(str(settings.redis_url))).note_ended(
@@ -388,10 +408,24 @@ def _notify(finished: list[Review]) -> None:
     """After the review transaction committed: queue the notification webhooks, if any."""
     if not finished:
         return
+    _inbox(finished)
     with get_sessionmaker()() as session, session.begin():
         queue = Queue("default", connection=get_redis())
         for review in finished:
             enqueue_review_notifications(session, queue, review)
+
+
+def _inbox(finished: list[Review]) -> None:
+    """The bell of the author and of who asked (docs/specs/24), in a transaction of its own,
+    before the webhooks (Redis down there does not lose it); it never fails the job."""
+    try:
+        with get_sessionmaker()() as session, session.begin():
+            for done in finished:
+                review = session.get(Review, done.id)
+                if review is not None:
+                    inbox.review_finished(session, review)
+    except Exception:
+        log.exception("in-app review notification failed")
 
 
 def _ensure_knowledge(project_id: int, settings: Settings) -> None:

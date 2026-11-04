@@ -372,7 +372,7 @@ def run(
     over_budget: Callable[[float], bool],
     rereview: Callable[[Review], bool] | None,
     on_batch: Callable[[float, int], None] = lambda cost, calls: None,
-    progress: Callable[[int, int], None] = lambda done, total: None,
+    progress: Callable[[str, "Outcome"], None] = lambda phase, out: None,
     weights_override: Mapping[str, float] | None = None,
     min_confidence_unverified: float = MIN_CONFIDENCE_UNVERIFIED,
     batch: int = 100,
@@ -380,9 +380,12 @@ def run(
     """Rescore every review of `scope` under `versions`; with `provider`, place the unplaced
     findings first. `over_budget(cost not yet recorded)` is asked before every call; `on_batch(
     cost, calls)` records a batch's spend in the batch's own transaction (a job that dies later
-    has still paid it). With `rereview`, the thin reviews are handed to it once."""
+    has still paid it). With `rereview`, the thin reviews are handed to it once.
+    `progress(phase, outcome so far)` is told at each step (phase: scoring | classifying |
+    saving | finished); the caller decides how often to publish it."""
     reviews = reviews_of(session, scope)
     out = Outcome(reviews=len(reviews))
+    progress("scoring", out)
     calling = provider is not None
     failures = 0
     for start in range(0, len(reviews), batch):
@@ -400,6 +403,7 @@ def run(
                     if over_budget(batch_cost):
                         out.budget_stopped, calling = True, False
                         break
+                    progress("classifying", out)
                     try:
                         placed, call = classify(provider, version, loose)  # type: ignore[arg-type]
                     except LLMError as exc:
@@ -443,10 +447,12 @@ def run(
                     out.rereview_queued += 1
                 else:
                     out.rereview_skipped += 1
+            progress("scoring", out)
+        progress("saving", out)
         if batch_cost or batch_calls:
             on_batch(batch_cost, batch_calls)
         session.commit()
-        progress(min(start + batch, len(reviews)), len(reviews))
+    progress("finished", out)
     return out
 
 

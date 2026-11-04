@@ -180,6 +180,11 @@ Mỗi giai đoạn: lint, mypy, toàn bộ test, build frontend; commit và push
   - Job `rescore_job` chạy trên hàng `reviews` (việc LLM, không chặn sync ở hàng `default`).
   - Mỗi dự án một lượt một lúc: khoá Redis `SET NX` lấy khi bấm, job nhả khi xong; đang chạy thì trả 409.
   - Kết quả giữ 1 ngày; lỗi thì trả về dòng lỗi cuối.
+- **Tiến trình** (người dùng 2026-11-04: "cần show tiến trình để biết có chạy hay không, tiến độ ra sao"):
+  - Job ghi tiến độ vào meta của job RQ **sau từng review và trước từng lượt gọi Claude** (tối đa mỗi 1,5 giây, luôn ghi khi đổi pha): pha (`scoring` / `classifying` / `saving` / `finished`), số review đã chấm / tổng, lượt gọi Claude, lượt lỗi, chi phí, số finding đã xếp, số review lại đã xếp hàng, lúc bắt đầu, lúc cập nhật gần nhất.
+  - `GET …/criteria-rescore` trả thêm: vị trí trong hàng đợi `reviews` khi đang chờ, `stale` (đã chạy mà 5 phút không có bước nào: worker có thể đã dừng), giờ máy chủ (để tính thời gian đã chạy / còn lại không lệch đồng hồ).
+  - **Cạnh nút "Chấm lại điểm"** luôn có một nhãn trạng thái (dù hộp thoại đóng): đang chờ (n việc phía trước), đang chấm `x/y review · %` kèm thanh nhỏ, "không thấy tiến triển", lỗi, hoặc "đã chấm lại N review · giờ xong". Bấm nhãn mở thẳng phần tiến độ.
+  - **Hộp thoại, bước Tiến độ**: các bước (Chờ worker → pha hiện tại → Xong), thanh %, đã chạy, còn lại ước tính (theo tốc độ, khi đã xong ≥ 10%), lượt gọi Claude và chi phí, finding đã xếp, review lại đã xếp hàng, "cập nhật … trước"; cảnh báo khi `stale`. Xong thì hiện kết quả và nút "Chấm lại lượt mới".
   - Commit theo lô 100 review, tiến độ ở `job.meta`; hộp thoại hỏi lại mỗi 2 giây, đóng đi job vẫn chạy.
   - Kết quả: số review đã chấm, số finding Claude đã xếp, số lượt gọi và chi phí, có dừng vì ngân sách không, số review đã xếp hàng chạy lại / bỏ qua.
   - Audit: `criteria.rescore` (lúc bấm), `criteria.rescore.done`.

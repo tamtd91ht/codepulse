@@ -152,6 +152,66 @@ def test_run_places_findings_rescores_and_rereviews_the_thin(
     assert again.unplaced == 0 and again.reviews_to_classify == 0
 
 
+def test_run_reports_each_step_for_the_progress_bar(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    setup(client, world, as_user, db_session)
+    versions = project_sets(db_session, bp(world))
+    steps: list[tuple[str, int, int, int]] = []
+    run(
+        db_session,
+        Scope(bp(world)),
+        versions,
+        provider=FakeLLMProvider(responder=placer, cost_usd=0.02),
+        over_budget=lambda spent: False,
+        rereview=None,
+        progress=lambda phase, out: steps.append((phase, out.scored, out.reviews, out.calls)),
+    )
+    assert steps[0] == ("scoring", 0, 2, 0)  # before any work: the total is known
+    assert any(phase == "classifying" for phase, *_ in steps)
+    assert steps[-2:] == [("saving", 2, 2, 1), ("finished", 2, 2, 1)]
+    scored = [done for phase, done, _, _ in steps if phase == "scoring"]
+    assert scored == sorted(scored) and scored[-1] == 2  # moves review by review
+
+
+class FakeJob:
+    enqueued_at = ended_at = None
+    exc_info = None
+
+    def __init__(self, state: str, progress: dict[str, Any]) -> None:
+        self.state, self.meta = state, {"progress": progress}
+
+    def get_status(self, refresh: bool = True) -> str:
+        return self.state
+
+    def get_meta(self, refresh: bool = True) -> dict[str, Any]:
+        return self.meta
+
+    def get_position(self) -> int:
+        return 3
+
+
+def test_status_says_how_far_a_run_is(
+    client: TestClient, world: World, as_user: Any, queue: FakeQueue
+) -> None:
+    url = f"{API}/business-projects/{bp(world)}/criteria-rescore"
+    admin = as_user(world.admin)
+    old = {
+        "phase": "classifying",
+        "done": 4,
+        "total": 10,
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    }
+    queue.fetch_job = lambda job_id: FakeJob("started", old)  # type: ignore[attr-defined]
+    body = client.get(url, headers=admin).json()
+    assert body["progress"]["done"] == 4 and body["stale"] is True
+    fresh = {**old, "updated_at": datetime.now(UTC).isoformat()}
+    queue.fetch_job = lambda job_id: FakeJob("started", fresh)  # type: ignore[attr-defined]
+    assert client.get(url, headers=admin).json()["stale"] is False
+    queue.fetch_job = lambda job_id: FakeJob("queued", {})  # type: ignore[attr-defined]
+    assert client.get(url, headers=admin).json()["queue_position"] == 3
+
+
 def test_the_budget_stops_the_calls_not_the_scores(
     client: TestClient, world: World, as_user: Any, db_session: Session
 ) -> None:

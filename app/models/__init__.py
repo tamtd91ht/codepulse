@@ -23,7 +23,7 @@ from app.models.evidence import EvidenceItem, EvidencePack
 from app.models.identity import Account, Team, TeamMember, User
 from app.models.knowledge import ReviewKnowledge, ReviewKnowledgeEdit
 from app.models.metrics import MetricsTeamPeriod, MetricsUserPeriod
-from app.models.notifications import NotificationWebhook
+from app.models.notifications import NotificationWebhook, UserNotification
 from app.models.permissions import PermissionSet, PermissionSetItem, UserPermissionSet
 from app.models.review import FindingClosure, FindingDispute, Review, ReviewFinding
 from app.models.secrets import AppSetting, StoredSecret
@@ -74,5 +74,6 @@ __all__ = [
     "TelegramBot",
     "TelegramRequest",
     "User",
+    "UserNotification",
     "UserPermissionSet",
 ]

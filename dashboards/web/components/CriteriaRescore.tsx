@@ -38,7 +38,14 @@ interface Preview {
 
 interface RunStatus {
   status: "none" | "queued" | "started" | "finished" | "failed" | "deferred" | "scheduled" | "canceled" | "stopped";
-  progress?: { done: number; total: number } | null;
+  progress?: RunProgress | null;
+  /** Jobs ahead of it on the reviews queue (while queued). */
+  queue_position?: number | null;
+  /** Started, but no step for 5 minutes: the worker may have stopped. */
+  stale?: boolean;
+  server_time?: string;
+  enqueued_at?: string | null;
+  ended_at?: string | null;
   result?: {
     reviews: number;
     scored: number;
@@ -59,6 +66,44 @@ interface RunStatus {
 const RUNNING = new Set(["queued", "started", "deferred", "scheduled"]);
 type Step = "filters" | "confirm" | "progress";
 
+interface RunProgress {
+  phase?: "scoring" | "classifying" | "saving" | "finished";
+  done: number;
+  total: number;
+  llm_calls?: number;
+  failed_calls?: number;
+  cost_usd?: number;
+  classified_findings?: number;
+  rereview_queued?: number;
+  started_at?: string;
+  updated_at?: string;
+}
+
+const PHASE: Record<NonNullable<RunProgress["phase"]>, string> = {
+  scoring: "Đang chấm điểm",
+  classifying: "Claude đang xếp finding vào thành phần",
+  saving: "Đang lưu một lô (100 review)",
+  finished: "Đang hoàn tất",
+};
+
+const n = (v: number) => v.toLocaleString("vi-VN");
+
+/** "2 phút 05 giây" from seconds. */
+function duration(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s} giây`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} phút ${String(s % 60).padStart(2, "0")} giây`;
+  return `${Math.floor(m / 60)} giờ ${String(m % 60).padStart(2, "0")} phút`;
+}
+
+/** Seconds between two ISO times (the server's clock on both sides: no skew). */
+function between(from?: string | null, to?: string | null): number | null {
+  if (!from || !to) return null;
+  const d = (new Date(to).getTime() - new Date(from).getTime()) / 1000;
+  return Number.isFinite(d) ? d : null;
+}
+
 /**
  * "Chấm lại điểm" of one dự án: recompute the criteria scores of finished reviews from the
  * findings they already have, under the sets' current versions. Filters first, then a dry run
@@ -67,7 +112,8 @@ type Step = "filters" | "confirm" | "progress";
  * reviewed again for real (optional, priced like any review).
  */
 export function CriteriaRescore({ projectId, projectName, sets }: { projectId: number; projectName: string; sets: ProjectCriteriaSet[] }) {
-  const [open, setOpen] = useState(false);
+  // Which step the dialog opens on: the chip shows the last run, the button starts a new one.
+  const [open, setOpen] = useState<Step | null>(null);
   const base = `/business-projects/${projectId}/criteria-rescore`;
   const status = useApi<RunStatus>(base, {
     refreshInterval: (latest) => (latest && RUNNING.has(latest.status) ? 2000 : 0),
@@ -75,10 +121,13 @@ export function CriteriaRescore({ projectId, projectName, sets }: { projectId: n
   const running = status.data ? RUNNING.has(status.data.status) : false;
   return (
     <>
-      <button type="button" className="sm" onClick={() => setOpen(true)} disabled={!sets.length} title={sets.length ? undefined : "Gán ít nhất một bộ tiêu chí trước"}>
-        <Icon name="sync" size={14} /> {running ? "Đang chấm lại…" : "Chấm lại điểm…"}
-      </button>
-      {open && (
+      <span className="rescore-entry">
+        <button type="button" className="sm" onClick={() => setOpen("filters")} disabled={!sets.length} title={sets.length ? undefined : "Gán ít nhất một bộ tiêu chí trước"}>
+          <Icon name="sync" size={14} /> {running ? "Đang chấm lại…" : "Chấm lại điểm…"}
+        </button>
+        <RunChip status={status.data} onOpen={() => setOpen("progress")} />
+      </span>
+      {open !== null && (
         <RescoreDialog
           base={base}
           projectId={projectId}
@@ -86,7 +135,8 @@ export function CriteriaRescore({ projectId, projectName, sets }: { projectId: n
           sets={sets}
           status={status.data}
           onStarted={() => void status.mutate()}
-          onClose={() => setOpen(false)}
+          initialStep={open}
+          onClose={() => setOpen(null)}
         />
       )}
     </>
@@ -101,6 +151,7 @@ function RescoreDialog({
   status,
   onStarted,
   onClose,
+  initialStep,
 }: {
   base: string;
   projectId: number;
@@ -109,9 +160,10 @@ function RescoreDialog({
   status?: RunStatus;
   onStarted: () => void;
   onClose: () => void;
+  initialStep: Step;
 }) {
   const running = status ? RUNNING.has(status.status) : false;
-  const [step, setStep] = useState<Step>(running ? "progress" : "filters");
+  const [step, setStep] = useState<Step>(running ? "progress" : initialStep);
   const [setIds, setSetIds] = useState<number[]>(sets.map((s) => s.set_id));
   const [repo, setRepo] = useState("");
   const [people, setPeople] = useState<number[]>([]);
@@ -183,9 +235,16 @@ function RescoreDialog({
         </button>
       </>
     ) : (
-      <button type="button" className="primary" onClick={onClose}>
-        Đóng
-      </button>
+      <>
+        {!running && (
+          <button type="button" className="ghost" onClick={() => setStep("filters")}>
+            Chấm lại lượt mới
+          </button>
+        )}
+        <button type="button" className="primary" onClick={onClose}>
+          Đóng
+        </button>
+      </>
     );
 
   return (
@@ -347,20 +406,130 @@ function RescoreDialog({
   );
 }
 
+/** Beside the button, dialog closed or not: is a run going, and how far (docs/specs/22 §10). */
+function RunChip({ status, onOpen }: { status?: RunStatus; onOpen: () => void }) {
+  if (!status || status.status === "none") return null;
+  const p = status.progress;
+  const pct = p && p.total ? Math.round((100 * p.done) / p.total) : 0;
+  let text: string;
+  let tone = "";
+  if (status.status === "queued") {
+    text = status.queue_position ? `Đang chờ hàng đợi · ${status.queue_position} việc phía trước` : "Đang chờ worker nhận việc";
+  } else if (RUNNING.has(status.status)) {
+    text = p ? `Đang chấm lại ${n(p.done)}/${n(p.total)} review · ${pct}%` : "Đang bắt đầu…";
+    if (status.stale) {
+      text = `Không thấy tiến triển · ${n(p?.done ?? 0)}/${n(p?.total ?? 0)}`;
+      tone = " warn";
+    }
+  } else if (status.status === "failed" || status.result?.error) {
+    text = "Lượt chấm lại gần nhất bị lỗi";
+    tone = " bad";
+  } else if (status.status === "finished" && status.result) {
+    const at = status.ended_at ? new Date(status.ended_at).toLocaleString("vi-VN", { hour12: false }) : "";
+    text = `Đã chấm lại ${n(status.result.scored)} review${at ? ` · ${at}` : ""}`;
+    tone = " good";
+  } else {
+    return null;
+  }
+  const live = RUNNING.has(status.status);
+  return (
+    <button type="button" className={`rescore-chip${tone}`} onClick={onOpen} title="Mở để xem chi tiết tiến độ">
+      {live && !status.stale && <span className="spinner inline" aria-hidden="true" />}
+      <span aria-live="polite">{text}</span>
+      {live && status.status !== "queued" && (
+        <span className="rescore-bar mini" aria-hidden="true">
+          <span style={{ width: `${pct}%` }} />
+        </span>
+      )}
+    </button>
+  );
+}
+
 function Progress({ status }: { status?: RunStatus }) {
-  if (!status || status.status === "none") return <p className="muted">Đang chờ worker nhận việc…</p>;
+  if (!status || status.status === "none") return <p className="muted">Đang gửi việc cho worker…</p>;
   const p = status.progress;
   const pct = p && p.total ? Math.round((100 * p.done) / p.total) : 0;
   if (RUNNING.has(status.status)) {
+    const queued = status.status === "queued";
+    const elapsed = between(p?.started_at, status.server_time);
+    const quiet = between(p?.updated_at, status.server_time);
+    // Remaining time from the pace so far; only once a tenth is done (the start is uneven).
+    const eta = p && elapsed && p.done >= Math.max(1, p.total / 10) && p.done < p.total ? (elapsed / p.done) * (p.total - p.done) : null;
+    const steps: { key: string; label: string; state: "done" | "now" | "todo" }[] = [
+      { key: "queued", label: "Chờ worker", state: queued ? "now" : "done" },
+      {
+        key: "run",
+        label: p?.phase ? PHASE[p.phase] : "Chấm điểm",
+        state: queued ? "todo" : p?.phase === "finished" ? "done" : "now",
+      },
+      { key: "done", label: "Xong", state: p?.phase === "finished" ? "now" : "todo" },
+    ];
     return (
-      <div>
-        <p style={{ margin: "0 0 8px" }}>
-          {status.status === "queued" ? "Đang chờ trong hàng đợi…" : `Đang chấm lại: ${p ? `${p.done} / ${p.total} review` : "bắt đầu…"}`}
-        </p>
-        <div className="rescore-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
-          <span style={{ width: `${pct}%` }} />
-        </div>
-        <p className="muted small">Có thể đóng hộp thoại; việc vẫn chạy nền. Mở lại để xem tiến độ.</p>
+      <div className="rescore-progress">
+        <ol className="rescore-steps" aria-label="Các bước">
+          {steps.map((s) => (
+            <li key={s.key} className={s.state} aria-current={s.state === "now" ? "step" : undefined}>
+              {s.state === "done" ? <Icon name="check" size={12} /> : s.state === "now" ? <span className="spinner inline" aria-hidden="true" /> : null}
+              {s.label}
+            </li>
+          ))}
+        </ol>
+        {queued ? (
+          <p style={{ margin: "0 0 8px" }}>
+            Đang chờ trong hàng đợi review
+            {status.queue_position ? ` (${status.queue_position} việc phía trước, chạy theo thứ tự đến trước)` : ""}…
+          </p>
+        ) : (
+          <>
+            <p style={{ margin: "0 0 8px" }}>
+              <strong>
+                {p ? `${n(p.done)} / ${n(p.total)} review` : "Đang bắt đầu…"} · {pct}%
+              </strong>
+            </p>
+            <div className="rescore-bar" role="progressbar" aria-label="Tiến độ chấm lại" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+              <span style={{ width: `${pct}%` }} />
+            </div>
+            {p && (
+              <dl className="rescore-stats">
+                <div>
+                  <dt>Đã chạy</dt>
+                  <dd>{elapsed !== null ? duration(elapsed) : "—"}</dd>
+                </div>
+                <div>
+                  <dt>Còn lại (ước tính)</dt>
+                  <dd>{eta !== null ? `~${duration(eta)}` : "—"}</dd>
+                </div>
+                <div>
+                  <dt>Claude</dt>
+                  <dd>
+                    {n(p.llm_calls ?? 0)} lượt · {(p.cost_usd ?? 0).toFixed(2)} USD
+                    {p.failed_calls ? <span className="tone-bad-text"> · {p.failed_calls} lỗi</span> : null}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Finding đã xếp</dt>
+                  <dd>{n(p.classified_findings ?? 0)}</dd>
+                </div>
+                {(p.rereview_queued ?? 0) > 0 && (
+                  <div>
+                    <dt>Review lại</dt>
+                    <dd>{n(p.rereview_queued ?? 0)} đã xếp hàng</dd>
+                  </div>
+                )}
+              </dl>
+            )}
+            <p className="muted small" style={{ margin: "8px 0 0" }}>
+              {quiet !== null ? `Cập nhật ${duration(quiet)} trước. ` : ""}
+              Có thể đóng hộp thoại; việc vẫn chạy nền và tiến độ hiện cạnh nút "Chấm lại điểm".
+            </p>
+          </>
+        )}
+        {status.stale && (
+          <Alert tone="warning">
+            Không thấy tiến triển {quiet !== null ? `trong ${duration(quiet)}` : "một lúc"}: worker có thể đã dừng (khởi động lại?).
+            Phần đã lưu theo lô vẫn được giữ; nếu vẫn đứng yên, đợi lượt này hết thời gian rồi chạy lại.
+          </Alert>
+        )}
       </div>
     );
   }

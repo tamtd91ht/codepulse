@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { Icon, type IconName, IconButton } from "@/components/icons";
+import { InboxProvider, NotificationBell } from "@/components/Inbox";
 import { ReviewActivity } from "@/components/ReviewActivity";
 import { Stetho } from "@/components/Stetho";
 import { RAIL_KEY, ThemeToggle } from "@/components/theme";
@@ -142,6 +143,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   return (
+    <InboxProvider enabled={!!me}>
     <div className={`shell${rail ? " rail" : ""}${drawer ? " drawer-open" : ""}${assistant ? " has-stetho" : ""}`}>
       <a href="#main" className="skip-link">
         Bỏ qua điều hướng
@@ -189,6 +191,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           )}
           <div className="sidebar-actions">
+            {me && <NotificationBell className={rail ? "tip-right" : undefined} />}
             <ThemeToggle className={rail ? "tip-right" : undefined} />
             <IconButton
               icon="panelLeft"
@@ -240,6 +243,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span className="brand-text">CodePulse</span>
           </Link>
           <span className="spacer" />
+          {me && <NotificationBell />}
           <ThemeToggle />
         </header>
 
@@ -255,5 +259,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       {me && <ReviewActivity />}
       {assistant && <Stetho />}
     </div>
+    </InboxProvider>
   );
 }

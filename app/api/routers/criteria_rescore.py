@@ -5,7 +5,7 @@ the dự án's sets; nothing is reviewed again unless the person asks to re-revi
 """
 
 import logging
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -41,6 +41,7 @@ QueueDep = Annotated[Enqueuer, Depends(get_queue)]
 # Who may give sets to a dự án may also redo its scores (docs/specs/22 §5).
 AssignPrincipal = Annotated[Principal, require("criteria.assign")]
 MAX_DAYS = 366
+STALE_S = 5 * 60  # a Claude call (120 s, one retry) never takes this long
 
 
 class RescoreIn(BaseModel):
@@ -210,13 +211,30 @@ def status(
         return {"status": "none"}
     state = job.get_status(refresh=True)
     meta = job.get_meta(refresh=True) if hasattr(job, "get_meta") else job.meta
+    status_name = str(getattr(state, "value", state))
+    progress = (meta or {}).get("progress")
+    position = None
+    if status_name == "queued":
+        try:  # jobs ahead of it on the reviews queue (reviews run first-come, first-served)
+            position = job.get_position()
+        except Exception:
+            position = None
+    stale = False
+    if status_name == "started" and isinstance(progress, dict) and progress.get("updated_at"):
+        moved = datetime.fromisoformat(str(progress["updated_at"]))
+        stale = (datetime.now(UTC) - moved).total_seconds() > STALE_S
     return {
-        "status": str(getattr(state, "value", state)),
-        "progress": (meta or {}).get("progress"),
+        "status": status_name,
+        "progress": progress,
+        "queue_position": position,
+        # Started but not moved for STALE_S: the worker may have died (the lock is freed when
+        # the job's timeout ends); the dialog says so instead of a bar that never moves.
+        "stale": stale,
+        "server_time": datetime.now(UTC).isoformat(),
         "result": (meta or {}).get("result"),
         "enqueued_at": job.enqueued_at.isoformat() if job.enqueued_at else None,
         "ended_at": job.ended_at.isoformat() if job.ended_at else None,
         "error": (str(job.exc_info or "").strip().splitlines() or [""])[-1][:300]
-        if str(getattr(state, "value", state)) == "failed"
+        if status_name == "failed"
         else None,
     }

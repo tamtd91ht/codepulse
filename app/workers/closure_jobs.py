@@ -39,6 +39,7 @@ from app.models import (
     ReviewFinding,
 )
 from app.models.review import CHANGE_TIME_UNKNOWN
+from app.notifications import inbox
 from app.review.masking import is_config, mask_code, mask_config
 from app.review.prepare import prepare
 from app.review.providers import LLMProvider, build_provider
@@ -384,6 +385,8 @@ def run_close_request(
         if closed != "closed":
             return "superseded"
         if mark_fixed(session, finding, outcome.closes_as or "fixed"):
+            session.refresh(closure)
+            inbox.finding_closed(session, finding, closure, closure.decided_by)
             session.commit()
             return "closed"
         session.rollback()

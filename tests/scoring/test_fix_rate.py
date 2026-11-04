@@ -65,7 +65,7 @@ def test_fixed_findings_and_fix_rate(db_session: Session) -> None:
     )
     latest = add_review(s, user, mr, "v2", "done", ("critical", "sqli"))
 
-    assert mark_fixed_findings(s, mr.id, latest.id) == 2
+    assert len(mark_fixed_findings(s, mr.id, latest.id)) == 2
     statuses = {
         f.fingerprint: f.status
         for f in s.scalars(select(ReviewFinding).where(ReviewFinding.review_id == first.id))

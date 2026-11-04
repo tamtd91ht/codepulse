@@ -33,9 +33,9 @@ def supersede_mr_reviews(session: Session, project: Project, iid: int, head_sha:
 SEVERE = ("critical", "high")
 
 
-def mark_fixed_findings(session: Session, mr_id: int, latest_review_id: int) -> int:
+def mark_fixed_findings(session: Session, mr_id: int, latest_review_id: int) -> list[int]:
     """docs/specs/08: a critical/high finding is fixed once a later review of the same MR no
-    longer reports its fingerprint."""
+    longer reports its fingerprint. Returns the ids it fixed (their authors are told)."""
     still_present = select(ReviewFinding.fingerprint).where(
         ReviewFinding.review_id == latest_review_id, ReviewFinding.fingerprint.is_not(None)
     )
@@ -51,5 +51,7 @@ def mark_fixed_findings(session: Session, mr_id: int, latest_review_id: int) -> 
             ReviewFinding.fingerprint.not_in(still_present),
         )
         .values(status="fixed")
+        .returning(ReviewFinding.id)
+        .execution_options(synchronize_session=False)
     )
-    return int(getattr(result, "rowcount", 0) or 0)
+    return [int(i) for i in result.scalars()]

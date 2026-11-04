@@ -9,7 +9,7 @@ service. Scoped to one dự án or one repo, or to everything when both are NULL
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey
+from sqlalchemy import DateTime, ForeignKey, Index, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -42,3 +42,36 @@ class NotificationWebhook(TimestampMixin, Base):
 
     def scope(self) -> dict[str, Any]:
         return {"business_project_id": self.business_project_id, "project_id": self.project_id}
+
+
+class UserNotification(TimestampMixin, Base):
+    """In-app notification of one person (docs/specs/24): the bell, the toast and the history.
+
+    Written in the transaction of the event itself (a review saved, a finding closed, a dispute
+    raised or decided), pushed live once that transaction commits (app/notifications/inbox.py).
+    """
+
+    __tablename__ = "user_notifications"
+    __table_args__ = (
+        # The history (newest first) and the unread count of one person.
+        Index("ix_user_notifications_user_id_id", "user_id", "id"),
+        Index(
+            "ix_user_notifications_unread",
+            "user_id",
+            postgresql_where=text("read_at IS NULL"),
+        ),
+        Index("ix_user_notifications_actor_id", "actor_id"),
+        Index("ix_user_notifications_created_at", "created_at"),  # the daily retention delete
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    # review_done | review_failed | finding_closed | dispute_new | dispute_decided
+    kind: Mapped[str]
+    title: Mapped[str]
+    body: Mapped[str | None]
+    link: Mapped[str | None]  # a dashboard path, e.g. /reviews/12#finding-40
+    tone: Mapped[str] = mapped_column(server_default="info")  # info | good | warn | bad
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    ref: Mapped[str | None]  # review:12, finding:40, dispute:7
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

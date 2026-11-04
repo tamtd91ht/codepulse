@@ -1986,3 +1986,25 @@ export interface BackfillProgress {
     finished_at: string | null;
   }[];
 }
+
+/** An in-app notification (docs/specs/24): GET /inbox, and live on /inbox/stream. */
+export type NotificationKind = "review_done" | "review_failed" | "finding_closed" | "dispute_new" | "dispute_decided";
+export interface InboxNote {
+  id: number;
+  user_id: number;
+  kind: NotificationKind;
+  title: string;
+  body: string | null;
+  link: string | null;
+  tone: "info" | "good" | "warn" | "bad";
+  ref: string | null;
+  actor_id: number | null;
+  read_at: string | null;
+  created_at: string | null;
+}
+export interface InboxPage {
+  items: InboxNote[];
+  unread: number;
+  next_before: number | null;
+}
+

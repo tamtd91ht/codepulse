@@ -66,3 +66,12 @@ def _fresh_component_maps() -> Iterator[None]:
     load._AUTO_CACHE.clear()
     yield
     load._AUTO_CACHE.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_push(monkeypatch: pytest.MonkeyPatch) -> None:
+    """In-app notifications are published on Redis after a commit (app/notifications/inbox.py);
+    tests have no Redis: drop them (tests that check them swap in a list)."""
+    from app.notifications import inbox
+
+    monkeypatch.setattr(inbox, "publisher", lambda messages: None)
