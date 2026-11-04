@@ -381,11 +381,16 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
         subtitle={person.primary_email}
         avatar={<Avatar name={person.full_name} email={person.primary_email} size="lg" src={person.avatar_url} />}
         actions={
-          packs && (
-            <Link href={`/members/${person.id}/evidence`} className="button">
-              Hồ sơ tháng (1:1)
+          <>
+            <Link href={`/members/report?user=${person.id}`} className="button">
+              Báo cáo &amp; export
             </Link>
-          )
+            {packs && (
+              <Link href={`/members/${person.id}/evidence`} className="button">
+                Hồ sơ tháng (1:1)
+              </Link>
+            )}
+          </>
         }
       />
 

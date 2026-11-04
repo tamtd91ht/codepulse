@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Bar, BarChart, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
@@ -246,7 +247,14 @@ function MembersEvaluationBody() {
       <PageHeader
         eyebrow="Đánh giá"
         title="Thành viên"
-        actions={<RangePicker value={range} onChange={setRange} />}
+        actions={
+          <>
+            <RangePicker value={range} onChange={setRange} />
+            <Link href={`/members/report${rangeSearch(range)}`} className="button">
+              <Icon name="book" size={14} /> Báo cáo &amp; export
+            </Link>
+          </>
+        }
       />
 
       <div className="toolbar filters">

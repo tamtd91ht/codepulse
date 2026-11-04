@@ -159,6 +159,14 @@ export default function GuidePage() {
             trước.
           </li>
           <li>
+            <strong>Báo cáo thành viên</strong>: chọn một người, khoảng thời gian, dự án và repo. Tab{" "}
+            <strong>Tổng quan</strong> cho mức đánh giá (Tốt / Cần cải thiện / Cần hỗ trợ) kèm lý do, so với kỳ trước và
+            với mặt bằng những người bạn xem được; xu hướng, mức lỗi, loại lỗi hay gặp, repo và các review cần mở ra
+            xem. Tab <strong>Theo tiêu chí</strong> cho điểm từng thành phần của bộ tiêu chí so với mặt bằng, điểm mạnh và
+            điểm cần cải thiện. <strong>Xuất Excel</strong> tải file nhiều sheet (kể cả danh sách mọi review);{" "}
+            <strong>In / PDF</strong> in trang. Link của trang giữ nguyên bộ lọc nên gửi được cho người khác.
+          </li>
+          <li>
             <strong>Duyệt khiếu nại</strong>: chấp nhận hoặc từ chối. Bạn không thể tự duyệt khiếu nại của mình.
           </li>
           <li>Review bị lỗi hoặc bị bỏ qua có thể chạy lại ngay từ trang review.</li>

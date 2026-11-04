@@ -27,6 +27,8 @@ Tự động thu thập commit/MR từ GitLab, cho AI review từng thay đổi,
 | 15–18 | `15_TELEGRAM_BOT.md`, `16_NOTIFICATION_WEBHOOKS.md`, `17_TECHLEAD_REVIEW.md`, `18_DEEP_REVIEW.md` | Mở rộng theo yêu cầu người dùng (10/2026) | [ ] |
 | 19 | `19_REVIEW_KNOWLEDGE.md` | **Tri thức review theo dự án (biên dịch `.claude`) + luồng review v2** – thay các mục tương ứng của 06/08/17/18 | [ ] |
 | 20 | `20_ENGINEERING_INSIGHTS.md` | **Engineering Insights (luồng làm việc, tải review, rủi ro tri thức, DORA) + hồ sơ bằng chứng cá nhân** – không điểm tổng cá nhân; tách khỏi điểm review của 08 | [ ] |
+| 21–22 | `21_PERMISSIONS.md`, `22_CRITERIA_SCORING.md` | Phân quyền theo bộ quyền; bộ tiêu chí chấm điểm có trọng số | [ ] |
+| 23 | `23_MEMBER_REPORT.md` | **Báo cáo thành viên và export** (tổng quan, theo tiêu chí, Excel / in) | [ ] |
 
 ## Cách dùng với AI agent
 1. Copy toàn bộ thư mục này vào `docs/specs/` của repo mới.
