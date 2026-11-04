@@ -50,7 +50,18 @@ class Settings(BaseSettings):
 
     backfill_days: int = Field(default=90, ge=0)
     sync_interval_min: int = Field(default=30, gt=0)
-    ignore_paths: CommaList = ["*.lock", "dist/**", "vendor/**", "*.min.js", "**/generated/**"]
+    ignore_paths: CommaList = [
+        "*.lock",
+        "dist/**",
+        "vendor/**",
+        "*.min.js",
+        "**/generated/**",
+        # docs/specs/25 §4.3: generated code and lockfiles are no one's output.
+        "**/openapi/**",
+        "*.generated.*",
+        "package-lock.json",
+        "go.sum",
+    ]
     sensitive_paths: CommaList = ["**/secrets/**", ".env*", "*.pem", "*.key"]
     allowed_email_domains: CommaList = []
 
@@ -181,6 +192,10 @@ class Settings(BaseSettings):
     # Incidents (docs/specs/20 §5.3, D3): GitLab issues of type incident, or with one of
     # these labels.
     incident_labels: CommaList = ["incident"]
+    # DPI (docs/specs/25 §4.3): accounts matching this are bots, never counted.
+    bot_account_pattern: str = r"(^|[-_.])bot([-_.@]|$)|renovate|dependabot|codepulse|gitlab-ci"
+    # Use the LLM to label review comments for D1 (§4.5); off: the keyword rule only.
+    dpi_classify_comments: bool = True
 
     @field_validator(
         "ignore_paths",

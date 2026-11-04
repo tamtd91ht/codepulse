@@ -26,6 +26,8 @@ def test_scheduler_enqueues_syncs_on_the_configured_interval() -> None:
         "command-cleanup",
         "evidence-drafts",
         "insights-backfill-once",
+        "dpi-month",
+        "dpi-lock",
     }
     assert str(jobs["evidence-drafts"].trigger.timezone) == "Asia/Ho_Chi_Minh"
     assert jobs["command-cleanup"].trigger.interval.total_seconds() == 3600

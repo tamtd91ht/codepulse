@@ -8,3 +8,5 @@
 
 - Chạy command `.claude` cần code của nhiều repo cùng lúc (clone thêm repo và `--add-dir`); hiện mỗi lần chạy chỉ một repo hoặc chỉ repo `.claude` dùng chung (người dùng 2026-10-30).
 - Chạy command có MCP server (Jira, Sentry…) trên command worker: hiện `--strict-mcp-config` tắt mọi MCP.
+- DPI (spec 25): nhận GitLab Code Quality report (CodeClimate JSON) / SonarQube cho R3 và complexity delta của B4; adapter Jira cho nguồn task; blame mức dòng cho rework 21 ngày (hiện tính mức file).
+

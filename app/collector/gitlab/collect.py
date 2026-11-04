@@ -32,6 +32,10 @@ EP_DEPLOYMENT_MRS = "deployment_mrs"  # params.id, payload: list of MR iids it s
 EP_INCIDENT = "incident"  # one row per incident issue (docs/specs/20 §5.3)
 EP_INCIDENT_FIXES = "incident_fixes"  # params.iid, payload: MR iids that close it
 EP_INCIDENT_GONE = "incidents_gone"  # payload: iids that are no longer incidents
+EP_ISSUE = "issue"  # one row per issue (docs/specs/25 §4.1)
+EP_ISSUE_CLOSED_BY = "issue_closed_by"  # params.iid, payload: MR iids that close it
+EP_PIPELINE_TESTS = "pipeline_tests"  # params.id, payload: test_report_summary.total
+FINISHED_PIPELINE = frozenset({"success", "failed"})
 # GitLab label filter wildcards, never a real incident label.
 LABEL_WILDCARDS = frozenset({"any", "none"})
 
@@ -169,6 +173,15 @@ class GitLabCollector:
             if extra is None and session.get(Pipeline, pipeline_id) is not None:
                 continue  # keep the stored duration / finished_at
             store(EP_PIPELINE, {**pipeline, **(extra or {})}, id=pipeline_id)
+            if pipeline.get("status") in FINISHED_PIPELINE:
+                tests = detail(
+                    EP_PIPELINE_TESTS,
+                    partial(self._client.pipeline_test_summary, pid, pipeline_id),
+                    id=pipeline_id,
+                )
+                total = (tests or {}).get("total") if isinstance(tests, dict) else None
+                if total and total.get("count"):
+                    store(EP_PIPELINE_TESTS, total, id=pipeline_id)
         session.flush()
 
         self._collect_deployments(project, deployments_since or since, store, detail)
@@ -182,6 +195,7 @@ class GitLabCollector:
         self._collect_incidents(
             project, incidents_since or since, incident_labels, store, detail, open_iids
         )
+        self._collect_issues(project, since, store, detail)
         session.flush()
 
         log.info(
@@ -308,6 +322,35 @@ class GitLabCollector:
             )
             if fixes is not None:
                 store(EP_INCIDENT_FIXES, fixes, iid=iid)
+
+    def _collect_issues(
+        self,
+        project: Project,
+        since: datetime | None,
+        store: Callable[..., None],
+        detail: Callable[..., Any],
+    ) -> None:
+        """docs/specs/25 §4.1: every issue changed in the window (the task source of the DPI),
+        and the MRs that close each closed one. A repo with issues off has none."""
+        pid = project.external_id
+        try:
+            issues = list(self._client.issues(pid, since))
+        except GitLabError as exc:
+            if exc.status_code not in (403, 404):
+                raise
+            return
+        for issue in issues:
+            iid = int(issue["iid"])
+            store(EP_ISSUE, issue, iid=iid)
+            if issue.get("state") != "closed":
+                continue
+            closers = detail(
+                EP_ISSUE_CLOSED_BY,
+                lambda iid=iid: [int(m["iid"]) for m in self._client.issue_closed_by(pid, iid)],
+                iid=iid,
+            )
+            if closers is not None:
+                store(EP_ISSUE_CLOSED_BY, closers, iid=iid)
 
     def collect_commit(self, session: Session, project: Project, sha: str) -> list[RawGitlab]:
         """One commit (and its diff stats) into raw_gitlab, for a review of a commit the last

@@ -1,7 +1,8 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Numeric, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -53,6 +54,11 @@ class MergeRequest(TimestampMixin, Base):
     # The commit the merge created / the squashed commit (docs/specs/20 §6.2, 9.10b).
     merge_commit_sha: Mapped[str | None] = mapped_column(index=True)
     squash_commit_sha: Mapped[str | None] = mapped_column(index=True)
+    # docs/specs/25 §4.1: labels, and the description's checklist (- [ ] / - [x]) counted; the
+    # description itself is not kept.
+    labels: Mapped[list[str] | None] = mapped_column(JSONB)
+    tasks_total: Mapped[int | None]
+    tasks_done: Mapped[int | None]
 
 
 class MrCommit(TimestampMixin, Base):
@@ -84,6 +90,12 @@ class Pipeline(TimestampMixin, Base):
     duration_sec: Mapped[int | None]
     created_at_src: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at_src: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # docs/specs/25 §4.2: the coverage GitLab parsed from the jobs, and the test report summary.
+    source: Mapped[str | None]  # push|merge_request_event|schedule|...
+    coverage: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    tests_total: Mapped[int | None]
+    tests_failed: Mapped[int | None]
+    tests_skipped: Mapped[int | None]
 
 
 class CommitFile(TimestampMixin, Base):

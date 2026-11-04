@@ -211,6 +211,11 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
             AuditLog.action == "criteria.rescore.cost", AuditLog.at >= month_start
         )
     )
+    dpi_labels = session.scalar(
+        select(func.coalesce(func.sum(AuditLog.details["cost_usd"].as_float()), 0)).where(
+            AuditLog.action == "dpi.classify.cost", AuditLog.at >= month_start
+        )
+    )
     builds = 0.0
     for data in session.scalars(
         select(ReviewKnowledge.data).where(ReviewKnowledge.created_at >= month_start)
@@ -230,6 +235,7 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
         "dispute_checks_usd": round(float(dispute_checks or 0), 4),
         "component_maps_usd": round(float(component_maps or 0), 4),
         "criteria_rescore_usd": round(float(rescores or 0), 4),
+        "dpi_labels_usd": round(float(dpi_labels or 0), 4),
         "total_usd": round(
             float(reviews or 0)
             + float(commands or 0)
@@ -239,7 +245,8 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
             + float(drafts or 0)
             + float(dispute_checks or 0)
             + float(component_maps or 0)
-            + float(rescores or 0),
+            + float(rescores or 0)
+            + float(dpi_labels or 0),
             4,
         ),
     }

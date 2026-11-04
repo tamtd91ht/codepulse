@@ -272,6 +272,22 @@ class GitLabClient:
     def pipeline(self, project_id: int, pipeline_id: int) -> Any:
         return self.get(f"/projects/{project_id}/pipelines/{pipeline_id}")
 
+    def pipeline_test_summary(self, project_id: int, pipeline_id: int) -> Any:
+        """docs/specs/25 §4.2: totals of the pipeline's JUnit reports (empty when none)."""
+        return self.get(f"/projects/{project_id}/pipelines/{pipeline_id}/test_report_summary")
+
+    def protected_branches(self, project_id: int) -> Iterator[Any]:
+        return self.paginate(f"/projects/{project_id}/protected_branches")
+
+    def labels(self, project_id: int) -> Iterator[Any]:
+        return self.paginate(f"/projects/{project_id}/labels", {"include_ancestor_groups": "true"})
+
+    def create_label(self, project_id: int, name: str, color: str, description: str) -> Any:
+        return self.post(
+            f"/projects/{project_id}/labels",
+            {"name": name, "color": color, "description": description},
+        )
+
     # -- deployments (docs/specs/20 §5.2, DORA) ----------------------------------------------
 
     def environments(self, project_id: int) -> Iterator[Any]:

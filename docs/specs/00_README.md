@@ -30,6 +30,7 @@ Tự động thu thập commit/MR từ GitLab, cho AI review từng thay đổi,
 | 21–22 | `21_PERMISSIONS.md`, `22_CRITERIA_SCORING.md` | Phân quyền theo bộ quyền; bộ tiêu chí chấm điểm có trọng số | [ ] |
 | 23 | `23_MEMBER_REPORT.md` | **Báo cáo thành viên và export** (tổng quan, theo tiêu chí, Excel / in) | [ ] |
 | 24 | `24_IN_APP_NOTIFICATIONS.md` | **Thông báo trong ứng dụng**: chuông, toast realtime (SSE), lịch sử | [ ] |
+| 25 | `25_DPI_SCORECARD.md` | **Đánh giá hiệu suất Developer hàng tháng (DPI)**: 70 tự động + 30 quản lý, quy trình tháng, báo cáo R1–R6 | [ ] |
 
 ## Cách dùng với AI agent
 1. Copy toàn bộ thư mục này vào `docs/specs/` của repo mới.

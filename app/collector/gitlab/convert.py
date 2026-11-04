@@ -2,7 +2,7 @@
 never duplicate rows."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import Select, delete, func, select, update
@@ -17,22 +17,29 @@ from app.collector.gitlab.extract import (
     GlFileStat,
     GlUser,
     _files,
+    branch_issue,
     first_review_at,
     review_rounds,
 )
+from app.dpi.labels import label_fields
 from app.models import (
     Account,
     Commit,
     CommitFile,
     Deployment,
     Incident,
+    Issue,
+    IssueMrLink,
     MergeRequest,
     MrCommit,
     MrNote,
     Pipeline,
+    ProdDefect,
     Project,
     RawGitlab,
 )
+
+LINK_RANK = {"mention": 1, "branch": 2, "closes": 3}
 
 
 @dataclass
@@ -154,7 +161,7 @@ class Converter:
             additions = deletions = None
             if mr.files is not None:
                 additions, deletions, _ = _loc(mr.files, self._ignore)
-            values = {
+            values: dict[str, Any] = {
                 "project_id": self._project.id,
                 "iid": mr.iid,
                 "title": mr.title,
@@ -172,6 +179,9 @@ class Converter:
                 "head_sha": mr.head_sha,
                 "merge_commit_sha": mr.merge_commit_sha,
                 "squash_commit_sha": mr.squash_commit_sha,
+                "labels": mr.labels,
+                "tasks_total": mr.tasks_total,
+                "tasks_done": mr.tasks_done,
             }
             stmt = self._upsert(MergeRequest, values, ["project_id", "iid"])
             mr_id = self._session.execute(stmt.returning(MergeRequest.id)).scalar_one()
@@ -205,7 +215,13 @@ class Converter:
                 "duration_sec": pipeline.duration_sec,
                 "created_at_src": pipeline.created_at,
                 "finished_at_src": pipeline.finished_at,
+                "source": pipeline.source,
+                "coverage": pipeline.coverage,
             }
+            if pipeline.tests is not None:  # a run that did not ask keeps what was stored
+                values["tests_total"] = pipeline.tests["total"]
+                values["tests_failed"] = pipeline.tests["failed"]
+                values["tests_skipped"] = pipeline.tests["skipped"]
             self._session.execute(self._upsert(Pipeline, values, ["id"]))
         counts["pipelines"] = len(data.pipelines)
         self._deployments(data)
@@ -236,8 +252,92 @@ class Converter:
                 )
             )
         counts["incidents"] = len(data.incidents)
+        self._issues(data)
+        counts["issues"] = len(data.issues)
         self._session.flush()
         return result
+
+    def _issues(self, data: Extracted) -> None:
+        """docs/specs/25 §4.1: issues with their labels read (type, complexity, prod-bug), then
+        the issue <-> MR links: GitLab's closed_by, the MR description (closes / mentions), the
+        source branch. A link keeps its strongest source (closes)."""
+        for issue in data.issues.values():
+            fields = label_fields(issue.labels)
+            row: dict[str, Any] = {
+                "id": issue.id,
+                "project_id": self._project.id,
+                "iid": issue.iid,
+                "title": issue.title,
+                "state": issue.state,
+                "labels": issue.labels,
+                "assignee_account_ids": [self.gitlab_account(a) for a in issue.assignees],
+                "milestone": issue.milestone,
+                "due_date": date.fromisoformat(issue.due_date[:10]) if issue.due_date else None,
+                "web_url": issue.web_url,
+                "created_at_src": issue.created_at,
+                "closed_at_src": issue.closed_at,
+                "time_estimate_s": issue.time_estimate_s,
+                "time_spent_s": issue.time_spent_s,
+                **fields,
+            }
+            self._session.execute(self._upsert(Issue, row, ["id"]))
+            if fields["prod_severity"]:
+                severity = fields["prod_severity"]
+                stmt = insert(ProdDefect).values(issue_id=issue.id, severity=severity)
+                self._session.execute(
+                    stmt.on_conflict_do_update(
+                        index_elements=["issue_id"],
+                        set_={"severity": stmt.excluded.severity, "updated_at": func.now()},
+                    )
+                )
+        wanted: dict[tuple[int, int], str] = {}  # (issue iid, mr iid) -> source
+
+        def want(issue_iid: int, mr_iid: int, source: str) -> None:
+            if LINK_RANK[source] > LINK_RANK.get(wanted.get((issue_iid, mr_iid), ""), 0):
+                wanted[(issue_iid, mr_iid)] = source
+
+        for issue in data.issues.values():
+            for mr_iid in issue.closed_by_iids or []:
+                want(issue.iid, mr_iid, "closes")
+        for mr in data.merge_requests.values():
+            for iid in mr.closes_iids:
+                want(iid, mr.iid, "closes")
+            for iid in mr.mention_iids:
+                want(iid, mr.iid, "mention")
+            if (branch := branch_issue(mr.source_branch)) is not None:
+                want(branch, mr.iid, "branch")
+        if not wanted:
+            return
+        issue_ids: dict[int, int] = {
+            int(iid): int(row_id)
+            for iid, row_id in self._session.execute(
+                select(Issue.iid, Issue.id).where(
+                    Issue.project_id == self._project.id,
+                    Issue.iid.in_(sorted({i for i, _ in wanted})),
+                )
+            )
+        }
+        mr_ids: dict[int, int] = {
+            int(iid): int(row_id)
+            for iid, row_id in self._session.execute(
+                select(MergeRequest.iid, MergeRequest.id).where(
+                    MergeRequest.project_id == self._project.id,
+                    MergeRequest.iid.in_(sorted({m for _, m in wanted})),
+                )
+            )
+        }
+        for (issue_iid, mr_iid), source in wanted.items():
+            issue_id, mr_id = issue_ids.get(issue_iid), mr_ids.get(mr_iid)
+            if issue_id is None or mr_id is None:
+                continue  # one of them is not collected (yet)
+            stmt = insert(IssueMrLink).values(issue_id=issue_id, mr_id=mr_id, source=source)
+            self._session.execute(
+                stmt.on_conflict_do_update(
+                    index_elements=["issue_id", "mr_id"],
+                    set_={"source": stmt.excluded.source, "updated_at": func.now()},
+                    where=IssueMrLink.source != "closes",
+                )
+            )
 
     def _deployments(self, data: Extracted) -> None:
         """docs/specs/20 §5.2. The tier comes from this run's environment list; a deployment of

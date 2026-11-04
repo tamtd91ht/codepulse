@@ -7,6 +7,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from app.collector.sync import enqueue_syncs_job
 from app.commands.store import enqueue_cleanup_job
 from app.config import get_settings
+from app.dpi.jobs import dpi_lock_job
 from app.evidence.jobs import create_drafts_job
 from app.insights.backfill import backfill_once_job
 from app.logging import configure_logging
@@ -14,6 +15,17 @@ from app.reporting.jobs import send_reports_job
 from app.retention import purge_job
 from app.scoring.aggregate import aggregate_job
 from app.telegram.poller import telegram_tick_job
+
+
+def enqueue_dpi_month_job() -> None:
+    """The month's scorecards run on a worker (long: every person's facts)."""
+    from rq import Queue
+
+    from app.db import get_redis
+
+    Queue("default", connection=get_redis()).enqueue(
+        "app.dpi.jobs.dpi_month_job", job_timeout=60 * 60
+    )
 
 
 def build_scheduler(
@@ -81,6 +93,12 @@ def build_scheduler(
     scheduler.add_job(
         create_drafts_job, "cron", day="1-3", hour=1, minute=30, id="evidence-drafts", **common
     )
+    # docs/specs/25 §5: last month's DPI scorecards on the 1st (after the syncs and the
+    # evidence drafts), and finalized months locking a week later.
+    scheduler.add_job(
+        enqueue_dpi_month_job, "cron", day=1, hour=2, minute=30, id="dpi-month", **common
+    )
+    scheduler.add_job(dpi_lock_job, "cron", hour=4, minute=0, id="dpi-lock", **common)
     # docs/specs/11: data retention, daily at night.
     scheduler.add_job(purge_job, "cron", hour=3, minute=0, id="retention-purge", **common)
     # Command runs (app/commands): files nobody downloaded, runs whose worker died. Runs on the
