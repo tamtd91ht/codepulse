@@ -63,3 +63,7 @@ class EvidenceItem(TimestampMixin, Base):
     title: Mapped[str]
     note: Mapped[str | None]
     added_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # docs/specs/25 §5: the lead approves each self-reported item (counted in A2 / D2), or
+    # rejects it; None: not decided (counted once the whole pack was reviewed, as before).
+    approved: Mapped[bool | None]
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
