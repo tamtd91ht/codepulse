@@ -13,8 +13,10 @@ from app.insights.backfill import backfill_once_job
 from app.logging import configure_logging
 from app.reporting.jobs import send_reports_job
 from app.retention import purge_job
+from app.review.llm_recovery import TICK_MIN
 from app.scoring.aggregate import aggregate_job
 from app.telegram.poller import telegram_tick_job
+from app.workers.llm_jobs import llm_watch_job
 
 
 def enqueue_dpi_month_job() -> None:
@@ -99,6 +101,15 @@ def build_scheduler(
         enqueue_dpi_month_job, "cron", day=1, hour=2, minute=30, id="dpi-month", **common
     )
     scheduler.add_job(dpi_lock_job, "cron", hour=4, minute=0, id="dpi-lock", **common)
+    # A down LLM is probed when its probe is due (LLM_PROBE_INTERVAL_MIN); the tick is cheap.
+    scheduler.add_job(
+        llm_watch_job,
+        "interval",
+        minutes=TICK_MIN,
+        id="llm-watch",
+        max_instances=1,
+        coalesce=True,
+    )
     # docs/specs/11: data retention, daily at night.
     scheduler.add_job(purge_job, "cron", hour=3, minute=0, id="retention-purge", **common)
     # Command runs (app/commands): files nobody downloaded, runs whose worker died. Runs on the

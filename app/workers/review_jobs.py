@@ -96,6 +96,10 @@ def review_settings(settings: Settings, session: Session | None = None) -> Revie
             else 0
         ),
         stale_running=timedelta(seconds=review_job_timeout(settings) + STALE_GRACE_S),
+        llm_auto_resume=bool(edited.get("llm_auto_resume", settings.llm_auto_resume)),
+        llm_probe_interval_min=int(
+            edited.get("llm_probe_interval_min", settings.llm_probe_interval_min)
+        ),
     )
 
 

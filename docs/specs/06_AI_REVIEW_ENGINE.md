@@ -89,3 +89,15 @@ class LLMProvider(Protocol):
 ## Đánh giá chất lượng reviewer (eval)
 - [ ] Bộ 20–30 diff mẫu có lỗi đã biết trong `tests/eval/` (expected findings).
 - [ ] Script `make eval` đo precision/recall theo severity – chạy mỗi khi đổi prompt/model.
+
+## Tự review lại khi LLM hoạt động lại (yêu cầu 2026-11-04)
+
+Cấu hình (Cài đặt review, sửa trên UI): `LLM_AUTO_RESUME` (mặc định tắt) và `LLM_PROBE_INTERVAL_MIN` (5–240, mặc định 30).
+
+- **LLM lỗi** = lỗi của chính LLM (`llm: …`) do kết nối, timeout, HTTP 401/403/408/409/425/429/5xx, rate/usage limit, quota, quá tải, hết hạn đăng nhập. Không tính: câu trả lời hỏng (non-JSON, parse), hết ngân sách tháng, lỗi GitLab.
+- Bảng một dòng `llm_health` (`ok | down | recovering`). Review gặp LLM lỗi được đánh dấu `reviews.llm_retry` và chuyển dòng `ok → down` bằng UPDATE có điều kiện: N review lỗi cùng lúc thì chỉ lần đầu mở "sự cố", các lần sau không đổi gì.
+- Khi `down`: review mới không gọi LLM, kết thúc `failed` với lời "chờ LLM hoạt động lại" và cũng được đánh dấu chờ (không tốn token, không spam LLM).
+- Scheduler tick 5 phút (`llm-watch`, max_instances=1); chỉ thử khi dòng `down` và tới `next_probe_at`, khoá `FOR UPDATE SKIP LOCKED` nên hai scheduler không thử cùng lúc. Thử = một lệnh rất nhỏ (timeout 60s, không retry). Lỗi → hẹn lần sau theo chu kỳ.
+- Thử được → `recovering` và xếp **một** job `llm_resume_job` (job id theo sự cố). Job khoá dòng, chỉ chạy khi còn `recovering`, đặt `ok` rồi nhận review chờ theo lô bằng `UPDATE … RETURNING` (mỗi review chỉ được nhận một lần dù job chạy hai lần) và xếp lại như "Chạy lại" (trigger `rerun`, giữ người yêu cầu). Review không còn chạy được (repo tắt, vòng mới hơn, rubric đổi, MR đã merge/có push mới) giữ `failed` kèm lý do.
+- Tắt cấu hình khi đang `down`: lần tick kế đóng sự cố, review chờ giữ `failed` (chạy lại tay).
+- API: `GET /admin/llm-health`, `POST /admin/llm-health/probe` ("Kiểm tra ngay": thử ở tick kế), quyền `admin.review_settings`.

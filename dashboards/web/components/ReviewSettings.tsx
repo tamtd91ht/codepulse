@@ -4,7 +4,8 @@ import { type FormEvent, useState } from "react";
 
 import { Alert, Loading } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
-import type { ReviewSetting } from "@/lib/types";
+import { dateTime } from "@/lib/format";
+import type { LlmHealth, ReviewSetting } from "@/lib/types";
 
 type Key = ReviewSetting["key"];
 
@@ -53,6 +54,8 @@ export function ReviewSettings() {
   const autoClose = find("auto_close_findings");
   const autoDays = find("auto_close_days");
   const listMax = find("review_commits_list_max");
+  const resume = find("llm_auto_resume");
+  const probeEvery = find("llm_probe_interval_min");
 
   async function save(key: Key, value: number | string | boolean | null) {
     await saveAll({ [key]: value });
@@ -384,6 +387,19 @@ export function ReviewSettings() {
         </form>
       )}
 
+      {resume && probeEvery && (
+        <LlmResumeForm
+          key={`${String(resume.value)}-${String(probeEvery.value)}`}
+          enabled={resume.value === true}
+          minutes={Number(probeEvery.value)}
+          min={probeEvery.minimum ?? 5}
+          max={probeEvery.maximum ?? 240}
+          env={`${resume.env}, ${probeEvery.env}`}
+          busy={busy}
+          onSave={(on, minutes) => saveAll(on ? { llm_auto_resume: true, llm_probe_interval_min: minutes } : { llm_auto_resume: false })}
+        />
+      )}
+
       {autoClose && autoDays && (
         <AutoCloseForm
           key={`${String(autoClose.value)}-${String(autoDays.value)}`}
@@ -447,3 +463,110 @@ function AutoCloseForm({
     </form>
   );
 }
+
+const LLM_STATE: Record<LlmHealth["status"], { label: string; tone: string }> = {
+  ok: { label: "Bình thường", tone: "ok" },
+  down: { label: "Đang lỗi", tone: "bad" },
+  recovering: { label: "Đã hoạt động lại, đang xếp review chờ", tone: "warn" },
+};
+
+/** LLM_AUTO_RESUME: a review that failed because the LLM was down (connection, quota, rate or
+ * usage limit) is reviewed again by itself once a probe sees the LLM answer. */
+function LlmResumeForm({
+  enabled,
+  minutes,
+  min,
+  max,
+  env,
+  busy,
+  onSave,
+}: {
+  enabled: boolean;
+  minutes: number;
+  min: number;
+  max: number;
+  env: string;
+  busy: boolean;
+  onSave: (on: boolean, minutes: number) => Promise<void>;
+}) {
+  const [on, setOn] = useState(enabled);
+  const health = useApi<LlmHealth>("/admin/llm-health", { refreshInterval: 30_000 });
+  const [probing, setProbing] = useState(false);
+  const [probeError, setProbeError] = useState<string | null>(null);
+  const h = health.data;
+  const state = h ? LLM_STATE[h.status] : null;
+
+  async function probe() {
+    setProbing(true);
+    setProbeError(null);
+    try {
+      await health.mutate(await api.post<LlmHealth>("/admin/llm-health/probe"), false);
+    } catch (e) {
+      setProbeError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setProbing(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        const value = Number(new FormData(e.currentTarget).get("llm_probe_interval_min") ?? 0);
+        void onSave(on, value);
+      }}
+      className="setting-tile"
+    >
+      <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input type="checkbox" checked={on} onChange={(e) => setOn(e.target.checked)} />
+        <span>Tự review lại khi LLM hoạt động lại ({env})</span>
+      </label>
+      {on && (
+        <label style={{ display: "grid", gap: 4, maxWidth: 320 }}>
+          <span className="small muted">Chu kỳ kiểm tra LLM khi đang lỗi (phút)</span>
+          <input name="llm_probe_interval_min" type="number" required min={min} max={max} defaultValue={minutes} />
+        </label>
+      )}
+      <p className="muted small">
+        Khi LLM lỗi kết nối, hết hạn mức (rate/usage limit, quota) hoặc quá tải, review đó được đánh dấu “chờ LLM” và các review mới
+        không gọi LLM nữa mà xếp hàng chờ. Cứ mỗi chu kỳ CodePulse gửi một lệnh rất nhỏ để thử; khi LLM trả lời được, mọi review đang chờ
+        được đưa lại vào hàng đợi đúng một lần. Lỗi do câu trả lời hỏng hay hết ngân sách tháng không tính là LLM lỗi.
+      </p>
+      {h && state && (
+        <div className="llm-health" data-tone={state.tone}>
+          <div className="toolbar" style={{ alignItems: "center" }}>
+            <strong>LLM: {state.label}</strong>
+            {h.status === "down" && (
+              <button type="button" className="sm" disabled={probing || !enabled} onClick={() => void probe()}>
+                {probing ? "Đang đặt lịch…" : "Kiểm tra ngay"}
+              </button>
+            )}
+          </div>
+          <ul className="small">
+            {h.status === "down" && h.down_since && <li>Lỗi từ {dateTime(h.down_since)}</li>}
+            {h.status === "down" && h.next_probe_at && (
+              <li>
+                Lần kiểm tra kế tiếp: {dateTime(h.next_probe_at)} (đã thử {h.probes} lần)
+              </li>
+            )}
+            {h.status !== "ok" && h.last_error && <li className="muted">Lỗi gần nhất: {h.last_error}</li>}
+            <li>Review đang chờ LLM: {h.waiting_reviews}</li>
+            {h.recovered_at && (
+              <li className="muted">
+                Phục hồi gần nhất: {dateTime(h.recovered_at)}
+                {h.requeued_last !== null ? `, đã xếp lại ${h.requeued_last} review` : ""}
+              </li>
+            )}
+          </ul>
+          {probeError && <Alert tone="error">{probeError}</Alert>}
+        </div>
+      )}
+      <div className="toolbar">
+        <button type="submit" disabled={busy}>
+          Lưu
+        </button>
+      </div>
+    </form>
+  );
+}
+

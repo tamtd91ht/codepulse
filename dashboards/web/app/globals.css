@@ -7284,3 +7284,30 @@ button.crit-info-btn:focus-visible {
   justify-self: start;
 }
 
+/* LLM auto-resume: the LLM's health under its setting. */
+.llm-health {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  background: var(--surface-2);
+  overflow-wrap: anywhere;
+}
+.llm-health[data-tone="ok"] {
+  border-left-color: var(--success, #16a34a);
+}
+.llm-health[data-tone="bad"] {
+  border-left-color: var(--danger, #dc2626);
+}
+.llm-health[data-tone="warn"] {
+  border-left-color: var(--warning, #d97706);
+}
+.llm-health ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 2px;
+}
+

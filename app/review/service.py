@@ -38,7 +38,7 @@ from app.models import (
 )
 from app.models.review import CHANGE_TIME_UNKNOWN
 from app.notifications import inbox
-from app.review import claude_kit, comment, knowledge
+from app.review import claude_kit, comment, knowledge, llm_recovery
 from app.review.agent import (
     agent_findings,
     build_agent_prompt,
@@ -157,6 +157,9 @@ class ReviewSettings:
     # change against, to close the fixed ones (app/review/resolve.py); 0 = off.
     auto_close_days: int = 0
     stale_running: timedelta = STALE_RUNNING  # see STALE_RUNNING
+    # Review again once the LLM works again (app/review/llm_recovery.py).
+    llm_auto_resume: bool = False
+    llm_probe_interval_min: int = 30
 
 
 @dataclass
@@ -757,6 +760,13 @@ class ReviewService:
         return review
 
     def _fail(self, review: Review, error: str) -> Review:
+        settings = self._settings
+        # Only the LLM's own errors ("llm: ..."); a GitLab connection error is not an outage.
+        outage = error.startswith("llm:") and llm_recovery.is_llm_outage(error)
+        if settings.llm_auto_resume and outage:
+            # The LLM is down: this review waits for it, and the outage is opened (once).
+            review.llm_retry = True
+            llm_recovery.mark_down(self._session, error, settings.llm_probe_interval_min)
         return self._finish(review, "failed", error[:1000])
 
     def _run(
@@ -780,6 +790,10 @@ class ReviewService:
         over_limit = prepared.loc > settings.max_review_loc
         if over_limit and not settings.ignore_loc_limit:
             return self._finish(review, "skipped", f"{TOO_LARGE}: {prepared.loc} LOC")
+        if settings.llm_auto_resume and llm_recovery.is_down(self._session):
+            # The LLM is known down: do not call it; this review waits for the resume.
+            review.llm_retry = True
+            return self._finish(review, "failed", llm_recovery.WAITING_ERROR)
         over_budget = self._over_budget(review, project)
         if over_budget is not None:
             # "failed", not "skipped": the review can be re-run once the budget allows it.

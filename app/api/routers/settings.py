@@ -81,3 +81,24 @@ def update_review_settings(
         )
     session.commit()
     return _out(session, settings)
+
+
+@router.get("/admin/llm-health")
+def llm_health(principal: ReviewSettingsAdmin, session: SessionDep) -> dict[str, object]:
+    """Is the LLM working, since when not, when it is probed next, how many reviews wait."""
+    from app.review import llm_recovery
+
+    return llm_recovery.status(session)
+
+
+@router.post("/admin/llm-health/probe")
+def llm_probe_now(principal: ReviewSettingsAdmin, session: SessionDep) -> dict[str, object]:
+    """Probe at the next tick (within a few minutes) instead of at the end of the interval."""
+    from app.review import llm_recovery
+
+    if not llm_recovery.probe_soon(session):
+        raise HTTPException(409, "the LLM is not down")
+    audit(session, principal.user_id, "llm.probe_now", "llm_health")
+    session.commit()
+    session.expire_all()
+    return llm_recovery.status(session)

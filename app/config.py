@@ -194,6 +194,10 @@ class Settings(BaseSettings):
     incident_labels: CommaList = ["incident"]
     # DPI (docs/specs/25 §4.3): accounts matching this are bots, never counted.
     bot_account_pattern: str = r"(^|[-_.])bot([-_.@]|$)|renovate|dependabot|codepulse|gitlab-ci"
+    # Review again once the LLM works again (app/review/llm_recovery.py): the switch, and how
+    # often a down LLM is probed.
+    llm_auto_resume: bool = False
+    llm_probe_interval_min: int = Field(default=30, ge=5, le=240)
     # Use the LLM to label review comments for D1 (§4.5); off: the keyword rule only.
     dpi_classify_comments: bool = True
 

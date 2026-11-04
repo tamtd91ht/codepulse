@@ -1100,7 +1100,9 @@ export interface ReviewSetting {
     | "monthly_llm_budget_usd"
     | "review_commits_list_max"
     | "auto_close_findings"
-    | "auto_close_days";
+    | "auto_close_days"
+    | "llm_auto_resume"
+    | "llm_probe_interval_min";
   env: string;
   kind: "int" | "model" | "url" | "bool";
   value: number | string | boolean;
@@ -2011,3 +2013,15 @@ export interface InboxPage {
   next_before: number | null;
 }
 
+/** GET /admin/llm-health: is the LLM working (app/review/llm_recovery.py). */
+export interface LlmHealth {
+  status: "ok" | "down" | "recovering";
+  down_since: string | null;
+  last_error: string | null;
+  last_probe_at: string | null;
+  next_probe_at: string | null;
+  probes: number;
+  recovered_at: string | null;
+  requeued_last: number | null;
+  waiting_reviews: number;
+}

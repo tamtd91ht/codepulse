@@ -40,7 +40,7 @@ from app.models.knowledge import ReviewKnowledge, ReviewKnowledgeEdit
 from app.models.metrics import MetricsTeamPeriod, MetricsUserPeriod
 from app.models.notifications import NotificationWebhook, UserNotification
 from app.models.permissions import PermissionSet, PermissionSetItem, UserPermissionSet
-from app.models.review import FindingClosure, FindingDispute, Review, ReviewFinding
+from app.models.review import FindingClosure, FindingDispute, LlmHealth, Review, ReviewFinding
 from app.models.secrets import AppSetting, StoredSecret
 from app.models.source import BusinessProject, Connection, Project, ProjectGrant, RawGitlab
 from app.models.telegram import TelegramBot, TelegramRequest
@@ -75,6 +75,7 @@ __all__ = [
     "InsightsBackfill",
     "Issue",
     "IssueMrLink",
+    "LlmHealth",
     "MergeRequest",
     "MetricsTeamPeriod",
     "MetricsUserPeriod",

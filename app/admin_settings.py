@@ -66,6 +66,10 @@ EDITABLE: dict[str, Editable] = {
     "auto_close_days": Editable("AUTO_CLOSE_DAYS", "int", 1, 90),
     # "Yêu cầu review": how many commits per repo the list fetches from GitLab at most.
     "review_commits_list_max": Editable("REVIEW_COMMITS_LIST_MAX", "int", 20, 2000),
+    # A review failed because the LLM was down is reviewed again once it answers (probed every
+    # N minutes).
+    "llm_auto_resume": Editable("LLM_AUTO_RESUME", "bool"),
+    "llm_probe_interval_min": Editable("LLM_PROBE_INTERVAL_MIN", "int", 5, 240),
 }
 
 
@@ -89,6 +93,8 @@ def defaults(settings: Settings) -> dict[str, Value]:
         "auto_close_findings": settings.auto_close_findings,
         "auto_close_days": settings.auto_close_days,
         "review_commits_list_max": settings.review_commits_list_max,
+        "llm_auto_resume": settings.llm_auto_resume,
+        "llm_probe_interval_min": settings.llm_probe_interval_min,
     }
 
 

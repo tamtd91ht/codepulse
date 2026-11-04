@@ -42,6 +42,7 @@ class Review(TimestampMixin, Base):
             postgresql_nulls_not_distinct=True,
         ),
         Index("ix_reviews_author_user_id_finished_at", "author_user_id", "finished_at"),
+        Index("ix_reviews_llm_retry", "id", postgresql_where=text("llm_retry")),
         # Read backwards for "newest change first" and its (changed_at, id) cursor.
         Index("ix_reviews_changed_at_id", "changed_at", "id"),
     )
@@ -94,6 +95,9 @@ class Review(TimestampMixin, Base):
             else_=cls.finished_at,
         )
 
+    # Failed because the LLM was down, waiting to be reviewed again once it works (app/review/
+    # llm_recovery.py); cleared when the resume job claims it.
+    llm_retry: Mapped[bool] = mapped_column(server_default="false", default=False)
     # docs/specs/17: merge verdict (approve|fix_required|block) and risk score from the
     # findings; the model's design & intent notes; what asked for the review and who.
     verdict: Mapped[str | None]
@@ -264,3 +268,19 @@ class FindingClosure(TimestampMixin, Base):
     # The "Chạy review" being run: only the worker carrying this token claims and decides it.
     run_token: Mapped[str | None]
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class LlmHealth(TimestampMixin, Base):
+    """One row (id 1): is the LLM working? ok | down | recovering (app/review/llm_recovery.py)."""
+
+    __tablename__ = "llm_health"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(server_default="ok")
+    down_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None]
+    last_probe_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_probe_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    probes: Mapped[int] = mapped_column(server_default="0", default=0)
+    recovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    requeued_last: Mapped[int | None]

@@ -953,6 +953,8 @@ class ReviewSettingsIn(BaseModel):
     auto_close_findings: Annotated[bool, Field(strict=True)] | None = None
     auto_close_days: Annotated[int, Field(strict=True)] | None = None
     review_commits_list_max: Annotated[int, Field(strict=True)] | None = None
+    llm_auto_resume: Annotated[bool, Field(strict=True)] | None = None
+    llm_probe_interval_min: Annotated[int, Field(strict=True)] | None = None
 
 
 class LiveEvent(BaseModel):
