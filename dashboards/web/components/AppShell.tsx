@@ -101,6 +101,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         { href: "/critical", label: "Critical Board", icon: "alert" },
         { href: "/closures", label: "Đóng finding", icon: "checkCircle" },
         { href: "/disputes", label: isLead ? "Duyệt khiếu nại" : "Khiếu nại", icon: "scale" },
+        // DPI hàng tháng (docs/specs/25): everyone with a scorecard, the managers' distribution, HR.
+        ...(can(me, "dpi.view") || can(me, "dpi.distribution") || can(me, "dpi.final_view")
+          ? [{ href: "/dpi", label: "DPI hàng tháng", icon: "trendUp" } as Item]
+          : []),
       ]
     : [];
   const secondary: Item[] = [

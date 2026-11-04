@@ -12,6 +12,7 @@ const SECTIONS = [
   { id: "telegram", label: "Bot Telegram" },
   { id: "metrics", label: "Đọc các chỉ số" },
   { id: "insights", label: "Luồng làm việc" },
+  { id: "dpi", label: "DPI hàng tháng" },
 ];
 
 /** The dashboard copy of docs/USER_GUIDE.md, plus the Admin screen; readable without signing in. */
@@ -614,6 +615,45 @@ export default function GuidePage() {
           Thời gian tính theo lịch (cả cuối tuần), dùng trung vị và p75; ít hơn 5 MR thì không hiện trung vị. Comment tóm tắt của
           CodePulse không tính là review. Tên người chỉ hiện với ai được xem việc của người đó; người khác thấy &quot;Một thành
           viên&quot;.
+        </p>
+      </section>
+
+      <section id="dpi" className="card">
+        <h2>9. DPI: đánh giá hiệu suất hàng tháng</h2>
+        <p>
+          Mỗi người một scorecard mỗi tháng: <strong>70 điểm chỉ số kỹ thuật tự động</strong> (giao việc, chất lượng code, quy trình,
+          review cho người khác) và <strong>30 điểm lead chấm</strong> (tác động, thiết kế, làm việc nhóm, ownership), trọng số theo
+          level. Đang <strong>chạy thử</strong>: không dùng cho lương thưởng cho tới khi quản lý tắt chế độ này.
+        </p>
+        <ol>
+          <li>Ngày 1: hệ thống tính scorecard tạm tính tháng trước cho mọi người có hoạt động Git.</li>
+          <li>Hạn ngày 3: bạn tự khai trong Hồ sơ tháng (đóng góp tiêu biểu, việc ngoài Git, blocker, ngày nghỉ) rồi bấm Gửi.</li>
+          <li>Hạn ngày 7: lead chấm 30 điểm, mỗi ô có nhận xét và bằng chứng; xác nhận RCA lỗi production.</li>
+          <li>Hạn ngày 10: người có quyền hiệu chỉnh xem phân phối giữa các team, điều chỉnh ±10 điểm kèm lý do.</li>
+          <li>Sau 1:1: lead chốt với action plan tháng sau; tự khoá sau 7 ngày. Trước khi chốt, bạn khiếu nại được từng chỉ số.</li>
+        </ol>
+        <p>Để chỉ số có dữ liệu, mỗi repo cần:</p>
+        <ul>
+          <li>
+            Nhánh chính có bảo vệ, mọi thay đổi đi qua MR có ít nhất 1 approve (Settings › Repository › Protected branches; Settings ›
+            Merge requests › Approvals).
+          </li>
+          <li>
+            Label: <code>complexity::XS|S|M|L|XL</code> (1/2/3/5/8 điểm), <code>type::feature|bug|refactor|chore|docs|incident|automation</code>,{" "}
+            <code>prod-bug::P1|P2|P3</code>, <code>blocked</code>. Admin tạo nhanh bằng nút &quot;Tạo label chuẩn&quot; ở DPI › Sẵn sàng dữ liệu.
+          </li>
+          <li>
+            Mẫu MR <code>.gitlab/merge_request_templates/Default.md</code> có dòng <code>Closes #</code> và checklist (đã liên kết issue,
+            có test, migration hai chiều, có cách rollback).
+          </li>
+          <li>
+            CI xuất coverage: dòng <code>coverage:</code> với regex của công cụ test, và <code>artifacts:reports:junit</code> /{" "}
+            <code>coverage_report</code> (JaCoCo cho Java, <code>go test -coverprofile</code>, Jest/Vitest <code>--coverage</code>).
+          </li>
+        </ul>
+        <p className="muted">
+          Chỉ số thiếu dữ liệu không bị tính 0 mà làm giảm độ phủ; độ tin cậy thấp thì không xếp loại. Không có bảng xếp hạng toàn công
+          ty; manager chỉ thấy phân phối của team. Chi tiết công thức: mở một chỉ số trên scorecard, hoặc docs/specs/25.
         </p>
       </section>
 
