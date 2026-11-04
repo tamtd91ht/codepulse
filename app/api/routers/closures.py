@@ -53,7 +53,7 @@ from app.models import (
 from app.models.review import CLOSURE_OPEN
 from app.notifications import inbox
 from app.review.masking import looks_secret
-from app.review.resolve import close_finding
+from app.review.resolve import close_finding, mark_fixed
 from app.review.status import SEVERE, carry_decision
 from app.scoring.rescore import rescore_copies, rescore_review
 
@@ -63,8 +63,9 @@ SHA = re.compile(r"^[0-9a-f]{7,40}$")
 # A GitLab commit link: …/-/commit/<sha>, …/commit/<sha>, also with a #fragment or ?query.
 COMMIT_LINK = re.compile(r"/commits?/([0-9a-fA-F]{7,40})(?:[/?#].*)?$")
 MAX_COMMITS = 5
-# A request waiting for a manager's or an admin's decision.
-TO_DECIDE = ("pending", "failed", "proposed")
+# A request waiting for a manager's or an admin's decision (`unmet`: the check found it not good
+# enough; they close the finding anyway, run it again or confirm the refusal).
+TO_DECIDE = ("pending", "failed", "proposed", "unmet")
 MIN_ARGUMENT = 50  # an argument shorter than this says too little to be checked
 MAX_ARGUMENT = 4000
 MAX_REQUESTS_PER_DAY = 20  # per author: each one may cost a check
@@ -142,6 +143,19 @@ class ConfirmIn(BaseModel):
 
     outcome: Settle | None = None
     note: str | None = Field(default=None, max_length=1000)
+
+
+class OverrideIn(BaseModel):
+    """Closing a request the check found not good enough: by its commits (`fixed`, severity
+    kept), or accepting the risk at medium/low, or the finding was wrong; why, always."""
+
+    note: str = Field(min_length=5, max_length=1000)
+    outcome: Literal["fixed", "medium", "low", "false_positive"]
+
+
+# How the reason of an `unmet` request goes on once a person weighed it (the page reads these).
+CHECKED = "Kết quả kiểm:"
+OVERRIDDEN = "Người duyệt vẫn đóng:"
 
 
 class AdminCloseIn(BaseModel):
@@ -429,7 +443,9 @@ def cancel_request(
     closure = _request(session, closure_id)
     if closure.requested_by != principal.user_id:
         raise HTTPException(403, "chỉ người gửi mới rút được yêu cầu")
-    if not _move(session, closure, ("pending",), status="cancelled", decided_at=datetime.now(UTC)):
+    if not _move(
+        session, closure, ("pending", "unmet"), status="cancelled", decided_at=datetime.now(UTC)
+    ):
         raise HTTPException(409, "yêu cầu đã được duyệt hoặc đang được kiểm; tải lại trang")
     audit(
         session, principal.user_id, "finding.close_request.cancel", f"finding:{closure.finding_id}"
@@ -448,7 +464,7 @@ def run_request(
     session: SessionDep,
     queue: Annotated[Any, Depends(get_queue)],
 ) -> FindingClosure:
-    """ "Chạy review": check the commits now (a failed check may be run again)."""
+    """ "Chạy review": check the commits now (a failed or unmet check may be run again)."""
     closure = _request(session, closure_id)
     _decider(session, principal, closure)
     _sweep(session, closure.finding_id)  # a lost check may be run again
@@ -461,19 +477,21 @@ def run_request(
         "reason": closure.reason,
         "decided_at": closure.decided_at,
         "decided_by": closure.decided_by,
+        "evidence": closure.evidence,
     }
     token = secrets.token_hex(8)
     try:
         moved = _move(
             session,
             closure,
-            ("pending", "failed"),
+            ("pending", "failed", "unmet"),
             status="checking",
             run_token=token,
             started_at=None,
             decided_by=principal.user_id,
             decided_at=None,
             reason=None,
+            evidence=None,
         )
     except IntegrityError:  # another request of the same finding is in flight
         raise HTTPException(409, "finding này đang có yêu cầu khác") from None
@@ -508,20 +526,93 @@ def reject_request(
 ) -> FindingClosure:
     closure = _request(session, closure_id)
     _decider(session, principal, closure)
-    moved = _move(
-        session,
-        closure,
-        ("pending", "failed", "proposed"),
-        status="rejected",
-        decided_by=principal.user_id,
-        decided_at=datetime.now(UTC),
-        reason=f"Từ chối: {body.note.strip()}",
+    was = closure.status
+    reason = f"Từ chối: {body.note.strip()}"
+    if was == "unmet" and closure.reason:  # the check's reason stays with the refusal
+        reason = f"{reason}\n{CHECKED} {closure.reason}"
+    moved = (
+        was in TO_DECIDE
+        and _move(  # from the state read: the reason was built on it
+            session,
+            closure,
+            (was,),
+            status="rejected",
+            decided_by=principal.user_id,
+            decided_at=datetime.now(UTC),
+            reason=reason[:1000],
+        )
     )
     if not moved:
         raise HTTPException(409, "yêu cầu đang được kiểm hoặc đã có kết quả; tải lại trang")
     audit(
         session, principal.user_id, "finding.close_request.reject", f"finding:{closure.finding_id}"
     )
+    session.commit()
+    return closure
+
+
+@router.post("/close-requests/{closure_id}/close", response_model=ClosureOut)
+def close_unmet(
+    closure_id: int,
+    body: OverrideIn,
+    principal: DeciderPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> FindingClosure:
+    """ "Đóng finding" on a request the check found not good enough (`unmet`): the author's
+    lead, a manager or an admin who read the check's reason closes the finding anyway, a note
+    being mandatory: as fixed by the request's commits (severity and score kept), or accepting
+    the risk at medium/low (re-scored), or as wrong (false_positive)."""
+    closure = _request(session, closure_id)
+    _decider(session, principal, closure)
+    if closure.status != "unmet":
+        raise HTTPException(409, "chỉ đóng được yêu cầu kiểm chưa đạt; tải lại trang")
+    finding = session.get(ReviewFinding, closure.finding_id)
+    if finding is None:
+        raise HTTPException(404, "finding not found")
+    if finding.status != "open":
+        raise HTTPException(409, f"finding đang ở trạng thái {finding.status}, không còn mở")
+    note = body.note.strip()
+    if body.outcome == "fixed":
+        if not closure.shas:
+            raise HTTPException(422, "yêu cầu không kèm commit: chọn mức mới hoặc 'finding sai'")
+    else:
+        author, bp_id = _owner(session, closure)
+        _check_settle(finding, body.outcome, note, _lowers_far(principal, author, bp_id))
+    reason = f"{closure.reason or ''}\n{OVERRIDDEN} {note}".strip()[:1000]
+    if not _move(
+        session,
+        closure,
+        ("unmet",),
+        status="closed",
+        decided_by=principal.user_id,
+        decided_at=datetime.now(UTC),
+        reason=reason,
+        evidence=None,  # what the check pointed at is not where a fix is
+    ):
+        raise HTTPException(409, "yêu cầu vừa được người khác xử lý; tải lại trang")
+    if body.outcome == "fixed":
+        closure.closed_as = "fixed"
+        session.flush()
+        closed = mark_fixed(session, finding)
+        if closed:
+            rescore_copies(session, carry_decision(session, finding), settings)
+    else:
+        closed = _settle(session, finding, closure, body.outcome, settings)
+    if not closed:
+        session.rollback()
+        raise HTTPException(409, "finding vừa đổi trạng thái; tải lại trang")
+    audit(
+        session,
+        principal.user_id,
+        "finding.close_request.override",
+        f"finding:{closure.finding_id}",
+        closure_id=closure.id,
+        outcome=body.outcome,
+        note=note,
+    )
+    session.refresh(finding)
+    inbox.finding_closed(session, finding, closure, principal.user_id)
     session.commit()
     return closure
 
@@ -605,7 +696,7 @@ def close_by_admin(
     if waiting is not None and not _move(  # a waiting request: the admin's decision answers it
         session,
         waiting,
-        ("pending", "proposed"),
+        ("pending", "proposed", "unmet"),
         status="rejected",
         decided_by=principal.user_id,
         decided_at=datetime.now(UTC),
@@ -685,6 +776,21 @@ def reopen_by_admin(
     if last is not None and last.severity_before and last.severity_before != finding.severity:
         finding.severity = last.severity_before  # what the review found, before it was lowered
         rescore = True
+    # A request left waiting while the finding was closed another way (a later review, a
+    # dispute) is answered now: reopened, the finding needs a new request with today's code.
+    session.execute(
+        update(FindingClosure)
+        .where(
+            FindingClosure.finding_id == finding.id,
+            FindingClosure.status.in_(("pending", "proposed", "unmet")),
+        )
+        .values(
+            status="rejected",
+            decided_at=datetime.now(UTC),
+            reason="Finding đã được đóng cách khác trong lúc chờ duyệt.",
+        )
+        .execution_options(synchronize_session=False)
+    )
     closure = FindingClosure(
         finding_id=finding.id,
         kind="reopen",
@@ -743,7 +849,8 @@ def review_closures(
         {
             **ClosureOut.model_validate(row).model_dump(),
             "can_decide": decides and row.kind == "request" and row.status in TO_DECIDE,
-            "can_cancel": row.status == "pending" and row.requested_by == principal.user_id,
+            "can_cancel": row.status in ("pending", "unmet")
+            and row.requested_by == principal.user_id,
             "can_lower_far": far,
             "finding_severity": severity.get(row.finding_id),
         }
@@ -852,6 +959,7 @@ def list_closures(
         query = query.where(
             FindingClosure.kind == "request",
             FindingClosure.status.in_(TO_DECIDE),
+            ReviewFinding.status == "open",  # closed another way meanwhile: nothing to decide
             Review.author_user_id != principal.user_id,
         )
         if not principal.is_admin:
@@ -892,6 +1000,7 @@ def list_closures(
         decides = (
             closure.kind == "request"
             and closure.status in TO_DECIDE
+            and finding.status == "open"
             and _may_decide(principal, review.author_user_id, bp_id)
         )
         items.append(
@@ -920,7 +1029,7 @@ def list_closures(
                 "can_decide": decides,
                 "can_lower_far": decides and _lowers_far(principal, review.author_user_id, bp_id),
                 "finding_severity": finding.severity,
-                "can_cancel": closure.status == "pending"
+                "can_cancel": closure.status in ("pending", "unmet")
                 and closure.requested_by == principal.user_id,
                 "can_open_review": sees_work(principal, review.author_user_id, bp_id),
             }
@@ -960,6 +1069,7 @@ def closure_facets(principal: ViewPrincipal, session: SessionDep) -> dict[str, A
         base.where(
             FindingClosure.kind == "request",
             FindingClosure.status.in_(TO_DECIDE),
+            ReviewFinding.status == "open",
             Review.author_user_id != principal.user_id,
             *([] if principal.is_admin else [Review.author_user_id.in_(managed)]),
         ).subquery()

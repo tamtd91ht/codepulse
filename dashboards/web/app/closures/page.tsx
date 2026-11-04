@@ -5,7 +5,7 @@ import { Fragment, useEffect, useState } from "react";
 import useSWRInfinite from "swr/infinite";
 
 import { DateRangePicker } from "@/components/DateRangePicker";
-import { CLOSED_AS, ConfirmSettle, shortShas } from "@/components/FindingClose";
+import { CLOSED_AS, ConfirmSettle, OverrideClose, shortShas } from "@/components/FindingClose";
 import { Icon, IconButton } from "@/components/icons";
 import { Card, EmptyState, Loading, Message, PageHeader, Pill, Segmented, SeverityBadge } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
@@ -32,8 +32,9 @@ const STATUS: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "
   pending: { label: "Chờ duyệt", tone: "info" },
   checking: { label: "Đang review", tone: "info" },
   proposed: { label: "Đề xuất chấp nhận rủi ro", tone: "warn" },
+  unmet: { label: "Chưa đủ điều kiện · chờ quyết định", tone: "bad" },
   closed: { label: "Đã đóng", tone: "good" },
-  rejected: { label: "Chưa đủ điều kiện", tone: "bad" },
+  rejected: { label: "Bị từ chối", tone: "bad" },
   failed: { label: "Chưa kiểm được", tone: "warn" },
   cancelled: { label: "Đã rút" },
   reopened: { label: "Mở lại", tone: "warn" },
@@ -142,7 +143,7 @@ export default function ClosuresPage() {
           <strong>2. Lead, manager của tác giả hoặc admin</strong> xem yêu cầu ở tab “Chờ duyệt” (hoặc ngay trên finding ở trang review), bấm “Chạy review” (hoặc từ chối kèm lý do). Người gửi không tự duyệt được yêu cầu của mình.
         </li>
         <li>
-          <strong>3. Kết quả</strong>: đạt thì finding được đóng; chưa đạt thì lý do hiện ở đây và dưới finding.
+          <strong>3. Kết quả</strong>: đạt thì finding được đóng; chưa đạt thì lý do hiện ở đây và dưới finding, và yêu cầu nằm lại ở “Chờ duyệt” để người duyệt quyết: vẫn đóng (ghi lý do), chạy lại hoặc từ chối.
         </li>
       </ol>
 
@@ -162,9 +163,10 @@ export default function ClosuresPage() {
             <span className="small muted">Trạng thái</span>
             <select value={filters.status} onChange={(e) => set("status", e.target.value)}>
               <option value="">Mọi trạng thái</option>
-              <option value="waiting">Đang chờ (chờ duyệt, đang review, chờ xác nhận)</option>
+              <option value="waiting">Đang chờ (chờ duyệt, đang review, chờ xác nhận, chưa đủ điều kiện)</option>
+              <option value="unmet">Chưa đủ điều kiện, chờ quyết định</option>
               <option value="closed">Đã đóng</option>
-              <option value="rejected">Chưa đủ điều kiện / bị từ chối</option>
+              <option value="rejected">Bị từ chối</option>
               <option value="failed">Chưa kiểm được</option>
               <option value="cancelled">Đã rút</option>
               <option value="reopened">Mở lại</option>
@@ -363,7 +365,7 @@ export default function ClosuresPage() {
 /** "waiting" groups the two in-flight states. */
 function statusParams(status: string): string {
   if (!status) return "";
-  const list = status === "waiting" ? ["pending", "checking", "proposed"] : [status];
+  const list = status === "waiting" ? ["pending", "checking", "proposed", "unmet"] : [status];
   return list.map((s) => `&status=${s}`).join("");
 }
 
@@ -386,9 +388,14 @@ function Detail({
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const decidable = c.can_decide && (c.status === "pending" || c.status === "failed");
+  const [closing, setClosing] = useState(false);
+  const decidable = c.can_decide && (c.status === "pending" || c.status === "failed" || c.status === "unmet");
+  // The check found it not good enough: the decider may still close the finding, with a reason.
+  const overridable = c.can_decide && c.status === "unmet";
   const confirmable = c.can_decide && c.status === "proposed";
   const refusedByPerson = c.status === "rejected" && (c.reason ?? "").startsWith("Từ chối:");
+  // Refused after the check found it not good enough (the API keeps the check's reason after this).
+  const refusedAfterCheck = refusedByPerson && (c.reason ?? "").includes("\nKết quả kiểm:");
 
   async function act(path: string, body: unknown, done: string) {
     setBusy(true);
@@ -451,8 +458,10 @@ function Detail({
                     : "Chờ lead, manager hoặc admin duyệt"
                   : c.status === "cancelled"
                     ? "Người gửi đã rút yêu cầu"
-                    : refusedByPerson
-                      ? `${c.decided_by_name ?? "Người duyệt"} từ chối, không chạy review`
+                    : refusedAfterCheck
+                      ? `${c.decided_by_name ?? "Người duyệt"} chạy review, chưa đạt, rồi từ chối`
+                      : refusedByPerson
+                        ? `${c.decided_by_name ?? "Người duyệt"} từ chối, không chạy review`
                       : `${c.decided_by_name ?? "Người duyệt"} chạy review ${[c.shas.length ? "các commit" : "", c.argument ? "phản biện" : ""].filter(Boolean).join(" và ")}`}
               </div>
               {c.decided_at && c.status !== "pending" && <div className="muted small">{date(c.decided_at)}</div>}
@@ -479,7 +488,18 @@ function Detail({
                 hoặc admin xác nhận: hãy mở file bằng chứng trên GitLab và chắc đó là cấu hình đang chạy thật.
               </div>
             )}
-            {c.reason && <div className="small">{c.reason}</div>}
+            {c.status === "unmet" && (
+              <div className="small">
+                {c.can_decide
+                  ? "Kiểm chưa đạt. Bạn quyết: vẫn đóng finding (ghi lý do), chạy review lại, hoặc từ chối."
+                  : "Kiểm chưa đạt; chờ lead, manager hoặc admin quyết: vẫn đóng, chạy lại hoặc từ chối."}
+              </div>
+            )}
+            {c.reason && (
+              <div className="small" style={{ whiteSpace: "pre-line" }}>
+                {c.reason}
+              </div>
+            )}
             {c.evidence && (
               <div className="small">
                 Chỗ sửa: <code>{c.evidence}</code>
@@ -503,15 +523,34 @@ function Detail({
           />
         </div>
       )}
-      {(decidable || confirmable || c.can_cancel) && (
+      {overridable && closing && (
+        <div style={{ marginTop: 12 }}>
+          <OverrideClose
+            closure={c}
+            severity={c.finding.severity}
+            canLowerFar={!!c.can_lower_far}
+            onCancel={() => setClosing(false)}
+            onDone={async (m) => {
+              onMessage(m);
+              await onDone();
+            }}
+          />
+        </div>
+      )}
+      {(decidable || confirmable || c.can_cancel) && !closing && (
         <div className="toolbar" style={{ marginTop: 12 }}>
+          {overridable && !refusing && (
+            <button className="primary" disabled={busy} onClick={() => setClosing(true)}>
+              Đóng finding
+            </button>
+          )}
           {decidable && (
             <button
-              className="primary"
+              className={overridable ? undefined : "primary"}
               disabled={busy}
               onClick={() => act(`/close-requests/${c.id}/run`, undefined, "Đã gửi đi review; kết quả hiện ở đây sau ít phút.")}
             >
-              {c.status === "failed" ? "Chạy review lại" : "Chạy review"}
+              {c.status === "pending" ? "Chạy review" : "Chạy review lại"}
             </button>
           )}
           {(decidable || confirmable) && !refusing && (

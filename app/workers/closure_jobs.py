@@ -6,7 +6,9 @@ review" (the request is `checking`). The worker fetches the commits from GitLab,
 cannot be a fix (another repo, a commit older than the change that brought the finding, a diff
 over MAX_REVIEW_LOC), then asks the same no-tool check the reviews use. "fixed" with evidence in
 the diff closes the finding; anything else leaves it open and the request says why ("chưa đủ
-điều kiện đóng"). The call's cost counts toward the month's LLM budget (`closures_usd`).
+điều kiện đóng", `unmet`): the manager or admin who ran it then closes the finding anyway
+with a note, runs it again, or confirms the refusal. The call's cost counts toward the month's
+LLM budget (`closures_usd`).
 
 No transaction stays open while GitLab or the model work (docs/specs/19 §4.6).
 """
@@ -255,7 +257,7 @@ def run_close_request(
     if finding.status != "open":
         return decide("rejected", f"Finding không còn mở (trạng thái {finding.status}).")
     if project.allow_external_llm is False:
-        return decide("rejected", "Repo này không cho dùng LLM bên ngoài nên không kiểm được.")
+        return decide("unmet", "Repo này không cho dùng LLM bên ngoài nên không kiểm được.")
     budget = monthly_budget_usd(session, settings)
     if budget > 0:
         from app.workers.knowledge_jobs import month_spend_usd  # lazy: heavy module
@@ -310,13 +312,13 @@ def run_close_request(
     except GitLabError as exc:
         return decide("failed", f"GitLab: {str(exc)[:200]}")
     if refused is not None:
-        return decide("rejected", refused)
+        return decide("unmet", refused)
     prepared = prepare(entries, settings.ignore_paths, settings.sensitive_paths)
     if target.shas and not prepared.files and not target.argument:
-        return decide("rejected", "Các commit không có thay đổi nào xem được (file bị bỏ qua).")
+        return decide("unmet", "Các commit không có thay đổi nào xem được (file bị bỏ qua).")
     if prepared.loc > settings.max_review_loc:
         return decide(
-            "rejected",
+            "unmet",
             f"Các commit thay đổi {prepared.loc} dòng, quá MAX_REVIEW_LOC "
             f"({settings.max_review_loc}); chọn đúng commit sửa lỗi.",
         )
@@ -408,7 +410,7 @@ def run_close_request(
         ),
     }[outcome.verdict]
     return decide(
-        "rejected",
+        "unmet",
         f"Chưa đủ điều kiện đóng — {why}: {outcome.reason}",
         evidence=outcome.evidence,
     )

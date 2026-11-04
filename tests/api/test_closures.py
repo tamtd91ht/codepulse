@@ -143,6 +143,11 @@ def run(client: TestClient, as_user: Any, who: Any, closure_id: int) -> Any:
     return client.post(f"/api/v1/close-requests/{closure_id}/run", headers=as_user(who))
 
 
+def withdraw(client: TestClient, as_user: Any, who: Any, closure_id: int) -> None:
+    cancelled = client.post(f"/api/v1/close-requests/{closure_id}/cancel", headers=as_user(who))
+    assert cancelled.json()["status"] == "cancelled"
+
+
 def test_commit_links_and_hashes() -> None:
     assert parse_commit(LINK) == FIX
     assert parse_commit(f"{LINK}#note_1") == FIX
@@ -223,7 +228,7 @@ def test_not_a_fix_says_why_and_leaves_it_open(
 ) -> None:
     closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
     run(client, as_user, world.admin, closure_id)
-    assert check(db_session, settings, closure_id, answer) == "rejected"
+    assert check(db_session, settings, closure_id, answer) == "unmet"
     closure = db_session.get(FindingClosure, closure_id)
     assert closure is not None and closure.reason is not None
     assert closure.reason.startswith("Chưa đủ điều kiện đóng")
@@ -237,9 +242,10 @@ def test_commits_that_cannot_be_the_fix_are_refused_without_asking(
 ) -> None:
     unknown = ask(client, world, as_user, world.an, ["a1b2c3d4"]).json()["id"]
     run(client, as_user, world.admin, unknown)
-    assert check(db_session, settings, unknown, FIXED) == "rejected"
+    assert check(db_session, settings, unknown, FIXED) == "unmet"
     refused = db_session.get(FindingClosure, unknown)
     assert refused is not None and "Không tìm thấy commit a1b2c3d4" in (refused.reason or "")
+    withdraw(client, as_user, world.an, unknown)  # a new request needs the last one answered
 
     review = db_session.get(Review, world.an_review.id)
     assert review is not None
@@ -248,7 +254,7 @@ def test_commits_that_cannot_be_the_fix_are_refused_without_asking(
     older = ask(client, world, as_user, world.an, [FIX]).json()["id"]
     run(client, as_user, world.admin, older)
     # committed_date decides, not the author date anyone can set.
-    assert check(db_session, settings, older, FIXED) == "rejected"
+    assert check(db_session, settings, older, FIXED) == "unmet"
     refused = db_session.get(FindingClosure, older)
     assert refused is not None and "có trước thay đổi" in (refused.reason or "")
     assert refused.cost_usd is None  # no model call
@@ -614,7 +620,7 @@ def test_an_argument_without_proof_in_the_code_shown_stays_open(
     closure_id = ask_with(client, world, as_user, {"argument": ARGUMENT}).json()["id"]
     run(client, as_user, world.manager, closure_id)
     elsewhere = {**ACCEPTED, "evidence_file": "deploy/k8s/secret.yaml"}  # never shown
-    assert check(db_session, settings, closure_id, elsewhere) == "rejected"
+    assert check(db_session, settings, closure_id, elsewhere) == "unmet"
     closure = db_session.get(FindingClosure, closure_id)
     assert closure is not None and "phản biện hợp lý nhưng chưa đủ chắc chắn" in (
         closure.reason or ""
@@ -622,10 +628,12 @@ def test_an_argument_without_proof_in_the_code_shown_stays_open(
     db_session.refresh(world.an_finding)
     assert world.an_finding.status == "open"
 
-    again = ask_with(client, world, as_user, {"argument": ARGUMENT}).json()["id"]
-    run(client, as_user, world.manager, again)
+    # The request waits for the lead, who runs it again (no new request meanwhile).
+    assert ask_with(client, world, as_user, {"argument": ARGUMENT}).status_code == 409
+    again = closure_id
+    assert run(client, as_user, world.manager, again).status_code == 202
     not_fixed = {"index": 0, "verdict": "not_fixed", "reason": "Không thấy file prod."}
-    assert check(db_session, settings, again, not_fixed) == "rejected"
+    assert check(db_session, settings, again, not_fixed) == "unmet"
     closure = db_session.get(FindingClosure, again)
     assert closure is not None and "Phản biện chưa được code trên nhánh HEAD chứng minh" in (
         closure.reason or ""
@@ -638,7 +646,7 @@ def test_accepted_is_not_a_verdict_without_an_argument(
     closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
     run(client, as_user, world.manager, closure_id)
     assert check(db_session, settings, closure_id, {**ACCEPTED, "evidence_file": "app/a.py"}) == (
-        "rejected"
+        "unmet"
     )
 
 
@@ -683,7 +691,8 @@ def test_evidence_must_be_lines_of_a_file_that_was_shown(
         run(client, as_user, world.manager, closure_id)
         provider = FakeLLMProvider(lambda p, e=evidence: {"answers": [{**ACCEPTED, **e}]})
         token = token_of(db_session, closure_id)
-        assert work(db_session, settings, closure_id, token, None, provider=provider) == "rejected"
+        assert work(db_session, settings, closure_id, token, None, provider=provider) == "unmet"
+        withdraw(client, as_user, world.an, closure_id)
         assert "FILES NOT SHOWN" in provider.prompts[0].user
         assert "env-staging" in provider.prompts[0].user
 
@@ -857,3 +866,158 @@ def test_a_false_positive_set_by_a_dispute_after_a_reopen_is_not_reopened_here(
     assert world.an_finding.status == "false_positive"
     # The dispute's decision, not an undone close: not reopened from here.
     assert client.post(reopen, json={"note": "Thử lại"}, headers=admin).status_code == 409
+
+
+NOT_FIXED = {"index": 0, "verdict": "not_fixed", "reason": "Không liên quan."}
+
+
+def unmet_request(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    db_session: Session,
+    settings: Settings,
+    body: dict[str, Any] | None = None,
+) -> int:
+    closure_id: int = ask_with(client, world, as_user, body or {"commits": [FIX]}).json()["id"]
+    run(client, as_user, world.manager, closure_id)
+    assert check(db_session, settings, closure_id, NOT_FIXED) == "unmet"
+    return closure_id
+
+
+def test_a_check_not_good_enough_waits_for_the_decider(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = unmet_request(client, world, as_user, db_session, settings)
+    todo = client.get("/api/v1/close-requests?view=todo", headers=as_user(world.manager)).json()
+    assert [(i["id"], i["status"], i["can_decide"]) for i in todo["items"]] == [
+        (closure_id, "unmet", True)
+    ]
+    facets = client.get("/api/v1/close-requests/facets", headers=as_user(world.manager)).json()
+    assert facets["todo"] == 1
+    waiting = client.get("/api/v1/close-requests?status=unmet", headers=as_user(world.an)).json()[
+        "items"
+    ]
+    assert [(i["id"], i["can_cancel"], i["can_decide"]) for i in waiting] == [
+        (closure_id, True, False)
+    ]
+    # Refusing it keeps the check's reason after the decider's.
+    refused = client.post(
+        f"/api/v1/close-requests/{closure_id}/reject",
+        json={"note": "Đồng ý với kết quả kiểm"},
+        headers=as_user(world.manager),
+    ).json()
+    assert refused["status"] == "rejected"
+    assert refused["reason"].startswith("Từ chối: Đồng ý với kết quả kiểm\nKết quả kiểm: Chưa đủ")
+    # Answered: the author may ask again.
+    assert ask(client, world, as_user, world.an, [FIX]).status_code == 201
+
+
+def test_a_decider_closes_anyway_by_the_commits(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = unmet_request(client, world, as_user, db_session, settings)
+    url = f"/api/v1/close-requests/{closure_id}/close"
+    body = {"outcome": "fixed", "note": "Commit đã sửa, model đọc sai diff"}
+    for who in (world.an, world.binh):  # neither the author nor a peer
+        assert client.post(url, json=body, headers=as_user(who)).status_code == 403
+    assert (
+        client.post(url, json={**body, "note": "ok"}, headers=as_user(world.lead)).status_code
+        == 422
+    )
+    closed = client.post(url, json=body, headers=as_user(world.lead))
+    assert closed.status_code == 200
+    out = closed.json()
+    assert (out["status"], out["closed_as"]) == ("closed", "fixed")
+    assert "Người duyệt vẫn đóng: Commit đã sửa" in out["reason"]
+    assert "Chưa đủ điều kiện đóng" in out["reason"]  # the check's reason stays
+    db_session.refresh(world.an_finding)
+    assert (world.an_finding.status, world.an_finding.severity) == ("fixed", "critical")
+    assert client.post(url, json=body, headers=as_user(world.lead)).status_code == 409
+    actions = set(
+        db_session.scalars(select(AuditLog.action).where(AuditLog.action.like("finding.%")))
+    )
+    assert "finding.close_request.override" in actions
+
+
+def test_a_decider_closes_anyway_accepting_the_risk(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = unmet_request(client, world, as_user, db_session, settings, {"argument": ARGUMENT})
+    url = f"/api/v1/close-requests/{closure_id}/close"
+    note = "Prod đọc key từ k8s, đã kiểm tay"
+    # No commit in the request: "fixed" cannot be its outcome.
+    no_fix = client.post(url, json={"outcome": "fixed", "note": note}, headers=as_user(world.lead))
+    assert no_fix.status_code == 422
+    # A lead lowers a critical one step only.
+    far = client.post(url, json={"outcome": "low", "note": note}, headers=as_user(world.lead))
+    assert far.status_code == 403
+    db_session.refresh(world.an_review)
+    score_before = world.an_review.score
+    closed = client.post(url, json={"outcome": "medium", "note": note}, headers=as_user(world.lead))
+    assert closed.status_code == 200
+    out = closed.json()
+    assert (out["closed_as"], out["severity_before"], out["severity_after"]) == (
+        "accepted_risk",
+        "critical",
+        "medium",
+    )
+    db_session.refresh(world.an_finding)
+    assert (world.an_finding.status, world.an_finding.severity) == ("accepted_risk", "medium")
+    db_session.refresh(world.an_review)
+    assert world.an_review.score is not None and score_before is not None
+    assert world.an_review.score > score_before
+
+
+def test_only_an_unmet_request_is_closed_this_way(
+    client: TestClient, world: World, as_user: Any
+) -> None:
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    closed = client.post(
+        f"/api/v1/close-requests/{closure_id}/close",
+        json={"outcome": "fixed", "note": "Chưa kiểm mà đóng"},
+        headers=as_user(world.manager),
+    )
+    assert closed.status_code == 409
+
+
+def test_disputing_withdraws_the_authors_unmet_request(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = unmet_request(client, world, as_user, db_session, settings)
+    dispute = client.post(
+        f"/api/v1/findings/{world.an_finding.id}/dispute",
+        json={"reason": "Finding này không đúng ở môi trường thật"},
+        headers=as_user(world.an),
+    )
+    assert dispute.status_code == 201
+    closure = db_session.get(FindingClosure, closure_id)
+    assert closure is not None
+    db_session.refresh(closure)
+    assert closure.status == "cancelled"
+
+
+def test_a_request_of_a_finding_closed_another_way_leaves_the_todo(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = unmet_request(client, world, as_user, db_session, settings)
+    world.an_finding.status = "fixed"  # e.g. a later review of the MR no longer reports it
+    db_session.flush()
+    todo = client.get("/api/v1/close-requests?view=todo", headers=as_user(world.manager)).json()
+    assert todo["items"] == []
+    facets = client.get("/api/v1/close-requests/facets", headers=as_user(world.manager)).json()
+    assert facets["todo"] == 0
+    (row,) = client.get("/api/v1/close-requests", headers=as_user(world.manager)).json()["items"]
+    assert (row["id"], row["can_decide"]) == (closure_id, False)
+    # Reopened: the stale request is answered, a new one starts from today's code.
+    reopened = client.post(
+        f"/api/v1/findings/{world.an_finding.id}/reopen",
+        json={"note": "Lỗi vẫn còn ở nhánh chính"},
+        headers=as_user(world.admin),
+    )
+    assert reopened.status_code == 200
+    closure = db_session.get(FindingClosure, closure_id)
+    assert closure is not None
+    db_session.refresh(closure)
+    assert closure.status == "rejected"
+    assert ask(client, world, as_user, world.an, [FIX]).status_code == 201

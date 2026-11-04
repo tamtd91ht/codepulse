@@ -628,7 +628,7 @@ export interface FindingClosure {
   kind: "auto" | "request" | "admin" | "reopen";
   /** pending: waiting for a manager/admin; checking: the check runs; proposed: the argument held, waiting for a
    * manager/admin to confirm; then closed / rejected / failed; cancelled by the author. */
-  status: "pending" | "checking" | "proposed" | "closed" | "rejected" | "failed" | "cancelled" | "reopened";
+  status: "pending" | "checking" | "proposed" | "unmet" | "closed" | "rejected" | "failed" | "cancelled" | "reopened";
   shas: string[];
   /** auto: the review whose change closed it. */
   review_id: number | null;

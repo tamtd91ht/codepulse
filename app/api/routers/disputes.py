@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import ColumnElement, and_, or_, select
+from sqlalchemy import ColumnElement, and_, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.api.access import (
@@ -119,12 +119,25 @@ def raise_dispute(
         raise HTTPException(403, "only the author of the change can dispute its findings")
     if finding.status != "open":
         raise HTTPException(409, f"finding is {finding.status}")
-    # One flow at a time: a request to close it as fixed is being checked.
+    # Their own request the check found not good enough gives way: disputing is their answer.
+    session.execute(
+        update(FindingClosure)
+        .where(
+            FindingClosure.finding_id == finding.id,
+            FindingClosure.status == "unmet",
+            FindingClosure.requested_by == principal.user_id,
+        )
+        .values(status="cancelled", decided_at=datetime.now(UTC))
+        .execution_options(synchronize_session=False)
+    )
+    # One flow at a time: a request to close it as fixed is waiting or being checked.
     pending_close = select(FindingClosure.id).where(
         FindingClosure.finding_id == finding.id, FindingClosure.status.in_(CLOSURE_OPEN)
     )
     if session.scalar(pending_close) is not None:
-        raise HTTPException(409, "finding has a close request being checked")
+        raise HTTPException(
+            409, "finding đang có yêu cầu đóng chờ duyệt hoặc đang kiểm; rút yêu cầu trước"
+        )
     dispute = FindingDispute(finding_id=finding.id, raised_by=principal.user_id, reason=body.reason)
     finding.status = "disputed"
     session.add(dispute)
