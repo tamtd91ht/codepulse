@@ -107,7 +107,8 @@ export interface ScorecardView {
   month: string;
   shadow: boolean;
   review: {
-    id: number;
+    /** null: nobody acted on this month yet (a computed draft, nothing stored). */
+    id: number | null;
     status: DpiStatus;
     profile: string;
     leave_days: number;
@@ -127,7 +128,9 @@ export interface ScorecardView {
   rolling: { value: number | null; months: number; partial: boolean; rating?: Rating | null };
   assessments: { metric: string; score: number; comment: string; evidence: string[]; by: string | null; updated_at: string }[];
   disputes: { id: number; metric: string; reason: string; decision: "accepted" | "rejected" | null; answer: string | null; decided_at: string | null; created_at: string }[];
-  peer: { count: number; average: number | null; items: { score: number; comment: string | null; from?: string | null }[] };
+  peer: { count: number; average: number | null; hidden?: boolean; items: { score: number; comment: string | null; from?: string | null }[] };
+  /** The month is over: its cycle can be acted on. */
+  finished: boolean;
   b5_suggestions: Evidence[];
   manager_metrics: { key: string; label: string; max: number }[];
   can: { self: boolean; dispute: boolean; assess: boolean; calibrate: boolean; finalize: boolean; lock: boolean; decide: boolean };

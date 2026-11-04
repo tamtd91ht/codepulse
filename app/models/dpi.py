@@ -41,6 +41,13 @@ class Issue(TimestampMixin, Base):
         UniqueConstraint("project_id", "iid"),
         Index("ix_issues_closed_at_src", "closed_at_src"),
         Index("ix_issues_due_date", "due_date"),
+        # "Assigned to one of these accounts" (JSONB containment).
+        Index(
+            "ix_issues_assignee_account_ids",
+            "assignee_account_ids",
+            postgresql_using="gin",
+            postgresql_ops={"assignee_account_ids": "jsonb_path_ops"},
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
@@ -165,6 +172,8 @@ class DpiReview(TimestampMixin, Base):
     month: Mapped[date] = mapped_column(Date, index=True)  # the 1st
     status: Mapped[str] = mapped_column(server_default="draft")
     profile: Mapped[str]
+    # The rubric in force when the review opened (a new version applies from the next cycle).
+    rubric_version: Mapped[str | None]
     leave_days: Mapped[Decimal] = mapped_column(Numeric(4, 1), server_default="0")
     # The lead's adjustment of a metric after a dispute, the calibration delta, the 1:1.
     adjustment: Mapped[Decimal] = mapped_column(Numeric(5, 2), server_default="0")

@@ -54,6 +54,7 @@ class MrFact:
     coverage: float | None = None
     reviewed: bool = False
     refactor: bool = False
+    ci: bool = True  # the repo runs pipelines at all
 
 
 @dataclass(frozen=True)
@@ -214,6 +215,9 @@ def b1(f: Facts) -> Result:
 
 
 def b2(f: Facts) -> Result:
+    active = f.review_count or f.mrs or f.direct_commits or f.added_lines or f.defects
+    if not active:
+        return Result("B2", None, "low", {"defects": 0})  # no work this month: no free points
     penalty = sum(PROD_PENALTY.get(d.severity, 0) * d.share for d in f.defects)
     evidence = [
         {
@@ -307,7 +311,8 @@ def c2(f: Facts) -> Result:
 
 def _compliant(m: MrFact) -> bool:
     checklist = m.tasks_total == 0 or m.tasks_done == m.tasks_total
-    return bool(m.issue_ids) and checklist and m.pipeline == "success" and m.reviewed
+    green = m.pipeline == "success" if m.ci else True  # no CI in the repo: not their fault
+    return bool(m.issue_ids) and checklist and green and m.reviewed
 
 
 def c3(f: Facts) -> Result:
@@ -322,7 +327,7 @@ def c3(f: Facts) -> Result:
         "direct_commits": len(f.direct_commits),
         "missing_issue": sum(1 for m in f.mrs if not m.issue_ids),
         "unchecked_checklist": sum(1 for m in f.mrs if m.tasks_done < m.tasks_total),
-        "pipeline_not_green": sum(1 for m in f.mrs if m.pipeline != "success"),
+        "pipeline_not_green": sum(1 for m in f.mrs if m.ci and m.pipeline != "success"),
         "not_reviewed": sum(1 for m in f.mrs if not m.reviewed),
     }
     evidence = [{**_mr(m), "ok": _compliant(m)} for m in f.mrs] + [

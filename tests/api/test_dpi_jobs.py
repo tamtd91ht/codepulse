@@ -82,3 +82,16 @@ def test_readiness_lists_repos_for_admins(client: TestClient, world: World, as_u
     assert [r["project"]["path"] for r in body["repos"]] == ["demo/p"]
     assert body["acceptance"]["targets"]["through_mr_pct"] == 80
     assert client.get("/api/v1/dpi/readiness", headers=as_user(world.lead)).status_code == 403
+
+
+def test_rebuild_is_queued_by_admins_only(
+    client: TestClient, world: World, as_user: Any, queue: Any
+) -> None:
+    url = "/api/v1/dpi/rebuild"
+    assert client.post(url, headers=as_user(world.lead), json={}).status_code == 403
+    started = client.post(url, headers=as_user(world.admin), json={"months": 3, "resync": True})
+    assert started.status_code == 202
+    (job,) = [j for j in queue.jobs if j[0] == "app.dpi.jobs.dpi_rebuild_job"]
+    assert job[1] == (3, True) and job[2]["job_id"] == "dpi-rebuild"
+    assert client.get(url, headers=as_user(world.admin)).json() == {"status": "none"}
+    assert client.post(url, headers=as_user(world.admin), json={"months": 9}).status_code == 422

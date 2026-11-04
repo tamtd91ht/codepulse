@@ -125,20 +125,25 @@ def classify_month(
         calls += 1
         cost += spent
         labels.update({i: (lbl, "llm") for i, lbl in got.items()})
+        if spent:
+            # Per batch, so the budget check of the next batch sees it.
+            session.add(
+                AuditLog(
+                    actor_user_id=None,
+                    action=COST_ACTION,
+                    target=f"month:{month.isoformat()}",
+                    details={"cost_usd": round(spent, 6), "calls": 1},
+                )
+            )
+            session.flush()
+    meant_for_llm = {i for i, _t in llm_rows}
     for r in rows:
-        if int(r.id) not in labels:
+        # A comment the model should have labelled but did not (stopped, failed) stays
+        # unlabelled: the scorecard reads it by the rule meanwhile, the next run asks again.
+        if int(r.id) not in labels and int(r.id) not in meant_for_llm:
             labels[int(r.id)] = (classify_rule(r.body), "rule")
     for note_id, (label, by) in labels.items():
         session.add(ReviewComment(note_id=note_id, label=label, by=by))
-    if cost:
-        session.add(
-            AuditLog(
-                actor_user_id=None,
-                action=COST_ACTION,
-                target=f"month:{month.isoformat()}",
-                details={"cost_usd": round(cost, 6), "calls": calls},
-            )
-        )
     session.flush()
     return {
         "comments": len(rows),
@@ -184,6 +189,58 @@ def dpi_month_job(month_iso: str | None = None) -> dict[str, Any]:
         out["scorecards"] = service.run_month(session, month, settings)
         session.commit()
     log.info("dpi month done", extra=out)
+    return out
+
+
+REBUILD_JOB_ID = "dpi-rebuild"
+REBUILD_TIMEOUT = 4 * 60 * 60
+
+
+def _progress(**values: Any) -> None:
+    from rq import get_current_job
+
+    job = get_current_job()
+    if job is not None:
+        job.meta["progress"] = {**values, "updated_at": datetime.now(UTC).isoformat()}
+        job.save_meta()  # type: ignore[no-untyped-call]
+
+
+def dpi_rebuild_job(months: int = 3, resync: bool = True) -> dict[str, Any]:
+    """ "Chạy lại dữ liệu DPI" (docs/specs/25 §6): optionally collect every tracked repo again
+    over its backfill window (so issues, MR checklists, coverage and test reports that older
+    syncs did not ask for come in), then compute the scorecards of the last `months` finished
+    months, oldest first. One repo failing does not stop the others."""
+    from app.collector.sync import sync_project_job
+    from app.models import Project
+
+    out: dict[str, Any] = {"synced": 0, "sync_failed": [], "months": []}
+    if resync:
+        with get_sessionmaker()() as session:
+            repos = [
+                (int(pid), str(path))
+                for pid, path in session.execute(
+                    select(Project.id, Project.path_with_namespace)
+                    .where(Project.tracked.is_(True))
+                    .order_by(Project.id)
+                )
+            ]
+        for i, (pid, path) in enumerate(repos):
+            _progress(phase="sync", done=i, total=len(repos), current=path)
+            try:
+                sync_project_job(pid, full=True)
+                out["synced"] += 1
+            except Exception as exc:  # one repo's GitLab trouble must not stop the rebuild
+                log.warning(
+                    "dpi rebuild: sync failed", extra={"project_id": pid, "error": str(exc)[:200]}
+                )
+                out["sync_failed"].append(path)
+    today = datetime.now(UTC).date()
+    wanted = [service.months_back(service.previous_month(today), n) for n in range(months)][::-1]
+    for i, month in enumerate(wanted):
+        _progress(phase="score", done=i, total=len(wanted), current=month.isoformat()[:7])
+        out["months"].append(dpi_month_job(month.isoformat()))
+    _progress(phase="done", done=len(wanted), total=len(wanted), current=None)
+    log.info("dpi rebuild done", extra={"synced": out["synced"], "months": len(wanted)})
     return out
 
 

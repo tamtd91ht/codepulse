@@ -176,3 +176,15 @@ def test_split_mrs_flags_many_mrs_for_one_issue_in_a_day() -> None:
     mrs = [m.MrFact(i, i, 1, None, None, at(5), 1.0, (9,)) for i in range(3)]
     assert m.split_mrs(mrs) == [{"issue_id": 9, "day": "2026-10-05", "mrs": ["!0", "!1", "!2"]}]
     assert m.split_mrs(mrs[:2]) == []
+
+
+def test_author_hours_counts_writing_up_to_the_ready_mark_for_early_drafts() -> None:
+    from app.dpi.facts import author_hours
+
+    opened = at(1)
+    # The draft was opened before any code: writing runs to the ready mark, not 0.
+    hours = author_hours(opened, at(2), [], ready=at(4), last_commit=at(3))
+    assert hours == 48.0
+    # One review comment answered by a push 5 hours later.
+    notes = [(at(5), False, True), (datetime(2026, 10, 5, 14, tzinfo=UTC), True, False)]
+    assert author_hours(at(3), at(2), notes) == 24.0 + 5.0

@@ -140,7 +140,7 @@ def test_the_whole_month_of_one_person(
     kinds = set(
         db_session.scalars(select(DpiSnapshot.kind).where(DpiSnapshot.user_id == world.an.id))
     )
-    assert kinds == {"auto", "final"}
+    assert kinds == {"final"}  # viewing stores nothing; finalizing keeps the final card
     # Closed: nothing more is assessed, the card shown is the final one.
     assert client.put(url, headers=as_user(world.lead), json=assessment()).status_code == 409
 
@@ -232,15 +232,23 @@ def test_defect_rca_counts_in_b2_once_confirmed(
 
 
 def test_overview_distribution_settings_and_peer_feedback(
-    client: TestClient, world: World, as_user: Any, db_session: Session, an_work: Account
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    db_session: Session,
+    an_work: Account,
+    settings: Settings,
 ) -> None:
-    card(client, as_user, world.an, world.an.id)  # a snapshot for October
+    review = service.ensure_review(db_session, world.an.id, date(2026, 10, 1))
+    service.snapshot(
+        db_session, review, service.Calculator(db_session, date(2026, 10, 1), settings).card(review)
+    )
     overview = client.get(f"{API}/overview?month={MONTH}", headers=as_user(world.lead)).json()
     assert world.an.id in [r["user"]["id"] for r in overview["rows"]]
     assert overview["summary"]["people"] >= 1
     dist = client.get(f"{API}/distribution?month={MONTH}", headers=as_user(world.manager))
     assert dist.status_code == 200
-    assert all(t["hidden"] for t in dist.json()["teams"] if t["people"] < 3)
+    assert all(t["hidden"] or t["people"] >= 5 for t in dist.json()["teams"])
     assert client.get(f"{API}/distribution", headers=as_user(world.an)).status_code == 403
 
     bad = {"label": "X", "weights": {"A": 50, "B": 10}, "a1_target": 10}
@@ -280,6 +288,76 @@ def test_overview_distribution_settings_and_peer_feedback(
         == 403
     )
     peer_for_an = card(client, as_user, world.an, world.an.id).json()["peer"]
-    assert peer_for_an["count"] == 1 and "from" not in peer_for_an["items"][0]  # anonymous
+    # One feedback only: the person learns that it exists, not what it says (anonymity).
+    assert peer_for_an["count"] == 1 and peer_for_an["items"] == [] and peer_for_an["hidden"]
     peer_for_lead = card(client, as_user, world.lead, world.an.id).json()["peer"]
     assert peer_for_lead["items"][0]["from"] == "Binh"
+
+
+def test_viewing_writes_nothing_and_an_unfinished_month_takes_no_action(
+    client: TestClient, world: World, as_user: Any, db_session: Session, an_work: Account
+) -> None:
+    body = card(client, as_user, world.an, world.an.id).json()
+    assert body["review"]["id"] is None and body["finished"] is True
+    assert db_session.scalars(select(DpiReview)).all() == []
+    assert db_session.scalars(select(DpiSnapshot)).all() == []
+    current = datetime.now(UTC).strftime("%Y-%m")
+    now = client.get(f"{API}/people/{world.an.id}?month={current}", headers=as_user(world.an))
+    assert now.json()["finished"] is False and not now.json()["can"]["self"]
+    early = client.post(
+        f"{API}/people/{world.an.id}/months/{current}/submit",
+        headers=as_user(world.an),
+        json={"leave_days": 0},
+    )
+    assert early.status_code == 409
+
+
+def test_defects_stay_inside_the_leads_projects_and_shares_are_checked(
+    client: TestClient, world: World, as_user: Any, db_session: Session, an_work: Account
+) -> None:
+    from app.models import BusinessProject, Connection, Project
+
+    other_bp = BusinessProject(name="Khác")
+    db_session.add(other_bp)
+    db_session.flush()
+    connection = db_session.scalars(select(Connection)).first()
+    assert connection is not None
+    elsewhere = Project(
+        connection_id=connection.id,
+        external_id=2002,
+        path_with_namespace="other/q",
+        business_project_id=other_bp.id,
+    )
+    db_session.add(elsewhere)
+    db_session.flush()
+    for issue_id, project_id in ((910, world.project.id), (911, elsewhere.id)):
+        db_session.add(
+            Issue(
+                id=issue_id,
+                project_id=project_id,
+                iid=issue_id,
+                title="bug",
+                prod_severity="P2",
+                created_at_src=datetime(2026, 10, 15, tzinfo=UTC),
+            )
+        )
+        db_session.flush()
+        db_session.add(ProdDefect(issue_id=issue_id, severity="P2"))
+    db_session.flush()
+    seen = client.get(f"{API}/defects", headers=as_user(world.lead)).json()["items"]
+    assert [d["issue"]["id"] for d in seen] == [910]  # not the other dự án's bug
+    hidden = db_session.scalars(select(ProdDefect).where(ProdDefect.issue_id == 911)).one()
+    url = f"{API}/defects/{hidden.id}/rca"
+    assert (
+        client.put(url, headers=as_user(world.lead), json={"status": "process"}).status_code == 404
+    )
+    mine = db_session.scalars(select(ProdDefect).where(ProdDefect.issue_id == 910)).one()
+    bad = {
+        "status": "confirmed",
+        "responsible": [
+            {"user_id": world.an.id, "share": 2},
+            {"user_id": world.binh.id, "share": -1},
+        ],
+    }
+    response = client.put(f"{API}/defects/{mine.id}/rca", headers=as_user(world.lead), json=bad)
+    assert response.status_code == 422

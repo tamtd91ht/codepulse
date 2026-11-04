@@ -5,7 +5,7 @@
  * self review, the lead's 30 points, calibration, disputes, finalize after the 1:1.
  */
 import Link from "next/link";
-import { use, useState } from "react";
+import { use, useEffect, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { SubPanel, type SubTab, SubTabs } from "@/components/AdminTabs";
@@ -150,6 +150,8 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
   const { data, error, mutate } = useApi<ScorecardView>(month ? `/dpi/people/${userId}?month=${month}` : null, { keepPreviousData: true });
   const [message, setMessage] = useState<string | null>(null);
   const [disputeFor, setDisputeFor] = useState<string | null>(null);
+  // A dispute form belongs to the month it was opened on.
+  useEffect(() => setDisputeFor(null), [month]);
 
   if (error) return <Loading error={error} />;
   if (!data || !month) return <Loading rows={6}>Đang tính scorecard…</Loading>;
@@ -168,7 +170,8 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
       setMessage(`Lỗi: ${e instanceof ApiError ? e.message : String(e)}`);
     }
   };
-  const base = `/dpi/people/${userId}/months/${month}`;
+  const dataMonth = data.month.slice(0, 7);
+  const base = `/dpi/people/${userId}/months/${dataMonth}`;
 
   return (
     <>
@@ -227,9 +230,11 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
           <div className="dpi-group-grid">
             {GROUPS.map((g) => (
               <Card key={g} title={`${g} · ${GROUP_LABEL[g]}`} collapsible={false} subtitle={`Trọng số ${c.groups[g]?.weight ?? 0} với profile ${c.profile_label}`}>
-                {(c.groups[g]?.metrics ?? []).map((k) => (
-                  <MetricRow key={k} k={k} m={c.metrics[k]} onDispute={data.can.dispute ? () => setDisputeFor(k) : undefined} />
-                ))}
+                {(c.groups[g]?.metrics ?? [])
+                  .filter((k) => c.metrics[k])
+                  .map((k) => (
+                    <MetricRow key={k} k={k} m={c.metrics[k]} onDispute={data.can.dispute ? () => setDisputeFor(k) : undefined} />
+                  ))}
               </Card>
             ))}
           </div>
@@ -289,10 +294,11 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
       )}
       {tab === "cycle" && (
         <SubPanel id="dpi-card" tab="cycle">
-          <Cycle data={data} base={base} month={month} userId={userId} run={run} />
+          {/* Keyed by person and month: the forms start from that month's data, never another's. */}
+          <Cycle key={`${userId}-${dataMonth}-${data.review.id ?? "new"}`} data={data} base={base} month={dataMonth} userId={userId} run={run} />
         </SubPanel>
       )}
-      {disputeFor && (
+      {disputeFor && data.can.dispute && (
         <DisputeForm
           metric={disputeFor}
           onClose={() => setDisputeFor(null)}
@@ -309,7 +315,14 @@ function DisputeForm({ metric, onClose, onSend }: { metric: string; onClose: () 
   const [reason, setReason] = useState("");
   return (
     <Card title={`Khiếu nại chỉ số ${metric}`} collapsible={false} actions={<button type="button" className="ghost" onClick={onClose}>Huỷ</button>}>
-      <textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Vì sao chỉ số này chưa đúng? (ít nhất 10 ký tự)" style={{ width: "100%" }} />
+      <textarea
+        rows={3}
+        aria-label={`Lý do khiếu nại ${metric}`}
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder="Vì sao chỉ số này chưa đúng? (ít nhất 10 ký tự)"
+        style={{ width: "100%" }}
+      />
       <div className="row" style={{ marginTop: 8 }}>
         <button type="button" className="primary" disabled={reason.trim().length < 10} onClick={() => onSend(reason.trim())}>
           Gửi khiếu nại
@@ -378,6 +391,7 @@ function Cycle({
         )}
         <p className="small muted">
           Phản hồi đồng nghiệp (D3): {data.peer.count} phản hồi{data.peer.average !== null && `, TB ${data.peer.average}/5`}
+          {data.peer.hidden && " (dưới 3 phản hồi: nội dung ẩn để giữ ẩn danh)"}
         </p>
         {data.peer.items.length > 0 && (
           <ul className="small">
@@ -408,8 +422,8 @@ function Cycle({
                   onChange={(e) => setScores({ ...scores, [m.key]: { ...v, score: e.target.value } })}
                   style={{ width: 80 }}
                 />
-                <textarea rows={2} placeholder="Nhận xét" value={v.comment} onChange={(e) => setScores({ ...scores, [m.key]: { ...v, comment: e.target.value } })} />
-                <textarea rows={2} placeholder="Bằng chứng: mỗi dòng một link MR / issue / tài liệu" value={v.evidence} onChange={(e) => setScores({ ...scores, [m.key]: { ...v, evidence: e.target.value } })} />
+                <textarea rows={2} aria-label={`Nhận xét ${m.key}`} placeholder="Nhận xét" value={v.comment} onChange={(e) => setScores({ ...scores, [m.key]: { ...v, comment: e.target.value } })} />
+                <textarea rows={2} aria-label={`Bằng chứng ${m.key}`} placeholder="Bằng chứng: mỗi dòng một link MR / issue / tài liệu" value={v.evidence} onChange={(e) => setScores({ ...scores, [m.key]: { ...v, evidence: e.target.value } })} />
                 {given[m.key]?.by && <span className="muted small">Chấm bởi {given[m.key].by}</span>}
               </fieldset>
             );
@@ -469,8 +483,8 @@ function Cycle({
                 </p>
               ) : data.can.decide ? (
                 <div className="row">
-                  <input placeholder="Trả lời" value={answers[d.id]?.answer ?? ""} onChange={(e) => setAnswers({ ...answers, [d.id]: { answer: e.target.value, value: answers[d.id]?.value ?? "" } })} style={{ flex: 1, minWidth: 180 }} />
-                  <input placeholder="Giá trị mới 0–1" value={answers[d.id]?.value ?? ""} onChange={(e) => setAnswers({ ...answers, [d.id]: { answer: answers[d.id]?.answer ?? "", value: e.target.value } })} style={{ width: 120 }} />
+                  <input aria-label={`Trả lời khiếu nại ${d.metric}`} placeholder="Trả lời" value={answers[d.id]?.answer ?? ""} onChange={(e) => setAnswers({ ...answers, [d.id]: { answer: e.target.value, value: answers[d.id]?.value ?? "" } })} style={{ flex: 1, minWidth: 180 }} />
+                  <input aria-label={`Giá trị mới ${d.metric}`} placeholder="Giá trị mới 0–1" value={answers[d.id]?.value ?? ""} onChange={(e) => setAnswers({ ...answers, [d.id]: { answer: answers[d.id]?.answer ?? "", value: e.target.value } })} style={{ width: 120 }} />
                   <button type="button" onClick={() => run(() => api.post(`/dpi/disputes/${d.id}/decide`, { decision: "accepted", answer: answers[d.id]?.answer ?? "", value: answers[d.id]?.value ? Number(answers[d.id].value) : null }), "Đã chấp nhận khiếu nại.")}>
                     Chấp nhận
                   </button>
@@ -500,7 +514,7 @@ function Cycle({
             <label>
               Ngày 1:1 <input type="date" value={final.day} onChange={(e) => setFinal({ ...final, day: e.target.value })} />
             </label>
-            <textarea rows={3} placeholder="Action plan tháng sau (≥ 10 ký tự)" value={final.plan} onChange={(e) => setFinal({ ...final, plan: e.target.value })} />
+            <textarea rows={3} aria-label="Action plan tháng sau" placeholder="Action plan tháng sau (≥ 10 ký tự)" value={final.plan} onChange={(e) => setFinal({ ...final, plan: e.target.value })} />
             <button type="button" className="primary" disabled={!final.day || final.plan.trim().length < 10} onClick={() => run(() => api.post(`${base}/finalize`, { one_on_one_at: final.day, action_plan: final.plan.trim() }), "Đã chốt kỳ đánh giá.")}>
               Chốt kỳ đánh giá
             </button>

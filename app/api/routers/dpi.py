@@ -5,6 +5,7 @@ Who sees what (§7): `dpi.view` over the person (own / team / project / all, `co
 rating, never people. Viewing someone else's scorecard is audited.
 """
 
+import logging
 from collections import Counter, defaultdict
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -49,10 +50,12 @@ from app.models import (
     User,
 )
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/dpi", tags=["dpi"])
 SessionDep = Annotated[Session, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
-MIN_GROUP = 3  # a distribution of fewer people would point at someone
+MIN_GROUP = 5  # a distribution of fewer people would point at someone
+MIN_PEER = 3  # fewer peer feedbacks than this: the person sees only that some exist
 
 
 def parse_month(value: str | None) -> date:
@@ -83,6 +86,26 @@ def _review(session: Session, user_id: int, month: date) -> DpiReview:
     if review is None:
         raise HTTPException(404, "no DPI review for this month yet")
     return review
+
+
+def _finished(month: date) -> bool:
+    return month < service.month_start(datetime.now(UTC).date())
+
+
+def _acting_review(session: Session, user_id: int, month: date) -> DpiReview:
+    """The review an action changes: only of a month that is over (§5, the cycle starts on the
+    1st of the next month)."""
+    if not _finished(month):
+        raise HTTPException(409, "tháng chưa kết thúc: kỳ đánh giá mở từ ngày 1 tháng sau")
+    return service.ensure_review(session, user_id, month)
+
+
+def _only_final_view(session: Session, principal: Principal, user_id: int) -> bool:
+    """HR (`dpi.final_view`) without any other right over this person."""
+    return not (
+        covers_person(session, principal, "dpi.view", user_id)
+        or covers_person(session, principal, "dpi.calibrate", user_id)
+    )
 
 
 def _sees(session: Session, principal: Principal, user_id: int, review: DpiReview | None) -> bool:
@@ -162,20 +185,29 @@ def _view(
     user: User,
     month: date,
 ) -> dict[str, Any]:
-    review = service.ensure_review(session, user.id, month)
+    # Read-only: a month nobody acted on yet is computed, not stored (the job of the 1st and
+    # each state change store reviews and snapshots).
+    review = service.find_review(session, user.id, month) or service.draft_review(
+        session, user.id, month
+    )
     if not _sees(session, principal, user.id, review):
         raise HTTPException(403, "không có quyền xem scorecard DPI của người này")
+    hr_only = _only_final_view(session, principal, user.id)
     card = _final_card(session, review) if review.status in service.CLOSED else None
     if card is None:
         card = service.Calculator(session, month, settings).card(review)
-        service.snapshot(session, review, card)
-    trend = service.history(session, user.id, month)
+    trend = service.history(session, user.id, month, final_only=hr_only)
     assess = _assesses(session, principal, user.id)
     calibrate = _calibrates(session, principal, user.id)
     own = user.id == principal.user_id
-    is_open = review.status in service.OPEN
-    rubric = service.active_rubric(session)
+    finished = _finished(month)
+    is_open = finished and review.status in service.OPEN
+    rubric = service.review_rubric(session, review)
     today = datetime.now(UTC).date()
+    lead_may_start = review.status in ("lead_review", "calibration") or (
+        review.status in ("draft", "self_review")
+        and today > service.deadlines(month)["self_review"]
+    )
     if not own:
         audit(session, principal.user_id, "dpi.view", f"user:{user.id}", month=month.isoformat())
     return {
@@ -201,9 +233,15 @@ def _view(
         "card": card,
         "trend": trend,
         "rolling": service.rolling_of(trend, card.get("total")),
-        "assessments": _assessments(session, review),
-        "disputes": _disputes(session, review),
-        "peer": service.peer_summary(session, user.id, month, named=assess or calibrate),
+        "finished": finished,
+        "assessments": [
+            {k: v for k, v in a.items() if k in ("metric", "score")} if hr_only else a
+            for a in (_assessments(session, review) if review.id else [])
+        ],
+        "disputes": [] if hr_only or not review.id else _disputes(session, review),
+        "peer": {"count": 0, "average": None, "items": []}
+        if hr_only
+        else service.peer_summary(session, user.id, month, named=assess or calibrate),
         "b5_suggestions": service.b5_suggestions(session, review, card) if assess else [],
         "manager_metrics": [
             {"key": m.key, "label": m.label, "max": m.max}
@@ -211,12 +249,17 @@ def _view(
             if m.source == "manager"
         ],
         "can": {
-            "self": own and is_open and principal.can("dpi.self"),
+            "self": own
+            and finished
+            and review.status in ("draft", "self_review")
+            and principal.can("dpi.self"),
             "dispute": own and is_open and principal.can("dpi.dispute"),
-            "assess": assess and is_open,
+            "assess": assess and is_open and lead_may_start,
             "calibrate": calibrate and is_open,
             "finalize": assess
+            and finished
             and review.status in ("lead_review", "calibration")
+            and bool(review.id)
             and service.can_assess_complete(session, review, rubric),
             "lock": principal.can("dpi.admin") and review.status == "finalized",
             "decide": (assess or calibrate) and is_open,
@@ -255,7 +298,7 @@ def submit(
     """§5 self_review -> lead_review: the person sent their part (the monthly evidence pack)."""
     if user_id != principal.user_id or not principal.can("dpi.self"):
         raise HTTPException(403, "chỉ người được đánh giá mới gửi phần tự khai")
-    review = service.ensure_review(session, user_id, parse_month(month))
+    review = _acting_review(session, user_id, parse_month(month))
     if review.status not in ("draft", "self_review"):
         raise HTTPException(409, f"kỳ đánh giá đang ở bước {review.status}")
     review.leave_days = Decimal(str(body.leave_days))
@@ -290,10 +333,17 @@ def assess(
     """§3: the lead's 30 points; each with a comment and at least one piece of evidence."""
     if not _assesses(session, principal, user_id):
         raise HTTPException(403, "chỉ lead của người này (hoặc người có quyền chấm) được chấm")
-    review = service.ensure_review(session, user_id, parse_month(month))
+    review = _acting_review(session, user_id, parse_month(month))
     if review.status not in service.OPEN:
         raise HTTPException(409, "kỳ đánh giá đã chốt")
-    rubric = service.active_rubric(session).by_key()
+    if review.status in ("draft", "self_review"):
+        # The developer's part comes first; past its deadline the lead may go on without it.
+        if datetime.now(UTC).date() <= service.deadlines(review.month)["self_review"]:
+            raise HTTPException(
+                409, "chờ người được đánh giá gửi phần tự khai (hoặc qua hạn tự khai)"
+            )
+        review.status = "lead_review"
+    rubric = service.review_rubric(session, review).by_key()
     for item in body.items:
         metric = rubric.get(item.metric)
         if metric is None or metric.source != "manager":
@@ -317,8 +367,8 @@ def assess(
     session.flush()
     review.assessed_by = principal.user_id
     review.assessed_at = datetime.now(UTC)
-    if review.status in ("draft", "self_review", "lead_review") and service.can_assess_complete(
-        session, review, service.active_rubric(session)
+    if review.status == "lead_review" and service.can_assess_complete(
+        session, review, service.review_rubric(session, review)
     ):
         review.status = "calibration"
     audit(
@@ -389,7 +439,7 @@ def finalize(
     review = _review(session, user_id, parse_month(month))
     if review.status not in ("lead_review", "calibration"):
         raise HTTPException(409, f"kỳ đánh giá đang ở bước {review.status}")
-    if not service.can_assess_complete(session, review, service.active_rubric(session)):
+    if not service.can_assess_complete(session, review, service.review_rubric(session, review)):
         raise HTTPException(409, "chưa chấm đủ 30 điểm quản lý")
     pending = [d for d in service.open_disputes(session, review) if d.decision is None]
     if pending:
@@ -401,6 +451,7 @@ def finalize(
     review.finalized_at = datetime.now(UTC)
     card = service.Calculator(session, review.month, settings).card(review)
     service.snapshot(session, review, card, kind="final")
+    session.flush()
     audit(session, principal.user_id, "dpi.finalize", f"dpi_review:{review.id}")
     out = _view(session, settings, principal, _user(session, user_id), review.month)
     session.commit()
@@ -446,8 +497,17 @@ def raise_dispute(
     review = _review(session, user_id, parse_month(month))
     if review.status not in service.OPEN:
         raise HTTPException(409, "kỳ đánh giá đã chốt")
-    if body.metric not in service.active_rubric(session).by_key():
+    if body.metric not in service.review_rubric(session, review).by_key():
         raise HTTPException(422, "chỉ số không có trong rubric")
+    waiting = session.scalars(
+        select(DpiDispute.id).where(
+            DpiDispute.review_id == review.id,
+            DpiDispute.metric == body.metric,
+            DpiDispute.decision.is_(None),
+        )
+    ).first()
+    if waiting is not None:
+        raise HTTPException(409, "chỉ số này đã có khiếu nại đang chờ trả lời")
     dispute = DpiDispute(
         review_id=review.id,
         metric=body.metric,
@@ -484,7 +544,9 @@ def decide_dispute(
         raise HTTPException(403, "không có quyền trả lời khiếu nại này")
     if dispute.decision is not None:
         raise HTTPException(409, "khiếu nại đã được trả lời")
-    metric = service.active_rubric(session).by_key().get(dispute.metric)
+    if review.status not in service.OPEN:
+        raise HTTPException(409, "kỳ đánh giá đã chốt")
+    metric = service.review_rubric(session, review).by_key().get(dispute.metric)
     if body.decision == "accepted" and metric is not None and metric.source == "auto":
         if body.value is None:
             raise HTTPException(422, "chấp nhận khiếu nại chỉ số tự động cần giá trị mới (0-1)")
@@ -519,12 +581,22 @@ def decide_dispute(
 
 @router.post("/comments/{note_id}/confirm")
 def confirm_comment(
-    note_id: int, principal: CurrentPrincipal, session: SessionDep, confirmed: bool = True
+    note_id: int,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    confirmed: bool = True,
+    label: Literal["actionable", "design", "correctness", "security", "testability"] | None = None,
 ) -> dict[str, Any]:
-    """§4.5: a lead ticks a review comment as one that mattered (D1)."""
+    """§4.5: a lead ticks a review comment as one that mattered (D1): a comment by someone
+    else than the MR's author; its label stays unless the lead names a meaningful one."""
+    from app.models import MergeRequest
+
     note = session.get(MrNote, note_id)
-    if note is None:
+    if note is None or note.is_system:
         raise HTTPException(404, "comment not found")
+    mr = session.get(MergeRequest, note.mr_id) if note.mr_id else None
+    if mr is None or mr.author_account_id == note.author_account_id:
+        raise HTTPException(422, "chỉ xác nhận comment review trên MR của người khác")
     from app.models import Account
 
     account = session.get(Account, note.author_account_id) if note.author_account_id else None
@@ -540,6 +612,8 @@ def confirm_comment(
 
         row = ReviewComment(note_id=note_id, label=classify_rule(note.body), by="rule")
         session.add(row)
+    if label is not None:
+        row.label = label
     if confirmed and row.label not in (
         "actionable",
         "design",
@@ -547,7 +621,7 @@ def confirm_comment(
         "security",
         "testability",
     ):
-        row.label = "actionable"
+        raise HTTPException(422, "comment này không thuộc loại có giá trị; chọn nhãn khi xác nhận")
     row.confirmed_by = principal.user_id if confirmed else None
     audit(session, principal.user_id, "dpi.comment.confirm", f"note:{note_id}", confirmed=confirmed)
     session.commit()
@@ -561,20 +635,20 @@ class PeerIn(BaseModel):
     comment: str | None = Field(default=None, max_length=1000)
 
 
-def _teammates(session: Session, user_id: int) -> set[int]:
-    today = datetime.now(UTC).date()
-    teams = select(TeamMember.team_id).where(
-        TeamMember.user_id == user_id,
-        TeamMember.joined_at <= today,
-        (TeamMember.left_at.is_(None)) | (TeamMember.left_at > today),
+def _in_month(month: date) -> Any:
+    """Team membership that overlaps the month."""
+    end = service.next_month(month)
+    return (TeamMember.joined_at < end) & (
+        TeamMember.left_at.is_(None) | (TeamMember.left_at > month)
     )
+
+
+def _teammates(session: Session, user_id: int, month: date) -> set[int]:
+    teams = select(TeamMember.team_id).where(TeamMember.user_id == user_id, _in_month(month))
     return {
         int(u)
         for u in session.scalars(
-            select(TeamMember.user_id).where(
-                TeamMember.team_id.in_(teams),
-                (TeamMember.left_at.is_(None)) | (TeamMember.left_at > today),
-            )
+            select(TeamMember.user_id).where(TeamMember.team_id.in_(teams), _in_month(month))
         )
     } - {user_id}
 
@@ -585,7 +659,7 @@ def peer_targets(
 ) -> dict[str, Any]:
     """D3: teammates one may give feedback to this month, and what one already gave."""
     m = parse_month(month)
-    mates = _teammates(session, principal.user_id)
+    mates = _teammates(session, principal.user_id, m)
     given = {
         r.to_user_id: {"score": r.score, "comment": r.comment}
         for r in session.scalars(
@@ -610,9 +684,14 @@ def give_peer_feedback(
 ) -> dict[str, Any]:
     if body.to_user_id == principal.user_id:
         raise HTTPException(422, "không tự đánh giá mình ở đây")
-    if body.to_user_id not in _teammates(session, principal.user_id):
-        raise HTTPException(403, "chỉ đánh giá được người cùng team")
     m = parse_month(body.month)
+    if not _finished(m) and m != service.month_start(datetime.now(UTC).date()):
+        raise HTTPException(422, "chỉ phản hồi cho tháng này hoặc tháng đã qua")
+    if body.to_user_id not in _teammates(session, principal.user_id, m):
+        raise HTTPException(403, "chỉ đánh giá được người cùng team")
+    closed = service.find_review(session, body.to_user_id, m)
+    if closed is not None and closed.status in service.CLOSED:
+        raise HTTPException(409, "kỳ đánh giá của người này đã chốt")
     row = session.scalars(
         select(DpiPeerFeedback).where(
             DpiPeerFeedback.month == m,
@@ -633,26 +712,29 @@ def give_peer_feedback(
 
 
 def _latest_cards(session: Session, month: date, people: set[int] | None) -> dict[int, DpiSnapshot]:
-    query = select(DpiSnapshot).where(DpiSnapshot.month == month).order_by(DpiSnapshot.id)
+    """Each person's latest snapshot of the month, the final one first (DISTINCT ON)."""
+    query = (
+        select(DpiSnapshot)
+        .where(DpiSnapshot.month == month)
+        .distinct(DpiSnapshot.user_id)
+        .order_by(DpiSnapshot.user_id, (DpiSnapshot.kind == "final").desc(), DpiSnapshot.id.desc())
+    )
     if people is not None:
         query = query.where(DpiSnapshot.user_id.in_(people or {0}))
-    best: dict[int, DpiSnapshot] = {}
-    for row in session.scalars(query):
-        current = best.get(row.user_id)
-        if current is None or row.kind == "final" or current.kind != "final":
-            best[row.user_id] = row
-    return best
+    return {row.user_id: row for row in session.scalars(query)}
 
 
-def _team_people(session: Session, team_id: int) -> set[int]:
-    today = datetime.now(UTC).date()
+def _team_people(session: Session, team_id: int, month: date | None = None) -> set[int]:
+    """The team's people in `month` (today when None)."""
+    if month is None:
+        today = datetime.now(UTC).date()
+        when = (TeamMember.left_at.is_(None)) | (TeamMember.left_at > today)
+    else:
+        when = _in_month(month)
     return {
         int(u)
         for u in session.scalars(
-            select(TeamMember.user_id).where(
-                TeamMember.team_id == team_id,
-                (TeamMember.left_at.is_(None)) | (TeamMember.left_at > today),
-            )
+            select(TeamMember.user_id).where(TeamMember.team_id == team_id, when)
         )
     }
 
@@ -705,7 +787,7 @@ def overview(
     if people is not None and not people:
         raise HTTPException(403, "không có quyền xem DPI")
     if team_id is not None:
-        members = _team_people(session, team_id)
+        members = _team_people(session, team_id, m)
         people = members if people is None else people & members
     cards = _latest_cards(session, m, people)
     reviews = {r.user_id: r for r in session.scalars(select(DpiReview).where(DpiReview.month == m))}
@@ -762,13 +844,14 @@ def distribution(
         query = query.where(Team.id.in_(teams or {0}))
     out = []
     for team in session.scalars(query.order_by(Team.name)):
-        cards = list(_latest_cards(session, m, _team_people(session, team.id)).values())
+        # The viewer is left out: knowing one's own score must not reveal the others'.
+        members = _team_people(session, team.id, m) - {principal.user_id}
+        cards = list(_latest_cards(session, m, members).values())
         agg = _aggregates(cards)
         hidden = agg["people"] < MIN_GROUP
         out.append(
             {
                 "team": {"id": team.id, "name": team.name},
-                "people": agg["people"],
                 "hidden": hidden,
                 **({} if hidden else agg),
             }
@@ -886,6 +969,82 @@ def run_now(
     return {"queued": True, "month": m.isoformat()}
 
 
+class RebuildIn(BaseModel):
+    months: int = Field(default=3, ge=1, le=6)
+    resync: bool = True
+
+
+def _rebuild_job(queue: Enqueuer) -> Any:
+    fetch = getattr(queue, "fetch_job", None)
+    if fetch is None:
+        return None
+    from app.dpi.jobs import REBUILD_JOB_ID
+
+    try:
+        return fetch(REBUILD_JOB_ID)
+    except Exception:
+        return None
+
+
+@router.get("/rebuild")
+def rebuild_status(
+    principal: CurrentPrincipal, queue: Annotated[Enqueuer, Depends(get_queue)]
+) -> dict[str, Any]:
+    """The last "Chạy lại dữ liệu DPI": queued / started / finished / failed, and how far."""
+    if not principal.can("dpi.admin"):
+        raise HTTPException(403, "chỉ admin DPI")
+    job = _rebuild_job(queue)
+    if job is None:
+        return {"status": "none"}
+    state = job.get_status(refresh=True)
+    meta = job.get_meta(refresh=True) if hasattr(job, "get_meta") else job.meta
+    name = str(getattr(state, "value", state))
+    return {
+        "status": name,
+        "progress": (meta or {}).get("progress"),
+        "result": job.result if name == "finished" else None,
+        "enqueued_at": job.enqueued_at.isoformat() if job.enqueued_at else None,
+        "ended_at": job.ended_at.isoformat() if job.ended_at else None,
+        "error": (str(job.exc_info or "").strip().splitlines() or [""])[-1][:300]
+        if name == "failed"
+        else None,
+    }
+
+
+@router.post("/rebuild", status_code=202)
+def rebuild(
+    body: RebuildIn,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    queue: Annotated[Enqueuer, Depends(get_queue)],
+) -> dict[str, Any]:
+    """Re-collect GitLab (optional) and compute the last months' scorecards, in the background."""
+    if not principal.can("dpi.admin"):
+        raise HTTPException(403, "chỉ admin DPI")
+    from app.dpi.jobs import REBUILD_JOB_ID, REBUILD_TIMEOUT
+
+    job = _rebuild_job(queue)
+    if job is not None:
+        state = str(getattr(job.get_status(refresh=True), "value", ""))
+        if state in ("queued", "started", "deferred", "scheduled"):
+            raise HTTPException(409, "đang chạy lại dữ liệu; chờ lượt này xong")
+        try:
+            job.delete()
+        except Exception:  # the old run's record only
+            log.warning("old dpi rebuild job not deleted")
+    queue.enqueue(
+        "app.dpi.jobs.dpi_rebuild_job",
+        body.months,
+        body.resync,
+        job_id=REBUILD_JOB_ID,
+        job_timeout=REBUILD_TIMEOUT,
+        result_ttl=7 * 24 * 3600,
+    )
+    audit(session, principal.user_id, "dpi.rebuild", "dpi", months=body.months, resync=body.resync)
+    session.commit()
+    return {"queued": True, "months": body.months, "resync": body.resync}
+
+
 # -- production defects (B2) --------------------------------------------------------------------
 
 
@@ -905,11 +1064,20 @@ def defects(
     if not principal.can("dpi.defects"):
         raise HTTPException(403, "cần quyền xác nhận RCA")
     from app.dpi.defects import suggest
+    from app.models import Project
 
-    query = select(ProdDefect, Issue).join(Issue, Issue.id == ProdDefect.issue_id)
+    query = (
+        select(ProdDefect, Issue)
+        .join(Issue, Issue.id == ProdDefect.issue_id)
+        .join(Project, Project.id == Issue.project_id)
+    )
+    allowed = _defect_projects(principal)
+    if allowed is not None:
+        query = query.where(Project.business_project_id.in_(allowed or {0}))
     if status:
         query = query.where(ProdDefect.rca_status == status)
-    rows = session.execute(query.order_by(Issue.created_at_src.desc()).limit(200)).all()
+    rows = session.execute(query.order_by(Issue.created_at_src.desc()).limit(100)).all()
+    in_scope = person_scope(session, principal, "dpi.defects")
     users = {
         u.id: _name(u)
         for u in session.scalars(
@@ -935,17 +1103,41 @@ def defects(
                 },
                 "rca_status": d.rca_status,
                 "responsible": [
-                    {**r, "name": users.get(int(r["user_id"]))} for r in d.responsible or []
+                    {
+                        **r,
+                        "name": users.get(int(r["user_id"]))
+                        if in_scope is None or int(r["user_id"]) in in_scope
+                        else None,
+                    }
+                    for r in d.responsible or []
                 ],
                 "process_gaps": d.process_gaps or [],
                 "note": d.rca_note,
                 "root_commit_sha": d.root_commit_sha,
                 "root_mr_id": d.root_mr_id,
-                "suggestions": suggest(session, d, i),
+                "suggestions": [
+                    s
+                    if not s.get("author")
+                    or in_scope is None
+                    or int(s["author"]["user_id"]) in in_scope
+                    else {**s, "author": None}
+                    for s in suggest(session, d, i)
+                ],
             }
             for d, i in rows
         ]
     }
+
+
+def _defect_projects(principal: Principal) -> set[int] | None:
+    """Dự án whose production bugs one handles: the managed ones ("project"), every one
+    granted ("team", "all"); None: all (admin). Repos outside every dự án are the admins'."""
+    if principal.is_admin:
+        return None
+    held = principal.scope("dpi.defects")
+    if held == "project":
+        return principal.managed_projects() or set()
+    return principal.visible_projects() or set()
 
 
 @router.put("/defects/{defect_id}/rca")
@@ -954,16 +1146,31 @@ def confirm_rca(
 ) -> dict[str, Any]:
     """§4.4: the lead confirms who carries a production bug (shares summing to 1), or that it
     was the process (nobody's points)."""
+    from app.models import Project
+
     defect = session.get(ProdDefect, defect_id)
-    if defect is None:
+    if defect is None or not principal.can("dpi.defects"):
+        raise HTTPException(404, "defect not found")
+    issue = session.get(Issue, defect.issue_id)
+    project = session.get(Project, issue.project_id) if issue else None
+    allowed = _defect_projects(principal)
+    if allowed is not None and (project is None or project.business_project_id not in allowed):
         raise HTTPException(404, "defect not found")
     responsible = [
         {"user_id": int(r.get("user_id", 0)), "share": float(r.get("share", 0))}
         for r in body.responsible
         if r.get("user_id")
     ]
-    for r in responsible:
-        if not covers_person(session, principal, "dpi.defects", int(r["user_id"])):
+    if len({r["user_id"] for r in responsible}) != len(responsible) or any(
+        not 0 < r["share"] <= 1 for r in responsible
+    ):
+        raise HTTPException(422, "mỗi người một lần, tỉ lệ trong (0, 100%]")
+    # Whoever is named now, and whoever carried it before, must be in one's scope.
+    touched = {int(r["user_id"]) for r in responsible} | {
+        int(r.get("user_id", 0)) for r in defect.responsible or [] if r.get("user_id")
+    }
+    for user_id in touched:
+        if not covers_person(session, principal, "dpi.defects", user_id):
             raise HTTPException(403, "chỉ quy trách nhiệm cho người trong phạm vi quyền")
     if body.status == "confirmed":
         total = sum(r["share"] for r in responsible)

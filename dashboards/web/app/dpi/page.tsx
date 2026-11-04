@@ -5,7 +5,7 @@
  * distribution, calibration, production defects, peer feedback, settings and data readiness.
  */
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { SubPanel, type SubTab, SubTabs } from "@/components/AdminTabs";
@@ -74,11 +74,100 @@ function RatingChart({ s }: { s: Aggregates }) {
   );
 }
 
+interface RebuildStatus {
+  status: "none" | "queued" | "started" | "finished" | "failed" | "deferred" | "scheduled" | "canceled" | "stopped";
+  progress?: { phase: "sync" | "score" | "done"; done: number; total: number; current: string | null; updated_at: string } | null;
+  result?: { synced: number; sync_failed: string[]; months: { month: string; scorecards?: { people: number; created: number; scored: number } }[] } | null;
+  ended_at?: string | null;
+  error?: string | null;
+}
+
+const LIVE = new Set(["queued", "started", "deferred", "scheduled"]);
+
+/** "Chạy lại dữ liệu DPI": re-collect GitLab (optional), then compute the last months. */
+function Rebuild({ onDone }: { onDone: () => void }) {
+  const status = useApi<RebuildStatus>("/dpi/rebuild", {
+    refreshInterval: (latest) => (latest && LIVE.has(latest.status) ? 3000 : 0),
+  });
+  const [months, setMonths] = useState(3);
+  const [resync, setResync] = useState(true);
+  const [message, setMessage] = useState<string | null>(null);
+  const s = status.data;
+  const live = !!s && LIVE.has(s.status);
+  const p = s?.progress;
+  const pctDone = p && p.total ? Math.round((100 * p.done) / p.total) : 0;
+  // A run that just finished: the overview reads the new scorecards.
+  const ended = s?.status === "finished" ? (s.ended_at ?? null) : null;
+  const [seenEnd, setSeenEnd] = useState<string | null>(null);
+  useEffect(() => {
+    if (ended && ended !== seenEnd) {
+      if (seenEnd !== null) onDone();
+      setSeenEnd(ended);
+    }
+  }, [ended, seenEnd, onDone]);
+  const start = async () => {
+    try {
+      await api.post("/dpi/rebuild", { months, resync });
+      setMessage(null);
+      await status.mutate();
+    } catch (e) {
+      setMessage(`Lỗi: ${e instanceof ApiError ? e.message : String(e)}`);
+    }
+  };
+  return (
+    <Card
+      title="Dữ liệu DPI"
+      collapsible={false}
+      subtitle="Scorecard được tính tự động ngày 1 hằng tháng. Lần đầu (hoặc sau khi đổi quy trình, label, CI) hãy chạy lại: đồng bộ lại GitLab để lấy issue, checklist MR, coverage, test report của dữ liệu cũ, rồi tính các tháng gần nhất."
+    >
+      <Message text={message} onClose={() => setMessage(null)} />
+      {live ? (
+        <div>
+          <p style={{ margin: "0 0 6px" }}>
+            {s?.status === "queued" ? "Đang chờ worker nhận việc…" : p?.phase === "sync" ? `Đang đồng bộ GitLab: ${p.done}/${p.total} repo` : p?.phase === "score" ? `Đang tính scorecard: tháng ${p.current} (${p.done}/${p.total})` : "Đang bắt đầu…"}
+            {p?.phase === "sync" && p.current && <span className="muted small"> · {p.current}</span>}
+          </p>
+          <div className="rescore-bar" role="progressbar" aria-label="Tiến độ chạy lại dữ liệu" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pctDone}>
+            <span style={{ width: `${pctDone}%` }} />
+          </div>
+          <p className="muted small">Có thể rời trang; việc chạy nền. Đồng bộ lại toàn bộ repo có thể mất vài chục phút.</p>
+        </div>
+      ) : (
+        <div className="row">
+          <label>
+            Tính lại{" "}
+            <select value={months} onChange={(e) => setMonths(Number(e.target.value))}>
+              {[1, 3, 6].map((n) => (
+                <option key={n} value={n}>
+                  {n} tháng gần nhất
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="small">
+            <input type="checkbox" checked={resync} onChange={(e) => setResync(e.target.checked)} /> Đồng bộ lại GitLab trước (lâu hơn, cần cho lần đầu)
+          </label>
+          <button type="button" className="primary ink" onClick={() => void start()}>
+            Chạy lại dữ liệu DPI
+          </button>
+        </div>
+      )}
+      {!live && s?.status === "finished" && s.result && (
+        <p className="small muted" style={{ marginTop: 8 }}>
+          Lần gần nhất xong {s.ended_at ? new Date(s.ended_at).toLocaleString("vi-VN", { hour12: false }) : ""}: đồng bộ {s.result.synced} repo
+          {s.result.sync_failed.length > 0 && `, lỗi ${s.result.sync_failed.length} (${s.result.sync_failed.slice(0, 3).join(", ")})`}; tính{" "}
+          {s.result.months.map((m) => `${m.month.slice(0, 7)}: ${m.scorecards?.scored ?? 0} người`).join(" · ")}.
+        </p>
+      )}
+      {!live && s?.status === "failed" && <Alert tone="error">Lần chạy lại gần nhất bị lỗi{s.error ? `: ${s.error}` : ""}.</Alert>}
+    </Card>
+  );
+}
+
 function OverviewTab({ month, me }: { month: string; me: Me }) {
   const [team, setTeam] = useState("");
   const { data: teams } = useApi<Team[]>("/teams/visible");
-  const { data, error } = useApi<Overview>(`/dpi/overview?month=${month}${team ? `&team_id=${team}` : ""}`, { keepPreviousData: true });
-  const [message, setMessage] = useState<string | null>(null);
+  const { data, error, mutate } = useApi<Overview>(`/dpi/overview?month=${month}${team ? `&team_id=${team}` : ""}`, { keepPreviousData: true });
   if (error) return error.status === 403 ? <Alert tone="info">Bạn xem được scorecard của chính mình: <Link href={`/dpi/${me.id}?month=${month}`}>mở scorecard</Link>.</Alert> : <Loading error={error} />;
   if (!data) return <Loading rows={5} />;
   return (
@@ -99,25 +188,10 @@ function OverviewTab({ month, me }: { month: string; me: Me }) {
           <Link href={`/dpi/${me.id}?month=${month}`} className="button">
             Scorecard của tôi
           </Link>
-          {can(me, "dpi.admin") && (
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  await api.post(`/dpi/run?month=${month}`);
-                  setMessage("Đã xếp hàng tính scorecard cho cả tháng; tải lại sau ít phút.");
-                } catch (e) {
-                  setMessage(`Lỗi: ${e instanceof ApiError ? e.message : String(e)}`);
-                }
-              }}
-            >
-              Tính lại cả tháng
-            </button>
-          )}
         </span>
       </div>
       <ShadowBanner on={data.shadow} />
-      <Message text={message} onClose={() => setMessage(null)} />
+      {can(me, "dpi.admin") && <Rebuild onDone={() => void mutate()} />}
       <Summary s={data.summary} />
       <div className="dpi-two">
         <Card title="Phân bổ xếp loại" collapsible={false} subtitle="Không xếp loại khi dữ liệu không đủ tin cậy">
@@ -125,7 +199,9 @@ function OverviewTab({ month, me }: { month: string; me: Me }) {
         </Card>
         <Card title="Theo người" collapsible={false} subtitle="Bản mới nhất mỗi người (đã chốt ưu tiên); bấm tên để mở scorecard">
           {data.rows.length === 0 ? (
-            <EmptyState title="Chưa có scorecard tháng này.">Job ngày 1 tính tự động; admin có thể bấm “Tính lại cả tháng”.</EmptyState>
+            <EmptyState title="Chưa có scorecard tháng này.">
+              Job ngày 1 tính tự động. Admin bấm “Chạy lại dữ liệu DPI” ở trên để đồng bộ và tính ngay.
+            </EmptyState>
           ) : (
             <div className="table-wrap">
               <table className="table compact">
@@ -179,11 +255,11 @@ function OverviewTab({ month, me }: { month: string; me: Me }) {
 }
 
 function DistributionTab({ month }: { month: string }) {
-  const { data, error } = useApi<{ teams: ({ team: Team; people: number; hidden: boolean } & Partial<Aggregates>)[] }>(`/dpi/distribution?month=${month}`);
+  const { data, error } = useApi<{ teams: ({ team: Team; hidden: boolean } & Partial<Aggregates>)[] }>(`/dpi/distribution?month=${month}`);
   if (error) return <Loading error={error} />;
   if (!data) return <Loading />;
   return (
-    <Card title="Phân phối điểm theo team" collapsible={false} subtitle="Chỉ số tổng hợp, không theo từng người; team dưới 3 người được ẩn">
+    <Card title="Phân phối điểm theo team" collapsible={false} subtitle="Chỉ số tổng hợp, không theo từng người; không tính chính bạn; team dưới 5 người được ẩn">
       <table className="table compact">
         <thead>
           <tr>
@@ -202,10 +278,10 @@ function DistributionTab({ month }: { month: string }) {
           {data.teams.map((t) => (
             <tr key={t.team.id}>
               <td>{t.team.name}</td>
-              <td className="num">{t.people}</td>
+              <td className="num">{t.hidden ? "—" : t.people}</td>
               {t.hidden ? (
                 <td colSpan={RATINGS.length + 2} className="muted small">
-                  Ẩn (dưới 3 người)
+                  Ẩn (dưới 5 người, không tính bạn)
                 </td>
               ) : (
                 <>
@@ -831,7 +907,7 @@ export default function DpiPage() {
         {current === "distribution" && <DistributionTab month={month} />}
         {current === "calibration" && <CalibrationTab month={month} />}
         {current === "defects" && <DefectsTab />}
-        {current === "peer" && <PeerTab month={month} />}
+        {current === "peer" && <PeerTab key={month} month={month} />}
         {current === "settings" && <SettingsTab />}
         {current === "readiness" && <ReadinessTab me={me} />}
       </SubPanel>

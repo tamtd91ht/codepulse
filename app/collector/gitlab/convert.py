@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Select, delete, func, select, update
+from sqlalchemy import Select, case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -281,6 +281,19 @@ class Converter:
                 **fields,
             }
             self._session.execute(self._upsert(Issue, row, ["id"]))
+            if not fields["prod_severity"]:
+                # The prod-bug label went: an unconfirmed defect goes, a confirmed one is
+                # withdrawn (out of B2, kept for the record).
+                self._session.execute(
+                    delete(ProdDefect).where(
+                        ProdDefect.issue_id == issue.id, ProdDefect.rca_status == "pending"
+                    )
+                )
+                self._session.execute(
+                    update(ProdDefect)
+                    .where(ProdDefect.issue_id == issue.id, ProdDefect.rca_status != "pending")
+                    .values(rca_status="withdrawn")
+                )
             if fields["prod_severity"]:
                 severity = fields["prod_severity"]
                 stmt = insert(ProdDefect).values(issue_id=issue.id, severity=severity)
@@ -306,6 +319,18 @@ class Converter:
                 want(iid, mr.iid, "mention")
             if (branch := branch_issue(mr.source_branch)) is not None:
                 want(branch, mr.iid, "branch")
+        described = {mr.iid for mr in data.merge_requests.values()}
+        if described:
+            # Mentions and branch links of the MRs converted now are re-derived: one whose
+            # "#n" was removed from the description goes.
+            stale_mrs = select(MergeRequest.id).where(
+                MergeRequest.project_id == self._project.id, MergeRequest.iid.in_(described)
+            )
+            self._session.execute(
+                delete(IssueMrLink).where(
+                    IssueMrLink.mr_id.in_(stale_mrs), IssueMrLink.source != "closes"
+                )
+            )
         if not wanted:
             return
         issue_ids: dict[int, int] = {
@@ -331,11 +356,12 @@ class Converter:
             if issue_id is None or mr_id is None:
                 continue  # one of them is not collected (yet)
             stmt = insert(IssueMrLink).values(issue_id=issue_id, mr_id=mr_id, source=source)
+            rank = case(LINK_RANK, value=IssueMrLink.source, else_=0)
             self._session.execute(
                 stmt.on_conflict_do_update(
                     index_elements=["issue_id", "mr_id"],
                     set_={"source": stmt.excluded.source, "updated_at": func.now()},
-                    where=IssueMrLink.source != "closes",
+                    where=rank < LINK_RANK[source],  # a link never weakens
                 )
             )
 

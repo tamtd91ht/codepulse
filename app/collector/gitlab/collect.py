@@ -173,12 +173,22 @@ class GitLabCollector:
             if extra is None and session.get(Pipeline, pipeline_id) is not None:
                 continue  # keep the stored duration / finished_at
             store(EP_PIPELINE, {**pipeline, **(extra or {})}, id=pipeline_id)
-            if pipeline.get("status") in FINISHED_PIPELINE:
-                tests = detail(
-                    EP_PIPELINE_TESTS,
-                    partial(self._client.pipeline_test_summary, pid, pipeline_id),
-                    id=pipeline_id,
-                )
+            stored = session.get(Pipeline, pipeline_id)
+            if pipeline.get("status") in FINISHED_PIPELINE and (
+                stored is None or stored.tests_total is None
+            ):
+                try:
+                    tests = detail(
+                        EP_PIPELINE_TESTS,
+                        partial(self._client.pipeline_test_summary, pid, pipeline_id),
+                        id=pipeline_id,
+                    )
+                except GitLabError as exc:
+                    # CI access restricted for the token (401/403): no test data, the sync
+                    # goes on (docs/specs/25 §4.2).
+                    if exc.status_code not in (401, 403):
+                        raise
+                    tests = None
                 total = (tests or {}).get("total") if isinstance(tests, dict) else None
                 if total and total.get("count"):
                     store(EP_PIPELINE_TESTS, total, id=pipeline_id)
@@ -342,7 +352,10 @@ class GitLabCollector:
         for issue in issues:
             iid = int(issue["iid"])
             store(EP_ISSUE, issue, iid=iid)
-            if issue.get("state") != "closed":
+            closed = issue.get("closed_at")
+            if issue.get("state") != "closed" or (
+                since is not None and closed and datetime.fromisoformat(closed) < since
+            ):
                 continue
             closers = detail(
                 EP_ISSUE_CLOSED_BY,

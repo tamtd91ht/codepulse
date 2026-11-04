@@ -149,3 +149,16 @@ draft (ngày 1 tháng N+1) → self_review (hạn N+3) → lead_review (hạn N+
 
 ## 10. Nghiệm thu (plan §5) và việc của con người
 1–3 (MR ≥ 80%, pipeline ≥ 90% repo, issue có complexity ≥ 70%) đo trên trang **Sẵn sàng dữ liệu**. 4 (scorecard ngày 1, drill-down) và 6 (phiên bản, tính lại cho cùng kết quả) có test. 5 (pilot 2 tháng shadow trên 2–3 team) là việc của đội: chọn team trong Admin › DPI (cờ shadow giữ bật), sau mỗi tháng so điểm hệ thống với đánh giá của lead trên trang Calibration (cột "Lệch so với lead").
+
+## 11. Sau review và vận hành (2026-11-04)
+- **Chạy lại dữ liệu DPI** (người dùng: "cần có nút chạy lại dữ liệu, chứ giờ lên làm gì có dữ liệu"): nút ở DPI › Tổng quan (quyền `dpi.admin`). Chọn 1 / 3 / 6 tháng gần nhất và có đồng bộ lại GitLab trước hay không (mặc định có: lần đầu bắt buộc, vì các lần sync cũ chưa lấy issue, checklist MR, coverage, test report). Job nền `dpi_rebuild_job`: đồng bộ toàn bộ repo đang theo dõi trong cửa sổ backfill (repo lỗi bỏ qua, ghi lại), rồi tính scorecard từng tháng từ cũ tới mới; tiến độ (repo / tháng đang làm) hiện ngay trên nút; một lượt một lúc (409 khi đang chạy).
+- **Xem không ghi gì**: mở scorecard chỉ tính và hiển thị; kỳ đánh giá và snapshot được tạo bởi job ngày 1, nút chạy lại, và các bước của quy trình. Tháng chưa kết thúc chỉ để xem: không tự khai, chấm, khiếu nại được.
+- **Thứ tự**: lead chỉ chấm sau khi người được đánh giá gửi tự khai, hoặc khi đã qua hạn tự khai (ngày 3).
+- **Rubric gắn với kỳ đánh giá** khi kỳ mở (`dpi_reviews.rubric_version`): đổi rubric áp dụng từ kỳ sau.
+- **HR** (`dpi.final_view`) chỉ thấy bản đã chốt: xu hướng chỉ gồm tháng đã chốt, không thấy khiếu nại, phản hồi đồng nghiệp, nhận xét của lead (chỉ điểm).
+- **Phân phối cho manager**: ẩn team dưới **5** người, không tính chính người xem, thành viên theo tháng đó.
+- **Phản hồi đồng nghiệp**: dưới 3 phản hồi thì người được đánh giá chỉ biết số lượng (ẩn điểm TB và nội dung); chỉ cho tháng này hoặc tháng đã qua, không cho kỳ đã chốt.
+- **Lỗi production**: chỉ thấy và xác nhận RCA lỗi của dự án trong phạm vi quyền; tên người ngoài phạm vi bị ẩn; tỉ lệ trách nhiệm mỗi người trong (0, 100%], không trùng người. Bỏ label prod-bug: lỗi chưa xác nhận bị xoá, đã xác nhận chuyển `withdrawn` (không trừ điểm).
+- **Công thức**: rework 21 ngày trừ xoá theo FIFO (một lần xoá không trừ hai lần thêm; MR `type::refactor` không tính); B2 không có dữ liệu khi tháng không có việc; C3 không đòi pipeline xanh ở repo không có CI; C2 so ngày đóng theo `REPORT_TZ`; C1 tính thời gian viết tới lúc MR "ready" khi draft được mở trước khi có code.
+- **Collector**: 401/403 ở test report không làm hỏng sync; test report chỉ hỏi một lần mỗi pipeline; closed_by chỉ hỏi cho issue đóng trong cửa sổ; liên kết issue↔MR không bị hạ hạng và được làm mới theo mô tả MR.
+

@@ -2,10 +2,12 @@
 (`DpiReview`), its scorecard computed from the facts and what the lead gave, the snapshots."""
 
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -39,6 +41,7 @@ CLOSED = ("finalized", "locked")
 # Deadlines after the month's end (§5): self review N+3, lead N+7, calibration N+10.
 DEADLINES = {"self_review": 3, "lead_review": 7, "calibration": 10}
 LOCK_AFTER_DAYS = 7
+MIN_PEER = 3
 MAX_ADJUSTMENT = 10.0
 
 
@@ -103,16 +106,56 @@ def profile_of(session: Session, user_id: int, month: date) -> tuple[str, bool]:
     return (row.profile, True) if row else (DEFAULT_PROFILE, False)
 
 
-def ensure_review(session: Session, user_id: int, month: date) -> DpiReview:
-    review = session.scalars(
+def find_review(session: Session, user_id: int, month: date) -> DpiReview | None:
+    return session.scalars(
         select(DpiReview).where(DpiReview.user_id == user_id, DpiReview.month == month)
     ).first()
-    if review is None:
-        key, _assigned = profile_of(session, user_id, month)
-        review = DpiReview(user_id=user_id, month=month, status="draft", profile=key)
-        session.add(review)
-        session.flush()
-    return review
+
+
+def draft_review(session: Session, user_id: int, month: date) -> DpiReview:
+    """An unsaved draft: what a month nobody acted on yet looks like (never added)."""
+    key, _assigned = profile_of(session, user_id, month)
+    return DpiReview(
+        user_id=user_id,
+        month=month,
+        status="draft",
+        profile=key,
+        leave_days=Decimal(0),
+        adjustment=Decimal(0),
+        rubric_version=active_rubric(session).version,
+    )
+
+
+def ensure_review(session: Session, user_id: int, month: date) -> DpiReview:
+    """The person's review of the month, created once (two requests at once: one insert wins,
+    INSERT … ON CONFLICT DO NOTHING); it pins the rubric in force."""
+    review = find_review(session, user_id, month)
+    if review is not None:
+        return review
+    key, _assigned = profile_of(session, user_id, month)
+    session.execute(
+        insert(DpiReview)
+        .values(
+            user_id=user_id,
+            month=month,
+            status="draft",
+            profile=key,
+            rubric_version=active_rubric(session).version,
+        )
+        .on_conflict_do_nothing(index_elements=["user_id", "month"])
+    )
+    found = find_review(session, user_id, month)
+    assert found is not None  # noqa: S101 - inserted above or by the concurrent request
+    return found
+
+
+def review_rubric(session: Session, review: DpiReview) -> Rubric:
+    """The rubric the review was opened under (a new version applies from the next cycle)."""
+    return (
+        rubric_version(session, review.rubric_version)
+        if review.rubric_version
+        else active_rubric(session)
+    )
 
 
 def deadlines(month: date) -> dict[str, date]:
@@ -159,7 +202,7 @@ class Calculator:
         self.profiles = profiles(session)
 
     def card(self, review: DpiReview, rubric: Rubric | None = None) -> dict[str, Any]:
-        rubric = rubric or active_rubric(self.session)
+        rubric = rubric or review_rubric(self.session, review)
         profile = self.profiles.get(review.profile) or self.profiles.get(DEFAULT_PROFILE)
         if profile is None:  # no profiles at all (a fresh database without the seed)
             profile = Profile(
@@ -220,18 +263,20 @@ def snapshot(
     return row
 
 
-def history(session: Session, user_id: int, month: date, months: int = 6) -> list[dict[str, Any]]:
-    """R6: the latest snapshot of each of the last `months` months (final wins over auto)."""
+def history(
+    session: Session, user_id: int, month: date, months: int = 6, *, final_only: bool = False
+) -> list[dict[str, Any]]:
+    """R6: the latest snapshot of each of the last `months` months (final wins over auto);
+    `final_only`: finalized months only (what HR may see)."""
     first = months_back(month, months - 1)
-    rows = session.scalars(
-        select(DpiSnapshot)
-        .where(
-            DpiSnapshot.user_id == user_id,
-            DpiSnapshot.month >= first,
-            DpiSnapshot.month <= month,
-        )
-        .order_by(DpiSnapshot.month, DpiSnapshot.id)
-    ).all()
+    query = select(DpiSnapshot).where(
+        DpiSnapshot.user_id == user_id,
+        DpiSnapshot.month >= first,
+        DpiSnapshot.month <= month,
+    )
+    if final_only:
+        query = query.where(DpiSnapshot.kind == "final")
+    rows = session.scalars(query.order_by(DpiSnapshot.month, DpiSnapshot.id)).all()
     best: dict[date, DpiSnapshot] = {}
     for row in rows:
         current = best.get(row.month)
@@ -258,7 +303,8 @@ def history(session: Session, user_id: int, month: date, months: int = 6) -> lis
 
 
 def rolling_of(trend: list[dict[str, Any]], current: float | None) -> dict[str, Any]:
-    previous = [t["total"] for t in trend[:-1]][::-1]
+    """Earlier months count when finalized only: a provisional total lacks the lead's 30."""
+    previous = [t["total"] if t["kind"] == "final" else None for t in trend[:-1]][::-1]
     return rolling([current, *([*previous, None, None])[:2]])
 
 
@@ -282,6 +328,9 @@ def peer_summary(session: Session, user_id: int, month: date, *, named: bool) ->
             DpiPeerFeedback.to_user_id == user_id, DpiPeerFeedback.month == month
         )
     ).all()
+    if not named and len(rows) < MIN_PEER:
+        # Too few to stay anonymous: the person learns only that feedback exists.
+        return {"count": len(rows), "average": None, "items": [], "hidden": bool(rows)}
     names = {}
     if named and rows:
         names = {
@@ -326,7 +375,6 @@ def run_month(session: Session, month: date, settings: Settings) -> dict[str, in
         if session.get(User, u) is not None and session.get(User, u).active is not False  # type: ignore[union-attr]
     ]
     calc = Calculator(session, month, settings)
-    rubric = active_rubric(session)
     created = scored = 0
     for user_id in people:
         existed = session.scalars(
@@ -339,7 +387,7 @@ def run_month(session: Session, month: date, settings: Settings) -> dict[str, in
             continue
         if review.status == "draft":
             review.status = "self_review"
-        snapshot(session, review, calc.card(review, rubric))
+        snapshot(session, review, calc.card(review))
         scored += 1
     return {"people": len(people), "created": created, "scored": scored}
 

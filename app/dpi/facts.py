@@ -98,6 +98,8 @@ def author_hours(
     opened: datetime | None,
     first_commit: datetime | None,
     notes: list[tuple[datetime, bool, bool]],
+    ready: datetime | None = None,
+    last_commit: datetime | None = None,
 ) -> float | None:
     """§2 C1: the author's own time on an MR: writing (first commit -> opened) plus handling
     each review comment (comment -> the author's next push), each at most FEEDBACK_CAP_H.
@@ -106,7 +108,13 @@ def author_hours(
         return None
     total = 0.0
     if first_commit is not None:
-        total += max(0.0, (opened - first_commit).total_seconds() / 3600)
+        # Writing ends when the MR is opened, or, for a draft opened before the code, when it
+        # is marked ready (else at its last commit before review): opening an empty draft early
+        # must not make the writing look instant.
+        end = ready or opened
+        if first_commit > end and last_commit is not None:
+            end = last_commit
+        total += max(0.0, (end - first_commit).total_seconds() / 3600)
     pending: list[datetime] = []
     for at, is_push, is_comment in notes:
         if is_comment:
@@ -130,6 +138,7 @@ class Loader:
         module_depth: int = 2,
     ) -> None:
         self.s = session
+        self.tz = tz
         self.month = month
         self.lo, self.hi = month_bounds(month, tz)
         self.next_month = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
@@ -181,16 +190,21 @@ class Loader:
         mrs = {
             m.id: m for m in self.s.scalars(select(MergeRequest).where(MergeRequest.id.in_(mr_ids)))
         }
-        firsts = dict(
-            self.s.execute(
-                select(MrCommit.mr_id, func.min(Commit.authored_at))
-                .join(Commit, Commit.sha == MrCommit.sha)
-                .where(MrCommit.mr_id.in_(mr_ids), Commit.is_merge.is_not(True))
-                .group_by(MrCommit.mr_id)
-            ).all()
-        )
+        firsts: dict[int, datetime] = {}
+        lasts: dict[int, datetime] = {}
+        for mr_id, first, last in self.s.execute(
+            select(MrCommit.mr_id, func.min(Commit.authored_at), func.max(Commit.authored_at))
+            .join(Commit, Commit.sha == MrCommit.sha)
+            .where(MrCommit.mr_id.in_(mr_ids), Commit.is_merge.is_not(True))
+            .group_by(MrCommit.mr_id)
+        ):
+            if first is not None:
+                firsts[int(mr_id)] = first
+            if last is not None:
+                lasts[int(mr_id)] = last
+        ready_at: dict[int, datetime] = {}
         notes: dict[int, list[tuple[datetime, bool, bool]]] = defaultdict(list)
-        for mr_id, author, is_system, body, at in self.s.execute(
+        for note_mr, author, is_system, body, at in self.s.execute(
             select(
                 MrNote.mr_id,
                 MrNote.author_account_id,
@@ -199,17 +213,26 @@ class Loader:
                 MrNote.created_at_src,
             ).where(MrNote.mr_id.in_(mr_ids), MrNote.created_at_src.is_not(None))
         ):
-            mr = mrs.get(int(mr_id or 0))
+            mr = mrs.get(int(note_mr or 0))
             if mr is None:
                 continue
+            lowered = (body or "").lower()
+            if (
+                is_system
+                and at is not None
+                and ("as **ready**" in lowered or "as ready" in lowered)
+            ):
+                ready_at.setdefault(int(note_mr or 0), at)
             push = bool(is_system) and bool(PUSH.match(body or ""))
             comment = not is_system and author != mr.author_account_id
             if (push or comment) and at is not None:
-                notes[int(mr_id or 0)].append((at, push, comment))
+                notes[int(note_mr or 0)].append((at, push, comment))
         out: dict[int, float] = {}
         for mr_id, mr in mrs.items():
             ordered = sorted(notes.get(mr_id, []), key=lambda n: n[0])
-            hours = author_hours(mr.created_at_src, firsts.get(mr_id), ordered)
+            hours = author_hours(
+                mr.created_at_src, firsts.get(mr_id), ordered, ready_at.get(mr_id), lasts.get(mr_id)
+            )
             if hours is not None:
                 out[mr_id] = hours
         return out
@@ -258,6 +281,8 @@ class Loader:
         return f
 
     def _issue_fact(self, i: Issue) -> IssueFact:
+        # Closed "on time" is judged on the local day (REPORT_TZ), as due dates are.
+        closed = i.closed_at_src.astimezone(self.tz) if i.closed_at_src else None
         return IssueFact(
             id=i.id,
             iid=i.iid,
@@ -269,7 +294,7 @@ class Loader:
             assignees=len(i.assignee_account_ids or []) or 1,
             due_date=i.due_date,
             state=i.state,
-            closed_at=i.closed_at_src,
+            closed_at=closed,
             blocked=blocked(i.labels),
         )
 
@@ -422,6 +447,18 @@ class Loader:
             )
         )
         heads = self._head_pipelines([m.head_sha for m in mrs if m.head_sha])
+        # Repos with CI at all (a pipeline in the last 90 days): only there is "pipeline green"
+        # part of C3 (§1: nobody is penalised for a repo without CI).
+        with_ci = set(
+            self.s.scalars(
+                select(Pipeline.project_id)
+                .where(
+                    Pipeline.project_id.in_({m.project_id for m in mrs if m.project_id}),
+                    Pipeline.created_at_src >= self.hi - timedelta(days=BASELINE_DAYS),
+                )
+                .distinct()
+            )
+        )
         hours = self._mr_hours(ids)
         for m in mrs:
             pipeline = heads.get(m.head_sha or "")
@@ -446,6 +483,7 @@ class Loader:
                     if pipeline is not None and pipeline.coverage is not None
                     else None,
                     reviewed=m.id in reviewed,
+                    ci=m.project_id in with_ci,
                     refactor=any(
                         (label or "").lower() == "type::refactor" for label in m.labels or []
                     ),
@@ -525,25 +563,49 @@ class Loader:
             )
             .order_by(Commit.authored_at)
         ).all()
+        shas = sorted({r[0] for r in rows})
+        refactor_mrs = set(
+            self.s.scalars(
+                select(MrCommit.sha)
+                .join(MergeRequest, MergeRequest.id == MrCommit.mr_id)
+                .where(
+                    MrCommit.sha.in_(shas or ["-"]),
+                    MergeRequest.labels.contains(["type::refactor"]),
+                )
+            )
+        )
         by_path: dict[str, list[tuple[datetime, int, int, bool]]] = defaultdict(list)
-        for _sha, at, message, path, adds, dels in rows:
-            refactor = (message or "").lower().lstrip().startswith("refactor")
+        for sha, at, message, path, adds, dels in rows:
+            refactor = (message or "").lower().lstrip().startswith(
+                "refactor"
+            ) or sha in refactor_mrs
             if at is not None:
                 by_path[path].append((at, int(adds or 0), int(dels or 0), refactor))
         window_hi = self.hi - timedelta(days=REWORK_DAYS)
         files: list[dict[str, Any]] = []
         for path, events in by_path.items():
             added = reworked = 0
-            for i, (at, adds, _dels, _refactor) in enumerate(events):
-                if not (start <= at < window_hi) or adds <= 0:
-                    continue
-                later = sum(
-                    d
-                    for t, _a, d, refactor in events[i + 1 :]
-                    if t <= at + timedelta(days=REWORK_DAYS) and not refactor
-                )
-                added += adds
-                reworked += min(adds, later)
+            # FIFO: a deletion consumes the oldest additions still inside their 21 days, so one
+            # deletion is never counted against two additions.
+            pending: list[list[Any]] = []  # [at, lines left, counted (in the window)]
+            for at, adds, dels, refactor in events:
+                if dels and not refactor:
+                    left = dels
+                    for entry in pending:
+                        if left <= 0:
+                            break
+                        if at - entry[0] > timedelta(days=REWORK_DAYS) or entry[1] <= 0:
+                            continue
+                        used = min(left, entry[1])
+                        entry[1] -= used
+                        left -= used
+                        if entry[2]:
+                            reworked += used
+                if adds > 0:
+                    counted = start <= at < window_hi
+                    pending.append([at, adds, counted])
+                    if counted:
+                        added += adds
             if added:
                 f.added_lines += added
                 f.reworked_lines += reworked
@@ -708,7 +770,12 @@ def active_people(session: Session, month: date, tz: ZoneInfo) -> list[int]:
         .join(MergeRequest, MergeRequest.author_account_id == Account.id)
         .where(and_(MergeRequest.merged_at >= lo, MergeRequest.merged_at < hi))
     )
+    issues = (
+        select(Account.user_id)
+        .join(Issue, Issue.assignee_account_ids.contains(func.jsonb_build_array(Account.id)))
+        .where(Issue.closed_at_src >= lo, Issue.closed_at_src < hi)
+    )
     ids: set[int] = set()
-    for query in (commits, notes, mrs):
+    for query in (commits, notes, mrs, issues):
         ids |= {int(u) for u in session.scalars(query.distinct()) if u is not None}
     return sorted(ids)
