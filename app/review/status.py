@@ -56,7 +56,17 @@ def mark_fixed_findings(session: Session, mr_id: int, latest_review_id: int) -> 
         .returning(ReviewFinding.id)
         .execution_options(synchronize_session=False)
     )
-    return [int(i) for i in result.scalars()]
+    fixed = [int(i) for i in result.scalars()]
+    # Recorded like any other closing: "Đóng finding" and the review page must say it was
+    # closed, not show only an older refused request (user report 2026-11-04).
+    record_closings(
+        session,
+        fixed,
+        closed_as="fixed",
+        reason="Finding đã sửa: lần push mới của MR không còn báo lỗi này.",
+        review_id=latest_review_id,
+    )
+    return fixed
 
 
 # A decision on a finding that holds for the same finding (fingerprint: file, category, code,
@@ -101,11 +111,12 @@ def carry_decision(session: Session, finding: ReviewFinding) -> list[int]:
         .execution_options(synchronize_session="fetch")
     )
     rows = result.all()
-    settle_open_requests(
+    record_closings(
         session,
         [int(fid) for fid, _rid in rows],
         closed_as=finding.status,
-        reason=f"Finding {DECIDED_AS[finding.status]} (quyết định ở review khác cùng thay đổi).",
+        reason=f"Finding {DECIDED_AS[finding.status]} (quyết định ở finding #{finding.id}, "
+        "cùng lỗi ở review khác của thay đổi này).",
     )
     return sorted({int(rid) for _fid, rid in rows if rid is not None})
 
@@ -119,6 +130,53 @@ DECIDED_AS = {
     "accepted_risk": "được chấp nhận rủi ro",
     "fixed": "đã được sửa",
 }
+
+
+def record_closings(
+    session: Session,
+    finding_ids: Iterable[int],
+    *,
+    closed_as: str,
+    reason: str,
+    review_id: int | None = None,
+    decided_by: int | None = None,
+) -> None:
+    """Findings closed by the system (a new push no longer reports them, a decision carried
+    from the same finding elsewhere): a waiting request of theirs is closed with it, the others
+    get a closing row of their own (kind "auto"), so every closing leaves a record."""
+    ids = list(finding_ids)
+    if not ids:
+        return
+    from datetime import UTC, datetime
+
+    from app.models import FindingClosure
+
+    waiting = set(
+        session.scalars(
+            select(FindingClosure.finding_id).where(
+                FindingClosure.finding_id.in_(ids), FindingClosure.status.in_(WAITING)
+            )
+        )
+    )
+    settle_open_requests(
+        session, sorted(waiting), closed_as=closed_as, reason=reason, decided_by=decided_by
+    )
+    now = datetime.now(UTC)
+    session.add_all(
+        FindingClosure(
+            finding_id=fid,
+            kind="auto",
+            status="closed",
+            closed_as=closed_as,
+            review_id=review_id,
+            reason=reason[:1000],
+            decided_by=decided_by,
+            decided_at=now,
+        )
+        for fid in ids
+        if fid not in waiting
+    )
+    session.flush()
 
 
 def settle_open_requests(

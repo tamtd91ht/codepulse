@@ -100,3 +100,48 @@ def test_a_finding_judged_wrong_can_be_closed_by_hand_and_not_reopened_by_the_cl
         json={"note": "mở lại"},
     )
     assert reopen.status_code == 409  # decided by the dispute, not by a close
+
+
+def test_a_closing_by_the_system_is_recorded_after_a_refused_request(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    """The duplicate case: the request on one copy was refused, then the same finding was closed
+    another way (a new push no longer reports it). History must say closed, not only refused."""
+    from app.review.status import mark_fixed_findings
+
+    world.an_finding.fingerprint = "fp-dup"
+    refused = FindingClosure(
+        finding_id=world.an_finding.id,
+        kind="request",
+        status="rejected",
+        reason="Chưa đủ điều kiện đóng",
+    )
+    db_session.add(refused)
+    newer = Review(
+        target_type="mr",
+        mr_id=world.mr.id,
+        reviewed_sha="e" * 40,
+        status="done",
+        author_user_id=world.an.id,
+        finished_at=datetime(2026, 10, 8, tzinfo=UTC),
+        rubric_version=RUBRIC_VERSION,
+    )
+    db_session.add(newer)
+    db_session.flush()
+    assert mark_fixed_findings(db_session, world.mr.id, newer.id) == [world.an_finding.id]
+    rows = db_session.scalars(
+        select(FindingClosure)
+        .where(FindingClosure.finding_id == world.an_finding.id)
+        .order_by(FindingClosure.id)
+    ).all()
+    assert [(r.status, r.closed_as, r.kind) for r in rows] == [
+        ("rejected", None, "request"),
+        ("closed", "fixed", "auto"),
+    ]
+    assert rows[-1].review_id == newer.id
+    history = client.get(
+        "/api/v1/close-requests?view=history", headers=as_user(world.admin)
+    ).json()["items"]
+    mine = [i for i in history if i["finding"]["id"] == world.an_finding.id]
+    assert mine[0]["status"] == "closed"  # newest first: the closing, then the refusal
+    assert {i["finding"]["status"] for i in mine} == {"fixed"}

@@ -39,6 +39,12 @@ const STATUS: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "
   cancelled: { label: "Đã rút" },
   reopened: { label: "Mở lại", tone: "warn" },
 };
+/** A finding closed after this request (another request, a later push, a dispute): its state now. */
+const FINDING_NOW: Record<string, string> = {
+  fixed: "đã sửa",
+  accepted_risk: "chấp nhận rủi ro",
+  false_positive: "không phải lỗi",
+};
 const KIND: Record<string, string> = {
   request: "Thành viên yêu cầu",
   auto: "Tự động sau review",
@@ -291,7 +297,7 @@ export default function ClosuresPage() {
                           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                             <SeverityBadge severity={c.finding.severity} />
                             {c.can_open_review ? (
-                              <Link href={`/reviews/${c.finding_review_id}`}>{c.finding.title ?? `Finding #${c.finding.id}`}</Link>
+                              <Link href={`/reviews/${c.finding_review_id}#finding-${c.finding.id}`}>{c.finding.title ?? `Finding #${c.finding.id}`}</Link>
                             ) : (
                               <strong>{c.finding.title ?? `Finding #${c.finding.id}`}</strong>
                             )}
@@ -326,6 +332,11 @@ export default function ClosuresPage() {
                             {c.severity_before && c.severity_after ? ` (${c.severity_before} → ${c.severity_after})` : ""}
                           </Pill>
                           <div className="muted small">{date(c.decided_at ?? c.created_at)}</div>
+                          {c.status !== "closed" && c.finding.status && FINDING_NOW[c.finding.status] && (
+                            <div className="small" title="Yêu cầu này không còn là trạng thái của finding">
+                              <Pill tone="good">Finding hiện: {FINDING_NOW[c.finding.status]}</Pill>
+                            </div>
+                          )}
                         </td>
                         <td style={{ width: 44 }}>
                           <IconButton
