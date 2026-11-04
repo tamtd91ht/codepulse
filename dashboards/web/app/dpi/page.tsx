@@ -25,9 +25,9 @@ import {
   pct,
 } from "@/lib/dpi";
 import { date } from "@/lib/format";
-import type { Me, Person, Team } from "@/lib/types";
+import type { BusinessProject, Me, Person, Team } from "@/lib/types";
 
-type Tab = "overview" | "distribution" | "calibration" | "defects" | "peer" | "settings" | "readiness";
+type Tab = "overview" | "distribution" | "calibration" | "quality" | "delivery" | "defects" | "peer" | "settings" | "readiness";
 const RATING_COLOR: Record<Rating, string> = {
   excellent: "var(--good)",
   good: "var(--chart-2)",
@@ -166,8 +166,16 @@ function Rebuild({ onDone }: { onDone: () => void }) {
 
 function OverviewTab({ month, me }: { month: string; me: Me }) {
   const [team, setTeam] = useState("");
+  const [profile, setProfile] = useState("");
+  const [bp, setBp] = useState("");
   const { data: teams } = useApi<Team[]>("/teams/visible");
-  const { data, error, mutate } = useApi<Overview>(`/dpi/overview?month=${month}${team ? `&team_id=${team}` : ""}`, { keepPreviousData: true });
+  const { data: projects } = useApi<BusinessProject[]>("/business-projects");
+  const { data: settings } = useApi<{ profiles: { key: string; label: string }[] }>("/dpi/settings");
+  const query = new URLSearchParams({ month });
+  if (team) query.set("team_id", team);
+  if (profile) query.set("profile", profile);
+  if (bp) query.set("business_project_id", bp);
+  const { data, error, mutate } = useApi<Overview>(`/dpi/overview?${query}`, { keepPreviousData: true });
   if (error) return error.status === 403 ? <Alert tone="info">Bạn xem được scorecard của chính mình: <Link href={`/dpi/${me.id}?month=${month}`}>mở scorecard</Link>.</Alert> : <Loading error={error} />;
   if (!data) return <Loading rows={5} />;
   return (
@@ -180,6 +188,28 @@ function OverviewTab({ month, me }: { month: string; me: Me }) {
             {(teams ?? []).map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Dự án{" "}
+          <select value={bp} onChange={(e) => setBp(e.target.value)}>
+            <option value="">Mọi dự án</option>
+            {(projects ?? []).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Level{" "}
+          <select value={profile} onChange={(e) => setProfile(e.target.value)}>
+            <option value="">Mọi level</option>
+            {(settings?.profiles ?? []).map((p) => (
+              <option key={p.key} value={p.key}>
+                {p.label}
               </option>
             ))}
           </select>
@@ -592,6 +622,244 @@ function PeerTab({ month }: { month: string }) {
   );
 }
 
+interface Quality {
+  repos: number;
+  findings_new: Record<string, number>;
+  findings_old_open: Record<string, number>;
+  coverage: { project: string | null; coverage: number; delta: number | null }[];
+  hotspots: { project: string | null; path: string; changes: number; findings: number; score: number }[];
+  debt: { project: string | null; module: string; critical: number; high: number; medium: number; low: number; weight: number }[];
+}
+
+const SEV = ["critical", "high", "medium", "low"] as const;
+
+function ProjectFilter({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const { data } = useApi<BusinessProject[]>("/business-projects");
+  return (
+    <label>
+      Dự án{" "}
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Mọi dự án trong phạm vi</option>
+        {(data ?? []).map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function QualityTab({ month }: { month: string }) {
+  const [bp, setBp] = useState("");
+  const { data, error } = useApi<Quality>(`/dpi/quality?month=${month}${bp ? `&business_project_id=${bp}` : ""}`, { keepPreviousData: true });
+  if (error) return <Loading error={error} />;
+  if (!data) return <Loading rows={5} />;
+  return (
+    <>
+      <div className="row" style={{ marginBottom: 8 }}>
+        <ProjectFilter value={bp} onChange={setBp} />
+        <span className="muted small">{data.repos} repo</span>
+      </div>
+      <div className="dpi-two">
+        <Card title="Lỗi mới và lỗi cũ còn mở" collapsible={false} subtitle="Mới: finding của các review trong tháng. Cũ: finding trước tháng vẫn mở.">
+          <table className="table compact">
+            <thead>
+              <tr>
+                <th />
+                {SEV.map((s) => (
+                  <th key={s} className="num">
+                    {s}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Mới trong tháng</td>
+                {SEV.map((s) => (
+                  <td key={s} className="num">
+                    {data.findings_new[s] ?? 0}
+                  </td>
+                ))}
+              </tr>
+              <tr>
+                <td>Cũ còn mở</td>
+                {SEV.map((s) => (
+                  <td key={s} className="num">
+                    {data.findings_old_open[s] ?? 0}
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+          <h4>Coverage trên MR của tháng</h4>
+          {data.coverage.length === 0 ? (
+            <p className="muted small">Chưa có pipeline báo coverage.</p>
+          ) : (
+            <table className="table compact">
+              <tbody>
+                {data.coverage.map((c) => (
+                  <tr key={c.project}>
+                    <td>{c.project}</td>
+                    <td className="num">{c.coverage}%</td>
+                    <td className={`num small ${c.delta !== null && c.delta < 0 ? "tone-bad" : "tone-good"}`}>{c.delta === null ? "" : `${c.delta > 0 ? "+" : ""}${c.delta}`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+        <Card title="Hotspot" collapsible={false} subtitle="File sửa nhiều × nhiều finding trong 90 ngày: nơi đáng refactor / viết test trước">
+          {data.hotspots.length === 0 ? (
+            <EmptyState title="Không có hotspot." />
+          ) : (
+            <table className="table compact">
+              <thead>
+                <tr>
+                  <th>File</th>
+                  <th className="num">Lần sửa</th>
+                  <th className="num">Finding</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.hotspots.map((h) => (
+                  <tr key={`${h.project}-${h.path}`}>
+                    <td>
+                      <code className="small">{h.path}</code>
+                      <div className="muted small">{h.project}</div>
+                    </td>
+                    <td className="num">{h.changes}</td>
+                    <td className="num">{h.findings}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      </div>
+      <Card title="Nợ kỹ thuật theo module" collapsible={false} subtitle="Finding còn mở, trọng số critical 8 · high 4 · medium 2 · low 1">
+        {data.debt.length === 0 ? (
+          <EmptyState title="Không còn finding mở." tone="good" />
+        ) : (
+          <div className="table-wrap">
+            <table className="table compact">
+              <thead>
+                <tr>
+                  <th>Module</th>
+                  {SEV.map((s) => (
+                    <th key={s} className="num">
+                      {s}
+                    </th>
+                  ))}
+                  <th className="num">Trọng số</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.debt.map((d) => (
+                  <tr key={`${d.project}-${d.module}`}>
+                    <td>
+                      <code className="small">{d.module}</code>
+                      <div className="muted small">{d.project}</div>
+                    </td>
+                    {SEV.map((s) => (
+                      <td key={s} className="num">
+                        {d[s] || ""}
+                      </td>
+                    ))}
+                    <td className="num">{d.weight}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </>
+  );
+}
+
+interface Delivery {
+  wip_mrs: number;
+  open_issues: number;
+  overdue_issues: number;
+  aging: { bucket: string; issues: number }[];
+  blockers: { reason: string; issues: number }[];
+  repos: { project: string | null; wip_mrs: number; open_issues: number; overdue: number; blocked: number }[];
+}
+
+function DeliveryTab() {
+  const [bp, setBp] = useState("");
+  const { data, error } = useApi<Delivery>(`/dpi/delivery${bp ? `?business_project_id=${bp}` : ""}`, { keepPreviousData: true });
+  if (error) return <Loading error={error} />;
+  if (!data) return <Loading rows={4} />;
+  return (
+    <>
+      <div className="row" style={{ marginBottom: 8 }}>
+        <ProjectFilter value={bp} onChange={setBp} />
+        <span className="muted small">
+          Hiện tại. DORA và các chặng của luồng (coding / pickup / review / deploy): xem <Link href="/insights">Luồng làm việc</Link>.
+        </span>
+      </div>
+      <StatStrip label="Delivery hiện tại">
+        <StripStat label="MR đang mở (WIP)" value={data.wip_mrs} />
+        <StripStat label="Issue đang mở" value={data.open_issues} />
+        <StripStat label="Issue quá hạn" value={data.overdue_issues} tone={data.overdue_issues ? "warn" : undefined} />
+      </StatStrip>
+      <div className="dpi-two">
+        <Card title="Tuổi backlog" collapsible={false} subtitle="Issue đang mở theo thời gian kể từ khi tạo">
+          <table className="table compact">
+            <tbody>
+              {data.aging.map((a) => (
+                <tr key={a.bucket}>
+                  <td>{a.bucket}</td>
+                  <td className="num">{a.issues}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <h4>Blocker theo nguyên nhân</h4>
+          {data.blockers.length === 0 ? (
+            <p className="muted small">Không có issue gắn blocked. Dùng label blocked::lý-do (ví dụ blocked::chờ-QA) để thấy nguyên nhân.</p>
+          ) : (
+            <ul className="small">
+              {data.blockers.map((b) => (
+                <li key={b.reason}>
+                  {b.reason}: {b.issues}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+        <Card title="Theo repo" collapsible={false}>
+          <table className="table compact">
+            <thead>
+              <tr>
+                <th>Repo</th>
+                <th className="num">WIP</th>
+                <th className="num">Issue mở</th>
+                <th className="num">Quá hạn</th>
+                <th className="num">Blocked</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.repos.map((r) => (
+                <tr key={r.project}>
+                  <td>{r.project}</td>
+                  <td className="num">{r.wip_mrs}</td>
+                  <td className="num">{r.open_issues}</td>
+                  <td className="num">{r.overdue || ""}</td>
+                  <td className="num">{r.blocked || ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      </div>
+    </>
+  );
+}
+
 interface SettingsView {
   shadow: boolean;
   rubric: { version: string; metrics: { key: string; group: string; max: number; source: string; label: string }[] };
@@ -599,6 +867,81 @@ interface SettingsView {
   profiles: { key: string; label: string; weights: Record<string, number>; a1_target: number }[];
   user_profiles?: { user: { id: number; name: string | null }; profile: string; effective_from: string }[];
   can_admin: boolean;
+}
+
+type RubricMetric = SettingsView["rubric"]["metrics"][number];
+
+/** A new rubric version from the current one: labels and points editable (keys, groups and
+ * who scores stay: the formulas are tied to them). */
+function RubricEditor({ current, onSaved }: { current: SettingsView["rubric"]; onSaved: (version: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<RubricMetric[]>(current.metrics);
+  const [version, setVersion] = useState(() => {
+    const m = /^(.*?)(\d+)$/.exec(current.version);
+    return m ? `${m[1]}${Number(m[2]) + 1}` : `${current.version}-2`;
+  });
+  const [error, setError] = useState<string | null>(null);
+  const auto = rows.filter((r) => r.source === "auto").reduce((n, r) => n + Number(r.max || 0), 0);
+  const manager = rows.filter((r) => r.source === "manager").reduce((n, r) => n + Number(r.max || 0), 0);
+  if (!open)
+    return (
+      <button type="button" className="sm" onClick={() => setOpen(true)}>
+        Sửa rubric…
+      </button>
+    );
+  const save = async () => {
+    try {
+      await api.post("/dpi/settings/rubric", { version, metrics: rows.map((r) => ({ ...r, max: Number(r.max) })) });
+      setOpen(false);
+      onSaved(version);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  };
+  return (
+    <div className="dpi-rubric-editor">
+      <label>
+        Phiên bản mới <input value={version} onChange={(e) => setVersion(e.target.value)} aria-label="Tên phiên bản rubric" />
+      </label>
+      <table className="table compact">
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={r.key}>
+              <td>{r.key}</td>
+              <td>
+                <input value={r.label} aria-label={`Tên ${r.key}`} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
+              </td>
+              <td>
+                <input
+                  type="number"
+                  min={0.5}
+                  step={0.5}
+                  value={r.max}
+                  aria-label={`Điểm tối đa ${r.key}`}
+                  onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, max: Number(e.target.value) } : x)))}
+                  style={{ width: 70 }}
+                />
+              </td>
+              <td className="muted small">{r.source === "manager" ? "lead chấm" : "tự động"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="small">
+        Tự động {auto} · quản lý {manager} · tổng {auto + manager}
+        {auto + manager !== 100 && <span className="tone-warn"> (nên là 100)</span>}
+      </p>
+      {error && <Alert tone="error">{error}</Alert>}
+      <div className="row">
+        <button type="button" className="primary" onClick={() => void save()}>
+          Tạo phiên bản
+        </button>
+        <button type="button" className="ghost" onClick={() => setOpen(false)}>
+          Huỷ
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function SettingsTab() {
@@ -631,7 +974,12 @@ function SettingsTab() {
           )}
         </p>
       </Card>
-      <Card title={`Rubric ${data.rubric.version}`} collapsible={false} subtitle="17 chỉ số, 70 điểm tự động + 30 điểm quản lý. Phiên bản mới tạo qua API (POST /dpi/settings/rubric); bản cũ giữ cho snapshot.">
+      <Card
+        title={`Rubric ${data.rubric.version}`}
+        collapsible={false}
+        subtitle="70 điểm tự động + 30 điểm quản lý. Sửa tạo một phiên bản mới, áp dụng cho các kỳ mở sau đó; bản cũ giữ cho snapshot."
+        actions={data.can_admin && <RubricEditor current={data.rubric} onSaved={(v) => run(async () => v, `Đã tạo rubric ${v}.`)} />}
+      >
         <div className="dpi-rubric">
           {GROUPS.map((g) => (
             <div key={g}>
@@ -790,12 +1138,27 @@ function Mark({ value, target }: { value: number | null; target: number }) {
 
 function ReadinessTab({ me }: { me: Me }) {
   const { data, error } = useApi<Readiness>("/dpi/readiness?days=30");
-  const [checks, setChecks] = useState<Record<number, { default_protected?: boolean; missing_labels?: string[]; error?: string; created?: string[] }>>({});
+  const [checks, setChecks] = useState<Record<number, { default_protected?: boolean; missing_labels?: string[]; error?: string; created?: string[]; note?: string }>>({});
   if (error) return <Loading error={error} />;
   if (!data) return <Loading />;
   const a = data.acceptance;
   const check = async (id: number) => setChecks({ ...checks, [id]: await api.get(`/dpi/readiness/${id}/gitlab`) });
   const labels = async (id: number) => setChecks({ ...checks, [id]: { ...checks[id], ...(await api.post<{ created: string[]; error?: string }>(`/dpi/readiness/${id}/labels`)) } });
+  const [confirm, setConfirm] = useState<{ id: number; path: string; action: "protect" | "mr-template" } | null>(null);
+  const act = async () => {
+    if (!confirm) return;
+    const result = await api.post<{ protected?: string; created?: string; exists?: boolean; error?: string }>(`/dpi/readiness/${confirm.id}/${confirm.action}`);
+    setChecks({
+      ...checks,
+      [confirm.id]: {
+        ...checks[confirm.id],
+        ...(result.error ? { error: result.error } : {}),
+        ...(result.protected ? { default_protected: true } : {}),
+        note: result.created ? "Đã thêm mẫu MR" : result.exists ? "Repo đã có mẫu MR" : result.protected ? `Đã bảo vệ ${result.protected}` : undefined,
+      },
+    });
+    setConfirm(null);
+  };
   return (
     <>
       <StatStrip label="Nghiệm thu P0 (30 ngày)">
@@ -803,7 +1166,27 @@ function ReadinessTab({ me }: { me: Me }) {
         <StripStat label="Repo có pipeline + coverage" value={a.repos_with_pipeline_pct} unit="%" sub={`mục tiêu ≥ ${a.targets.repos_with_pipeline_pct}%`} tone={a.repos_with_pipeline_pct >= 90 ? "good" : "warn"} />
         <StripStat label="Issue có complexity" value={a.issues_with_complexity_pct} unit="%" sub={`mục tiêu ≥ ${a.targets.issues_with_complexity_pct}%`} tone={(a.issues_with_complexity_pct ?? 0) >= 70 ? "good" : "warn"} />
       </StatStrip>
-      <Card title="Từng repo" collapsible={false} subtitle="Hướng dẫn bật protected branch, coverage trong CI, mẫu MR: xem Hướng dẫn › DPI.">
+      {confirm && (
+        <Alert tone="warning">
+          {confirm.action === "protect" ? (
+            <>
+              Bảo vệ nhánh chính của <strong>{confirm.path}</strong> trên GitLab: <strong>không ai push thẳng</strong> được nữa, chỉ merge qua MR (Maintainer).
+              Báo đội trước khi bật.
+            </>
+          ) : (
+            <>
+              Commit file <code>.gitlab/merge_request_templates/Default.md</code> (Closes # + checklist) lên nhánh chính của <strong>{confirm.path}</strong>.
+            </>
+          )}{" "}
+          <button type="button" className="primary sm" onClick={() => void act()}>
+            Xác nhận
+          </button>{" "}
+          <button type="button" className="ghost sm" onClick={() => setConfirm(null)}>
+            Huỷ
+          </button>
+        </Alert>
+      )}
+      <Card title="Từng repo" collapsible={false} subtitle="Bấm Kiểm tra để hỏi GitLab: nhánh chính có bảo vệ chưa, đủ label chưa. Coverage trong CI: xem Hướng dẫn › DPI.">
         <div className="table-wrap">
           <table className="table compact">
             <thead>
@@ -859,6 +1242,19 @@ function ReadinessTab({ me }: { me: Me }) {
                               Tạo label chuẩn
                             </button>
                           )}
+                          {c.note && <div className="muted">{c.note}</div>}
+                          {can(me, "admin.projects") && (
+                            <div className="row" style={{ marginTop: 4 }}>
+                              {c.default_protected === false && (
+                                <button type="button" className="sm" onClick={() => setConfirm({ id: r.project.id, path: r.project.path, action: "protect" })}>
+                                  Bảo vệ nhánh chính
+                                </button>
+                              )}
+                              <button type="button" className="ghost sm" onClick={() => setConfirm({ id: r.project.id, path: r.project.path, action: "mr-template" })}>
+                                Thêm mẫu MR
+                              </button>
+                            </div>
+                          )}
                         </>
                       ) : (
                         <button type="button" className="ghost sm" onClick={() => void check(r.project.id)}>
@@ -886,6 +1282,9 @@ export default function DpiPage() {
     ...(can(me, "dpi.view") || can(me, "dpi.final_view") ? [{ key: "overview", label: "Tổng quan" } as SubTab<Tab>] : []),
     ...(can(me, "dpi.distribution") ? [{ key: "distribution", label: "Phân phối" } as SubTab<Tab>] : []),
     ...(can(me, "dpi.calibrate") ? [{ key: "calibration", label: "Hiệu chỉnh" } as SubTab<Tab>] : []),
+    ...(can(me, "dpi.distribution") || can(me, "dpi.final_view") || ["team", "project", "all"].includes(me.permissions?.["dpi.view"] ?? "") || me.is_admin
+      ? [{ key: "quality", label: "Chất lượng & nợ" } as SubTab<Tab>, { key: "delivery", label: "Delivery" } as SubTab<Tab>]
+      : []),
     ...(can(me, "dpi.defects") ? [{ key: "defects", label: "Lỗi production" } as SubTab<Tab>] : []),
     { key: "peer", label: "Phản hồi đồng nghiệp" },
     ...(can(me, "dpi.admin") || can(me, "dpi.view") ? [{ key: "settings", label: "Cấu hình" } as SubTab<Tab>] : []),
@@ -906,6 +1305,8 @@ export default function DpiPage() {
         {current === "overview" && <OverviewTab month={month} me={me} />}
         {current === "distribution" && <DistributionTab month={month} />}
         {current === "calibration" && <CalibrationTab month={month} />}
+        {current === "quality" && <QualityTab month={month} />}
+        {current === "delivery" && <DeliveryTab />}
         {current === "defects" && <DefectsTab />}
         {current === "peer" && <PeerTab key={month} month={month} />}
         {current === "settings" && <SettingsTab />}

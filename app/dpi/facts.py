@@ -628,6 +628,23 @@ class Loader:
             if at is not None:
                 by_path[path].append((at, int(adds or 0), int(dels or 0), refactor))
         window_hi = self.hi - timedelta(days=REWORK_DAYS)
+        # Someone else's recent commits on the same paths: editing their fresh code is help.
+        others: dict[str, list[datetime]] = defaultdict(list)
+        if by_path:
+            for path, at in self.s.execute(
+                select(CommitFile.path, Commit.authored_at)
+                .join(Commit, Commit.sha == CommitFile.sha)
+                .where(
+                    CommitFile.path.in_(list(by_path)),
+                    Commit.author_account_id.not_in(accounts),
+                    Commit.is_merge.is_not(True),
+                    Commit.authored_at >= start - timedelta(days=REWORK_DAYS),
+                    Commit.authored_at < end,
+                )
+            ):
+                if at is not None:
+                    others[path].append(at)
+        kinds = {"new_work": 0, "refactor": 0, "help_others": 0}
         files: list[dict[str, Any]] = []
         for path, events in by_path.items():
             added = reworked = 0
@@ -652,12 +669,22 @@ class Loader:
                     pending.append([at, adds, counted])
                     if counted:
                         added += adds
+                        if refactor:
+                            kinds["refactor"] += adds
+                        elif any(
+                            timedelta(0) <= at - t <= timedelta(days=REWORK_DAYS)
+                            for t in others.get(path, [])
+                        ):
+                            kinds["help_others"] += adds
+                        else:
+                            kinds["new_work"] += adds
             if added:
                 f.added_lines += added
                 f.reworked_lines += reworked
                 if reworked:
                     files.append({"label": path, "added": added, "reworked": reworked})
         f.rework_files = sorted(files, key=lambda r: -r["reworked"])
+        f.contribution = {**kinds, "churn": f.reworked_lines}
 
     def _comments(self, f: Facts, accounts: list[int]) -> None:
         notes = self.s.execute(
@@ -759,9 +786,16 @@ class Loader:
         ).first()
         if pack is None:
             return
-        confirmed = pack.status in ("reviewed", "shared")
+        reviewed = pack.status in ("reviewed", "shared")
         f.items = [
-            ItemFact(id=int(i.id), kind=i.kind, title=i.title, confirmed=confirmed)
+            # Approved by the lead item by item; an undecided item counts once the whole pack
+            # was reviewed; a rejected one never.
+            ItemFact(
+                id=int(i.id),
+                kind=i.kind,
+                title=i.title,
+                confirmed=i.approved is True or (i.approved is None and reviewed),
+            )
             for i in self.s.scalars(select(EvidenceItem).where(EvidenceItem.pack_id == pack.id))
             if i.kind not in ("mr", "commit")  # Git work is counted from Git already
         ]

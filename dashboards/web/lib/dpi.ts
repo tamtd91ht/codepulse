@@ -100,6 +100,8 @@ export interface Card {
   rating: Rating | null;
   split: { auto: number; auto_max: number; manager: number; manager_max: number };
   flags?: { split_mrs: { issue_id: number; day: string; mrs: string[] }[] };
+  /** Lines added by kind (new work, refactor, helping others) and churn: shown, not scored. */
+  contribution?: { new_work: number; refactor: number; help_others: number; churn: number };
 }
 
 export interface ScorecardView {
@@ -132,6 +134,12 @@ export interface ScorecardView {
   /** The month is over: its cycle can be acted on. */
   finished: boolean;
   b5_suggestions: Evidence[];
+  self_items: { id: number; kind: string; title: string; note: string | null; ref: string | null; approved: boolean | null; counted: boolean }[];
+  growth: {
+    axes: { group: Group; label: string; level: number | null; trend: number | null }[];
+    promotion_readiness: "ready" | "near" | "not_yet" | "unknown";
+    why: string;
+  };
   manager_metrics: { key: string; label: string; max: number }[];
   can: { self: boolean; dispute: boolean; assess: boolean; calibrate: boolean; finalize: boolean; lock: boolean; decide: boolean };
 }

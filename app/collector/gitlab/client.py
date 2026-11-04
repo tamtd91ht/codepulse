@@ -282,6 +282,44 @@ class GitLabClient:
     def labels(self, project_id: int) -> Iterator[Any]:
         return self.paginate(f"/projects/{project_id}/labels", {"include_ancestor_groups": "true"})
 
+    def protect_branch(
+        self, project_id: int, branch: str, *, push_access_level: int, merge_access_level: int
+    ) -> Any:
+        return self.post(
+            f"/projects/{project_id}/protected_branches",
+            {
+                "name": branch,
+                "push_access_level": push_access_level,
+                "merge_access_level": merge_access_level,
+            },
+        )
+
+    def unprotect_branch(self, project_id: int, branch: str) -> None:
+        self.request(
+            "DELETE", f"/projects/{project_id}/protected_branches/{quote(branch, safe='')}"
+        )
+
+    def file_exists(self, project_id: int, path: str, ref: str) -> bool:
+        try:
+            self.request(
+                "HEAD",
+                f"/projects/{project_id}/repository/files/{quote(path, safe='')}",
+                params={"ref": ref},
+            )
+        except GitLabError as exc:
+            if exc.status_code == 404:
+                return False
+            raise
+        return True
+
+    def create_file(
+        self, project_id: int, path: str, branch: str, content: str, message: str
+    ) -> Any:
+        return self.post(
+            f"/projects/{project_id}/repository/files/{quote(path, safe='')}",
+            {"branch": branch, "content": content, "commit_message": message},
+        )
+
     def create_label(self, project_id: int, name: str, color: str, description: str) -> Any:
         return self.post(
             f"/projects/{project_id}/labels",

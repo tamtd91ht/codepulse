@@ -202,3 +202,70 @@ def ensure_labels(session: Session, project_id: int) -> dict[str, Any]:
         hint = " (token cần quyền api)" if exc.status_code in (401, 403) else ""
         return {"created": created, "error": f"GitLab trả lỗi {exc.status_code}{hint}"}
     return {"created": created}
+
+
+MR_TEMPLATE_PATH = ".gitlab/merge_request_templates/Default.md"
+MR_TEMPLATE = """Closes #
+
+## Checklist
+- [ ] Đã liên kết issue
+- [ ] Có test cho thay đổi
+- [ ] Migration (nếu có) chạy được hai chiều
+- [ ] Có cách rollback
+"""
+
+
+def protect_default_branch(session: Session, project_id: int) -> dict[str, Any]:
+    """P0.1: the default branch protected: nobody pushes, maintainers merge (MRs only)."""
+    project = session.get(Project, project_id)
+    if project is None:
+        return {"error": "repo không tồn tại"}
+    client = _client(session, project)
+    if client is None:
+        return {"error": "repo không có kết nối GitLab"}
+    branch = project.default_branch or "main"
+    try:
+        with client:
+            existing = [b.get("name") for b in client.protected_branches(project.external_id)]
+            if branch in existing:
+                client.unprotect_branch(project.external_id, branch)
+            client.protect_branch(
+                project.external_id, branch, push_access_level=0, merge_access_level=40
+            )
+    except GitLabError as exc:
+        hint = (
+            " (token cần quyền api và vai trò Maintainer)" if exc.status_code in (401, 403) else ""
+        )
+        return {"error": f"GitLab trả lỗi {exc.status_code}{hint}"}
+    return {"protected": branch}
+
+
+def add_mr_template(session: Session, project_id: int) -> dict[str, Any]:
+    """P0.5: the MR template with the issue link and the checklist, committed to the default
+    branch (left alone when the repo already has one)."""
+    project = session.get(Project, project_id)
+    if project is None:
+        return {"error": "repo không tồn tại"}
+    client = _client(session, project)
+    if client is None:
+        return {"error": "repo không có kết nối GitLab"}
+    branch = project.default_branch or "main"
+    try:
+        with client:
+            if client.file_exists(project.external_id, MR_TEMPLATE_PATH, branch):
+                return {"exists": True}
+            client.create_file(
+                project.external_id,
+                MR_TEMPLATE_PATH,
+                branch,
+                MR_TEMPLATE,
+                "chore: mẫu merge request có checklist (CodePulse DPI)",
+            )
+    except GitLabError as exc:
+        hint = (
+            " (nhánh có bảo vệ: thêm qua MR, hoặc token cần quyền api)"
+            if exc.status_code in (400, 401, 403)
+            else ""
+        )
+        return {"error": f"GitLab trả lỗi {exc.status_code}{hint}"}
+    return {"created": MR_TEMPLATE_PATH}

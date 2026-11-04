@@ -1,6 +1,7 @@
 """The DPI cycle (docs/specs/25 §5, §6): rubric and profiles in force, each person's month
 (`DpiReview`), its scorecard computed from the facts and what the lead gave, the snapshots."""
 
+from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -214,6 +215,7 @@ class Calculator:
         overrides = metric_overrides(self.session, review)
         card = scorecard(rubric, profile, auto, manager, overrides, float(review.adjustment or 0))
         card["flags"] = {"split_mrs": split_mrs(facts.mrs)}
+        card["contribution"] = facts.contribution
         _profile, assigned = profile_of(self.session, review.user_id, self.month)
         card["profile_assigned"] = assigned
         card["inputs_hash"] = inputs_hash(
@@ -325,13 +327,138 @@ def can_assess_complete(session: Session, review: DpiReview, rubric: Rubric) -> 
     return wanted <= set(manager_scores(session, review))
 
 
-def b5_suggestions(
-    session: Session, review: DpiReview, card: dict[str, Any]
-) -> list[dict[str, Any]]:
-    """§3 B5: 3-5 MRs of the month for the lead to judge the design of: from the C1 / C3
-    evidence (largest first is not known here; the scorecard's MRs in order)."""
-    mrs = [e for e in card["metrics"].get("C3", {}).get("evidence", []) if e.get("kind") == "mr"]
-    return mrs[:5]
+def b5_suggestions(calc: "Calculator", user_id: int, limit: int = 5) -> list[dict[str, Any]]:
+    """§3 B5: the MRs of the month most worth judging the design of: most critical/high
+    findings first, then the largest, then the lowest review score."""
+    from app.models import MergeRequest, Review, ReviewFinding
+
+    loader = calc.loader
+    accounts = loader.accounts(user_id)
+    if not accounts:
+        return []
+    mrs = list(
+        calc.session.scalars(
+            select(MergeRequest).where(
+                MergeRequest.author_account_id.in_(accounts),
+                MergeRequest.state == "merged",
+                MergeRequest.merged_at >= loader.lo,
+                MergeRequest.merged_at < loader.hi,
+            )
+        )
+    )
+    if not mrs:
+        return []
+    ids = [m.id for m in mrs]
+    severe: dict[int, int] = defaultdict(int)
+    score: dict[int, float] = {}
+    for mr_id, review_score, severity in calc.session.execute(
+        select(Review.mr_id, Review.score, ReviewFinding.severity)
+        .outerjoin(ReviewFinding, ReviewFinding.review_id == Review.id)
+        .where(Review.mr_id.in_(ids), Review.status == "done")
+    ):
+        if mr_id is None:
+            continue
+        if review_score is not None:
+            score[int(mr_id)] = min(score.get(int(mr_id), 100.0), float(review_score))
+        if severity in ("critical", "high"):
+            severe[int(mr_id)] += 1
+
+    def size(m: MergeRequest) -> int:
+        return int(m.additions or 0) + int(m.deletions or 0)
+
+    ranked = sorted(mrs, key=lambda m: (-severe[m.id], -size(m), score.get(m.id, 100.0)))
+    out = []
+    for m in ranked[:limit]:
+        why = []
+        if severe[m.id]:
+            why.append(f"{severe[m.id]} finding critical/high")
+        why.append(f"{size(m)} dòng")
+        if m.id in score:
+            why.append(f"điểm review {score[m.id]:.0f}")
+        out.append(
+            {
+                "kind": "mr",
+                "id": m.id,
+                "ref": f"!{m.iid}",
+                "label": f"{m.title or ''} · {', '.join(why)}".strip(" ·"),
+                "url": loader.url(m.project_id, "merge_requests", m.iid),
+            }
+        )
+    return out
+
+
+def self_items(session: Session, user_id: int, month: date) -> list[dict[str, Any]]:
+    """The self-reported items of the month (the evidence pack, spec 20 §5.4) and their approval."""
+    from app.models import EvidenceItem, EvidencePack
+
+    pack = session.scalars(
+        select(EvidencePack).where(
+            EvidencePack.user_id == user_id, EvidencePack.period_start == month
+        )
+    ).first()
+    if pack is None:
+        return []
+    return [
+        {
+            "id": i.id,
+            "kind": i.kind,
+            "title": i.title,
+            "note": i.note,
+            "ref": i.ref,
+            "approved": i.approved,
+            "counted": i.kind not in ("mr", "commit"),
+        }
+        for i in session.scalars(
+            select(EvidenceItem).where(EvidenceItem.pack_id == pack.id).order_by(EvidenceItem.id)
+        )
+    ]
+
+
+AXES = {
+    "A": "Kết quả công việc",
+    "B": "Năng lực kỹ thuật (chất lượng code)",
+    "C": "Độ chín trong giao việc",
+    "D": "Hợp tác",
+    "E": "Ownership & phát triển",
+}
+READY_ROLLING = 85.0
+NEAR_ROLLING = 80.0
+READY_FLOOR = 0.7
+
+
+def growth(trend: list[dict[str, Any]], rolling_value: float | None) -> dict[str, Any]:
+    """R6 Competency & Growth: each axis (a group's share achieved) averaged over the last
+    three months with data, its trend over the window, and promotion readiness: rolling ≥ 85
+    over finalized months with no axis under 70% -> ready; rolling ≥ 80 -> getting there."""
+    axes: list[dict[str, Any]] = []
+    for g, label in AXES.items():
+        series = [t["groups"].get(g) for t in trend if t["groups"].get(g) is not None]
+        recent = series[-3:]
+        axes.append(
+            {
+                "group": g,
+                "label": label,
+                "level": round(sum(recent) / len(recent), 4) if recent else None,
+                "trend": round(series[-1] - series[0], 4) if len(series) >= 2 else None,
+            }
+        )
+    finals = [t for t in trend if t.get("kind") == "final" and t.get("total") is not None]
+    floor_ok = all(a["level"] is None or a["level"] >= READY_FLOOR for a in axes)
+    if rolling_value is None or len(finals) < 2:
+        readiness, why = "unknown", "Cần ít nhất 2 tháng đã chốt"
+    elif rolling_value >= READY_ROLLING and floor_ok:
+        readiness, why = (
+            "ready",
+            f"Rolling {rolling_value:.0f} ≥ {READY_ROLLING:.0f}, không trục nào dưới 70%",
+        )
+    elif rolling_value >= NEAR_ROLLING:
+        readiness, why = (
+            "near",
+            f"Rolling {rolling_value:.0f}; cần ≥ {READY_ROLLING:.0f} và mọi trục ≥ 70%",
+        )
+    else:
+        readiness, why = "not_yet", f"Rolling {rolling_value:.0f} < {NEAR_ROLLING:.0f}"
+    return {"axes": axes, "promotion_readiness": readiness, "why": why}
 
 
 def peer_summary(session: Session, user_id: int, month: date, *, named: bool) -> dict[str, Any]:

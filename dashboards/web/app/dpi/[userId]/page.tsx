@@ -227,6 +227,9 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
       <SubTabs id="dpi-card" label="Scorecard" tabs={tabs} value={tab} onChange={setTab} variant="bar" />
       {tab === "card" && (
         <SubPanel id="dpi-card" tab="card">
+          {c.contribution && c.contribution.new_work + c.contribution.refactor + c.contribution.help_others > 0 && (
+            <Contribution c={c.contribution} />
+          )}
           <div className="dpi-group-grid">
             {GROUPS.map((g) => (
               <Card key={g} title={`${g} · ${GROUP_LABEL[g]}`} collapsible={false} subtitle={`Trọng số ${c.groups[g]?.weight ?? 0} với profile ${c.profile_label}`}>
@@ -242,6 +245,7 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
       )}
       {tab === "trend" && (
         <SubPanel id="dpi-card" tab="trend">
+          <Growth g={data.growth} />
           <Card title="Xu hướng (R6 Competency & Growth)" collapsible={false} subtitle="Tổng điểm và tỉ lệ đạt của 5 nhóm, 6 tháng gần nhất">
             {data.trend.every((t) => t.total === null) ? (
               <EmptyState title="Chưa có điểm các tháng trước." />
@@ -311,6 +315,67 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
   );
 }
 
+const READINESS: Record<ScorecardView["growth"]["promotion_readiness"], { label: string; tone: "good" | "info" | "warn" | undefined }> = {
+  ready: { label: "Sẵn sàng cân nhắc thăng tiến", tone: "good" },
+  near: { label: "Đang tiến tới", tone: "info" },
+  not_yet: { label: "Chưa", tone: "warn" },
+  unknown: { label: "Chưa đủ tháng đã chốt", tone: undefined },
+};
+
+function Growth({ g }: { g: ScorecardView["growth"] }) {
+  const r = READINESS[g.promotion_readiness];
+  return (
+    <Card title="Năng lực theo trục" collapsible={false} subtitle="Mức đạt trung bình 3 tháng gần nhất có dữ liệu và xu hướng trong 6 tháng (R6)">
+      <div className="dpi-axes">
+        {g.axes.map((a) => (
+          <div key={a.group} className="dpi-axis">
+            <span className="small">{a.label}</span>
+            <ScoreBar value={a.level === null ? null : a.level * 100} label={a.label} />
+            <span className="small muted">
+              {a.level === null ? "—" : `${Math.round(a.level * 100)}%`}
+              {a.trend !== null && a.trend !== 0 && (
+                <span className={a.trend > 0 ? "tone-good" : "tone-bad"}>
+                  {" "}
+                  {a.trend > 0 ? "▲" : "▼"} {Math.abs(Math.round(a.trend * 100))}
+                </span>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="small">
+        Sẵn sàng thăng tiến: <Pill tone={r.tone}>{r.label}</Pill> <span className="muted">{g.why}</span>
+      </p>
+    </Card>
+  );
+}
+
+function Contribution({ c }: { c: NonNullable<ScorecardView["card"]["contribution"]> }) {
+  const total = c.new_work + c.refactor + c.help_others;
+  const parts = [
+    { key: "new_work", label: "Việc mới", value: c.new_work, color: "var(--chart-1)" },
+    { key: "refactor", label: "Refactor", value: c.refactor, color: "var(--chart-4)" },
+    { key: "help_others", label: "Sửa code người khác vừa viết", value: c.help_others, color: "var(--chart-2)" },
+  ];
+  return (
+    <Card title="Loại đóng góp" collapsible={false} subtitle="Dòng code thêm theo loại, trong cửa sổ đo rework (không tính điểm)">
+      <div className="dpi-split" role="img" aria-label={parts.map((p) => `${p.label} ${p.value} dòng`).join(", ")}>
+        {parts.map((p) => (
+          <span key={p.key} style={{ flexGrow: p.value, background: p.color }} />
+        ))}
+      </div>
+      <p className="small">
+        {parts.map((p) => (
+          <span key={p.key} style={{ marginRight: 12 }}>
+            <span className="chart-legend-swatch" style={{ background: p.color }} /> {p.label}: {p.value.toLocaleString("vi-VN")} ({total ? Math.round((100 * p.value) / total) : 0}%)
+          </span>
+        ))}
+        <span className="muted">· Churn (tự xoá lại trong 21 ngày): {c.churn.toLocaleString("vi-VN")} dòng</span>
+      </p>
+    </Card>
+  );
+}
+
 function DisputeForm({ metric, onClose, onSend }: { metric: string; onClose: () => void; onSend: (reason: string) => void }) {
   const [reason, setReason] = useState("");
   return (
@@ -365,8 +430,31 @@ function Cycle({
     <div className="dpi-cycle">
       <Card title="1. Tự khai" collapsible={false} subtitle="Đóng góp tiêu biểu, việc ngoài Git, blocker: ghi trong Hồ sơ tháng. Số ngày nghỉ điều chỉnh target A1.">
         <p className="small">
-          <Link href={`/members/${userId}/evidence?month=${month}`}>Mở Hồ sơ tháng {monthLabel(month)}</Link> — các mục ở đó được tính vào A2 / D2 khi lead đã duyệt hồ sơ.
+          <Link href={`/members/${userId}/evidence?month=${month}`}>Mở Hồ sơ tháng {monthLabel(month)}</Link> — mỗi mục được tính vào A2 / D2 khi lead duyệt mục đó.
         </p>
+        {data.self_items.filter((i) => i.counted).length > 0 && (
+          <ul className="dpi-items">
+            {data.self_items
+              .filter((i) => i.counted)
+              .map((i) => (
+                <li key={i.id}>
+                  <span className="muted small">{i.kind}</span> {i.title}
+                  {i.note && <span className="muted small"> — {i.note}</span>}{" "}
+                  {i.approved === true ? <Pill tone="good">đã duyệt</Pill> : i.approved === false ? <Pill tone="bad">không tính</Pill> : <Pill>chờ duyệt</Pill>}
+                  {data.can.assess && (
+                    <span className="dpi-item-actions">
+                      <button type="button" className="sm" disabled={i.approved === true} onClick={() => run(() => api.post(`/dpi/items/${i.id}/approve`, { approved: true }), "Đã duyệt mục tự khai.")}>
+                        Duyệt
+                      </button>
+                      <button type="button" className="ghost sm" disabled={i.approved === false} onClick={() => run(() => api.post(`/dpi/items/${i.id}/approve`, { approved: false }), "Mục này không được tính.")}>
+                        Không tính
+                      </button>
+                    </span>
+                  )}
+                </li>
+              ))}
+          </ul>
+        )}
         {r.submitted_at ? (
           <p className="muted small">Đã gửi {date(r.submitted_at)} · nghỉ {r.leave_days} ngày.</p>
         ) : data.can.self ? (

@@ -7069,4 +7069,42 @@ button.crit-info-btn:focus-visible {
     display: none;
   }
 }
+.dpi-items {
+  margin: 8px 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+.dpi-item-actions {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 6px;
+}
+.dpi-axes {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.dpi-axis {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(80px, 2fr) 80px;
+  gap: 8px;
+  align-items: center;
+}
+.dpi-split {
+  display: flex;
+  height: 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.dpi-split > span {
+  display: block;
+  min-width: 2px;
+}
+.dpi-rubric-editor {
+  display: grid;
+  gap: 8px;
+  max-width: 560px;
+}
 

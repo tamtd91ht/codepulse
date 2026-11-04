@@ -180,8 +180,9 @@ def write_draft(
         for i in session.scalars(select(EvidenceItem).where(EvidenceItem.pack_id == pack.id))
     ]
     snap = pack.snapshot or {}
-    known = draft.references(snap, items)
-    prompt = draft.build_prompt(snap, items, pack.self_notes)
+    card = _dpi_card(session, pack.user_id, pack.period_start)
+    known = draft.references(snap, items, card)
+    prompt = draft.build_prompt(snap, items, pack.self_notes, card)
     user_id, period = pack.user_id, str(pack.period_start)
     session.commit()  # no lock and no open transaction while the model writes
     outcome = runner(prompt, known, settings, token)
@@ -222,3 +223,16 @@ def ai_draft_job(pack_id: int, actor_id: int) -> dict[str, Any]:
         token = llm_token(session, secret_box(), settings)
         outcome = write_draft(session, pack_id, actor_id, settings, token)
     return {"ok": outcome.ok, "cost_usd": outcome.cost_usd, "error": outcome.error}
+
+
+def _dpi_card(session: Session, user_id: int, month: Any) -> dict[str, Any] | None:
+    """The month's latest DPI scorecard (docs/specs/25 §8: the AI draft reads it), if any."""
+    from app.models import DpiSnapshot
+
+    row = session.scalars(
+        select(DpiSnapshot)
+        .where(DpiSnapshot.user_id == user_id, DpiSnapshot.month == month)
+        .order_by((DpiSnapshot.kind == "final").desc(), DpiSnapshot.id.desc())
+        .limit(1)
+    ).first()
+    return dict(row.values) if row else None

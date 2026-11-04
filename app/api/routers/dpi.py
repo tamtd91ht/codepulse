@@ -194,8 +194,9 @@ def _view(
         raise HTTPException(403, "không có quyền xem scorecard DPI của người này")
     hr_only = _only_final_view(session, principal, user.id)
     card = _final_card(session, review) if review.status in service.CLOSED else None
+    calc = service.Calculator(session, month, settings)
     if card is None:
-        card = service.Calculator(session, month, settings).card(review)
+        card = calc.card(review)
     trend = service.history(session, user.id, month, final_only=hr_only)
     assess = _assesses(session, principal, user.id)
     calibrate = _calibrates(session, principal, user.id)
@@ -242,7 +243,9 @@ def _view(
         "peer": {"count": 0, "average": None, "items": []}
         if hr_only
         else service.peer_summary(session, user.id, month, named=assess or calibrate),
-        "b5_suggestions": service.b5_suggestions(session, review, card) if assess else [],
+        "b5_suggestions": service.b5_suggestions(calc, user.id) if assess else [],
+        "self_items": [] if hr_only else service.self_items(session, user.id, month),
+        "growth": service.growth(trend, service.rolling_of(trend, card.get("total"))["value"]),
         "manager_metrics": [
             {"key": m.key, "label": m.label, "max": m.max}
             for m in rubric.metrics
@@ -579,6 +582,39 @@ def decide_dispute(
     return {"id": dispute.id, "decision": dispute.decision}
 
 
+class ItemDecisionIn(BaseModel):
+    approved: bool | None  # None: back to undecided
+
+
+@router.post("/items/{item_id}/approve")
+def approve_item(
+    item_id: int, body: ItemDecisionIn, principal: CurrentPrincipal, session: SessionDep
+) -> dict[str, Any]:
+    """§5: the lead approves (counted in A2 / D2) or rejects one self-reported item."""
+    from app.models import EvidenceItem, EvidencePack
+
+    item = session.get(EvidenceItem, item_id)
+    pack = session.get(EvidencePack, item.pack_id) if item else None
+    if item is None or pack is None:
+        raise HTTPException(404, "item not found")
+    if not _assesses(session, principal, pack.user_id):
+        raise HTTPException(403, "chỉ lead của người này được duyệt")
+    review = service.find_review(session, pack.user_id, pack.period_start)
+    if review is not None and review.status in service.CLOSED:
+        raise HTTPException(409, "kỳ đánh giá đã chốt")
+    item.approved = body.approved
+    item.approved_by = principal.user_id if body.approved is not None else None
+    audit(
+        session,
+        principal.user_id,
+        "dpi.item.approve",
+        f"evidence_item:{item.id}",
+        approved=body.approved,
+    )
+    session.commit()
+    return {"id": item.id, "approved": item.approved}
+
+
 @router.post("/comments/{note_id}/confirm")
 def confirm_comment(
     note_id: int,
@@ -777,8 +813,10 @@ def overview(
     month: str | None = None,
     team_id: int | None = None,
     profile: str | None = None,
+    business_project_id: int | None = None,
 ) -> dict[str, Any]:
-    """R1: the month's DPI of the people one may see (latest snapshot each)."""
+    """R1: the month's DPI of the people one may see (latest snapshot each); filters: team,
+    profile (level), dự án (everyone who is part of it)."""
     m = parse_month(month)
     final_only = False
     people = person_scope(session, principal, "dpi.view")
@@ -789,6 +827,13 @@ def overview(
     if team_id is not None:
         members = _team_people(session, team_id, m)
         people = members if people is None else people & members
+    if business_project_id is not None:
+        from app.api.access import project_people
+
+        if not principal.can_view_project(business_project_id):
+            raise HTTPException(403, "dự án không trong phạm vi")
+        part = project_people(session, [business_project_id])
+        people = part if people is None else people & part
     cards = _latest_cards(session, m, people)
     reviews = {r.user_id: r for r in session.scalars(select(DpiReview).where(DpiReview.month == m))}
     rows = []
@@ -1053,6 +1098,60 @@ def rebuild(
     audit(session, principal.user_id, "dpi.rebuild", "dpi", months=body.months, resync=body.resync)
     session.commit()
     return {"queued": True, "months": body.months, "resync": body.resync}
+
+
+# -- R3 / R4 -----------------------------------------------------------------------------------
+
+
+def _report_repos(
+    session: Session, principal: Principal, business_project_id: int | None
+) -> list[Any]:
+    """Tracked repos of the dự án one sees (team-level reports: R3, R4)."""
+    from app.models import Project
+
+    if not (
+        principal.can("dpi.distribution")
+        or principal.scope("dpi.view") in ("team", "project", "all")
+        or principal.can("dpi.final_view")
+    ):
+        raise HTTPException(403, "cần quyền xem báo cáo DPI cấp team")
+    query = select(Project).where(Project.tracked.is_(True))
+    visible = principal.visible_projects()
+    if visible is not None:
+        query = query.where(Project.business_project_id.in_(visible or {0}))
+    if business_project_id is not None:
+        query = query.where(Project.business_project_id == business_project_id)
+    return list(session.scalars(query.order_by(Project.path_with_namespace)))
+
+
+@router.get("/quality")
+def quality_report(
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: SettingsDep,
+    month: str | None = None,
+    business_project_id: int | None = None,
+) -> dict[str, Any]:
+    """R3 Quality & Debt: new findings vs older ones still open, coverage on the month's MRs,
+    hotspots (files changed often x findings), open debt per module."""
+    from app.dpi.reports import quality
+
+    m = parse_month(month)
+    repos = _report_repos(session, principal, business_project_id)
+    return {"month": m.isoformat(), **quality(session, repos, m, settings)}
+
+
+@router.get("/delivery")
+def delivery_report(
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    business_project_id: int | None = None,
+) -> dict[str, Any]:
+    """R4 Delivery: WIP, backlog aging, blockers by reason, overdue issues (now)."""
+    from app.dpi.reports import delivery
+
+    repos = _report_repos(session, principal, business_project_id)
+    return delivery(session, repos, datetime.now(UTC))
 
 
 # -- production defects (B2) --------------------------------------------------------------------
@@ -1392,6 +1491,36 @@ def readiness_gitlab(
     from app.dpi.readiness import gitlab_checks
 
     return gitlab_checks(session, project_id)
+
+
+@router.post("/readiness/{project_id}/protect")
+def protect_branch(
+    project_id: int, principal: CurrentPrincipal, session: SessionDep
+) -> dict[str, Any]:
+    """P0.1: protect the repo's default branch (nobody pushes, maintainers merge)."""
+    if not principal.can("admin.projects"):
+        raise HTTPException(403, "cần quyền quản trị dự án và repo")
+    from app.dpi.readiness import protect_default_branch
+
+    result = protect_default_branch(session, project_id)
+    audit(session, principal.user_id, "dpi.protect_branch", f"project:{project_id}", **result)
+    session.commit()
+    return result
+
+
+@router.post("/readiness/{project_id}/mr-template")
+def mr_template(
+    project_id: int, principal: CurrentPrincipal, session: SessionDep
+) -> dict[str, Any]:
+    """P0.5: commit the MR template with the checklist to the default branch."""
+    if not principal.can("admin.projects"):
+        raise HTTPException(403, "cần quyền quản trị dự án và repo")
+    from app.dpi.readiness import add_mr_template
+
+    result = add_mr_template(session, project_id)
+    audit(session, principal.user_id, "dpi.mr_template", f"project:{project_id}", **result)
+    session.commit()
+    return result
 
 
 @router.post("/readiness/{project_id}/labels")

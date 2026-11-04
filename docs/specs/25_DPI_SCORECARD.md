@@ -162,3 +162,16 @@ draft (ngày 1 tháng N+1) → self_review (hạn N+3) → lead_review (hạn N+
 - **Công thức**: rework 21 ngày trừ xoá theo FIFO (một lần xoá không trừ hai lần thêm; MR `type::refactor` không tính); B2 không có dữ liệu khi tháng không có việc; C3 không đòi pipeline xanh ở repo không có CI; C2 so ngày đóng theo `REPORT_TZ`; C1 tính thời gian viết tới lúc MR "ready" khi draft được mở trước khi có code.
 - **Collector**: 401/403 ở test report không làm hỏng sync; test report chỉ hỏi một lần mỗi pipeline; closed_by chỉ hỏi cho issue đóng trong cửa sổ; liên kết issue↔MR không bị hạ hạng và được làm mới theo mô tả MR.
 
+## 12. Phần còn lại của plan (người dùng 2026-11-04: "làm hết đi")
+- **AI nháp nhận xét tháng** đọc scorecard DPI của tháng (bản chốt, không có thì bản tạm tính): các chỉ số tự động kèm chi tiết, trích dẫn `(ref: dpi:<mã>)`; **không** đưa tổng điểm, xếp loại hay điểm lead chấm vào prompt.
+- **B5 gợi ý MR mẫu**: MR của tháng xếp theo số finding critical/high, rồi kích thước, rồi điểm review thấp; mỗi gợi ý ghi lý do.
+- **Duyệt từng mục tự khai** (`evidence_items.approved`): lead duyệt / không tính từng mục; mục chưa quyết định vẫn được tính khi cả hồ sơ đã duyệt (như trước), mục bị "không tính" thì không bao giờ tính.
+- **Phân loại đóng góp** (P1.4, hiển thị, không chấm): dòng thêm trong cửa sổ rework chia thành việc mới / refactor (commit `refactor:` hoặc MR `type::refactor`) / sửa code người khác vừa viết (người khác commit cùng file trong 21 ngày trước) và churn (tự xoá lại trong 21 ngày).
+- **R1** lọc thêm theo dự án và level. **[Quyết định]** Không có "phòng ban": hệ thống chưa có khái niệm này; team cha (cây team) đóng vai trò đó.
+- **R3 Chất lượng & nợ** (`GET /dpi/quality`): lỗi mới trong tháng và lỗi cũ còn mở theo mức; coverage trên MR của tháng so với tháng trước; hotspot (số lần sửa × số finding trong 90 ngày); nợ theo module (finding mở, trọng số 8/4/2/1).
+- **R4 Delivery** (`GET /dpi/delivery`): MR đang mở (WIP), issue mở, quá hạn, tuổi backlog (≤7 / 8–30 / 31–90 / >90 ngày), blocker theo nguyên nhân (label `blocked::<lý do>`), theo repo. DORA và các chặng luồng ở Luồng làm việc.
+- R3/R4 là số tổng hợp theo repo trong phạm vi dự án người xem thấy; quyền: `dpi.distribution`, `dpi.final_view`, hoặc `dpi.view` từ team trở lên.
+- **R6**: 5 trục năng lực (mức đạt TB 3 tháng có dữ liệu, xu hướng 6 tháng) và **sẵn sàng thăng tiến**: rolling ≥ 85 trên ≥ 2 tháng đã chốt và không trục nào < 70% → sẵn sàng; rolling ≥ 80 → đang tiến tới; còn lại chưa. Chỉ là gợi ý cho 1:1.
+- **Sửa rubric trên giao diện** (Cấu hình): sửa tên và điểm tối đa từng chỉ số, tạo phiên bản mới; mã, nhóm, người chấm giữ nguyên (công thức gắn với mã).
+- **P0 trên GitLab** (Sẵn sàng dữ liệu, quyền `admin.projects`, có hộp xác nhận): **Bảo vệ nhánh chính** (không ai push, Maintainer merge) và **Thêm mẫu MR** (commit `.gitlab/merge_request_templates/Default.md`). Approval rule (≥ 1 approve) là tính năng GitLab Premium: bật tay trong Settings › Merge requests.
+

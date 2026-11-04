@@ -110,6 +110,9 @@ class Facts:
     added_lines: int = 0
     reworked_lines: int = 0
     rework_files: list[dict[str, Any]] = field(default_factory=list)
+    # §4.2 contribution kinds of the lines added (new_work, refactor, help_others) and churn
+    # (reworked within 21 days): shown, not scored.
+    contribution: dict[str, int] = field(default_factory=dict)
     repo_author_median: dict[int, float] = field(default_factory=dict)
     comments: list[CommentFact] = field(default_factory=list)
     reviewed_mrs: int = 0  # others' MRs they responded to

@@ -46,6 +46,8 @@ SYSTEM_PROMPT = "\n".join(
         '- "Cần chú ý" là việc cụ thể có thể làm tháng sau (ví dụ: tách MR nhỏ hơn, viết thêm '
         "test cho nhánh lỗi), giọng xây dựng.",
         "- MR phải chờ review lâu là vướng ở người khác, không phải lỗi của người này.",
+        '- Nếu có `scorecard_dpi`: dùng các chỉ số yếu/mạnh làm gợi ý cho "Điểm tốt" và '
+        '"Cần chú ý", trích dẫn bằng (ref: dpi:<mã chỉ số>); không nhắc tổng điểm hay xếp loại.',
         "- Ngắn gọn: mỗi gạch đầu dòng tối đa hai câu.",
     ]
 )
@@ -61,9 +63,15 @@ class DraftOutcome:
     dropped: int = 0  # bullets without a known citation
 
 
-def references(snapshot: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> dict[str, str]:
+def references(
+    snapshot: Mapping[str, Any],
+    items: Sequence[Mapping[str, Any]],
+    scorecard: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
     """Every citation the draft may use -> the label shown to the lead."""
     out: dict[str, str] = {}
+    for key, metric in ((scorecard or {}).get("metrics") or {}).items():
+        out[f"dpi:{key}"] = f"DPI {key} {metric.get('label') or ''}".strip()
     for key in ("merged", "reviews_given"):
         for m in (snapshot.get(key) or {}).get("items", []):
             repo = m.get("path_with_namespace") or ""
@@ -75,10 +83,32 @@ def references(snapshot: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) 
     return out
 
 
+def scorecard_data(card: Mapping[str, Any] | None) -> list[dict[str, Any]] | None:
+    """The DPI metrics of the month (docs/specs/25), without the total or the rating: what
+    is strong or weak, with what it was computed from."""
+    if not card:
+        return None
+    rows = []
+    for key, m in (card.get("metrics") or {}).items():
+        if m.get("value") is None or m.get("source") != "auto":
+            continue
+        rows.append(
+            {
+                "ref": f"dpi:{key}",
+                "chi_so": m.get("label"),
+                "dat_phan_tram": round(100 * float(m["value"])),
+                "chi_tiet": m.get("detail"),
+                "do_tin_cay": m.get("confidence"),
+            }
+        )
+    return rows or None
+
+
 def build_prompt(
     snapshot: Mapping[str, Any],
     items: Sequence[Mapping[str, Any]],
     self_notes: str | None,
+    scorecard: Mapping[str, Any] | None = None,
 ) -> str:
     """The data the model sees: lists with their `ref`, counts, the person's notes."""
 
@@ -146,6 +176,8 @@ def build_prompt(
         ],
         "tu_nhan_xet": (self_notes or "")[:4000],
     }
+    if (dpi := scorecard_data(scorecard)) is not None:
+        data["scorecard_dpi"] = dpi
     # Free text (titles, notes) could hold a secret or try to close the data tag.
     dumped = redact(json.dumps(data, ensure_ascii=False, indent=1))
     dumped = dumped.replace("<", "\\u003c").replace(">", "\\u003e")
