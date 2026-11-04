@@ -16,6 +16,7 @@ from app.db import get_redis, get_sessionmaker
 from app.models import Connection, Project
 from app.review.status import supersede_mr_reviews
 from app.workers.knowledge_jobs import KNOWLEDGE_JOB_TIMEOUT
+from app.workers.queues import review_queue
 from app.workers.review_jobs import review_job_timeout
 
 log = logging.getLogger(__name__)
@@ -107,13 +108,13 @@ def knowledge_job_active(queue: Any, job_id: str) -> bool:
 
 
 def _enqueue_review(queue: Enqueuer, func: str, *args: Any, job_id: str) -> None:
-    queue.enqueue(
+    # Reviews have a queue of their own (app/workers/queues.py): never behind a sync, in order.
+    review_queue(queue).enqueue(
         f"app.workers.review_jobs.{func}",
         *args,
         job_id=job_id,
         job_timeout=review_job_timeout(get_settings()),
         retry=REVIEW_RETRY,
-        at_front=True,  # reviews before syncs: people wait for them
     )
 
 

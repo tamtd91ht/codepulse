@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app import health
 from app.models import Review
 
-QUEUES = ("default",)
+QUEUES = ("default", "reviews")
 WINDOW = timedelta(hours=1)
 
 

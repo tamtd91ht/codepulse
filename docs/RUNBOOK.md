@@ -83,9 +83,17 @@ Lệnh này chấm lại điểm review từ finding hiện tại rồi tổng h
 | Cảnh báo | Kiểm tra | Xử lý |
 |---|---|---|
 | `CodePulseWorkerDown` | `docker compose ps worker`, `docker compose logs worker` | `docker compose restart worker`; nếu crash lặp lại, xem traceback (log JSON có `job_id`). |
-| `CodePulseQueueBacklog` | `docker compose exec worker rq info --url $REDIS_URL` | Tăng worker: `docker compose up -d --scale worker=3`. |
+| `CodePulseQueueBacklog` | `docker compose exec worker rq info --url $REDIS_URL` (hàng `reviews` và `default`) | Review chờ lâu: tăng `REVIEW_WORKERS` trong `.env.local` rồi `docker compose up -d review-worker` (hoặc `--scale review-worker=4`). Hàng `default` dồn: `--scale worker=2`. |
 | `CodePulseLlmErrors` | log `claude call failed` / review `failed` với lỗi `llm: …` | Kiểm tra `CLAUDE_CODE_OAUTH_TOKEN` / `LLM_API_KEY`, hạn mức gói Claude / tài khoản Anthropic, phiên bản CLI. Chạy lại review lỗi sau khi sửa. |
 | `CodePulseBudget80` | Admin → Chi phí LLM | Báo người phụ trách; đến 100% review tạm dừng (`failed: monthly LLM budget reached`) và có thể chạy lại khi tăng ngân sách. |
+
+### Hàng đợi review và chạy song song (2026-11-04)
+- Mỗi worker RQ chạy **một job một lúc**. Trước đây mọi job (review, sync, tri thức, thông báo…) chung một hàng `default` với **một** worker, nên 5 người gửi review cùng lúc thì chạy lần lượt (mỗi review vài phút, review sâu tới ~8 phút/chunk), và vì `at_front` người gửi **sau cùng lại chạy trước**.
+- Nay review có hàng riêng `reviews`, chạy **theo thứ tự gửi** (FIFO) bởi `review-worker` × `REVIEW_WORKERS` (mặc định 2), mỗi worker một review; worker `default` cũng nhận review khi rảnh. Ví dụ 5 yêu cầu, 2 review-worker + worker default rảnh → 3 review chạy cùng lúc, 2 cái sau bắt đầu ngay khi có chỗ.
+- Hai worker không bao giờ chạy trùng một review (khoá `FOR UPDATE` khi nhận, job id cố định cho cùng sha), mỗi review dùng thư mục tạm riêng.
+- Tăng `REVIEW_WORKERS` khi review hay phải chờ, nhưng nhớ: mỗi review là một phiên LLM chạy song song (gói Claude / API có giới hạn tốc độ: quá tay sẽ gặp 429 và review bị thử lại), và một bản checkout repo (vài trăm MB RAM/đĩa với repo lớn). Bắt đầu 2–3, theo dõi `codepulse_queue_jobs{queue="reviews"}` và lỗi LLM.
+- Bot Telegram báo ngay khi nhận lệnh: còn bao nhiêu review chờ trước và bao nhiêu worker đang chạy song song.
+- Sau khi nâng cấp: `docker compose --env-file .env.local -f docker-compose.prod.yml up -d --build` (tạo thêm service `review-worker`). Job review cũ còn trong hàng `default` vẫn được worker `default` chạy hết.
 
 ## 7. Backup và khôi phục
 

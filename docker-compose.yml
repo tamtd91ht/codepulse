@@ -54,6 +54,27 @@ services:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
 
+  # Reviews only (queue "reviews", app/workers/queues.py): REVIEW_WORKERS of them run
+  # reviews in parallel, first come first served. Each review is one LLM session (and up
+  # to a few hundred MB of RAM for a checkout); raise it while the provider's rate limit
+  # and the machine allow.
+  review-worker:
+    build: .
+    command: ["python", "-m", "app.workers", "reviews"]
+    deploy:
+      replicas: ${REVIEW_WORKERS:-2}
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.healthcheck"]
+      interval: 30s
+      start_period: 20s
+      retries: 3
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
   # Runs .claude commands from Admin > Chay command (queue "commands", app/commands).
   command-worker:
     build: .

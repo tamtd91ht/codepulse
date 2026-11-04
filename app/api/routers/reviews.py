@@ -65,6 +65,7 @@ from app.review.rubric import RUBRIC_VERSION
 from app.review.service import TOO_LARGE
 from app.scoring.criteria_store import review_scores
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
+from app.workers.queues import review_queue
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["reviews"])
@@ -583,7 +584,7 @@ def _queue_rerun(
     # waits for it instead of being overwritten by this "queued".
     session.flush()
     try:
-        queue.enqueue(
+        review_queue(queue).enqueue(
             f"app.workers.review_jobs.{func}",
             *args,
             trigger="rerun",
@@ -596,7 +597,6 @@ def _queue_rerun(
             job_timeout=review_job_timeout(get_settings()),
             # A run past the LOC limit is paid in full each time: only a person repeats it.
             retry=None if ignore_loc_limit else REVIEW_RETRY,
-            at_front=True,
         )
     except Exception:
         # Redis not answering: this one did not start; earlier ones of a batch did and are kept.

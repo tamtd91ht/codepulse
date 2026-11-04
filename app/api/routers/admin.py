@@ -85,6 +85,7 @@ from app.models import (
 )
 from app.models.source import ALL_BRANCHES
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
+from app.workers.queues import review_queue
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["admin"])
@@ -997,7 +998,7 @@ def backfill_reviews(
     for mr in mrs:
         if mr.head_sha is None:
             continue
-        queue.enqueue(
+        review_queue(queue).enqueue(
             "app.workers.review_jobs.review_mr_job",
             project.id,
             mr.iid,

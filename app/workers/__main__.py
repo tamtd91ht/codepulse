@@ -11,7 +11,8 @@ from rq.job import Job
 from app.db import get_redis
 from app.logging import configure_logging, job_id_var
 
-QUEUES = ["default"]
+# The default worker also takes reviews when it has nothing else (app/workers/queues.py).
+QUEUES = ["default", "reviews"]
 
 
 class JobContextWorker(Worker):

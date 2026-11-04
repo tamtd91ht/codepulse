@@ -49,6 +49,7 @@ from app.models import Account, BusinessProject, Connection, Project, Review, Us
 from app.models.review import CHANGE_TIME_UNKNOWN
 from app.review.rubric import RUBRIC_VERSION
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
+from app.workers.queues import review_queue
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["review-requests"])
@@ -496,7 +497,7 @@ def review_commits(
                 )
             session.flush()
             try:
-                queue.enqueue(
+                review_queue(queue).enqueue(
                     "app.workers.review_jobs.review_commit_job",
                     project.id,
                     commit.sha,
@@ -505,7 +506,6 @@ def review_commits(
                     job_id=job_id,
                     job_timeout=review_job_timeout(settings),
                     retry=REVIEW_RETRY,
-                    at_front=True,
                 )
             except Exception:
                 if fresh is None:

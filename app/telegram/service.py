@@ -78,6 +78,7 @@ from app.telegram.picker import (
 from app.telegram.report import Period, parse_period, parse_report
 from app.telegram.resolve import NoResolver, Resolver
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
+from app.workers.queues import backlog_note, review_backlog, review_queue
 
 log = logging.getLogger(__name__)
 
@@ -852,6 +853,8 @@ class BotService:
             *notes,
             f"Đã đưa <b>{len(queued)}</b> review vào hàng đợi; tôi sẽ báo kết quả ở đây khi xong.",
         ]
+        if note := backlog_note(review_backlog(self._queue), len(queued)):
+            lines.append(note)
         lines += [f"• {esc(t.label)}" for t in queued[:10]]
         if len(queued) > 10:
             lines.append(f"… và {len(queued) - 10} mục nữa")
@@ -1238,7 +1241,7 @@ class BotService:
         queued: list[Target] = []
         for t in targets:
             if t.kind == "mr":
-                self._queue.enqueue(
+                review_queue(self._queue).enqueue(
                     "app.workers.review_jobs.review_mr_job",
                     t.project_id,
                     int(t.ref),
@@ -1251,10 +1254,9 @@ class BotService:
                     + (f"-again-{t.round}" if t.force else ""),
                     job_timeout=review_job_timeout(self._settings),
                     retry=REVIEW_RETRY,
-                    at_front=True,
                 )
             else:
-                self._queue.enqueue(
+                review_queue(self._queue).enqueue(
                     "app.workers.review_jobs.review_commit_job",
                     t.project_id,
                     t.sha,
@@ -1265,7 +1267,6 @@ class BotService:
                     job_id=f"review-commit-{t.sha[:12]}" + (f"-again-{t.round}" if t.force else ""),
                     job_timeout=review_job_timeout(self._settings),
                     retry=REVIEW_RETRY,
-                    at_front=True,
                 )
             queued.append(t)
         request = TelegramRequest(
@@ -2067,6 +2068,8 @@ class BotService:
         ]
         if len(queued) > 10:
             lines.append(f"… và {len(queued) - 10} mục nữa")
+        if note := backlog_note(review_backlog(self._queue), len(queued)):
+            lines.append(note)
         return CallbackOutcome(answer=f"Đã xếp hàng {len(queued)} review.", text="\n".join(lines))
 
     # -- read-only commands --------------------------------------------------------------------
