@@ -58,7 +58,21 @@ interface Snapshot {
   components: CriteriaComponent[];
 }
 
-const snap = (s: Snapshot) => JSON.stringify(s);
+/** Comparable form: trimmed text, fixed field order, categories sorted, so a set opened and not
+ * touched never reads as changed (the server's rows and the draft's differ only in form). */
+const snap = (s: Snapshot) =>
+  JSON.stringify({
+    name: s.name.trim(),
+    description: (s.description ?? "").trim(),
+    apply_caps: s.apply_caps,
+    components: s.components.map((c) => ({
+      key: c.key,
+      name: c.name.trim(),
+      description: (c.description ?? "").trim(),
+      weight: c.weight,
+      categories: [...c.categories].sort(),
+    })),
+  });
 
 function blankComponents(): DraftComponent[] {
   return evenWeights(2).map((w, i) => ({
@@ -76,7 +90,9 @@ function blankComponents(): DraftComponent[] {
 /**
  * The set editor (docs/specs/22 §7.2): components on the left with the total weight bar always
  * in view and the category × component matrix, the preview on the right; tabs for versions and
- * the dự án using the set. Ctrl+S saves; leaving with unsaved changes asks first.
+ * the dự án using the set. An existing set opens read-only ("Xem"); "Sửa" switches to the editor
+ * and "Huỷ" / a save switches back. Ctrl+S saves while editing; leaving with unsaved changes asks
+ * first.
  */
 export function CriteriaEditor({
   setId,
@@ -165,6 +181,8 @@ function EditorBody({
   const [touched, setTouched] = useState<Set<string>>(new Set());
   const [attempted, setAttempted] = useState(false);
   const [tab, setTab] = useState<EditorTab>("edit");
+  // A new set is being written; an existing one is looked at until "Sửa".
+  const [editing, setEditing] = useState(!set);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -179,7 +197,7 @@ function EditorBody({
   );
   const errors = useMemo(() => validate(name, comps, meta), [name, comps, meta]);
   const valid = errors.length === 0;
-  const dirty = snap(current) !== baseline;
+  const dirty = editing && snap(current) !== baseline;
   const newVersion = versionChanged(set?.current_version ?? null, current);
   const nextVersion = (set?.current_version?.version ?? 0) + 1;
   const release = useLeaveGuard(dirty && canManage);
@@ -261,8 +279,13 @@ function EditorBody({
     setComps(comps.map((c, i) => ({ ...c, weight: w[i] })));
     setAnnounce("Đã chuẩn hoá trọng số về tổng 100, giữ tỉ lệ.");
   };
+  const startEdit = () => {
+    setEditing(true);
+    setTab("edit");
+  };
   const reset = () => {
-    if (!window.confirm("Bỏ mọi thay đổi chưa lưu?")) return;
+    if (dirty && !window.confirm("Bỏ mọi thay đổi chưa lưu?")) return;
+    if (set) setEditing(false);
     setName(initial.name);
     setDescription(initial.description);
     setApplyCaps(initial.apply_caps);
@@ -276,13 +299,14 @@ function EditorBody({
     const keys = new Set(set?.current_version?.components.map((c) => c.key) ?? []);
     setComps(toDraft(v.components, true).map((c) => ({ ...c, locked: keys.has(c.key) })));
     setApplyCaps(v.apply_caps);
+    setEditing(true);
     setTab("edit");
     setMessage(`Đã nạp phiên bản ${v.version}. Lưu để tạo phiên bản ${nextVersion} giống nó.`);
   };
 
   /* ---- saving ---- */
   const requestSave = () => {
-    if (!canManage || saving) return;
+    if (!canManage || saving || !editing) return;
     if (!valid) {
       setAttempted(true);
       summaryRef.current?.focus();
@@ -350,6 +374,7 @@ function EditorBody({
       setTouched(new Set());
       setAttempted(false);
       setSaveOpen(false);
+      setEditing(false); // saved: back to looking at it
       setMessage(
         (newVersion ? `Đã lưu phiên bản ${fresh?.current_version?.version ?? nextVersion}.` : "Đã lưu tên và mô tả (không tạo phiên bản mới).") +
           (queued ? ` Đã xếp hàng tính lại cho ${queued} dự án.` : "") +
@@ -380,7 +405,7 @@ function EditorBody({
   const versions = set?.versions ?? [];
   const tabs = set
     ? [
-        { key: "edit" as const, label: canManage ? "Soạn" : "Thành phần", hint: "Thành phần, trọng số, loại finding, xem trước" },
+        { key: "edit" as const, label: editing ? "Soạn" : "Thành phần", hint: "Thành phần, trọng số, loại finding, xem trước" },
         { key: "versions" as const, label: "Phiên bản", count: versions.length || undefined, hint: "Lịch sử và so sánh phiên bản" },
         { key: "projects" as const, label: "Dự án đang dùng", count: set.projects.length, hint: "Dự án dùng bộ này, tính lại điểm" },
       ]
@@ -400,6 +425,7 @@ function EditorBody({
           <h2>{name.trim() || (set ? set.name : "Bộ tiêu chí mới")}</h2>
           {set?.current_version ? <span className="crit-ver">v{set.current_version.version}</span> : <Pill tone="info">Chưa lưu</Pill>}
           {set?.archived && <Pill>Lưu trữ</Pill>}
+          {set && editing && <Pill tone="info">Đang sửa</Pill>}
           {set && dirty && canManage && (
             <Pill tone="warn" title={newVersion ? `Lưu sẽ tạo phiên bản ${nextVersion}` : "Chỉ đổi tên hoặc mô tả"}>
               Có thay đổi chưa lưu
@@ -407,11 +433,18 @@ function EditorBody({
           )}
         </div>
         <span className="spacer" />
-        {canManage && (
+        {canManage && set && !editing && (
           <div className="crit-editor-actions">
-            {dirty && set && (
+            <button type="button" className="primary sm" onClick={startEdit}>
+              <Icon name="edit" size={14} /> Sửa
+            </button>
+          </div>
+        )}
+        {canManage && editing && (
+          <div className="crit-editor-actions">
+            {set && (
               <button type="button" className="ghost sm" onClick={reset} disabled={saving}>
-                Hoàn tác
+                Huỷ
               </button>
             )}
             <button
@@ -437,7 +470,25 @@ function EditorBody({
         {announce}
       </p>
 
-      {tab === "edit" && (
+      {tab === "edit" && set && !editing && (
+        <SubPanel id="crit-ed" tab="edit">
+          <div className="crit-layout">
+            <div className="crit-main">
+              <SetView set={set} meta={meta} catLabel={catLabel} />
+            </div>
+            <aside className="crit-side">
+              <CriteriaPreview
+                components={initial.components}
+                applyCaps={initial.apply_caps}
+                valid
+                defaultProject={set.projects.find((p) => p.is_primary)?.id ?? set.projects[0]?.id ?? null}
+              />
+            </aside>
+          </div>
+        </SubPanel>
+      )}
+
+      {tab === "edit" && editing && (
         <SubPanel id="crit-ed" tab="edit">
           <div className="crit-layout">
             <div className="crit-main">
@@ -780,6 +831,77 @@ function EditorBody({
           onSave={(note, recompute) => void save(note, recompute)}
         />
       )}
+    </>
+  );
+}
+
+/** The saved set, read-only: what each component weighs, what it covers, which finding types. */
+function SetView({ set, meta, catLabel }: { set: CriteriaSet; meta: CriteriaMeta; catLabel: (key: string) => string }) {
+  const version = set.current_version;
+  const comps = version?.components ?? [];
+  const placed = new Set(comps.flatMap((c) => c.categories));
+  const loose = meta.categories.filter((c) => !placed.has(c.key));
+  if (!version) return <EmptyState icon="scale" title="Bộ chưa có phiên bản nào" />;
+  return (
+    <>
+      <section className="card crit-info-card">
+        <p className={set.description ? undefined : "muted"} style={{ margin: 0 }}>
+          {set.description || "Chưa có mô tả."}
+        </p>
+        <p className="muted small" style={{ margin: "8px 0 0" }}>
+          Phiên bản {version.version} · lưu {dateTime(version.created_at)}
+          {" · "}
+          {version.apply_caps
+            ? "chặn trần như điểm review (có critical tối đa 50, có high tối đa 80)"
+            : "không chặn trần theo critical/high"}
+        </p>
+      </section>
+
+      <div className="crit-total ok" role="group" aria-label="Tổng trọng số">
+        <div className="crit-total-row">
+          <strong>
+            {comps.length} thành phần <span className="muted">· tổng trọng số 100</span>
+          </strong>
+        </div>
+        <WeightBar parts={comps} label={`Trọng số của ${set.name}`} size="lg" />
+      </div>
+
+      <section className="card crit-comps" aria-labelledby="crit-view-title">
+        <div className="card-head">
+          <div>
+            <h2 id="crit-view-title">Thành phần</h2>
+            <div className="sub">AI đọc mô tả để xếp mỗi finding vào một thành phần; loại finding là đường lui.</div>
+          </div>
+        </div>
+        <ol className="crit-view-list">
+          {comps.map((c, i) => (
+            <li key={c.key} className="crit-view-item">
+              <Swatch index={i} />
+              <div className="crit-view-body">
+                <div className="crit-view-head">
+                  <strong>{c.name}</strong>
+                  <code className="muted small">{c.key}</code>
+                  <span className="spacer" />
+                  <span className="crit-view-weight">{c.weight}%</span>
+                </div>
+                {c.description && <p className="muted small crit-view-desc">{c.description}</p>}
+                <div className="crit-view-cats">
+                  {c.categories.length ? (
+                    c.categories.map((cat) => <Pill key={cat}>{catLabel(cat)}</Pill>)
+                  ) : (
+                    <span className="muted small">Không có loại finding nào</span>
+                  )}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
+        {loose.length > 0 && (
+          <p className="error small" style={{ margin: "8px 0 0" }}>
+            Loại finding chưa thuộc thành phần nào: {loose.map((c) => c.label).join(", ")}.
+          </p>
+        )}
+      </section>
     </>
   );
 }

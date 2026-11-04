@@ -1,6 +1,7 @@
 """The result of an MR review asked for in Telegram: levels, counts and a download link."""
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -131,3 +132,42 @@ def test_the_link_downloads_the_analysis_until_it_expires(
     commit_link = link_url(settings, world.binh_review.id, now)
     assert commit_link is not None
     assert client.get(commit_link.split("https://dash.example.com", 1)[1]).status_code == 404
+
+
+def test_results_carry_the_criteria_scores(
+    client: TestClient,
+    db_session: Session,
+    bot: TelegramBot,
+    world: World,
+    settings: Settings,
+    as_user: Any,
+) -> None:
+    from app.notifications.payload import build, text
+    from app.telegram.mr_report import render
+    from app.workers.criteria_jobs import recompute_criteria
+    from tests.api.test_criteria_api import assign, bp, make
+
+    admin = as_user(world.admin)
+    made = make(client, admin, name="Chuẩn OmiCRM", apply_caps=False)
+    assign(client, admin, bp(world), [{"set_id": made["id"], "is_primary": True}])
+    world.an_finding.criteria = {str(made["id"]): "correctness"}
+    world.an_review.loc_reviewed = 100
+    db_session.flush()
+    assert recompute_criteria(db_session, bp(world), made["id"]) >= 1
+
+    # Telegram: the MR result names the set, its score and each component's score.
+    request_for(db_session, bot, world, {**MR_TARGET, "project_id": world.project.id})
+    ((_, message),) = finished_requests(
+        db_session, bot, settings.dashboard_url, NOW, timedelta(hours=3)
+    )
+    assert "📐 Chuẩn OmiCRM v1: <b>85</b>/100" in message
+    assert "Đúng chức năng 50" in message
+    # The analysis file has the table.
+    _, body = render(db_session, world.an_review, settings, NOW, NOW + timedelta(hours=1))
+    assert "Điểm theo tiêu chí · Chuẩn OmiCRM v1 (bộ chính): 85/100" in body
+    # Notification webhooks: JSON field and chat text.
+    payload = build(db_session, world.an_review, settings.dashboard_url, NOW)
+    (scored,) = payload["review"]["criteria_scores"]
+    assert scored["set_name"] == "Chuẩn OmiCRM" and scored["score"] == 85.0
+    assert any(c["key"] == "correctness" for c in scored["components"])
+    assert "📐 Chuẩn OmiCRM v1: *85*/100" in text("review.done", payload)

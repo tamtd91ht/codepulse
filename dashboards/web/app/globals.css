@@ -6139,3 +6139,48 @@ button.crit-info-btn:focus-visible {
 
 .perm-dirty { color: var(--accent, var(--chart-1)); font-weight: 700; }
 .perm-row.changed { border-color: var(--accent, var(--chart-1)); }
+
+/* Bộ tiêu chí, read-only view (Xem): one row per component */
+.crit-view-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.crit-view-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  background: var(--surface);
+}
+.crit-view-item > :first-child {
+  margin-top: 4px;
+}
+.crit-view-body {
+  flex: 1;
+  min-width: 0;
+}
+.crit-view-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.crit-view-weight {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.crit-view-desc {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.crit-view-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}

@@ -101,6 +101,7 @@ Vị trí: **Admin › Bộ tiêu chí**, một tab của Admin.
    - Lọc "đang dùng / lưu trữ", ô tìm.
    - Nút **Tạo bộ** mở hộp chọn: *bắt đầu từ mẫu* (§8) hoặc *trống*, hoặc nhân bản bộ có sẵn.
 2. **Trình soạn bộ** (trang hoặc ngăn kéo rộng, không cuộn kiểu landing):
+   - **Xem và sửa tách riêng** (người dùng 2026-11-04): bấm một bộ có sẵn là **chế độ Xem**, chỉ đọc (mô tả, phiên bản, trần, thanh trọng số, mỗi thành phần một dòng gồm tên, mã, trọng số, mô tả và các loại finding; Xem trước vẫn ở bên phải). Nút **Sửa** (chỉ ai có `criteria.manage`) mở trình soạn bên dưới; **Huỷ** bỏ thay đổi và về chế độ Xem; lưu xong cũng về chế độ Xem. Bộ mới mở thẳng trình soạn. "Có thay đổi chưa lưu", hỏi khi rời trang và Ctrl+S chỉ có trong chế độ Sửa. So sánh "đã đổi" dùng dạng chuẩn hoá (cắt khoảng trắng, loại finding đã sắp xếp), nên mở bộ mà không sửa gì không bao giờ báo phải lưu.
    - **Bên trái, các thành phần.** Mỗi dòng có tay kéo để sắp xếp, tên, mô tả (textarea gọn, đếm ký tự), và trọng số (thanh trượt + ô số, bước 1).
    - **Thanh tổng trọng số** luôn hiện trên cùng: phần đã dùng, phần còn lại, và báo đỏ khi tổng khác 100. Có nút **Chia đều**, và nút **Chuẩn hoá về 100** (giữ tỉ lệ).
    - **Ma trận loại finding × thành phần:** mỗi loại finding là một hàng, chọn một thành phần (radio). Loại chưa được gán được tô đỏ, và nút Lưu bị khoá cho tới khi đủ.
@@ -117,6 +118,11 @@ Vị trí: **Admin › Bộ tiêu chí**, một tab của Admin.
    - xác nhận khi bỏ bộ chính.
 4. **Hiển thị điểm:**
    - **Trang review:** thẻ "Điểm theo tiêu chí". Bộ chính hiện trước, bộ khác ở tab nhỏ. Hiện điểm cuối lớn, rồi mỗi thành phần một hàng gồm tên, trọng số, thanh điểm và số finding. Bấm vào hàng thì mở danh sách finding (nguồn xếp: AI hay loại finding). Có tooltip giải thích công thức và trần.
+   - **Kết quả gửi đi** (người dùng 2026-11-04): mọi nơi trả kết quả một review đã xong đều kèm điểm theo tiêu chí (`criteria_results`, `app/scoring/criteria_store.py`: các bộ đã lưu điểm cho review, bộ chính trước, tối đa 3), mỗi bộ một dòng `📐 <tên bộ> v<n>: <điểm>/100 (<thành phần> <điểm> · …)`:
+     - Telegram: tin kết quả commit và MR, câu trả lời "đã được review" và `/status`;
+     - file phân tích MR tải từ Telegram: bảng "Điểm theo tiêu chí" (thành phần, trọng số, điểm) cho từng bộ;
+     - webhook thông báo (spec 16): trường `review.criteria_scores` trong JSON và dòng điểm trong tin Slack/Teams.
+     Dự án chưa gán bộ nào hoặc review chưa có điểm theo bộ: không có dòng nào (không đổi gì so với trước).
    - **Trang thành viên và trang dự án:** khối "Theo tiêu chí": điểm trung bình từng thành phần (bar ngang), xu hướng điểm cuối theo tuần, chọn bộ nếu dự án có nhiều bộ.
 5. **Chung:**
    - Dùng hệ thống tab và nút hiện có;

@@ -75,6 +75,7 @@ Repo: đường dẫn GitLab hoặc hậu tố (`api`, `omicrm/api`). Người: 
 Mục đã có review `done` cùng sha → bot trả kết quả ngay, không xếp hàng lại; `failed`/`skipped` → chạy lại (như `POST /reviews/{id}/rerun`).
 
 ### Kết quả MR và file phân tích (2026-11-02)
+- **Điểm theo tiêu chí** (2026-11-04, spec 22 §7.4): dự án có bộ tiêu chí thì tin kết quả (commit và MR), câu trả lời "đã được review" và `/status` thêm mỗi bộ một dòng `📐 <bộ> v<n>: <điểm>/100 (<thành phần> <điểm> · …)`; file phân tích có bảng điểm theo thành phần.
 - Chỉ áp dụng cho **merge request được yêu cầu review từ Telegram** (tin nhắn kết quả của `telegram_requests`); commit và review từ nguồn khác giữ dòng ngắn như cũ.
 - Mỗi MR trong tin kết quả ghi: kết luận, điểm, **mức cao nhất** (🔴 Critical / 🟠 High / 🟡 Medium / 🔵 Low / ✅ không có lỗi), số finding **cả bốn mức** (kể cả 0) theo đúng cách đếm của kết luận (bỏ finding bị bác bỏ / báo nhầm; finding chưa kiểm chứng ghi riêng, không tính điểm), link **⬇ Tải kết quả phân tích** và link trang review. Cuối tin có chú giải bốn mức (một lần).
 - File phân tích: một file HTML tự chứa (`app/telegram/mr_report.py`: CSS nội tuyến, không script, không gọi ra ngoài, sáng/tối theo máy) gồm thông tin MR, kết luận, điểm, mức cao nhất, bảng **các mức nghĩa là gì** (theo rubric), từng finding theo mức (file:dòng, nhóm, trạng thái kiểm chứng, mô tả, gợi ý sửa, đoạn diff đã lưu ≤ 40 dòng); finding không tính điểm xếp cuối.

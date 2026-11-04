@@ -17,6 +17,7 @@ from app.models import (
     ReviewFinding,
     User,
 )
+from app.scoring.criteria_store import criteria_results, criteria_text
 from app.scoring.verdict import VERDICT_LABEL
 
 EVENTS = ("review.done", "review.failed", "review.severe")
@@ -133,6 +134,8 @@ def build(
             "error": public_error(review.error),
             "finished_at": review.finished_at.isoformat() if review.finished_at else None,
             "findings": counts,
+            # docs/specs/22: the score under each criteria set of the dự án (primary first).
+            "criteria_scores": criteria_results(session, review),
             "top_findings": [
                 {
                     "severity": f.severity,
@@ -178,6 +181,20 @@ def sample(dashboard_url: str, now: datetime | None = None) -> dict[str, Any]:
             "error": None,
             "finished_at": (now or datetime.now(UTC)).isoformat(),
             "findings": {**{s: 0 for s in SEVERITIES}, "high": 1, "total": 1},
+            "criteria_scores": [
+                {
+                    "set_id": 0,
+                    "set_name": "Chuẩn chung",
+                    "version": 1,
+                    "is_primary": True,
+                    "score": 86.0,
+                    "capped": False,
+                    "components": [
+                        {"key": "bao_mat", "name": "Bảo mật", "weight": 40, "score": 80.0},
+                        {"key": "chat_luong", "name": "Chất lượng", "weight": 60, "score": 90.0},
+                    ],
+                }
+            ],
             "top_findings": [
                 {
                     "severity": "high",
@@ -216,6 +233,7 @@ def text(event: str, payload: dict[str, Any]) -> str:
     if author and author.get("name"):
         facts.append(f"tác giả {esc(author['name'])}")
     lines = [headline, " · ".join(facts)]
+    lines += criteria_text(review.get("criteria_scores") or [], esc, ("*", "*"))
     if review["status"] == "failed" and review.get("error"):
         lines.append(f"Lỗi: {esc(review['error'][:200])}")
     for f in review.get("top_findings") or []:

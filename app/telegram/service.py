@@ -47,6 +47,7 @@ from app.models import (
 )
 from app.models.source import ALL_BRANCHES
 from app.review.rubric import RUBRIC_VERSION
+from app.scoring.criteria_store import criteria_results, criteria_text
 from app.scoring.evaluation import Bucket, ReviewFacts, evaluate_member, evaluate_members
 from app.scoring.verdict import VERDICT_LABEL, VERDICTS
 from app.telegram.commands import (
@@ -2089,7 +2090,8 @@ class BotService:
         parts = [f"{counts[s]} {s}" for s in ("critical", "high", "medium", "low") if counts.get(s)]
         findings = ", ".join(parts) if parts else "không có finding"
         score = f"{review.score:.0f}" if review.score is not None else "—"
-        return f"Điểm <b>{score}</b>/100 · {findings}\n{esc(self._review_url(review.id))}"
+        criteria = "".join(f"\n{line}" for line in _criteria_lines(self._s, review))
+        return f"Điểm <b>{score}</b>/100 · {findings}{criteria}\n{esc(self._review_url(review.id))}"
 
     def _status(self, me: Principal) -> str:
         reviews = self._s.scalars(
@@ -2509,6 +2511,7 @@ def _mr_result(
     lines = [f"{verdict}Điểm <b>{score}</b>/100 · Mức cao nhất: {level}", f"  {counts}"]
     if t.unverified:
         lines.append(f"  ({t.unverified} finding chưa kiểm chứng, không tính điểm)")
+    lines += [f"  {line}" for line in _criteria_lines(session, review)]
     url = report_link(review.id) if report_link else None
     if url:
         lines.append(
@@ -2552,7 +2555,13 @@ def _result(session: Session, review: Review, dashboard_url: str) -> str:
     if review.verdict:
         icon = VERDICT_ICON.get(review.verdict, "")
         verdict = f"{icon} <b>{VERDICT_LABEL.get(review.verdict, review.verdict)}</b> · "
+    criteria = "".join(f"\n  {line}" for line in _criteria_lines(session, review))
     return (
         f"{verdict}Điểm <b>{score}</b>/100 · {', '.join(parts) if parts else 'không có finding'}"
-        f"\n  {esc(dashboard_url.rstrip('/'))}/reviews/{review.id}"
+        f"{criteria}\n  {esc(dashboard_url.rstrip('/'))}/reviews/{review.id}"
     )
+
+
+def _criteria_lines(session: Session, review: Review) -> list[str]:
+    """The review's score under each criteria set of its dự án (docs/specs/22), HTML-escaped."""
+    return criteria_text(criteria_results(session, review), esc, ("<b>", "</b>"))

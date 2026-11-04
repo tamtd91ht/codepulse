@@ -23,6 +23,8 @@ Header: `Content-Type: application/json`, `User-Agent: CodePulse-Webhook/1.0`, `
     "reviewed_sha": "…", "score": 72.5, "loc_reviewed": 180, "summary": "…", "model": "…",
     "rubric_version": "v1", "error": null, "finished_at": "…",
     "findings": {"critical": 1, "high": 0, "medium": 2, "low": 1, "info": 0, "total": 4},
+    "criteria_scores": [{"set_id": 3, "set_name": "Chuẩn OmiCRM", "version": 2, "is_primary": true, "score": 82.0, "capped": false,
+                         "components": [{"key": "bao_mat", "name": "Bảo mật", "weight": 40, "score": 70.0}]}],
     "top_findings": [{"severity": "critical", "category": "security", "title": "…", "file_path": "app/x.py", "line_start": 12}],
     "url": "https://codepulse.company.vn/reviews/120",
     "web_url": "https://gitlab.company.vn/vihat/omicrm/api/-/merge_requests/412"
@@ -32,7 +34,7 @@ Header: `Content-Type: application/json`, `User-Agent: CodePulse-Webhook/1.0`, `
   "author": {"user_id": 5, "name": "Nguyễn Văn An"}
 }
 ```
-`top_findings` tối đa 5 (critical trước, rồi theo độ tin cậy). Không gửi email, diff hay đoạn code (xem 11); `review.error` chỉ là loại lỗi (`gitlab`, `llm`, …), chi tiết (URL nội bộ, stderr) chỉ xem trên dashboard. Với Slack/Teams, mọi chuỗi lấy từ dữ liệu (tên dự án, tiêu đề finding, đường dẫn file) được escape `& < >`.
+`criteria_scores` (2026-11-04, spec 22): điểm của review theo từng bộ tiêu chí của dự án, bộ chính trước, tối đa 3; rỗng khi dự án chưa gán bộ. Tin Slack/Teams thêm một dòng mỗi bộ. `top_findings` tối đa 5 (critical trước, rồi theo độ tin cậy). Không gửi email, diff hay đoạn code (xem 11); `review.error` chỉ là loại lỗi (`gitlab`, `llm`, …), chi tiết (URL nội bộ, stderr) chỉ xem trên dashboard. Với Slack/Teams, mọi chuỗi lấy từ dữ liệu (tên dự án, tiêu đề finding, đường dẫn file) được escape `& < >`.
 
 `slack`: `{"text": "<markdown>", "mrkdwn": true}`; `teams`: MessageCard với cùng nội dung. Dòng đầu: `*[Dự án] repo !iid — Review xong: 72/100*`, rồi số finding theo mức độ, LOC, tác giả, tối đa 5 finding và link xem review.
 

@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.models import Account, Connection, MergeRequest, Project, Review, ReviewFinding, User
+from app.scoring.criteria_store import criteria_results
 from app.scoring.verdict import NOT_COUNTED, UNDECIDED, VERDICT_LABEL, count_severities
 
 KEY_CONTEXT = b"codepulse/telegram-mr-report/v1"
@@ -277,6 +278,27 @@ def render(
             f"<p class='small muted'>{t.unverified} finding chưa kiểm chứng được: liệt kê bên"
             " dưới để người xem quyết định, không tính vào điểm và kết luận.</p>"
         )
+    for item in criteria_results(session, review):
+        out.append(
+            f"<h2>Điểm theo tiêu chí · {_e(item['set_name'])} v{item['version']}"
+            + (" (bộ chính)" if item["is_primary"] else "")
+            + f": {item['score']:.0f}/100</h2>"
+        )
+        if item["capped"]:
+            out.append(
+                "<p class='small muted'>Bị chặn trần như điểm review (có critical tối đa 50,"
+                " có high tối đa 80).</p>"
+            )
+        out.append(
+            "<table><thead><tr><th>Thành phần</th><th>Trọng số</th><th>Điểm</th></tr></thead>"
+            "<tbody>"
+        )
+        for c in item["components"]:
+            out.append(
+                f"<tr><td>{_e(c['name'])}</td><td>{_e(c['weight'])}%</td>"
+                f"<td><b>{c['score']:.0f}</b>/100</td></tr>"
+            )
+        out.append("</tbody></table>")
     summary = (review.intent or {}).get("summary") if isinstance(review.intent, dict) else None
     if summary:
         out.append(f"<div class='card'><h3>MR này làm gì</h3><p>{_e(summary)}</p></div>")

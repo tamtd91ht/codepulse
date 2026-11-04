@@ -14,8 +14,11 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.models import (
+    Commit,
     CriteriaSet,
     CriteriaSetVersion,
+    MergeRequest,
+    Project,
     ProjectCriteriaSet,
     Review,
     ReviewCriteriaScore,
@@ -210,6 +213,67 @@ def review_scores(session: Session, review_id: int, bp_id: int | None) -> list[d
         return (0 if link.is_primary else 1, link.position, item["set_id"])
 
     return sorted(out, key=order)
+
+
+def review_bp_id(session: Session, review: Review) -> int | None:
+    """The dự án of a review's repo (through its MR or commit); None when unassigned."""
+    project_id: int | None = None
+    if review.mr_id is not None:
+        project_id = session.scalar(
+            select(MergeRequest.project_id).where(MergeRequest.id == review.mr_id)
+        )
+    elif review.commit_sha:
+        project_id = session.scalar(
+            select(Commit.project_id).where(Commit.sha == review.commit_sha)
+        )
+    if project_id is None:
+        return None
+    return session.scalar(select(Project.business_project_id).where(Project.id == project_id))
+
+
+def criteria_results(session: Session, review: Review, limit: int = 3) -> list[dict[str, Any]]:
+    """What a result message shows of the criteria scores (docs/specs/22): the stored scores,
+    primary set first, at most `limit`, each with its components (name, weight, score)."""
+    if review.status != "done":
+        return []
+    out: list[dict[str, Any]] = []
+    for item in review_scores(session, review.id, review_bp_id(session, review))[:limit]:
+        breakdown = item.get("breakdown") or {}
+        out.append(
+            {
+                "set_id": item["set_id"],
+                "set_name": item["set_name"],
+                "version": item["version"],
+                "is_primary": item["is_primary"],
+                "score": float(item["score"]),
+                "capped": bool(breakdown.get("capped")),
+                "components": [
+                    {
+                        "key": c.get("key"),
+                        "name": c.get("name"),
+                        "weight": c.get("weight"),
+                        "score": float(c.get("score") or 0),
+                    }
+                    for c in breakdown.get("components") or []
+                ],
+            }
+        )
+    return out
+
+
+def criteria_text(
+    items: list[dict[str, Any]], escape: Any = str, bold: tuple[str, str] = ("", "")
+) -> list[str]:
+    """One line per set: "📐 Chuẩn OmiCRM v2: 82/100 (Bảo mật 70 · Hiệu năng 90 · …)"."""
+    lines: list[str] = []
+    for item in items:
+        parts = " · ".join(f"{escape(c['name'])} {c['score']:.0f}" for c in item["components"])
+        cap = " · bị chặn trần" if item["capped"] else ""
+        lines.append(
+            f"📐 {escape(item['set_name'])} v{item['version']}:"
+            f" {bold[0]}{item['score']:.0f}{bold[1]}/100" + (f" ({parts}{cap})" if parts else cap)
+        )
+    return lines
 
 
 def rescore_stored(
