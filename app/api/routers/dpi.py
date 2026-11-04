@@ -235,6 +235,16 @@ def _view(
         "trend": trend,
         "rolling": service.rolling_of(trend, card.get("total")),
         "finished": finished,
+        "ai_suggestion": None
+        if not assess or not review.id
+        else {
+            "status": "failed"
+            if review.ai_suggestion_status in ("queued", "running") and _stale(review)
+            else review.ai_suggestion_status,
+            "at": review.ai_suggested_at,
+            "error": review.ai_suggestion_error,
+            "result": review.ai_suggestion,
+        },
         "assessments": [
             {k: v for k, v in a.items() if k in ("metric", "score")} if hr_only else a
             for a in (_assessments(session, review) if review.id else [])
@@ -322,6 +332,57 @@ class AssessmentItem(BaseModel):
 
 class AssessmentIn(BaseModel):
     items: list[AssessmentItem] = Field(min_length=1, max_length=10)
+
+
+def _stale(review: DpiReview) -> bool:
+    """A suggestion queued or running for longer than its job may take: the worker died."""
+    from app.dpi.jobs import SUGGEST_STALE_S
+
+    started = review.updated_at
+    return started is None or (datetime.now(UTC) - started).total_seconds() > SUGGEST_STALE_S
+
+
+@router.post("/people/{user_id}/months/{month}/suggest", status_code=202)
+def suggest_points(
+    user_id: int,
+    month: str,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: SettingsDep,
+    queue: Annotated[Enqueuer, Depends(get_queue)],
+) -> dict[str, Any]:
+    """§13: ask the AI to suggest the lead's points (a background job; the scorecard shows it).
+    For who assesses the person; costs LLM budget."""
+    from app.admin_settings import monthly_budget_usd
+    from app.workers.knowledge_jobs import month_spend_usd
+
+    if not _assesses(session, principal, user_id):
+        raise HTTPException(403, "chỉ người chấm điểm người này được nhờ AI gợi ý")
+    review = _acting_review(session, user_id, parse_month(month))
+    if review.status not in service.OPEN:
+        raise HTTPException(409, "kỳ đánh giá đã chốt")
+    if review.ai_suggestion_status in ("queued", "running") and not _stale(review):
+        raise HTTPException(409, "AI đang gợi ý; chờ một chút")
+    budget = monthly_budget_usd(session, settings)
+    if budget > 0 and month_spend_usd(session) >= budget:
+        raise HTTPException(409, "đã hết ngân sách LLM của tháng")
+    review.ai_suggestion_status = "queued"
+    review.ai_suggestion_error = None
+    audit(session, principal.user_id, "dpi.suggest", f"dpi_review:{review.id}")
+    session.commit()
+    try:
+        queue.enqueue(
+            "app.dpi.jobs.dpi_suggest_job",
+            review.id,
+            job_id=f"dpi-suggest-{review.id}-{int(datetime.now(UTC).timestamp())}",
+            job_timeout=600,
+        )
+    except Exception:
+        review.ai_suggestion_status = "failed"
+        review.ai_suggestion_error = "Không xếp hàng được; thử lại."
+        session.commit()
+        raise HTTPException(503, "không xếp hàng được") from None
+    return {"status": "queued"}
 
 
 @router.put("/people/{user_id}/months/{month}/assessment")

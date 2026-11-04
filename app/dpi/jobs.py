@@ -244,6 +244,73 @@ def dpi_rebuild_job(months: int = 3, resync: bool = True) -> dict[str, Any]:
     return out
 
 
+SUGGEST_COST = "dpi.suggest.cost"
+SUGGEST_STALE_S = 15 * 60
+
+
+def dpi_suggest_job(review_id: int) -> str:
+    """§13: the AI's suggestion of the lead's points for one review (a background job: the
+    model call takes a while). Its cost goes to the month's LLM budget."""
+    from app.admin_settings import with_overrides
+    from app.dpi.suggest import suggest
+    from app.models import DpiReview
+    from app.review.providers import build_provider
+
+    settings = get_settings()
+    with get_sessionmaker()() as session:
+        review = session.get(DpiReview, review_id)
+        if review is None:
+            return "gone"
+        review.ai_suggestion_status = "running"
+        session.commit()
+        try:
+            calc = service.Calculator(session, review.month, settings)
+            rubric = service.review_rubric(session, review)
+            card = calc.card(review, rubric)
+            card["trend_groups"] = [
+                {"thang": t["month"][:7], **t["groups"]}
+                for t in service.history(session, review.user_id, review.month)
+            ]
+            provider = build_provider(
+                with_overrides(session, settings), timeout_s=180.0, max_retries=1
+            )
+            session.commit()  # no transaction open while the model thinks
+            result, cost = suggest(
+                session, provider, calc.loader, review.user_id, review.month, card, rubric
+            )
+        except Exception as exc:
+            session.rollback()
+            review = session.get(DpiReview, review_id)
+            if review is not None:
+                review.ai_suggestion_status = "failed"
+                review.ai_suggestion_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+                session.commit()
+            log.exception("dpi suggestion failed", extra={"review_id": review_id})
+            return "failed"
+        review = session.get(DpiReview, review_id)
+        if review is None:
+            return "gone"
+        if cost:
+            session.add(
+                AuditLog(
+                    actor_user_id=None,
+                    action=SUGGEST_COST,
+                    target=f"dpi_review:{review_id}",
+                    details={"cost_usd": round(cost, 6)},
+                )
+            )
+        if result is None:
+            review.ai_suggestion_status = "failed"
+            review.ai_suggestion_error = "Model trả lời không đúng định dạng; thử lại."
+        else:
+            review.ai_suggestion = result
+            review.ai_suggestion_status = "done"
+            review.ai_suggestion_error = None
+            review.ai_suggested_at = datetime.now(UTC)
+        session.commit()
+        return review.ai_suggestion_status or "done"
+
+
 def dpi_lock_job() -> int:
     with get_sessionmaker()() as session, session.begin():
         return service.lock_due(session, datetime.now(UTC).date() - timedelta(days=0))

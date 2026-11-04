@@ -7259,3 +7259,28 @@ button.crit-info-btn:focus-visible {
   text-decoration: line-through;
 }
 
+/* DPI §13: the AI's suggestion next to each lead-scored metric. */
+.dpi-ai-bar {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.dpi-ai-bar p {
+  margin: 0;
+}
+.dpi-ai-hint {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--info-soft);
+  overflow-wrap: anywhere;
+}
+.dpi-ai-hint .link {
+  justify-self: start;
+}
+

@@ -175,3 +175,10 @@ draft (ngày 1 tháng N+1) → self_review (hạn N+3) → lead_review (hạn N+
 - **Sửa rubric trên giao diện** (Cấu hình): sửa tên và điểm tối đa từng chỉ số, tạo phiên bản mới; mã, nhóm, người chấm giữ nguyên (công thức gắn với mã).
 - **P0 trên GitLab** (Sẵn sàng dữ liệu, quyền `admin.projects`, có hộp xác nhận): **Bảo vệ nhánh chính** (không ai push, Maintainer merge) và **Thêm mẫu MR** (commit `.gitlab/merge_request_templates/Default.md`). Approval rule (≥ 1 approve) là tính năng GitLab Premium: bật tay trong Settings › Merge requests.
 
+## 13. AI gợi ý 30 điểm của lead (người dùng 2026-11-04)
+> "Nếu để lead tự mò và chấm điểm thì hơi khó và thiếu khách quan; LLM có thể đề xuất kèm gợi ý giá trị điểm số dựa trên các commit hoặc MR không?"
+- Nút **AI gợi ý điểm** ở bước 2 (người có quyền chấm người đó). Job nền đọc bằng chứng của tháng và đề xuất cho **từng chỉ số lead chấm** (A3, B5, D3, E1, E2, E3): điểm (0..max, bước 0,5), độ tin cậy, lý do 1–3 câu, **bằng chứng trích dẫn** (MR, issue, comment, mục tự khai). Không đủ bằng chứng thì không cho điểm và nói thiếu gì.
+- Dữ liệu gửi: tiêu đề, kích thước, nhãn, điểm và kết luận review, số finding theo mức/loại của MR đã merge; issue đã đóng (loại, độ phức tạp, đúng hạn, lỗi production); tối đa 12 comment review của người đó (cắt ngắn, che bí mật); mục tự khai và trạng thái duyệt; phản hồi đồng nghiệp (ẩn danh); các chỉ số tự động; xu hướng 5 nhóm 6 tháng. **Không gửi code.** Repo không cho gửi ra LLM ngoài bị bỏ hẳn.
+- **[Quyết định]** Chỉ là gợi ý: không bao giờ tự lưu. Lead bấm "Dùng gợi ý" (từng chỉ số hoặc tất cả) để điền sẵn điểm, nhận xét, bằng chứng vào form, sửa rồi Lưu như thường. Người được đánh giá không thấy gợi ý.
+- Kết quả bị kiểm: chỉ nhận chỉ số quản lý của rubric của kỳ, điểm bị kẹp trong 0..max, bằng chứng chỉ giữ mã đã đưa vào prompt. Chi phí ghi audit `dpi.suggest.cost`, tính vào ngân sách LLM tháng; hết ngân sách thì không cho chạy.
+

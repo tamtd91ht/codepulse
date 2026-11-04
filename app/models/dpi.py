@@ -187,6 +187,11 @@ class DpiReview(TimestampMixin, Base):
     finalized_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # §13: the AI's suggestion of the lead's points (never applied on its own).
+    ai_suggestion: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    ai_suggestion_status: Mapped[str | None]  # queued|running|done|failed
+    ai_suggested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ai_suggestion_error: Mapped[str | None]
 
 
 class DpiAssessment(TimestampMixin, Base):

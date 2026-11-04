@@ -133,6 +133,25 @@ export interface ScorecardView {
   peer: { count: number; average: number | null; hidden?: boolean; items: { score: number; comment: string | null; from?: string | null }[] };
   /** The month is over: its cycle can be acted on. */
   finished: boolean;
+  /** §13: the AI's suggestion of the lead's points (for who assesses); null otherwise. */
+  ai_suggestion: {
+    status: "queued" | "running" | "done" | "failed" | null;
+    at: string | null;
+    error: string | null;
+    result: {
+      summary: string;
+      metrics: Record<
+        string,
+        {
+          score: number | null;
+          max: number;
+          confidence: Confidence;
+          reason: string;
+          evidence: { ref: string; label: string; url: string | null }[];
+        }
+      >;
+    } | null;
+  } | null;
   b5_suggestions: Evidence[];
   self_items: { id: number; kind: string; title: string; note: string | null; ref: string | null; approved: boolean | null; counted: boolean }[];
   growth: {

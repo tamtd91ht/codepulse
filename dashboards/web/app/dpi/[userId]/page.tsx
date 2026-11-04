@@ -156,7 +156,11 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
   const { userId } = use(params);
   const [month, setMonth] = useMonth();
   const [tab, setTab] = useState<Tab>("card");
-  const { data, error, mutate } = useApi<ScorecardView>(month ? `/dpi/people/${userId}?month=${month}` : null, { keepPreviousData: true });
+  const { data, error, mutate } = useApi<ScorecardView>(month ? `/dpi/people/${userId}?month=${month}` : null, {
+    keepPreviousData: true,
+    // While the AI suggests the lead's points (a background job), poll until it is in.
+    refreshInterval: (latest) => (latest?.ai_suggestion?.status === "queued" || latest?.ai_suggestion?.status === "running" ? 3000 : 0),
+  });
   const [message, setMessage] = useState<string | null>(null);
   const [disputeFor, setDisputeFor] = useState<string | null>(null);
   // A dispute form belongs to the month it was opened on.
@@ -324,6 +328,57 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
           }
         />
       )}
+    </div>
+  );
+}
+
+type Suggested = NonNullable<NonNullable<ScorecardView["ai_suggestion"]>["result"]>["metrics"][string];
+
+/** A form row from the AI's suggestion: the lead still reads, edits and saves it. */
+function fromSuggestion(g: Suggested): { score: string; comment: string; evidence: string } {
+  return {
+    score: g.score === null ? "" : String(g.score),
+    comment: g.reason,
+    evidence: g.evidence.map((e) => e.url ?? e.label).join("\n"),
+  };
+}
+
+function AiSuggestBar({
+  s,
+  onAsk,
+  onApplyAll,
+}: {
+  s: ScorecardView["ai_suggestion"];
+  onAsk: () => void;
+  onApplyAll: () => void;
+}) {
+  const running = s?.status === "queued" || s?.status === "running";
+  return (
+    <div className="dpi-ai-bar">
+      <div className="dpi-row">
+        <button type="button" className="sm" disabled={running} onClick={onAsk}>
+          {running ? (
+            <>
+              <span className="spinner inline" aria-hidden="true" /> AI đang đọc bằng chứng…
+            </>
+          ) : s?.status === "done" ? (
+            "AI gợi ý lại"
+          ) : (
+            "AI gợi ý điểm"
+          )}
+        </button>
+        {s?.status === "done" && s.result && (
+          <button type="button" className="ghost sm" onClick={onApplyAll}>
+            Dùng tất cả gợi ý (vẫn phải bấm Lưu)
+          </button>
+        )}
+        <span className="muted small">
+          AI đọc MR, issue, finding, comment review, tự khai và phản hồi đồng nghiệp của tháng rồi đề xuất điểm kèm lý do và bằng chứng; lead
+          quyết định. Tốn ngân sách LLM.
+        </span>
+      </div>
+      {s?.status === "failed" && <Alert tone="error">AI gợi ý lỗi{s.error ? `: ${s.error}` : ""}.</Alert>}
+      {s?.status === "done" && s.result?.summary && <p className="small">{s.result.summary}</p>}
     </div>
   );
 }
@@ -512,10 +567,27 @@ function Cycle({
             ))}
           </ul>
         )}
+        {data.can.assess && (
+          <AiSuggestBar
+            s={data.ai_suggestion}
+            onAsk={() => run(() => api.post(`${base}/suggest`), "Đã nhờ AI gợi ý; kết quả hiện ở từng chỉ số sau ít phút.")}
+            onApplyAll={() => {
+              const res = data.ai_suggestion?.result;
+              if (!res) return;
+              const next = { ...scores };
+              for (const m of data.manager_metrics) {
+                const g = res.metrics[m.key];
+                if (g && g.score !== null) next[m.key] = fromSuggestion(g);
+              }
+              setScores(next);
+            }}
+          />
+        )}
         <div className="dpi-assess">
           {data.manager_metrics.map((m) => {
             const v = scores[m.key];
             const read = !data.can.assess;
+            const g = data.ai_suggestion?.result?.metrics[m.key];
             return (
               <fieldset key={m.key} className="dpi-assess-item" disabled={read}>
                 <legend>
@@ -534,6 +606,37 @@ function Cycle({
                 <textarea rows={2} aria-label={`Nhận xét ${m.key}`} placeholder="Nhận xét" value={v.comment} onChange={(e) => setScores({ ...scores, [m.key]: { ...v, comment: e.target.value } })} />
                 <textarea rows={2} aria-label={`Bằng chứng ${m.key}`} placeholder="Bằng chứng: mỗi dòng một link MR / issue / tài liệu" value={v.evidence} onChange={(e) => setScores({ ...scores, [m.key]: { ...v, evidence: e.target.value } })} />
                 {given[m.key]?.by && <span className="muted small">Chấm bởi {given[m.key].by}</span>}
+                {g && data.can.assess && (
+                  <div className="dpi-ai-hint">
+                    <span>
+                      <Pill tone="info">AI gợi ý: {g.score === null ? "chưa đủ bằng chứng" : `${g.score}/${g.max}`}</Pill>{" "}
+                      <span className="muted small">tin cậy {g.confidence === "high" ? "cao" : g.confidence === "medium" ? "vừa" : "thấp"}</span>
+                    </span>
+                    {g.reason && <span className="small">{g.reason}</span>}
+                    {g.evidence.length > 0 && (
+                      <span className="small muted">
+                        Dựa trên:{" "}
+                        {g.evidence.map((e, i) => (
+                          <span key={e.ref}>
+                            {i > 0 && ", "}
+                            {e.url ? (
+                              <a href={e.url} target="_blank" rel="noreferrer">
+                                {e.label}
+                              </a>
+                            ) : (
+                              e.label
+                            )}
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                    {g.score !== null && (
+                      <button type="button" className="link sm" onClick={() => setScores({ ...scores, [m.key]: fromSuggestion(g) })}>
+                        Dùng gợi ý cho {m.key}
+                      </button>
+                    )}
+                  </div>
+                )}
               </fieldset>
             );
           })}

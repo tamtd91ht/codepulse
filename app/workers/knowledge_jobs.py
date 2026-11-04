@@ -213,7 +213,8 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
     )
     dpi_labels = session.scalar(
         select(func.coalesce(func.sum(AuditLog.details["cost_usd"].as_float()), 0)).where(
-            AuditLog.action == "dpi.classify.cost", AuditLog.at >= month_start
+            AuditLog.action.in_(("dpi.classify.cost", "dpi.suggest.cost")),
+            AuditLog.at >= month_start,
         )
     )
     builds = 0.0
