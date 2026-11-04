@@ -20,9 +20,11 @@ from app.config import get_settings
 from app.crypto import SecretBox, secret_box
 from app.identity.autolink import unmapped_accounts
 from app.identity.csv_import import CsvImportError, import_identity
-from app.models import Connection, Project
+from app.models import Connection, Project, ReviewFinding
 from app.reporting import review_metrics
+from app.review.status import CARRIED, carry_all
 from app.scoring.aggregate import recompute
+from app.scoring.rescore import rescore_copies
 
 
 class CliError(Exception):
@@ -297,6 +299,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rebuild.add_argument("--project", type=int, help="CodePulse project id; default: all tracked")
 
+    findings = sub.add_parser("findings").add_subparsers(dest="command", required=True)
+    findings.add_parser(
+        "carry-decisions",
+        help="apply decisions made before 2026-11-04 (accepted disputes, closed as wrong or "
+        "accepted risk) to the same finding re-reported by other reviews of the MR / commit",
+    )
+
     rm = sub.add_parser(
         "review-metrics",
         help="cost / duration / turns / disputes / score drift per mode and rubric (spec 19 §5)",
@@ -417,6 +426,15 @@ def run(
             out.write(
                 "next: `codepulse projects resync` (or Admin) for deployments and incidents\n"
             )
+        case ("findings", "carry-decisions"):
+            decided = session.scalars(
+                select(ReviewFinding)
+                .where(ReviewFinding.status.in_(CARRIED), ReviewFinding.fingerprint.is_not(None))
+                .order_by(ReviewFinding.id)
+            )
+            changed = sorted(carry_all(session, list(decided)))
+            rescore_copies(session, changed, settings)
+            out.write(f"{len(changed)} review(s) updated\n")
         case ("metrics", "recompute"):
             if args.date_to < args.date_from:
                 raise CliError("--to must not be before --from")

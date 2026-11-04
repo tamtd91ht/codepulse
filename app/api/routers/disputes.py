@@ -26,7 +26,8 @@ from app.config import Settings, get_settings
 from app.models import FindingClosure, FindingDispute, Review, ReviewFinding, User
 from app.models.review import CLOSURE_OPEN
 from app.notifications import inbox
-from app.scoring.rescore import rescore_review
+from app.review.status import carry_decision
+from app.scoring.rescore import rescore_copies, rescore_review
 from app.scoring.verdict import assess
 from app.workers.dispute_jobs import running as ai_running
 
@@ -325,6 +326,8 @@ def decide(
         review.verdict, review.risk_score = assess((str(s), st, v) for s, st, v in siblings)
     session.flush()
     _recompute_for(session, _review_of(session, finding), settings)
+    if body.decision == "accepted":
+        rescore_copies(session, carry_decision(session, finding), settings)
     audit(
         session,
         principal.user_id,

@@ -14,7 +14,7 @@ rolled-back session.
 
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -74,7 +74,7 @@ from app.review.rubric import RUBRIC_LENS, RUBRIC_VERSION
 from app.review.rules import collect_rules
 from app.review.schema import AgentFinding, Intent, LLMFinding
 from app.review.signals import detect_signals
-from app.review.status import mark_fixed_findings, supersede_mr_reviews
+from app.review.status import decided_before, mark_fixed_findings, supersede_mr_reviews
 from app.review.verify import skipped_status, verify
 from app.scoring.criteria_store import SetVersion, clean_criteria, project_sets, store_scores
 from app.scoring.formula import ScoredFinding, review_score, weights_for
@@ -1117,7 +1117,15 @@ class ReviewService:
     def _store(self, review: Review, prepared: PreparedDiff, outcome: PassOutcome) -> Review:
         settings = self._settings
         self._step(review.id, "save")
-        final = outcome.findings
+        # A finding already decided wrong / accepted in another review of this MR or commit
+        # (dispute, close) keeps that decision when reported again (app/review/status.py).
+        decided = decided_before(self._session, review)
+        final = [
+            replace(f, status=decided[f.fingerprint][0], severity=decided[f.fingerprint][1])
+            if f.status == "open" and f.fingerprint in decided
+            else f
+            for f in outcome.findings
+        ]
         sets = self._criteria.pop(review.id, [])
         stored: list[ReviewFinding] = []
         for f in final:

@@ -62,3 +62,14 @@ quality_index = 0.50 × avg_score
 - [ ] Bảng test case công thức (MR nhỏ có 1 critical, MR lớn nhiều low, không finding…)
 - [ ] Test ranh giới tuần/tháng theo timezone
 - [ ] Test recompute sau dispute
+
+## Quyết định trên finding giữ nguyên qua các review sau (người dùng 2026-11-04)
+> "Bên khiếu nại đã duyệt nhưng bên finding lại chưa đóng."
+
+- **Nguyên nhân**: khiếu nại (và đóng finding) chỉ đổi đúng dòng finding được khiếu nại. Một push mới của MR, hoặc một lần review lại, báo **lại cùng lỗi đó thành một dòng mới** ở trạng thái mở; Critical Board và trang review hiện review mới nhất nên lỗi vẫn hiện như chưa đóng.
+- **[Quyết định]** Quyết định "finding sai" (khiếu nại được chấp nhận, hoặc đóng là finding sai) và "chấp nhận rủi ro" (kèm mức đã hạ) áp dụng cho **cùng finding** (cùng fingerprint: file, loại, đoạn code, tiêu đề) trong **mọi review khác của cùng MR / cùng commit**:
+  - lúc quyết định: các bản còn mở được đổi theo, review của chúng được tính lại kết luận merge, điểm, tuần và tháng (`app/review/status.carry_decision`, `app/scoring/rescore.rescore_copies`);
+  - lúc review mới lưu kết quả: lỗi đã được quyết định trước đó giữ quyết định ấy (`decided_before`).
+- "Đã sửa" không mang sang: lỗi bị báo lại nghĩa là chưa sửa. Khiếu nại bị từ chối cũng không đổi gì.
+- Dữ liệu có từ trước: chạy một lần `python -m app.cli findings carry-decisions`.
+

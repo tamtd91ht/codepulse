@@ -54,8 +54,8 @@ from app.models.review import CLOSURE_OPEN
 from app.notifications import inbox
 from app.review.masking import looks_secret
 from app.review.resolve import close_finding
-from app.review.status import SEVERE
-from app.scoring.rescore import rescore_review
+from app.review.status import SEVERE, carry_decision
+from app.scoring.rescore import rescore_copies, rescore_review
 
 router = APIRouter(tags=["closures"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -365,6 +365,8 @@ def _settle(
     review = session.get(Review, finding.review_id) if finding.review_id else None
     if review is not None:
         rescore_review(session, review, settings)
+    # The same finding re-reported by another review of the MR / commit takes the decision.
+    rescore_copies(session, carry_decision(session, finding), settings)
     return True
 
 
