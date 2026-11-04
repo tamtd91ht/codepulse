@@ -6561,3 +6561,5 @@ button.crit-info-btn:focus-visible {
   transition: width 0.3s ease;
 }
 
+.chart-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.chart-legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }

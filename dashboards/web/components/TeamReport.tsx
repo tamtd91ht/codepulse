@@ -188,8 +188,8 @@ function MemberChart({ data, onOpen }: { data: TeamReport; onOpen: (userId: numb
               <Tooltip content={<ChartTip />} cursor={{ fill: "var(--surface-2)" }} />
               {group !== null && <ReferenceLine xAxisId="value" x={group} stroke="var(--text)" strokeDasharray="4 4" />}
               {paired && (
-                <Bar xAxisId="count" dataKey="count" name={`Số ${def.label}`} fill="var(--chart-grid)" radius={[0, 4, 4, 0]} isAnimationActive={false}>
-                  <LabelList dataKey="count" position="right" fontSize={12} fill="var(--muted)" formatter={(v: unknown) => `${num(Number(v), 0)} lỗi`} />
+                <Bar xAxisId="count" dataKey="count" name={`Số ${def.label}`} fill="var(--chart-4)" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                  <LabelList dataKey="count" position="right" fontSize={12} fontWeight={600} fill="var(--text)" formatter={(v: unknown) => `${num(Number(v), 0)} lỗi`} />
                 </Bar>
               )}
               <Bar
@@ -219,6 +219,12 @@ function MemberChart({ data, onOpen }: { data: TeamReport; onOpen: (userId: numb
             </BarChart>
           </ResponsiveContainer>
         </div>
+      )}
+      {paired && chart.length > 0 && (
+        <p className="muted small chart-legend" style={{ margin: "6px 0 0" }}>
+          <span className="chart-legend-swatch" style={{ background: "var(--chart-4)" }} /> Số {def.label} (trục trên)
+          <span className="chart-legend-swatch" style={{ background: "var(--bad)", marginLeft: 16 }} /> % review có {def.label} (trục dưới, màu theo mức)
+        </p>
       )}
       {missing > 0 && (
         <p className="muted small" style={{ margin: "6px 0 0" }}>
