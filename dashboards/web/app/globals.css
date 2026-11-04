@@ -2612,6 +2612,18 @@ code.phrase {
   gap: 10px;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
 }
+/* Dự án drawer: the part tabs stay on top while a long panel scrolls under them. */
+.project-tabs {
+  position: sticky;
+  top: -16px; /* the drawer body's top padding */
+  z-index: 3;
+  margin: 16px -20px 12px;
+  padding: 0 20px;
+  background: var(--surface);
+}
+.project-tabs .sub-tabs-row.mini {
+  margin: 0;
+}
 .kpi.compact {
   min-height: 0;
   padding: 10px 12px;

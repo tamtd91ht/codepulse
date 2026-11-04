@@ -204,15 +204,17 @@ export default function GuidePage() {
           </li>
           <li>
             Tab <strong>Dự án &amp; Repo</strong> mặc định hiện mỗi dự án là một ô (số repo, bao nhiêu repo bật review,
-            sync gần nhất); bấm vào ô để mở ngăn chi tiết: đổi tên, repo của dự án với đầy đủ nút Sync / Webhook /
-            Review / Bỏ theo dõi, thêm repo có sẵn vào dự án, bot Telegram và webhook thông báo của dự án. Nút{" "}
+            sync gần nhất); bấm vào ô để mở ngăn chi tiết: đầu ngăn là tên, mô tả và số liệu (repo, bật review, sync,
+            bot Telegram, webhook thông báo), bên dưới chia tab <strong>Repo</strong> (đầy đủ nút Sync / Webhook / Review
+            / Bỏ theo dõi, thêm repo có sẵn), <strong>Quyền truy cập</strong>, <strong>Tiêu chí chấm</strong>,{" "}
+            <strong>Quy tắc review</strong> và <strong>Repo .claude</strong>; tab dùng lần trước được nhớ. Nút{" "}
             <strong>Danh sách</strong> chuyển sang bảng toàn bộ repo để lọc, chọn nhiều và thao tác hàng loạt.
           </li>
           <li>Xoá dự án chỉ bỏ cách nhóm; repo và lịch sử review vẫn giữ.</li>
         </ul>
         <h3>Quy tắc review theo dự án</h3>
         <p>
-          Trong ngăn chi tiết của một dự án (Admin → Dự án &amp; Repo → bấm ô dự án) có mục <strong>Quy tắc review</strong>:
+          Trong ngăn chi tiết của một dự án (Admin → Dự án &amp; Repo → bấm ô dự án) có tab <strong>Quy tắc review</strong>:
           markdown mô tả các quy tắc của team (tenant isolation, money safety, PII, convention…). Mỗi repo có thể thêm
           quy tắc riêng và chỉ tới file quy tắc nằm trong repo. Reviewer đọc các quy tắc này cùng diff; finding vi phạm
           ghi rõ tên quy tắc. Từ rubric v2, mỗi review còn có <strong>kết luận merge</strong> (APPROVE / FIX REQUIRED /

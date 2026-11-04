@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 
+import { type SubTab, SubPanel, SubTabs } from "@/components/AdminTabs";
 import { ClaudeRepoEditor } from "@/components/ClaudeRepoEditor";
 import { Icon, IconButton } from "@/components/icons";
 import { ProjectCriteria } from "@/components/ProjectCriteria";
@@ -119,6 +120,21 @@ function Tile({
 
 type Status = "tracked" | "untracked" | "all";
 
+/** The parts of a dự án, one tab each, instead of one long page to scroll. */
+type ProjectTab = "repos" | "access" | "criteria" | "rules" | "claude";
+const PROJECT_TAB_KEY = "codepulse.admin.project.tab";
+const PROJECT_TABS: ProjectTab[] = ["repos", "access", "criteria", "rules", "claude"];
+
+/** Per-viewer convenience: the tab last used comes back for the next dự án opened. */
+function loadProjectTab(): ProjectTab {
+  try {
+    const saved = window.localStorage.getItem(PROJECT_TAB_KEY);
+    return PROJECT_TABS.find((t) => t === saved) ?? "repos";
+  } catch {
+    return "repos";
+  }
+}
+
 /** Everything about one dự án: repos (with the same controls as the list), bots, webhooks. */
 export function ProjectDrawer({
   tile,
@@ -157,6 +173,16 @@ export function ProjectDrawer({
   const [status, setStatus] = useState<Status>("tracked");
   const [editing, setEditing] = useState(startEditing);
   const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [tab, setTabState] = useState<ProjectTab>("repos");
+  useEffect(() => setTabState(loadProjectTab()), []);
+  const setTab = (next: ProjectTab) => {
+    setTabState(next);
+    try {
+      window.localStorage.setItem(PROJECT_TAB_KEY, next);
+    } catch {
+      /* ignore */
+    }
+  };
   const nameInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!editing) return;
@@ -175,6 +201,23 @@ export function ProjectDrawer({
     .filter((p) => project && p.business_project_id !== project.id)
     .sort((a, b) => a.path_with_namespace.localeCompare(b.path_with_namespace));
   const title = project ? project.name : "Chưa gán dự án";
+  const withRules = items.filter((p) => p.review_rules || p.review_rules_paths).length;
+  const tabs: SubTab<ProjectTab>[] = project
+    ? [
+        { key: "repos", label: "Repo", count: stats.repos, hint: "Repo của dự án: nhánh review, sync, webhook, theo dõi" },
+        { key: "access", label: "Quyền truy cập", hint: "Ai được xem / quản lý dự án này" },
+        { key: "criteria", label: "Tiêu chí chấm", hint: "Bộ tiêu chí chấm điểm review của dự án" },
+        {
+          key: "rules",
+          label: "Quy tắc review",
+          hint: "Quy tắc của dự án và của từng repo, đọc cùng diff khi review",
+          ...(withRules || project.review_rules ? { count: withRules + (project.review_rules ? 1 : 0) } : {}),
+        },
+        { key: "claude", label: "Repo .claude", hint: "Repo .claude dùng chung cho command và review" },
+      ]
+    : [];
+  // The unassigned tile has repos only: no tab row.
+  const current: ProjectTab = project ? tab : "repos";
   const chosen = shown.filter((p) => picked.has(p.id));
   const pick = (ids: number[], on: boolean) =>
     setPicked((prev) => {
@@ -275,106 +318,114 @@ export function ProjectDrawer({
         </div>
       </div>
 
-      <div className="drawer-section">
-        <div className="toolbar" style={{ marginTop: 0 }}>
-          <Segmented
-            label="Trạng thái repo"
-            value={status}
-            onChange={setStatus}
-            options={[
-              { value: "tracked", label: `Đang theo dõi (${stats.tracked})` },
-              { value: "untracked", label: `Đã bỏ (${stats.repos - stats.tracked})` },
-              { value: "all", label: `Tất cả (${stats.repos})` },
-            ]}
-          />
-          <span className="spacer" />
-          {project && addable.length > 0 && (
-            <select
-              value=""
-              aria-label="Thêm repo có sẵn vào dự án"
-              onChange={(e) =>
-                e.target.value &&
-                void actions.assign([Number(e.target.value)], String(project.id), `Đã thêm repo vào ${project.name}.`)
-              }
-            >
-              <option value="">Thêm repo có sẵn…</option>
-              {addable.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.path_with_namespace}
-                </option>
-              ))}
-            </select>
-          )}
+      {project && (
+        <div className="project-tabs">
+          <SubTabs id="bp-tabs" label={`Phần của dự án ${project.name}`} variant="mini" tabs={tabs} value={current} onChange={setTab} />
         </div>
-        {chosen.length > 0 && (
-          <div className="bulk-bar" role="region" aria-label="Thao tác với repo đã chọn">
-            <strong>Đã chọn {chosen.length} repo</strong>
-            <BulkBranch
-              items={chosen}
-              onApply={(branch) =>
-                actions.setBranchMany(chosen, branch).then((ok) => {
-                  if (ok) setPicked(new Set());
-                  return ok;
-                })
-              }
-            />
-            <IconButton
-              icon="untrack"
-              label="Bỏ theo dõi các repo đã chọn"
-              onClick={() => void actions.setTracking(chosen, false).then(() => setPicked(new Set()))}
-            />
-            <IconButton
-              icon="track"
-              label="Theo dõi lại các repo đã chọn"
-              onClick={() => void actions.setTracking(chosen, true).then(() => setPicked(new Set()))}
+      )}
+
+      {current === "repos" && (
+        <SubPanel id="bp-tabs" tab="repos">
+          <div className="toolbar" style={{ marginTop: 0 }}>
+            <Segmented
+              label="Trạng thái repo"
+              value={status}
+              onChange={setStatus}
+              options={[
+                { value: "tracked", label: `Đang theo dõi (${stats.tracked})` },
+                { value: "untracked", label: `Đã bỏ (${stats.repos - stats.tracked})` },
+                { value: "all", label: `Tất cả (${stats.repos})` },
+              ]}
             />
             <span className="spacer" />
-            <IconButton icon="close" label="Bỏ chọn" onClick={() => setPicked(new Set())} />
+            {project && addable.length > 0 && (
+              <select
+                value=""
+                aria-label="Thêm repo có sẵn vào dự án"
+                onChange={(e) =>
+                  e.target.value &&
+                  void actions.assign([Number(e.target.value)], String(project.id), `Đã thêm repo vào ${project.name}.`)
+                }
+              >
+                <option value="">Thêm repo có sẵn…</option>
+                {addable.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.path_with_namespace}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
-        )}
-        {shown.length === 0 ? (
-          <p className="muted" style={{ padding: "8px 0" }}>
-            {items.length === 0 ? "Dự án chưa có repo: thêm repo có sẵn ở trên, hoặc thêm repo / cả group GitLab ở cuối trang." : "Không có repo ở trạng thái này."}
-          </p>
-        ) : (
-          <RepoTable
-            sections={[{ key: "all", label: null, items: shown, expanded: true }]}
-            actions={actions}
-            projectOptions={projectOptions}
-            fullPath
-            showProject={!project}
-            selectable
-            selected={picked}
-            onSelect={pick}
-          />
-        )}
-        {items.length > 0 && (
-          <p className="muted small">
-            {items.length} repo: {items.slice(0, 6).map(repoName).join(", ")}
-            {items.length > 6 ? ` và ${items.length - 6} repo khác` : ""}.
-          </p>
-        )}
-      </div>
+          {chosen.length > 0 && (
+            <div className="bulk-bar" role="region" aria-label="Thao tác với repo đã chọn">
+              <strong>Đã chọn {chosen.length} repo</strong>
+              <BulkBranch
+                items={chosen}
+                onApply={(branch) =>
+                  actions.setBranchMany(chosen, branch).then((ok) => {
+                    if (ok) setPicked(new Set());
+                    return ok;
+                  })
+                }
+              />
+              <IconButton
+                icon="untrack"
+                label="Bỏ theo dõi các repo đã chọn"
+                onClick={() => void actions.setTracking(chosen, false).then(() => setPicked(new Set()))}
+              />
+              <IconButton
+                icon="track"
+                label="Theo dõi lại các repo đã chọn"
+                onClick={() => void actions.setTracking(chosen, true).then(() => setPicked(new Set()))}
+              />
+              <span className="spacer" />
+              <IconButton icon="close" label="Bỏ chọn" onClick={() => setPicked(new Set())} />
+            </div>
+          )}
+          {shown.length === 0 ? (
+            <p className="muted" style={{ padding: "8px 0" }}>
+              {items.length === 0 ? "Dự án chưa có repo: thêm repo có sẵn ở trên, hoặc thêm repo / cả group GitLab ở cuối trang." : "Không có repo ở trạng thái này."}
+            </p>
+          ) : (
+            <RepoTable
+              sections={[{ key: "all", label: null, items: shown, expanded: true }]}
+              actions={actions}
+              projectOptions={projectOptions}
+              fullPath
+              showProject={!project}
+              selectable
+              selected={picked}
+              onSelect={pick}
+            />
+          )}
+          {items.length > 0 && (
+            <p className="muted small">
+              {items.length} repo: {items.slice(0, 6).map(repoName).join(", ")}
+              {items.length > 6 ? ` và ${items.length - 6} repo khác` : ""}.
+            </p>
+          )}
+        </SubPanel>
+      )}
 
-      {project && (
-        <div className="drawer-section">
+      {project && current === "access" && (
+        <SubPanel id="bp-tabs" tab="access">
           <ProjectGrants key={project.id} project={project} busy={busy} />
-        </div>
+        </SubPanel>
       )}
-      {project && (
-        <div className="drawer-section">
+      {project && current === "criteria" && (
+        <SubPanel id="bp-tabs" tab="criteria">
           <ProjectCriteria key={project.id} projectId={project.id} projectName={project.name} />
-        </div>
+        </SubPanel>
       )}
-      {project && (
-        <div className="drawer-section">
+      {project && current === "rules" && (
+        <SubPanel id="bp-tabs" tab="rules">
           <RulesEditor key={project.id} project={project} repos={items} actions={actions} onSaveRules={onSaveRules} busy={busy} />
-        </div>
+        </SubPanel>
       )}
-      {project && (
-        <div className="drawer-section">
+      {project && current === "claude" && (
+        <SubPanel id="bp-tabs" tab="claude">
           <ClaudeRepoEditor key={project.id} project={project} busy={busy} />
-        </div>
+        </SubPanel>
       )}
     </Drawer>
   );
