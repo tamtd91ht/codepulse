@@ -31,6 +31,7 @@ Tự động thu thập commit/MR từ GitLab, cho AI review từng thay đổi,
 | 23 | `23_MEMBER_REPORT.md` | **Báo cáo thành viên và export** (tổng quan, theo tiêu chí, Excel / in) | [ ] |
 | 24 | `24_IN_APP_NOTIFICATIONS.md` | **Thông báo trong ứng dụng**: chuông, toast realtime (SSE), lịch sử | [ ] |
 | 25 | `25_DPI_SCORECARD.md` | **Đánh giá hiệu suất Developer hàng tháng (DPI)**: 70 tự động + 30 quản lý, quy trình tháng, báo cáo R1–R6 | [ ] |
+| 26 | `26_MCP_SERVER.md` | **MCP server cho Claude Code**: đọc finding critical/high theo người/commit/MR, gửi yêu cầu đóng sau khi sửa; token cá nhân | [ ] |
 
 ## Cách dùng với AI agent
 1. Copy toàn bộ thư mục này vào `docs/specs/` của repo mới.

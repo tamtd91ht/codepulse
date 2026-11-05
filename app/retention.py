@@ -2,7 +2,7 @@
 payloads; reviews, findings and aggregated metrics stay (review history is never deleted).
 Evidence packs (docs/specs/20 §11) keep their month and status, but their notes and items go
 after EVIDENCE_RETENTION_MONTHS. In-app notifications (docs/specs/24) go after
-INBOX_KEEP_DAYS."""
+INBOX_KEEP_DAYS, the MCP call log (docs/specs/26 §13.1) after MCP_CALLS_KEEP_DAYS."""
 
 import logging
 from dataclasses import dataclass
@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     EvidenceItem,
     EvidencePack,
+    McpCall,
     RawGitlab,
     Review,
     ReviewFinding,
@@ -23,6 +24,7 @@ from app.models import (
 log = logging.getLogger(__name__)
 
 INBOX_KEEP_DAYS = 180
+MCP_CALLS_KEEP_DAYS = 180
 
 
 @dataclass
@@ -31,6 +33,7 @@ class PurgeResult:
     raw_rows_deleted: int
     evidence_cleared: int = 0
     notifications_deleted: int = 0
+    mcp_calls_deleted: int = 0
 
 
 def _months_before(day: date, months: int) -> date:
@@ -75,11 +78,17 @@ def purge(
             < (now or datetime.now(UTC)) - timedelta(days=INBOX_KEEP_DAYS)
         )
     )
+    calls = session.execute(
+        delete(McpCall).where(
+            McpCall.created_at < (now or datetime.now(UTC)) - timedelta(days=MCP_CALLS_KEEP_DAYS)
+        )
+    )
     result = PurgeResult(
         excerpts_cleared=int(getattr(excerpts, "rowcount", 0) or 0),
         raw_rows_deleted=int(getattr(raw, "rowcount", 0) or 0),
         evidence_cleared=evidence_cleared,
         notifications_deleted=int(getattr(notes, "rowcount", 0) or 0),
+        mcp_calls_deleted=int(getattr(calls, "rowcount", 0) or 0),
     )
     log.info("retention purge", extra={"cutoff": cutoff.isoformat(), **result.__dict__})
     return result

@@ -53,6 +53,7 @@ from app.models import (
 )
 from app.models.review import CLOSURE_OPEN
 from app.notifications import inbox
+from app.permissions.catalog import BY_KEY
 from app.review.masking import looks_secret
 from app.review.resolve import close_finding, mark_fixed
 from app.review.status import SEVERE, carry_decision, settle_open_requests
@@ -198,6 +199,9 @@ class ClosureOut(ORM):
     severity_before: str | None = None
     severity_after: str | None = None
     suggested_severity: str | None = None
+    # docs/specs/26 §8: "web" or "mcp" (Claude Code), and what the MCP client sent with it.
+    via: str = "web"
+    meta: dict[str, Any] | None = None
     # What the viewer may do with it (the review page's buttons).
     can_decide: bool = False
     can_cancel: bool = False
@@ -392,6 +396,23 @@ def _settle(
 def request_close(
     finding_id: int, body: CloseRequestIn, principal: RequestPrincipal, session: SessionDep
 ) -> FindingClosure:
+    closure = create_close_request(
+        session, principal, finding_id, body.commits, body.argument, body.note
+    )
+    session.commit()
+    return closure
+
+
+def check_close_request(
+    session: Session, principal: Principal, finding_id: int
+) -> tuple[ReviewFinding, Review]:
+    """Every refusal of a close request that needs nothing but the database: the permission,
+    the finding seen as on its review page, its author, critical/high, still open, no request in
+    flight, MAX_REQUESTS_PER_DAY. The MCP server runs it before it asks GitLab about the commits
+    (docs/specs/26 §8), and `create_close_request` runs it again when it writes. Writes nothing
+    but the sweep of lost checks. HTTPException on every refusal."""
+    if not principal.can("finding.close_request"):
+        raise HTTPException(403, f"thiếu quyền {BY_KEY['finding.close_request'].label.lower()}")
     finding, review = _finding(session, principal, finding_id)
     if review.author_user_id != principal.user_id:
         raise HTTPException(403, "chỉ tác giả của thay đổi mới được yêu cầu đóng finding của mình")
@@ -410,14 +431,35 @@ def request_close(
     )
     if (today or 0) >= MAX_REQUESTS_PER_DAY:
         raise HTTPException(429, f"tối đa {MAX_REQUESTS_PER_DAY} yêu cầu đóng mỗi ngày")
+    return finding, review
+
+
+def create_close_request(
+    session: Session,
+    principal: Principal,
+    finding_id: int,
+    commits: list[str],
+    argument: str | None,
+    note: str | None,
+    *,
+    via: str = "web",
+    meta: dict[str, Any] | None = None,
+) -> FindingClosure:
+    """A close request by the change's author: the dashboard form and the MCP server
+    (docs/specs/26 §8) share every rule here (`check_close_request`). `commits` / `argument`
+    arrive validated as by CloseRequestIn. Flushed and audited, not committed. HTTPException on
+    every refusal."""
+    finding, _review = check_close_request(session, principal, finding_id)
     closure = FindingClosure(
         finding_id=finding.id,
         kind="request",
         status="pending",
-        shas=body.commits,
-        argument=body.argument,
+        shas=commits,
+        argument=argument,
         requested_by=principal.user_id,
-        note=(body.note or "").strip() or None,
+        note=(note or "").strip() or None,
+        via=via,
+        meta=meta,
     )
     session.add(closure)
     try:
@@ -430,10 +472,10 @@ def request_close(
         "finding.close_request",
         f"finding:{finding.id}",
         closure_id=closure.id,
-        shas=body.commits,
-        argument=bool(body.argument),
+        shas=commits,
+        argument=bool(argument),
+        via=via,
     )
-    session.commit()
     return closure
 
 
@@ -441,6 +483,19 @@ def request_close(
 def cancel_request(
     closure_id: int, principal: RequestPrincipal, session: SessionDep
 ) -> FindingClosure:
+    closure = cancel_close_request(session, principal, closure_id)
+    session.commit()
+    return closure
+
+
+def cancel_close_request(
+    session: Session, principal: Principal, closure_id: int, *, via: str = "web"
+) -> FindingClosure:
+    """The sender withdraws their request while it waits (`pending`, `unmet`): the dashboard's
+    "Rút" button and the MCP server (docs/specs/26 §6) share it. Audited, not committed.
+    HTTPException on every refusal."""
+    if not principal.can("finding.close_request"):
+        raise HTTPException(403, f"thiếu quyền {BY_KEY['finding.close_request'].label.lower()}")
     closure = _request(session, closure_id)
     if closure.requested_by != principal.user_id:
         raise HTTPException(403, "chỉ người gửi mới rút được yêu cầu")
@@ -449,9 +504,12 @@ def cancel_request(
     ):
         raise HTTPException(409, "yêu cầu đã được duyệt hoặc đang được kiểm; tải lại trang")
     audit(
-        session, principal.user_id, "finding.close_request.cancel", f"finding:{closure.finding_id}"
+        session,
+        principal.user_id,
+        "finding.close_request.cancel",
+        f"finding:{closure.finding_id}",
+        via=None if via == "web" else via,
     )
-    session.commit()
     return closure
 
 

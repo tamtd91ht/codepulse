@@ -211,6 +211,19 @@ const PATHS = {
   plus: <path d="M12 5v14M5 12h14" />,
   arrowUp: <path d="M12 19V5M5 12l7-7 7 7" />,
   stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
+  key: (
+    <>
+      <circle cx="7.5" cy="15.5" r="4.5" />
+      <path d="M10.7 12.3L21 2M17 6l3 3M14.5 8.5l2.5 2.5" />
+    </>
+  ),
+  /** A prompt: Claude Code (MCP) in a terminal. */
+  terminal: (
+    <>
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="M6 9l3 3-3 3M12 15h5" />
+    </>
+  ),
   stethoscope: (
     <>
       <path d="M5 2v2M11 2v2M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1" />

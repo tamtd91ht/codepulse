@@ -225,6 +225,7 @@ class FindingClosure(TimestampMixin, Base):
         CheckConstraint(
             "closed_as IN ('fixed','accepted_risk','false_positive')", name="closed_as"
         ),
+        CheckConstraint("via IN ('web','mcp')", name="via"),
         Index("ix_finding_closures_created_at", "created_at"),
         # One request in flight per finding: a double click must not pay twice.
         Index(
@@ -268,6 +269,11 @@ class FindingClosure(TimestampMixin, Base):
     # The "Chạy review" being run: only the worker carrying this token claims and decides it.
     run_token: Mapped[str | None]
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Where a request came from (docs/specs/26 §8): the dashboard form ("web") or Claude Code
+    # through the MCP server ("mcp"); `meta` holds what the MCP client sent with it:
+    # {files_changed, tests, token_id, token_name, client}.
+    via: Mapped[str] = mapped_column(server_default="web", default="web")
+    meta: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 
 class LlmHealth(TimestampMixin, Base):

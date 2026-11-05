@@ -24,6 +24,7 @@ dependencies = [
     "jinja2>=3.1",
     "prometheus-client>=0.21",
     "openpyxl>=3.1",  # Báo cáo thành viên: export Excel (docs/specs/23)
+    "mcp>=2.3,<3",  # MCP server cho Claude Code (docs/specs/26); 2.x renamed FastMCP to MCPServer
 ]
 
 [project.optional-dependencies]

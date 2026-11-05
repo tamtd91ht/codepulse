@@ -54,6 +54,8 @@ class GitLabClient:
         max_per_second: float = 10.0,
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        max_retry_after: float = 120.0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._http = httpx.Client(
             base_url=base_url.rstrip("/") + "/api/v4",
@@ -63,6 +65,10 @@ class GitLabClient:
         )
         self._max_retries = max_retries
         self._sleep = sleep
+        self._timeout = timeout
+        self._max_retry_after = max_retry_after  # the longest Retry-After honoured, seconds
+        self._clock = clock
+        self._deadline: float | None = None  # `clock()` value past which no call is tried
         self._mr_diffs_broken = False  # set once /diffs failed and /changes answered
         self._limiter = RateLimiter(max_per_second, sleep=sleep)
 
@@ -80,6 +86,22 @@ class GitLabClient:
         finally:
             self._max_retries = saved
 
+    @contextmanager
+    def deadline(self, seconds: float) -> Iterator[None]:
+        """Every call inside, retries and their sleeps included, ends within `seconds`: past
+        it a call raises GitLabError instead of trying (or sleeping) again. For a caller someone
+        waits on (the MCP server); the collector's calls have no deadline."""
+        saved = self._deadline
+        end = self._clock() + seconds
+        self._deadline = end if saved is None else min(saved, end)
+        try:
+            yield
+        finally:
+            self._deadline = saved
+
+    def _left(self) -> float | None:
+        return None if self._deadline is None else self._deadline - self._clock()
+
     def __enter__(self) -> "GitLabClient":
         return self
 
@@ -91,16 +113,29 @@ class GitLabClient:
     def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         for attempt in range(self._max_retries + 1):
             self._limiter.acquire()
+            left = self._left()
+            if left is not None and left <= 0:
+                raise GitLabError(f"{method} {url}: deadline exceeded")
+            args = kwargs if left is None else {"timeout": min(self._timeout, left), **kwargs}
             try:
-                response = self._http.request(method, url, **kwargs)
+                response = self._http.request(method, url, **args)
             except httpx.TransportError as exc:
-                if attempt == self._max_retries:
+                delay = self._backoff(attempt, None)
+                if attempt == self._max_retries or not self._may_wait(delay):
                     raise GitLabError(f"{method} {url}: {exc.__class__.__name__}") from exc
-                self._sleep(self._backoff(attempt, None))
+                self._sleep(delay)
                 continue
             self._limiter.observe(response.headers)
             if response.status_code in RETRY_STATUS and attempt < self._max_retries:
-                delay = self._backoff(attempt, response.headers.get("Retry-After"))
+                delay = min(
+                    self._backoff(attempt, response.headers.get("Retry-After")),
+                    self._max_retry_after,
+                )
+                if not self._may_wait(delay):
+                    raise GitLabError(
+                        f"{method} {url} -> HTTP {response.status_code} (deadline)",
+                        response.status_code,
+                    )
                 log.warning(
                     "gitlab request retried",
                     extra={"status": response.status_code, "url": url, "delay_s": delay},
@@ -113,6 +148,11 @@ class GitLabClient:
                 )
             return response
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _may_wait(self, delay: float) -> bool:
+        """A retry after `delay` seconds still starts before the deadline (or there is none)."""
+        left = self._left()
+        return left is None or delay < left
 
     @staticmethod
     def _backoff(attempt: int, retry_after: str | None) -> float:

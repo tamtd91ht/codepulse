@@ -45,7 +45,7 @@ from app.notifications import inbox
 from app.review.masking import is_config, mask_code, mask_config
 from app.review.prepare import prepare
 from app.review.providers import LLMProvider, build_provider
-from app.review.resolve import MAX_SOURCE_CHARS, check, mark_fixed, repo_path
+from app.review.resolve import MAX_SOURCE_CHARS, author_claims, check, mark_fixed, repo_path
 
 log = logging.getLogger(__name__)
 
@@ -85,6 +85,8 @@ class _Target:
     finding_path: str | None
     since: datetime | None
     connection: Connection
+    # An MCP request's note / files changed / tests (docs/specs/26 §8): untrusted claims.
+    claims: str | None = None
 
 
 MAX_SOURCES = 6  # current files shown with an argument
@@ -276,6 +278,7 @@ def run_close_request(
         finding_path=finding.file_path,
         since=review.changed_at if review.changed_at > CHANGE_TIME_UNKNOWN else None,
         connection=connection,
+        claims=author_claims(closure.note, closure.meta) if closure.via == "mcp" else None,
     )
     session.commit()  # nothing open while GitLab answers
 
@@ -337,6 +340,7 @@ def run_close_request(
         argument=target.argument,
         sources=sources.shown,
         not_shown=sources.not_shown,
+        claims=target.claims,
     )
     if checked.call is not None:
         # Paid whatever comes next: recorded and committed before anything else can fail. The

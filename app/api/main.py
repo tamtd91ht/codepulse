@@ -2,7 +2,8 @@ import hmac
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Request, Response
@@ -11,6 +12,7 @@ from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 from redis import Redis
 from sqlalchemy import Engine
+from starlette.routing import Route
 
 from app import health
 from app.admin_settings import monthly_budget_usd
@@ -34,6 +36,7 @@ from app.api.routers import (
     knowledge,
     knowledge_stats,
     llm,
+    mcp_report,
     member_report,
     members,
     metrics,
@@ -46,11 +49,13 @@ from app.api.routers import (
     settings,
     team_report,
     telegram,
+    tokens,
 )
 from app.collector.gitlab.client import GitLabError
 from app.config import get_settings
 from app.db import get_engine, get_redis, get_sessionmaker
 from app.logging import configure_logging, request_id_var
+from app.mcp.server import mcp_http
 from app.monitoring import CodePulseCollector
 from app.webhook.router import router as webhook_router
 
@@ -70,7 +75,17 @@ access_log = logging.getLogger("codepulse.access")
 
 _HTTPS = _settings_ok() and get_settings().app_base_url.startswith("https://")
 
-app = FastAPI(title="CodePulse", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # docs/specs/26: the MCP server's session manager (its task group) lives with the app.
+    async with mcp_http.lifespan():
+        yield
+
+
+app = FastAPI(title="CodePulse", version="0.1.0", lifespan=lifespan)
+# docs/specs/26: MCP for Claude Code (Streamable HTTP, personal access tokens only).
+app.router.routes.append(Route("/mcp", endpoint=mcp_http, include_in_schema=False))
 app.include_router(webhook_router, prefix="/api/v1")
 for api_router in (
     auth.router,
@@ -104,6 +119,8 @@ for api_router in (
     permissions.router,
     inbox.router,
     dpi.router,
+    tokens.router,
+    mcp_report.router,
 ):
     app.include_router(api_router, prefix="/api/v1")
 # docs/specs/11: CORS for the dashboard origin only; cookies need credentials.

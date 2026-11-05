@@ -37,6 +37,7 @@ from app.models.dpi import (
 from app.models.evidence import EvidenceItem, EvidencePack
 from app.models.identity import Account, Team, TeamMember, User
 from app.models.knowledge import ReviewKnowledge, ReviewKnowledgeEdit
+from app.models.mcp import McpCall
 from app.models.metrics import MetricsTeamPeriod, MetricsUserPeriod
 from app.models.notifications import NotificationWebhook, UserNotification
 from app.models.permissions import PermissionSet, PermissionSetItem, UserPermissionSet
@@ -44,9 +45,11 @@ from app.models.review import FindingClosure, FindingDispute, LlmHealth, Review,
 from app.models.secrets import AppSetting, StoredSecret
 from app.models.source import BusinessProject, Connection, Project, ProjectGrant, RawGitlab
 from app.models.telegram import TelegramBot, TelegramRequest
+from app.models.tokens import ApiToken
 
 __all__ = [
     "Account",
+    "ApiToken",
     "AppSetting",
     "AuditLog",
     "Base",
@@ -76,6 +79,7 @@ __all__ = [
     "Issue",
     "IssueMrLink",
     "LlmHealth",
+    "McpCall",
     "MergeRequest",
     "MetricsTeamPeriod",
     "MetricsUserPeriod",

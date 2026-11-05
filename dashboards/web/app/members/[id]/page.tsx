@@ -5,6 +5,7 @@ import { use, useEffect, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { SubPanel, type SubTab, SubTabs } from "@/components/AdminTabs";
+import { MyTokensCard } from "@/components/ApiTokens";
 import { CriteriaSummaryBlock } from "@/components/CriteriaScores";
 import { IconButton } from "@/components/icons";
 import { scoreTone, useUrlRange } from "@/components/Evaluation";
@@ -307,8 +308,8 @@ function TelegramCard() {
   );
 }
 
-type MemberTab = "overview" | "evaluation" | "reviews" | "categories" | "disputes" | "telegram";
-const MEMBER_TABS: MemberTab[] = ["overview", "evaluation", "reviews", "categories", "disputes", "telegram"];
+type MemberTab = "overview" | "evaluation" | "reviews" | "categories" | "disputes" | "telegram" | "claude";
+const MEMBER_TABS: MemberTab[] = ["overview", "evaluation", "reviews", "categories", "disputes", "telegram", "claude"];
 
 /** The member page's sub-tab, kept in the URL hash (#evaluation) like Admin's, so a link or a
  * reload opens the same tab; Back / Forward follow it. */
@@ -368,9 +369,14 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
     { key: "reviews", label: "Kết quả review", hint: "Các review MR/commit trong kỳ" },
     { key: "categories", label: "Loại lỗi", hint: "Loại lỗi theo tuần (12 tuần)" },
     { key: "disputes", label: "Khiếu nại", hint: "Mọi khiếu nại đã gửi và kết quả duyệt" },
-    ...(isMe ? [{ key: "telegram" as const, label: "Telegram", hint: "Gắn Telegram để gửi lệnh review cho bot" }] : []),
+    ...(isMe
+      ? [
+          { key: "telegram" as const, label: "Telegram", hint: "Gắn Telegram để gửi lệnh review cho bot" },
+          { key: "claude" as const, label: "Claude Code", hint: "Token để Claude Code đọc finding và gửi yêu cầu đóng qua MCP" },
+        ]
+      : []),
   ];
-  // A #telegram link opened on someone else's page shows the overview instead.
+  // A #telegram or #claude link opened on someone else's page shows the overview instead.
   const shownTab: MemberTab = tabs.some((t) => t.key === tab) ? tab : "overview";
 
   return (
@@ -534,6 +540,12 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
       {shownTab === "telegram" && isMe && (
         <SubPanel id="member" tab="telegram">
           <TelegramCard />
+        </SubPanel>
+      )}
+
+      {shownTab === "claude" && isMe && (
+        <SubPanel id="member" tab="claude">
+          <MyTokensCard />
         </SubPanel>
       )}
     </>

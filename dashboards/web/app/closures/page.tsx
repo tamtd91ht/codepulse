@@ -5,6 +5,7 @@ import { Fragment, useEffect, useState } from "react";
 import useSWRInfinite from "swr/infinite";
 
 import { DateRangePicker } from "@/components/DateRangePicker";
+import { ClosureMcpMeta, ViaMcpBadge } from "@/components/ClosureMeta";
 import { CLOSED_AS, ConfirmSettle, OverrideClose, shortShas } from "@/components/FindingClose";
 import { Icon, IconButton } from "@/components/icons";
 import { Card, EmptyState, Loading, Message, PageHeader, Pill, Segmented, SeverityBadge } from "@/components/ui";
@@ -324,6 +325,11 @@ export default function ClosuresPage() {
                             </div>
                           )}
                           {c.argument && <div className="small muted">có phản biện</div>}
+                          {c.via === "mcp" && (
+                            <div className="small">
+                              <ViaMcpBadge closure={c} />
+                            </div>
+                          )}
                         </td>
                         <td>
                           <Pill tone={st.tone}>
@@ -454,6 +460,7 @@ function Detail({
               </blockquote>
             )}
             {c.note && <div className="small">Ghi chú: {c.note}</div>}
+            <ClosureMcpMeta closure={c} />
           </div>
         </li>
         {c.kind === "request" && (

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 
+import { ClosureMcpMeta } from "@/components/ClosureMeta";
 import { Pill } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { date } from "@/lib/format";
@@ -403,14 +404,36 @@ const DECIDED: Record<string, string> = {
   fixed: "đã được sửa",
 };
 
-export function ClosureNote({
+export function ClosureNote(props: {
+  closure: FindingClosure | undefined;
+  onDone: () => Promise<unknown>;
+  /** The finding's own status: an old refused request of a finding decided since is history. */
+  findingStatus?: string;
+}) {
+  const { closure, findingStatus = "open" } = props;
+  const body = <ClosureNoteBody {...props} />;
+  // A request sent by Claude Code through MCP also shows its token, files changed and tests,
+  // while it is the finding's live story (not when withdrawn or superseded).
+  const live =
+    closure?.via === "mcp" &&
+    !["cancelled", "reopened"].includes(closure.status) &&
+    !(findingStatus in DECIDED && ["rejected", "failed", "unmet"].includes(closure.status));
+  if (!live) return body;
+  return (
+    <>
+      {body}
+      <ClosureMcpMeta closure={closure} />
+    </>
+  );
+}
+
+function ClosureNoteBody({
   closure,
   onDone,
   findingStatus = "open",
 }: {
   closure: FindingClosure | undefined;
   onDone: () => Promise<unknown>;
-  /** The finding's own status: an old refused request of a finding decided since is history. */
   findingStatus?: string;
 }) {
   if (!closure) return null;

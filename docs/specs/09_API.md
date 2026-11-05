@@ -140,3 +140,26 @@ Lỗi kiểm tra thành phần trả 422, `detail` dạng FastAPI: `[{loc: ["bod
 | POST | `/business-projects/{bp}/criteria-sets/{set_id}/recompute` `{since?: date}` | 202 `{status: "queued", set_id, since}` (since: đầu ngày theo REPORT_TZ). Audit `criteria_set.recompute` | `criteria.assign` trên dự án |
 | GET | `/reviews/{id}` | thêm `criteria_scores: [{set_id, set_name, version, is_primary, score, breakdown: {capped, components: [{key, name, weight, score, penalty, findings: [{id, source: ai\|category}]}]}}]`, bộ chính trước; mỗi finding thêm `criteria` | `review.view` |
 | GET | `/criteria/summary?business_project_id&project_id&user_id&from&to&set_id` | `{sets: [{set_id, name, is_primary}], set_id, set_name, version, reviews, loc, score, components: [{key, name, weight, current, score, findings}], weeks: [{week_start, score, reviews}]}`; trung bình có trọng số theo LOC, trên review xong trong phạm vi `review.view`; không có `set_id`: bộ chính của dự án (của `business_project_id`, hoặc dự án của `project_id`); không có dữ liệu: `reviews` = 0, `components` và `weeks` rỗng; dự án không thấy: 404 | `review.view` |
+
+## Bổ sung (token cho Claude Code / MCP, docs/specs/26 §2, người dùng 2026-11-05)
+
+Các endpoint dưới đây chỉ nhận phiên dashboard (cookie/JWT phiên); token `cpat_…` không dùng được ở đây (401), nó chỉ dùng ở `/mcp`. `TokenOut` = `{id, name, prefix, scopes, expires_at, last_used_at, revoked_at, created_at, active}` (không bao giờ có hash hay token).
+
+| Method | Path | Mô tả | Quyền |
+|---|---|---|---|
+| GET | `/me/tokens` | `[TokenOut]` của chính mình, mới nhất trước (kể cả đã thu hồi / hết hạn; `active` = chưa thu hồi và chưa hết hạn) | đăng nhập |
+| POST | `/me/tokens` `{name (1–80), scopes = ["findings:read", "findings:close_request"], days = 90 (30\|90\|180\|365)}` | 201, `TokenOut` + `token` (`cpat_…`, chỉ hiện lần này). `findings:read` luôn có; scope lạ, hạn khác, tên rỗng/dài: 422; đã có 10 token còn hiệu lực: 409. Audit `api_token.create` (không ghi token) | đăng nhập |
+| POST | `/me/tokens/{id}/revoke` | `TokenOut`; token của người khác hoặc không có: 404; thu hồi lại: trả như cũ, không audit thêm. Audit `api_token.revoke` | đăng nhập (chủ token) |
+| GET | `/admin/users/{user_id}/tokens` | `[TokenOut]` của người đó (404 nếu không có người) | admin |
+| POST | `/admin/tokens/{id}/revoke` | `TokenOut`; audit `api_token.revoke` kèm `by_admin` | admin |
+
+## Bổ sung (báo cáo Claude Code / MCP, docs/specs/26 §13, người dùng 2026-11-05)
+
+Bộ lọc chung: `from`, `to` (ngày, theo `REPORT_TZ`; mặc định 30 ngày đến hôm nay, tối đa 366 ngày), `business_project_id`, `project_id`, `team_id`, `user_id`, `severity` (`critical`, `high` hoặc cả hai cách dấu phẩy). Mọi dữ liệu giới hạn theo phạm vi `report.mcp` của người xem (người: `person_scope`; yêu cầu đóng và backlog: `work_scope` trên review). Tiêu đề finding / lý do của bước kiểm chỉ hiện khi `review.view` phủ review đó. Tỉ lệ 0–1 hoặc `null` khi mẫu số 0. Không cộng vào DPI hay điểm review.
+
+| Method | Path | Mô tả | Quyền |
+|---|---|---|---|
+| GET | `/mcp-report/summary` | `{period, previous, filters, kpis:{calls, active_users, requests, first_pass_rate, median_hours_to_close, prev:{…cùng khoá, kỳ trước cùng độ dài}}, members:[…], total:{…}, note}`; mỗi dòng theo docs/specs/26 §13.5. Audit `mcp_report.read` | `report.mcp` |
+| GET | `/mcp-report/requests?…&page` | `{items, total, page, page_size: 50}`: yêu cầu đóng qua MCP trong kỳ, mới nhất trước (`attempt` = lần gửi thứ mấy cho finding đó) | `report.mcp` |
+| GET | `/mcp-report/calls?…&tool&ok&page` | `{items, total, page, page_size: 50}`: nhật ký gọi tool (`mcp_calls`) | admin |
+| GET | `/mcp-report/export.xlsx?…` | Excel: sheet "Theo thành viên" và "Yêu cầu đóng qua MCP". Audit `mcp_report.export` | `report.mcp` |

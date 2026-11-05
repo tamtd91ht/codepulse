@@ -3,6 +3,7 @@
 import { type FormEvent, useState } from "react";
 import { useSWRConfig } from "swr";
 
+import { UserTokensDrawer } from "@/components/ApiTokens";
 import { Icon, IconButton } from "@/components/icons";
 import { ProfileDrawer } from "@/components/ProfileDrawer";
 import { Avatar, Drawer, EmptyState, Loading, Message, Segmented } from "@/components/ui";
@@ -60,6 +61,7 @@ export function UsersAdmin() {
   const { mutate } = useSWRConfig();
   const { message, setMessage, busy, run, submit } = useRun();
   const [profileId, setProfileId] = useState<number | null>(null);
+  const [tokensOf, setTokensOf] = useState<Person | null>(null);
   const [adding, setAdding] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<UserFilter>("active");
@@ -94,6 +96,9 @@ export function UsersAdmin() {
             void refreshMembers();
           }}
         />
+      )}
+      {tokensOf && (
+        <UserTokensDrawer userId={tokensOf.id} name={nameOf(tokensOf, `#${tokensOf.id}`)} onClose={() => setTokensOf(null)} />
       )}
       {adding && (
         <Drawer title="Thêm người dùng" width={460} onClose={() => setAdding(false)}>
@@ -138,7 +143,7 @@ export function UsersAdmin() {
       <div className="card-head">
         <div className="card-title" style={{ minWidth: 0 }}>
           <h2>Người dùng</h2>
-          <div className="sub">Bấm bút để xem, sửa hồ sơ (tên, email, ảnh); thùng rác để xoá người khai báo sai.</div>
+          <div className="sub">Bấm bút để xem, sửa hồ sơ (tên, email, ảnh); chìa khoá để xem, thu hồi token Claude Code; thùng rác để xoá người khai báo sai.</div>
         </div>
         <div className="actions">
           <button className="primary sm" type="button" onClick={() => { setMessage(null); setAdding(true); }}>
@@ -249,6 +254,11 @@ export function UsersAdmin() {
                       icon="edit"
                       label={`Xem / sửa hồ sơ ${u.full_name ?? u.primary_email ?? ""}`}
                       onClick={() => setProfileId(u.id)}
+                    />
+                    <IconButton
+                      icon="key"
+                      label={`Token Claude Code của ${u.full_name ?? u.primary_email ?? "người này"}`}
+                      onClick={() => setTokensOf(u)}
                     />
                     <IconButton
                       icon="remove"

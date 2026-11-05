@@ -648,6 +648,49 @@ export interface FindingClosure {
   created_at: string;
   updated_at: string;
   decided_at: string | null;
+  /** Where the request came from: the web form, or Claude Code through the MCP server (docs/specs/26 §8). */
+  via?: "web" | "mcp";
+  /** What an MCP request carried besides the commits; null for the web form. */
+  meta?: ClosureMeta | null;
+}
+
+/** One test run reported with an MCP close request. */
+export interface ClosureTest {
+  command: string;
+  result: "passed" | "failed" | "not_run";
+  summary?: string | null;
+}
+
+/** docs/specs/26 §8: files changed, tests, the token and the MCP client that sent the request. */
+export interface ClosureMeta {
+  files_changed?: string[];
+  tests?: ClosureTest[];
+  token_id?: number | null;
+  token_name?: string | null;
+  client?: string | null;
+}
+
+/* ---- personal access tokens for the MCP server (docs/specs/26 §2) ---- */
+
+export type ApiTokenScope = "findings:read" | "findings:close_request";
+
+export interface ApiToken {
+  id: number;
+  name: string;
+  /** The first 8 characters of the token, shown as `cpat_xxxxxxxx…`. */
+  prefix: string;
+  scopes: ApiTokenScope[];
+  expires_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+  /** Not revoked and not expired. */
+  active: boolean;
+}
+
+/** POST /me/tokens: the token itself is returned this once. */
+export interface ApiTokenCreated extends ApiToken {
+  token: string;
 }
 
 /** A row of the "Đóng finding" page. */
