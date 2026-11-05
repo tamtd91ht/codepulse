@@ -6591,10 +6591,15 @@ button.crit-info-btn:focus-visible {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-.member-chart-wrap,
-.report-split > .card:first-child .member-chart {
+/* The scroll box is the wrapper, never the chart's own box: a ResponsiveContainer inside a box
+ * that clamps its height and scrolls measures the clamped size, its scrollbars come and go, the
+ * box resizes, and the chart redraws forever (the flicker on Báo cáo thành viên). The gutter is
+ * reserved so a long list does not change the chart's width when its scrollbar shows. */
+.member-chart-wrap {
   max-height: 62vh;
+  overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .member-chart {
   min-height: 140px;

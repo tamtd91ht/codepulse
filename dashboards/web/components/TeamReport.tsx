@@ -178,46 +178,48 @@ function MemberChart({ data, onOpen }: { data: TeamReport; onOpen: (userId: numb
       {chart.length === 0 ? (
         <p className="muted small">Không ai có số liệu này trong khoảng đã chọn.</p>
       ) : (
-        <div className="member-chart" style={{ height: Math.max(140, chart.length * (paired ? 46 : 32) + 44) }}>
-          <ResponsiveContainer>
-            <BarChart data={chart} layout="vertical" margin={{ top: 4, right: 56, bottom: 4, left: 4 }} barCategoryGap={6}>
-              <CartesianGrid horizontal={false} stroke="var(--chart-grid)" />
-              <XAxis xAxisId="value" type="number" domain={[0, def.max ?? "auto"]} tickLine={false} axisLine={false} fontSize={12} unit={def.unit} />
-              {paired && <XAxis xAxisId="count" type="number" orientation="top" allowDecimals={false} tickLine={false} axisLine={false} fontSize={12} />}
-              <YAxis type="category" dataKey="name" width={150} tickLine={false} axisLine={false} fontSize={12} interval={0} />
-              <Tooltip content={<ChartTip />} cursor={{ fill: "var(--surface-2)" }} />
-              {group !== null && <ReferenceLine xAxisId="value" x={group} stroke="var(--text)" strokeDasharray="4 4" />}
-              {paired && (
-                <Bar xAxisId="count" dataKey="count" name={`Số ${def.label}`} fill="var(--chart-4)" radius={[0, 4, 4, 0]} isAnimationActive={false}>
-                  <LabelList dataKey="count" position="right" fontSize={12} fontWeight={600} fill="var(--text)" formatter={(v: unknown) => `${num(Number(v), 0)} lỗi`} />
-                </Bar>
-              )}
-              <Bar
-                xAxisId="value"
-                dataKey="value"
-                name={paired ? `% review có ${def.label}` : def.label}
-                radius={[0, 4, 4, 0]}
-                isAnimationActive={false}
-                cursor="pointer"
-                onClick={(entry) => {
-                  // The bar item carries its data row as `payload` (the member's id).
-                  const id = (entry as { payload?: { id?: number } }).payload?.id;
-                  if (id !== undefined) onOpen(id);
-                }}
-              >
-                {chart.map((c) => (
-                  <Cell key={c.id} fill={barColor(metric, c.row, c.value)} />
-                ))}
-                <LabelList
+        <div className="member-chart-wrap">
+          <div className="member-chart" style={{ height: Math.max(140, chart.length * (paired ? 46 : 32) + 44) }}>
+            <ResponsiveContainer>
+              <BarChart data={chart} layout="vertical" margin={{ top: 4, right: 56, bottom: 4, left: 4 }} barCategoryGap={6}>
+                <CartesianGrid horizontal={false} stroke="var(--chart-grid)" />
+                <XAxis xAxisId="value" type="number" domain={[0, def.max ?? "auto"]} tickLine={false} axisLine={false} fontSize={12} unit={def.unit} />
+                {paired && <XAxis xAxisId="count" type="number" orientation="top" allowDecimals={false} tickLine={false} axisLine={false} fontSize={12} />}
+                <YAxis type="category" dataKey="name" width={150} tickLine={false} axisLine={false} fontSize={12} interval={0} />
+                <Tooltip content={<ChartTip />} cursor={{ fill: "var(--surface-2)" }} />
+                {group !== null && <ReferenceLine xAxisId="value" x={group} stroke="var(--text)" strokeDasharray="4 4" />}
+                {paired && (
+                  <Bar xAxisId="count" dataKey="count" name={`Số ${def.label}`} fill="var(--chart-4)" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                    <LabelList dataKey="count" position="right" fontSize={12} fontWeight={600} fill="var(--text)" formatter={(v: unknown) => `${num(Number(v), 0)} lỗi`} />
+                  </Bar>
+                )}
+                <Bar
+                  xAxisId="value"
                   dataKey="value"
-                  position="right"
-                  fontSize={12}
-                  fill="var(--text)"
-                  formatter={(v: unknown) => `${num(Number(v), def.digits)}${def.unit ?? ""}`}
-                />
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+                  name={paired ? `% review có ${def.label}` : def.label}
+                  radius={[0, 4, 4, 0]}
+                  isAnimationActive={false}
+                  cursor="pointer"
+                  onClick={(entry) => {
+                    // The bar item carries its data row as `payload` (the member's id).
+                    const id = (entry as { payload?: { id?: number } }).payload?.id;
+                    if (id !== undefined) onOpen(id);
+                  }}
+                >
+                  {chart.map((c) => (
+                    <Cell key={c.id} fill={barColor(metric, c.row, c.value)} />
+                  ))}
+                  <LabelList
+                    dataKey="value"
+                    position="right"
+                    fontSize={12}
+                    fill="var(--text)"
+                    formatter={(v: unknown) => `${num(Number(v), def.digits)}${def.unit ?? ""}`}
+                  />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       )}
       {paired && chart.length > 0 && (
