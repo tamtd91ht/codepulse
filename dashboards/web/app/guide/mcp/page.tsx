@@ -297,18 +297,27 @@ export default function McpGuidePage() {
 
             <Tool name="list_findings" scope="đọc">
               <p>
-                Top finding critical/high <strong>còn mở</strong> (chưa đóng, không bị bước kiểm bác, chưa có yêu cầu đóng đang
-                chờ, không đang khiếu nại). Thứ tự: critical trước high → đã xác nhận trước → độ tin cậy cao trước → mới trước.
+                Finding critical/high với cùng bộ lọc như Critical Board trên dashboard. Mặc định: finding{" "}
+                <strong>còn mở</strong> của bạn (chưa đóng, không bị bước kiểm bác, chưa có yêu cầu đóng đang chờ, không đang
+                khiếu nại). Thứ tự: critical trước high → đã xác nhận trước → độ tin cậy cao trước → mới trước. Mỗi finding kèm
+                tác giả, ngày review (<code>reviewed_at</code>) và ngày của thay đổi (<code>counted_at</code>, ngày dùng để lọc
+                kỳ như dashboard).
               </p>
               <Params
                 rows={[
                   ["user", "chuỗi, tuỳ chọn", "Email hoặc id của người khác; mặc định là bạn. Chỉ dùng được trong phạm vi quyền xem review của bạn (lead: team, manager: dự án)."],
-                  ["severity", "danh sách", <>Thu hẹp: <code>[&quot;critical&quot;]</code> hoặc <code>[&quot;high&quot;]</code>; mặc định cả hai.</>],
+                  ["team", "chuỗi, tuỳ chọn", <>Tên hoặc id team: finding của các thành viên hiện tại, trong phạm vi quyền của bạn. Dùng cùng <code>user</code> để lọc một người trong team.</>],
+                  ["business_project", "chuỗi, tuỳ chọn", "Tên hoặc id dự án."],
                   ["repo", "chuỗi", <>Đường dẫn GitLab (<code>group/name</code>) hoặc id.</>],
-                  ["since", "ngày ISO", <>Chỉ review từ ngày này, ví dụ <code>2026-10-01</code>.</>],
-                  ["include_disputed", "true/false", "Thêm finding đang bị khiếu nại. Mặc định false."],
+                  ["severity", "danh sách", <>Thu hẹp: <code>[&quot;critical&quot;]</code> hoặc <code>[&quot;high&quot;]</code>; mặc định cả hai.</>],
+                  ["status", "chuỗi", <><code>open</code> (mặc định, còn phải sửa), <code>disputed</code>, <code>fixed</code>, <code>accepted_risk</code>, <code>false_positive</code> hoặc <code>any</code>.</>],
+                  ["since", "ngày ISO", <>Từ ngày (tính cả ngày đó), ví dụ <code>2026-10-01</code>. Theo ngày của thay đổi, múi giờ báo cáo.</>],
+                  ["until", "ngày ISO", <>Đến ngày (tính cả ngày đó), ví dụ <code>2026-10-31</code>.</>],
+                  ["include_disputed", "true/false", <>Với <code>status=open</code>: thêm finding đang bị khiếu nại. Mặc định false.</>],
                   ["include_pending", "true/false", "Thêm finding đã có yêu cầu đóng đang chờ (kèm trạng thái). Mặc định false."],
-                  ["limit", "1–50", "Số finding tối đa. Mặc định 20."],
+                  ["order", "chuỗi", <><code>priority</code> (mặc định) hoặc <code>newest</code> (thay đổi mới nhất trước).</>],
+                  ["offset", "0–1000", <>Phân trang: khi kết quả có <code>next_offset</code>, gọi lại với <code>offset</code> đó.</>],
+                  ["limit", "1–50", "Số finding tối đa mỗi trang. Mặc định 20."],
                 ]}
               />
             </Tool>

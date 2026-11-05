@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, Protocol
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 import anyio.to_thread
 from fastapi import HTTPException
@@ -343,32 +344,69 @@ def list_findings_work(
     user: str | None = None,
     severity: list[str] | None = None,
     repo: str | None = None,
+    business_project: str | None = None,
+    team: str | None = None,
     since: str | None = None,
+    until: str | None = None,
+    status: str | None = None,
     include_disputed: bool = False,
     include_pending: bool = False,
+    order: queries.Order = "priority",
+    offset: int = 0,
     limit: int = queries.DEFAULT_LIMIT,
 ) -> tuple[str, dict[str, Any], str | None]:
-    views, owner = queries.list_findings(
+    found = queries.list_findings(
         session,
         caller.principal,
         user=user,
         severity=severity,
         repo=repo,
+        business_project=business_project,
+        team=team,
         since=since,
+        until=until,
+        status=status,
         include_disputed=include_disputed,
         include_pending=include_pending,
+        order=order,
+        offset=offset,
         limit=limit,
+        tz=ZoneInfo(settings.report_tz),
     )
+    views, owner = found.views, found.owner
     facts.result_count = len(views)
-    facts.own_only = owner == caller.user_id
+    facts.own_only = owner == caller.user_id and found.team is None
     repos = {v.project.id for v in views if v.project is not None}
     if repo and len(repos) == 1:
         facts.project_id = repos.pop()
-    person = session.get(User, owner)
-    label = "bạn" if owner == caller.user_id else (person.full_name if person else f"#{owner}")
-    markdown, data = render.list_result(views, label or f"#{owner}", _base(session, settings))
+    if owner is None:
+        label = f"team {found.team.name}" if found.team else "?"
+    else:
+        person = session.get(User, owner)
+        name = "bạn" if owner == caller.user_id else (person.full_name if person else None)
+        label = name or f"#{owner}"
+        if found.team is not None:
+            label += f" (team {found.team.name})"
+    filters = {
+        "status": (status or "open").strip().lower(),
+        "severity": severity,
+        "repo": repo,
+        "business_project": found.business_project.name if found.business_project else None,
+        "team": found.team.name if found.team else None,
+        "since": since,
+        "until": until,
+        "include_disputed": include_disputed,
+        "include_pending": include_pending,
+        "order": order if order != "priority" else None,
+        "offset": offset or None,
+    }
+    markdown, data = render.list_result(
+        views, label, _base(session, settings), filters=filters, next_offset=found.next_offset
+    )
     data["user_id"] = owner
-    return markdown, data, f"user:{owner}"
+    data["team_id"] = found.team.id if found.team else None
+    target = f"user:{owner}" if owner is not None else f"team:{found.team.id if found.team else 0}"
+    return markdown, data, target
 
 
 def commit_findings_work(
@@ -649,11 +687,15 @@ def build_server() -> MCPServer:
         name="list_findings",
         annotations=READ_ONLY,
         description=(
-            "List the top open critical/high findings still to fix (default: the token owner's "
-            "own). Sorted critical first, then verified=confirmed, confidence, newest review. "
-            "Excludes findings with a pending close request unless include_pending=true. Each "
-            "item: id, severity, file:line, title, repo, commit, age. Then call get_finding(id) "
-            "for the full detail and fix suggestion." + UNTRUSTED
+            "List critical/high findings with the dashboard's (Critical Board) filters. Default: "
+            "the token owner's own findings still to fix (status open). Filters: user, team, "
+            "business_project (dự án), repo, severity, status, since/until (review period by the "
+            "change's date, both days inclusive, REPORT_TZ), include_disputed, include_pending. "
+            "Sorted critical first, then verified=confirmed, confidence, newest review "
+            "(order=newest: newest change first). Paged: when next_offset is set, call again "
+            "with offset=next_offset. Each item: id, severity, file:line, title, repo, commit, "
+            "author, review date (reviewed_at), change date (counted_at), age. Then call "
+            "get_finding(id) for the full detail and fix suggestion." + UNTRUSTED
         ),
     )
     def list_findings(
@@ -663,15 +705,47 @@ def build_server() -> MCPServer:
             Field(description='Thu hẹp mức: ["critical"] hoặc ["high"]; mặc định cả hai.'),
         ] = None,
         repo: RepoArg = None,
-        since: Annotated[
-            str | None, Field(description="Chỉ review từ ngày này (ISO, YYYY-MM-DD).")
+        business_project: Annotated[
+            str | None, Field(description="Dự án (tên hoặc id) trong phạm vi bạn được xem.")
         ] = None,
+        team: Annotated[
+            str | None,
+            Field(
+                description="Team (tên hoặc id): finding của thành viên hiện tại của team, trong "
+                "phạm vi quyền xem review của bạn. Dùng cùng user để lọc một người trong team."
+            ),
+        ] = None,
+        since: Annotated[
+            str | None,
+            Field(description="Từ ngày (ISO YYYY-MM-DD, tính cả ngày đó) theo ngày của thay đổi."),
+        ] = None,
+        until: Annotated[
+            str | None,
+            Field(description="Đến ngày (ISO YYYY-MM-DD, tính cả ngày đó) theo ngày của thay đổi."),
+        ] = None,
+        status: Annotated[
+            Literal["open", "disputed", "fixed", "accepted_risk", "false_positive", "any"],
+            Field(
+                description="Trạng thái finding: open (mặc định, còn phải sửa), disputed, fixed, "
+                "accepted_risk, false_positive, hoặc any."
+            ),
+        ] = "open",
         include_disputed: Annotated[
-            bool, Field(description="Thêm cả finding đang bị phản đối (disputed).")
+            bool, Field(description="Với status=open: thêm cả finding đang bị phản đối.")
         ] = False,
         include_pending: Annotated[
             bool, Field(description="Thêm cả finding đã có yêu cầu đóng đang chờ.")
         ] = False,
+        order: Annotated[
+            Literal["priority", "newest"],
+            Field(description="priority (mặc định: nặng và chắc trước) hoặc newest."),
+        ] = "priority",
+        offset: Annotated[
+            int,
+            Field(
+                ge=0, le=queries.MAX_OFFSET, description="Bỏ qua bấy nhiêu kết quả (phân trang)."
+            ),
+        ] = 0,
         limit: LimitArg = queries.DEFAULT_LIMIT,
         ctx: Context | None = None,
     ) -> CallToolResult:
@@ -686,9 +760,15 @@ def build_server() -> MCPServer:
                 user=user,
                 severity=severity,
                 repo=repo,
+                business_project=business_project,
+                team=team,
                 since=since,
+                until=until,
+                status=status,
                 include_disputed=include_disputed,
                 include_pending=include_pending,
+                order=order,
+                offset=offset,
                 limit=limit,
             ),
             client=_client_info(ctx),

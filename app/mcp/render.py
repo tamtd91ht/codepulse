@@ -81,6 +81,10 @@ def _age_days(at: datetime | None, now: datetime) -> int | None:
     return None if at is None else max(0, (now - at).days)
 
 
+def _day(at: datetime | None) -> str | None:
+    return at.date().isoformat() if at is not None else None
+
+
 def finding_link(base: str, review_id: int | None, finding_id: int) -> str:
     return f"{base}/reviews/{review_id}#finding-{finding_id}"
 
@@ -146,6 +150,12 @@ def finding_data(
         "mr_iid": view.mr.iid if view.mr else None,
         "review_id": r.id,
         "age_days": _age_days(r.finished_at, at),
+        # The change's date (what since/until filter on, as the dashboard's period) and when
+        # the review finished.
+        "counted_at": _iso(r.counted_at),
+        "reviewed_at": _iso(r.finished_at),
+        "author_user_id": r.author_user_id,
+        "author": view.author,
         "verified": f.verified,
         "confidence": float(f.confidence) if f.confidence is not None else None,
         "link": finding_link(base, r.id, f.id),
@@ -200,9 +210,13 @@ def _short_md(view: FindingView, tag: str, now: datetime) -> str:
     lines = [
         f"### #{f.id} [{f.severity}] {inline(_location(view))}",
         f"- repo `{where}` · {change} · reviewed_sha `{r.reviewed_sha[:12]}`"
-        + (f" · {age} ngày" if age is not None else "")
-        + f" · verified={f.verified}",
+        + (f" · review {_day(r.finished_at)}" if r.finished_at else "")
+        + (f" ({age} ngày)" if age is not None else "")
+        + (f" · thay đổi ngày {_day(r.counted_at)}" if r.counted_at else "")
+        + f" · {f.status} · verified={f.verified}",
     ]
+    if view.author:
+        lines.append(f"- tác giả: {inline(view.author)}")
     if view.pending:
         lines.append(f"- đang có yêu cầu đóng #{view.pending.id} ({view.pending.status})")
     lines.append(wrap(tag, f.title or "(không tiêu đề)"))
@@ -282,17 +296,35 @@ def _review_context_md(review: Review, tag: str, allowed: bool) -> list[str]:
 
 
 def list_result(
-    views: Sequence[FindingView], owner_label: str, base: str, now: datetime | None = None
+    views: Sequence[FindingView],
+    owner_label: str,
+    base: str,
+    now: datetime | None = None,
+    *,
+    filters: dict[str, Any] | None = None,
+    next_offset: int | None = None,
 ) -> tuple[str, dict[str, Any]]:
     at = now or datetime.now(UTC)
     tag = new_tag()
-    head = f"# Finding critical/high còn phải sửa của {owner_label}: {len(views)}"
+    applied = {k: v for k, v in (filters or {}).items() if v not in (None, "", [], False)}
+    status = applied.get("status", "open")
+    what = "còn phải sửa" if status == "open" else f"trạng thái {status}"
+    head = f"# Finding critical/high {what} của {owner_label}: {len(views)}"
+    if applied:
+        head += "\n- Bộ lọc: " + ", ".join(f"{k}={inline(str(v))}" for k, v in applied.items())
     if not views:
-        body = "Không còn finding critical/high nào đang mở theo bộ lọc này."
+        body = "Không có finding critical/high nào theo bộ lọc này."
     else:
         body = "\n\n".join(_short_md(v, tag, at) for v in views)
         body += "\n\nGọi `get_finding` với id để xem chi tiết và gợi ý sửa."
-    data = {"count": len(views), "findings": [finding_data(v, base, at, full=False) for v in views]}
+    if next_offset is not None:
+        body += f"\n\nCòn nữa: gọi lại với `offset={next_offset}`."
+    data = {
+        "count": len(views),
+        "filters": applied,
+        "next_offset": next_offset,
+        "findings": [finding_data(v, base, at, full=False) for v in views],
+    }
     return f"{guidance(tag)}\n\n{head}\n\n{body}", data
 
 

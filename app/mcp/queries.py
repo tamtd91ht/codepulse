@@ -9,7 +9,8 @@ of the review page. Errors are `McpError` (a code and a Vietnamese sentence sayi
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from sqlalchemy import ColumnElement, String, case, cast, exists, func, or_, select
@@ -21,6 +22,7 @@ from app.api.routers.reviews import _visible_review
 from app.api.security import Principal
 from app.models import (
     Account,
+    BusinessProject,
     Commit,
     Connection,
     FindingClosure,
@@ -28,6 +30,8 @@ from app.models import (
     Project,
     Review,
     ReviewFinding,
+    Team,
+    TeamMember,
     User,
 )
 from app.models.review import CLOSURE_OPEN, CLOSURE_STATUSES
@@ -70,6 +74,7 @@ class FindingView:
     pending: FindingClosure | None = None
     repeats: int = 0
     repo_url: str | None = None  # the repo on GitLab (web), for links
+    author: str | None = None  # the review author's name
 
 
 # -- arguments -------------------------------------------------------------------------------------
@@ -90,16 +95,31 @@ def severities(wanted: list[str] | None) -> tuple[str, ...]:
     return tuple(s for s in SEVERE if s in clean)
 
 
-def since_date(raw: str | None) -> datetime | None:
-    if not raw:
-        return None
+def _day(raw: str, name: str) -> date:
     try:
-        day = date.fromisoformat(raw.strip()[:10])
+        return date.fromisoformat(raw.strip()[:10])
     except ValueError:
         raise McpError(
-            "invalid_argument", f"since cần ngày ISO (YYYY-MM-DD), nhận {raw!r}"
+            "invalid_argument", f"{name} cần ngày ISO (YYYY-MM-DD), nhận {raw!r}"
         ) from None
-    return datetime(day.year, day.month, day.day, tzinfo=UTC)
+
+
+def _midnight(day: date, tz: ZoneInfo) -> datetime:
+    return datetime(day.year, day.month, day.day, tzinfo=tz)
+
+
+def since_date(raw: str | None, tz: ZoneInfo | None = None) -> datetime | None:
+    """The start of that day (REPORT_TZ, else UTC): reviews counted from it on."""
+    if not raw or not raw.strip():
+        return None
+    return _midnight(_day(raw, "since"), tz or ZoneInfo("UTC"))
+
+
+def until_date(raw: str | None, tz: ZoneInfo | None = None) -> datetime | None:
+    """The end of that day (exclusive bound: the next midnight), so `until` includes the day."""
+    if not raw or not raw.strip():
+        return None
+    return _midnight(_day(raw, "until") + timedelta(days=1), tz or ZoneInfo("UTC"))
 
 
 def resolve_user(session: Session, principal: Principal, user: str | None) -> int:
@@ -236,6 +256,65 @@ def _top_order() -> list[Any]:
     ]
 
 
+FINDING_STATUSES = ("open", "disputed", "fixed", "accepted_risk", "false_positive", "any")
+Order = Literal["priority", "newest"]
+MAX_OFFSET = 1000
+
+
+def resolve_business_project(session: Session, principal: Principal, raw: str) -> BusinessProject:
+    """A dự án by id or name (case-insensitive) among those this person sees."""
+    text = raw.strip()
+    found: BusinessProject | None = None
+    if text.isdigit():
+        found = session.get(BusinessProject, int(text))
+    if found is None:
+        found = session.scalars(
+            select(BusinessProject).where(func.lower(BusinessProject.name) == text.lower())
+        ).first()
+    if found is None or not principal.can_view_project(found.id):
+        raise McpError("not_found", f"không tìm thấy dự án {raw!r} (tên hoặc id)")
+    return found
+
+
+def resolve_team(session: Session, principal: Principal, raw: str) -> Team:
+    """A team by id or name (case-insensitive) that this person may filter by (as on the
+    dashboard: own teams, teams led or managed, admin)."""
+    text = raw.strip()
+    found: Team | None = None
+    if text.isdigit():
+        found = session.get(Team, int(text))
+    if found is None:
+        found = session.scalars(select(Team).where(func.lower(Team.name) == text.lower())).first()
+    if found is None or not principal.can_see_team(found.id):
+        raise McpError(
+            "not_found", f"không tìm thấy team {raw!r} (tên hoặc id) trong phạm vi của bạn"
+        )
+    return found
+
+
+def _statuses(status: str | None, include_disputed: bool) -> list[str] | None:
+    """The finding statuses wanted; None: any."""
+    wanted = (status or "open").strip().lower()
+    if wanted not in FINDING_STATUSES:
+        raise McpError(
+            "invalid_argument", f"status chỉ nhận {', '.join(FINDING_STATUSES)}, nhận {status!r}"
+        )
+    if wanted == "any":
+        return None
+    if wanted == "open" and include_disputed:
+        return ["open", "disputed"]
+    return [wanted]
+
+
+@dataclass
+class ListResult:
+    views: list[FindingView]
+    owner: int | None  # whose findings (None: a team's)
+    team: Team | None = None
+    business_project: BusinessProject | None = None
+    next_offset: int | None = None
+
+
 def list_findings(
     session: Session,
     principal: Principal,
@@ -243,28 +322,74 @@ def list_findings(
     user: str | None = None,
     severity: list[str] | None = None,
     repo: str | None = None,
+    business_project: str | None = None,
+    team: str | None = None,
     since: str | None = None,
+    until: str | None = None,
+    status: str | None = None,
     include_disputed: bool = False,
     include_pending: bool = False,
+    order: Order = "priority",
+    offset: int = 0,
     limit: int = DEFAULT_LIMIT,
-) -> tuple[list[FindingView], int]:
-    """The top findings still to fix (§4, §5) and whose they are."""
-    owner = resolve_user(session, principal, user)
-    query = _base().where(
-        Review.status == "done",
-        Review.author_user_id == owner,
-        *_still_to_fix(severities(severity), include_disputed),
-    )
+    tz: ZoneInfo | None = None,
+) -> ListResult:
+    """Critical/high findings with the Critical Board's filters (docs/specs/26 §4, §5):
+    one person (default the token's owner) or a team's current members, a dự án or a repo,
+    the review period [since, until] (Review.counted_at, days in REPORT_TZ, both inclusive),
+    the finding status (default open: still to fix). Paged by offset."""
+    team_row = resolve_team(session, principal, team) if team and team.strip() else None
+    owner: int | None = None
+    if team_row is None or (user and user.strip()):
+        owner = resolve_user(session, principal, user)
+    statuses = _statuses(status, include_disputed)
+    query = _base().where(Review.status == "done", ReviewFinding.severity.in_(severities(severity)))
+    if statuses is not None:
+        query = query.where(ReviewFinding.status.in_(statuses))
+    if statuses is not None and "open" in statuses:
+        # A rejected one is not still to fix (§4); other statuses list what was decided.
+        query = query.where(ReviewFinding.verified != "rejected")
+    if owner is not None:
+        query = query.where(Review.author_user_id == owner)
+    if team_row is not None:
+        members = select(TeamMember.user_id).where(
+            TeamMember.team_id == team_row.id, TeamMember.left_at.is_(None)
+        )
+        query = query.where(Review.author_user_id.in_(members))
     if (scope := work_scope(principal)) is not None:
         query = query.where(scope)
-    if repo:
+    if repo and repo.strip():
         query = query.where(Project.id == resolve_repo(session, principal, repo).id)
-    if (start := since_date(since)) is not None:
+    bp_row = None
+    if business_project and business_project.strip():
+        bp_row = resolve_business_project(session, principal, business_project)
+        query = query.where(Project.business_project_id == bp_row.id)
+    start, end = since_date(since, tz), until_date(until, tz)
+    if start is not None and end is not None and start >= end:
+        raise McpError("invalid_argument", "since phải trước hoặc bằng until")
+    if start is not None:
         query = query.where(Review.counted_at >= start)
+    if end is not None:
+        query = query.where(Review.counted_at < end)
     if not include_pending:
         query = query.where(~_in_flight())
-    rows = session.execute(query.order_by(*_top_order()).limit(max(1, min(limit, MAX_LIMIT)))).all()
-    return _views(session, rows), owner
+    if not 0 <= offset <= MAX_OFFSET:
+        raise McpError("invalid_argument", f"offset trong khoảng 0-{MAX_OFFSET}")
+    size = max(1, min(limit, MAX_LIMIT))
+    ordering = (
+        [Review.counted_at.desc().nulls_last(), Review.id.desc(), ReviewFinding.id.desc()]
+        if order == "newest"
+        else _top_order()
+    )
+    rows = session.execute(query.order_by(*ordering).offset(offset).limit(size + 1)).all()
+    more = len(rows) > size
+    return ListResult(
+        views=_views(session, rows[:size]),
+        owner=owner,
+        team=team_row,
+        business_project=bp_row,
+        next_offset=offset + size if more else None,
+    )
 
 
 def _views(session: Session, rows: Any) -> list[FindingView]:
@@ -281,7 +406,19 @@ def _views(session: Session, rows: Any) -> list[FindingView]:
         }
         repeats = repeat_counts(session, [v.finding.fingerprint for v in views])
         urls = repo_urls(session, [v.project for v in views])
+        author_ids = {v.review.author_user_id for v in views if v.review.author_user_id}
+        names = (
+            {
+                int(uid): name
+                for uid, name in session.execute(
+                    select(User.id, User.full_name).where(User.id.in_(author_ids))
+                )
+            }
+            if author_ids
+            else {}
+        )
         for view in views:
+            view.author = names.get(view.review.author_user_id or 0)
             view.pending = pending.get(view.finding.id)
             view.repeats = repeats.get(view.finding.fingerprint or "", 0)
             view.repo_url = urls.get(view.project.id) if view.project else None

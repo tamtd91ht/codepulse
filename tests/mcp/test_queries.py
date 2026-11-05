@@ -4,12 +4,14 @@ order, whose findings, a commit's / an MR's review, the repeat count."""
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.orm import Session
 
 from app.mcp import queries
 from app.mcp.queries import McpError
+from app.mcp.render import finding_data
 from app.models import BusinessProject, Commit, FindingClosure, Project, Review, ReviewFinding
 from app.review.rubric import RUBRIC_VERSION
 from tests.mcp.conftest import Env, caller_for
@@ -53,6 +55,11 @@ def commit_review(
     return review
 
 
+def listed(*args: Any, **kwargs: Any) -> tuple[list[queries.FindingView], int | None]:
+    found = queries.list_findings(*args, **kwargs)
+    return found.views, found.owner
+
+
 def ids(views: list[queries.FindingView]) -> list[int]:
     return [v.finding.id for v in views]
 
@@ -92,19 +99,19 @@ def test_default_is_own_open_critical_high_sorted(env: Env, world: Any) -> None:
     s.commit()
     caller = caller_for(s, env.settings, world.an)
 
-    views, owner = queries.list_findings(s, caller.principal)
+    views, owner = listed(s, caller.principal)
     assert owner == world.an.id
     # critical (confirmed first, then by confidence) before high (by confidence)
     assert ids(views) == [confirmed.id, world.an_finding.id, high.id, high_low.id]
 
-    views, _ = queries.list_findings(s, caller.principal, include_disputed=True)
+    views, _ = listed(s, caller.principal, include_disputed=True)
     assert disputed.id in ids(views)
-    views, _ = queries.list_findings(s, caller.principal, include_pending=True)
+    views, _ = listed(s, caller.principal, include_pending=True)
     assert pending.id in ids(views)
     shown = next(v for v in views if v.finding.id == pending.id)
     assert shown.pending is not None and shown.pending.status == "pending"
 
-    views, _ = queries.list_findings(s, caller.principal, severity=["high"], limit=1)
+    views, _ = listed(s, caller.principal, severity=["high"], limit=1)
     assert ids(views) == [high.id]
 
 
@@ -118,11 +125,11 @@ def test_severity_is_never_widened(env: Env, world: Any) -> None:
 def test_repo_and_since_filters(env: Env, world: Any) -> None:
     s = env.session
     caller = caller_for(s, env.settings, world.an)
-    views, _ = queries.list_findings(s, caller.principal, repo="demo/p")
+    views, _ = listed(s, caller.principal, repo="demo/p")
     assert ids(views) == [world.an_finding.id]
-    views, _ = queries.list_findings(s, caller.principal, repo=str(world.project.id))
+    views, _ = listed(s, caller.principal, repo=str(world.project.id))
     assert ids(views) == [world.an_finding.id]
-    views, _ = queries.list_findings(s, caller.principal, since="2026-12-01")
+    views, _ = listed(s, caller.principal, since="2026-12-01")
     assert views == []
     with pytest.raises(McpError) as err:
         queries.list_findings(s, caller.principal, repo="nope/x")
@@ -143,9 +150,9 @@ def test_user_scope(env: Env, world: Any) -> None:
     assert err.value.code == "forbidden"
     # The lead of Backend sees the team: by email or id.
     lead = caller_for(s, env.settings, world.lead)
-    views, owner = queries.list_findings(s, lead.principal, user="BINH@x.vn")
+    views, owner = listed(s, lead.principal, user="BINH@x.vn")
     assert owner == world.binh.id and ids(views) == [binh_finding.id]
-    views, _ = queries.list_findings(s, lead.principal, user=str(world.an.id))
+    views, _ = listed(s, lead.principal, user=str(world.an.id))
     assert ids(views) == [world.an_finding.id]
     # Not in anyone's reach: the outsider.
     outsider = caller_for(s, env.settings, world.outsider)
@@ -265,7 +272,7 @@ def test_own_only_reach_is_forbidden_for_anyone_existing_or_not(env: Env, world:
         with pytest.raises(McpError) as err:
             queries.list_findings(s, an.principal, user=who)
         assert err.value.code == "forbidden", who
-    _views, owner = queries.list_findings(s, an.principal, user="AN@x.vn")
+    _views, owner = listed(s, an.principal, user="AN@x.vn")
     assert owner == world.an.id
 
 
@@ -286,3 +293,84 @@ def test_a_number_that_is_two_repos_is_ambiguous(env: Env, world: Any) -> None:
     assert "demo/p" in err.value.message and "demo/twin" in err.value.message
     assert queries.resolve_repo(s, an.principal, "1001").id == world.project.id
     assert queries.resolve_repo(s, an.principal, "demo/twin").id == twin.id
+
+
+def test_board_filters_period_status_project_team_and_paging(env: Env, world: Any) -> None:
+    """The Critical Board's filters (user 2026-11-05): until, status, dự án, team, offset,
+    order; each item carries its review and change dates."""
+    s = env.session
+    tz = ZoneInfo("Asia/Ho_Chi_Minh")
+    world.an_review.changed_at = datetime(2026, 10, 5, 3, tzinfo=UTC)  # 10:00 on the 5th local
+    late = commit_review(
+        s,
+        world.project,
+        "c" * 40,
+        world.an.id,
+        changed_at=datetime(2026, 10, 20, 18, tzinfo=UTC),  # 01:00 on the 21st local
+        finished_at=datetime(2026, 10, 21, 2, tzinfo=UTC),
+    )
+    late_open = add_finding(s, late, severity="high")
+    late_fixed = add_finding(s, late, severity="high", status="fixed")
+    binh = commit_review(
+        s, world.project, "e" * 40, world.binh.id, changed_at=datetime(2026, 10, 10, tzinfo=UTC)
+    )
+    binh_finding = add_finding(s, binh, severity="critical")
+    s.commit()
+    an = caller_for(s, env.settings, world.an)
+    lead = caller_for(s, env.settings, world.lead)
+
+    # until includes its whole (local) day; since..until both inclusive.
+    views, _ = listed(s, an.principal, until="2026-10-05", tz=tz)
+    assert ids(views) == [world.an_finding.id]
+    views, _ = listed(s, an.principal, since="2026-10-21", until="2026-10-21", tz=tz)
+    assert ids(views) == [late_open.id]
+    views, _ = listed(s, an.principal, since="2026-10-20", until="2026-10-20", tz=tz)
+    assert views == []
+    with pytest.raises(McpError) as err:
+        listed(s, an.principal, since="2026-10-22", until="2026-10-21")
+    assert err.value.code == "invalid_argument"
+    with pytest.raises(McpError):
+        listed(s, an.principal, until="tomorrow")
+
+    # status: fixed / any / a wrong one.
+    views, _ = listed(s, an.principal, status="fixed")
+    assert ids(views) == [late_fixed.id]
+    views, _ = listed(s, an.principal, status="any")
+    assert set(ids(views)) == {world.an_finding.id, late_open.id, late_fixed.id}
+    with pytest.raises(McpError):
+        listed(s, an.principal, status="closed")
+
+    # dự án by name or id; one not visible does not exist.
+    views, _ = listed(s, an.principal, business_project="demo")
+    assert set(ids(views)) == {world.an_finding.id, late_open.id}
+    views, _ = listed(s, an.principal, business_project=str(world.project.business_project_id))
+    assert set(ids(views)) == {world.an_finding.id, late_open.id}
+    with pytest.raises(McpError) as err:
+        listed(s, an.principal, business_project="Không có")
+    assert err.value.code == "not_found"
+
+    # team: the lead sees the Backend members' findings; an outsider's team is out of reach.
+    found = queries.list_findings(s, lead.principal, team="backend")
+    assert found.owner is None and found.team is not None
+    assert set(ids(found.views)) >= {world.an_finding.id, late_open.id, binh_finding.id}
+    found = queries.list_findings(s, lead.principal, team=str(world.backend.id), user="binh@x.vn")
+    assert found.owner == world.binh.id and ids(found.views) == [binh_finding.id]
+    outsider = caller_for(s, env.settings, world.outsider)
+    with pytest.raises(McpError) as err:
+        queries.list_findings(s, outsider.principal, team="backend")
+    assert err.value.code == "not_found"
+
+    # paging and order.
+    first = queries.list_findings(s, an.principal, limit=1)
+    assert len(first.views) == 1 and first.next_offset == 1
+    second = queries.list_findings(s, an.principal, limit=1, offset=1)
+    assert second.next_offset is None and ids(second.views) != ids(first.views)
+    newest = queries.list_findings(s, an.principal, order="newest")
+    assert ids(newest.views) == [late_open.id, world.an_finding.id]
+
+    # Dates and author on each item.
+    views, _ = listed(s, an.principal, since="2026-10-21", tz=tz)
+    data = finding_data(views[0], "https://cp", full=False)
+    assert data["counted_at"].startswith("2026-10-20T18:00")
+    assert data["reviewed_at"].startswith("2026-10-21T02:00")
+    assert data["author"] == world.an.full_name and data["author_user_id"] == world.an.id
