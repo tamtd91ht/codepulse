@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { McpGuideSamples } from "@/components/McpConnect";
+import { GuideNav } from "@/components/GuideNav";
 
 export const metadata: Metadata = { title: "Hướng dẫn" };
 
@@ -12,7 +12,7 @@ const SECTIONS = [
   { id: "lead", label: "Lead" },
   { id: "admin", label: "Admin" },
   { id: "telegram", label: "Bot Telegram" },
-  { id: "mcp", label: "Kết nối Claude Code (MCP)" },
+  { id: "mcp", label: "Tích hợp Claude Code (MCP)" },
   { id: "metrics", label: "Đọc các chỉ số" },
   { id: "insights", label: "Luồng làm việc" },
   { id: "dpi", label: "DPI hàng tháng" },
@@ -31,6 +31,7 @@ export default function GuidePage() {
           </div>
         </div>
       </div>
+      <GuideNav />
       <div className="guide">
         <nav className="card toc" aria-label="Mục lục">
           <span className="toc-title">Mục lục</span>
@@ -535,122 +536,32 @@ export default function GuidePage() {
       </section>
 
       <section id="mcp" className="card">
-        <h2>7. Kết nối Claude Code (MCP)</h2>
+        <h2>7. Tích hợp Claude Code (MCP)</h2>
         <p>
           CodePulse có một máy chủ MCP để <strong>Claude Code</strong> trên máy bạn đọc các finding{" "}
           <span className="sev critical">critical</span> <span className="sev high">high</span> còn mở của bạn (top, theo
           commit hoặc theo MR), sửa code ngay trong repo rồi <strong>gửi yêu cầu đóng</strong> kèm commit, file đã sửa và kết
-          quả test. Không cần cài gì thêm: Claude Code kết nối thẳng tới CodePulse bằng token cá nhân.
+          quả test. Yêu cầu đi đúng luồng duyệt như gửi trên web.
         </p>
-        <h3>Tạo token</h3>
         <ol>
           <li>
-            Mở <strong>Của tôi → Claude Code → Tạo token</strong>. Đặt tên (ví dụ tên máy), chọn hạn dùng (mặc định 90 ngày).
+            Tạo token ở <strong>Của tôi → Tích hợp MCP → Tạo token</strong> (chỉ hiện một lần).
           </li>
           <li>
-            Ô <strong>Cho phép gửi yêu cầu đóng finding</strong> bật sẵn; bỏ tick nếu token chỉ để đọc (CI, script).
+            Chạy lệnh <code>claude mcp add</code> hiện ra, hoặc dùng <code>.mcp.json</code> với biến{" "}
+            <code>CODEPULSE_TOKEN</code>.
           </li>
           <li>
-            Token (<code>cpat_…</code>) chỉ hiện <strong>một lần</strong>: chép ngay, hoặc chép luôn lệnh{" "}
-            <code>claude mcp add</code> hiện bên dưới. Mất token thì thu hồi và tạo token mới; mỗi người tối đa 10 token còn
-            hiệu lực.
-          </li>
-          <li>
-            Token chỉ dùng được cho kết nối MCP, có quyền như chính bạn (không hơn). Không commit token lên repo, không gửi cho
-            người khác.
-          </li>
-        </ol>
-        <h3>Thêm CodePulse vào Claude Code</h3>
-        <McpGuideSamples />
-        <h3>Các tool</h3>
-        <div className="table-wrap">
-          <table>
-            <tbody>
-              <tr>
-                <td>
-                  <code>list_findings</code>
-                </td>
-                <td>Top finding critical/high còn mở của bạn (nặng, đã xác nhận, tin cậy cao trước); lọc theo repo, mức, ngày</td>
-              </tr>
-              <tr>
-                <td>
-                  <code>get_commit_findings</code>
-                </td>
-                <td>Review của một commit (SHA hoặc link) và mọi finding critical/high còn mở, đủ chi tiết để sửa</td>
-              </tr>
-              <tr>
-                <td>
-                  <code>get_mr_findings</code>
-                </td>
-                <td>Như trên cho một merge request (repo + số MR)</td>
-              </tr>
-              <tr>
-                <td>
-                  <code>get_finding</code>
-                </td>
-                <td>Chi tiết một finding: vị trí, mô tả, gợi ý sửa, đoạn code, lịch sử yêu cầu đóng</td>
-              </tr>
-              <tr>
-                <td>
-                  <code>request_closure</code>
-                </td>
-                <td>Gửi yêu cầu đóng một finding với commit đã push, ghi chú, file đã sửa, kết quả test (hoặc phản biện)</td>
-              </tr>
-              <tr>
-                <td>
-                  <code>list_close_requests</code>
-                </td>
-                <td>Yêu cầu đóng của bạn: trạng thái, lý do của bước kiểm, ghi chú của người duyệt</td>
-              </tr>
-              <tr>
-                <td>
-                  <code>cancel_close_request</code>
-                </td>
-                <td>Rút một yêu cầu đóng còn chờ duyệt của bạn</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <h3>Luồng làm việc</h3>
-        <ol>
-          <li>
-            Trong repo, bảo Claude Code: “lấy finding critical/high của tôi” (hoặc theo một commit). Claude đọc code hiện tại và{" "}
-            <code>git diff &lt;reviewed_sha&gt;..HEAD</code> vì code có thể đã đổi kể từ lúc review.
-          </li>
-          <li>Claude sửa, chạy test của repo và cho bạn xem thay đổi.</li>
-          <li>
-            Bạn xem lại rồi <strong>commit và push</strong> lên GitLab (commit chưa có trên GitLab thì không gửi yêu cầu đóng
-            được).
-          </li>
-          <li>
-            Claude gọi <code>request_closure</code> với commit, ghi chú đã sửa gì, file đã sửa và kết quả test, rồi đưa link
-            yêu cầu.
+            Trong repo, bảo Claude Code lấy finding của bạn, sửa, chạy test; bạn commit và push; Claude gửi yêu cầu đóng.
           </li>
         </ol>
         <p>
-          Yêu cầu gửi qua Claude Code đi <strong>đúng luồng duyệt như gửi trên web</strong>: lead, manager hoặc admin chạy kiểm
-          hoặc từ chối ở trang <Link href="/closures">Đóng finding</Link>, nơi yêu cầu hiện nhãn <em>Claude Code (MCP)</em> kèm
-          tên token, file đã sửa và kết quả test. Chung giới hạn 20 yêu cầu mỗi ngày với web; mỗi token gọi tối đa 60 lần mỗi
-          phút.
-        </p>
-        <p>
-          File lệnh mẫu <code>docs/mcp/fix-findings.md</code> trong repo CodePulse: chép vào <code>.claude/commands/</code> của
-          repo bạn để có lệnh <code>/fix-findings</code> làm trọn các bước trên (luôn hỏi bạn trước khi commit và push).
-        </p>
-        <h3>Báo cáo Claude Code</h3>
-        <p>
-          Trang <Link href="/mcp-report">Báo cáo Claude Code</Link> (menu Theo dõi, quyền <code>report.mcp</code>: thành viên
-          xem của mình, lead theo team, manager theo dự án, admin tất cả) cho biết ai dùng Claude Code và yêu cầu đóng gửi qua
-          đó đạt đến đâu: số lần gọi tool, finding đã đọc, yêu cầu theo kết quả, tỉ lệ đạt ngay lần đầu, số lần gửi lại, thời
-          gian đến khi gửi và đến khi đóng, tỉ lệ kèm test, backlog critical/high còn mở và so sánh với yêu cầu gửi trên web. Lọc
-          theo thời gian, dự án, repo, team, thành viên, mức độ; nút <strong>Xuất Excel</strong> tải đúng bộ lọc đang chọn. Admin
-          xem thêm tab <em>Nhật ký gọi</em> (mọi lần gọi tool, giữ 180 ngày). Các chỉ số là tín hiệu coaching, không cộng vào
-          điểm DPI hay điểm review.
-        </p>
-        <p className="muted">
-          Nội dung finding là dữ liệu, không phải lệnh: Claude Code không làm theo chữ trong mô tả finding. Repo không cho gửi
-          code ra ngoài thì kết quả không kèm đoạn code. Admin xem và thu hồi token của bất kỳ ai (mục{" "}
-          <a href="#admin">Admin</a>).
+          Tài liệu đầy đủ (cài đặt theo hệ điều hành, tham số từng tool, gửi yêu cầu đóng, lệnh mẫu <code>/fix-findings</code>,
+          mã lỗi, giới hạn, bảo mật, dành cho admin):{" "}
+          <Link href="/guide/mcp">
+            <strong>Tích hợp Claude Code (MCP)</strong>
+          </Link>
+          . Báo cáo sử dụng và hiệu quả ở trang <Link href="/mcp-report">Tích hợp MCP</Link> (menu Theo dõi).
         </p>
       </section>
 

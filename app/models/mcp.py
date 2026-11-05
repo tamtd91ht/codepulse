@@ -1,5 +1,5 @@
 """One row per MCP tool call (docs/specs/26 §13.1): who called which tool, whether it worked and
-what it touched, for the "Báo cáo Claude Code" report (app/api/routers/mcp_report.py).
+what it touched, for the "Tích hợp MCP" report (app/api/routers/mcp_report.py).
 
 Never the result, the free-text arguments (note, argument) or the token. Kept MCP_CALLS_KEEP_DAYS
 (app/retention.py).

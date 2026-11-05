@@ -79,8 +79,8 @@ CATALOG: tuple[Permission, ...] = (
     # log is admins' only. A coaching signal, never part of DPI or review scores.
     _p(
         "report.mcp",
-        "Báo cáo Claude Code",
-        "Xem báo cáo Claude Code (MCP) và xuất Excel",
+        "Tích hợp MCP",
+        "Xem báo cáo tích hợp MCP (Claude Code) và xuất Excel",
         "own team project all",
         True,
     ),

@@ -234,7 +234,7 @@ function CreateTokenModal({ onClose, onCreated }: { onClose: () => void; onCreat
 
   return (
     <Modal
-      title="Tạo token cho Claude Code"
+      title="Tạo token tích hợp MCP"
       onClose={onClose}
       busy={busy}
       width={468}
@@ -319,7 +319,7 @@ function RevealPanel({ token, onDone }: { token: ApiTokenCreated; onDone: () => 
   );
 }
 
-/** "Của tôi" › Claude Code: the person's own tokens (docs/specs/26 §2). */
+/** "Của tôi" › Tích hợp MCP: the person's own tokens (docs/specs/26 §2). */
 export function MyTokensCard() {
   const tokens = useApi<ApiToken[]>("/me/tokens");
   const [creating, setCreating] = useState(false);
@@ -330,7 +330,7 @@ export function MyTokensCard() {
   return (
     <Card
       id="member-tokens"
-      title="Token cho Claude Code"
+      title="Token tích hợp MCP"
       subtitle={
         tokens.data
           ? `${activeCount} / ${TOKEN_LIMIT} token còn hiệu lực · Claude Code dùng token để đọc finding critical/high của bạn và gửi yêu cầu đóng`
@@ -371,7 +371,7 @@ export function MyTokensCard() {
         }
       />
       <div className="muted small token-foot">
-        Cách dùng và mẫu <code>.mcp.json</code>: <Link href="/guide#mcp">Hướng dẫn › Kết nối Claude Code (MCP)</Link>.
+        Cách dùng và mẫu <code>.mcp.json</code>: <Link href="/guide/mcp">Hướng dẫn › Tích hợp Claude Code (MCP)</Link>.
       </div>
     </Card>
   );
@@ -380,7 +380,7 @@ export function MyTokensCard() {
 /** Admin › Người dùng › key: one person's Claude Code tokens; the admin may revoke any of them. */
 export function UserTokensDrawer({ userId, name, onClose }: { userId: number; name: string; onClose: () => void }) {
   return (
-    <Drawer title={`Token Claude Code · ${name}`} width={560} onClose={onClose}>
+    <Drawer title={`Token tích hợp MCP · ${name}`} width={560} onClose={onClose}>
       <p className="muted small" style={{ marginTop: 0 }}>
         Token người này tạo ở trang “Của tôi” để Claude Code đọc finding và gửi yêu cầu đóng qua MCP. Thu hồi khi máy bị mất,
         người nghỉ việc hoặc token bị lộ; người dùng tự tạo lại token mới nếu cần.

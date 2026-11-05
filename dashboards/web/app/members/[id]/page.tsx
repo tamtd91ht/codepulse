@@ -372,7 +372,7 @@ export default function MemberDetail({ params }: { params: Promise<{ id: string 
     ...(isMe
       ? [
           { key: "telegram" as const, label: "Telegram", hint: "Gắn Telegram để gửi lệnh review cho bot" },
-          { key: "claude" as const, label: "Claude Code", hint: "Token để Claude Code đọc finding và gửi yêu cầu đóng qua MCP" },
+          { key: "claude" as const, label: "Tích hợp MCP", hint: "Token để Claude Code đọc finding và gửi yêu cầu đóng qua MCP" },
         ]
       : []),
   ];

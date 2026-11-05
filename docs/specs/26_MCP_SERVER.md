@@ -97,7 +97,7 @@ Sau khi tạo: trạng thái `pending`, manager/admin duyệt **giống hệt th
 
 ## 10. Hướng dẫn và slash command mẫu **[Đã chốt]**
 - Trang Hướng dẫn thêm mục "Kết nối Claude Code (MCP)": tạo token, lệnh `claude mcp add`, mẫu `.mcp.json` (token đọc từ biến môi trường `CODEPULSE_TOKEN`, không ghi thẳng vào file commit lên repo).
-- File mẫu `docs/mcp/fix-findings.md` để dev chép vào `.claude/commands/`: lấy top (`list_findings`) → chọn lỗi → đọc code hiện tại → sửa → chạy test → **hỏi xác nhận** trước khi commit + push → `request_closure` với commit, `note`, `files_changed`, `tests` → báo link yêu cầu.
+- File mẫu `dashboards/web/public/downloads/fix-findings.md` (tải tại `/downloads/fix-findings.md`, hiện nội dung ở `/guide/mcp`) để dev chép vào `.claude/commands/`: lấy top (`list_findings`) → chọn lỗi → đọc code hiện tại → sửa → chạy test → **hỏi xác nhận** trước khi commit + push → `request_closure` với commit, `note`, `files_changed`, `tests` → báo link yêu cầu.
 
 ## 11. Kiểm thử
 - Unit: tạo/xác thực/thu hồi/hết hạn token, scope; lọc + sắp xếp `list_findings`; phạm vi `user`; ẩn `code_excerpt` theo `allow_external_llm`; `request_closure` đủ nhánh (không phải tác giả, đã có yêu cầu, quá 20/ngày, commit chưa push – GitLab mock bằng respx, thiếu `note`/`files_changed`, chỉ `argument`); `cancel_close_request`; giới hạn 60/phút.
@@ -116,8 +116,8 @@ Sau khi tạo: trạng thái `pending`, manager/admin duyệt **giống hệt th
 - Giữ **180 ngày**, xoá trong `app/retention.py` cùng job purge hiện có (`MCP_CALLS_KEEP_DAYS = 180`).
 - Admin xem nhật ký chi tiết (bảng, phân trang) trong trang báo cáo, tab "Nhật ký gọi".
 
-### 13.2 Trang "Báo cáo Claude Code" và quyền
-- Trang `/mcp-report` trong menu Theo dõi, nhãn "Báo cáo Claude Code".
+### 13.2 Trang "Tích hợp MCP" và quyền
+- Trang `/mcp-report` trong menu Theo dõi, nhãn **"Tích hợp MCP"** (đổi từ "Báo cáo Claude Code" theo yêu cầu người dùng 2026-11-05; tab ở Của tôi cũng tên "Tích hợp MCP"). Tài liệu tích hợp đầy đủ ở Hướng dẫn › Tích hợp Claude Code (MCP), `/guide/mcp`.
 - Quyền mới `report.mcp` (Admin › Phân quyền), mặc định theo vai trò: thành viên `own`, lead `team`, manager `project`, admin `all` (giống `report.member`). Nhật ký gọi chi tiết: chỉ admin.
 - Bộ lọc: khoảng thời gian (mặc định 30 ngày; preset 7/30/90 ngày, tháng này, tháng trước, tuỳ chọn), dự án, repo, team, thành viên, mức độ (critical/high). Mọi dữ liệu bị giới hạn thêm theo phạm vi `report.mcp` của người xem.
 - **[Quyết định]** (review 2026-11-05) Lần gọi tool được lọc theo dự án mà `report.mcp` của người xem phủ, giống `work_scope` của yêu cầu đóng: lần gọi của chính mình; về repo của dự án mà phạm vi phủ mọi người (`project`: dự án mình manage; `all`: dự án mình xem được); của người mình lead về repo của dự án mình xem được. Manager phạm vi `project` **không** thấy lần gọi về dự án mình chỉ xem. Lần gọi không gắn repo (`project_id` null) chỉ tính cho người nằm trong phạm vi người của người xem.

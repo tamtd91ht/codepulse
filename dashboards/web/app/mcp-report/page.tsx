@@ -295,7 +295,7 @@ function RangeFilter({ value, onChange }: { value: Range | null; onChange: (r: R
 type Tab = "members" | "requests" | "calls";
 
 /**
- * Báo cáo Claude Code (docs/specs/26 §13): how people use the MCP flow and how well the fixes it
+ * Tích hợp MCP, the report (docs/specs/26 §13): how people use the MCP flow and how well the fixes it
  * sends land. KPIs against the previous period, one row per member, the close requests sent
  * through MCP and (admins) every tool call. Scope: `report.mcp`; not part of DPI or review scores.
  */
@@ -351,10 +351,10 @@ export default function McpReportPage() {
   if (me.data && !scope) {
     return (
       <>
-        <PageHeader title="Báo cáo Claude Code" foldable={false} />
+        <PageHeader title="Tích hợp MCP" foldable={false} />
         <Card collapsible={false}>
-          <EmptyState icon="alert" title="Bạn chưa có quyền xem báo cáo Claude Code">
-            Quyền &ldquo;Xem báo cáo Claude Code&rdquo; (report.mcp) do admin cấp ở Admin › Phân quyền.
+          <EmptyState icon="alert" title="Bạn chưa có quyền xem báo cáo tích hợp MCP">
+            Quyền &ldquo;Tích hợp MCP&rdquo; (report.mcp) do admin cấp ở Admin › Phân quyền.
           </EmptyState>
         </Card>
       </>
@@ -364,8 +364,8 @@ export default function McpReportPage() {
   return (
     <>
       <PageHeader
-        title="Báo cáo Claude Code"
-        subtitle="Ai dùng Claude Code (MCP) để sửa finding, và yêu cầu đóng gửi qua đó đạt đến đâu."
+        title="Tích hợp MCP"
+        subtitle="Báo cáo: ai dùng Claude Code qua MCP để sửa finding, và yêu cầu đóng gửi qua đó đạt đến đâu."
         foldable={false}
         actions={
           <span className="no-print report-actions">
@@ -721,7 +721,7 @@ function MembersTable({ summary, error, search }: { summary?: Summary; error?: E
     return (
       <Card collapsible={false}>
         <EmptyState icon="inbox" title="Chưa có ai dùng Claude Code trong khoảng này">
-          Đổi khoảng thời gian hoặc bộ lọc. Cách kết nối: <Link href="/guide#mcp">Hướng dẫn › Kết nối Claude Code (MCP)</Link>.
+          Đổi khoảng thời gian hoặc bộ lọc. Cách kết nối: <Link href="/guide/mcp">Hướng dẫn › Kết nối Claude Code (MCP)</Link>.
         </EmptyState>
       </Card>
     );

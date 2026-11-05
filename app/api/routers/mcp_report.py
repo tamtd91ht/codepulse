@@ -1,4 +1,4 @@
-"""Báo cáo Claude Code (docs/specs/26 §13): how people use the MCP server and how their close
+"""Tích hợp MCP, the report (docs/specs/26 §13): how people use the MCP server and how their close
 requests sent through it fare, per member over a period, against the period before and against
 their requests sent on the web; the close-request log, the tool-call log (admins) and an Excel
 workbook.
@@ -844,7 +844,7 @@ def export_xlsx(
     body = workbook(f, report, requests)
     audit(session, principal.user_id, "mcp_report.export", "mcp-report", **f.audit_args())
     session.commit()
-    filename = f"codepulse-bao-cao-claude-code-{f.start:%Y%m%d}-{f.end:%Y%m%d}.xlsx"
+    filename = f"codepulse-tich-hop-mcp-{f.start:%Y%m%d}-{f.end:%Y%m%d}.xlsx"
     return Response(
         body,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -932,7 +932,7 @@ def workbook(f: McpFilters, report: dict[str, Any], requests: list[dict[str, Any
 
     sheet(
         MEMBER_SHEET,
-        [f"Báo cáo Claude Code (MCP) theo thành viên · {where}", period, NOT_IN_SCORES],
+        [f"Tích hợp MCP (Claude Code) theo thành viên · {where}", period, NOT_IN_SCORES],
         [
             "Thành viên",
             "Email",

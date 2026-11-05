@@ -1,4 +1,4 @@
-"""Báo cáo Claude Code (docs/specs/26 §13): scoping by `report.mcp`, every metric on a small
+"""Tích hợp MCP report (docs/specs/26 §13): scoping by `report.mcp`, every metric on a small
 world, the filters, the logs and the Excel export."""
 
 import io
@@ -327,7 +327,7 @@ def test_export_has_both_sheets(
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     assert (
-        "codepulse-bao-cao-claude-code-20261001-20261031.xlsx" in res.headers["content-disposition"]
+        "codepulse-tich-hop-mcp-20261001-20261031.xlsx" in res.headers["content-disposition"]
     )
     wb = load_workbook(io.BytesIO(res.content))
     assert wb.sheetnames == ["Theo thành viên", "Yêu cầu đóng qua MCP"]

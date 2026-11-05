@@ -73,23 +73,66 @@ export function CopyBlock({ text, label, secret }: { text: string; label: string
   );
 }
 
-/** The guide's copyable samples, with this server's real address. */
-export function McpGuideSamples() {
+/** This server's MCP address, copyable (the integration document). */
+export function McpUrl() {
   const url = useMcpUrl();
+  return <CopyBlock label="Địa chỉ MCP" text={url} />;
+}
+
+/** One `claude mcp add` per scope (local / user), with this server's real address. */
+export function McpAddScoped({ scope }: { scope: "local" | "user" }) {
+  const url = useMcpUrl();
+  const text = `claude mcp add --transport http --scope ${scope} codepulse ${url} --header "Authorization: Bearer cpat_…"`;
+  return <CopyBlock label={`Lệnh claude mcp add (scope ${scope})`} text={text} />;
+}
+
+/** `.mcp.json` for a repo, the token read from CODEPULSE_TOKEN. */
+export function McpJsonSample() {
+  const url = useMcpUrl();
+  return <CopyBlock label="Nội dung .mcp.json" text={mcpJson(url)} />;
+}
+
+const COMMAND_FILE = "/downloads/fix-findings.md";
+
+/** The /fix-findings slash command, read from the file people download (one source). */
+export function FixFindingsFile() {
+  const [text, setText] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let live = true;
+    setFailed(false);
+    fetch(COMMAND_FILE)
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
+      .then((t) => live && setText(t))
+      .catch(() => live && setFailed(true));
+    return () => {
+      live = false;
+    };
+  }, [attempt]);
   return (
     <>
-      <p>Cách nhanh, mỗi máy một lần (thay <code>cpat_…</code> bằng token vừa tạo):</p>
-      <CopyBlock label="Lệnh claude mcp add" text={mcpAddCommand(url, "cpat_…")} />
       <p>
-        Hoặc dùng chung cho cả repo bằng <code>.mcp.json</code> ở thư mục gốc. Token đọc từ biến môi trường{" "}
-        <code>CODEPULSE_TOKEN</code> (Claude Code thay <code>{"${VAR}"}</code> trong header), nên file commit lên repo không
-        chứa token:
+        <a href={COMMAND_FILE} download="fix-findings.md">
+          Tải fix-findings.md
+        </a>{" "}
+        rồi lưu vào <code>.claude/commands/fix-findings.md</code> trong repo (chỉ repo đó) hoặc{" "}
+        <code>~/.claude/commands/fix-findings.md</code> (mọi repo trên máy bạn).
       </p>
-      <CopyBlock label="Nội dung .mcp.json" text={mcpJson(url)} />
-      <p className="muted small">
-        Đặt <code>export CODEPULSE_TOKEN=cpat_…</code> trong shell profile (hoặc biến môi trường người dùng trên Windows),
-        mở lại terminal rồi chạy <code>claude</code>; gõ <code>/mcp</code> để xem kết nối.
-      </p>
+      {failed ? (
+        <p className="error small" role="alert">
+          Không tải được nội dung lệnh.{" "}
+          <button type="button" className="link sm" onClick={() => setAttempt((n) => n + 1)}>
+            Thử lại
+          </button>
+        </p>
+      ) : text === null ? (
+        <div className="skeleton" style={{ height: 160 }} role="status" aria-label="Đang tải" />
+      ) : (
+        <div className="copy-tall">
+          <CopyBlock label="Nội dung fix-findings.md" text={text} />
+        </div>
+      )}
     </>
   );
 }
