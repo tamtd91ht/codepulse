@@ -41,7 +41,7 @@ Khác spec 16 (webhook gửi ra ngoài: Slack, Teams, hệ thống khác, cấu 
 - Không cần quyền riêng: ai đăng nhập cũng có hộp thư của mình và chỉ thấy của mình.
 
 ## 5. Giao diện
-- **Chuông** ở chân thanh bên (máy tính) và thanh trên (điện thoại), có số chưa đọc (99+). Bấm mở bảng 15 thông báo gần nhất: chưa đọc nền xanh nhạt và chấm xanh; "Đánh dấu đã đọc tất cả"; bấm một dòng thì mở liên kết và đánh dấu đã đọc; "Xem tất cả thông báo" sang trang lịch sử. Esc hoặc bấm ra ngoài để đóng.
+- **Chuông** ở góc trên bên phải của thanh trên (mọi kích thước màn hình, theo app shell omicx-ui; đổi từ chân thanh bên theo yêu cầu người dùng 2026-11-05), có số chưa đọc (99+). Bấm mở bảng 15 thông báo gần nhất: chưa đọc nền xanh nhạt và chấm xanh; "Đánh dấu đã đọc tất cả"; bấm một dòng thì mở liên kết và đánh dấu đã đọc; "Xem tất cả thông báo" sang trang lịch sử. Esc hoặc bấm ra ngoài để đóng.
 - **Toast** góc trên phải khi có thông báo mới: loại, tiêu đề, mô tả, viền trái theo sắc thái; tự ẩn sau 6 giây (dừng khi rê chuột / focus), tối đa 3 cái; bấm để mở.
 - Thông báo đến thì các danh sách liên quan đang mở được tải lại (Khiếu nại, Đóng finding, Kết quả review, hoạt động review).
 - **Trang Thông báo** (`/notifications`): lịch sử, lọc Tất cả / Chưa đọc và theo loại, "Tải thêm", "Đánh dấu đã đọc tất cả"; thông báo mới đến khi đang mở trang hiện ngay trên đầu.

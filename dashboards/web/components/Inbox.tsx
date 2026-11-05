@@ -13,6 +13,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { mutate as mutateGlobal } from "swr";
 
 import { Icon, type IconName, IconButton } from "@/components/icons";
@@ -299,14 +300,13 @@ export function NotificationBell({ className }: { className?: string }) {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const width = Math.min(PANEL_W, vw - 24);
-    const left = Math.max(12, Math.min(rect.left, vw - width - 12));
-    // In the sidebar's foot (lower half): open upward beside it; in the top bar: below it.
-    if (rect.top > vh / 2) {
-      const besideLeft = rect.right + 8 + width <= vw - 12 ? rect.right + 8 : left;
-      setStyle({ width, left: besideLeft, bottom: Math.max(12, vh - rect.bottom) });
-    } else {
-      setStyle({ width, left: Math.max(12, Math.min(rect.right - width, vw - width - 12)), top: rect.bottom + 8 });
-    }
+    // The bell lives in the top bar: the panel opens below it, right-aligned to it.
+    setStyle({
+      width,
+      left: Math.max(12, Math.min(rect.right - width, vw - width - 12)),
+      top: rect.bottom + 8,
+      maxHeight: Math.min(560, vh - rect.bottom - 20),
+    });
   }, []);
 
   useEffect(() => {
@@ -364,7 +364,9 @@ export function NotificationBell({ className }: { className?: string }) {
           </span>
         )}
       </span>
-      {open && (
+      {/* Portalled: the top bar's backdrop-filter would otherwise become the panel's containing
+          block and shift its viewport coordinates by the sidebar's width. */}
+      {open && createPortal(
         <div className="bell-panel" role="dialog" aria-label="Thông báo" ref={panelRef} style={style}>
           <div className="bell-head">
             <strong>Thông báo</strong>
@@ -411,7 +413,8 @@ export function NotificationBell({ className }: { className?: string }) {
               Xem tất cả thông báo
             </Link>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );

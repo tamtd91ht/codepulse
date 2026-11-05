@@ -137,7 +137,7 @@ export default function GuidePage() {
             trang <strong>Khiếu nại</strong>.
           </li>
           <li>
-            <strong>Chuông thông báo</strong> (chân thanh bên, hoặc thanh trên trên điện thoại) báo ngay khi review của
+            <strong>Chuông thông báo</strong> (góc trên bên phải, cạnh nút đổi giao diện sáng/tối) báo ngay khi review của
             bạn xong, finding được đóng, khiếu nại của bạn được xử lý, và với lead / admin: khi có khiếu nại mới cần
             duyệt. Thông báo mới hiện thêm một toast ở góc trên phải; lịch sử 180 ngày ở trang{" "}
             <Link href="/notifications">Thông báo</Link>.

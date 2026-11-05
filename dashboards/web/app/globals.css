@@ -614,7 +614,7 @@ ol {
 }
 
 .topbar {
-  display: none;
+  display: flex;
   position: sticky;
   top: 0;
   z-index: 40;
@@ -628,6 +628,33 @@ ol {
 }
 .topbar .spacer {
   flex: 1;
+}
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+/* At the top edge the tooltips open below, anchored to the right so they stay on screen. */
+.topbar .icon-btn[data-tip]:hover::after,
+.topbar .icon-btn[data-tip]:focus-visible::after {
+  bottom: auto;
+  top: calc(100% + 6px);
+  left: auto;
+  right: 0;
+  transform: none;
+}
+.topbar .icon-btn[aria-expanded="true"][data-tip]::after {
+  display: none;
+}
+/* The sidebar carries the menu and the brand on desktops; the top bar keeps only the actions. */
+@media (min-width: 1024px) {
+  .topbar {
+    padding: 0 clamp(16px, 2.5vw, 32px);
+  }
+  .topbar-menu,
+  .topbar-brand {
+    display: none;
+  }
 }
 
 main {
@@ -696,9 +723,6 @@ footer.notice {
   }
   .shell:is(.rail, [data-rail] *) .sidebar-actions {
     flex-direction: row;
-  }
-  .topbar {
-    display: flex;
   }
   main {
     padding: 16px 16px 40px;
@@ -2202,7 +2226,7 @@ pre.excerpt {
 }
 .guide .toc {
   position: sticky;
-  top: 24px;
+  top: calc(var(--topbar-h) + 24px);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2231,7 +2255,7 @@ pre.excerpt {
   min-width: 0;
 }
 .guide-body section {
-  scroll-margin-top: 16px;
+  scroll-margin-top: calc(var(--topbar-h) + 16px);
 }
 @media (max-width: 1023px) {
   .guide-body section {
@@ -2338,7 +2362,7 @@ select.compact {
 }
 .bulk-bar {
   position: sticky;
-  top: 8px;
+  top: calc(var(--topbar-h) + 8px);
   z-index: 10;
   display: flex;
   align-items: center;
@@ -4621,7 +4645,7 @@ form.toolbar.adm-inline-form {
 }
 .master-detail > .master {
   position: sticky;
-  top: 16px;
+  top: calc(var(--topbar-h) + 16px);
 }
 @media (max-width: 860px) {
   .master-detail {
@@ -4905,7 +4929,7 @@ label.purge-scope:focus-within {
 
 .ins-bar {
   position: sticky;
-  top: 0;
+  top: var(--topbar-h);
   z-index: 30;
   display: flex;
   align-items: center;
@@ -5169,7 +5193,7 @@ button.link.crit-card-name {
   gap: 8px 12px;
   padding: 10px 14px;
   position: sticky;
-  top: 8px;
+  top: calc(var(--topbar-h) + 8px);
   z-index: 15;
 }
 @media (max-width: 1023px) {
@@ -5229,7 +5253,7 @@ button.link.crit-card-name {
 }
 .crit-side {
   position: sticky;
-  top: 72px;
+  top: calc(var(--topbar-h) + 72px);
   min-width: 0;
 }
 @media (max-width: 1180px) {
@@ -5306,7 +5330,7 @@ button.link.crit-card-name {
 
 .crit-total {
   position: sticky;
-  top: 70px;
+  top: calc(var(--topbar-h) + 70px);
   z-index: 10;
   display: flex;
   flex-direction: column;

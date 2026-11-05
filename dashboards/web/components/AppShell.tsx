@@ -195,8 +195,6 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           )}
           <div className="sidebar-actions">
-            {me && <NotificationBell className={rail ? "tip-right" : undefined} />}
-            <ThemeToggle className={rail ? "tip-right" : undefined} />
             <IconButton
               icon="panelLeft"
               label={rail ? "Mở rộng thanh bên" : "Thu gọn thanh bên"}
@@ -234,12 +232,13 @@ export function AppShell({ children }: { children: ReactNode }) {
           <IconButton
             icon="menu"
             label="Mở menu"
+            className="topbar-menu"
             onClick={() => setDrawer(true)}
             aria-expanded={drawer}
             aria-controls="sidebar"
             ref={menuRef}
           />
-          <Link href="/" className="brand">
+          <Link href="/" className="brand topbar-brand">
             <span className="brand-mark">
               {/* The project logo (also the browser tab icon, app/icon.svg). */}
               <img src="/icon.svg" alt="" width={30} height={30} />
@@ -247,8 +246,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span className="brand-text">CodePulse</span>
           </Link>
           <span className="spacer" />
-          {me && <NotificationBell />}
-          <ThemeToggle />
+          {/* Global actions sit top right on every width (omicx-ui app shell). */}
+          <div className="topbar-actions">
+            {me && <NotificationBell />}
+            <ThemeToggle />
+          </div>
         </header>
 
         <main id="main" tabIndex={-1}>
