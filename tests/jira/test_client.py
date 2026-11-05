@@ -1,5 +1,6 @@
 """Jira client: retry, 429, paging, timeout, no token in logs (docs/specs/27 §2, §14)."""
 
+import base64
 import json
 import logging
 from collections.abc import Callable
@@ -7,7 +8,7 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from app.jira.client import JiraClient, JiraError
+from app.jira.client import JiraAuthError, JiraClient, JiraError, auth_header
 
 TOKEN = "pat-" + "fake-" + "0123456789"  # fake, built by concatenation
 
@@ -147,3 +148,87 @@ def test_search_stops_on_an_empty_page() -> None:
         return httpx.Response(200, json={"startAt": 0, "total": 500, "issues": []})
 
     assert list(make(handler).search_all("x", [])) == []
+
+
+# -- basic auth: Jira Server older than 8.14 has no PAT (docs/specs/27 §2) ---------------------
+
+PASSWORD = "mật-" + "khẩu " + "fake:1"  # fake, non-ASCII, a space and a ':' on purpose
+
+
+def make_basic(
+    handler: Callable[[httpx.Request], httpx.Response], sleeps: list[float] | None = None
+) -> JiraClient:
+    record = sleeps if sleeps is not None else []
+    return JiraClient(
+        "https://jira.example.vn",
+        PASSWORD,
+        auth_type="basic",
+        username="codepulse-bot",
+        transport=httpx.MockTransport(handler),
+        sleep=record.append,
+    )
+
+
+def test_basic_auth_sends_username_and_utf8_password(caplog: pytest.LogCaptureFixture) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"name": "codepulse-bot"})
+
+    with caplog.at_level(logging.DEBUG):
+        assert make_basic(handler).myself() == {"name": "codepulse-bot"}
+    assert seen[0].url == "https://jira.example.vn/rest/api/2/myself"
+    expected = base64.b64encode(f"codepulse-bot:{PASSWORD}".encode()).decode()
+    assert seen[0].headers["Authorization"] == f"Basic {expected}"
+    assert PASSWORD not in caplog.text and expected not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("status", "headers"),
+    [
+        (401, {"X-Seraph-LoginReason": "AUTHENTICATED_FAILED"}),
+        (
+            403,
+            {
+                "X-Seraph-LoginReason": "AUTHENTICATION_DENIED",
+                "X-Authentication-Denied-Reason": "CAPTCHA_CHALLENGE; login-url=https://x/login",
+            },
+        ),
+    ],
+)
+def test_refused_login_is_never_retried(
+    status: int, headers: dict[str, str], caplog: pytest.LogCaptureFixture
+) -> None:
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(status, headers=headers)
+
+    sleeps: list[float] = []
+    with caplog.at_level(logging.DEBUG), pytest.raises(JiraAuthError) as err:
+        make_basic(handler, sleeps).fields()
+    assert calls["n"] == 1 and not [s for s in sleeps if s >= 1]
+    assert err.value.status_code == status
+    assert "CAPTCHA" in err.value.message and "tài khoản dịch vụ" in err.value.message
+    assert PASSWORD not in str(err.value) and PASSWORD not in caplog.text
+
+
+def test_a_plain_401_is_a_refused_login_a_plain_403_is_not() -> None:
+    with pytest.raises(JiraAuthError) as err:
+        make(lambda r: httpx.Response(401)).server_info()
+    assert "Personal Access Token" in err.value.message and "8.14" in err.value.message
+    with pytest.raises(JiraAuthError) as err:
+        make_basic(lambda r: httpx.Response(401)).server_info()
+    assert "mật khẩu" in err.value.message
+    with pytest.raises(JiraError) as forbidden:
+        make_basic(lambda r: httpx.Response(403, json={"errorMessages": ["no browse"]})).projects()
+    assert not isinstance(forbidden.value, JiraAuthError)
+    assert "no browse" in forbidden.value.message
+
+
+def test_auth_header() -> None:
+    assert auth_header("pat", TOKEN) == f"Bearer {TOKEN}"
+    pair = base64.b64encode(f"bot:{PASSWORD}".encode()).decode()
+    assert auth_header("basic", PASSWORD, "bot") == f"Basic {pair}"

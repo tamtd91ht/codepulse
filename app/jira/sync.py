@@ -8,6 +8,12 @@ whole project went through; a failure is kept in `last_error` and the next run s
 One project's failure does not stop the others; each project is committed on its own, under a
 per-project advisory lock (a second sync of a busy project is skipped). Afterwards every
 jira_user account still without a person is retried with its stored email and name.
+
+A refused login (JiraAuthError) stops the whole run at once: every project left keeps the error,
+and the scheduled syncs wait (`record_auth_failure`, checked by the tick and again by a
+scheduled `sync_all`) until the credentials change, a test passes or "Đồng bộ ngay" (manual)
+succeeds. Jira Server locks an account behind a CAPTCHA after a few
+failed logins, so a wrong password must not be tried again and again.
 """
 
 import logging
@@ -24,10 +30,18 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db import get_sessionmaker
 from app.identity.autolink import BOT_PATTERNS, is_bot
-from app.jira.client import JiraClient, JiraError
+from app.jira.client import JiraAuthError, JiraClient, JiraError
 from app.jira.links import link_issues
 from app.jira.mapping import FieldIds, JiraUser, map_issue, resolve_fields, search_fields
-from app.jira.settings import JiraConnection, JiraMapping, connection, mapping
+from app.jira.settings import (
+    JiraConnection,
+    JiraMapping,
+    clear_auth_failure,
+    connection,
+    login_paused,
+    mapping,
+    record_auth_failure,
+)
 from app.models import Account, Issue, JiraProject, ProdDefect, User
 
 log = logging.getLogger(__name__)
@@ -234,20 +248,32 @@ def sync_project(
 
 
 def _error_text(exc: Exception) -> str:
+    """Jira's own message, else only the exception's class: its text may quote request data
+    (a UnicodeEncodeError would echo the characters of a header, i.e. the secret)."""
     if isinstance(exc, JiraError):
         return exc.message[:500]
-    return f"{exc.__class__.__name__}: {exc}"[:500]
+    return exc.__class__.__name__
 
 
 def sync_all(
-    session: Session, settings: Settings, client: JiraSource | None = None
+    session: Session,
+    settings: Settings,
+    client: JiraSource | None = None,
+    *,
+    manual: bool = False,
 ) -> dict[str, Any]:
     """Every enabled project, each committed on its own. No-op unless Jira is configured (the
     connection in effect: saved on the web, else JIRA_*) and some project is enabled (whatever
-    the task source: data is ready before a switch)."""
+    the task source: data is ready before a switch). A scheduled run (not `manual`, i.e. not
+    "Đồng bộ ngay") is skipped while the last login was refused with these credentials."""
     conn = connection(session, settings)
     if not conn.configured:
         return {"skipped": "not_configured"}
+    if not manual:
+        paused = login_paused(session, conn)
+        session.commit()  # a marker of other credentials dropped
+        if paused:
+            return {"skipped": "paused"}
     keys = list(
         session.scalars(
             select(JiraProject.key).where(JiraProject.enabled.is_(True)).order_by(JiraProject.key)
@@ -266,8 +292,9 @@ def sync_all(
     rules = mapping(session)
     ids: FieldIds | None = None
     out: dict[str, Any] = {"projects": {}}
+    refused: str | None = None
     try:
-        for key in keys:
+        for index, key in enumerate(keys):
             project = session.scalars(select(JiraProject).where(JiraProject.key == key)).one()
             now = datetime.now(UTC)
             try:
@@ -282,6 +309,15 @@ def sync_all(
                     continue
                 out["projects"][key] = {"issues": count}
                 log.info("jira project synced", extra={"jira_project": key, "issues": count})
+            except JiraAuthError as exc:  # the login itself was refused: stop, try no more
+                session.rollback()
+                refused = _error_text(exc)
+                log.warning("jira login refused, sync stopped", extra={"jira_project": key})
+                _all_failed(session, keys[index:], refused, out=out)
+                record_auth_failure(session, refused, conn)
+                session.commit()
+                out["auth_failed"] = True
+                break
             except Exception as exc:  # one project's failure must not stop the others
                 session.rollback()
                 error = _error_text(exc)
@@ -294,6 +330,12 @@ def sync_all(
     finally:
         if own and isinstance(source, JiraClient):
             source.close()
+    if refused is not None:
+        return out
+    # Logged in again (Jira answered at least once): the scheduled syncs resume. A run where
+    # every call failed (network, 5xx) or every project was busy proves nothing.
+    if ids is not None and clear_auth_failure(session):
+        session.commit()
     try:
         out["relinked"] = relink_unlinked(session, settings.allowed_email_domains)
         session.commit()
@@ -303,21 +345,28 @@ def sync_all(
     return out
 
 
-def _all_failed(session: Session, keys: list[str], error: str) -> dict[str, Any]:
-    """No client could be built: every enabled project keeps the error, nothing else moves."""
-    log.warning("jira client unavailable", extra={"error": error})
+def _all_failed(
+    session: Session, keys: list[str], error: str, *, out: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """No client could be built, or the login was refused: these projects keep the error,
+    nothing else moves."""
+    if out is None:
+        log.warning("jira client unavailable", extra={"error": error})
     now = datetime.now(UTC)
     for project in session.scalars(select(JiraProject).where(JiraProject.key.in_(keys))):
         project.last_error = error
         project.last_synced_at = now
     session.commit()
-    return {"projects": {key: {"error": error} for key in keys}}
+    result = out if out is not None else {"projects": {}}
+    result["projects"].update({key: {"error": error} for key in keys})
+    return result
 
 
-def sync_all_job() -> dict[str, Any]:
-    """RQ entry point (the scheduler's tick once per sync interval, and "Đồng bộ ngay")."""
+def sync_all_job(manual: bool = False) -> dict[str, Any]:
+    """RQ entry point (the scheduler's tick once per sync interval, and "Đồng bộ ngay" with
+    `manual`: it runs even while a refused login pauses the schedule)."""
     with get_sessionmaker()() as session:
-        return sync_all(session, get_settings())
+        return sync_all(session, get_settings(), manual=manual)
 
 
 class DueStore(Protocol):
@@ -344,6 +393,12 @@ def tick(session: Session, settings: Settings, redis: DueStore, queue: Enqueue) 
     conn = connection(session, settings)
     if not conn.configured:
         return "not configured"
+    paused = login_paused(session, conn)
+    session.commit()  # a marker of other credentials (e.g. JIRA_TOKEN fixed) is dropped
+    if paused:
+        # The last sync's login was refused: trying again on schedule would lock the account
+        # (CAPTCHA). Admin > Jira says so; a credentials change or "Đồng bộ ngay" resumes.
+        return "paused: login refused"
     seconds = conn.interval_min * 60
     if not redis.set(DUE_KEY, "1", ex=seconds, nx=True):
         left = redis.ttl(DUE_KEY)

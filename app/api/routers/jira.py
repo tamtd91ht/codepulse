@@ -1,7 +1,8 @@
 """Admin > Jira and DPI > Jira (docs/specs/27 §12-13): the connection (saved on the web, else
 JIRA_*), the task source, the registered Jira projects, the field mapping, and "Đồng bộ ngay".
-Everything needs `jira.admin` (an admin has it); every change is audited. The token never leaves the
-server: it is write-only here, and never logged or audited."""
+Everything needs `jira.admin` (an admin has it); every change is audited. The secret (a PAT, or
+the service account's password with basic auth) never leaves the server: it is write-only here,
+and never logged or audited."""
 
 import dataclasses
 from collections.abc import Callable
@@ -19,21 +20,26 @@ from app.api.security import CurrentPrincipal, Principal
 from app.collector.sync import SYNC_JOB_TIMEOUT, Enqueuer
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
-from app.jira.client import JiraClient, JiraError
+from app.jira.client import JiraAuthError, JiraClient, JiraError
 from app.jira.mapping import resolve_fields
 from app.jira.settings import (
     DPI_TYPES,
+    AuthType,
     JiraConnection,
+    auth_failure,
+    check_auth_type,
     check_ca_pem,
-    check_token,
+    check_secret,
+    check_username,
+    clear_auth_failure,
     clear_connection,
     clear_token,
     connection,
-    effective_base_url,
     mapping,
     normalize_base_url,
     parse_connection,
     parse_mapping,
+    pat_supported,
     save_connection,
     save_token,
     set_mapping,
@@ -51,6 +57,8 @@ KEY_PATTERN = r"^[A-Z][A-Z0-9_]{1,9}$"
 
 class JiraApi(Protocol):
     def server_info(self) -> dict[str, Any]: ...
+
+    def myself(self) -> dict[str, Any]: ...
 
     def fields(self) -> list[dict[str, Any]]: ...
 
@@ -74,7 +82,9 @@ def _admin(principal: Principal) -> None:
         raise HTTPException(403, "cần quyền Cấu hình tích hợp Jira (jira.admin)")
 
 
-NOT_CONFIGURED = "chưa cấu hình Jira: nhập URL và token ở Admin > Jira > Kết nối"
+NOT_CONFIGURED = (
+    "chưa cấu hình Jira: nhập URL và token (hoặc tài khoản + mật khẩu) ở Admin > Jira > Kết nối"
+)
 
 
 def _configured(conn: JiraConnection) -> None:
@@ -147,6 +157,8 @@ def overview(
         "projects": _projects(session),
         "accounts": {"total": int(total), "linked": int(linked)},
         "interval_min": conn.interval_min,
+        # The last sync's login was refused: scheduled syncs wait (docs/specs/27 §3).
+        "auth_failure": auth_failure(session, conn, box),
     }
 
 
@@ -154,6 +166,24 @@ MOVED_SERVER = (
     "token hiện có thuộc máy chủ Jira khác URL này và không được gửi sang đây: nhập token cho"
     " máy chủ này (hoặc Dùng lại biến môi trường)"
 )
+NEED_USERNAME = "username: cần tên đăng nhập của tài khoản dịch vụ khi dùng Tài khoản + mật khẩu"
+NOT_A_PAT = (
+    "token: mật khẩu đang lưu không dùng được làm Personal Access Token: nhập PAT cho máy chủ này"
+)
+# A change to one of these is a new login: the scheduled syncs paused by a refused one resume.
+CREDENTIALS = {"base_url", "auth_type", "username", "token"}
+
+
+def _check_login(conn: JiraConnection) -> None:
+    """Basic auth needs a username; a PAT must be one (a password kept from basic auth may
+    not be: spaces, non-ASCII)."""
+    if conn.auth_type == "basic" and conn.token and not conn.username:
+        raise ValueError(NEED_USERNAME)
+    if conn.auth_type == "pat" and conn.token:
+        try:
+            check_secret(conn.token, "pat")
+        except ValueError:
+            raise ValueError(NOT_A_PAT) from None
 
 
 class ConnectionIn(BaseModel):
@@ -161,7 +191,9 @@ class ConnectionIn(BaseModel):
     (the numbers, enabled) drops the value saved on the web and the environment applies."""
 
     base_url: str | None = Field(default=None, max_length=2000)
-    token: str | None = Field(default=None, max_length=2000)  # write-only
+    auth_type: Literal["pat", "basic"] | None = None
+    username: str | None = Field(default=None, max_length=2000)
+    token: str | None = Field(default=None, max_length=2000)  # write-only: the PAT or password
     ca_pem: str | None = Field(default=None, max_length=200_000)
     interval_min: int | None = None
     backfill_days: int | None = None
@@ -182,8 +214,6 @@ def put_connection(
     token = given.pop("token", None)
     try:
         values = parse_connection(given)
-        if token:
-            token = check_token(token)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     before = connection(session, settings, box)
@@ -193,23 +223,28 @@ def put_connection(
     try:
         save_connection(session, values, principal.user_id)
         if token:
-            # Bound to the server of the URL in effect after this request (§2).
-            save_token(
-                session, box, token, principal.user_id, effective_base_url(session, settings)
-            )
+            # Checked as the secret of the auth type in effect after this request (a PAT or a
+            # password), and bound to the server of the URL in effect after it (§2).
+            target = connection(session, settings, box)
+            save_token(session, box, token, principal.user_id, target.base_url, target.auth_type)
             changed.append("token")
         elif token == "" and clear_token(session):
             changed.append("token")
         after = connection(session, settings, box)
-        # The resolver never sends a token to another server than its own; a request that
-        # leaves Jira without a token for that reason (a new URL without its token, or the web
-        # token cleared while JIRA_TOKEN belongs to another server) is refused, not half done.
+        # The resolver never sends a secret to another server than its own; a request that
+        # leaves Jira without one for that reason (a new URL without its token or password, or
+        # the web secret cleared while JIRA_TOKEN belongs to another server) is refused, not
+        # half done. A username or auth type changed on the same server keeps the secret.
         if before.token and not after.token and after.token_other_server:
             raise ValueError(MOVED_SERVER)
+        if CREDENTIALS & set(changed):  # e.g. switching the integration off is always allowed
+            _check_login(after)
     except ValueError as exc:
         savepoint.rollback()
         raise HTTPException(422, str(exc)) from None
     savepoint.commit()
+    if CREDENTIALS & set(changed):
+        clear_auth_failure(session)  # a new login: the scheduled syncs try again
     audit(
         session,
         principal.user_id,
@@ -217,6 +252,8 @@ def put_connection(
         "jira",
         changed=sorted(changed),
         base_url=after.base_url or None,
+        auth_type=after.auth_type,
+        username=after.username or None,
         enabled=after.enabled,
     )
     session.commit()
@@ -239,7 +276,9 @@ class TestIn(BaseModel):
     """Values typed on the screen and not saved yet; a missing one is the one in effect."""
 
     base_url: str | None = Field(default=None, max_length=2000)
-    token: str | None = Field(default=None, max_length=2000)
+    auth_type: Literal["pat", "basic"] | None = None
+    username: str | None = Field(default=None, max_length=2000)
+    token: str | None = Field(default=None, max_length=2000)  # the PAT or the password
     ca_pem: str | None = Field(default=None, max_length=200_000)
 
 
@@ -247,22 +286,41 @@ def _with_unsaved(
     session: Session, settings: Settings, box: SecretBox, body: TestIn | None
 ) -> JiraConnection:
     """The connection to test: the values typed, else the ones in effect. A URL typed without a
-    token gets only a token of its own server (the resolver's rule, §2)."""
+    token (or password) gets only one of its own server (the resolver's rule, §2)."""
     if body is None:
-        return connection(session, settings, box)
+        conn = connection(session, settings, box)
+    else:
+        try:
+            base_url = normalize_base_url(body.base_url) if body.base_url else None
+            ca_pem = check_ca_pem(body.ca_pem) if body.ca_pem and body.ca_pem.strip() else None
+            conn = connection(session, settings, box, base_url=base_url)
+            auth_type: AuthType = (
+                check_auth_type(body.auth_type) if body.auth_type else conn.auth_type
+            )
+            username = check_username(body.username) if body.username else conn.username
+            token = check_secret(body.token, auth_type) if body.token else None
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        if token is None and not conn.token and conn.token_other_server:
+            raise HTTPException(422, MOVED_SERVER)
+        conn = dataclasses.replace(
+            conn,
+            token=token or conn.token,
+            ca_pem=ca_pem if ca_pem is not None else conn.ca_pem,
+            auth_type=auth_type,
+            username=username,
+        )
     try:
-        base_url = normalize_base_url(body.base_url) if body.base_url else None
-        token = check_token(body.token) if body.token else None
-        ca_pem = check_ca_pem(body.ca_pem) if body.ca_pem and body.ca_pem.strip() else None
+        _check_login(conn)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
-    conn = connection(session, settings, box, base_url=base_url)
-    if token is None and not conn.token and conn.token_other_server:
-        raise HTTPException(422, MOVED_SERVER)
-    return dataclasses.replace(
-        conn,
-        token=token or conn.token,
-        ca_pem=ca_pem if ca_pem is not None else conn.ca_pem,
+    return conn
+
+
+def _unsaved(body: TestIn | None) -> bool:
+    """Values typed and not saved were tested (not the connection in effect)."""
+    return body is not None and any(
+        v not in (None, "") for v in body.model_dump(include=body.model_fields_set).values()
     )
 
 
@@ -275,24 +333,47 @@ def test_connection(
     factory: JiraFactoryDep,
     body: Annotated[TestIn | None, Body()] = None,
 ) -> dict[str, Any]:
-    """serverInfo + /field: the Jira version and the custom fields the mapping names. With a
-    body, the values typed on the screen and not saved yet (tested before "Lưu"); nothing is
-    saved. Works with the integration switched off."""
+    """serverInfo + /myself + /field: the Jira version, the account the credentials log in as
+    (serverInfo alone answers anonymous callers) and the custom fields the mapping names. With
+    a body, the values typed on the screen and not saved yet (tested before "Lưu"); nothing is
+    saved. Works with the integration switched off. A pass of the connection in effect resumes
+    the scheduled syncs a refused login paused."""
     _admin(principal)
     rules = mapping(session)
     conn = _with_unsaved(session, settings, box, body)
 
     def work(client: JiraApi) -> dict[str, Any]:
         info = client.server_info()
+        version = info.get("version")
+        has_pat = pat_supported(
+            str(version) if version is not None else None, info.get("versionNumbers")
+        )
+        try:
+            me = client.myself()
+        except JiraAuthError as exc:
+            if conn.auth_type == "pat" and has_pat is False:
+                raise JiraError(
+                    exc.status_code,
+                    f"Jira {version} chưa có Personal Access Token (có từ 8.14): chọn Tài"
+                    " khoản + mật khẩu của tài khoản dịch vụ",
+                ) from None
+            raise
         ids = resolve_fields(client.fields(), rules)
         return {
             "ok": True,
-            "version": info.get("version"),
+            "version": version,
             "server_title": info.get("serverTitle"),
+            "deployment_type": info.get("deploymentType"),
+            "pat_supported": has_pat,
+            "auth_type": conn.auth_type,
+            "user": me.get("name") or me.get("key"),
             "fields": ids.as_json(),
         }
 
-    return _call(conn, factory, work, need_enabled=False)
+    result = _call(conn, factory, work, need_enabled=False)
+    if not _unsaved(body) and clear_auth_failure(session):
+        session.commit()
+    return result
 
 
 @router.get("/remote-projects")
@@ -437,7 +518,8 @@ def sync_now(
     from app.jira.sync import JOB_ID, JOB_TIMEOUT
 
     job_id = f"{JOB_ID}-now-{int(datetime.now(UTC).timestamp())}"
-    queue.enqueue("app.jira.sync.sync_all_job", job_id=job_id, job_timeout=JOB_TIMEOUT)
+    # manual: runs even while a refused login pauses the scheduled syncs (§3).
+    queue.enqueue("app.jira.sync.sync_all_job", manual=True, job_id=job_id, job_timeout=JOB_TIMEOUT)
     audit(session, principal.user_id, "dpi.jira.sync", "jira", job_id=job_id)
     session.commit()
     return {"queued": True, "job_id": job_id}

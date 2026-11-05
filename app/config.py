@@ -193,9 +193,12 @@ class Settings(BaseSettings):
     # these labels.
     incident_labels: CommaList = ["incident"]
     # Jira Data Center as the DPI task source (docs/specs/27 §2); no base URL: off. The token is
-    # a read-only service account's PAT.
+    # a read-only service account's PAT, or its password with JIRA_AUTH_TYPE=basic (Jira older
+    # than 8.14 has no PAT) and JIRA_USERNAME.
     jira_base_url: str = ""
     jira_token: SecretStr = SecretStr("")
+    jira_auth_type: Literal["pat", "basic"] = "pat"
+    jira_username: str = ""
     jira_ca_bundle: str = ""  # an internal CA's PEM file; empty: the system's
     jira_sync_interval_min: int = Field(default=15, ge=1, le=1440)
     jira_backfill_days: int = Field(default=180, ge=1, le=3650)

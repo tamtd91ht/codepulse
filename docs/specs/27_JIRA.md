@@ -17,7 +17,9 @@
 - **[Quyết định]** Biến môi trường:
   - `JIRA_BASE_URL`: ví dụ `https://jira.company.vn`. Để trống thì tắt tích hợp.
   - `JIRA_TOKEN`: PAT của **tài khoản dịch vụ chỉ đọc** (quyền Browse projects trên các dự án
-    cần lấy).
+    cần lấy); với `JIRA_AUTH_TYPE=basic` là mật khẩu của tài khoản đó.
+  - `JIRA_AUTH_TYPE`: `pat` (mặc định) | `basic`; `JIRA_USERNAME`: tài khoản dịch vụ khi
+    `basic` (xem cách đăng nhập bên dưới).
   - `JIRA_CA_BUNDLE`: CA nội bộ (tuỳ chọn).
   - `JIRA_SYNC_INTERVAL_MIN`: mặc định 15.
   - `JIRA_BACKFILL_DAYS`: lần sync đầu lấy lùi bao nhiêu ngày, mặc định 180.
@@ -58,11 +60,42 @@
     process (không mỗi tick).
   - Không tạo được client (ví dụ CA lỗi) thì sync ghi `last_error` cho mọi dự án bật.
   - Tick: đưa job vào hàng đợi lỗi thì xoá `jira:sync:due` (tick sau thử lại) và báo lỗi.
-- Header `Authorization: Bearer <PAT>`. Mọi lần gọi có timeout, retry 3 lần với 5xx và lỗi
-  mạng, tôn trọng `Retry-After` của 429 (trần 30 giây), và nghỉ tối thiểu 100 ms giữa hai lần
-  gọi. Token không bao giờ ghi vào log hay trả về API.
+- **[Quyết định]** (user 2026-11-05: Jira công ty là **Jira Server 8.0.2**, chưa có PAT vì PAT
+  có từ 8.14) Hai cách đăng nhập, `auth_type`:
+  - `pat` (mặc định): `Authorization: Bearer <PAT>`.
+  - `basic`: `Authorization: Basic base64(username:password)`, chuỗi `username:password` mã hoá
+    UTF-8 trước khi base64 (mật khẩu không ASCII dùng được). Dùng một **tài khoản dịch vụ
+    riêng** chỉ có Browse Projects, mật khẩu mạnh không dùng nơi khác, chỉ qua HTTPS (màn hình
+    cảnh báo đỏ với `http://`), đổi mật khẩu định kỳ.
+  - `auth_type` và `username` (không bí mật; 1–200 ký tự in được, không có `:`, bỏ khoảng trắng
+    hai đầu) lưu trong `app_settings["jira_connection"]` như các giá trị web khác; biến môi
+    trường dự phòng `JIRA_AUTH_TYPE` (`pat` | `basic`, mặc định `pat`) và `JIRA_USERNAME`
+    (`JIRA_USERNAME` có `:` thì bỏ qua và ghi cảnh báo).
+  - Bí mật vẫn là **một** bí mật đã lưu (`stored_secrets` `jira_token`, mã hoá; env
+    `JIRA_TOKEN`): với `basic` nó là mật khẩu. Mọi luật gắn máy chủ ở trên áp dụng y hệt cho mật
+    khẩu (`token_origin`, `JIRA_TOKEN` chỉ cho origin của `JIRA_BASE_URL`, 422 khi đổi máy chủ
+    mà dùng lại bí mật). Đổi `username` hay `auth_type` mà không nhập lại bí mật: được, vì bí mật
+    vẫn chỉ đi tới máy chủ của nó; máy chủ mới luôn cần nhập lại.
+  - Kiểm tra mật khẩu: 1–1000 ký tự, không ký tự điều khiển (Unicode `Cc`), giữ nguyên như gõ
+    (không cắt khoảng trắng); PAT vẫn là ASCII in được. Bí mật được kiểm theo `auth_type` đang
+    hiệu lực sau request. Chuyển `basic` → `pat` mà mật khẩu đang lưu không phải PAT hợp lệ thì
+    422 (nhập PAT). `basic` mà không có username thì 422.
+  - "Đã cấu hình" = URL + bí mật + bật + (username khi `basic`).
+- Mọi lần gọi có timeout, retry 3 lần với 5xx và lỗi mạng, tôn trọng `Retry-After` của 429
+  (trần 30 giây), và nghỉ tối thiểu 100 ms giữa hai lần gọi. Token và mật khẩu không bao giờ ghi
+  vào log hay trả về API.
+- **[Quyết định]** (2026-11-05) Đăng nhập bị từ chối thì **không bao giờ thử lại** (Jira
+  Server khoá tài khoản sau vài lần sai bằng CAPTCHA): mọi 401, và 403 có
+  `X-Seraph-LoginReason` chứa `AUTHENTICATION_DENIED` / `AUTHENTICATED_FAILED` hoặc có
+  `X-Authentication-Denied-Reason` (ví dụ `CAPTCHA_CHALLENGE`), là `JiraAuthError` với thông
+  báo tiếng Việt ("sai tài khoản/mật khẩu, hoặc Jira đã bật CAPTCHA sau nhiều lần đăng nhập
+  sai: đăng nhập web bằng tài khoản dịch vụ để giải CAPTCHA rồi thử lại"; với PAT: token sai,
+  hết hạn hoặc bị thu hồi). 403 không có các header đó (thiếu quyền) vẫn là lỗi thường.
 - Endpoint dùng:
-  - `GET /rest/api/2/serverInfo`: kiểm tra kết nối.
+  - `GET /rest/api/2/serverInfo`: kiểm tra kết nối, phiên bản (`version`, `versionNumbers`,
+    `deploymentType`). Jira trả cả cho người chưa đăng nhập.
+  - `GET /rest/api/2/myself`: (kiểm tra kết nối) tài khoản đăng nhập được; Jira 8.0 bỏ qua
+    header Bearer lạ và coi như ẩn danh, nên chỉ serverInfo thì không biết đăng nhập có đúng.
   - `GET /rest/api/2/field`: tìm id custom field theo tên (Story Points, Sprint, Flagged).
   - `GET /rest/api/2/project`: danh sách dự án cho Admin chọn.
   - `POST /rest/api/2/search`: lấy issue theo JQL, phân trang `startAt`/`maxResults=100`.
@@ -89,7 +122,41 @@
   cùng dự án. Admin có nút **Đồng bộ ngay**.
 - Sync chạy khi đã cấu hình và có dự án bật, **bất kể nguồn task đang chọn**. Nhờ vậy dữ liệu
   có sẵn trước khi chuyển nguồn.
+- **[Quyết định]** (2026-11-05) `JiraAuthError` trong lần sync: dừng cả lần chạy ngay (không gọi
+  tiếp dự án nào, không retry), mọi dự án còn lại ghi `last_error`, và ghi
+  `app_settings["jira_auth_failure"] = {at, error, fingerprint}`. `fingerprint` là HMAC-SHA256
+  của (origin, `auth_type`, `username`, bí mật), khoá dẫn xuất từ `APP_ENCRYPTION_KEY`
+  (`SecretBox.fingerprint`): không lộ bí mật, nhưng biết thông tin đăng nhập đã đổi chưa.
+  Khi khoá còn khớp với thông tin đăng nhập đang hiệu lực, tick **không** đưa sync tự động vào
+  hàng đợi (`paused: login refused`), và một `sync_all` theo lịch đã nằm trong hàng đợi cũng
+  kiểm lại và trả `{"skipped": "paused"}` mà không gọi Jira; chỉ **Đồng bộ ngay**
+  (`sync_all_job(manual=True)`) chạy bất chấp. Nhờ vậy mật khẩu sai không bị thử mỗi chu kỳ
+  rồi khoá tài khoản. Khoá được xoá khi:
+  - fingerprint đang hiệu lực khác fingerprint đã ghi (ví dụ sửa `JIRA_TOKEN` rồi khởi động
+    lại): tick / sync theo lịch xoá và chạy tiếp;
+  - lưu thay đổi URL / `auth_type` / `username` / bí mật, hoặc **Dùng lại biến môi trường**;
+  - **Kiểm tra kết nối** thành công với kết nối đang hiệu lực (không kèm giá trị chưa lưu);
+  - một lần sync có ít nhất một lời gọi Jira thành công (`/field` trả lời) và không bị từ chối
+    đăng nhập. Lần sync mà mọi lời gọi lỗi mạng / 5xx hay mọi dự án đang bận thì không xoá.
+
+  `GET /dpi/jira` trả `auth_failure` (`{at, error}` khi còn khớp), thẻ Kết nối báo đỏ cách gỡ
+  (giải CAPTCHA).
+- **[Quyết định]** (review 2026-11-05) `last_error` của lỗi không phải `JiraError` chỉ ghi tên
+  lớp ngoại lệ (như `_call` của API), vì nội dung có thể trích dữ liệu request (ví dụ
+  `UnicodeEncodeError` trích ký tự của header, tức bí mật). `save_token` ghi kèm
+  `token_auth_type` (cách đăng nhập bí mật được kiểm theo) vào `jira_connection`. `JIRA_TOKEN`
+  chỉ cắt khoảng trắng khi cách đăng nhập là `pat`. `PUT /connection` chỉ kiểm username / PAT
+  hợp lệ khi request đổi URL, `auth_type`, `username` hay bí mật: chỉ tắt tích hợp
+  (`enabled: false`) luôn được.
 - Issue bị xoá trên Jira không phát hiện được qua search, nên vẫn giữ trong DB (ghi nhận).
+- **Tương thích Jira Server 8.0** (rà 2026-11-05): `POST /rest/api/2/search` (body `jql`,
+  `fields`, `startAt`, `maxResults`, `validateQuery: true`), `/field`, `/project`,
+  `/serverInfo`, `/myself` đều có từ trước 8.0. Trường không tồn tại trong `fields` bị Jira bỏ
+  qua; `statuscategorychangedate` có thể vắng, ngày đóng đã lùi về `updated`. Sprint 8.0 trả
+  dạng chuỗi `…sprint.Sprint@…[id=…,name=…,goal=…,endDate=…]` (đã đọc, kể cả `<null>` và goal
+  có dấu phẩy). Ngày dạng `+0700` đọc được. Assignee 8.0 có `key` (thường bằng username),
+  `name`, `emailAddress` có thể bị ẩn (khi đó nối người theo `name@<domain>`). 429 chỉ có từ 8.6,
+  vô hại. Không chỗ nào khác cần ≥ 8.14 ngoài PAT.
 - Issue chuyển sang dự án khác thì đổi key. `id` giữ nguyên nên cập nhật đúng dòng.
 
 ## 4. Chọn dự án Jira
@@ -223,6 +290,13 @@ production của issue Jira có `rca_status` khác `pending`.
 
 - **Admin › Jira** và **DPI › Jira** (cùng một màn hình; tab Admin hiện cho admin và người có
   `jira.admin`):
+  - **[Quyết định]** (user 2026-11-05) **Cách đăng nhập** là lựa chọn phân đoạn "Personal Access
+    Token (Jira ≥ 8.14)" / "Tài khoản + mật khẩu (Jira cũ hơn 8.14)". Chọn basic thì hiện
+    Username và **Mật khẩu** (ô mật khẩu, chỉ ghi như token, cùng trạng thái đã lưu / biến môi
+    trường / chưa có và **Xoá mật khẩu đã lưu**); nhãn đổi giữa token / mật khẩu. `http://` với
+    basic là cảnh báo đỏ (mật khẩu đi dạng rõ). Kết quả kiểm tra ghi phiên bản, loại triển khai,
+    "đăng nhập là …"; Jira < 8.14 mà đang chọn PAT thì cảnh báo chọn Tài khoản + mật khẩu.
+    `auth_failure` hiện thành cảnh báo đỏ ở đầu thẻ.
   - **[Quyết định]** (2026-11-05) thẻ **Kết nối** là form: URL Jira, Personal Access Token (ô
     mật khẩu; trạng thái "Đã lưu (cập nhật …)" / "Đang dùng biến môi trường" / "Chưa có"; để
     trống là giữ; **Xoá token đã lưu**), CA nội bộ (PEM, tuỳ chọn), bật/tắt tích hợp, chu kỳ
@@ -253,7 +327,7 @@ Tiền tố `/dpi/jira`, quyền `jira.admin` (admin có mọi quyền).
 | GET | `/dpi/jira` | Cấu hình, nguồn task, mapping, dự án đã đăng ký kèm trạng thái sync; khối `connection` |
 | PUT | `/dpi/jira/connection` | Lưu kết nối trên web (chỉ các khoá gửi lên); trả `connection` |
 | DELETE | `/dpi/jira/connection` | Xoá giá trị đã lưu trên web, biến môi trường áp dụng lại |
-| POST | `/dpi/jira/test` | Gọi serverInfo + field: phiên bản, custom field tìm được; body tuỳ chọn để thử giá trị chưa lưu |
+| POST | `/dpi/jira/test` | Gọi serverInfo + myself + field: phiên bản, tài khoản, custom field tìm được; body tuỳ chọn để thử giá trị chưa lưu |
 | GET | `/dpi/jira/remote-projects` | Dự án trên Jira (key, name) để chọn |
 | PUT | `/dpi/jira/projects` | Đăng ký, cập nhật dự án (key, name, enabled, business_project_id) |
 | PUT | `/dpi/jira/mapping` | Lưu bảng quy đổi |
@@ -262,6 +336,15 @@ Tiền tố `/dpi/jira`, quyền `jira.admin` (admin có mọi quyền).
 
 Mỗi thay đổi đều ghi audit.
 
+- **[Quyết định]** (user 2026-11-05, basic auth) `connection` thêm `auth_type` (`pat` |
+  `basic`), `auth_type_source`, `username` (hoặc `null`), `username_source`; `env` thêm
+  `auth_type` (`JIRA_AUTH_TYPE=basic`) và `username`. `token_set` / `token_*` giữ nghĩa cũ (bí
+  mật: PAT hoặc mật khẩu). `PUT /connection` và `POST /test` nhận thêm `auth_type`, `username`;
+  `token` là PAT hoặc mật khẩu. Audit `dpi.jira.connection` ghi thêm `auth_type` và `username`
+  (không bao giờ ghi bí mật). `GET /dpi/jira` có `auth_failure` (`{at, error}` | `null`).
+  `POST /test` trả thêm `deployment_type`, `pat_supported` (phiên bản ≥ 8.14; `null` khi không
+  đọc được), `auth_type`, `user` (`name` của `/myself`); `/myself` bị từ chối trên Jira < 8.14
+  khi dùng PAT thì 502 với lời nhắc chọn Tài khoản + mật khẩu.
 - **[Quyết định]** (2026-11-05) `connection` = `{base_url, base_url_source, token_set,
   token_source, token_updated_at, token_unreadable, token_other_server, ca_set, ca_source,
   interval_min, backfill_days, timeout_s,
@@ -281,7 +364,11 @@ Mỗi thay đổi đều ghi audit.
 
 - `mapping`: Story Points ↔ mức, loại issue, sub-task, prod-bug, priority, due date
   (issue / sprint / fix version), blocked, sprint dạng chuỗi (DC cũ) và dạng object.
-- `client`: retry 5xx, 429 + Retry-After, timeout, phân trang, không log token.
+- `client`: retry 5xx, 429 + Retry-After, timeout, phân trang, không log token; header Basic
+  đúng (mật khẩu UTF-8), không log mật khẩu, 401 / 403 Seraph (CAPTCHA) không retry và có thông
+  báo rõ.
+- `connection` / API với basic: env và web, username bắt buộc, mật khẩu gắn máy chủ, luật đổi
+  `auth_type`; sync dừng ngay khi bị từ chối đăng nhập, ghi `last_error`, tick tạm dừng.
 - `sync`: upsert, nối tài khoản theo email, mốc chỉ tiến khi xong, lỗi ghi `last_error`, nối MR
   theo key, defect tạo và rút.
 - DPI: facts chỉ đọc nguồn đang chọn; sub-task không điểm bị bỏ; R4 và defect lọc theo dự án

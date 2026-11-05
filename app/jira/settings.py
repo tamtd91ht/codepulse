@@ -1,5 +1,6 @@
 """What the Jira integration is set to (docs/specs/27 §2, §5, §9): the connection, the DPI task
-source and the field mapping, kept in app_settings (the token in stored_secrets, encrypted) and
+source and the field mapping, kept in app_settings (the secret, a PAT or the service account's
+password, in stored_secrets, encrypted) and
 edited in Admin > Jira or DPI > Jira. A connection value saved on the web wins over its JIRA_*
 environment variable; the variables are an optional fallback.
 
@@ -11,8 +12,9 @@ import ipaddress
 import logging
 import re
 import ssl
+import unicodedata
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -30,11 +32,19 @@ TASK_SOURCE_KEY = "dpi_task_source"
 MAPPING_KEY = "jira_mapping"
 CONNECTION_KEY = "jira_connection"
 TOKEN_SECRET = "jira_token"  # noqa: S105 - a stored_secrets row name, not a secret
+# The last sync stopped on a refused login (§3): {"at", "error"}; scheduled syncs wait.
+AUTH_FAILURE_KEY = "jira_auth_failure"
 MAX_BASE_URL_CHARS = 300
 MAX_CA_PEM_BYTES = 100_000
 MAX_TOKEN_CHARS = 1000
+MAX_PASSWORD_CHARS = 1000
+MAX_USERNAME_CHARS = 200
+# Jira Server/DC has Personal Access Tokens from this version on; older: basic auth only.
+PAT_MIN_VERSION = (8, 14)
 # In CONNECTION_KEY: the server (origin) the saved token belongs to.
 TOKEN_ORIGIN = "token_origin"  # noqa: S105 - a key name, not a secret
+# In CONNECTION_KEY: the auth type the saved secret was checked for (a PAT or a password).
+TOKEN_AUTH_TYPE = "token_auth_type"  # noqa: S105 - a key name, not a secret
 TOKEN_RE = re.compile(r"^[\x21-\x7e]+$")  # printable ASCII, no space
 # Bounds of the numbers (the same as the JIRA_* variables in app/config.py).
 INTERVAL_MIN = (1, 1440)
@@ -48,6 +58,10 @@ DPI_TYPES = ("feature", "bug", "refactor", "chore", "docs", "incident", "automat
 SEVERITIES = ("P1", "P2", "P3")
 
 Source = Literal["web", "env"]
+# "pat": Authorization: Bearer <PAT> (Jira >= 8.14); "basic": a service account's username and
+# password (older Jira). The secret (`token`) is the PAT or the password.
+AuthType = Literal["pat", "basic"]
+AUTH_TYPES: tuple[AuthType, ...] = ("pat", "basic")
 
 
 @dataclass(frozen=True)
@@ -55,7 +69,7 @@ class JiraConnection:
     """The connection in effect (§2): each value saved on the web, else its JIRA_* variable."""
 
     base_url: str  # without a trailing slash; "" when none
-    token: str = field(repr=False)
+    token: str = field(repr=False)  # the PAT, or the password with auth_type "basic"
     ca_pem: str = field(repr=False)  # an internal CA saved on the web (PEM), else ""
     ca_path: str = ""  # JIRA_CA_BUNDLE, used when no PEM is saved
     interval_min: int = 15
@@ -75,11 +89,17 @@ class JiraConnection:
     token_unreadable: bool = False
     # A token exists (web or env) but was set for another server than base_url: not used.
     token_other_server: bool = False
+    auth_type: AuthType = "pat"
+    username: str = ""  # the service account, with auth_type "basic"
+    auth_type_source: Source | None = None
+    username_source: Source | None = None
+    env_auth_type: bool = False  # JIRA_AUTH_TYPE=basic
+    env_username: bool = False
 
     @property
     def reachable(self) -> bool:
         """Enough to call Jira (a test call does not need the integration switched on)."""
-        return bool(self.base_url and self.token)
+        return bool(self.base_url and self.token and (self.auth_type == "pat" or self.username))
 
     @property
     def configured(self) -> bool:
@@ -93,10 +113,14 @@ class JiraConnection:
         return self.ca_path or True
 
     def as_json(self) -> dict[str, Any]:
-        """For the Admin screen: never the token nor the PEM."""
+        """For the Admin screen: never the token (PAT or password) nor the PEM."""
         return {
             "base_url": self.base_url or None,
             "base_url_source": self.base_url_source,
+            "auth_type": self.auth_type,
+            "auth_type_source": self.auth_type_source,
+            "username": self.username or None,
+            "username_source": self.username_source,
             "token_set": bool(self.token),
             "token_source": self.token_source,
             "token_updated_at": self.token_updated_at,
@@ -114,6 +138,8 @@ class JiraConnection:
                 "base_url": self.env_base_url,
                 "token": self.env_token,
                 "ca_bundle": self.env_ca_bundle,
+                "auth_type": self.env_auth_type,
+                "username": self.env_username,
             },
         }
 
@@ -194,6 +220,59 @@ def check_token(raw: str) -> str:
     return token
 
 
+def check_password(raw: str) -> str:
+    """A service account's password (basic auth): 1-1000 characters, none a control character
+    (non-ASCII is fine: `user:password` is sent UTF-8 encoded). Kept as typed, not stripped."""
+    if not 1 <= len(raw) <= MAX_PASSWORD_CHARS or any(unicodedata.category(c) == "Cc" for c in raw):
+        raise ValueError(
+            f"token: cần mật khẩu của tài khoản dịch vụ (1-{MAX_PASSWORD_CHARS} ký tự, "
+            "không ký tự điều khiển)"
+        )
+    return raw
+
+
+def check_secret(raw: str, auth_type: AuthType) -> str:
+    """The PAT (auth_type "pat") or the password ("basic")."""
+    return check_password(raw) if auth_type == "basic" else check_token(raw)
+
+
+def check_username(raw: str) -> str:
+    """The service account's username: 1-200 printable characters, no ':' (it ends the username
+    in basic auth)."""
+    name = raw.strip()
+    if not name or len(name) > MAX_USERNAME_CHARS or ":" in name or not name.isprintable():
+        raise ValueError(
+            f"username: cần tên đăng nhập của tài khoản dịch vụ (1-{MAX_USERNAME_CHARS} ký tự "
+            "in được, không có dấu :)"
+        )
+    return name
+
+
+def check_auth_type(raw: Any) -> AuthType:
+    if raw == "basic":
+        return "basic"
+    if raw == "pat":
+        return "pat"
+    raise ValueError("auth_type: chỉ nhận pat hoặc basic")
+
+
+def pat_supported(version: str | None, numbers: Any = None) -> bool | None:
+    """Has this Jira Personal Access Tokens (8.14+)? None when the version cannot be read.
+    `numbers`: serverInfo's versionNumbers, else the version string ("8.0.2") is parsed."""
+    parts: list[int] = []
+    if isinstance(numbers, list) and numbers:
+        parts = [n for n in numbers if isinstance(n, int) and not isinstance(n, bool)]
+    if not parts and isinstance(version, str):
+        for piece in version.split(".")[:3]:
+            digits = re.match(r"\d+", piece)
+            if not digits:
+                break
+            parts.append(int(digits.group()))
+    if len(parts) < 2:
+        return None
+    return (parts[0], parts[1]) >= PAT_MIN_VERSION
+
+
 def _bounded(name: str, value: Any, bounds: tuple[int, int]) -> int:
     if isinstance(value, bool) or not isinstance(value, int | float) or value != int(value):
         raise ValueError(f"{name}: cần một số nguyên")
@@ -211,6 +290,11 @@ def parse_connection(raw: dict[str, Any]) -> dict[str, Any]:
     if "base_url" in raw:
         value = raw["base_url"]
         out["base_url"] = normalize_base_url(str(value)) if value and str(value).strip() else None
+    if "auth_type" in raw:
+        out["auth_type"] = None if raw["auth_type"] is None else check_auth_type(raw["auth_type"])
+    if "username" in raw:
+        value = raw["username"]
+        out["username"] = check_username(str(value)) if value and str(value).strip() else None
     if "ca_pem" in raw:
         value = raw["ca_pem"]
         out["ca_pem"] = check_ca_pem(str(value)) if value and str(value).strip() else None
@@ -264,10 +348,16 @@ def _env_base(settings: Settings) -> str:
 
 
 def save_token(
-    session: Session, box: SecretBox, token: str, user_id: int | None, base_url: str
+    session: Session,
+    box: SecretBox,
+    token: str,
+    user_id: int | None,
+    base_url: str,
+    auth_type: AuthType = "pat",
 ) -> None:
-    """The PAT pasted on the Admin screen, encrypted at rest like the Claude token, and bound to
-    the server (`origin(base_url)`) it was given for: it is never sent anywhere else."""
+    """The secret pasted on the Admin screen (the PAT, or the password with `auth_type`
+    "basic"), encrypted at rest like the Claude token, and bound to the server
+    (`origin(base_url)`) it was given for: it is never sent anywhere else."""
     server = origin(base_url)
     if not server:
         raise ValueError("token: nhập URL Jira trước (token gắn với máy chủ của URL đó)")
@@ -275,17 +365,19 @@ def save_token(
     if row is None:
         row = StoredSecret(name=TOKEN_SECRET)
         session.add(row)
-    row.value_encrypted = box.encrypt(check_token(token))
+    row.value_encrypted = box.encrypt(check_secret(token, auth_type))
     row.source = "paste"
     row.set_by = user_id
-    save_connection(session, {TOKEN_ORIGIN: server}, user_id)
+    save_connection(session, {TOKEN_ORIGIN: server, TOKEN_AUTH_TYPE: auth_type}, user_id)
 
 
 def clear_token(session: Session) -> bool:
     row = session.get(StoredSecret, TOKEN_SECRET)
     conn_row = session.get(AppSetting, CONNECTION_KEY)
-    if conn_row is not None and isinstance(conn_row.value, dict) and TOKEN_ORIGIN in conn_row.value:
-        conn_row.value = {k: v for k, v in conn_row.value.items() if k != TOKEN_ORIGIN}
+    if conn_row is not None and isinstance(conn_row.value, dict):
+        kept = {k: v for k, v in conn_row.value.items() if k not in (TOKEN_ORIGIN, TOKEN_AUTH_TYPE)}
+        if kept != conn_row.value:
+            conn_row.value = kept
     if row is None:
         session.flush()
         return False
@@ -296,6 +388,7 @@ def clear_token(session: Session) -> bool:
 
 def clear_connection(session: Session) -> bool:
     """ "Dùng lại biến môi trường": every value saved on the web goes; True if one was."""
+    clear_auth_failure(session)
     had_token = clear_token(session)
     row = session.get(AppSetting, CONNECTION_KEY)
     if row is not None:
@@ -341,10 +434,15 @@ def connection(
     one in effect (a test of a URL not saved yet).
 
     A token only goes to its own server (§2): the web token to the origin it was saved for,
-    JIRA_TOKEN to the origin of JIRA_BASE_URL (none: never). Otherwise there is no token."""
+    JIRA_TOKEN to the origin of JIRA_BASE_URL (none: never). Otherwise there is no token. The
+    same holds for a password (auth_type "basic": it is kept as the token); the auth type and
+    the username are plain values (web, else JIRA_AUTH_TYPE / JIRA_USERNAME)."""
     stored = stored_connection(session)
     env_base = _env_base(settings)
-    env_token = settings.jira_token.get_secret_value().strip()
+    auth_type: AuthType = stored.get("auth_type") or settings.jira_auth_type
+    # A PAT is trimmed; a password is kept as given (spaces may be part of it).
+    env_raw = settings.jira_token.get_secret_value()
+    env_token = env_raw.strip() if auth_type == "pat" or not env_raw.strip() else env_raw
     env_ca = settings.jira_ca_bundle.strip()
     web_token, web_server, web_at, unreadable = _stored_token(session, box)
     url_source: Source | None = None
@@ -359,6 +457,8 @@ def connection(
     token = web_token if web_ok else env_token if env_ok else ""
     other_server = not token and bool((web_token and not web_ok) or (env_token and not env_ok))
     ca_pem = str(stored.get("ca_pem") or "")
+    env_user = _env_username(settings)
+    username = str(stored.get("username") or env_user)
     sources: dict[str, Source] = {
         k: ("web" if k in stored else "env") for k in (*NUMBERS, "enabled")
     }
@@ -381,12 +481,88 @@ def connection(
         env_ca_bundle=bool(env_ca),
         token_unreadable=unreadable,
         token_other_server=other_server,
+        auth_type=auth_type,
+        username=username,
+        auth_type_source="web" if "auth_type" in stored else "env",
+        username_source=("web" if "username" in stored else "env") if username else None,
+        env_auth_type=settings.jira_auth_type == "basic",
+        env_username=bool(env_user),
     )
 
 
+def _env_username(settings: Settings) -> str:
+    """JIRA_USERNAME; one that fails the checks (a ':' in it) is not used."""
+    raw = settings.jira_username.strip()
+    if not raw:
+        return ""
+    try:
+        return check_username(raw)
+    except ValueError:
+        log.warning("JIRA_USERNAME ignored: not a valid username")
+        return ""
+
+
 def jira_configured(session: Session, settings: Settings, box: SecretBox | None = None) -> bool:
-    """A base URL and a token in effect, and the integration not switched off."""
+    """A base URL and a secret in effect (and a username with basic auth), and the integration
+    not switched off."""
     return connection(session, settings, box).configured
+
+
+def credential_fingerprint(conn: JiraConnection, box: SecretBox | None = None) -> str:
+    """HMAC (keyed from APP_ENCRYPTION_KEY) of the login in effect: server, auth type, username
+    and secret. Tells a refused login from a changed one (e.g. JIRA_TOKEN fixed, restarted)."""
+    text = "\n".join((origin(conn.base_url), conn.auth_type, conn.username, conn.token))
+    return (box or secret_box()).fingerprint(text)
+
+
+def record_auth_failure(
+    session: Session, error: str, conn: JiraConnection, box: SecretBox | None = None
+) -> None:
+    """The sync stopped on a refused login (§3): the scheduled syncs wait until the credentials
+    are changed, a test of the connection in effect passes, or "Đồng bộ ngay" succeeds, so a
+    wrong password does not lock the account behind a CAPTCHA. The caller commits."""
+    value = {
+        "at": datetime.now(UTC).isoformat(),
+        "error": error[:500],
+        "fingerprint": credential_fingerprint(conn, box),
+    }
+    row = session.get(AppSetting, AUTH_FAILURE_KEY)
+    if row is None:
+        session.add(AppSetting(key=AUTH_FAILURE_KEY, value=value))
+    else:
+        row.value = value
+    session.flush()
+
+
+def auth_failure(
+    session: Session, conn: JiraConnection, box: SecretBox | None = None
+) -> dict[str, Any] | None:
+    """The refused login still in effect ({at, error}), None when there is none or the
+    credentials changed since (another fingerprint)."""
+    row = session.get(AppSetting, AUTH_FAILURE_KEY)
+    if row is None or not isinstance(row.value, dict):
+        return None
+    if row.value.get("fingerprint") != credential_fingerprint(conn, box):
+        return None
+    return {"at": row.value.get("at"), "error": row.value.get("error")}
+
+
+def login_paused(session: Session, conn: JiraConnection, box: SecretBox | None = None) -> bool:
+    """Scheduled syncs wait on a refused login; a marker left by other credentials is dropped
+    (the caller commits)."""
+    if auth_failure(session, conn, box) is not None:
+        return True
+    clear_auth_failure(session)
+    return False
+
+
+def clear_auth_failure(session: Session) -> bool:
+    row = session.get(AppSetting, AUTH_FAILURE_KEY)
+    if row is None:
+        return False
+    session.delete(row)
+    session.flush()
+    return True
 
 
 def task_source(session: Session, settings: Settings) -> TaskSource:

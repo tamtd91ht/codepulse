@@ -7916,6 +7916,34 @@ label.jira-field > span:first-child {
 .jira-field input[aria-invalid="true"] {
   border-color: var(--danger);
 }
+/* Kết nối: PAT or username + password (docs/specs/27 §12). */
+div.jira-auth {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 12px;
+  min-width: 0;
+}
+div.jira-auth > span:first-child {
+  font-weight: 500;
+}
+div.jira-auth > span:first-child .pill {
+  margin-left: 6px;
+  font-weight: 400;
+}
+.jira-auth .segmented {
+  display: flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.jira-auth .segmented button {
+  height: auto;
+  min-height: 30px;
+  padding: 4px 12px;
+  white-space: normal;
+  text-align: left;
+}
 .jira-key {
   min-width: 96px;
 }

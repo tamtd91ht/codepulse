@@ -44,6 +44,8 @@ const MAPPING: [dpi: string, jira: ReactNode][] = [
 ];
 
 const CHECK_TOKEN = 'curl -H "Authorization: Bearer <token>" https://jira.company.vn/rest/api/2/myself';
+const CHECK_VERSION = "curl https://jira.company.vn/rest/api/2/serverInfo";
+const CHECK_PASSWORD = "curl -u codepulse-bot https://jira.company.vn/rest/api/2/myself";
 
 const POINTS: [range: string, level: string, score: string][] = [
   ["trên 0 đến 1", "XS", "1"],
@@ -232,6 +234,10 @@ export default function JiraGuidePage() {
               <li>Đồng bộ chạy khi đã cấu hình và có dự án bật, kể cả khi nguồn task vẫn là GitLab, để dữ liệu sẵn sàng trước khi chuyển.</li>
               <li>Issue chuyển sang dự án khác vẫn là một issue (key mới). Issue bị xoá trên Jira vẫn giữ trong CodePulse.</li>
               <li>Lỗi đồng bộ hiện ở DPI › Jira và DPI › Sẵn sàng dữ liệu; lần sau tự làm lại.</li>
+              <li>
+                Jira từ chối đăng nhập (sai token / mật khẩu, CAPTCHA): đồng bộ dừng ngay, không thử lại, và lịch tự động tạm dừng cho tới khi sửa thông
+                tin đăng nhập, Kiểm tra kết nối thành công hoặc bấm Đồng bộ ngay, để không khoá tài khoản dịch vụ.
+              </li>
             </ul>
           </section>
 
@@ -260,7 +266,13 @@ export default function JiraGuidePage() {
 
           <section id="pat" className="card">
             <h2>11. Tạo Personal Access Token</h2>
-            <p>Jira Data Center từ bản 8.14 có Personal Access Token (PAT). Nên tạo bằng một tài khoản dịch vụ riêng, không dùng tài khoản cá nhân.</p>
+            <p>Jira Data Center / Server từ bản 8.14 có Personal Access Token (PAT). Nên tạo bằng một tài khoản dịch vụ riêng, không dùng tài khoản cá nhân.</p>
+            <p>
+              <strong>Xem phiên bản Jira trước</strong>: mở <code>&lt;địa chỉ Jira&gt;/rest/api/2/serverInfo</code> trên trình duyệt (không cần đăng
+              nhập), xem <code>version</code>. Từ 8.14 trở lên: làm theo các bước dưới. Cũ hơn (ví dụ <code>8.0.2</code>): xem{" "}
+              <a href="#no-pat">Jira cũ hơn 8.14</a>. Nút <strong>Kiểm tra kết nối</strong> cũng cho biết phiên bản.
+            </p>
+            <CopyBlock text={CHECK_VERSION} label="Lệnh xem phiên bản Jira" />
             <ol>
               <li>
                 <strong>Chuẩn bị tài khoản dịch vụ</strong> (nhờ admin Jira): tạo user riêng, ví dụ <code>codepulse-bot</code>, thêm vào group hoặc
@@ -284,11 +296,50 @@ export default function JiraGuidePage() {
             <CopyBlock text={CHECK_TOKEN} label="Lệnh kiểm tra token" />
             <p className="muted small">Trả về thông tin của tài khoản dịch vụ là token dùng được.</p>
             <ul>
-              <li>Không thấy mục Personal Access Tokens: Jira cũ hơn 8.14, hoặc admin Jira đã tắt tính năng; nhờ admin Jira bật.</li>
+              <li>
+                Không thấy mục Personal Access Tokens: Jira cũ hơn 8.14 (dùng <a href="#no-pat">tài khoản + mật khẩu</a>), hoặc admin Jira đã tắt
+                tính năng; nhờ admin Jira bật.
+              </li>
               <li>Đổi token: tạo token mới trên Jira, nhập vào ô token ở thẻ Kết nối rồi Lưu (để trống ô token là giữ token cũ).</li>
               <li>Thu hồi: vào lại Personal Access Tokens trên Jira, bấm <strong>Revoke</strong>.</li>
               <li>Không dán token vào chat, issue hay commit. CodePulse mã hoá token và chỉ gửi nó tới đúng máy chủ Jira đã nhập cùng.</li>
             </ul>
+
+            <h3 id="no-pat">Jira cũ hơn 8.14 (không có PAT)</h3>
+            <p>
+              Jira Server / Data Center trước 8.14 (ví dụ 8.0.2) chưa có Personal Access Token: CodePulse đăng nhập bằng <strong>tài khoản + mật
+              khẩu</strong> của một tài khoản dịch vụ (HTTP Basic). Vì mật khẩu mạnh hơn token (đăng nhập được cả giao diện web), làm đúng các điểm sau:
+            </p>
+            <ol>
+              <li>
+                Nhờ admin Jira tạo tài khoản dịch vụ riêng <code>codepulse-bot</code>, <strong>chỉ có quyền Browse Projects</strong> trên các dự án
+                cần đồng bộ (không quyền sửa, không quyền admin, không vào group <code>jira-administrators</code>).
+              </li>
+              <li>Đặt mật khẩu mạnh, dài, sinh ngẫu nhiên và <strong>không dùng ở nơi nào khác</strong>.</li>
+              <li>
+                Ở <Link href="/admin#jira">Admin › Jira</Link> › <strong>Kết nối</strong>, chọn <strong>Tài khoản + mật khẩu (Jira cũ hơn 8.14)</strong>,
+                nhập Username và Mật khẩu, bấm <strong>Kiểm tra kết nối</strong> (kết quả ghi “đăng nhập là codepulse-bot”) rồi <strong>Lưu</strong>.
+                Mật khẩu được mã hoá, không bao giờ hiện lại, và chỉ gửi tới đúng máy chủ đã nhập cùng.
+              </li>
+              <li>
+                <strong>Chỉ dùng https://</strong>. Với http:// mật khẩu đi qua mạng dạng rõ (Basic chỉ là base64), ai nghe lén được là đăng nhập được.
+              </li>
+              <li>
+                <strong>CAPTCHA</strong>: Jira Server bật CAPTCHA cho tài khoản sau vài lần đăng nhập sai; khi đó mọi lời gọi API đều bị từ chối. CodePulse
+                không thử lại lời gọi bị từ chối đăng nhập và tạm dừng đồng bộ tự động (thẻ Kết nối báo đỏ). Cách gỡ: đăng nhập giao diện web Jira bằng{" "}
+                <code>codepulse-bot</code>, giải CAPTCHA, rồi bấm <strong>Kiểm tra kết nối</strong> hoặc <strong>Đồng bộ ngay</strong>.
+              </li>
+              <li>
+                <strong>Đổi mật khẩu định kỳ</strong> (theo chính sách công ty, ví dụ 90 ngày): đổi trên Jira, nhập mật khẩu mới ở ô Mật khẩu rồi Lưu
+                ngay, để lần đồng bộ sau không đăng nhập sai. Khi nâng Jira lên 8.14+, chuyển sang Personal Access Token.
+              </li>
+            </ol>
+            <p>Muốn tự thử tài khoản trước (curl hỏi mật khẩu, không ghi vào lịch sử lệnh):</p>
+            <CopyBlock text={CHECK_PASSWORD} label="Lệnh kiểm tra tài khoản" />
+            <p className="muted small">
+              Chỉ chạy một lần: sai mật khẩu vài lần là bị CAPTCHA. Biến môi trường tương ứng: <code>JIRA_AUTH_TYPE=basic</code>,{" "}
+              <code>JIRA_USERNAME</code>, mật khẩu trong <code>JIRA_TOKEN</code>.
+            </p>
           </section>
 
           <section id="admin" className="card">
@@ -296,23 +347,26 @@ export default function JiraGuidePage() {
             <ol>
               <li>
                 Tạo tài khoản dịch vụ <strong>chỉ đọc</strong> trên Jira với quyền Browse Projects ở các dự án cần lấy, rồi tạo Personal Access Token
-                (mục <a href="#pat">Tạo Personal Access Token</a>). Người cấu hình cần quyền <code>jira.admin</code> (mục{" "}
-                <a href="#permission">Phân quyền</a>).
+                (mục <a href="#pat">Tạo Personal Access Token</a>); Jira cũ hơn 8.14 thì dùng tài khoản + mật khẩu (mục{" "}
+                <a href="#no-pat">Jira cũ hơn 8.14</a>). Người cấu hình cần quyền <code>jira.admin</code> (mục <a href="#permission">Phân quyền</a>).
               </li>
               <li>
                 Mở <Link href="/admin#jira">Admin › Jira</Link> (hoặc <Link href="/dpi">DPI</Link> › <strong>Jira</strong>), thẻ <strong>Kết nối</strong>:
-                nhập URL Jira và Personal Access Token; tuỳ chọn CA nội bộ (PEM), chu kỳ đồng bộ (mặc định 15 phút), số ngày lấy lùi lần đầu (180),
+                nhập URL Jira, chọn <strong>Cách đăng nhập</strong> (Personal Access Token, hoặc Tài khoản + mật khẩu cho Jira cũ hơn 8.14) và nhập token
+                hoặc username + mật khẩu; tuỳ chọn CA nội bộ (PEM), chu kỳ đồng bộ (mặc định 15 phút), số ngày lấy lùi lần đầu (180),
                 timeout (20 giây). Bấm <strong>Kiểm tra kết nối</strong> để thử ngay giá trị đang nhập, rồi <strong>Lưu</strong>. Không cần khởi động
                 lại: lịch đồng bộ đọc cấu hình mới trong vòng một phút.
               </li>
               <li>
-                Kết quả kiểm tra cho biết phiên bản Jira và các trường Story Points, Sprint, Flagged tìm được. Trường báo “không tìm thấy” thì sửa tên ở
-                Quy đổi trường.
+                Kết quả kiểm tra cho biết phiên bản Jira, tài khoản đăng nhập được và các trường Story Points, Sprint, Flagged tìm được. Jira cũ hơn 8.14
+                mà đang chọn PAT thì màn hình nhắc chuyển sang tài khoản + mật khẩu. Trường báo “không tìm thấy” thì sửa tên ở Quy đổi trường.
               </li>
               <li>
-                Biến môi trường <code>JIRA_BASE_URL</code>, <code>JIRA_TOKEN</code>, <code>JIRA_CA_BUNDLE</code>, <code>JIRA_SYNC_INTERVAL_MIN</code>,{" "}
-                <code>JIRA_BACKFILL_DAYS</code>, <code>JIRA_TIMEOUT_S</code> là tuỳ chọn: chỉ dùng cho giá trị chưa lưu trên web; giá trị lưu trên web luôn
-                được ưu tiên. <strong>Dùng lại biến môi trường</strong> xoá các giá trị đã lưu. Đổi sang máy chủ Jira khác thì phải nhập lại token.
+                Biến môi trường <code>JIRA_BASE_URL</code>, <code>JIRA_TOKEN</code>, <code>JIRA_AUTH_TYPE</code>, <code>JIRA_USERNAME</code>,{" "}
+                <code>JIRA_CA_BUNDLE</code>, <code>JIRA_SYNC_INTERVAL_MIN</code>, <code>JIRA_BACKFILL_DAYS</code>, <code>JIRA_TIMEOUT_S</code> là tuỳ
+                chọn: chỉ dùng cho giá trị chưa lưu trên web; giá trị lưu trên web luôn được ưu tiên. <strong>Dùng lại biến môi trường</strong> xoá các
+                giá trị đã lưu. Đổi sang máy chủ Jira khác thì phải nhập lại token / mật khẩu; đổi username hay cách đăng nhập trên cùng máy chủ thì
+                không cần.
               </li>
               <li>
                 <strong>Thêm dự án</strong>, bật và gán mỗi dự án Jira cho một dự án CodePulse (để lọc báo cáo và phân quyền), rồi Lưu. Dự án chưa
@@ -326,7 +380,7 @@ export default function JiraGuidePage() {
               </li>
             </ol>
             <p className="muted">
-              Token lưu trên web được mã hoá (APP_ENCRYPTION_KEY), không bao giờ hiện lại trên giao diện hay trong log. Mọi thay đổi cấu hình Jira đều ghi audit. Chi tiết: docs/specs/27.
+              Token / mật khẩu lưu trên web được mã hoá (APP_ENCRYPTION_KEY), không bao giờ hiện lại trên giao diện hay trong log. Mọi thay đổi cấu hình Jira đều ghi audit. Chi tiết: docs/specs/27.
             </p>
           </section>
 

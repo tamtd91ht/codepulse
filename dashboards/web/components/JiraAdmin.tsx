@@ -7,7 +7,7 @@
  */
 import { useState } from "react";
 
-import { Alert, Card, EmptyState, Loading, Message, Pill } from "@/components/ui";
+import { Alert, Card, EmptyState, Loading, Message, Pill, Segmented } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { dateTime, relative } from "@/lib/format";
 import type { BusinessProject } from "@/lib/types";
@@ -39,10 +39,17 @@ export interface JiraProject {
 }
 
 type ValueSource = "web" | "env" | null;
+/** "pat": Personal Access Token (Jira 8.14+); "basic": service account + password (older). */
+type AuthType = "pat" | "basic";
 
 export interface JiraConnection {
   base_url: string | null;
   base_url_source: ValueSource;
+  auth_type: AuthType;
+  auth_type_source: ValueSource;
+  username: string | null;
+  username_source: ValueSource;
+  /** The secret in effect (the PAT, or the password with basic auth). */
   token_set: boolean;
   token_source: ValueSource;
   token_updated_at: string | null;
@@ -58,7 +65,7 @@ export interface JiraConnection {
   enabled: boolean;
   configured: boolean;
   sources: Record<"interval_min" | "backfill_days" | "timeout_s" | "enabled", "web" | "env">;
-  env: { base_url: boolean; token: boolean; ca_bundle: boolean };
+  env: { base_url: boolean; token: boolean; ca_bundle: boolean; auth_type: boolean; username: boolean };
 }
 
 interface JiraView {
@@ -71,6 +78,8 @@ interface JiraView {
   projects: JiraProject[];
   accounts: { total: number; linked: number };
   interval_min: number;
+  /** The last sync's login was refused: scheduled syncs wait (CAPTCHA protection). */
+  auth_failure: { at: string; error: string } | null;
 }
 
 interface FieldRef {
@@ -82,6 +91,12 @@ interface TestResult {
   ok: boolean;
   version: string | null;
   server_title: string | null;
+  deployment_type: string | null;
+  /** Jira 8.14+ has Personal Access Tokens; null: version unknown. */
+  pat_supported: boolean | null;
+  auth_type: AuthType;
+  /** The account the credentials log in as. */
+  user: string | null;
   fields: { story_points: FieldRef | null; sprint: FieldRef | null; flagged: FieldRef | null };
 }
 
@@ -110,7 +125,7 @@ export function JiraAdmin() {
           <EmptyState icon="info" title={c.base_url && c.token_set && !c.enabled ? "Tích hợp Jira đang tắt." : "Điền thẻ Kết nối trước."}>
             {c.base_url && c.token_set && !c.enabled
               ? "Bật “Tích hợp Jira” ở thẻ Kết nối rồi Lưu để chọn nguồn task, đăng ký dự án và đồng bộ."
-              : "Nhập URL Jira và Personal Access Token ở thẻ Kết nối, bấm Kiểm tra kết nối rồi Lưu. Sau đó chọn nguồn task, đăng ký dự án Jira và sửa quy đổi trường tại đây."}
+              : "Nhập URL Jira và Personal Access Token (Jira cũ hơn 8.14: tài khoản + mật khẩu) ở thẻ Kết nối, bấm Kiểm tra kết nối rồi Lưu. Sau đó chọn nguồn task, đăng ký dự án Jira và sửa quy đổi trường tại đây."}
           </EmptyState>
         </Card>
       )}
@@ -118,8 +133,12 @@ export function JiraAdmin() {
   );
 }
 
-type ConnKey = "base_url" | "token" | "ca_pem" | "interval_min" | "backfill_days" | "timeout_s" | "enabled";
-const CONN_KEYS: readonly string[] = ["base_url", "token", "ca_pem", "interval_min", "backfill_days", "timeout_s", "enabled"];
+type ConnKey = "base_url" | "auth_type" | "username" | "token" | "ca_pem" | "interval_min" | "backfill_days" | "timeout_s" | "enabled";
+const CONN_KEYS: readonly string[] = ["base_url", "auth_type", "username", "token", "ca_pem", "interval_min", "backfill_days", "timeout_s", "enabled"];
+const AUTH_OPTIONS: { value: AuthType; label: string }[] = [
+  { value: "pat", label: "Personal Access Token (Jira ≥ 8.14)" },
+  { value: "basic", label: "Tài khoản + mật khẩu (Jira cũ hơn 8.14)" },
+];
 
 /** "base_url: message" (the API's 422 text) → the field it is about, else none. */
 function connError(message: string): { key: ConnKey | null; text: string } {
@@ -137,6 +156,8 @@ function From({ source, env }: { source: ValueSource; env?: boolean }) {
 function Connection({ data, onDone }: { data: JiraView; onDone: (msg: string) => void }) {
   const c = data.connection;
   const [baseUrl, setBaseUrl] = useState(c.base_url ?? "");
+  const [authType, setAuthType] = useState<AuthType>(c.auth_type);
+  const [username, setUsername] = useState(c.username ?? "");
   const [token, setToken] = useState("");
   const [caPem, setCaPem] = useState("");
   const [enabled, setEnabled] = useState(c.enabled);
@@ -151,17 +172,27 @@ function Connection({ data, onDone }: { data: JiraView; onDone: (msg: string) =>
   const trimmedUrl = baseUrl.trim();
   const urlChanged = trimmedUrl.replace(/\/+$/, "") !== (c.base_url ?? "");
   const num = (v: string) => (v.trim() === "" ? NaN : Number(v));
+  const basic = authType === "basic";
+  // A password is sent as typed (spaces may be part of it); a PAT is trimmed.
+  const secret = basic ? token : token.trim();
+  const trimmedUser = username.trim();
+  const userChanged = basic && trimmedUser !== (c.username ?? "");
   const changes: Record<string, unknown> = {};
   if (urlChanged) changes.base_url = trimmedUrl;
-  if (token.trim()) changes.token = token.trim();
+  if (authType !== c.auth_type) changes.auth_type = authType;
+  if (userChanged) changes.username = trimmedUser;
+  if (secret) changes.token = secret;
   if (caPem.trim()) changes.ca_pem = caPem;
   if (enabled !== c.enabled) changes.enabled = enabled;
   if (num(intervalMin) !== c.interval_min) changes.interval_min = num(intervalMin);
   if (num(backfill) !== c.backfill_days) changes.backfill_days = num(backfill);
   if (num(timeoutS) !== c.timeout_s) changes.timeout_s = num(timeoutS);
   const dirty = Object.keys(changes).length > 0;
-  const fromWeb = c.base_url_source === "web" || c.token_source === "web" || c.ca_source === "web" || Object.values(c.sources).includes("web");
-  const canTest = Boolean((trimmedUrl || c.base_url) && (token.trim() || c.token_set));
+  const fromWeb =
+    c.base_url_source === "web" || c.auth_type_source === "web" || c.username_source === "web" || c.token_source === "web" || c.ca_source === "web" || Object.values(c.sources).includes("web");
+  const canTest = Boolean((trimmedUrl || c.base_url) && (secret || c.token_set) && (!basic || trimmedUser));
+  // What the secret is called on this screen.
+  const secretName = basic ? "mật khẩu" : "token";
 
   const fail = (e: unknown) => {
     const text = errText(e);
@@ -182,13 +213,17 @@ function Connection({ data, onDone }: { data: JiraView; onDone: (msg: string) =>
   const save = () =>
     void run("save", () => api.put("/dpi/jira/connection", changes), "Đã lưu kết nối Jira. Lịch đồng bộ dùng cấu hình mới trong vòng một phút.");
   const clearToken = () => {
-    if (!window.confirm(c.env.token ? "Xoá token đã lưu trên web? Sau đó dùng JIRA_TOKEN của biến môi trường." : "Xoá token đã lưu trên web? Jira sẽ ngừng đồng bộ cho tới khi nhập token mới."))
+    if (
+      !window.confirm(
+        c.env.token ? `Xoá ${secretName} đã lưu trên web? Sau đó dùng JIRA_TOKEN của biến môi trường.` : `Xoá ${secretName} đã lưu trên web? Jira sẽ ngừng đồng bộ cho tới khi nhập ${secretName} mới.`,
+      )
+    )
       return;
-    void run("save", () => api.put("/dpi/jira/connection", { token: "" }), "Đã xoá token Jira đã lưu.");
+    void run("save", () => api.put("/dpi/jira/connection", { token: "" }), `Đã xoá ${secretName} Jira đã lưu.`);
   };
   const clearCa = () => void run("save", () => api.put("/dpi/jira/connection", { ca_pem: "" }), "Đã xoá CA đã lưu.");
   const reset = () => {
-    if (!window.confirm("Xoá mọi giá trị kết nối Jira đã lưu trên web (URL, token, CA, chu kỳ…) và dùng lại biến môi trường JIRA_*?")) return;
+    if (!window.confirm("Xoá mọi giá trị kết nối Jira đã lưu trên web (URL, cách đăng nhập, token / mật khẩu, CA, chu kỳ…) và dùng lại biến môi trường JIRA_*?")) return;
     void run("reset", () => api.delete("/dpi/jira/connection"), "Đã xoá cấu hình Jira trên web, đang dùng biến môi trường.");
   };
   const test = async () => {
@@ -197,7 +232,9 @@ function Connection({ data, onDone }: { data: JiraView; onDone: (msg: string) =>
     setResult(null);
     const body: Record<string, string> = {};
     if (urlChanged && trimmedUrl) body.base_url = trimmedUrl;
-    if (token.trim()) body.token = token.trim();
+    if (authType !== c.auth_type) body.auth_type = authType;
+    if (userChanged && trimmedUser) body.username = trimmedUser;
+    if (secret) body.token = secret;
     if (caPem.trim()) body.ca_pem = caPem;
     try {
       setResult(await api.post<TestResult>("/dpi/jira/test", body));
@@ -214,9 +251,10 @@ function Connection({ data, onDone }: { data: JiraView; onDone: (msg: string) =>
     : c.token_source === "env"
       ? "Đang dùng biến môi trường JIRA_TOKEN"
       : c.token_other_server
-        ? "Chưa có token cho máy chủ này (token hiện có thuộc máy chủ khác, không được gửi sang đây)"
+        ? `Chưa có ${secretName} cho máy chủ này (${secretName} hiện có thuộc máy chủ khác, không được gửi sang đây)`
         : "Chưa có";
   const cleartext = /^http:\/\//i.test(trimmedUrl);
+  const oldJira = result !== null && result.pat_supported === false;
   const field = (label: string, f: FieldRef | null) => (
     <li>
       {label}:{" "}
@@ -247,13 +285,20 @@ function Connection({ data, onDone }: { data: JiraView; onDone: (msg: string) =>
       subtitle={
         c.configured
           ? `Chỉ đọc. Đồng bộ mỗi ${c.interval_min} phút. Tài khoản Jira đã nối người dùng: ${data.accounts.linked} / ${data.accounts.total}.`
-          : "Jira Data Center, chỉ đọc: một tài khoản dịch vụ có quyền Browse projects và Personal Access Token của nó."
+          : "Jira Data Center / Server, chỉ đọc: một tài khoản dịch vụ có quyền Browse projects, đăng nhập bằng Personal Access Token (Jira ≥ 8.14) hoặc tài khoản + mật khẩu."
       }
       actions={c.configured ? <Pill tone="good">đã cấu hình</Pill> : !c.enabled && c.base_url && c.token_set ? <Pill tone="warn">đang tắt</Pill> : <Pill>chưa cấu hình</Pill>}
     >
+      {data.auth_failure && (
+        <Alert tone="error">
+          Lần đồng bộ gần nhất ({relative(data.auth_failure.at)}) bị Jira từ chối đăng nhập: {data.auth_failure.error}. Đồng bộ tự động đang tạm dừng để không khoá tài khoản dịch vụ. Sửa
+          thông tin đăng nhập rồi Lưu; nếu Jira đã bật CAPTCHA, đăng nhập web bằng tài khoản dịch vụ để giải CAPTCHA rồi bấm Kiểm tra kết nối (hoặc Đồng bộ ngay).
+        </Alert>
+      )}
       {c.token_unreadable && (
         <Alert tone="warning">
-          Token đã lưu trên web không giải mã được (APP_ENCRYPTION_KEY đã đổi?). Nhập lại token rồi Lưu{c.env.token ? "; trong lúc đó dùng JIRA_TOKEN nếu cùng máy chủ" : ""}.
+          {basic ? "Mật khẩu" : "Token"} đã lưu trên web không giải mã được (APP_ENCRYPTION_KEY đã đổi?). Nhập lại {secretName} rồi Lưu
+          {c.env.token ? "; trong lúc đó dùng JIRA_TOKEN nếu cùng máy chủ" : ""}.
         </Alert>
       )}
       <form
@@ -268,31 +313,66 @@ function Connection({ data, onDone }: { data: JiraView; onDone: (msg: string) =>
               URL Jira <From source={c.base_url_source} env={c.env.base_url} />
             </span>
             <input type="url" inputMode="url" autoComplete="off" spellCheck={false} placeholder="https://jira.congty.vn" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} aria-invalid={!!fe("base_url")} />
-            <span className="muted small">Địa chỉ gốc, có thể kèm context path (ví dụ /jira). Token chỉ gửi tới máy chủ nó được nhập cho: đổi máy chủ thì nhập token mới.</span>
-            {cleartext && <span className="tone-warn small">http:// không mã hoá: token đi qua mạng dạng rõ. Nên dùng https://.</span>}
+            <span className="muted small">Địa chỉ gốc, có thể kèm context path (ví dụ /jira). {basic ? "Mật khẩu" : "Token"} chỉ gửi tới máy chủ nó được nhập cho: đổi máy chủ thì nhập lại.</span>
+            {cleartext &&
+              (basic ? (
+                <span className="tone-bad small">http:// không mã hoá: tài khoản và mật khẩu đi qua mạng dạng rõ, ai nghe lén được là đăng nhập được. Chỉ dùng https://.</span>
+              ) : (
+                <span className="tone-warn small">http:// không mã hoá: token đi qua mạng dạng rõ. Nên dùng https://.</span>
+              ))}
             <FieldError text={fe("base_url")} />
           </label>
+          <div className="jira-field jira-auth">
+            <span>
+              Cách đăng nhập <From source={c.auth_type_source === "web" ? "web" : null} />
+            </span>
+            <Segmented<AuthType> value={authType} onChange={setAuthType} options={AUTH_OPTIONS} label="Cách đăng nhập Jira" />
+            <span className="muted small">
+              {basic
+                ? "Cho Jira Server/Data Center cũ hơn 8.14 (chưa có PAT). Dùng tài khoản dịch vụ riêng chỉ có quyền Browse projects, mật khẩu mạnh không dùng ở nơi khác."
+                : "Jira 8.14 trở lên. Xem phiên bản ở <URL Jira>/rest/api/2/serverInfo."}
+            </span>
+            <FieldError text={fe("auth_type")} />
+          </div>
+          {basic && (
+            <label className="jira-field">
+              <span>
+                Username <From source={c.username_source} env={c.env.username} />
+              </span>
+              <input
+                type="text"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="codepulse-bot"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                aria-invalid={!!fe("username")}
+              />
+              <span className="muted small">Tên đăng nhập của tài khoản dịch vụ{c.username_source === "env" ? " (đang dùng JIRA_USERNAME)" : ""}.</span>
+              <FieldError text={fe("username")} />
+            </label>
+          )}
           <label className="jira-field">
             <span>
-              Personal Access Token <From source={c.token_source} env={c.env.token} />
+              {basic ? "Mật khẩu" : "Personal Access Token"} <From source={c.token_source} env={c.env.token} />
             </span>
             <input
               type="password"
               autoComplete="new-password"
               spellCheck={false}
-              placeholder={c.token_set ? "Để trống: giữ token hiện tại" : "Dán PAT của tài khoản dịch vụ"}
+              placeholder={c.token_set ? `Để trống: giữ ${secretName} hiện tại` : basic ? "Mật khẩu của tài khoản dịch vụ" : "Dán PAT của tài khoản dịch vụ"}
               value={token}
               onChange={(e) => setToken(e.target.value)}
               aria-invalid={!!fe("token")}
               aria-describedby="jira-token-state"
             />
             <span id="jira-token-state" className="muted small">
-              {tokenState}. Token được mã hoá khi lưu và không bao giờ hiện lại.
+              {tokenState}. {basic ? "Mật khẩu" : "Token"} được mã hoá khi lưu và không bao giờ hiện lại.
             </span>
             {c.token_source === "web" && (
               <span>
                 <button type="button" className="ghost sm" disabled={!!busy} onClick={clearToken}>
-                  Xoá token đã lưu
+                  Xoá {secretName} đã lưu
                 </button>
               </span>
             )}
@@ -336,10 +416,17 @@ function Connection({ data, onDone }: { data: JiraView; onDone: (msg: string) =>
 
         {error && error.key === null && <Alert tone="error">Lỗi: {error.text}</Alert>}
         {testError && <Alert tone="error">Kết nối lỗi: {testError}</Alert>}
+        {result && oldJira && authType === "pat" && (
+          <Alert tone="warning">
+            Jira {result.version} chưa có Personal Access Token (có từ 8.14): chọn “Tài khoản + mật khẩu” và nhập tài khoản dịch vụ.
+          </Alert>
+        )}
         {result && (
           <Alert tone="success">
             <div>
               Kết nối được: {result.server_title ?? "Jira"} · phiên bản {result.version ?? "—"}
+              {result.deployment_type ? ` (${result.deployment_type})` : ""}
+              {result.user ? ` · đăng nhập là ${result.user}` : ""}
               {dirty ? " (chưa lưu)" : ""}
             </div>
             <ul className="small" style={{ margin: "4px 0 0" }}>
@@ -356,7 +443,7 @@ function Connection({ data, onDone }: { data: JiraView; onDone: (msg: string) =>
             </button>
           )}
           <span className="dpi-spacer" />
-          <button type="button" className="sm" disabled={!!busy || !canTest} onClick={() => void test()} title={canTest ? "Thử giá trị đang nhập, chưa lưu" : "Nhập URL và token trước"}>
+          <button type="button" className="sm" disabled={!!busy || !canTest} onClick={() => void test()} title={canTest ? "Thử giá trị đang nhập, chưa lưu" : basic ? "Nhập URL, username và mật khẩu trước" : "Nhập URL và token trước"}>
             {busy === "test" ? "Đang kiểm tra…" : "Kiểm tra kết nối"}
           </button>
           <button type="submit" className={dirty ? "primary sm" : "sm"} disabled={!dirty || !!busy}>

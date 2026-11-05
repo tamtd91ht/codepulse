@@ -245,3 +245,29 @@ def test_custom_fields_are_found_by_name_case_insensitively() -> None:
 def test_unresolved_custom_fields_are_ignored() -> None:
     r = map_issue(issue(customfield_10002=5), JiraMapping(), FieldIds(), BASE, 7).row
     assert r["complexity"] is None and r["story_points"] is None
+
+
+def test_an_issue_as_jira_server_8_0_returns_it() -> None:
+    """Jira Server 8.0 (no PAT, docs/specs/27 §2): no statuscategorychangedate, the sprint as a
+    string with a goal, an assignee whose key is the username and whose email is hidden."""
+    sprint = (
+        "com.atlassian.greenhopper.service.sprint.Sprint@6f0f5f[id=12,rapidViewId=3,"
+        "state=CLOSED,name=Sprint 12,goal=Login, OTP,startDate=2019-03-01T09:00:00.000+07:00,"
+        "endDate=2019-03-14T17:00:00.000+07:00,completeDate=<null>,sequence=12]"
+    )
+    raw = issue(
+        status={"name": "Done", "statusCategory": {"key": "done"}},
+        customfield_10004=[sprint],
+        assignee={"key": "an.nguyen", "name": "an.nguyen", "displayName": "Nguyễn An"},
+    )
+    mapped = map_issue(raw, JiraMapping(), IDS, BASE, 7)
+    assert mapped.row["closed_at_src"] == datetime(
+        2026, 10, 5, 10, tzinfo=timezone(timedelta(hours=7))
+    )
+    assert (mapped.row["milestone"], mapped.row["due_date"]) == ("Sprint 12", date(2019, 3, 14))
+    assert mapped.assignee is not None
+    assert (mapped.assignee.key, mapped.assignee.name, mapped.assignee.email) == (
+        "an.nguyen",
+        "an.nguyen",
+        None,
+    )

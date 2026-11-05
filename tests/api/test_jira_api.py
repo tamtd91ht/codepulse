@@ -14,7 +14,7 @@ from app.api.main import app
 from app.api.routers.jira import get_jira_factory
 from app.collector.sync import SYNC_JOB_TIMEOUT
 from app.config import Settings
-from app.jira.client import JiraError
+from app.jira.client import JiraAuthError, JiraError
 from app.jira.settings import (
     CONNECTION_KEY,
     TOKEN_SECRET,
@@ -41,14 +41,29 @@ TOKEN = "pat-" + "fake-" + "secret"
 
 
 class FakeApi:
-    def __init__(self, fail: bool = False) -> None:
+    def __init__(
+        self, fail: bool = False, version: str = "9.12.1", refuse_login: bool = False
+    ) -> None:
         self.fail = fail
+        self.version = version
+        self.refuse_login = refuse_login
         self.closed = False
 
     def server_info(self) -> dict[str, Any]:
         if self.fail:
             raise JiraError(401, "GET /serverInfo -> HTTP 401")
-        return {"version": "9.12.1", "serverTitle": "Jira Công ty"}
+        numbers = [int(n) for n in self.version.split(".")]
+        return {
+            "version": self.version,
+            "versionNumbers": numbers,
+            "serverTitle": "Jira Công ty",
+            "deploymentType": "Server",
+        }
+
+    def myself(self) -> dict[str, Any]:
+        if self.refuse_login:
+            raise JiraAuthError(401, "GET /myself -> HTTP 401: Jira từ chối token")
+        return {"name": "codepulse-bot", "key": "JIRAUSER10000"}
 
     def fields(self) -> list[dict[str, Any]]:
         return [
@@ -181,6 +196,10 @@ def test_connection_test_and_remote_projects(
         "ok": True,
         "version": "9.12.1",
         "server_title": "Jira Công ty",
+        "deployment_type": "Server",
+        "pat_supported": True,
+        "auth_type": "pat",
+        "user": "codepulse-bot",
         "fields": {
             "story_points": {"id": "customfield_10002", "name": "Story Points"},
             "sprint": {"id": "customfield_10004", "name": "Sprint"},
@@ -302,6 +321,7 @@ def test_sync_now_queues_the_job(
     assert body["queued"] is True and body["job_id"].startswith("jira-sync")
     assert queue.jobs[0][0] == "app.jira.sync.sync_all_job"
     assert queue.jobs[0][2]["job_id"] == body["job_id"]
+    assert queue.jobs[0][2]["manual"] is True  # runs even while a refused login pauses
     assert db_session.scalars(select(AuditLog).where(AuditLog.action == "dpi.jira.sync")).one()
 
 
@@ -329,6 +349,10 @@ def test_overview_connection_from_env(client: TestClient, world: World, as_user:
     assert body["connection"] == {
         "base_url": "https://jira.example.vn",
         "base_url_source": "env",
+        "auth_type": "pat",
+        "auth_type_source": "env",
+        "username": None,
+        "username_source": None,
         "token_set": True,
         "token_source": "env",
         "token_updated_at": None,
@@ -347,7 +371,13 @@ def test_overview_connection_from_env(client: TestClient, world: World, as_user:
             "timeout_s": "env",
             "enabled": "env",
         },
-        "env": {"base_url": True, "token": True, "ca_bundle": False},
+        "env": {
+            "base_url": True,
+            "token": True,
+            "ca_bundle": False,
+            "auth_type": False,
+            "username": False,
+        },
     }
 
 
@@ -606,3 +636,167 @@ def test_loopback_and_cleartext(client: TestClient, world: World, as_user: Any) 
         json={"base_url": "http://jira.example.vn", "token": WEB_TOKEN},
     )
     assert plain.status_code == 200  # allowed; the screen warns the PAT travels in cleartext
+
+
+# -- basic auth: Jira Server older than 8.14 has no PAT (docs/specs/27 §2, §13) -----------------
+
+PASSWORD = "mật " + "khẩu-" + "fake"  # fake, built by concatenation
+
+
+def test_basic_auth_put_get_and_audit(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    db_session: Session,
+    made: list[JiraConnection],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    admin = as_user(world.admin)
+    caplog.set_level(logging.DEBUG)
+    # Basic without a username: refused, nothing saved.
+    refused = client.put(
+        f"{API}/connection", headers=admin, json={"auth_type": "basic", "token": PASSWORD}
+    )
+    assert refused.status_code == 422 and "username" in refused.json()["detail"]
+    assert db_session.get(AppSetting, CONNECTION_KEY) is None
+    assert db_session.get(StoredSecret, TOKEN_SECRET) is None
+    body = {
+        "base_url": "https://manage.congty.vn",
+        "auth_type": "basic",
+        "username": "codepulse-bot",
+        "token": PASSWORD,
+    }
+    response = client.put(f"{API}/connection", headers=admin, json=body)
+    assert response.status_code == 200, response.text
+    conn = response.json()["connection"]
+    assert (conn["auth_type"], conn["auth_type_source"]) == ("basic", "web")
+    assert (conn["username"], conn["username_source"]) == ("codepulse-bot", "web")
+    assert conn["token_set"] and conn["token_source"] == "web" and conn["configured"]
+    row = db_session.get(StoredSecret, TOKEN_SECRET)
+    assert row is not None and BOX.decrypt(row.value_encrypted) == PASSWORD
+    audit = db_session.scalars(
+        select(AuditLog).where(AuditLog.action == "dpi.jira.connection")
+    ).one()
+    assert audit.details is not None
+    assert audit.details["changed"] == ["auth_type", "base_url", "token", "username"]
+    assert audit.details["username"] == "codepulse-bot"
+    assert audit.details["auth_type"] == "basic"
+    overview = client.get(API, headers=admin).json()
+    assert overview["connection"]["auth_type"] == "basic" and overview["auth_failure"] is None
+    for text in (response.text, str(overview), str(audit.details), caplog.text):
+        assert PASSWORD not in text
+    # The calls use it.
+    assert client.get(f"{API}/remote-projects", headers=admin).status_code == 200
+    assert made[-1].auth_type == "basic" and made[-1].username == "codepulse-bot"
+    assert made[-1].token == PASSWORD
+    # Another username on the same server: the password stays.
+    same = client.put(f"{API}/connection", headers=admin, json={"username": "bot2"})
+    assert same.status_code == 200 and same.json()["connection"]["token_source"] == "web"
+    # Back to PAT on the same server: the saved password is not a PAT, so one must be typed.
+    not_pat = client.put(f"{API}/connection", headers=admin, json={"auth_type": "pat"})
+    assert not_pat.status_code == 422 and "PAT" in not_pat.json()["detail"]
+    pat = client.put(
+        f"{API}/connection", headers=admin, json={"auth_type": "pat", "token": WEB_TOKEN}
+    )
+    assert pat.status_code == 200 and pat.json()["connection"]["auth_type"] == "pat"
+    # Another server with basic: the secret must be typed again.
+    moved = client.put(
+        f"{API}/connection",
+        headers=admin,
+        json={"base_url": "https://evil.example.com", "auth_type": "basic"},
+    )
+    assert moved.status_code == 422 and "máy chủ" in moved.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ({"auth_type": "oauth"}, "auth_type"),
+        ({"username": "a:b"}, "username"),
+        ({"auth_type": "basic", "username": "bot", "token": "a\nb"}, "mật khẩu"),
+        ({"auth_type": "basic", "username": "bot", "token": "x" * 1001}, "mật khẩu"),
+    ],
+)
+def test_basic_auth_checks(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    db_session: Session,
+    body: dict[str, Any],
+    message: str,
+) -> None:
+    response = client.put(f"{API}/connection", headers=as_user(world.admin), json=body)
+    assert response.status_code == 422
+    assert message in str(response.json()["detail"])
+    assert db_session.get(AppSetting, CONNECTION_KEY) is None
+
+
+def test_test_endpoint_with_basic_auth_and_an_old_jira(
+    client: TestClient, world: World, as_user: Any, made: list[JiraConnection]
+) -> None:
+    admin = as_user(world.admin)
+    typed = {"auth_type": "basic", "username": "codepulse-bot", "token": PASSWORD}
+    response = client.post(f"{API}/test", headers=admin, json=typed)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["auth_type"] == "basic" and body["user"] == "codepulse-bot"
+    assert made[-1].auth_type == "basic" and made[-1].token == PASSWORD
+    assert PASSWORD not in response.text
+    missing = client.post(f"{API}/test", headers=admin, json={"auth_type": "basic"})
+    assert missing.status_code == 422 and "username" in missing.json()["detail"]
+
+
+def test_old_jira_with_a_pat_says_to_use_basic_auth(
+    client: TestClient, world: World, as_user: Any, jira: dict[str, FakeApi]
+) -> None:
+    admin = as_user(world.admin)
+    jira["api"] = FakeApi(version="8.0.2")
+    ok = client.post(f"{API}/test", headers=admin).json()
+    assert ok["version"] == "8.0.2" and ok["pat_supported"] is False
+    jira["api"] = FakeApi(version="8.0.2", refuse_login=True)
+    failed = client.post(f"{API}/test", headers=admin)
+    assert failed.status_code == 502
+    assert "8.0.2" in failed.json()["detail"] and "Tài khoản + mật khẩu" in failed.json()["detail"]
+
+
+def test_a_refused_login_shows_and_a_passing_test_clears_it(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    db_session: Session,
+    settings: Settings,
+    jira: dict[str, FakeApi],
+) -> None:
+    from app.jira.settings import connection, record_auth_failure
+
+    admin = as_user(world.admin)
+    conn = connection(db_session, settings, BOX)
+    record_auth_failure(db_session, "GET /field -> HTTP 401: CAPTCHA", conn, BOX)
+    db_session.flush()
+    shown = client.get(API, headers=admin).json()["auth_failure"]
+    assert shown is not None and "CAPTCHA" in shown["error"] and shown["at"]
+    # A test of other values typed does not resume the schedule, one of the saved ones does.
+    assert client.post(f"{API}/test", headers=admin, json={"token": WEB_TOKEN}).status_code == 200
+    assert client.get(API, headers=admin).json()["auth_failure"] is not None
+    assert client.post(f"{API}/test", headers=admin, json={}).status_code == 200
+    assert client.get(API, headers=admin).json()["auth_failure"] is None
+    # A credentials change resumes it too; a change of the interval does not.
+    record_auth_failure(db_session, "HTTP 401", conn, BOX)
+    db_session.flush()
+    client.put(f"{API}/connection", headers=admin, json={"interval_min": 30})
+    assert client.get(API, headers=admin).json()["auth_failure"] is not None
+    client.put(f"{API}/connection", headers=admin, json={"token": WEB_TOKEN})
+    assert client.get(API, headers=admin).json()["auth_failure"] is None
+
+
+def test_switching_off_is_allowed_whatever_the_login(
+    client: TestClient, world: World, as_user: Any, settings: Settings
+) -> None:
+    """JIRA_AUTH_TYPE=basic without JIRA_USERNAME: a login change is refused, switching the
+    integration off is not."""
+    settings.jira_auth_type = "basic"
+    admin = as_user(world.admin)
+    off = client.put(f"{API}/connection", headers=admin, json={"enabled": False})
+    assert off.status_code == 200 and off.json()["connection"]["enabled"] is False
+    login = client.put(f"{API}/connection", headers=admin, json={"token": TOKEN})
+    assert login.status_code == 422 and "username" in login.json()["detail"]

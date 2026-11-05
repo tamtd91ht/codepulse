@@ -1,7 +1,10 @@
-"""Jira Data Center REST v2 client, read only (docs/specs/27 §2): Bearer PAT, timeout, retry
-with backoff on 5xx and network errors, Retry-After of a 429 (at most 30 s), at least 100 ms
-between two calls. The token is never logged."""
+"""Jira Data Center / Server REST v2 client, read only (docs/specs/27 §2): Bearer PAT (Jira
+8.14+) or basic auth with a service account (older Jira), timeout, retry with backoff on 5xx
+and network errors, Retry-After of a 429 (at most 30 s), at least 100 ms between two calls. A
+refused login (401, or a 403 Seraph denies) is never retried: Jira Server locks an account behind
+a CAPTCHA after a few failed logins. The token and the password are never logged."""
 
+import base64
 import logging
 import random
 import ssl
@@ -11,7 +14,7 @@ from typing import Any
 
 import httpx
 
-from app.jira.settings import JiraConnection
+from app.jira.settings import AuthType, JiraConnection
 from app.ratelimit import RateLimiter
 
 log = logging.getLogger(__name__)
@@ -20,6 +23,19 @@ RETRY_STATUS = {429, 500, 502, 503, 504}
 PAGE_SIZE = 100
 MAX_RETRY_AFTER_S = 30.0
 MIN_INTERVAL_S = 0.1
+# Seraph (Jira Server's login filter) says why a login was refused.
+SERAPH_REASON = "X-Seraph-LoginReason"
+DENIED_REASON = "X-Authentication-Denied-Reason"  # e.g. CAPTCHA_CHALLENGE
+SERAPH_DENIED = ("AUTHENTICATION_DENIED", "AUTHENTICATED_FAILED")
+LOGIN_DENIED = (
+    "sai tài khoản/mật khẩu, hoặc Jira đã bật CAPTCHA sau nhiều lần đăng nhập sai: đăng nhập web"
+    " bằng tài khoản dịch vụ để giải CAPTCHA rồi thử lại"
+)
+PAT_REFUSED = (
+    "Jira từ chối token: Personal Access Token sai, hết hạn hoặc đã bị thu hồi (Jira cũ hơn"
+    " 8.14 không có PAT: chọn Tài khoản + mật khẩu)"
+)
+BASIC_REFUSED = "Jira từ chối đăng nhập: " + LOGIN_DENIED
 
 
 class JiraError(Exception):
@@ -27,6 +43,19 @@ class JiraError(Exception):
         super().__init__(message)
         self.status_code = status_code
         self.message = message
+
+
+class JiraAuthError(JiraError):
+    """Jira refused the credentials: retrying would only count more failed logins."""
+
+
+def auth_header(auth_type: AuthType, token: str, username: str = "") -> str:
+    """`Bearer <PAT>`, or `Basic base64(username:password)` (UTF-8, so a non-ASCII password
+    works)."""
+    if auth_type == "basic":
+        pair = f"{username}:{token}".encode()
+        return "Basic " + base64.b64encode(pair).decode("ascii")
+    return f"Bearer {token}"
 
 
 class JiraClient:
@@ -40,10 +69,16 @@ class JiraClient:
         max_retries: int = 3,
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        auth_type: AuthType = "pat",
+        username: str = "",
     ) -> None:
+        self._auth_type = auth_type
         self._http = httpx.Client(
             base_url=base_url.rstrip("/") + "/rest/api/2",
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            headers={
+                "Authorization": auth_header(auth_type, token, username),
+                "Accept": "application/json",
+            },
             timeout=timeout,
             verify=verify,
             transport=transport,
@@ -60,6 +95,8 @@ class JiraClient:
             connection.token,
             timeout=connection.timeout_s,
             verify=connection.verify(),
+            auth_type=connection.auth_type,
+            username=connection.username,
         )
 
     def close(self) -> None:
@@ -96,6 +133,11 @@ class JiraClient:
                 )
                 self._sleep(delay)
                 continue
+            if refused := self._refused(response):
+                raise JiraAuthError(
+                    response.status_code,
+                    f"{method} {path} -> HTTP {response.status_code}: {refused}",
+                )
             if response.is_error:
                 raise JiraError(
                     response.status_code,
@@ -106,6 +148,19 @@ class JiraClient:
             except ValueError as exc:
                 raise JiraError(response.status_code, f"{method} {path}: not JSON") from exc
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _refused(self, response: httpx.Response) -> str:
+        """Why Jira refused the login ("" when it did not): any 401, or a 403 whose Seraph
+        headers say the login was denied (wrong password, CAPTCHA)."""
+        seraph = response.headers.get(SERAPH_REASON, "").upper()
+        denied = any(r in seraph for r in SERAPH_DENIED) or bool(
+            response.headers.get(DENIED_REASON)
+        )
+        if response.status_code not in (401, 403) or (response.status_code == 403 and not denied):
+            return ""
+        if denied:
+            return "Jira từ chối đăng nhập: " + LOGIN_DENIED
+        return BASIC_REFUSED if self._auth_type == "basic" else PAT_REFUSED
 
     def _delay(self, attempt: int, response: httpx.Response) -> float:
         if response.status_code == 429:
@@ -125,6 +180,10 @@ class JiraClient:
 
     def server_info(self) -> dict[str, Any]:
         return dict(self.request("GET", "/serverInfo") or {})
+
+    def myself(self) -> dict[str, Any]:
+        """The account the credentials log in as (serverInfo answers anonymous callers too)."""
+        return dict(self.request("GET", "/myself") or {})
 
     def fields(self) -> list[dict[str, Any]]:
         return [f for f in self.request("GET", "/field") or [] if isinstance(f, dict)]
