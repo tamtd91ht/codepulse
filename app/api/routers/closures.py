@@ -33,7 +33,14 @@ from sqlalchemy import ColumnElement, String, and_, cast, func, or_, select, tru
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
-from app.api.access import covers_work, review_repo, sees_work, team_reach, whole_projects
+from app.api.access import (
+    covers_work,
+    review_repo,
+    sees_work,
+    team_reach,
+    whole_projects,
+    work_scope,
+)
 from app.api.audit import audit
 from app.api.deps import get_queue, get_session
 from app.api.routers.reviews import _visible_review
@@ -218,6 +225,17 @@ def _managed_members(principal: Principal) -> set[int]:
     team they manage (sub-teams included) or lead (the same people who decide disputes, user
     request 2026-11-03). Admins: everyone, see `_may_decide`."""
     return team_reach(principal, "finding.close_decide")
+
+
+def _decides_where(principal: Principal) -> list[ColumnElement[bool]]:
+    """`_may_decide` as filters on `reviews` (the "Chờ duyệt" tab and its count): every scope
+    of `finding.close_decide` (team, a dự án one manages, every dự án one sees), not only the
+    teams one leads or manages, and never one's own work."""
+    where: list[ColumnElement[bool]] = [Review.author_user_id != principal.user_id]
+    scope = work_scope(principal, "finding.close_decide")
+    if scope is not None:
+        where.append(scope)
+    return where
 
 
 def _may_decide(principal: Principal, author_id: int | None, bp_id: int | None) -> bool:
@@ -1102,10 +1120,8 @@ def list_closures(
             FindingClosure.kind == "request",
             FindingClosure.status.in_(TO_DECIDE),
             ReviewFinding.status == "open",  # closed another way meanwhile: nothing to decide
-            Review.author_user_id != principal.user_id,
+            *_decides_where(principal),
         )
-        if not principal.is_admin:
-            query = query.where(Review.author_user_id.in_(_managed_members(principal)))
     if status:
         query = query.where(FindingClosure.status.in_(status))
     if kind:
@@ -1206,14 +1222,12 @@ def closure_facets(principal: ViewPrincipal, session: SessionDep) -> dict[str, A
         .where(Project.id.in_(base.with_only_columns(repo.c.project_id)))
         .order_by(Project.path_with_namespace)
     ).all()
-    managed = _managed_members(principal)
     todo = select(func.count()).select_from(
         base.where(
             FindingClosure.kind == "request",
             FindingClosure.status.in_(TO_DECIDE),
             ReviewFinding.status == "open",
-            Review.author_user_id != principal.user_id,
-            *([] if principal.is_admin else [Review.author_user_id.in_(managed)]),
+            *_decides_where(principal),
         ).subquery()
     )
     projects = {(bp_id, bp_name) for _, _, bp_id, bp_name in repos if bp_id is not None}
@@ -1224,5 +1238,7 @@ def closure_facets(principal: ViewPrincipal, session: SessionDep) -> dict[str, A
             {"id": i, "name": n} for i, n in sorted(projects, key=lambda x: x[1])
         ],
         "todo": session.scalar(todo) or 0,
-        "can_decide": principal.is_admin or bool(managed),
+        "can_decide": principal.is_admin
+        or bool(_managed_members(principal))
+        or bool(whole_projects(principal, "finding.close_decide")),
     }

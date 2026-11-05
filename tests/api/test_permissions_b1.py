@@ -182,3 +182,31 @@ def test_closing_by_hand_can_be_given_and_a_project_manager_still_decides_nothin
         client, own_finding(db_session, world, world.binh).id, as_user(world.binh)
     )
     assert decide(client, dispute_id, as_user(world.outsider)).status_code == 403
+
+
+def test_a_decider_by_dự_án_scope_sees_the_request_in_the_todo(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    """Regression: the "Chờ duyệt" tab and its count only looked at the teams one leads or
+    manages, so a request (from the MCP server or the web) that a decider holding
+    `finding.close_decide` at "project"/"all" may decide showed in "Lịch sử" only."""
+    made = client.post(
+        f"/api/v1/findings/{world.an_finding.id}/close-requests",
+        json={"commits": ["d" * 40]},
+        headers=as_user(world.an),
+    )
+    assert made.status_code == 201, made.text
+    bp_id = world.project.business_project_id
+    for scope, role in (("all", "view"), ("project", "manage")):
+        decider = User(full_name=f"Duyệt {scope}", primary_email=f"duyet-{scope}@x.vn")
+        db_session.add(decider)
+        db_session.flush()
+        grant(db_session, decider, bp_id, role)
+        give(db_session, decider, {"finding.close_decide": scope, "review.view": "all"})
+        todo = client.get("/api/v1/close-requests?view=todo", headers=as_user(decider)).json()
+        assert [(i["id"], i["can_decide"]) for i in todo["items"]] == [(made.json()["id"], True)]
+        facets = client.get("/api/v1/close-requests/facets", headers=as_user(decider)).json()
+        assert (facets["todo"], facets["can_decide"]) == (1, True)
+    # The author never sees their own request as one to decide.
+    own = client.get("/api/v1/close-requests?view=todo", headers=as_user(world.an)).json()
+    assert own["items"] == []
