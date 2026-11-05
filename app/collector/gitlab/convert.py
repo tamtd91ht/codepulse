@@ -22,6 +22,8 @@ from app.collector.gitlab.extract import (
     review_rounds,
 )
 from app.dpi.labels import label_fields
+from app.jira.links import link_merge_requests
+from app.jira.settings import JIRA_ID_OFFSET
 from app.models import (
     Account,
     Commit,
@@ -157,6 +159,7 @@ class Converter:
             self.commit(commit)
         counts["commits"] = len(data.commits)
 
+        converted_mrs: list[int] = []
         for mr in data.merge_requests.values():
             additions = deletions = None
             if mr.files is not None:
@@ -182,9 +185,11 @@ class Converter:
                 "labels": mr.labels,
                 "tasks_total": mr.tasks_total,
                 "tasks_done": mr.tasks_done,
+                "jira_keys": mr.jira_keys,
             }
             stmt = self._upsert(MergeRequest, values, ["project_id", "iid"])
             mr_id = self._session.execute(stmt.returning(MergeRequest.id)).scalar_one()
+            converted_mrs.append(mr_id)
 
             for commit in mr.commits:
                 self.commit(data.commits.get(commit.sha, commit), only_if_missing=True)
@@ -254,6 +259,9 @@ class Converter:
         counts["incidents"] = len(data.incidents)
         self._issues(data)
         counts["issues"] = len(data.issues)
+        # docs/specs/27 §8: after the GitLab links of these MRs were re-derived (that step only
+        # touches GitLab issues' links), link them to the Jira issues their keys name.
+        counts["jira_links"] = link_merge_requests(self._session, converted_mrs)
         self._session.flush()
         return result
 
@@ -328,7 +336,9 @@ class Converter:
             )
             self._session.execute(
                 delete(IssueMrLink).where(
-                    IssueMrLink.mr_id.in_(stale_mrs), IssueMrLink.source != "closes"
+                    IssueMrLink.mr_id.in_(stale_mrs),
+                    IssueMrLink.source != "closes",
+                    IssueMrLink.issue_id < JIRA_ID_OFFSET,  # GitLab issues' links only
                 )
             )
         if not wanted:

@@ -326,9 +326,7 @@ def test_export_has_both_sheets(
     assert res.headers["content-type"].startswith(
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-    assert (
-        "codepulse-tich-hop-mcp-20261001-20261031.xlsx" in res.headers["content-disposition"]
-    )
+    assert "codepulse-tich-hop-mcp-20261001-20261031.xlsx" in res.headers["content-disposition"]
     wb = load_workbook(io.BytesIO(res.content))
     assert wb.sheetnames == ["Theo thành viên", "Yêu cầu đóng qua MCP"]
     members = [r for r in wb["Theo thành viên"].iter_rows(values_only=True) if r and r[0]]

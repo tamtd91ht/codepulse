@@ -63,16 +63,38 @@ def suggest(
     session: Session, defect: ProdDefect, issue: Issue, authors: Authors | None = None
 ) -> list[dict[str, Any]]:
     """Candidates for the root cause: commits a revert near the bug undid, and MRs merged in
-    the LOOKBACK before the bug that touched the files its fix changed."""
+    the LOOKBACK before the bug that touched the files its fix changed. A Jira issue has no repo
+    (docs/specs/27): the repos are those of the MRs that close it, none linked: no candidates."""
     authors = authors or Authors(session)
     out: list[dict[str, Any]] = []
     created = issue.created_at_src
     if created is None:
         return out
-    # Reverts in the repo around the report.
+    # The fix: the MRs that close the issue.
+    fixes = list(
+        session.scalars(
+            select(IssueMrLink.mr_id).where(
+                IssueMrLink.issue_id == issue.id, IssueMrLink.source == "closes"
+            )
+        )
+    )
+    repos: set[int] = set()
+    if issue.project_id is not None:
+        repos.add(issue.project_id)
+    elif fixes:
+        repos = {
+            int(pid)
+            for pid in session.scalars(
+                select(MergeRequest.project_id).where(MergeRequest.id.in_(fixes)).distinct()
+            )
+            if pid is not None
+        }
+    if not repos:
+        return out
+    # Reverts in the repo(s) around the report.
     for sha, message in session.execute(
         select(Commit.sha, Commit.message).where(
-            Commit.project_id == issue.project_id,
+            Commit.project_id.in_(repos),
             Commit.authored_at >= created - LOOKBACK,
             Commit.authored_at <= created + LOOKBACK,
             Commit.message.ilike("%This reverts commit%"),
@@ -91,13 +113,6 @@ def suggest(
             }
         )
     # The fix's files: those of the MRs that close the issue.
-    fixes = list(
-        session.scalars(
-            select(IssueMrLink.mr_id).where(
-                IssueMrLink.issue_id == issue.id, IssueMrLink.source == "closes"
-            )
-        )
-    )
     files = set(
         session.scalars(
             select(CommitFile.path)
@@ -111,7 +126,7 @@ def suggest(
             .join(MrCommit, MrCommit.mr_id == MergeRequest.id)
             .join(CommitFile, CommitFile.sha == MrCommit.sha)
             .where(
-                MergeRequest.project_id == issue.project_id,
+                MergeRequest.project_id.in_(repos),
                 MergeRequest.state == "merged",
                 MergeRequest.merged_at >= created - LOOKBACK,
                 MergeRequest.merged_at <= created,

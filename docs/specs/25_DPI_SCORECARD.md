@@ -22,7 +22,7 @@
 | P4 | R1 Executive, R2 Scorecard + drill-down, R6 Growth, escaped defects + RCA, phân loại comment review (D1), AI nháp nhận xét | — |
 
 - **[Quyết định]** P1.5 (SonarQube / Code Quality report) **chưa làm**: plan ghi "tuỳ chọn", Sonar Community không phân tích MR; B1 dùng điểm review AI + pipeline + quality gate do CodePulse tính (§3). Ghi vào IDEAS.md.
-- **[Quyết định]** Jira: chưa làm adapter; nguồn task là **GitLab Issues** (§6.3). Collector issue tách lớp `IssueSource` để thêm Jira sau.
+- **[Đã chốt 2026-11-05]** Jira: nguồn task là **Jira Data Center** hoặc **GitLab Issues**, Admin chọn (§6.3). Chi tiết ở `27_JIRA.md`.
 
 ## 1. Mô hình điểm
 - **Rubric** (`dpi_rubrics`, có phiên bản, bản mặc định `dpi-v1`): 17 chỉ số trong 5 nhóm, mỗi chỉ số có `max`, `source` (`auto` | `manager`) và mô tả. Tổng `max` tự động = 70, của quản lý = 30.
@@ -97,7 +97,7 @@ draft (ngày 1 tháng N+1) → self_review (hạn N+3) → lead_review (hạn N+
 ## 6. Vận hành
 1. **Snapshot**: mỗi lần tính lưu `dpi_snapshots(user, month, rubric_version, profile, inputs_hash, values, confidence, total, rating, kind)` (`kind`: `auto` | `final`); tính lại cùng đầu vào cùng phiên bản cho cùng kết quả (kiểm bằng test). Mọi lần xem scorecard người khác, chấm, điều chỉnh, khoá ghi audit.
 2. **Chống gaming**: không cộng theo số MR/commit; cảnh báo **tách MR bất thường** (≥ 3 MR merge cùng một issue trong một ngày của một người); trần D1; so sánh chỉ trong cùng team và profile; không có bảng xếp hạng toàn công ty.
-3. **Nguồn task**: GitLab Issues.
+3. **Nguồn task**: `app_settings["dpi_task_source"]` = `gitlab` | `jira` (mặc định `jira` khi đã cấu hình Jira). DPI chỉ đọc issue của nguồn đang chọn; khi là Jira, collector GitLab ngừng lấy issue. Xem `27_JIRA.md`.
 4. **Shadow**: cờ `dpi_shadow` (Admin › DPI), mặc định **bật**. Khi bật, mọi scorecard và báo cáo ghi "Chạy thử — không dùng cho lương thưởng". Tắt cờ là quyết định của quản lý, có audit.
 5. **[Quyết định] 70/30 đồng nhất** (đúng tổng max của rubric); profile đổi trọng số **nhóm**, không đổi tỉ lệ tự động/quản lý trong nhóm. Muốn tăng phần quản lý cho Senior/TL thì sửa rubric (phiên bản mới).
 6. **[Quyết định] Manager (team)** chỉ thấy **phân phối điểm** của team (không thấy từng người), như chính sách hiện tại; người điều chỉnh từng người cần `dpi.calibrate` (Quản lý tổng có sẵn, EM được admin cấp). **HR** dùng quyền `dpi.final_view`: chỉ bản `finalized/locked`.

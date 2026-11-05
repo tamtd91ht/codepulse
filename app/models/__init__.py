@@ -36,6 +36,7 @@ from app.models.dpi import (
 )
 from app.models.evidence import EvidenceItem, EvidencePack
 from app.models.identity import Account, Team, TeamMember, User
+from app.models.jira import JiraProject
 from app.models.knowledge import ReviewKnowledge, ReviewKnowledgeEdit
 from app.models.mcp import McpCall
 from app.models.metrics import MetricsTeamPeriod, MetricsUserPeriod
@@ -78,6 +79,7 @@ __all__ = [
     "InsightsBackfill",
     "Issue",
     "IssueMrLink",
+    "JiraProject",
     "LlmHealth",
     "McpCall",
     "MergeRequest",

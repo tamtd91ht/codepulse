@@ -148,6 +148,17 @@ def author_hours(
     return round(total, 2)
 
 
+def issue_of_source(source: str) -> Any:
+    """Issues of the DPI task source (docs/specs/27 §9): DPI never counts both."""
+    return Issue.source == source
+
+
+def counted_task() -> Any:
+    """Not a Jira sub-task without points (docs/specs/27 §6): those are left out of A1, A2
+    and C2, the points sit on the parent story."""
+    return or_(Issue.parent_key.is_(None), Issue.complexity_points.is_not(None))
+
+
 class Loader:
     """Facts of many people for one month; what all of them share (repo baselines, bots,
     primary criteria sets) is read once."""
@@ -159,8 +170,11 @@ class Loader:
         tz: ZoneInfo,
         bot_pattern: str | None = None,
         module_depth: int = 2,
+        source: str = "gitlab",
     ) -> None:
+        """`source`: the DPI task source (docs/specs/27 §9), the only issues read."""
         self.s = session
+        self.source = source
         self.tz = tz
         self.month = month
         self.lo, self.hi = month_bounds(month, tz)
@@ -333,6 +347,7 @@ class Loader:
             id=i.id,
             iid=i.iid,
             project_id=i.project_id,
+            key=i.key,
             title=i.title,
             web_url=i.web_url,
             type=i.type,
@@ -347,10 +362,16 @@ class Loader:
     def _assigned(self, accounts: list[int]) -> Any:
         return or_(*[Issue.assignee_account_ids.contains([a]) for a in accounts])
 
+    def _counted(self) -> Any:
+        """Issues of the chosen source that count as tasks: a Jira sub-task without points is
+        left out, its points are on the parent story (docs/specs/27 §6)."""
+        return and_(issue_of_source(self.source), counted_task())
+
     def _issues(self, f: Facts, accounts: list[int]) -> None:
         closed = list(
             self.s.scalars(
                 select(Issue).where(
+                    self._counted(),
                     self._assigned(accounts),
                     Issue.state == "closed",
                     Issue.closed_at_src >= self.lo,
@@ -363,6 +384,7 @@ class Loader:
         f.issues_closed_all = len(closed)
         due = self.s.scalars(
             select(Issue).where(
+                self._counted(),
                 self._assigned(accounts),
                 Issue.due_date >= self.month,
                 Issue.due_date < self.next_month,
@@ -472,7 +494,9 @@ class Loader:
         ids = [m.id for m in mrs]
         links: dict[int, list[int]] = defaultdict(list)
         for issue_id, mr_id in self.s.execute(
-            select(IssueMrLink.issue_id, IssueMrLink.mr_id).where(IssueMrLink.mr_id.in_(ids))
+            select(IssueMrLink.issue_id, IssueMrLink.mr_id)
+            .join(Issue, Issue.id == IssueMrLink.issue_id)
+            .where(IssueMrLink.mr_id.in_(ids), issue_of_source(self.source))
         ):
             links[int(mr_id)].append(int(issue_id))
         # Reviewed before the merge: a comment or an approval by someone else (spec 20 §4.2).
@@ -806,6 +830,7 @@ class Loader:
             .join(Issue, Issue.id == ProdDefect.issue_id)
             .where(
                 ProdDefect.rca_status == "confirmed",
+                issue_of_source(self.source),
                 Issue.created_at_src >= self.lo,
                 Issue.created_at_src < self.hi,
             )
@@ -829,9 +854,9 @@ class Loader:
                 )
 
 
-def active_people(session: Session, month: date, tz: ZoneInfo) -> list[int]:
+def active_people(session: Session, month: date, tz: ZoneInfo, source: str = "gitlab") -> list[int]:
     """People with Git activity in the month (a commit, a merged MR, a review comment, a closed
-    issue assigned to them): the ones the cycle creates a scorecard for (§5)."""
+    issue of the task source assigned to them): the ones the cycle creates a scorecard for (§5)."""
     lo, hi = month_bounds(month, tz)
     commits = (
         select(Account.user_id)
@@ -853,7 +878,7 @@ def active_people(session: Session, month: date, tz: ZoneInfo) -> list[int]:
     issues = (
         select(Account.user_id)
         .join(Issue, Issue.assignee_account_ids.contains(func.jsonb_build_array(Account.id)))
-        .where(Issue.closed_at_src >= lo, Issue.closed_at_src < hi)
+        .where(issue_of_source(source), Issue.closed_at_src >= lo, Issue.closed_at_src < hi)
     )
     ids: set[int] = set()
     for query in (commits, notes, mrs, issues):

@@ -13,11 +13,11 @@ from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from app.dpi.facts import Loader, classify_rule
-from app.dpi.metrics import MEANINGFUL
+from app.dpi.facts import Loader, classify_rule, issue_of_source
+from app.dpi.metrics import MEANINGFUL, issue_ref
 from app.dpi.rubric import Rubric
 from app.models import (
     DpiPeerFeedback,
@@ -139,7 +139,7 @@ def gather(
             for mr_id, title in s.execute(
                 select(IssueMrLink.mr_id, Issue.title)
                 .join(Issue, Issue.id == IssueMrLink.issue_id)
-                .where(IssueMrLink.mr_id.in_(ids or [0]))
+                .where(IssueMrLink.mr_id.in_(ids or [0]), issue_of_source(loader.source))
             )
         }
         for m in mrs:
@@ -174,13 +174,23 @@ def gather(
                 Issue.state == "closed",
                 Issue.closed_at_src >= loader.lo,
                 Issue.closed_at_src < loader.hi,
-                Issue.project_id.in_(allowed or {0}),
+                issue_of_source(loader.source),
+                # The repo gate is GitLab's; a Jira issue (title only, docs/specs/27 §11) has
+                # no repo.
+                or_(
+                    Issue.source == "jira",
+                    and_(Issue.source == "gitlab", Issue.project_id.in_(allowed or {0})),
+                ),
             )
             .limit(MAX_ISSUES)
         ):
             issues_out.append(
                 {
-                    "ref": cite(f"issue:{i.id}", f"#{i.iid} {i.title or ''}".strip(), i.web_url),
+                    "ref": cite(
+                        f"issue:{i.id}",
+                        f"{issue_ref(i.iid, i.key)} {i.title or ''}".strip(),
+                        i.web_url,
+                    ),
                     "title": i.title,
                     "type": i.type,
                     "complexity": i.complexity,

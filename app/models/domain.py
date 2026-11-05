@@ -33,6 +33,12 @@ class MergeRequest(TimestampMixin, Base):
         UniqueConstraint("project_id", "iid"),
         Index("ix_merge_requests_project_id_merged_at", "project_id", "merged_at"),
         Index("ix_merge_requests_author_account_id", "author_account_id"),
+        Index(
+            "ix_merge_requests_jira_keys",
+            "jira_keys",
+            postgresql_using="gin",
+            postgresql_ops={"jira_keys": "jsonb_path_ops"},
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -59,6 +65,9 @@ class MergeRequest(TimestampMixin, Base):
     labels: Mapped[list[str] | None] = mapped_column(JSONB)
     tasks_total: Mapped[int | None]
     tasks_done: Mapped[int | None]
+    # docs/specs/27 §8: Jira keys (ABC-123) seen in the title, description and source branch;
+    # only those of a registered Jira project are linked.
+    jira_keys: Mapped[list[str] | None] = mapped_column(JSONB)
 
 
 class MrCommit(TimestampMixin, Base):

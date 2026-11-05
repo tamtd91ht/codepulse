@@ -1185,6 +1185,22 @@ def _report_repos(
     return list(session.scalars(query.order_by(Project.path_with_namespace)))
 
 
+def _report_jira_projects(
+    session: Session, principal: Principal, business_project_id: int | None
+) -> list[Any]:
+    """Registered Jira projects of the dự án one sees (docs/specs/27 §11), as `_report_repos`
+    (whose permission check runs first): one without a dự án is the admins'."""
+    from app.models import JiraProject
+
+    query = select(JiraProject)
+    visible = principal.visible_projects()
+    if visible is not None:
+        query = query.where(JiraProject.business_project_id.in_(visible or {0}))
+    if business_project_id is not None:
+        query = query.where(JiraProject.business_project_id == business_project_id)
+    return list(session.scalars(query.order_by(JiraProject.key)))
+
+
 @router.get("/quality")
 def quality_report(
     principal: CurrentPrincipal,
@@ -1206,13 +1222,23 @@ def quality_report(
 def delivery_report(
     principal: CurrentPrincipal,
     session: SessionDep,
+    settings: SettingsDep,
     business_project_id: int | None = None,
 ) -> dict[str, Any]:
-    """R4 Delivery: WIP, backlog aging, blockers by reason, overdue issues (now)."""
+    """R4 Delivery: WIP, backlog aging, blockers by reason, overdue issues (now). The issues
+    are those of the task source (docs/specs/27 §9)."""
     from app.dpi.reports import delivery
+    from app.jira.settings import task_source
 
     repos = _report_repos(session, principal, business_project_id)
-    return delivery(session, repos, datetime.now(UTC))
+    source = task_source(session, settings)
+    jira = (
+        _report_jira_projects(session, principal, business_project_id) if source == "jira" else []
+    )
+    return {
+        "task_source": source,
+        **delivery(session, repos, datetime.now(UTC), source=source, jira_projects=jira),
+    }
 
 
 # -- production defects (B2) --------------------------------------------------------------------
@@ -1229,21 +1255,27 @@ class RcaIn(BaseModel):
 
 @router.get("/defects")
 def defects(
-    principal: CurrentPrincipal, session: SessionDep, status: str | None = None
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: SettingsDep,
+    status: str | None = None,
+    business_project_id: int | None = None,
 ) -> dict[str, Any]:
+    """Production bugs of the task source (docs/specs/27 §9), in the dự án one handles: a
+    GitLab issue's by its repo, a Jira issue's by its Jira project (§11)."""
     if not principal.can("dpi.defects"):
         raise HTTPException(403, "cần quyền xác nhận RCA")
     from app.dpi.defects import Authors, suggest
-    from app.models import Project
+    from app.jira.settings import task_source
 
-    query = (
-        select(ProdDefect, Issue)
-        .join(Issue, Issue.id == ProdDefect.issue_id)
-        .join(Project, Project.id == Issue.project_id)
-    )
+    source = task_source(session, settings)
+    bp = _defect_bp()
+    query = _defect_query().where(Issue.source == source)
     allowed = _defect_projects(principal)
     if allowed is not None:
-        query = query.where(Project.business_project_id.in_(allowed or {0}))
+        query = query.where(bp.in_(allowed or {0}))
+    if business_project_id is not None:
+        query = query.where(bp == business_project_id)
     if status:
         query = query.where(ProdDefect.rca_status == status)
     rows = session.execute(query.order_by(Issue.created_at_src.desc()).limit(100)).all()
@@ -1267,6 +1299,8 @@ def defects(
                 "issue": {
                     "id": i.id,
                     "iid": i.iid,
+                    "key": i.key,
+                    "source": i.source,
                     "title": i.title,
                     "url": i.web_url,
                     "created_at": i.created_at_src,
@@ -1296,8 +1330,30 @@ def defects(
                 ],
             }
             for d, i in rows
-        ]
+        ],
+        "task_source": source,
     }
+
+
+def _defect_bp() -> Any:
+    """The dự án of a production bug: its repo's (GitLab) or its Jira project's."""
+    from app.models import JiraProject, Project
+
+    return func.coalesce(Project.business_project_id, JiraProject.business_project_id)
+
+
+def _defect_query(*columns: Any) -> Any:
+    """`columns` (default: the defect and its issue) of production bugs, with their repo and
+    Jira project joined (either may be missing)."""
+    from app.models import JiraProject, Project
+
+    return (
+        select(*(columns or (ProdDefect, Issue)))
+        .select_from(ProdDefect)
+        .join(Issue, Issue.id == ProdDefect.issue_id)
+        .outerjoin(Project, Project.id == Issue.project_id)
+        .outerjoin(JiraProject, JiraProject.id == Issue.jira_project_id)
+    )
 
 
 def _defect_projects(principal: Principal) -> set[int] | None:
@@ -1317,16 +1373,14 @@ def confirm_rca(
 ) -> dict[str, Any]:
     """§4.4: the lead confirms who carries a production bug (shares summing to 1), or that it
     was the process (nobody's points)."""
-    from app.models import Project
-
     defect = session.get(ProdDefect, defect_id)
     if defect is None or not principal.can("dpi.defects"):
         raise HTTPException(404, "defect not found")
-    issue = session.get(Issue, defect.issue_id)
-    project = session.get(Project, issue.project_id) if issue else None
     allowed = _defect_projects(principal)
-    if allowed is not None and (project is None or project.business_project_id not in allowed):
-        raise HTTPException(404, "defect not found")
+    if allowed is not None:
+        bp = session.scalar(_defect_query(_defect_bp()).where(ProdDefect.id == defect.id))
+        if bp is None or bp not in allowed:
+            raise HTTPException(404, "defect not found")
     responsible = [
         {"user_id": int(r.get("user_id", 0)), "share": float(r.get("share", 0))}
         for r in body.responsible
@@ -1537,9 +1591,19 @@ def readiness(
     if not (principal.can("dpi.admin") or principal.can("admin.projects")):
         raise HTTPException(403, "chỉ admin")
     from app.dpi.readiness import repo_readiness
+    from app.jira.settings import task_source
 
     since = datetime.now(UTC) - timedelta(days=days)
-    return {"days": days, **repo_readiness(session, since)}
+    return {
+        "days": days,
+        **repo_readiness(
+            session,
+            since,
+            source=task_source(session, settings),
+            # A DPI admin sees every Jira project, one without a dự án too (docs/specs/27 §4).
+            visible=None if principal.can("dpi.admin") else principal.visible_projects(),
+        ),
+    }
 
 
 @router.get("/readiness/{project_id}/gitlab")

@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from app.collector.gitlab import collect as ep
+from app.jira.links import extract_keys
 from app.models import RawGitlab
 
 PUSH_NOTE = re.compile(r"^added \d+ (new )?commits?\b")
@@ -114,6 +115,8 @@ class GlMergeRequest:
     tasks_done: int = 0
     closes_iids: list[int] = field(default_factory=list)
     mention_iids: list[int] = field(default_factory=list)
+    # docs/specs/27 §8: key-looking tokens (ABC-123) of the title, description, source branch.
+    jira_keys: list[str] = field(default_factory=list)
     commits: list[GlCommit] = field(default_factory=list)
     notes: list[GlNote] = field(default_factory=list)
     files: list[GlFileStat] | None = None
@@ -270,6 +273,9 @@ def extract(rows: Iterable[RawGitlab]) -> Extracted:
                     tasks_done=done,
                     closes_iids=closes,
                     mention_iids=mentions,
+                    jira_keys=extract_keys(
+                        payload.get("title"), description, branch=payload.get("source_branch")
+                    ),
                 )
             case ep.EP_MR_COMMITS | ep.EP_MR_NOTES | ep.EP_MR_DIFFS:
                 mr_parts.setdefault(int(params["iid"]), {})[row.endpoint] = payload

@@ -73,6 +73,40 @@ def test_review_unique_holds_when_target_column_is_null(migrated_engine: Engine)
         conn.rollback()
 
 
+def test_jira_downgrade_refuses_to_drop_a_reviewed_defect(
+    postgres_url: str, migrated_engine: Engine
+) -> None:
+    config = alembic_config(postgres_url)
+    issue_id = 10**15 + 424242
+    with migrated_engine.begin() as conn:
+        jp = conn.execute(
+            text("INSERT INTO jira_projects (key) VALUES ('MIGX') RETURNING id")
+        ).scalar_one()
+        conn.execute(
+            text(
+                "INSERT INTO issues (id, source, jira_project_id, iid, key, title, state)"
+                " VALUES (:id, 'jira', :jp, 1, 'MIGX-1', 't', 'closed')"
+            ),
+            {"id": issue_id, "jp": jp},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO prod_defects (issue_id, severity, rca_status)"
+                " VALUES (:id, 'P1', 'confirmed')"
+            ),
+            {"id": issue_id},
+        )
+    try:
+        with pytest.raises(RuntimeError, match="refusing to downgrade e8a0c2d4f6b9"):
+            command.downgrade(config, "d7f9b1c3e5a8")
+        # Nothing moved: the whole downgrade ran in one transaction.
+        assert "jira_projects" in inspect(migrated_engine).get_table_names()
+    finally:
+        command.upgrade(config, "head")
+        with migrated_engine.begin() as conn:
+            conn.execute(text("DELETE FROM jira_projects WHERE key = 'MIGX'"))  # cascades
+
+
 def test_downgrade_then_upgrade(postgres_url: str, migrated_engine: Engine) -> None:
     config = alembic_config(postgres_url)
     command.downgrade(config, "base")

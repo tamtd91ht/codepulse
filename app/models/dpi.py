@@ -33,12 +33,23 @@ COMMENT_LABELS = (
 )
 
 
+ISSUE_SOURCES = ("gitlab", "jira")
+
+
 class Issue(TimestampMixin, Base):
-    """A GitLab issue of a tracked repo (docs/specs/25 §4.1): the task source of A1, A2, C2."""
+    """A task of the DPI (docs/specs/25 §4.1): a GitLab issue of a tracked repo, or a Jira issue
+    of a registered Jira project (docs/specs/27). DPI reads only the chosen source's rows."""
 
     __tablename__ = "issues"
     __table_args__ = (
         UniqueConstraint("project_id", "iid"),
+        CheckConstraint(f"source IN {ISSUE_SOURCES}", name="source"),
+        CheckConstraint(
+            "(source = 'gitlab' AND project_id IS NOT NULL)"
+            " OR (source = 'jira' AND jira_project_id IS NOT NULL AND key IS NOT NULL)",
+            name="origin",
+        ),
+        Index("uq_issues_key", "key", unique=True, postgresql_where="key IS NOT NULL"),
         Index("ix_issues_closed_at_src", "closed_at_src"),
         Index("ix_issues_due_date", "due_date"),
         # "Assigned to one of these accounts" (JSONB containment).
@@ -50,13 +61,22 @@ class Issue(TimestampMixin, Base):
         ),
     )
 
+    # GitLab's global issue id; a Jira issue's is JIRA_ID_OFFSET + its Jira id (app/jira).
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
-    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
-    iid: Mapped[int]
+    source: Mapped[str] = mapped_column(server_default="gitlab")
+    # The repo (GitLab), or the Jira project; the other is NULL.
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    jira_project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("jira_projects.id", ondelete="CASCADE"), index=True
+    )
+    iid: Mapped[int]  # GitLab iid; the number of a Jira key
+    key: Mapped[str | None]  # Jira only: ABC-123
+    parent_key: Mapped[str | None]  # Jira sub-task: its parent's key
+    story_points: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))  # Jira only, as entered
     title: Mapped[str | None]
     state: Mapped[str | None]  # opened|closed
     labels: Mapped[list[str] | None] = mapped_column(JSONB)
-    # Accounts (gitlab_user) of the assignees.
+    # Accounts (gitlab_user, or jira_user) of the assignees.
     assignee_account_ids: Mapped[list[int] | None] = mapped_column(JSONB)
     type: Mapped[str | None]  # from type::*: feature|bug|refactor|chore|docs|incident|automation
     complexity: Mapped[str | None]  # XS|S|M|L|XL from complexity::*

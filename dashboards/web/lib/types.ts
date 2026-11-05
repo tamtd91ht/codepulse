@@ -1979,6 +1979,8 @@ export interface InsightsDora {
     recent: {
       id: number;
       iid: number;
+      /** Jira key (ABC-123) when the issue comes from Jira; shown instead of #iid. */
+      key?: string | null;
       title: string | null;
       project_id: number;
       path_with_namespace: string | null;

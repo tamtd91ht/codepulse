@@ -38,7 +38,8 @@ class TeamMember(TimestampMixin, Base):
 
 
 class Account(TimestampMixin, Base):
-    """One person has many accounts/emails; kind is 'gitlab_user' or 'git_email'."""
+    """One person has many accounts/emails; kind is 'gitlab_user', 'git_email' or 'jira_user'
+    (docs/specs/27 §7)."""
 
     __tablename__ = "accounts"
     __table_args__ = (UniqueConstraint("kind", "external_key"),)
@@ -47,4 +48,8 @@ class Account(TimestampMixin, Base):
     kind: Mapped[str]
     external_key: Mapped[str]
     display_name: Mapped[str | None]
+    # What the source says of the account, kept to retry linking it later (docs/specs/27 §7):
+    # for a jira_user its emailAddress and name (username). Not set for the other kinds.
+    email: Mapped[str | None]
+    login: Mapped[str | None]
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))

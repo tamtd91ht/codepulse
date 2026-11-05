@@ -87,9 +87,12 @@ class GitLabCollector:
         deployments_since: datetime | None = None,
         incidents_since: datetime | None = None,
         incident_labels: Sequence[str] = ("incident",),
+        issues: bool = True,
     ) -> CollectResult:
         """`deployments_since`: the deployments window when it differs from `since` (a repo
-        whose deployment history was never collected backfills it, docs/specs/20 §5.2)."""
+        whose deployment history was never collected backfills it, docs/specs/20 §5.2).
+        `issues`: False while Jira is the DPI task source (docs/specs/27 §9): GitLab issues
+        (and their closed_by) are not fetched; incidents are, they are not DPI tasks."""
         result = CollectResult(window_start=since, started_at=self._clock())
         pid = project.external_id
 
@@ -205,7 +208,8 @@ class GitLabCollector:
         self._collect_incidents(
             project, incidents_since or since, incident_labels, store, detail, open_iids
         )
-        self._collect_issues(project, since, store, detail)
+        if issues:
+            self._collect_issues(project, since, store, detail)
         session.flush()
 
         log.info(

@@ -684,7 +684,16 @@ export default function GuidePage() {
             <code>prod-bug::P1|P2|P3</code>, <code>blocked</code>. Admin tạo nhanh bằng nút &quot;Tạo label chuẩn&quot; ở DPI › Sẵn sàng dữ liệu.
           </li>
           <li>
-            Mẫu MR <code>.gitlab/merge_request_templates/Default.md</code> có dòng <code>Closes #</code> và checklist (đã liên kết issue,
+            Nếu nguồn task là <strong>Jira</strong> (Admin chọn ở DPI › Jira): độ phức tạp lấy từ <strong>Story Points</strong> thay cho label{" "}
+            <code>complexity::</code>, loại lấy từ issue type, lỗi production từ Bug có label <code>production</code> / <code>prod-bug</code> và
+            Priority. MR nối issue bằng key trong tiêu đề hoặc tên nhánh (<code>feature/ABC-123-mo-ta</code>). Xem{" "}
+            <Link href="/guide/jira">
+              <strong>Hướng dẫn › Tích hợp Jira</strong>
+            </Link>
+            .
+          </li>
+          <li>
+            Mẫu MR <code>.gitlab/merge_request_templates/Default.md</code> có dòng <code>Closes #</code> (với Jira: key <code>ABC-123</code> trong tiêu đề MR) và checklist (đã liên kết issue,
             có test, migration hai chiều, có cách rollback).
           </li>
           <li>

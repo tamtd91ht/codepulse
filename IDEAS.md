@@ -10,3 +10,4 @@
 - Chạy command có MCP server (Jira, Sentry…) trên command worker: hiện `--strict-mcp-config` tắt mọi MCP.
 - DPI (spec 25): nhận GitLab Code Quality report (CodeClimate JSON) / SonarQube cho R3 và complexity delta của B4; adapter Jira cho nguồn task; blame mức dòng cho rework 21 ngày (hiện tính mức file).
 
+- Jira (spec 27): webhook Jira thay polling, tạo ticket Jira từ finding, đồng bộ hai chiều (CodePulse ghi lên Jira); hiện chỉ đọc theo JQL.

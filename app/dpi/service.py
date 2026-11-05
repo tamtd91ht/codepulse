@@ -22,6 +22,7 @@ from app.dpi.rubric import (
     as_rubric,
 )
 from app.dpi.score import Profile, inputs_hash, rolling, scorecard
+from app.jira.settings import task_source
 from app.models import (
     AppSetting,
     DpiAssessment,
@@ -199,6 +200,7 @@ class Calculator:
             self.tz,
             bot_pattern=settings.bot_account_pattern,
             module_depth=settings.knowledge_module_depth,
+            source=task_source(session, settings),
         )
         self.profiles = profiles(session)
 
@@ -510,7 +512,7 @@ def run_month(session: Session, month: date, settings: Settings) -> dict[str, in
     tz = ZoneInfo(settings.report_tz)
     people = [
         u
-        for u in active_people(session, month, tz)
+        for u in active_people(session, month, tz, task_source(session, settings))
         if session.get(User, u) is not None and session.get(User, u).active is not False  # type: ignore[union-attr]
     ]
     calc = Calculator(session, month, settings)

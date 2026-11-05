@@ -10,6 +10,7 @@ import { Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Too
 
 import { SubPanel, type SubTab, SubTabs } from "@/components/AdminTabs";
 import { ConfidencePill, MonthPicker, RatingPill, ShadowBanner, useMonth } from "@/components/DpiParts";
+import { JiraAdmin } from "@/components/JiraAdmin";
 import { Alert, Card, ChartTip, EmptyState, Loading, Message, PageHeader, Pill, StatStrip, StripStat } from "@/components/ui";
 import { ApiError, api, can, useApi } from "@/lib/api";
 import {
@@ -24,10 +25,10 @@ import {
   monthLabel,
   pct,
 } from "@/lib/dpi";
-import { date } from "@/lib/format";
+import { date, dateTime, relative } from "@/lib/format";
 import type { BusinessProject, Me, Person, Team } from "@/lib/types";
 
-type Tab = "overview" | "distribution" | "calibration" | "quality" | "delivery" | "defects" | "peer" | "settings" | "readiness";
+type Tab = "overview" | "distribution" | "calibration" | "quality" | "delivery" | "defects" | "peer" | "settings" | "jira" | "readiness";
 const RATING_COLOR: Record<Rating, string> = {
   excellent: "var(--good)",
   good: "var(--chart-2)",
@@ -427,7 +428,8 @@ function CalibrationTab({ month }: { month: string }) {
 interface Defect {
   id: number;
   severity: string;
-  issue: { id: number; iid: number; title: string | null; url: string | null; created_at: string | null; state: string | null };
+  /** `key` is the Jira key (ABC-123) of a Jira issue; GitLab issues show `#iid`. */
+  issue: { id: number; iid: number; key?: string | null; title: string | null; url: string | null; created_at: string | null; state: string | null };
   rca_status: "pending" | "confirmed" | "process";
   responsible: { user_id: number; share: number; name?: string | null }[];
   process_gaps: string[];
@@ -444,6 +446,7 @@ const GAPS = [
 ] as const;
 
 function DefectRow({ d, onSaved }: { d: Defect; onSaved: (msg: string) => void }) {
+  const ref = d.issue.key || `#${d.issue.iid}`;
   const authors = d.suggestions.map((s) => s.author).filter((a): a is { user_id: number; name: string | null } => !!a);
   const [who, setWho] = useState<number | "">(d.responsible[0]?.user_id ?? authors[0]?.user_id ?? "");
   const [gaps, setGaps] = useState<string[]>(d.process_gaps);
@@ -468,10 +471,10 @@ function DefectRow({ d, onSaved }: { d: Defect; onSaved: (msg: string) => void }
           <Pill tone={d.severity === "P1" ? "bad" : "warn"}>{d.severity}</Pill>{" "}
           {d.issue.url ? (
             <a href={d.issue.url} target="_blank" rel="noreferrer">
-              #{d.issue.iid} {d.issue.title}
+              {ref} {d.issue.title}
             </a>
           ) : (
-            `#${d.issue.iid} ${d.issue.title}`
+            `${ref} ${d.issue.title ?? ""}`
           )}
         </>
       }
@@ -540,7 +543,7 @@ function DefectsTab() {
           <option value="process">Lỗi quy trình</option>
           <option value="">Tất cả</option>
         </select>
-        <span className="muted small">Issue gắn label prod-bug::P1/P2/P3. Chỉ lỗi đã xác nhận RCA mới trừ điểm B2.</span>
+        <span className="muted small">GitLab: issue gắn label prod-bug::P1/P2/P3. Jira: Bug có label production / prod-bug hoặc loại Incident, mức theo Priority. Chỉ lỗi đã xác nhận RCA mới trừ điểm B2.</span>
       </div>
       <Message text={message} onClose={() => setMessage(null)} />
       {!data ? (
@@ -1127,9 +1130,90 @@ interface Readiness {
     pipeline_pass_pct: number | null;
     coverage_pct: number | null;
     avg_coverage: number | null;
-    issues_closed: number;
+    /** Null when the task source is Jira: issues are counted per Jira project instead. */
+    issues_closed: number | null;
     complexity_pct: number | null;
   }[];
+  task_source?: "gitlab" | "jira";
+  /** Present when the task source is Jira (docs/specs/27 §12). */
+  jira?: {
+    projects: {
+      key: string;
+      name: string;
+      business_project: { id: number; name: string } | null;
+      issues_closed: number;
+      story_points_pct: number | null;
+      oversized: number;
+      last_synced_at: string | null;
+      last_error: string | null;
+    }[];
+    assignees: { total: number; linked: number };
+  };
+}
+
+function JiraReadiness({ jira }: { jira: NonNullable<Readiness["jira"]> }) {
+  const a = jira.assignees;
+  const linkedPct = a.total ? Math.round((100 * a.linked) / a.total) : null;
+  return (
+    <Card
+      title="Dự án Jira"
+      collapsible={false}
+      subtitle="Nguồn task đang là Jira: issue đóng trong 90 ngày, % có Story Points (mục tiêu ≥ 70%). Story Points > 8 vẫn tính 8. Cấu hình ở DPI › Jira."
+    >
+      <p className="small">
+        Assignee Jira đã nối người dùng: <Mark value={linkedPct} target={90} />{" "}
+        <span className="muted">
+          ({a.linked} / {a.total} tài khoản)
+        </span>
+        {a.total > a.linked && <span className="muted"> · nối tay ở Admin › Người & Team › tài khoản chưa gán.</span>}
+      </p>
+      {jira.projects.length === 0 ? (
+        <EmptyState title="Chưa bật dự án Jira nào.">Admin thêm và bật dự án ở tab Jira.</EmptyState>
+      ) : (
+        <div className="table-wrap">
+          <table className="table compact">
+            <thead>
+              <tr>
+                <th>Dự án Jira</th>
+                <th className="num">Issue đóng</th>
+                <th className="num">Có Story Points</th>
+                <th className="num">Issue &gt; 8 điểm</th>
+                <th>Đồng bộ gần nhất</th>
+              </tr>
+            </thead>
+            <tbody>
+              {jira.projects.map((p) => (
+                <tr key={p.key}>
+                  <td>
+                    <code>{p.key}</code> {p.name}
+                    <div className="muted small">{p.business_project?.name ?? "chưa thuộc dự án"}</div>
+                  </td>
+                  <td className="num">{p.issues_closed}</td>
+                  <td className="num">
+                    <Mark value={p.story_points_pct} target={70} />
+                  </td>
+                  <td className="num">
+                    {p.oversized ? (
+                      <>
+                        <span className="tone-warn">{p.oversized}</span>
+                        <div className="muted small">nên tách issue</div>
+                      </>
+                    ) : (
+                      <span className="muted">0</span>
+                    )}
+                  </td>
+                  <td className="small">
+                    {p.last_synced_at ? <span title={dateTime(p.last_synced_at)}>{relative(p.last_synced_at)}</span> : <span className="muted">chưa đồng bộ</span>}
+                    {p.last_error && <div className="tone-bad">{p.last_error}</div>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
 }
 
 function Mark({ value, target }: { value: number | null; target: number }) {
@@ -1144,6 +1228,9 @@ function ReadinessTab({ me }: { me: Me }) {
   if (error) return <Loading error={error} />;
   if (!data) return <Loading />;
   const a = data.acceptance;
+  const jira = data.task_source === "jira";
+  // Per-repo issue columns only make sense for GitLab Issues; under Jira they come back null.
+  const repoIssues = !jira || data.repos.some((r) => r.issues_closed !== null || r.complexity_pct !== null);
   const check = async (id: number) => setChecks({ ...checks, [id]: await api.get(`/dpi/readiness/${id}/gitlab`) });
   const labels = async (id: number) => setChecks({ ...checks, [id]: { ...checks[id], ...(await api.post<{ created: string[]; error?: string }>(`/dpi/readiness/${id}/labels`)) } });
   const act = async () => {
@@ -1165,7 +1252,7 @@ function ReadinessTab({ me }: { me: Me }) {
       <StatStrip label="Nghiệm thu P0 (30 ngày)">
         <StripStat label="Thay đổi đi qua MR" value={a.through_mr_pct} unit="%" sub={`mục tiêu ≥ ${a.targets.through_mr_pct}%`} tone={(a.through_mr_pct ?? 0) >= 80 ? "good" : "warn"} />
         <StripStat label="Repo có pipeline + coverage" value={a.repos_with_pipeline_pct} unit="%" sub={`mục tiêu ≥ ${a.targets.repos_with_pipeline_pct}%`} tone={a.repos_with_pipeline_pct >= 90 ? "good" : "warn"} />
-        <StripStat label="Issue có complexity" value={a.issues_with_complexity_pct} unit="%" sub={`mục tiêu ≥ ${a.targets.issues_with_complexity_pct}%`} tone={(a.issues_with_complexity_pct ?? 0) >= 70 ? "good" : "warn"} />
+        <StripStat label={jira ? "Issue Jira có Story Points" : "Issue có complexity"} value={a.issues_with_complexity_pct} unit="%" sub={`mục tiêu ≥ ${a.targets.issues_with_complexity_pct}%`} tone={(a.issues_with_complexity_pct ?? 0) >= 70 ? "good" : "warn"} />
       </StatStrip>
       {confirm && (
         <Alert tone="warning">
@@ -1177,6 +1264,7 @@ function ReadinessTab({ me }: { me: Me }) {
           ) : (
             <>
               Commit file <code>.gitlab/merge_request_templates/Default.md</code> (Closes # + checklist) lên nhánh chính của <strong>{confirm.path}</strong>.
+              {jira && " Nguồn task là Jira: nhắc đội ghi key (ABC-123) trong tiêu đề MR và tên nhánh feature/ABC-123-mo-ta."}
             </>
           )}{" "}
           <button type="button" className="primary sm" onClick={() => void act()}>
@@ -1187,7 +1275,16 @@ function ReadinessTab({ me }: { me: Me }) {
           </button>
         </Alert>
       )}
-      <Card title="Từng repo" collapsible={false} subtitle="Bấm Kiểm tra để hỏi GitLab: nhánh chính có bảo vệ chưa, đủ label chưa. Coverage trong CI: xem Hướng dẫn › DPI.">
+      {jira && data.jira && <JiraReadiness jira={data.jira} />}
+      <Card
+        title="Từng repo"
+        collapsible={false}
+        subtitle={
+          jira
+            ? "Bấm Kiểm tra để hỏi GitLab: nhánh chính có bảo vệ chưa. Issue tính theo dự án Jira ở trên; MR nối issue bằng key trong tiêu đề hoặc tên nhánh. Xem Hướng dẫn › Tích hợp Jira."
+            : "Bấm Kiểm tra để hỏi GitLab: nhánh chính có bảo vệ chưa, đủ label chưa. Coverage trong CI: xem Hướng dẫn › DPI."
+        }
+      >
         <div className="table-wrap">
           <table className="table compact">
             <thead>
@@ -1198,7 +1295,7 @@ function ReadinessTab({ me }: { me: Me }) {
                 <th className="num">MR có checklist</th>
                 <th className="num">Pipeline</th>
                 <th className="num">Có coverage</th>
-                <th className="num">Issue có complexity</th>
+                {repoIssues && <th className="num">Issue có complexity</th>}
                 <th>GitLab</th>
               </tr>
             </thead>
@@ -1227,10 +1324,12 @@ function ReadinessTab({ me }: { me: Me }) {
                       <Mark value={r.coverage_pct} target={90} />
                       {r.avg_coverage !== null && <div className="muted small">TB {r.avg_coverage}%</div>}
                     </td>
-                    <td className="num">
-                      <Mark value={r.complexity_pct} target={70} />
-                      <div className="muted small">{r.issues_closed} issue</div>
-                    </td>
+                    {repoIssues && (
+                      <td className="num">
+                        <Mark value={r.complexity_pct} target={70} />
+                        <div className="muted small">{r.issues_closed === null ? "—" : `${r.issues_closed} issue`}</div>
+                      </td>
+                    )}
                     <td className="small">
                       {c?.error ? (
                         <span className="tone-bad">{c.error}</span>
@@ -1289,6 +1388,7 @@ export default function DpiPage() {
     ...(can(me, "dpi.defects") ? [{ key: "defects", label: "Lỗi production" } as SubTab<Tab>] : []),
     { key: "peer", label: "Phản hồi đồng nghiệp" },
     ...(can(me, "dpi.admin") || can(me, "dpi.view") ? [{ key: "settings", label: "Cấu hình" } as SubTab<Tab>] : []),
+    ...(can(me, "dpi.admin") ? [{ key: "jira", label: "Jira" } as SubTab<Tab>] : []),
     ...(can(me, "dpi.admin") || can(me, "admin.projects") ? [{ key: "readiness", label: "Sẵn sàng dữ liệu" } as SubTab<Tab>] : []),
   ];
   const current = tabs.some((t) => t.key === tab) ? tab : tabs[0].key;
@@ -1312,6 +1412,7 @@ export default function DpiPage() {
         {current === "defects" && <DefectsTab />}
         {current === "peer" && <PeerTab key={month} month={month} />}
         {current === "settings" && <SettingsTab />}
+        {current === "jira" && <JiraAdmin />}
         {current === "readiness" && <ReadinessTab me={me} />}
         </div>
       </SubPanel>

@@ -188,3 +188,11 @@ def test_author_hours_counts_writing_up_to_the_ready_mark_for_early_drafts() -> 
     # One review comment answered by a push 5 hours later.
     notes = [(at(5), False, True), (datetime(2026, 10, 5, 14, tzinfo=UTC), True, False)]
     assert author_hours(at(3), at(2), notes) == 24.0 + 5.0
+
+
+def test_blocked_takes_a_reason_too() -> None:
+    from app.dpi.labels import blocked
+
+    assert blocked(["Blocked"]) and blocked(["blocked::impediment"])
+    assert blocked(["blocked::Waiting for review"])
+    assert not blocked(["unblocked", "blockedx", "type::bug"]) and not blocked(None)

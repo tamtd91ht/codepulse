@@ -26,6 +26,7 @@ def test_scheduler_enqueues_syncs_on_the_configured_interval() -> None:
         "command-cleanup",
         "evidence-drafts",
         "insights-backfill-once",
+        "jira-keys-backfill-once",
         "dpi-month",
         "dpi-lock",
         "llm-watch",
@@ -36,3 +37,9 @@ def test_scheduler_enqueues_syncs_on_the_configured_interval() -> None:
     assert jobs["telegram-tick"].trigger.interval.total_seconds() == 7
     assert str(jobs["aggregate-week"].trigger.timezone) == "Asia/Ho_Chi_Minh"
     assert jobs["aggregate-month"].args == ("month",)
+
+
+def test_scheduler_runs_the_jira_sync_only_when_jira_is_configured() -> None:
+    assert "jira-sync" not in {job.id for job in build_scheduler(30).get_jobs()}
+    jobs = {job.id: job for job in build_scheduler(30, jira_sync_interval_min=15).get_jobs()}
+    assert jobs["jira-sync"].trigger.interval.total_seconds() == 15 * 60

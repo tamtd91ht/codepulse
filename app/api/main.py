@@ -33,6 +33,7 @@ from app.api.routers import (
     evidence,
     inbox,
     insights,
+    jira,
     knowledge,
     knowledge_stats,
     llm,
@@ -119,6 +120,7 @@ for api_router in (
     permissions.router,
     inbox.router,
     dpi.router,
+    jira.router,
     tokens.router,
     mcp_report.router,
 ):

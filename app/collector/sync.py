@@ -21,6 +21,7 @@ from app.crypto import SecretBox, secret_box
 from app.db import get_redis, get_sessionmaker
 from app.identity.attribution import Attribution, attribute_reviews, rebuild_after_commit
 from app.identity.autolink import PublicEmailLookup, autolink
+from app.jira.settings import task_source
 from app.models import Connection, Deployment, Incident, Project
 
 log = logging.getLogger(__name__)
@@ -146,6 +147,7 @@ def sync_project(
             deployments_since=deployments_since,
             incidents_since=incidents_since,
             incident_labels=incident_labels,
+            issues=task_source(session, get_settings()) == "gitlab",
         )
         rows = session.scalars(raw_rows_query(project, fetched_since=collected.started_at)).all()
         converted = Converter(session, project, ignore_paths).run(extract(rows))

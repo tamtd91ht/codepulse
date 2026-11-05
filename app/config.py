@@ -192,6 +192,14 @@ class Settings(BaseSettings):
     # Incidents (docs/specs/20 §5.3, D3): GitLab issues of type incident, or with one of
     # these labels.
     incident_labels: CommaList = ["incident"]
+    # Jira Data Center as the DPI task source (docs/specs/27 §2); no base URL: off. The token is
+    # a read-only service account's PAT.
+    jira_base_url: str = ""
+    jira_token: SecretStr = SecretStr("")
+    jira_ca_bundle: str = ""  # an internal CA's PEM file; empty: the system's
+    jira_sync_interval_min: int = Field(default=15, ge=1, le=1440)
+    jira_backfill_days: int = Field(default=180, ge=1, le=3650)
+    jira_timeout_s: float = Field(default=20.0, gt=0, le=300)
     # DPI (docs/specs/25 §4.3): accounts matching this are bots, never counted.
     bot_account_pattern: str = r"(^|[-_.])bot([-_.@]|$)|renovate|dependabot|codepulse|gitlab-ci"
     # Review again once the LLM works again (app/review/llm_recovery.py): the switch, and how

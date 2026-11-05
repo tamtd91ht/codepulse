@@ -7854,3 +7854,64 @@ td.mcp-req > strong {
   max-height: 420px;
   overflow-y: auto;
 }
+
+/* DPI › Jira (docs/specs/27 §12) */
+.dpi-page .tone-warn {
+  color: var(--warn);
+}
+.dpi-page .tone-bad {
+  color: var(--bad-text);
+}
+.jira-grid,
+.jira-two {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 12px 16px;
+}
+.jira-two {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  margin-top: 8px;
+}
+label.jira-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: left;
+  gap: 4px;
+  margin-top: 12px;
+  min-width: 0;
+}
+label.jira-field > span:first-child {
+  font-weight: 500;
+}
+.jira-field input,
+.jira-field select {
+  width: 100%;
+  max-width: 360px;
+}
+.jira-field input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+.jira-key {
+  min-width: 96px;
+}
+.jira-key code {
+  white-space: nowrap;
+}
+.jira-pairs {
+  width: 100%;
+  table-layout: fixed;
+}
+.jira-pairs th:last-child,
+.jira-pairs td:last-child {
+  width: 56px;
+}
+.jira-pairs td:nth-child(2),
+.jira-pairs th:nth-child(2) {
+  width: 38%;
+}
+.jira-pairs input,
+.jira-pairs select {
+  width: 100%;
+  min-width: 0;
+}

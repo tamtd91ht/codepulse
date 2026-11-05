@@ -26,7 +26,7 @@ MEANINGFUL = frozenset({"actionable", "design", "correctness", "security", "test
 class IssueFact:
     id: int
     iid: int
-    project_id: int
+    project_id: int | None  # None: a Jira issue (docs/specs/27)
     title: str | None
     web_url: str | None
     type: str | None
@@ -36,6 +36,7 @@ class IssueFact:
     state: str | None
     closed_at: datetime | None
     blocked: bool = False
+    key: str | None = None  # Jira: ABC-123, shown instead of #iid
 
 
 @dataclass(frozen=True)
@@ -149,8 +150,14 @@ def _linear(x: float, good: float, bad: float) -> float:
     return _clamp((bad - x) / (bad - good)) if bad > good else _clamp((x - bad) / (good - bad))
 
 
+def issue_ref(iid: int, key: str | None = None) -> str:
+    """How an issue is named: its Jira key (ABC-123), else GitLab's #iid."""
+    return key or f"#{iid}"
+
+
 def _issue(i: IssueFact) -> dict[str, Any]:
-    return {"kind": "issue", "id": i.id, "ref": f"#{i.iid}", "label": i.title, "url": i.web_url}
+    ref = issue_ref(i.iid, i.key)
+    return {"kind": "issue", "id": i.id, "ref": ref, "label": i.title, "url": i.web_url}
 
 
 def _mr(m: MrFact) -> dict[str, Any]:

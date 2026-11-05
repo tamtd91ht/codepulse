@@ -6,9 +6,10 @@ import { usePathname } from "next/navigation";
 const PAGES = [
   { href: "/guide", label: "Hướng dẫn sử dụng" },
   { href: "/guide/mcp", label: "Tích hợp MCP" },
+  { href: "/guide/jira", label: "Tích hợp Jira" },
 ];
 
-/** The Guide menu's pages: the user guide and the Claude Code (MCP) integration document. */
+/** The Guide menu's pages: the user guide and the Claude Code (MCP) and Jira integration documents. */
 export function GuideNav() {
   const pathname = usePathname();
   return (

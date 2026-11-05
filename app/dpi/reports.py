@@ -17,6 +17,7 @@ from app.models import (
     Commit,
     CommitFile,
     Issue,
+    JiraProject,
     MergeRequest,
     Pipeline,
     Project,
@@ -194,12 +195,20 @@ def quality(
     }
 
 
-def delivery(session: Session, repos: list[Project], now: datetime) -> dict[str, Any]:
+def delivery(
+    session: Session,
+    repos: list[Project],
+    now: datetime,
+    source: str = "gitlab",
+    jira_projects: list[JiraProject] | None = None,
+) -> dict[str, Any]:
+    """`source`: the DPI task source (docs/specs/27 §9). Jira: the open issues are those of
+    `jira_projects` (the ones one sees), each a row "Jira · KEY" next to the repos."""
     ids = [r.id for r in repos] or [0]
-    names = {r.id: r.path_with_namespace for r in repos}
+    names: dict[tuple[str, int], str] = {("repo", r.id): r.path_with_namespace for r in repos}
     today = now.date()
     wip = {
-        int(pid): int(n)
+        ("repo", int(pid)): int(n)
         for pid, n in session.execute(
             select(MergeRequest.project_id, func.count())
             .where(MergeRequest.project_id.in_(ids), MergeRequest.state == "opened")
@@ -207,34 +216,47 @@ def delivery(session: Session, repos: list[Project], now: datetime) -> dict[str,
         )
         if pid is not None
     }
+    if source == "jira":
+        jira = jira_projects or []
+        names |= {("jira", j.id): f"Jira · {j.key}" for j in jira}
+        where = [
+            Issue.source == "jira",
+            Issue.jira_project_id.in_([j.id for j in jira] or [0]),
+        ]
+    else:
+        where = [Issue.source == "gitlab", Issue.project_id.in_(ids)]
     open_issues = session.execute(
         select(
-            Issue.project_id,
+            Issue.source,
+            func.coalesce(Issue.project_id, Issue.jira_project_id),
             Issue.created_at_src,
             Issue.labels,
             Issue.due_date,
-            Issue.prod_severity,
-        ).where(Issue.project_id.in_(ids), Issue.state == "opened")
+        ).where(*where, Issue.state == "opened")
     ).all()
     aging = Counter[str]()
     blockers = Counter[str]()
     overdue = 0
-    per_repo: dict[int, Counter[str]] = defaultdict(Counter)
-    for pid, created, labels, due, _sev in open_issues:
+    per_repo: dict[tuple[str, int], Counter[str]] = defaultdict(Counter)
+    for src, owner, created, labels, due in open_issues:
+        pid = ("jira" if src == "jira" else "repo", int(owner))
         if created is not None:
             age = (now - created).days
             label = next(text for limit, text in AGE_BUCKETS if limit is None or age <= limit)
             aging[label] += 1
+        blocked = False
         for name in labels or []:
             low = name.lower()
             if low == "blocked" or low.startswith("blocked::"):
                 reason = name.split("::", 1)[1] if "::" in name else "không ghi lý do"
                 blockers[reason] += 1
-                per_repo[int(pid)]["blocked"] += 1
+                blocked = True
+        if blocked:  # an issue once per row, whatever its number of blocked labels
+            per_repo[pid]["blocked"] += 1
         if due is not None and due < today:
             overdue += 1
-            per_repo[int(pid)]["overdue"] += 1
-        per_repo[int(pid)]["open"] += 1
+            per_repo[pid]["overdue"] += 1
+        per_repo[pid]["open"] += 1
     return {
         "as_of": now.isoformat(),
         "wip_mrs": sum(wip.values()),

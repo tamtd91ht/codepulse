@@ -42,4 +42,7 @@ def label_fields(labels: list[str]) -> dict[str, Any]:
 
 
 def blocked(labels: list[str] | None) -> bool:
-    return any(label.lower() == "blocked" for label in labels or [])
+    """`blocked`, or `blocked::<reason>` (R4's reasons; the Jira sync adds `blocked::impediment`
+    and `blocked::<status>`, docs/specs/27 §5): out of C2's due dates."""
+    names = [label.lower() for label in labels or []]
+    return any(name == "blocked" or name.startswith("blocked::") for name in names)

@@ -1530,7 +1530,7 @@ function DoraTab({ query, nav }: { query: Query; nav: SubNav }) {
                   <tbody>
                     {data.incidents.recent.map((i) => (
                       <tr key={i.id}>
-                        <td>{i.web_url ? <ExternalLink href={i.web_url}>{`#${i.iid} ${i.title ?? ""}`}</ExternalLink> : `#${i.iid} ${i.title ?? ""}`}</td>
+                        <td>{i.web_url ? <ExternalLink href={i.web_url}>{`${i.key || `#${i.iid}`} ${i.title ?? ""}`}</ExternalLink> : `${i.key || `#${i.iid}`} ${i.title ?? ""}`}</td>
                         <td className="muted">{i.path_with_namespace}</td>
                         <td>{i.state === "closed" ? <Pill tone="good">Đã đóng</Pill> : <Pill tone="bad">Đang mở</Pill>}</td>
                         <td className="nowrap muted">{dateTime(i.opened_at)}</td>
