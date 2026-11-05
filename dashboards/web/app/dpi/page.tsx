@@ -1140,12 +1140,12 @@ function Mark({ value, target }: { value: number | null; target: number }) {
 function ReadinessTab({ me }: { me: Me }) {
   const { data, error } = useApi<Readiness>("/dpi/readiness?days=30");
   const [checks, setChecks] = useState<Record<number, { default_protected?: boolean; missing_labels?: string[]; error?: string; created?: string[]; note?: string }>>({});
+  const [confirm, setConfirm] = useState<{ id: number; path: string; action: "protect" | "mr-template" } | null>(null);
   if (error) return <Loading error={error} />;
   if (!data) return <Loading />;
   const a = data.acceptance;
   const check = async (id: number) => setChecks({ ...checks, [id]: await api.get(`/dpi/readiness/${id}/gitlab`) });
   const labels = async (id: number) => setChecks({ ...checks, [id]: { ...checks[id], ...(await api.post<{ created: string[]; error?: string }>(`/dpi/readiness/${id}/labels`)) } });
-  const [confirm, setConfirm] = useState<{ id: number; path: string; action: "protect" | "mr-template" } | null>(null);
   const act = async () => {
     if (!confirm) return;
     const result = await api.post<{ protected?: string; created?: string; exists?: boolean; error?: string }>(`/dpi/readiness/${confirm.id}/${confirm.action}`);
