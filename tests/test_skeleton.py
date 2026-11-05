@@ -30,6 +30,7 @@ def test_scheduler_enqueues_syncs_on_the_configured_interval() -> None:
         "dpi-month",
         "dpi-lock",
         "llm-watch",
+        "jira-tick",
     }
     assert str(jobs["evidence-drafts"].trigger.timezone) == "Asia/Ho_Chi_Minh"
     assert jobs["command-cleanup"].trigger.interval.total_seconds() == 3600
@@ -39,7 +40,8 @@ def test_scheduler_enqueues_syncs_on_the_configured_interval() -> None:
     assert jobs["aggregate-month"].args == ("month",)
 
 
-def test_scheduler_runs_the_jira_sync_only_when_jira_is_configured() -> None:
-    assert "jira-sync" not in {job.id for job in build_scheduler(30).get_jobs()}
-    jobs = {job.id: job for job in build_scheduler(30, jira_sync_interval_min=15).get_jobs()}
-    assert jobs["jira-sync"].trigger.interval.total_seconds() == 15 * 60
+def test_scheduler_ticks_the_jira_sync_every_minute() -> None:
+    """docs/specs/27 §3: the connection can change on the web, so a tick decides each minute."""
+    jobs = {job.id: job for job in build_scheduler(30).get_jobs()}
+    assert "jira-sync" not in jobs
+    assert jobs["jira-tick"].trigger.interval.total_seconds() == 60

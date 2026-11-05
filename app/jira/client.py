@@ -4,13 +4,14 @@ between two calls. The token is never logged."""
 
 import logging
 import random
+import ssl
 import time
 from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
 import httpx
 
-from app.config import Settings
+from app.jira.settings import JiraConnection
 from app.ratelimit import RateLimiter
 
 log = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ class JiraClient:
         token: str,
         *,
         timeout: float = 20.0,
-        verify: str | bool = True,
+        verify: ssl.SSLContext | str | bool = True,
         max_retries: int = 3,
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
@@ -52,12 +53,13 @@ class JiraClient:
         self._limiter = RateLimiter(1.0 / MIN_INTERVAL_S, sleep=sleep)
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> "JiraClient":
+    def from_connection(cls, connection: JiraConnection) -> "JiraClient":
+        """The connection in effect (app/jira/settings.py): saved on the web, else JIRA_*."""
         return cls(
-            settings.jira_base_url,
-            settings.jira_token.get_secret_value(),
-            timeout=settings.jira_timeout_s,
-            verify=settings.jira_ca_bundle or True,
+            connection.base_url,
+            connection.token,
+            timeout=connection.timeout_s,
+            verify=connection.verify(),
         )
 
     def close(self) -> None:

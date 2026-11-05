@@ -237,12 +237,19 @@ export default function JiraGuidePage() {
                 Tạo tài khoản dịch vụ <strong>chỉ đọc</strong> trên Jira với quyền Browse projects ở các dự án cần lấy, rồi tạo Personal Access Token.
               </li>
               <li>
-                Đặt biến môi trường cho API và worker: <code>JIRA_BASE_URL</code>, <code>JIRA_TOKEN</code>; tuỳ chọn <code>JIRA_CA_BUNDLE</code> (CA nội
-                bộ), <code>JIRA_SYNC_INTERVAL_MIN</code> (15), <code>JIRA_BACKFILL_DAYS</code> (180), <code>JIRA_TIMEOUT_S</code> (20). Khởi động lại.
+                Mở <Link href="/admin#jira">Admin › Jira</Link> (hoặc <Link href="/dpi">DPI</Link> › <strong>Jira</strong>), thẻ <strong>Kết nối</strong>:
+                nhập URL Jira và Personal Access Token; tuỳ chọn CA nội bộ (PEM), chu kỳ đồng bộ (mặc định 15 phút), số ngày lấy lùi lần đầu (180),
+                timeout (20 giây). Bấm <strong>Kiểm tra kết nối</strong> để thử ngay giá trị đang nhập, rồi <strong>Lưu</strong>. Không cần khởi động
+                lại: lịch đồng bộ đọc cấu hình mới trong vòng một phút.
               </li>
               <li>
-                Mở <Link href="/dpi">DPI</Link> › <strong>Jira</strong>, bấm <strong>Kiểm tra kết nối</strong>: xem phiên bản Jira và các trường Story
-                Points, Sprint, Flagged tìm được. Trường báo “không tìm thấy” thì sửa tên ở Quy đổi trường.
+                Kết quả kiểm tra cho biết phiên bản Jira và các trường Story Points, Sprint, Flagged tìm được. Trường báo “không tìm thấy” thì sửa tên ở
+                Quy đổi trường.
+              </li>
+              <li>
+                Biến môi trường <code>JIRA_BASE_URL</code>, <code>JIRA_TOKEN</code>, <code>JIRA_CA_BUNDLE</code>, <code>JIRA_SYNC_INTERVAL_MIN</code>,{" "}
+                <code>JIRA_BACKFILL_DAYS</code>, <code>JIRA_TIMEOUT_S</code> là tuỳ chọn: chỉ dùng cho giá trị chưa lưu trên web; giá trị lưu trên web luôn
+                được ưu tiên. <strong>Dùng lại biến môi trường</strong> xoá các giá trị đã lưu. Đổi sang máy chủ Jira khác thì phải nhập lại token.
               </li>
               <li>
                 <strong>Thêm dự án</strong>, bật và gán mỗi dự án Jira cho một dự án CodePulse (để lọc báo cáo và phân quyền), rồi Lưu. Dự án chưa
@@ -256,7 +263,7 @@ export default function JiraGuidePage() {
               </li>
             </ol>
             <p className="muted">
-              Token không bao giờ hiện trên giao diện hay trong log. Mọi thay đổi cấu hình Jira đều ghi audit. Chi tiết: docs/specs/27.
+              Token lưu trên web được mã hoá (APP_ENCRYPTION_KEY), không bao giờ hiện lại trên giao diện hay trong log. Mọi thay đổi cấu hình Jira đều ghi audit. Chi tiết: docs/specs/27.
             </p>
           </section>
 

@@ -22,6 +22,42 @@
   - `JIRA_SYNC_INTERVAL_MIN`: mặc định 15.
   - `JIRA_BACKFILL_DAYS`: lần sync đầu lấy lùi bao nhiêu ngày, mặc định 180.
   - `JIRA_TIMEOUT_S`: mặc định 20.
+- **[Quyết định]** (user 2026-11-05) Cấu hình được trên web ở **Admin › Jira** (và DPI › Jira),
+  thẻ **Kết nối**: URL, PAT, CA nội bộ (PEM), bật/tắt tích hợp, chu kỳ, số ngày lấy lùi,
+  timeout. Biến môi trường thành tuỳ chọn:
+  - Thứ tự ưu tiên từng giá trị: giá trị lưu trên web, nếu không có thì biến môi trường
+    (`app.jira.settings.connection()` → `JiraConnection`). Không cần khởi động lại.
+  - Giá trị thường lưu ở `app_settings["jira_connection"]` (JSON: `base_url`, `ca_pem`,
+    `interval_min` 1–1440, `backfill_days` 1–3650, `timeout_s` 1–300, `enabled`, mặc định
+    `true`). Token lưu ở `stored_secrets` tên `jira_token`, mã hoá bằng `APP_ENCRYPTION_KEY`
+    như token Claude (`source = "paste"`); không bao giờ trả về API, ghi log hay audit.
+  - Kiểm tra: `base_url` là http(s), không kèm tài khoản, `?`, `#`, tối đa 300 ký tự (thiếu
+    scheme thì thêm `https://`), không nhận `localhost` / `*.localhost`, loopback
+    (127.0.0.0/8, ::1, kể cả dạng ::ffff:127.x) hay link-local (169.254.0.0/16, fe80::/10).
+    `http://` được nhận nhưng màn hình cảnh báo token đi dạng rõ. `ca_pem` phải đọc được bằng
+    `ssl.create_default_context(cadata=…)`, tối đa 100 KB; token là ASCII in được
+    (`^[\x21-\x7e]+$`), tối đa 1000 ký tự.
+  - CA: PEM lưu trên web, nếu không có thì `JIRA_CA_BUNDLE`, nếu không có thì CA hệ thống.
+  - "Đã cấu hình" = có URL và token đang hiệu lực, và tích hợp bật. Tắt thì ngừng sync, dữ
+    liệu giữ nguyên, nguồn task mặc định về GitLab (nếu chưa chọn).
+  - **[Quyết định]** (review 2026-11-05) Token gắn với máy chủ, luật nằm trong resolver
+    (`connection()`), không chỉ ở từng request. Máy chủ = origin `scheme://host:port`.
+    - Token web chỉ dùng khi origin của URL đang hiệu lực trùng origin lúc lưu token
+      (`app_settings["jira_connection"].token_origin`, ghi cùng token). Lưu token khi chưa có
+      URL thì 422.
+    - `JIRA_TOKEN` chỉ dùng khi origin của URL đang hiệu lực trùng origin của
+      `JIRA_BASE_URL`. `JIRA_BASE_URL` trống thì `JIRA_TOKEN` không bao giờ đi kèm URL web.
+    - Không token nào khớp thì không có token (chưa cấu hình), `connection.token_other_server
+      = true`, màn hình báo "token hiện có thuộc máy chủ khác".
+    - `PUT /connection` làm một kết nối đang có token thành không có token vì lý do này (URL
+      máy chủ khác mà không kèm token, hoặc `token: ""` khi `JIRA_TOKEN` thuộc máy chủ khác)
+      thì 422, không ghi gì. `POST /test` với URL máy chủ khác mà không kèm token cũng 422.
+  - **Dùng lại biến môi trường** xoá mọi giá trị đã lưu trên web. Token web giải mã không được
+    (sai key) thì coi như chưa lưu: `JIRA_TOKEN` áp dụng nếu cùng máy chủ, `connection`
+    có `token_unreadable: true` và màn hình nhắc nhập lại; cảnh báo ghi log một lần mỗi
+    process (không mỗi tick).
+  - Không tạo được client (ví dụ CA lỗi) thì sync ghi `last_error` cho mọi dự án bật.
+  - Tick: đưa job vào hàng đợi lỗi thì xoá `jira:sync:due` (tick sau thử lại) và báo lỗi.
 - Header `Authorization: Bearer <PAT>`. Mọi lần gọi có timeout, retry 3 lần với 5xx và lỗi
   mạng, tôn trọng `Retry-After` của 429 (trần 30 giây), và nghỉ tối thiểu 100 ms giữa hai lần
   gọi. Token không bao giờ ghi vào log hay trả về API.
@@ -39,14 +75,18 @@
     trang sau chỉ lặp lại một issue (vô hại, upsert theo `id`) chứ không bỏ sót như `ASC`.
   - `n` là số phút kể từ mốc đồng bộ trước của dự án, cộng 5 phút chồng lấn.
   - Dùng thời gian tương đối để không phụ thuộc múi giờ của tài khoản dịch vụ.
-  - Lần đầu: `n = JIRA_BACKFILL_DAYS × 1440`.
+  - Lần đầu: `n = số ngày lấy lùi × 1440` (web, nếu không thì `JIRA_BACKFILL_DAYS`).
 - Mốc `jira_projects.synced_until` chỉ tiến lên khi cả dự án sync xong. Lỗi thì ghi
   `last_error` và lần sau làm lại.
 - Mỗi dự án sync dưới `pg_try_advisory_xact_lock(0x7A, jira_projects.id)`: một lần sync khác
   của dự án đang chạy (scheduler và **Đồng bộ ngay**) thì dự án được bỏ qua (`skipped: busy`,
   không ghi `last_error`).
-- Scheduler đưa job `app.jira.sync.sync_all_job` vào hàng đợi mỗi `JIRA_SYNC_INTERVAL_MIN`
-  phút. Admin có nút **Đồng bộ ngay**.
+- **[Quyết định]** (2026-11-05, vì cấu hình đổi được trên web lúc đang chạy) Scheduler có job
+  `jira-tick` chạy mỗi phút (`app.jira.sync.tick`): đọc lại kết nối, chỉ khi đã cấu hình và
+  `SET jira:sync:due NX EX <chu kỳ × 60>` thành công mới đưa `app.jira.sync.sync_all_job` vào
+  hàng đợi. Nhờ vậy mỗi chu kỳ chỉ một lần, kể cả khi scheduler khởi động lại. Chu kỳ lưu mới
+  ngắn hơn thì thời gian chờ hiện tại rút xuống theo. Khoá advisory ở trên vẫn chặn hai lần sync
+  cùng dự án. Admin có nút **Đồng bộ ngay**.
 - Sync chạy khi đã cấu hình và có dự án bật, **bất kể nguồn task đang chọn**. Nhờ vậy dữ liệu
   có sẵn trước khi chuyển nguồn.
 - Issue bị xoá trên Jira không phát hiện được qua search, nên vẫn giữ trong DB (ghi nhận).
@@ -77,7 +117,7 @@ Cấu hình lưu ở `app_settings["jira_mapping"]` (JSON), xem `app/jira/settin
 | labels | `labels` của Jira, cộng label `blocked::…` như trên |
 | time | `timeoriginalestimate`, `timespent` (giây) |
 | assignee | `assignee` (Jira DC chỉ có một người được giao) |
-| web_url | `<JIRA_BASE_URL>/browse/<KEY>` |
+| web_url | `<URL Jira đang hiệu lực>/browse/<KEY>` |
 
 - **[Quyết định]** Không lấy Epic (JQL loại `issuetype != Epic`).
 
@@ -142,7 +182,7 @@ Cấu hình lưu ở `app_settings["jira_mapping"]` (JSON), xem `app/jira/settin
 ## 9. Nguồn task
 
 - **[Quyết định]** `app_settings["dpi_task_source"]` = `gitlab` | `jira`.
-  - Mặc định là `jira` khi đã có `JIRA_BASE_URL`, còn lại `gitlab`.
+  - Mặc định là `jira` khi Jira đã cấu hình (kết nối đang hiệu lực, §2), còn lại `gitlab`.
   - Admin đổi trong Admin › DPI › Jira.
 - DPI chỉ đọc issue của nguồn đang chọn (`issues.source`), nên không tính trùng.
 - Khi nguồn là `jira`, collector GitLab **ngừng lấy issue**. Dữ liệu cũ vẫn giữ, chuyển lại
@@ -180,9 +220,15 @@ production của issue Jira có `rca_status` khác `pending`.
 
 ## 12. Giao diện
 
-- **Admin › DPI › Jira**:
-  - trạng thái kết nối (đã cấu hình chưa, nút **Kiểm tra kết nối**: phiên bản Jira và các
-    custom field tìm được);
+- **Admin › Jira** và **DPI › Jira** (cùng một màn hình; tab Admin hiện cho admin và người có
+  `dpi.admin`):
+  - **[Quyết định]** (2026-11-05) thẻ **Kết nối** là form: URL Jira, Personal Access Token (ô
+    mật khẩu; trạng thái "Đã lưu (cập nhật …)" / "Đang dùng biến môi trường" / "Chưa có"; để
+    trống là giữ; **Xoá token đã lưu**), CA nội bộ (PEM, tuỳ chọn), bật/tắt tích hợp, chu kỳ
+    (phút), số ngày lấy lùi lần đầu, timeout (giây). Mỗi ô ghi giá trị đến từ web hay biến môi
+    trường. Nút **Kiểm tra kết nối** thử giá trị đang nhập (chưa lưu), một nút chính **Lưu**,
+    **Dùng lại biến môi trường** (hỏi xác nhận). Chưa cấu hình thì các thẻ còn lại thay bằng
+    lời nhắc điền Kết nối trước;
   - nguồn task;
   - danh sách dự án Jira (bật/tắt, gán dự án CodePulse, lần sync gần nhất, lỗi, số issue);
   - nút **Đồng bộ ngay**;
@@ -199,12 +245,14 @@ production của issue Jira có `rca_status` khác `pending`.
 
 ## 13. API
 
-Tiền tố `/dpi/jira`, quyền `dpi.admin`.
+Tiền tố `/dpi/jira`, quyền `dpi.admin` (admin có mọi quyền).
 
 | Method | Path | Việc |
 |---|---|---|
-| GET | `/dpi/jira` | Cấu hình, nguồn task, mapping, dự án đã đăng ký kèm trạng thái sync |
-| POST | `/dpi/jira/test` | Gọi serverInfo + field: phiên bản, custom field tìm được |
+| GET | `/dpi/jira` | Cấu hình, nguồn task, mapping, dự án đã đăng ký kèm trạng thái sync; khối `connection` |
+| PUT | `/dpi/jira/connection` | Lưu kết nối trên web (chỉ các khoá gửi lên); trả `connection` |
+| DELETE | `/dpi/jira/connection` | Xoá giá trị đã lưu trên web, biến môi trường áp dụng lại |
+| POST | `/dpi/jira/test` | Gọi serverInfo + field: phiên bản, custom field tìm được; body tuỳ chọn để thử giá trị chưa lưu |
 | GET | `/dpi/jira/remote-projects` | Dự án trên Jira (key, name) để chọn |
 | PUT | `/dpi/jira/projects` | Đăng ký, cập nhật dự án (key, name, enabled, business_project_id) |
 | PUT | `/dpi/jira/mapping` | Lưu bảng quy đổi |
@@ -212,6 +260,21 @@ Tiền tố `/dpi/jira`, quyền `dpi.admin`.
 | POST | `/dpi/jira/sync` | Đưa job sync vào hàng đợi (202) |
 
 Mỗi thay đổi đều ghi audit.
+
+- **[Quyết định]** (2026-11-05) `connection` = `{base_url, base_url_source, token_set,
+  token_source, token_updated_at, token_unreadable, token_other_server, ca_set, ca_source,
+  interval_min, backfill_days, timeout_s,
+  enabled, configured, sources: {interval_min, backfill_days, timeout_s, enabled}, env:
+  {base_url, token, ca_bundle}}`; mỗi `*_source` là `web` | `env` | `null`. Không bao giờ có
+  token hay nội dung PEM. `configured`, `base_url`, `interval_min` ở mức trên là giá trị đang
+  hiệu lực.
+- `PUT /connection` body `{base_url?, token?, ca_pem?, interval_min?, backfill_days?,
+  timeout_s?, enabled?}`: khoá không gửi thì giữ; `""` (base_url, token, ca_pem) hoặc `null`
+  (số, enabled) xoá giá trị web. Token chỉ ghi. Sai thì 422 (thông báo `<khoá>: …`). Audit
+  `dpi.jira.connection` ghi danh sách khoá đã đổi (`changed`), `base_url`, `enabled`, không
+  ghi token hay PEM. `DELETE` ghi `dpi.jira.connection.reset`.
+- `POST /test` body tuỳ chọn `{base_url?, token?, ca_pem?}`: khoá thiếu lấy giá trị đang hiệu
+  lực; không lưu gì; chạy được cả khi tích hợp đang tắt. Không có URL/token nào thì 409.
 
 ## 14. Kiểm thử
 

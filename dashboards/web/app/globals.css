@@ -7862,6 +7862,30 @@ td.mcp-req > strong {
 .dpi-page .tone-bad {
   color: var(--bad-text);
 }
+/* The same Jira screen in Admin › Jira, outside .dpi-page. */
+.jira-admin .tone-warn {
+  color: var(--warn);
+}
+.jira-admin .tone-bad {
+  color: var(--bad-text);
+}
+.jira-field.jira-wide textarea {
+  width: 100%;
+  max-width: 720px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+label.jira-field > span:first-child .pill {
+  margin-left: 6px;
+  font-weight: 400;
+}
+label.jira-check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+}
 .jira-grid,
 .jira-two {
   display: grid;

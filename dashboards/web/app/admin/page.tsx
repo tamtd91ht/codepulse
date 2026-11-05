@@ -8,6 +8,7 @@ import { CommandRunner } from "@/components/CommandRunner";
 import { CriteriaAdmin } from "@/components/CriteriaAdmin";
 import { GitLabMembers } from "@/components/GitLabMembers";
 import { Icon, type IconName, IconButton } from "@/components/icons";
+import { JiraAdmin } from "@/components/JiraAdmin";
 import { LlmCheck } from "@/components/LlmCheck";
 import { PermissionsAdmin } from "@/components/PermissionSets";
 import { PurgeData } from "@/components/PurgeData";
@@ -22,13 +23,14 @@ import { confirmLeave } from "@/lib/criteria";
 import { attributedText } from "@/lib/format";
 import type { Account, AccountLinked, Connection, LlmCosts, Me, Person, Team } from "@/lib/types";
 
-type Tab = "gitlab" | "repos" | "criteria" | "people" | "permissions" | "telegram" | "webhooks" | "llm" | "commands" | "data";
+type Tab = "gitlab" | "repos" | "criteria" | "people" | "permissions" | "jira" | "telegram" | "webhooks" | "llm" | "commands" | "data";
 const TABS: { key: Tab; label: string; icon: IconName; hint: string }[] = [
   { key: "gitlab", label: "Kết nối GitLab", icon: "gitlab", hint: "Token bot và máy chủ GitLab" },
   { key: "repos", label: "Dự án & Repo", icon: "folder", hint: "Dự án, group, repo, review theo repo" },
   { key: "criteria", label: "Bộ tiêu chí", icon: "scale", hint: "Bộ tiêu chí có trọng số để chấm điểm review, gán cho dự án" },
   { key: "people", label: "Người & Team", icon: "members", hint: "Tài khoản, người dùng, team, vai trò" },
   { key: "permissions", label: "Phân quyền", icon: "scale", hint: "Bộ quyền theo chức năng và phạm vi, gán cho người" },
+  { key: "jira", label: "Jira", icon: "flag", hint: "Kết nối Jira Data Center, nguồn task DPI, dự án Jira, quy đổi trường" },
   { key: "telegram", label: "Telegram", icon: "pulse", hint: "Bot nhận lệnh review theo dự án" },
   { key: "webhooks", label: "Webhook thông báo", icon: "webhook", hint: "POST kết quả review tới endpoint của bạn" },
   { key: "llm", label: "LLM & Chi phí", icon: "activity", hint: "Kết nối LLM, chi phí theo tháng" },
@@ -59,7 +61,9 @@ export default function AdminPage() {
   const commands = !!me?.command_runs;
   // Bộ tiêu chí (docs/specs/22 §5): who may manage sets, or assign them to a dự án.
   const criteria = can(me, "criteria.manage") || can(me, "criteria.assign");
-  const tabs = TABS.filter((t) => (t.key !== "commands" || commands) && (t.key !== "criteria" || criteria));
+  // Jira (docs/specs/27 §12): the same screen as DPI › Jira, for admins and DPI admins.
+  const jira = can(me, "dpi.admin");
+  const tabs = TABS.filter((t) => (t.key !== "commands" || commands) && (t.key !== "criteria" || criteria) && (t.key !== "jira" || jira));
   // The hash last shown, to put back when the user keeps unsaved criteria changes (Back button).
   const shownHash = useRef("");
   const asked = useRef(false);
@@ -75,7 +79,7 @@ export default function AdminPage() {
       asked.current = false;
       shownHash.current = window.location.hash;
       const [key, part] = readHash();
-      const next = isTab(key) && (key !== "commands" || commands) && (key !== "criteria" || criteria) ? key : "gitlab";
+      const next = isTab(key) && (key !== "commands" || commands) && (key !== "criteria" || criteria) && (key !== "jira" || jira) ? key : "gitlab";
       setTab(next);
       // Dự án & Repo links here with ?members=bp:3: that list lives under Người & Team › Từ GitLab.
       const members = next === "people" && !part && new URLSearchParams(window.location.search).has("members");
@@ -84,7 +88,7 @@ export default function AdminPage() {
     fromHash();
     window.addEventListener("hashchange", fromHash);
     return () => window.removeEventListener("hashchange", fromHash);
-  }, [ready, commands, criteria]);
+  }, [ready, commands, criteria, jira]);
 
   // The hash is the source of truth: setting it fires hashchange and keeps Back/Forward working.
   const go = (key: Tab, part?: string) => {
@@ -139,6 +143,7 @@ export default function AdminPage() {
         {tab === "criteria" && <CriteriaAdmin nav={nav} me={me} />}
         {tab === "people" && <PeopleTab nav={nav} />}
         {tab === "permissions" && <PermissionsAdmin nav={nav} />}
+        {tab === "jira" && <JiraAdmin />}
         {tab === "telegram" && <TelegramAdmin />}
         {tab === "webhooks" && <WebhookAdmin />}
         {tab === "llm" && <LlmTab nav={nav} />}

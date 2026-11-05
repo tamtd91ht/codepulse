@@ -1,8 +1,9 @@
 "use client";
 
 /**
- * DPI › Jira (docs/specs/27 §12): connection, task source, registered Jira projects, sync and
- * the field mapping. Needs `dpi.admin`; the API answers 403 otherwise.
+ * Admin › Jira and DPI › Jira (docs/specs/27 §12): connection (saved on the web, else the JIRA_*
+ * variables), task source, registered Jira projects, sync and the field mapping. Needs
+ * `dpi.admin` (or admin); the API answers 403 otherwise.
  */
 import { useState } from "react";
 
@@ -37,9 +38,33 @@ export interface JiraProject {
   issues_count: number;
 }
 
+type ValueSource = "web" | "env" | null;
+
+export interface JiraConnection {
+  base_url: string | null;
+  base_url_source: ValueSource;
+  token_set: boolean;
+  token_source: ValueSource;
+  token_updated_at: string | null;
+  /** A token is saved on the web but cannot be decrypted (APP_ENCRYPTION_KEY changed). */
+  token_unreadable: boolean;
+  /** A token exists but belongs to another server than the URL: never sent there. */
+  token_other_server: boolean;
+  ca_set: boolean;
+  ca_source: ValueSource;
+  interval_min: number;
+  backfill_days: number;
+  timeout_s: number;
+  enabled: boolean;
+  configured: boolean;
+  sources: Record<"interval_min" | "backfill_days" | "timeout_s" | "enabled", "web" | "env">;
+  env: { base_url: boolean; token: boolean; ca_bundle: boolean };
+}
+
 interface JiraView {
   configured: boolean;
   base_url: string | null;
+  connection: JiraConnection;
   task_source: "gitlab" | "jira";
   mapping: JiraMapping;
   dpi_types: string[];
@@ -68,47 +93,130 @@ export function JiraAdmin() {
   if (error) return error.status === 403 ? <Alert tone="info">Cần quyền quản trị DPI (dpi.admin) để cấu hình Jira.</Alert> : <Loading error={error} />;
   if (!data) return <Loading rows={6} />;
   const reload = () => void mutate();
+  const done = (m: string) => (setMessage(m), reload());
+  const c = data.connection;
   return (
-    <>
+    <div className="jira-admin">
       <Message text={message} onClose={() => setMessage(null)} />
-      <Connection data={data} />
-      {data.configured && (
+      <Connection key={JSON.stringify(c)} data={data} onDone={done} />
+      {data.configured ? (
         <>
-          <Source data={data} onDone={(m) => (setMessage(m), reload())} />
-          <Projects key={data.projects.map((p) => `${p.key}:${p.enabled}:${p.business_project?.id ?? ""}`).join("|")} data={data} onDone={(m) => (setMessage(m), reload())} />
-          <MappingEditor key={JSON.stringify(data.mapping)} data={data} onDone={(m) => (setMessage(m), reload())} />
+          <Source data={data} onDone={done} />
+          <Projects key={data.projects.map((p) => `${p.key}:${p.enabled}:${p.business_project?.id ?? ""}`).join("|")} data={data} onDone={done} />
+          <MappingEditor key={JSON.stringify(data.mapping)} data={data} onDone={done} />
         </>
+      ) : (
+        <Card title="Nguồn task, dự án Jira và quy đổi trường" collapsible={false}>
+          <EmptyState icon="info" title={c.base_url && c.token_set && !c.enabled ? "Tích hợp Jira đang tắt." : "Điền thẻ Kết nối trước."}>
+            {c.base_url && c.token_set && !c.enabled
+              ? "Bật “Tích hợp Jira” ở thẻ Kết nối rồi Lưu để chọn nguồn task, đăng ký dự án và đồng bộ."
+              : "Nhập URL Jira và Personal Access Token ở thẻ Kết nối, bấm Kiểm tra kết nối rồi Lưu. Sau đó chọn nguồn task, đăng ký dự án Jira và sửa quy đổi trường tại đây."}
+          </EmptyState>
+        </Card>
       )}
-    </>
+    </div>
   );
 }
 
-function Connection({ data }: { data: JiraView }) {
+type ConnKey = "base_url" | "token" | "ca_pem" | "interval_min" | "backfill_days" | "timeout_s" | "enabled";
+const CONN_KEYS: readonly string[] = ["base_url", "token", "ca_pem", "interval_min", "backfill_days", "timeout_s", "enabled"];
+
+/** "base_url: message" (the API's 422 text) → the field it is about, else none. */
+function connError(message: string): { key: ConnKey | null; text: string } {
+  const m = /^([a-z_]+): (.*)$/s.exec(message);
+  return m && CONN_KEYS.includes(m[1]) ? { key: m[1] as ConnKey, text: m[2] } : { key: null, text: message };
+}
+
+/** Where a value in effect comes from, next to its label. */
+function From({ source, env }: { source: ValueSource; env?: boolean }) {
+  if (source === "web") return <Pill tone="primary">đã lưu trên web</Pill>;
+  if (source === "env") return <Pill>biến môi trường</Pill>;
+  return env === false ? <span className="muted small">chưa có</span> : null;
+}
+
+function Connection({ data, onDone }: { data: JiraView; onDone: (msg: string) => void }) {
+  const c = data.connection;
+  const [baseUrl, setBaseUrl] = useState(c.base_url ?? "");
+  const [token, setToken] = useState("");
+  const [caPem, setCaPem] = useState("");
+  const [enabled, setEnabled] = useState(c.enabled);
+  const [intervalMin, setIntervalMin] = useState(String(c.interval_min));
+  const [backfill, setBackfill] = useState(String(c.backfill_days));
+  const [timeoutS, setTimeoutS] = useState(String(c.timeout_s));
   const [result, setResult] = useState<TestResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const test = async () => {
-    setBusy(true);
-    setTestError(null);
+  const [error, setError] = useState<{ key: ConnKey | null; text: string } | null>(null);
+  const [busy, setBusy] = useState<"test" | "save" | "reset" | null>(null);
+
+  const trimmedUrl = baseUrl.trim();
+  const urlChanged = trimmedUrl.replace(/\/+$/, "") !== (c.base_url ?? "");
+  const num = (v: string) => (v.trim() === "" ? NaN : Number(v));
+  const changes: Record<string, unknown> = {};
+  if (urlChanged) changes.base_url = trimmedUrl;
+  if (token.trim()) changes.token = token.trim();
+  if (caPem.trim()) changes.ca_pem = caPem;
+  if (enabled !== c.enabled) changes.enabled = enabled;
+  if (num(intervalMin) !== c.interval_min) changes.interval_min = num(intervalMin);
+  if (num(backfill) !== c.backfill_days) changes.backfill_days = num(backfill);
+  if (num(timeoutS) !== c.timeout_s) changes.timeout_s = num(timeoutS);
+  const dirty = Object.keys(changes).length > 0;
+  const fromWeb = c.base_url_source === "web" || c.token_source === "web" || c.ca_source === "web" || Object.values(c.sources).includes("web");
+  const canTest = Boolean((trimmedUrl || c.base_url) && (token.trim() || c.token_set));
+
+  const fail = (e: unknown) => {
+    const text = errText(e);
+    setError(e instanceof ApiError && e.status === 422 ? connError(text) : { key: null, text });
+  };
+  const run = async (kind: "save" | "reset", work: () => Promise<unknown>, done: string) => {
+    setBusy(kind);
+    setError(null);
     try {
-      setResult(await api.post<TestResult>("/dpi/jira/test"));
+      await work();
+      onDone(done);
     } catch (e) {
-      setResult(null);
-      setTestError(errText(e));
+      fail(e);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
-  if (!data.configured)
-    return (
-      <Card title="Kết nối Jira" collapsible={false}>
-        <EmptyState icon="info" title="Chưa cấu hình Jira Data Center.">
-          Đặt biến môi trường <code>JIRA_BASE_URL</code> (ví dụ <code>https://jira.company.vn</code>) và <code>JIRA_TOKEN</code> (PAT của tài khoản dịch vụ chỉ
-          đọc, quyền Browse projects) cho API và worker, rồi khởi động lại. Tuỳ chọn: <code>JIRA_CA_BUNDLE</code>, <code>JIRA_SYNC_INTERVAL_MIN</code> (mặc định 15),{" "}
-          <code>JIRA_BACKFILL_DAYS</code> (mặc định 180).
-        </EmptyState>
-      </Card>
-    );
+  const save = () =>
+    void run("save", () => api.put("/dpi/jira/connection", changes), "Đã lưu kết nối Jira. Lịch đồng bộ dùng cấu hình mới trong vòng một phút.");
+  const clearToken = () => {
+    if (!window.confirm(c.env.token ? "Xoá token đã lưu trên web? Sau đó dùng JIRA_TOKEN của biến môi trường." : "Xoá token đã lưu trên web? Jira sẽ ngừng đồng bộ cho tới khi nhập token mới."))
+      return;
+    void run("save", () => api.put("/dpi/jira/connection", { token: "" }), "Đã xoá token Jira đã lưu.");
+  };
+  const clearCa = () => void run("save", () => api.put("/dpi/jira/connection", { ca_pem: "" }), "Đã xoá CA đã lưu.");
+  const reset = () => {
+    if (!window.confirm("Xoá mọi giá trị kết nối Jira đã lưu trên web (URL, token, CA, chu kỳ…) và dùng lại biến môi trường JIRA_*?")) return;
+    void run("reset", () => api.delete("/dpi/jira/connection"), "Đã xoá cấu hình Jira trên web, đang dùng biến môi trường.");
+  };
+  const test = async () => {
+    setBusy("test");
+    setTestError(null);
+    setResult(null);
+    const body: Record<string, string> = {};
+    if (urlChanged && trimmedUrl) body.base_url = trimmedUrl;
+    if (token.trim()) body.token = token.trim();
+    if (caPem.trim()) body.ca_pem = caPem;
+    try {
+      setResult(await api.post<TestResult>("/dpi/jira/test", body));
+    } catch (e) {
+      setTestError(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const fe = (key: ConnKey) => (error?.key === key ? error.text : undefined);
+  const tokenState = c.token_source === "web"
+    ? `Đã lưu${c.token_updated_at ? ` (cập nhật ${relative(c.token_updated_at)})` : ""}`
+    : c.token_source === "env"
+      ? "Đang dùng biến môi trường JIRA_TOKEN"
+      : c.token_other_server
+        ? "Chưa có token cho máy chủ này (token hiện có thuộc máy chủ khác, không được gửi sang đây)"
+        : "Chưa có";
+  const cleartext = /^http:\/\//i.test(trimmedUrl);
   const field = (label: string, f: FieldRef | null) => (
     <li>
       {label}:{" "}
@@ -121,33 +229,141 @@ function Connection({ data }: { data: JiraView }) {
       )}
     </li>
   );
+  const number = (label: string, value: string, set: (v: string) => void, key: "interval_min" | "backfill_days" | "timeout_s", min: number, max: number, hint: string) => (
+    <label className="jira-field">
+      <span>
+        {label} <From source={c.sources[key]} />
+      </span>
+      <input type="number" inputMode="numeric" min={min} max={max} step={1} value={value} onChange={(e) => set(e.target.value)} aria-invalid={!!fe(key)} />
+      <span className="muted small">{hint}</span>
+      <FieldError text={fe(key)} />
+    </label>
+  );
+
   return (
     <Card
-      title="Kết nối Jira"
+      title="Kết nối"
       collapsible={false}
-      subtitle={`Chỉ đọc. Đồng bộ mỗi ${data.interval_min} phút. Tài khoản Jira đã nối người dùng: ${data.accounts.linked} / ${data.accounts.total}.`}
-      actions={
-        <button type="button" className="sm" disabled={busy} onClick={() => void test()}>
-          {busy ? "Đang kiểm tra…" : "Kiểm tra kết nối"}
-        </button>
+      subtitle={
+        c.configured
+          ? `Chỉ đọc. Đồng bộ mỗi ${c.interval_min} phút. Tài khoản Jira đã nối người dùng: ${data.accounts.linked} / ${data.accounts.total}.`
+          : "Jira Data Center, chỉ đọc: một tài khoản dịch vụ có quyền Browse projects và Personal Access Token của nó."
       }
+      actions={c.configured ? <Pill tone="good">đã cấu hình</Pill> : !c.enabled && c.base_url && c.token_set ? <Pill tone="warn">đang tắt</Pill> : <Pill>chưa cấu hình</Pill>}
     >
-      <p>
-        <Pill tone="good">đã cấu hình</Pill> <code>{data.base_url}</code>
-      </p>
-      {testError && <Alert tone="error">Kết nối lỗi: {testError}</Alert>}
-      {result && (
-        <Alert tone={result.ok ? "success" : "warning"}>
-          <div>
-            {result.server_title ?? "Jira"} · phiên bản {result.version ?? "—"}
-          </div>
-          <ul className="small" style={{ margin: "4px 0 0" }}>
-            {field("Story Points", result.fields.story_points)}
-            {field("Sprint", result.fields.sprint)}
-            {field("Flagged", result.fields.flagged)}
-          </ul>
+      {c.token_unreadable && (
+        <Alert tone="warning">
+          Token đã lưu trên web không giải mã được (APP_ENCRYPTION_KEY đã đổi?). Nhập lại token rồi Lưu{c.env.token ? "; trong lúc đó dùng JIRA_TOKEN nếu cùng máy chủ" : ""}.
         </Alert>
       )}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (dirty && !busy) save();
+        }}
+      >
+        <div className="jira-grid">
+          <label className="jira-field">
+            <span>
+              URL Jira <From source={c.base_url_source} env={c.env.base_url} />
+            </span>
+            <input type="url" inputMode="url" autoComplete="off" spellCheck={false} placeholder="https://jira.congty.vn" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} aria-invalid={!!fe("base_url")} />
+            <span className="muted small">Địa chỉ gốc, có thể kèm context path (ví dụ /jira). Token chỉ gửi tới máy chủ nó được nhập cho: đổi máy chủ thì nhập token mới.</span>
+            {cleartext && <span className="tone-warn small">http:// không mã hoá: token đi qua mạng dạng rõ. Nên dùng https://.</span>}
+            <FieldError text={fe("base_url")} />
+          </label>
+          <label className="jira-field">
+            <span>
+              Personal Access Token <From source={c.token_source} env={c.env.token} />
+            </span>
+            <input
+              type="password"
+              autoComplete="new-password"
+              spellCheck={false}
+              placeholder={c.token_set ? "Để trống: giữ token hiện tại" : "Dán PAT của tài khoản dịch vụ"}
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              aria-invalid={!!fe("token")}
+              aria-describedby="jira-token-state"
+            />
+            <span id="jira-token-state" className="muted small">
+              {tokenState}. Token được mã hoá khi lưu và không bao giờ hiện lại.
+            </span>
+            {c.token_source === "web" && (
+              <span>
+                <button type="button" className="ghost sm" disabled={!!busy} onClick={clearToken}>
+                  Xoá token đã lưu
+                </button>
+              </span>
+            )}
+            <FieldError text={fe("token")} />
+          </label>
+        </div>
+        <label className="jira-field jira-wide">
+          <span>
+            CA nội bộ (PEM, tuỳ chọn) <From source={c.ca_source} />
+          </span>
+          <textarea
+            rows={4}
+            spellCheck={false}
+            placeholder={c.ca_source === "web" ? "Đã lưu một CA. Dán CA khác để thay, để trống: giữ nguyên." : "-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----"}
+            value={caPem}
+            onChange={(e) => setCaPem(e.target.value)}
+            aria-invalid={!!fe("ca_pem")}
+          />
+          <span className="muted small">
+            Chỉ cần khi Jira dùng chứng chỉ do CA nội bộ cấp. Không có: dùng {c.env.ca_bundle ? "JIRA_CA_BUNDLE" : "CA của hệ thống"}.
+          </span>
+          {c.ca_source === "web" && (
+            <span>
+              <button type="button" className="ghost sm" disabled={!!busy} onClick={clearCa}>
+                Xoá CA đã lưu
+              </button>
+            </span>
+          )}
+          <FieldError text={fe("ca_pem")} />
+        </label>
+        <div className="jira-grid">
+          {number("Chu kỳ đồng bộ (phút)", intervalMin, setIntervalMin, "interval_min", 1, 1440, "1–1440. Mặc định 15.")}
+          {number("Số ngày lấy lùi lần đầu", backfill, setBackfill, "backfill_days", 1, 3650, "1–3650. Dự án mới đồng bộ lần đầu lấy issue cập nhật trong N ngày.")}
+          {number("Timeout (giây)", timeoutS, setTimeoutS, "timeout_s", 1, 300, "1–300, cho mỗi lời gọi Jira.")}
+        </div>
+        <label className="jira-check">
+          <input type="checkbox" role="switch" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Tích hợp Jira <From source={c.sources.enabled === "web" ? "web" : null} />
+          <span className="muted small"> Tắt: ngừng đồng bộ, dữ liệu đã lấy vẫn giữ.</span>
+        </label>
+        <FieldError text={fe("enabled")} />
+
+        {error && error.key === null && <Alert tone="error">Lỗi: {error.text}</Alert>}
+        {testError && <Alert tone="error">Kết nối lỗi: {testError}</Alert>}
+        {result && (
+          <Alert tone="success">
+            <div>
+              Kết nối được: {result.server_title ?? "Jira"} · phiên bản {result.version ?? "—"}
+              {dirty ? " (chưa lưu)" : ""}
+            </div>
+            <ul className="small" style={{ margin: "4px 0 0" }}>
+              {field("Story Points", result.fields.story_points)}
+              {field("Sprint", result.fields.sprint)}
+              {field("Flagged", result.fields.flagged)}
+            </ul>
+          </Alert>
+        )}
+        <div className="dpi-row" style={{ marginTop: 12 }}>
+          {fromWeb && (
+            <button type="button" className="link sm" disabled={!!busy} onClick={reset} title="Xoá các giá trị đã lưu trên web">
+              {busy === "reset" ? "Đang xoá…" : "Dùng lại biến môi trường"}
+            </button>
+          )}
+          <span className="dpi-spacer" />
+          <button type="button" className="sm" disabled={!!busy || !canTest} onClick={() => void test()} title={canTest ? "Thử giá trị đang nhập, chưa lưu" : "Nhập URL và token trước"}>
+            {busy === "test" ? "Đang kiểm tra…" : "Kiểm tra kết nối"}
+          </button>
+          <button type="submit" className={dirty ? "primary sm" : "sm"} disabled={!dirty || !!busy}>
+            {busy === "save" ? "Đang lưu…" : "Lưu"}
+          </button>
+        </div>
+      </form>
     </Card>
   );
 }

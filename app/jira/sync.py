@@ -27,7 +27,7 @@ from app.identity.autolink import BOT_PATTERNS, is_bot
 from app.jira.client import JiraClient, JiraError
 from app.jira.links import link_issues
 from app.jira.mapping import FieldIds, JiraUser, map_issue, resolve_fields, search_fields
-from app.jira.settings import JiraMapping, jira_configured, mapping
+from app.jira.settings import JiraConnection, JiraMapping, connection, mapping
 from app.models import Account, Issue, JiraProject, ProdDefect, User
 
 log = logging.getLogger(__name__)
@@ -35,6 +35,7 @@ log = logging.getLogger(__name__)
 OVERLAP_MIN = 5
 JOB_ID = "jira-sync"
 JOB_TIMEOUT = 60 * 60
+DUE_KEY = "jira:sync:due"  # set for one interval after the scheduler queued a sync
 LOCK_NAMESPACE = 0x7A  # first key of pg_try_advisory_xact_lock(ns, jira_projects.id)
 
 
@@ -197,6 +198,7 @@ def sync_project(
     *,
     rules: JiraMapping | None = None,
     ids: FieldIds | None = None,
+    conn: JiraConnection | None = None,
 ) -> int | None:
     """Fetch and store one project's updated issues; the caller commits. Returns the issues
     written, None when another sync of the project holds its lock (skipped, nothing changed).
@@ -207,13 +209,14 @@ def sync_project(
     if not locked:
         log.info("jira project sync already running, skipped", extra={"jira_project": project.key})
         return None
+    conn = conn if conn is not None else connection(session, settings)
     rules = rules if rules is not None else mapping(session)
     ids = ids if ids is not None else resolve_fields(client.fields(), rules)
     people = People(session, list(settings.allowed_email_domains))
-    query = jql(project, window_minutes(project, now, settings.jira_backfill_days))
+    query = jql(project, window_minutes(project, now, conn.backfill_days))
     written: list[int] = []
     for raw in client.search_all(query, search_fields(ids)):
-        mapped = map_issue(raw, rules, ids, settings.jira_base_url, project.id)
+        mapped = map_issue(raw, rules, ids, conn.base_url, project.id)
         row = dict(mapped.row)
         row["assignee_account_ids"] = [people.account(mapped.assignee)] if mapped.assignee else []
         _upsert_issue(session, row)
@@ -239,9 +242,11 @@ def _error_text(exc: Exception) -> str:
 def sync_all(
     session: Session, settings: Settings, client: JiraSource | None = None
 ) -> dict[str, Any]:
-    """Every enabled project, each committed on its own. No-op unless Jira is configured and
-    some project is enabled (whatever the task source: data is ready before a switch)."""
-    if not jira_configured(settings):
+    """Every enabled project, each committed on its own. No-op unless Jira is configured (the
+    connection in effect: saved on the web, else JIRA_*) and some project is enabled (whatever
+    the task source: data is ready before a switch)."""
+    conn = connection(session, settings)
+    if not conn.configured:
         return {"skipped": "not_configured"}
     keys = list(
         session.scalars(
@@ -251,7 +256,13 @@ def sync_all(
     if not keys:
         return {"skipped": "no_project"}
     own = client is None
-    source: JiraSource = client if client is not None else JiraClient.from_settings(settings)
+    if client is not None:
+        source: JiraSource = client
+    else:
+        try:
+            source = JiraClient.from_connection(conn)
+        except Exception as exc:  # e.g. the CA saved on the web: kept on every project
+            return _all_failed(session, keys, _error_text(exc))
     rules = mapping(session)
     ids: FieldIds | None = None
     out: dict[str, Any] = {"projects": {}}
@@ -262,7 +273,9 @@ def sync_all(
             try:
                 if ids is None:
                     ids = resolve_fields(source.fields(), rules)
-                count = sync_project(session, source, project, settings, now, rules=rules, ids=ids)
+                count = sync_project(
+                    session, source, project, settings, now, rules=rules, ids=ids, conn=conn
+                )
                 session.commit()
                 if count is None:  # another sync of it is running: not an error
                     out["projects"][key] = {"skipped": "busy"}
@@ -290,7 +303,67 @@ def sync_all(
     return out
 
 
+def _all_failed(session: Session, keys: list[str], error: str) -> dict[str, Any]:
+    """No client could be built: every enabled project keeps the error, nothing else moves."""
+    log.warning("jira client unavailable", extra={"error": error})
+    now = datetime.now(UTC)
+    for project in session.scalars(select(JiraProject).where(JiraProject.key.in_(keys))):
+        project.last_error = error
+        project.last_synced_at = now
+    session.commit()
+    return {"projects": {key: {"error": error} for key in keys}}
+
+
 def sync_all_job() -> dict[str, Any]:
-    """RQ entry point (scheduler every JIRA_SYNC_INTERVAL_MIN, and Admin "Đồng bộ ngay")."""
+    """RQ entry point (the scheduler's tick once per sync interval, and "Đồng bộ ngay")."""
     with get_sessionmaker()() as session:
         return sync_all(session, get_settings())
+
+
+class DueStore(Protocol):
+    """The bit of Redis the tick uses."""
+
+    def set(self, name: str, value: Any, *, ex: int | None = None, nx: bool = False) -> Any: ...
+
+    def ttl(self, name: str) -> Any: ...
+
+    def expire(self, name: str, time: int) -> Any: ...
+
+    def delete(self, *names: str) -> Any: ...
+
+
+class Enqueue(Protocol):
+    def enqueue(self, f: str, *args: Any, **kwargs: Any) -> Any: ...
+
+
+def tick(session: Session, settings: Settings, redis: DueStore, queue: Enqueue) -> str:
+    """The scheduler's 1-minute tick (§3): the connection is read anew each time (it can change
+    on the web), and `sync_all_job` is queued once per interval: `SET jira:sync:due NX EX`, so
+    the interval holds across scheduler restarts. A shorter interval saved meanwhile cuts the
+    current wait down to it."""
+    conn = connection(session, settings)
+    if not conn.configured:
+        return "not configured"
+    seconds = conn.interval_min * 60
+    if not redis.set(DUE_KEY, "1", ex=seconds, nx=True):
+        left = redis.ttl(DUE_KEY)
+        if isinstance(left, int) and left > seconds:
+            redis.expire(DUE_KEY, seconds)
+        return "not due"
+    try:
+        queue.enqueue("app.jira.sync.sync_all_job", job_id=JOB_ID, job_timeout=JOB_TIMEOUT)
+    except Exception:
+        redis.delete(DUE_KEY)  # not queued: the next tick tries again
+        raise
+    return "queued"
+
+
+def tick_job() -> str:
+    """Scheduler entry point (app/scheduler): cheap, runs in the scheduler itself."""
+    from rq import Queue
+
+    from app.db import get_redis
+
+    redis = get_redis()
+    with get_sessionmaker()() as session:
+        return tick(session, get_settings(), redis, Queue("default", connection=redis))
