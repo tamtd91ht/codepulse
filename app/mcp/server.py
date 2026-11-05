@@ -374,6 +374,7 @@ def list_findings_work(
         tz=ZoneInfo(settings.report_tz),
     )
     views, owner = found.views, found.owner
+    queries.mark_closable(session, caller.principal, views)
     facts.result_count = len(views)
     facts.own_only = owner == caller.user_id and found.team is None
     repos = {v.project.id for v in views if v.project is not None}
@@ -401,7 +402,12 @@ def list_findings_work(
         "offset": offset or None,
     }
     markdown, data = render.list_result(
-        views, label, _base(session, settings), filters=filters, next_offset=found.next_offset
+        views,
+        label,
+        _base(session, settings),
+        filters=filters,
+        next_offset=found.next_offset,
+        local_llm=_local_llm(settings),
     )
     data["user_id"] = owner
     data["team_id"] = found.team.id if found.team else None
@@ -419,6 +425,7 @@ def commit_findings_work(
     repo: str | None = None,
 ) -> tuple[str, dict[str, Any], str | None]:
     review, views = queries.commit_findings(session, caller.principal, sha, repo)
+    queries.mark_closable(session, caller.principal, views)
     project = review_repo(session, review)
     facts.project_id = project.id if project else None
     facts.commit_sha = review.commit_sha
@@ -434,6 +441,7 @@ def mr_findings_work(
     session: Session, caller: Caller, settings: Settings, facts: CallFacts, *, repo: str, iid: int
 ) -> tuple[str, dict[str, Any], str | None]:
     review, views = queries.mr_findings(session, caller.principal, repo, iid)
+    queries.mark_closable(session, caller.principal, views)
     project = review_repo(session, review)
     facts.project_id = project.id if project else None
     facts.result_count = len(views)
@@ -452,6 +460,7 @@ def finding_work(
 ) -> tuple[str, dict[str, Any], str | None]:
     facts.finding_id = finding_id
     view = queries.finding_view(session, caller.principal, finding_id)
+    queries.mark_closable(session, caller.principal, [view])
     facts.project_id = view.project.id if view.project else None
     facts.result_count = 1
     facts.own_only = view.review.author_user_id == caller.user_id

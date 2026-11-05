@@ -81,10 +81,6 @@ def _age_days(at: datetime | None, now: datetime) -> int | None:
     return None if at is None else max(0, (now - at).days)
 
 
-def _day(at: datetime | None) -> str | None:
-    return at.date().isoformat() if at is not None else None
-
-
 def finding_link(base: str, review_id: int | None, finding_id: int) -> str:
     return f"{base}/reviews/{review_id}#finding-{finding_id}"
 
@@ -111,6 +107,61 @@ def code_allowed(project: Project | None, local_llm: bool = False) -> bool:
 
 def _mr_url(repo_url: str | None, mr: MergeRequest | None) -> str | None:
     return f"{repo_url}/-/merge_requests/{mr.iid}" if repo_url and mr else None
+
+
+def _commit_url(repo_url: str | None, sha: str | None) -> str | None:
+    return f"{repo_url}/-/commit/{sha}" if repo_url and sha else None
+
+
+def _first_line(text: str | None) -> str | None:
+    lines = (text or "").strip().splitlines()
+    return clean(lines[0][:200]) if lines else None
+
+
+# What request_closure needs (docs/specs/26 §8), in every result so the agent can plan it.
+CLOSE_REQUIRES = {
+    "commits": "SHA đã push lên GitLab (tối đa 5) khi có sửa code",
+    "note": "50-1000 ký tự: nguyên nhân, cách sửa, chỗ sửa (bắt buộc khi có commit)",
+    "files_changed": "đường dẫn file đã sửa (tối đa 50, bắt buộc khi có commit)",
+    "tests": "[{command, result: passed|failed|not_run, summary}] (tối đa 10)",
+    "argument": "50-4000 ký tự: phản biện khi không sửa code (finding sai)",
+}
+
+
+def _mr_data(view: FindingView) -> dict[str, Any] | None:
+    mr = view.mr
+    if mr is None:
+        return None
+    return {
+        "iid": mr.iid,
+        "title": clean(mr.title),
+        "url": _mr_url(view.repo_url, mr),
+        "state": mr.state,
+        "source_branch": mr.source_branch,
+        "target_branch": mr.target_branch,
+        "head_sha": mr.head_sha,
+    }
+
+
+def _commit_data(view: FindingView) -> dict[str, Any] | None:
+    sha = view.review.commit_sha
+    if view.mr is not None or not sha:
+        return None
+    c = view.commit
+    return {
+        "sha": sha,
+        "title": _first_line(c.message) if c else None,
+        "authored_at": _iso(c.authored_at) if c else None,
+        "url": _commit_url(view.repo_url, sha),
+    }
+
+
+def _close_data(view: FindingView) -> dict[str, Any]:
+    return {
+        "allowed": view.close_block is None,
+        "reason": view.close_block,
+        "requires": CLOSE_REQUIRES,
+    }
 
 
 def _verification(view: FindingView, allowed: bool = True) -> dict[str, Any] | None:
@@ -163,32 +214,32 @@ def finding_data(
             {"id": view.pending.id, "status": view.pending.status} if view.pending else None
         ),
     }
-    if not full:
-        return data
     ok = code_allowed(view.project, local_llm)
+    # Enough to understand and plan the fix from the list alone (user 2026-11-05); the code
+    # excerpt, verification, review summary and closure history are get_finding's.
     data.update(
         {
             "rule_id": f.rule_id,
             "source": f.source,
             "message": clean(f.message),
             "suggestion": clean(f.suggestion) if ok else None,
+            "repo_url": view.repo_url,
+            "repo_default_branch": view.project.default_branch if view.project else None,
+            "mr": _mr_data(view),
+            "commit": _commit_data(view),
+            "close_request": _close_data(view),
+        }
+    )
+    if not full:
+        return data
+    data.update(
+        {
             "code_excerpt": clean(f.code_excerpt) if ok else None,
             "code_excerpt_hidden": not ok,
             "code_hidden": None if ok else HIDDEN,
             "verification": _verification(view, ok),
             "criteria": f.criteria or None,
             "repeats_90d": view.repeats,
-            "repo_default_branch": view.project.default_branch if view.project else None,
-            "repo_url": view.repo_url,
-            "mr": (
-                {
-                    "iid": view.mr.iid,
-                    "title": clean(view.mr.title),
-                    "url": _mr_url(view.repo_url, view.mr),
-                }
-                if view.mr
-                else None
-            ),
             "review_summary": clean(r.summary) if ok else None,
             "review_intent": _intent(r) if ok else None,
         }
@@ -202,25 +253,78 @@ def _intent(review: Review) -> Any:
     return json.loads(redact(json.dumps(review.intent, ensure_ascii=False)))
 
 
-def _short_md(view: FindingView, base: str, tag: str, now: datetime) -> str:
+def _change_md(view: FindingView) -> list[str]:
+    """Where the change is: the MR (state, branches, link) or the commit (message, link)."""
+    if (mr := _mr_data(view)) is not None:
+        line = f"- MR !{mr['iid']} ({mr['state'] or '?'})"
+        if mr["source_branch"]:
+            line += f": {inline(mr['source_branch'])} -> {inline(mr['target_branch'] or '?')}"
+        if mr["url"]:
+            line += f" · {mr['url']}"
+        out = [line]
+        if mr["title"]:
+            out.append(f"  - tiêu đề MR: {inline(mr['title'])}")
+        return out
+    if (commit := _commit_data(view)) is not None:
+        line = f"- commit `{commit['sha']}`"
+        if commit["authored_at"]:
+            line += f" (lúc {commit['authored_at']})"
+        if commit["url"]:
+            line += f" · {commit['url']}"
+        out = [line]
+        if commit["title"]:
+            out.append(f"  - commit message: {inline(commit['title'])}")
+        return out
+    return []
+
+
+def _close_md(view: FindingView) -> str:
+    if view.close_block is None:
+        return "- Yêu cầu đóng: **gửi được** (request_closure sau khi đã sửa và push)"
+    return f"- Yêu cầu đóng: không gửi được: {view.close_block}"
+
+
+def _dates_md(view: FindingView, now: datetime) -> str:
+    r = view.review
+    age = _age_days(r.finished_at, now)
+    parts = []
+    if r.finished_at:
+        parts.append(
+            f"review {_iso(r.finished_at)}" + (f" ({age} ngày trước)" if age is not None else "")
+        )
+    if r.counted_at:
+        parts.append(f"thay đổi lúc {_iso(r.counted_at)}")
+    if view.author:
+        parts.append(f"tác giả {inline(view.author)}")
+    return "- " + " · ".join(parts) if parts else ""
+
+
+def _short_md(
+    view: FindingView, base: str, tag: str, now: datetime, local_llm: bool = False
+) -> str:
     f, r = view.finding, view.review
     where = view.project.path_with_namespace if view.project else "?"
-    change = f"MR !{view.mr.iid}" if view.mr else f"commit {(r.commit_sha or '')[:10]}"
-    age = _age_days(r.finished_at, now)
+    ok = code_allowed(view.project, local_llm)
+    conf = f" · confidence {float(f.confidence):.2f}" if f.confidence is not None else ""
     lines = [
-        f"### #{f.id} [{f.severity}] {inline(_location(view))}",
-        f"- repo `{where}` · {change} · reviewed_sha `{r.reviewed_sha[:12]}`"
-        + (f" · review {_day(r.finished_at)}" if r.finished_at else "")
-        + (f" ({age} ngày)" if age is not None else "")
-        + (f" · thay đổi ngày {_day(r.counted_at)}" if r.counted_at else "")
-        + f" · {f.status} · verified={f.verified}",
+        f"### #{f.id} [{f.severity}] {inline(f.category)} tại {inline(_location(view))}",
+        f"- repo `{where}` · reviewed_sha `{r.reviewed_sha}`"
+        + (f" · rule {inline(f.rule_id)}" if f.rule_id else "")
+        + f" · {f.status} · verified={f.verified}{conf}",
+        *_change_md(view),
     ]
-    if view.author:
-        lines.append(f"- tác giả: {inline(view.author)}")
+    if dates := _dates_md(view, now):
+        lines.append(dates)
     lines.append(f"- CodePulse: {finding_link(base, r.id, f.id)}")
     if view.pending:
         lines.append(f"- đang có yêu cầu đóng #{view.pending.id} ({view.pending.status})")
-    lines.append(wrap(tag, f.title or "(không tiêu đề)"))
+    lines.append(_close_md(view))
+    lines += ["", "**Tiêu đề**", wrap(tag, f.title or "(không tiêu đề)")]
+    lines += ["", "**Mô tả**", wrap(tag, f.message or "(không có)")]
+    if not ok:
+        lines.append(f"- _({HIDDEN})_")
+    elif f.suggestion:
+        lines += ["", "**Gợi ý sửa**", wrap(tag, f.suggestion)]
     return "\n".join(lines)
 
 
@@ -242,10 +346,12 @@ def _full_md(view: FindingView, base: str, tag: str, now: datetime, local_llm: b
         ),
         f"- reviewed_sha: `{r.reviewed_sha}`"
         + (f" · commit_sha: `{r.commit_sha}`" if r.commit_sha else ""),
+        *_change_md(view),
     ]
-    if view.mr:
-        out.append(f"- MR !{view.mr.iid}" + (f": {data['mr']['url']}" if data["mr"]["url"] else ""))
+    if dates := _dates_md(view, now):
+        out.append(dates)
     out.append(f"- CodePulse: {data['link']}")
+    out.append(_close_md(view))
     if view.repeats > 1:
         out.append(f"- Lặp lại: cùng lỗi xuất hiện ở {view.repeats} thay đổi trong 90 ngày")
     if view.pending:
@@ -304,6 +410,7 @@ def list_result(
     *,
     filters: dict[str, Any] | None = None,
     next_offset: int | None = None,
+    local_llm: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     at = now or datetime.now(UTC)
     tag = new_tag()
@@ -316,15 +423,18 @@ def list_result(
     if not views:
         body = "Không có finding critical/high nào theo bộ lọc này."
     else:
-        body = "\n\n".join(_short_md(v, base, tag, at) for v in views)
-        body += "\n\nGọi `get_finding` với id để xem chi tiết và gợi ý sửa."
+        body = "\n\n".join(_short_md(v, base, tag, at, local_llm) for v in views)
+        body += (
+            "\n\nGọi `get_finding` với id để xem thêm đoạn code lúc review, kết quả kiểm chứng "
+            "và lịch sử đóng."
+        )
     if next_offset is not None:
         body += f"\n\nCòn nữa: gọi lại với `offset={next_offset}`."
     data = {
         "count": len(views),
         "filters": applied,
         "next_offset": next_offset,
-        "findings": [finding_data(v, base, at, full=False) for v in views],
+        "findings": [finding_data(v, base, at, full=False, local_llm=local_llm) for v in views],
     }
     return f"{guidance(tag)}\n\n{head}\n\n{body}", data
 

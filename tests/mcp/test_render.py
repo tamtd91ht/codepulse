@@ -83,3 +83,74 @@ def test_list_findings_links_each_finding(env: Env, world: Any) -> None:
     link = f"https://dash.example.com/reviews/{world.an_review.id}#finding-{world.an_finding.id}"
     assert result.structured_content["findings"][0]["link"] == link
     assert f"- CodePulse: {link}" in result.content[0].text
+
+
+def test_list_items_carry_what_a_fix_and_a_close_request_need(env: Env, world: Any) -> None:
+    """user 2026-11-05: the list alone is enough to understand, fix and close a finding."""
+    _setup(env, world)
+    mr = world.mr
+    mr.title, mr.state = "Thêm báo cáo", "merged"
+    mr.source_branch, mr.target_branch = "feature/report", "main"
+    env.session.commit()
+    an = caller_for(env.session, env.settings, world.an)
+    result = invoke(an, "list_findings")
+    item = result.structured_content["findings"][0]
+    assert item["severity"] == "critical" and item["category"] == "security"
+    assert item["message"] and item["suggestion"] == "Use bind parameters."
+    assert item["reviewed_at"] and item["review_id"] == world.an_review.id
+    assert item["mr"]["source_branch"] == "feature/report"
+    assert item["mr"]["target_branch"] == "main" and item["mr"]["state"] == "merged"
+    assert item["mr"]["url"].endswith("/demo/p/-/merge_requests/7")
+    assert item["close_request"]["allowed"] is True
+    assert {"commits", "note", "files_changed", "tests", "argument"} <= set(
+        item["close_request"]["requires"]
+    )
+    text = result.content[0].text
+    assert "**Mô tả**" in text and "**Gợi ý sửa**" in text
+    assert "`feature/report` -> `main`" in text and "Yêu cầu đóng: **gửi được**" in text
+    # Someone else's finding (the lead looking at An's): readable, not closable by them.
+    lead = caller_for(env.session, env.settings, world.lead)
+    other = invoke(lead, "list_findings", {"user": "an@x.vn"}).structured_content
+    assert other["findings"][0]["close_request"]["allowed"] is False
+    assert "tác giả" in other["findings"][0]["close_request"]["reason"]
+
+
+def test_a_commit_review_links_its_commit(env: Env, world: Any) -> None:
+    from datetime import UTC, datetime
+
+    from app.models import Commit, Review, ReviewFinding
+    from app.review.rubric import RUBRIC_VERSION
+
+    s = env.session
+    sha = "d" * 40
+    s.add(
+        Commit(
+            sha=sha,
+            project_id=world.project.id,
+            message="fix: chặn SQL injection\n\nchi tiết",
+            authored_at=datetime(2026, 10, 7, 2, tzinfo=UTC),
+        )
+    )
+    s.flush()
+    review = Review(
+        target_type="commit",
+        commit_sha=sha,
+        reviewed_sha=sha,
+        status="done",
+        author_user_id=world.an.id,
+        finished_at=datetime(2026, 10, 7, 3, tzinfo=UTC),
+        rubric_version=RUBRIC_VERSION,
+    )
+    s.add(review)
+    s.flush()
+    finding = ReviewFinding(
+        review_id=review.id, severity="high", category="bug", file_path="a.py", title="x"
+    )
+    s.add(finding)
+    s.commit()
+    an = caller_for(s, env.settings, world.an)
+    data = invoke(an, "get_finding", {"id": finding.id}).structured_content
+    assert data["mr"] is None
+    assert data["commit"]["sha"] == sha and data["commit"]["title"] == "fix: chặn SQL injection"
+    assert data["commit"]["url"].endswith(f"/demo/p/-/commit/{sha}")
+    assert data["commit"]["authored_at"].startswith("2026-10-07T02:00")

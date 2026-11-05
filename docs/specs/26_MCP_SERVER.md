@@ -141,3 +141,8 @@ Mỗi dòng một thành viên (trong phạm vi + bộ lọc), có dòng tổng:
 - `GET /api/v1/mcp-report/calls?…same filters…&tool&ok&page` → nhật ký gọi tool (admin).
 - `GET /api/v1/mcp-report/export.xlsx?…same filters…` → file Excel.
 - Tỉ lệ là số 0–1 hoặc `null` khi mẫu số bằng 0.
+
+## 14. Dữ liệu đủ để sửa và gửi yêu cầu đóng
+
+- **[Quyết định]** (user 2026-11-05) Mỗi finding trong `list_findings` (không chỉ `get_finding`) mang đủ để agent hiểu, sửa và gửi yêu cầu đóng: id, mức, category, rule, nguồn, tiêu đề, **mô tả**, **gợi ý sửa** (khi repo cho phép gửi code ra ngoài), file:dòng, repo + URL + nhánh mặc định, `reviewed_sha`, MR (iid, tiêu đề, trạng thái, nhánh nguồn → đích, head_sha, link) hoặc commit (sha, commit message dòng đầu, thời điểm, link), ngày review, ngày thay đổi, tác giả, độ tin cậy, verified, link CodePulse, yêu cầu đóng đang chờ, và `close_request` = {allowed, reason, requires}: người gọi có gửi được yêu cầu đóng không (cùng luật `check_close_request`: quyền, tác giả, critical/high, còn mở, không có yêu cầu đang chờ, hạn 20/ngày) và các trường `request_closure` cần.
+- `get_finding` thêm đoạn code lúc review, kết quả kiểm chứng, tiêu chí, số lần lặp 90 ngày, tóm tắt và intent của review, lịch sử đóng.

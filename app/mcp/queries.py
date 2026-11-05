@@ -75,6 +75,9 @@ class FindingView:
     repeats: int = 0
     repo_url: str | None = None  # the repo on GitLab (web), for links
     author: str | None = None  # the review author's name
+    commit: Commit | None = None  # the reviewed commit (a commit's review)
+    # Whether the caller may send a close request now: None = yes, else why not (Vietnamese).
+    close_block: str | None = None
 
 
 # -- arguments -------------------------------------------------------------------------------------
@@ -417,7 +420,14 @@ def _views(session: Session, rows: Any) -> list[FindingView]:
             if author_ids
             else {}
         )
+        shas = {v.review.commit_sha for v in views if v.mr is None and v.review.commit_sha}
+        commits = (
+            {c.sha: c for c in session.scalars(select(Commit).where(Commit.sha.in_(shas)))}
+            if shas
+            else {}
+        )
         for view in views:
+            view.commit = commits.get(view.review.commit_sha or "") if view.mr is None else None
             view.author = names.get(view.review.author_user_id or 0)
             view.pending = pending.get(view.finding.id)
             view.repeats = repeats.get(view.finding.fingerprint or "", 0)
@@ -615,3 +625,39 @@ def my_requests(
         query.order_by(FindingClosure.id.desc()).limit(max(1, min(limit, MAX_LIMIT)))
     ).all()
     return [RequestView(closure=c, finding=f, review_id=r, project=p) for c, f, r, p in rows]
+
+
+def mark_closable(session: Session, principal: Principal, views: list[FindingView]) -> None:
+    """Set `close_block` on each view: whether `request_closure` would be refused before it
+    asks GitLab, by the rules of `check_close_request` (app/api/routers/closures.py), so the
+    agent knows up front which findings it may send a close request for."""
+    from app.api.routers.closures import MAX_REQUESTS_PER_DAY
+
+    if not views:
+        return
+    if not principal.can("finding.close_request"):
+        for view in views:
+            view.close_block = "tài khoản không có quyền gửi yêu cầu đóng"
+        return
+    today = session.scalar(
+        select(func.count()).where(
+            FindingClosure.requested_by == principal.user_id,
+            FindingClosure.kind == "request",
+            FindingClosure.created_at >= datetime.now(UTC) - timedelta(days=1),
+        )
+    )
+    quota_left = (today or 0) < MAX_REQUESTS_PER_DAY
+    for view in views:
+        f = view.finding
+        if view.review.author_user_id != principal.user_id:
+            view.close_block = "chỉ tác giả của thay đổi mới gửi được yêu cầu đóng"
+        elif f.severity not in SEVERE:
+            view.close_block = "chỉ finding critical/high mới gửi yêu cầu đóng được"
+        elif (f.status or "open") != "open":
+            view.close_block = f"finding đang ở trạng thái {f.status}"
+        elif view.pending is not None:
+            view.close_block = f"đã có yêu cầu đóng #{view.pending.id} đang chờ"
+        elif not quota_left:
+            view.close_block = f"đã gửi tối đa {MAX_REQUESTS_PER_DAY} yêu cầu đóng trong 24 giờ"
+        else:
+            view.close_block = None
