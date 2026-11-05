@@ -5,7 +5,7 @@ allowed-tools: mcp__codepulse__list_findings, mcp__codepulse__get_commit_finding
 ---
 
 <!--
-Mẫu slash command cho Claude Code (tải tại <địa chỉ CodePulse>/downloads/fix-findings.md, xem Hướng dẫn › Tích hợp Claude Code). Chép file này vào `.claude/commands/fix-findings.md` của repo
+Mẫu slash command cho Claude Code (tải tại <địa chỉ CodePulse>/downloads/fix-findings.md, xem Hướng dẫn › Tích hợp MCP). Chép file này vào `.claude/commands/fix-findings.md` của repo
 bạn (hoặc `~/.claude/commands/` để dùng ở mọi repo), rồi gõ `/fix-findings` hoặc
 `/fix-findings <sha | finding id>`. Cần kết nối MCP tên `codepulse` (Hướng dẫn › Tích hợp Claude
 Code (MCP)). Sửa danh sách `Bash(...)` test ở trên cho khớp lệnh test của repo.

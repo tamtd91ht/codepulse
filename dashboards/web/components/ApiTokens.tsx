@@ -371,7 +371,7 @@ export function MyTokensCard() {
         }
       />
       <div className="muted small token-foot">
-        Cách dùng và mẫu <code>.mcp.json</code>: <Link href="/guide/mcp">Hướng dẫn › Tích hợp Claude Code (MCP)</Link>.
+        Cách dùng và mẫu <code>.mcp.json</code>: <Link href="/guide/mcp">Hướng dẫn › Tích hợp MCP</Link>.
       </div>
     </Card>
   );

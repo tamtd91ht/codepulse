@@ -12,7 +12,7 @@ const SECTIONS = [
   { id: "lead", label: "Lead" },
   { id: "admin", label: "Admin" },
   { id: "telegram", label: "Bot Telegram" },
-  { id: "mcp", label: "Tích hợp Claude Code (MCP)" },
+  { id: "mcp", label: "Tích hợp MCP" },
   { id: "metrics", label: "Đọc các chỉ số" },
   { id: "insights", label: "Luồng làm việc" },
   { id: "dpi", label: "DPI hàng tháng" },
@@ -428,7 +428,7 @@ export default function GuidePage() {
           prompt rất nhỏ (không có code) để đo trạng thái, độ trễ và chi phí. Mỗi lần kiểm tra tốn một ít quota và được
           ghi audit log.
         </p>
-        <h3>Token Claude Code (MCP)</h3>
+        <h3>Token tích hợp MCP</h3>
         <p>
           Ở <strong>Người &amp; Team → Người dùng</strong>, nút chìa khoá trên mỗi dòng mở danh sách token Claude Code của người
           đó (tên, hạn, lần dùng cuối) để thu hồi khi máy bị mất, người nghỉ việc hoặc token bị lộ. Dashboard chuyển tiếp{" "}
@@ -536,7 +536,7 @@ export default function GuidePage() {
       </section>
 
       <section id="mcp" className="card">
-        <h2>7. Tích hợp Claude Code (MCP)</h2>
+        <h2>7. Tích hợp MCP</h2>
         <p>
           CodePulse có một máy chủ MCP để <strong>Claude Code</strong> trên máy bạn đọc các finding{" "}
           <span className="sev critical">critical</span> <span className="sev high">high</span> còn mở của bạn (top, theo
@@ -559,7 +559,7 @@ export default function GuidePage() {
           Tài liệu đầy đủ (cài đặt theo hệ điều hành, tham số từng tool, gửi yêu cầu đóng, lệnh mẫu <code>/fix-findings</code>,
           mã lỗi, giới hạn, bảo mật, dành cho admin):{" "}
           <Link href="/guide/mcp">
-            <strong>Tích hợp Claude Code (MCP)</strong>
+            <strong>Hướng dẫn › Tích hợp MCP</strong>
           </Link>
           . Báo cáo sử dụng và hiệu quả ở trang <Link href="/mcp-report">Tích hợp MCP</Link> (menu Theo dõi).
         </p>

@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { GuideNav } from "@/components/GuideNav";
 import { FixFindingsFile, McpAddScoped, McpJsonSample, McpUrl } from "@/components/McpConnect";
 
-export const metadata: Metadata = { title: "Tích hợp Claude Code (MCP)" };
+export const metadata: Metadata = { title: "Tích hợp MCP" };
 
 const SECTIONS = [
   { id: "overview", label: "Tổng quan" },
@@ -100,7 +100,7 @@ export default function McpGuidePage() {
         <div className="titles">
           <div>
             <div className="eyebrow">Guide</div>
-            <h1>Tích hợp Claude Code (MCP)</h1>
+            <h1>Tích hợp MCP</h1>
             <div className="sub">
               Kết nối Claude Code với CodePulse để đọc finding critical/high, sửa ngay trong repo và gửi yêu cầu đóng.
             </div>

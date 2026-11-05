@@ -348,10 +348,22 @@ export default function McpReportPage() {
     ...(isAdmin ? [{ key: "calls", label: "Nhật ký gọi", hint: "Mọi lần gọi tool (chỉ admin)" } as SubTab<Tab>] : []),
   ];
 
+  // Của tôi › Tích hợp MCP: where a person makes and revokes their tokens (#claude tab).
+  const tokensHref = me.data ? `/members/${me.data.id}#claude` : null;
+  const manageTokens = tokensHref ? (
+    <Link className="button" href={tokensHref}>
+      <Icon name="key" size={14} /> Quản lý token
+    </Link>
+  ) : null;
+
   if (me.data && !scope) {
     return (
       <>
-        <PageHeader title="Tích hợp MCP" foldable={false} />
+        <PageHeader
+          title="Tích hợp MCP"
+          foldable={false}
+          actions={<span className="no-print report-actions">{manageTokens}</span>}
+        />
         <Card collapsible={false}>
           <EmptyState icon="alert" title="Bạn chưa có quyền xem báo cáo tích hợp MCP">
             Quyền &ldquo;Tích hợp MCP&rdquo; (report.mcp) do admin cấp ở Admin › Phân quyền.
@@ -369,6 +381,7 @@ export default function McpReportPage() {
         foldable={false}
         actions={
           <span className="no-print report-actions">
+            {manageTokens}
             {exportHref ? (
               <a className="button" href={exportHref} download>
                 <Icon name="download" size={14} /> Xuất Excel
@@ -721,7 +734,7 @@ function MembersTable({ summary, error, search }: { summary?: Summary; error?: E
     return (
       <Card collapsible={false}>
         <EmptyState icon="inbox" title="Chưa có ai dùng Claude Code trong khoảng này">
-          Đổi khoảng thời gian hoặc bộ lọc. Cách kết nối: <Link href="/guide/mcp">Hướng dẫn › Kết nối Claude Code (MCP)</Link>.
+          Đổi khoảng thời gian hoặc bộ lọc. Cách kết nối: <Link href="/guide/mcp">Hướng dẫn › Tích hợp MCP</Link>.
         </EmptyState>
       </Card>
     );
