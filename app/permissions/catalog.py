@@ -120,6 +120,13 @@ CATALOG: tuple[Permission, ...] = (
     _p("dpi.final_view", "DPI", "Xem scorecard DPI đã chốt (HR)", sensitive=True),
     _p("dpi.defects", "DPI", "Xác nhận RCA lỗi production", "team project all"),
     _p("dpi.admin", "DPI", "Cấu hình rubric, profile, level, cờ chạy thử"),
+    # docs/specs/27 §11: the Jira connection (URL, token), Jira projects, field mapping, the
+    # DPI task source and "sync now". No built-in set holds it: admins, or a set granting it.
+    _p(
+        "jira.admin",
+        "Tích hợp Jira",
+        "Cấu hình kết nối Jira (URL, token), dự án Jira, quy đổi trường, nguồn task DPI",
+    ),
     _p("knowledge.view", "Tiền đề review", "Xem Tiền đề review của repo"),
     _p(
         "knowledge.edit",

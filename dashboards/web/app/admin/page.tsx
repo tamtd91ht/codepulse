@@ -62,7 +62,7 @@ export default function AdminPage() {
   // Bộ tiêu chí (docs/specs/22 §5): who may manage sets, or assign them to a dự án.
   const criteria = can(me, "criteria.manage") || can(me, "criteria.assign");
   // Jira (docs/specs/27 §12): the same screen as DPI › Jira, for admins and DPI admins.
-  const jira = can(me, "dpi.admin");
+  const jira = can(me, "jira.admin");
   const tabs = TABS.filter((t) => (t.key !== "commands" || commands) && (t.key !== "criteria" || criteria) && (t.key !== "jira" || jira));
   // The hash last shown, to put back when the user keeps unsaved criteria changes (Back button).
   const shownHash = useRef("");

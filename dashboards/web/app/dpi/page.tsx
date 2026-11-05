@@ -1388,8 +1388,8 @@ export default function DpiPage() {
     ...(can(me, "dpi.defects") ? [{ key: "defects", label: "Lỗi production" } as SubTab<Tab>] : []),
     { key: "peer", label: "Phản hồi đồng nghiệp" },
     ...(can(me, "dpi.admin") || can(me, "dpi.view") ? [{ key: "settings", label: "Cấu hình" } as SubTab<Tab>] : []),
-    ...(can(me, "dpi.admin") ? [{ key: "jira", label: "Jira" } as SubTab<Tab>] : []),
-    ...(can(me, "dpi.admin") || can(me, "admin.projects") ? [{ key: "readiness", label: "Sẵn sàng dữ liệu" } as SubTab<Tab>] : []),
+    ...(can(me, "jira.admin") ? [{ key: "jira", label: "Jira" } as SubTab<Tab>] : []),
+    ...(can(me, "dpi.admin") || can(me, "admin.projects") || can(me, "jira.admin") ? [{ key: "readiness", label: "Sẵn sàng dữ liệu" } as SubTab<Tab>] : []),
   ];
   const current = tabs.some((t) => t.key === tab) ? tab : tabs[0].key;
   return (

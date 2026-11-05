@@ -212,7 +212,8 @@ production của issue Jira có `rca_status` khác `pending`.
 
 ## 11. Quyền và phạm vi
 
-- Cấu hình Jira cần quyền `dpi.admin`.
+- **[Quyết định]** (user 2026-11-05) Cấu hình Jira cần quyền riêng **`jira.admin`** ("Cấu hình tích hợp Jira", cờ): kết nối, token, dự án Jira, quy đổi trường, nguồn task, đồng bộ ngay. Không bộ quyền mặc định nào có nó (admin có sẵn). Migration `a3c5e7f9b1d4` thêm `jira.admin` cho mọi bộ quyền đang có `dpi.admin`, nên không ai mất quyền. Người có `jira.admin` thấy mọi dự án Jira trên trang Sẵn sàng dữ liệu.
+- Trên Jira, tài khoản dịch vụ chỉ cần Browse Projects trên các dự án cần đồng bộ; Hướng dẫn › Tích hợp Jira có cách tạo Personal Access Token.
 - Báo cáo cấp team và lỗi production lọc theo dự án CodePulse:
   - issue GitLab theo `projects.business_project_id` như cũ;
   - issue Jira theo `jira_projects.business_project_id`.
@@ -221,7 +222,7 @@ production của issue Jira có `rca_status` khác `pending`.
 ## 12. Giao diện
 
 - **Admin › Jira** và **DPI › Jira** (cùng một màn hình; tab Admin hiện cho admin và người có
-  `dpi.admin`):
+  `jira.admin`):
   - **[Quyết định]** (2026-11-05) thẻ **Kết nối** là form: URL Jira, Personal Access Token (ô
     mật khẩu; trạng thái "Đã lưu (cập nhật …)" / "Đang dùng biến môi trường" / "Chưa có"; để
     trống là giữ; **Xoá token đã lưu**), CA nội bộ (PEM, tuỳ chọn), bật/tắt tích hợp, chu kỳ
@@ -245,7 +246,7 @@ production của issue Jira có `rca_status` khác `pending`.
 
 ## 13. API
 
-Tiền tố `/dpi/jira`, quyền `dpi.admin` (admin có mọi quyền).
+Tiền tố `/dpi/jira`, quyền `jira.admin` (admin có mọi quyền).
 
 | Method | Path | Việc |
 |---|---|---|

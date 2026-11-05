@@ -3,7 +3,7 @@
 /**
  * Admin › Jira and DPI › Jira (docs/specs/27 §12): connection (saved on the web, else the JIRA_*
  * variables), task source, registered Jira projects, sync and the field mapping. Needs
- * `dpi.admin` (or admin); the API answers 403 otherwise.
+ * `jira.admin` (or admin); the API answers 403 otherwise.
  */
 import { useState } from "react";
 
@@ -90,7 +90,7 @@ const errText = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
 export function JiraAdmin() {
   const { data, error, mutate } = useApi<JiraView>("/dpi/jira");
   const [message, setMessage] = useState<string | null>(null);
-  if (error) return error.status === 403 ? <Alert tone="info">Cần quyền quản trị DPI (dpi.admin) để cấu hình Jira.</Alert> : <Loading error={error} />;
+  if (error) return error.status === 403 ? <Alert tone="info">Cần quyền "Cấu hình tích hợp Jira" (jira.admin): nhờ admin cấp ở Admin › Phân quyền.</Alert> : <Loading error={error} />;
   if (!data) return <Loading rows={6} />;
   const reload = () => void mutate();
   const done = (m: string) => (setMessage(m), reload());

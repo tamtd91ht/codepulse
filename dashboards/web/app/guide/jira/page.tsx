@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { GuideNav } from "@/components/GuideNav";
+import { CopyBlock } from "@/components/McpConnect";
 
 export const metadata: Metadata = { title: "Tích hợp Jira" };
 
@@ -16,6 +17,8 @@ const SECTIONS = [
   { id: "prod", label: "Lỗi production và blocked" },
   { id: "people", label: "Nối người" },
   { id: "sync", label: "Đồng bộ" },
+  { id: "permission", label: "Phân quyền" },
+  { id: "pat", label: "Tạo Personal Access Token" },
   { id: "admin", label: "Dành cho admin" },
 ];
 
@@ -39,6 +42,8 @@ const MAPPING: [dpi: string, jira: ReactNode][] = [
   ["Người làm", <>Assignee (Jira Data Center chỉ có một người được giao).</>],
   ["Link", <><code>&lt;địa chỉ Jira&gt;/browse/ABC-123</code></>],
 ];
+
+const CHECK_TOKEN = 'curl -H "Authorization: Bearer <token>" https://jira.company.vn/rest/api/2/myself';
 
 const POINTS: [range: string, level: string, score: string][] = [
   ["trên 0 đến 1", "XS", "1"],
@@ -230,11 +235,69 @@ export default function JiraGuidePage() {
             </ul>
           </section>
 
-          <section id="admin" className="card">
-            <h2>10. Dành cho admin</h2>
+          <section id="permission" className="card">
+            <h2>10. Phân quyền</h2>
+            <p>Có hai lớp quyền, cần đủ cả hai:</p>
+            <ul>
+              <li>
+                <strong>Trong CodePulse</strong>: cấu hình Jira (kết nối, token, dự án Jira, quy đổi trường, nguồn task, đồng bộ ngay) cần quyền{" "}
+                <strong>Cấu hình tích hợp Jira</strong> (<code>jira.admin</code>). Admin có sẵn quyền này; người khác cần được admin cấp ở{" "}
+                <Link href="/admin#permissions">Admin › Phân quyền</Link>: thêm quyền vào một bộ quyền rồi gán bộ đó cho người cần. Không bộ quyền
+                mặc định nào có <code>jira.admin</code>. Bộ quyền đang có <code>dpi.admin</code> từ trước được tự thêm <code>jira.admin</code> khi
+                nâng cấp, nên không ai mất quyền đang dùng.
+              </li>
+              <li>
+                <strong>Trên Jira</strong>: tài khoản tạo token chỉ cần quyền <strong>Browse Projects</strong> trên các dự án cần đồng bộ. Token mang
+                đúng quyền của tài khoản đó: dự án nào tài khoản không xem được thì CodePulse cũng không đọc được (báo lỗi ở dòng của dự án đó).
+                Không cấp quyền sửa, quyền admin Jira hay quyền xem dự án không liên quan.
+              </li>
+            </ul>
+            <p className="muted small">
+              Xem số liệu DPI lấy từ Jira (scorecard, Sẵn sàng dữ liệu, R4, lỗi production) vẫn theo các quyền DPI hiện có; dự án Jira gán cho dự
+              án CodePulse nào thì theo phạm vi của dự án đó.
+            </p>
+          </section>
+
+          <section id="pat" className="card">
+            <h2>11. Tạo Personal Access Token</h2>
+            <p>Jira Data Center từ bản 8.14 có Personal Access Token (PAT). Nên tạo bằng một tài khoản dịch vụ riêng, không dùng tài khoản cá nhân.</p>
             <ol>
               <li>
-                Tạo tài khoản dịch vụ <strong>chỉ đọc</strong> trên Jira với quyền Browse projects ở các dự án cần lấy, rồi tạo Personal Access Token.
+                <strong>Chuẩn bị tài khoản dịch vụ</strong> (nhờ admin Jira): tạo user riêng, ví dụ <code>codepulse-bot</code>, thêm vào group hoặc
+                project role có quyền <strong>Browse Projects</strong> trên các dự án cần đồng bộ.
+              </li>
+              <li>Đăng nhập Jira bằng tài khoản đó, bấm avatar góc trên bên phải → <strong>Profile</strong>.</li>
+              <li>
+                Ở menu bên trái chọn <strong>Personal Access Tokens</strong> → <strong>Create token</strong>. Đặt tên (ví dụ{" "}
+                <code>CodePulse</code>) và chọn <strong>Automatic expiry</strong> theo chính sách công ty; nếu đặt hạn, ghi lịch đổi token trước
+                ngày hết hạn.
+              </li>
+              <li>
+                Bấm <strong>Create</strong> và <strong>copy token ngay</strong>: Jira chỉ hiện token một lần.
+              </li>
+              <li>
+                Dán vào <Link href="/admin#jira">Admin › Jira</Link> › <strong>Kết nối</strong>, bấm <strong>Kiểm tra kết nối</strong> rồi{" "}
+                <strong>Lưu</strong>.
+              </li>
+            </ol>
+            <p>Muốn tự thử token trước (trên máy trong mạng công ty, thay địa chỉ Jira và token):</p>
+            <CopyBlock text={CHECK_TOKEN} label="Lệnh kiểm tra token" />
+            <p className="muted small">Trả về thông tin của tài khoản dịch vụ là token dùng được.</p>
+            <ul>
+              <li>Không thấy mục Personal Access Tokens: Jira cũ hơn 8.14, hoặc admin Jira đã tắt tính năng; nhờ admin Jira bật.</li>
+              <li>Đổi token: tạo token mới trên Jira, nhập vào ô token ở thẻ Kết nối rồi Lưu (để trống ô token là giữ token cũ).</li>
+              <li>Thu hồi: vào lại Personal Access Tokens trên Jira, bấm <strong>Revoke</strong>.</li>
+              <li>Không dán token vào chat, issue hay commit. CodePulse mã hoá token và chỉ gửi nó tới đúng máy chủ Jira đã nhập cùng.</li>
+            </ul>
+          </section>
+
+          <section id="admin" className="card">
+            <h2>12. Dành cho admin</h2>
+            <ol>
+              <li>
+                Tạo tài khoản dịch vụ <strong>chỉ đọc</strong> trên Jira với quyền Browse Projects ở các dự án cần lấy, rồi tạo Personal Access Token
+                (mục <a href="#pat">Tạo Personal Access Token</a>). Người cấu hình cần quyền <code>jira.admin</code> (mục{" "}
+                <a href="#permission">Phân quyền</a>).
               </li>
               <li>
                 Mở <Link href="/admin#jira">Admin › Jira</Link> (hoặc <Link href="/dpi">DPI</Link> › <strong>Jira</strong>), thẻ <strong>Kết nối</strong>:

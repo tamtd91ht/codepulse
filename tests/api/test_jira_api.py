@@ -28,7 +28,10 @@ from app.models import (
     AuditLog,
     BusinessProject,
     JiraProject,
+    PermissionSet,
+    PermissionSetItem,
     StoredSecret,
+    UserPermissionSet,
 )
 from tests.api.conftest import BOX, FakeQueue, World
 
@@ -85,7 +88,7 @@ def jira(client: TestClient) -> Iterator[dict[str, FakeApi]]:
     app.dependency_overrides.pop(get_jira_factory, None)
 
 
-def test_needs_dpi_admin(client: TestClient, world: World, as_user: Any) -> None:
+def test_needs_jira_admin(client: TestClient, world: World, as_user: Any) -> None:
     for method, path in [
         ("get", ""),
         ("post", "/test"),
@@ -102,6 +105,30 @@ def test_needs_dpi_admin(client: TestClient, world: World, as_user: Any) -> None
                 method, API + path, headers=as_user(world.lead), json={"source": "jira"}
             )
             assert ok.status_code == 403
+
+
+def _grant_flag(db_session: Session, user_id: int, permission: str) -> None:
+    row = PermissionSet(name=f"only {permission}", builtin=False)
+    db_session.add(row)
+    db_session.flush()
+    db_session.add_all(
+        [
+            PermissionSetItem(set_id=row.id, permission=permission, scope="flag"),
+            UserPermissionSet(user_id=user_id, set_id=row.id),
+        ]
+    )
+    db_session.flush()
+
+
+def test_jira_admin_is_its_own_permission(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    """docs/specs/27 §11: jira.admin opens the Jira screens; dpi.admin alone no longer does."""
+    _grant_flag(db_session, world.binh.id, "dpi.admin")
+    refused = client.get(API, headers=as_user(world.binh))
+    assert refused.status_code == 403 and "jira.admin" in refused.json()["detail"]
+    _grant_flag(db_session, world.binh.id, "jira.admin")
+    assert client.get(API, headers=as_user(world.binh)).status_code == 200
 
 
 def test_overview(

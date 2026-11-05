@@ -1,6 +1,6 @@
 """Admin > Jira and DPI > Jira (docs/specs/27 §12-13): the connection (saved on the web, else
 JIRA_*), the task source, the registered Jira projects, the field mapping, and "Đồng bộ ngay".
-Everything needs `dpi.admin` (an admin has it); every change is audited. The token never leaves the
+Everything needs `jira.admin` (an admin has it); every change is audited. The token never leaves the
 server: it is write-only here, and never logged or audited."""
 
 import dataclasses
@@ -70,8 +70,8 @@ JiraFactoryDep = Annotated[JiraFactory, Depends(get_jira_factory)]
 
 
 def _admin(principal: Principal) -> None:
-    if not principal.can("dpi.admin"):  # an admin has every permission
-        raise HTTPException(403, "chỉ admin DPI")
+    if not principal.can("jira.admin"):  # an admin has every permission
+        raise HTTPException(403, "cần quyền Cấu hình tích hợp Jira (jira.admin)")
 
 
 NOT_CONFIGURED = "chưa cấu hình Jira: nhập URL và token ở Admin > Jira > Kết nối"

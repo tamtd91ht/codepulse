@@ -1601,7 +1601,9 @@ def readiness(
             since,
             source=task_source(session, settings),
             # A DPI admin sees every Jira project, one without a dự án too (docs/specs/27 §4).
-            visible=None if principal.can("dpi.admin") else principal.visible_projects(),
+            visible=None
+            if principal.can("dpi.admin") or principal.can("jira.admin")
+            else principal.visible_projects(),
         ),
     }
 
