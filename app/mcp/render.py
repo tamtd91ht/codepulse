@@ -202,7 +202,7 @@ def _intent(review: Review) -> Any:
     return json.loads(redact(json.dumps(review.intent, ensure_ascii=False)))
 
 
-def _short_md(view: FindingView, tag: str, now: datetime) -> str:
+def _short_md(view: FindingView, base: str, tag: str, now: datetime) -> str:
     f, r = view.finding, view.review
     where = view.project.path_with_namespace if view.project else "?"
     change = f"MR !{view.mr.iid}" if view.mr else f"commit {(r.commit_sha or '')[:10]}"
@@ -217,6 +217,7 @@ def _short_md(view: FindingView, tag: str, now: datetime) -> str:
     ]
     if view.author:
         lines.append(f"- tác giả: {inline(view.author)}")
+    lines.append(f"- CodePulse: {finding_link(base, r.id, f.id)}")
     if view.pending:
         lines.append(f"- đang có yêu cầu đóng #{view.pending.id} ({view.pending.status})")
     lines.append(wrap(tag, f.title or "(không tiêu đề)"))
@@ -315,7 +316,7 @@ def list_result(
     if not views:
         body = "Không có finding critical/high nào theo bộ lọc này."
     else:
-        body = "\n\n".join(_short_md(v, tag, at) for v in views)
+        body = "\n\n".join(_short_md(v, base, tag, at) for v in views)
         body += "\n\nGọi `get_finding` với id để xem chi tiết và gợi ý sửa."
     if next_offset is not None:
         body += f"\n\nCòn nữa: gọi lại với `offset={next_offset}`."

@@ -72,3 +72,14 @@ def test_get_finding_tool_uses_the_dashboard_url(env: Env, world: Any) -> None:
     assert data["closures"] == []
     # The text never carries the GitLab token or other configuration.
     assert "PRIVATE-TOKEN" not in result.content[0].text
+
+
+def test_list_findings_links_each_finding(env: Env, world: Any) -> None:
+    """Each listed finding carries its CodePulse link, in the JSON and in the Markdown."""
+    _setup(env, world)
+    caller = caller_for(env.session, env.settings, world.an)
+    result = invoke(caller, "list_findings")
+    assert not result.is_error
+    link = f"https://dash.example.com/reviews/{world.an_review.id}#finding-{world.an_finding.id}"
+    assert result.structured_content["findings"][0]["link"] == link
+    assert f"- CodePulse: {link}" in result.content[0].text

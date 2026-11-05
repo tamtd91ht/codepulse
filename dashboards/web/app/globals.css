@@ -2103,6 +2103,18 @@ pre.excerpt {
 .finding + .finding {
   margin-top: 10px;
 }
+/* Opened from a link to this finding (#finding-<id>): clear of the sticky topbar, outlined. */
+.finding {
+  scroll-margin-top: calc(var(--topbar-h) + 16px);
+}
+.finding.finding-target {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.finding:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .finding::before {
   content: "";
   position: absolute;

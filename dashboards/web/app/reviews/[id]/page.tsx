@@ -341,6 +341,20 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
   // The knowledge line links to the repo's knowledge page; the detail only names the repo, so look its id up.
   const repos = useApi<Repo[]>(review?.basis?.knowledge ? "/repos" : null);
   const repoId = repos.data?.find((r) => r.path_with_namespace === review?.project)?.id ?? null;
+  // A link to one finding (#finding-<id>, e.g. from MCP or a notification): the list renders after
+  // the fetch, so the browser's own jump to the anchor finds nothing; scroll to it once it exists.
+  const jumped = useRef(false);
+  useEffect(() => {
+    if (jumped.current || !review) return;
+    const hash = window.location.hash;
+    if (!/^#finding-\d+$/.test(hash)) return;
+    const el = document.getElementById(hash.slice(1));
+    if (!el) return;
+    jumped.current = true;
+    el.scrollIntoView({ block: "start" });
+    el.focus({ preventScroll: true });
+    el.classList.add("finding-target");
+  }, [review]);
   // Stop polling once the worker took the rerun: a forced one supersedes this round, a plain
   // one leaves queued/running; give up after RERUN_POLL_MAX_MS either way.
   useEffect(() => {
