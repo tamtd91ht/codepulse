@@ -525,29 +525,6 @@ ol {
   flex-direction: column;
   gap: 6px;
 }
-.user-chip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 8px;
-  border-radius: var(--radius);
-  min-width: 0;
-}
-.user-chip .who {
-  min-width: 0;
-  line-height: 1.25;
-}
-.user-chip .name {
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.user-chip .role {
-  font-size: 11px;
-  color: var(--muted);
-  white-space: nowrap;
-}
 .sidebar-actions {
   display: flex;
   gap: 4px;
@@ -555,12 +532,10 @@ ol {
 }
 .shell:is(.rail, [data-rail] *) .nav-link .label,
 .shell:is(.rail, [data-rail] *) .nav-section,
-.shell:is(.rail, [data-rail] *) .brand-text,
-.shell:is(.rail, [data-rail] *) .user-chip .who {
+.shell:is(.rail, [data-rail] *) .brand-text {
   display: none;
 }
-.shell:is(.rail, [data-rail] *) .nav-link,
-.shell:is(.rail, [data-rail] *) .user-chip {
+.shell:is(.rail, [data-rail] *) .nav-link {
   justify-content: center;
   padding: 0;
 }
@@ -646,6 +621,126 @@ ol {
 .topbar .icon-btn[aria-expanded="true"][data-tip]::after {
   display: none;
 }
+/* The signed-in person, far right of the top bar. */
+.user-menu {
+  position: relative;
+  display: inline-flex;
+  margin-left: 4px;
+}
+.user-menu-btn {
+  display: inline-grid;
+  place-items: center;
+  padding: 2px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition: box-shadow var(--duration-fast) var(--ease-standard);
+}
+@media (hover: hover) {
+  .user-menu-btn:hover {
+    box-shadow: 0 0 0 2px var(--border);
+  }
+}
+.user-menu-btn[aria-expanded="true"] {
+  box-shadow: 0 0 0 2px var(--primary);
+}
+.user-menu-btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.user-menu-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 70;
+  width: min(280px, calc(100vw - 24px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.user-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.user-menu-head .who {
+  min-width: 0;
+  line-height: 1.3;
+}
+.user-menu-head .name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-menu-head .email {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-menu-head .role {
+  margin-top: 4px;
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-hover);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+}
+.user-menu-list {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+}
+.user-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+.user-menu-item svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+.user-menu-item:hover,
+.user-menu-item:focus-visible {
+  background: var(--surface-hover);
+  color: var(--text);
+  text-decoration: none;
+}
+.user-menu-item.tone-danger:hover,
+.user-menu-item.tone-danger:focus-visible,
+.user-menu-item.tone-danger:hover svg,
+.user-menu-item.tone-danger:focus-visible svg {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+.user-menu-item.tone-danger:hover svg,
+.user-menu-item.tone-danger:focus-visible svg {
+  background: transparent;
+}
+.user-menu-error {
+  margin: 0;
+  padding: 0 14px 12px;
+}
 /* The sidebar carries the menu and the brand on desktops; the top bar keeps only the actions. */
 @media (min-width: 1024px) {
   .topbar {
@@ -705,17 +800,12 @@ footer.notice {
   }
   .shell:is(.rail, [data-rail] *) .nav-link .label,
   .shell:is(.rail, [data-rail] *) .nav-section,
-  .shell:is(.rail, [data-rail] *) .brand-text,
-  .shell:is(.rail, [data-rail] *) .user-chip .who {
+  .shell:is(.rail, [data-rail] *) .brand-text {
     display: initial;
   }
-  .shell:is(.rail, [data-rail] *) .nav-link,
-  .shell:is(.rail, [data-rail] *) .user-chip {
+  .shell:is(.rail, [data-rail] *) .nav-link {
     justify-content: flex-start;
     padding: 0 10px;
-  }
-  .shell:is(.rail, [data-rail] *) .user-chip {
-    padding: 6px 8px;
   }
   .shell:is(.rail, [data-rail] *) .sidebar-head {
     justify-content: flex-start;
@@ -727,7 +817,8 @@ footer.notice {
   main {
     padding: 16px 16px 40px;
   }
-  .sidebar .rail-toggle {
+  .sidebar .rail-toggle,
+  .sidebar-foot {
     display: none;
   }
 }

@@ -9,8 +9,8 @@ import { InboxProvider, NotificationBell } from "@/components/Inbox";
 import { ReviewActivity } from "@/components/ReviewActivity";
 import { Stetho } from "@/components/Stetho";
 import { RAIL_KEY, ThemeToggle } from "@/components/theme";
-import { Avatar } from "@/components/ui";
-import { api, can, managesAnyProject, useApi } from "@/lib/api";
+import { UserMenu } from "@/components/UserMenu";
+import { can, managesAnyProject, useApi } from "@/lib/api";
 import type { Me } from "@/lib/types";
 
 const NARROW = "(max-width: 1023px)";
@@ -30,7 +30,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [rail, setRail] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const [narrow, setNarrow] = useState(false);
-  const [logoutFailed, setLogoutFailed] = useState(false);
   const asideRef = useRef<HTMLElement>(null);
   const menuRef = useRef<HTMLButtonElement>(null);
 
@@ -185,15 +184,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="sidebar-foot">
-          {me && (
-            <div className="user-chip" title={me.email ?? undefined}>
-              <Avatar name={me.full_name} email={me.email} src={me.avatar_url} />
-              <div className="who">
-                <div className="name">{me.full_name ?? me.email}</div>
-                <div className="role">{role}</div>
-              </div>
-            </div>
-          )}
           <div className="sidebar-actions">
             <IconButton
               icon="panelLeft"
@@ -201,28 +191,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               onClick={toggleRail}
               className={`rail-toggle${rail ? " tip-right" : ""}`}
             />
-            {me && (
-              <IconButton
-                icon="logout"
-                label="Đăng xuất"
-                className={rail ? "tip-right" : undefined}
-                onClick={async () => {
-                  try {
-                    await api.post("/auth/logout");
-                    window.location.href = "/login";
-                  } catch {
-                    // The session is still live; say so instead of pretending to be signed out.
-                    setLogoutFailed(true);
-                  }
-                }}
-              />
-            )}
           </div>
-          {logoutFailed && (
-            <span className="error small" role="alert">
-              Đăng xuất thất bại, thử lại.
-            </span>
-          )}
         </div>
       </aside>
       {drawer && <div className="drawer-backdrop" onClick={() => setDrawer(false)} aria-hidden="true" />}
@@ -250,6 +219,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="topbar-actions">
             {me && <NotificationBell />}
             <ThemeToggle />
+            {me && <UserMenu me={me} role={role} />}
           </div>
         </header>
 
