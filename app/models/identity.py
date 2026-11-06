@@ -1,6 +1,6 @@
 from datetime import date
 
-from sqlalchemy import ForeignKey, UniqueConstraint, false
+from sqlalchemy import CheckConstraint, ForeignKey, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -16,6 +16,12 @@ class Team(TimestampMixin, Base):
 
 class User(TimestampMixin, Base):
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(
+            "close_requests_per_day IS NULL OR close_requests_per_day BETWEEN 0 AND 1000",
+            name="close_requests_per_day",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     full_name: Mapped[str | None]
@@ -25,6 +31,9 @@ class User(TimestampMixin, Base):
     manage_all: Mapped[bool] = mapped_column(server_default=false(), default=False)
     # Admin > Người & Team (2026-11-03): the one avatar file in AVATAR_DIR ("<id>.<ext>").
     avatar_file: Mapped[str | None]
+    # Close requests this person may send in 24 hours (web and MCP); NULL: the default of
+    # Admin > Cấu hình (close_requests_per_day), 0: none (user 2026-11-06).
+    close_requests_per_day: Mapped[int | None]
 
 
 class TeamMember(TimestampMixin, Base):

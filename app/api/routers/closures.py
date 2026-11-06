@@ -45,6 +45,7 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
+from app.admin_settings import close_requests_per_day
 from app.api.access import (
     covers_work,
     review_repo,
@@ -89,7 +90,8 @@ MAX_COMMITS = 5
 TO_DECIDE = ("pending", "failed", "proposed", "unmet")
 MIN_ARGUMENT = 50  # an argument shorter than this says too little to be checked
 MAX_ARGUMENT = 4000
-MAX_REQUESTS_PER_DAY = 20  # per author: each one may cost a check
+# Close requests per person in 24 hours: their own number or Admin > Cấu hình's default
+# (app/admin_settings.close_requests_per_day, user 2026-11-06); each one may cost a check.
 CHECK_STALE = timedelta(minutes=30)  # a check begun this long ago was lost (worker killed)
 QUEUE_STALE = timedelta(hours=3)  # "Chạy review" this long ago and never begun: job lost
 PAGE = 50
@@ -438,9 +440,9 @@ def check_close_request(
 ) -> tuple[ReviewFinding, Review]:
     """Every refusal of a close request that needs nothing but the database: the permission,
     the finding seen as on its review page, its author, critical/high, still open, no request in
-    flight, MAX_REQUESTS_PER_DAY. The MCP server runs it before it asks GitLab about the commits
-    (docs/specs/26 §8), and `create_close_request` runs it again when it writes. Writes nothing
-    but the sweep of lost checks. HTTPException on every refusal."""
+    flight, the person's 24-hour limit (`quota`). The MCP server runs it before it asks GitLab
+    about the commits (docs/specs/26 §8), and `create_close_request` runs it again when it
+    writes. Writes nothing but the sweep of lost checks. HTTPException on every refusal."""
     if not principal.can("finding.close_request"):
         raise HTTPException(403, f"thiếu quyền {BY_KEY['finding.close_request'].label.lower()}")
     finding, review = _finding(session, principal, finding_id)
@@ -452,16 +454,33 @@ def check_close_request(
         raise HTTPException(409, f"finding đang ở trạng thái {finding.status}")
     if _in_flight(session, finding.id) is not None:
         raise HTTPException(409, "finding này đã có một yêu cầu đóng đang chờ")
-    today = session.scalar(
-        select(func.count()).where(
-            FindingClosure.requested_by == principal.user_id,
-            FindingClosure.kind == "request",
-            FindingClosure.created_at >= datetime.now(UTC) - timedelta(days=1),
-        )
-    )
-    if (today or 0) >= MAX_REQUESTS_PER_DAY:
-        raise HTTPException(429, f"tối đa {MAX_REQUESTS_PER_DAY} yêu cầu đóng mỗi ngày")
+    used, limit = quota(session, principal.user_id)
+    if limit == 0:
+        raise HTTPException(429, "tài khoản này không được gửi yêu cầu đóng (admin đặt giới hạn 0)")
+    if used >= limit:
+        raise HTTPException(429, f"tối đa {limit} yêu cầu đóng trong 24 giờ (đã gửi {used})")
     return finding, review
+
+
+def requests_last_day(session: Session, user_id: int) -> int:
+    """Close requests this person sent in the last 24 hours (web and MCP)."""
+    return int(
+        session.scalar(
+            select(func.count()).where(
+                FindingClosure.requested_by == user_id,
+                FindingClosure.kind == "request",
+                FindingClosure.created_at >= datetime.now(UTC) - timedelta(days=1),
+            )
+        )
+        or 0
+    )
+
+
+def quota(session: Session, user_id: int, settings: Settings | None = None) -> tuple[int, int]:
+    """(sent in the last 24 hours, may send): the person's own limit or the default (Admin >
+    Cấu hình, else the environment's `settings`)."""
+    limit = close_requests_per_day(session, settings or get_settings(), user_id)
+    return requests_last_day(session, user_id), limit
 
 
 def create_close_request(
@@ -479,6 +498,9 @@ def create_close_request(
     (docs/specs/26 §8) share every rule here (`check_close_request`). `commits` / `argument`
     arrive validated as by CloseRequestIn. Flushed and audited, not committed. HTTPException on
     every refusal."""
+    # One request of a person at a time from the count to the insert: requests sent at once
+    # (several findings, an MCP agent in a loop) cannot pass the 24-hour limit together.
+    session.execute(select(User.id).where(User.id == principal.user_id).with_for_update())
     finding, _review = check_close_request(session, principal, finding_id)
     closure = FindingClosure(
         finding_id=finding.id,

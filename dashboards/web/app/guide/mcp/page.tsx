@@ -76,7 +76,7 @@ const ERRORS: [code: string, meaning: string, fix: ReactNode][] = [
   ["commit_not_pushed", "Commit chưa có trên GitLab trong đúng repo của finding.", <>Chạy <code>git push</code> (đúng remote của repo đó) rồi gọi lại <code>request_closure</code>.</>],
   ["gitlab_unavailable", "GitLab không trả lời kịp (quá khoảng 20 giây) hoặc lỗi.", "Thử lại sau ít phút; không cần sửa gì ở phía bạn."],
   ["conflict", "Finding không còn mở, hoặc đã có một yêu cầu đóng đang chờ; yêu cầu cần rút không còn ở trạng thái chờ.", <>Xem <code>list_close_requests</code> hoặc trang review để biết trạng thái hiện tại.</>],
-  ["limit_reached", "Đã gửi 20 yêu cầu đóng trong 24 giờ (tính chung web và Claude Code).", "Đợi sang ngày; ưu tiên gửi những finding đã sửa chắc chắn."],
+  ["limit_reached", "Đã gửi đủ số yêu cầu đóng được phép trong 24 giờ (admin đặt mức mặc định và chỉnh được theo người; tính chung web và Claude Code).", "Đợi sang ngày; ưu tiên gửi những finding đã sửa chắc chắn."],
   ["rate_limited", "Gọi quá nhanh: hơn 60 lần mỗi phút với một token, hoặc 120 lần mỗi phút trên mọi token của bạn.", <>Đợi số giây trong <code>retry_after_s</code>; đừng để Claude Code gọi tool lặp vô hạn.</>],
   ["internal_error", "Lỗi phía CodePulse.", "Thử lại; nếu lặp lại, báo admin kèm thời điểm (admin xem trong Nhật ký gọi)."],
 ];
@@ -400,7 +400,7 @@ export default function McpGuidePage() {
             </p>
             <ul>
               <li>Chỉ tác giả của thay đổi có finding mới gửi được, chỉ với finding critical/high đang mở.</li>
-              <li>Mỗi finding chỉ một yêu cầu đang chờ; mỗi người tối đa 20 yêu cầu trong 24 giờ, tính chung web và Claude Code.</li>
+              <li>Mỗi finding chỉ một yêu cầu đang chờ; mỗi người có giới hạn số yêu cầu trong 24 giờ (admin đặt mức mặc định và chỉnh riêng từng người), tính chung web và Claude Code.</li>
               <li>
                 <strong>Có commit</strong>: mỗi commit phải đã có trên GitLab trong đúng repo của finding (CodePulse kiểm trước
                 khi nhận; tên nhánh hay tag không được chấp nhận). Kèm <code>note</code>, <code>files_changed</code> và nên có{" "}

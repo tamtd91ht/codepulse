@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # (0 = not set; turning it on needs a value). Both editable on the Admin screen.
     auto_close_findings: bool = False
     auto_close_days: int = Field(default=0, ge=0, le=90)
+    # Close requests (web and MCP) one person may send in 24 hours, unless an admin set their
+    # own (users.close_requests_per_day); Admin > Cấu hình overrides it.
+    close_requests_per_day: int = Field(default=20, ge=1, le=1000)
     max_review_loc: int = Field(default=1500, gt=0)
     max_tokens_per_chunk: int = Field(default=12000, gt=0)
     # How much of the .claude configuration (rules, skills, agents, CLAUDE.md, review commands)

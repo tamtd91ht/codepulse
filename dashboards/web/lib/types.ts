@@ -1175,7 +1175,8 @@ export interface ReviewSetting {
     | "auto_close_findings"
     | "auto_close_days"
     | "llm_auto_resume"
-    | "llm_probe_interval_min";
+    | "llm_probe_interval_min"
+    | "close_requests_per_day";
   env: string;
   kind: "int" | "model" | "url" | "bool";
   value: number | string | boolean;
@@ -1183,6 +1184,16 @@ export interface ReviewSetting {
   overridden: boolean;
   minimum: number | null;
   maximum: number | null;
+}
+
+/** A person's close-request limit over 24 hours (web and MCP), Admin › Hồ sơ thành viên. */
+export interface CloseQuota {
+  user_id: number;
+  /** Their own number; null: the default of Admin › Cấu hình. 0: may send none. */
+  own: number | null;
+  default: number;
+  limit: number;
+  used_24h: number;
 }
 
 /** GET /admin/llm-token: which credential reviews use; never contains the token. */

@@ -18,7 +18,7 @@ from sqlalchemy import ColumnElement, String, and_, case, cast, exists, func, or
 from sqlalchemy.orm import Session, aliased
 
 from app.api.access import team_reach, whole_projects, work_scope
-from app.api.routers.closures import parse_commit
+from app.api.routers.closures import parse_commit, quota
 from app.api.routers.reviews import _visible_review
 from app.api.security import Principal
 from app.models import (
@@ -903,7 +903,6 @@ def mark_closable(session: Session, principal: Principal, views: list[FindingVie
     """Set `close_block` on each view: whether `request_closure` would be refused before it
     asks GitLab, by the rules of `check_close_request` (app/api/routers/closures.py), so the
     agent knows up front which findings it may send a close request for."""
-    from app.api.routers.closures import MAX_REQUESTS_PER_DAY
 
     if not views:
         return
@@ -911,14 +910,8 @@ def mark_closable(session: Session, principal: Principal, views: list[FindingVie
         for view in views:
             view.close_block = "tài khoản không có quyền gửi yêu cầu đóng"
         return
-    today = session.scalar(
-        select(func.count()).where(
-            FindingClosure.requested_by == principal.user_id,
-            FindingClosure.kind == "request",
-            FindingClosure.created_at >= datetime.now(UTC) - timedelta(days=1),
-        )
-    )
-    quota_left = (today or 0) < MAX_REQUESTS_PER_DAY
+    used, limit = quota(session, principal.user_id)
+    quota_left = used < limit
     for view in views:
         f = view.finding
         if view.review.author_user_id != principal.user_id:
@@ -930,6 +923,10 @@ def mark_closable(session: Session, principal: Principal, views: list[FindingVie
         elif view.pending is not None:
             view.close_block = f"đã có yêu cầu đóng #{view.pending.id} đang chờ"
         elif not quota_left:
-            view.close_block = f"đã gửi tối đa {MAX_REQUESTS_PER_DAY} yêu cầu đóng trong 24 giờ"
+            view.close_block = (
+                f"đã gửi tối đa {limit} yêu cầu đóng trong 24 giờ"
+                if limit
+                else "tài khoản này không được gửi yêu cầu đóng (admin đặt giới hạn 0)"
+            )
         else:
             view.close_block = None

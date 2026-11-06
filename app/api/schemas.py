@@ -980,6 +980,25 @@ class ReviewSettingsIn(BaseModel):
     review_commits_list_max: Annotated[int, Field(strict=True)] | None = None
     llm_auto_resume: Annotated[bool, Field(strict=True)] | None = None
     llm_probe_interval_min: Annotated[int, Field(strict=True)] | None = None
+    close_requests_per_day: Annotated[int, Field(strict=True)] | None = None
+
+
+class CloseQuotaOut(BaseModel):
+    """A person's close-request limit (user 2026-11-06): their own number (None: the default),
+    the default, the one that applies, and what they sent in the last 24 hours."""
+
+    user_id: int
+    own: int | None
+    default: int
+    limit: int
+    used_24h: int
+
+
+class CloseQuotaIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # None: back to the default of Admin > Cấu hình; 0: this person may send none.
+    own: Annotated[int, Field(ge=0, le=1000, strict=True)] | None
 
 
 class LiveEvent(BaseModel):

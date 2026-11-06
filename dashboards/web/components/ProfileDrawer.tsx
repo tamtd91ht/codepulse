@@ -7,7 +7,7 @@ import { useSWRConfig } from "swr";
 import { Avatar, Drawer, Loading, Message, Pill } from "@/components/ui";
 import { ProfilePermissions } from "@/components/ProfilePermissions";
 import { ApiError, api, can, useApi } from "@/lib/api";
-import type { Me, Person } from "@/lib/types";
+import type { CloseQuota, Me, Person } from "@/lib/types";
 
 /** The formats and size the API keeps (app/avatars.py, AVATAR_MAX_KB default 1024). */
 const AVATAR_TYPES = ["image/png", "image/jpeg", "image/webp"];
@@ -190,6 +190,14 @@ export function ProfileDrawer({ userId, onClose, onChanged }: { userId: number; 
               </Link>
             </div>
           </form>
+          {can(me, "admin.review_settings") && (
+            <section aria-labelledby={`quota-${person.id}`} style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
+              <h3 id={`quota-${person.id}`} style={{ margin: "0 0 10px", fontSize: "var(--text-base, 15px)" }}>
+                Yêu cầu đóng finding
+              </h3>
+              <CloseQuotaForm userId={person.id} />
+            </section>
+          )}
           {can(me, "admin.permissions") && (
             <section aria-labelledby={`perm-${person.id}`} style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
               <h3 id={`perm-${person.id}`} style={{ margin: "0 0 10px", fontSize: "var(--text-base, 15px)" }}>
@@ -203,3 +211,90 @@ export function ProfileDrawer({ userId, onClose, onChanged }: { userId: number; 
     </Drawer>
   );
 }
+
+/**
+ * A person's limit of close requests over 24 hours (web and MCP, user 2026-11-06): the default
+ * of Admin › Cấu hình, or their own number (0: may send none).
+ */
+function CloseQuotaForm({ userId }: { userId: number }) {
+  const { data, error, mutate } = useApi<CloseQuota>(`/admin/users/${userId}/close-quota`);
+  const [mode, setMode] = useState<"default" | "own">("default");
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (data && !seeded.current) {
+      seeded.current = true;
+      setMode(data.own === null ? "default" : "own");
+      setValue(String(data.own ?? data.default));
+    }
+  }, [data]);
+  if (!data) return <Loading error={error} rows={2} />;
+
+  const wanted = mode === "default" ? null : Number(value);
+  const valid = mode === "default" || (value !== "" && Number.isInteger(wanted) && wanted! >= 0 && wanted! <= 1000);
+  const dirty = wanted !== data.own;
+
+  async function save(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!valid || !dirty) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const saved = await api.put<CloseQuota>(`/admin/users/${userId}/close-quota`, { own: wanted });
+      await mutate(saved, { revalidate: false });
+      setMessage(saved.own === null ? `Đã về mặc định (${saved.default}).` : `Đã đặt riêng ${saved.own} yêu cầu / 24 giờ.`);
+    } catch (err) {
+      setMessage(`Lỗi: ${err instanceof ApiError ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const full = data.limit > 0 && data.used_24h >= data.limit;
+  return (
+    <form onSubmit={(e) => void save(e)} style={{ display: "grid", gap: 10 }}>
+      <div className="small">
+        Đã gửi <strong>{data.used_24h}</strong> / {data.limit === 0 ? "0 (không được gửi)" : data.limit} trong 24 giờ qua{" "}
+        {full && <Pill tone="warn">Đã hết lượt</Pill>}
+      </div>
+      <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input type="radio" name={`quota-mode-${userId}`} checked={mode === "default"} onChange={() => setMode("default")} />
+        <span>Theo mặc định ({data.default} / 24 giờ, Admin › Cấu hình)</span>
+      </label>
+      <label style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <input type="radio" name={`quota-mode-${userId}`} checked={mode === "own"} onChange={() => setMode("own")} />
+        <span>Riêng cho người này:</span>
+        <input
+          type="number"
+          min={0}
+          max={1000}
+          step={1}
+          value={value}
+          onChange={(e) => {
+            setValue(e.target.value);
+            setMode("own");
+          }}
+          style={{ width: 96 }}
+          aria-label="Số yêu cầu đóng tối đa trong 24 giờ"
+        />
+        <span className="small muted">/ 24 giờ</span>
+      </label>
+      <p className="small muted" style={{ margin: 0 }}>
+        Tính chung web và MCP, cửa sổ 24 giờ trượt. 0 = không được gửi yêu cầu đóng.
+      </p>
+      <div className="toolbar">
+        <button type="submit" className="sm" disabled={busy || !valid || !dirty}>
+          Lưu giới hạn
+        </button>
+        {message && (
+          <span className={message.startsWith("Lỗi") ? "small" : "small muted"} style={message.startsWith("Lỗi") ? { color: "var(--bad-text)" } : undefined}>
+            {message}
+          </span>
+        )}
+      </div>
+    </form>
+  );
+}
+

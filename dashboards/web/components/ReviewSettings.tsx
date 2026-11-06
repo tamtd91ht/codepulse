@@ -56,6 +56,7 @@ export function ReviewSettings() {
   const listMax = find("review_commits_list_max");
   const resume = find("llm_auto_resume");
   const probeEvery = find("llm_probe_interval_min");
+  const closeQuota = find("close_requests_per_day");
 
   async function save(key: Key, value: number | string | boolean | null) {
     await saveAll({ [key]: value });
@@ -409,6 +410,44 @@ export function ReviewSettings() {
           busy={busy}
           onSave={(on, days) => saveAll(on ? { auto_close_findings: true, auto_close_days: days } : { auto_close_findings: false })}
         />
+      )}
+
+      {closeQuota && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            save("close_requests_per_day", Number(field(e, "close_requests_per_day")));
+          }}
+          className="setting-tile"
+        >
+          <label style={{ display: "grid", gap: 4, maxWidth: 320 }}>
+            <span className="small muted">Yêu cầu đóng finding tối đa mỗi người trong 24 giờ ({closeQuota.env})</span>
+            <input
+              key={String(closeQuota.value)}
+              name="close_requests_per_day"
+              type="number"
+              required
+              min={closeQuota.minimum ?? 1}
+              max={closeQuota.maximum ?? 1000}
+              defaultValue={Number(closeQuota.value)}
+            />
+          </label>
+          <p className="muted small">
+            Tính chung yêu cầu gửi trên web và qua MCP; mỗi yêu cầu có thể tốn một lượt kiểm bằng model. Đây là mức mặc định:
+            đặt số riêng cho một người ở Admin › Người &amp; Team › hồ sơ thành viên.{" "}
+            {closeQuota.overridden ? `Mặc định trong .env: ${closeQuota.default}.` : "Đang dùng giá trị trong .env."}
+          </p>
+          <div className="toolbar">
+            <button type="submit" disabled={busy}>
+              Lưu
+            </button>
+            {closeQuota.overridden && (
+              <button type="button" onClick={() => save("close_requests_per_day", null)} disabled={busy}>
+                Về mặc định ({String(closeQuota.default)})
+              </button>
+            )}
+          </div>
+        </form>
       )}
       </div>
     </section>

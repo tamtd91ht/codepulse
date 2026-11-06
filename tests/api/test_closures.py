@@ -1277,3 +1277,100 @@ def test_a_request_that_closed_a_finding_reopened_since_shows_reopened() -> None
     assert shown_status("pending", "open") == "pending"
     assert shown_status("pending", "accepted_risk") == "closed"
     assert shown_status("rejected", "disputed") == "rejected"
+
+
+def _sent(db_session: Session, world: World, n: int) -> None:
+    """`n` close requests of An in the last 24 hours (answered, so none is in flight)."""
+    for _ in range(n):
+        db_session.add(
+            FindingClosure(
+                finding_id=world.an_finding.id,
+                kind="request",
+                status="rejected",
+                requested_by=world.an.id,
+                argument="x" * 60,
+            )
+        )
+    db_session.flush()
+
+
+def test_the_close_request_limit_is_the_default_or_the_persons_own(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    """User 2026-11-06: 20 a day by default (Admin > Cấu hình), a person's own number wins,
+    0 sends none; web and MCP count together."""
+    _sent(db_session, world, 3)
+    admin = as_user(world.admin)
+    quota = client.get(f"/api/v1/admin/users/{world.an.id}/close-quota", headers=admin).json()
+    assert quota == {"user_id": world.an.id, "own": None, "default": 20, "limit": 20, "used_24h": 3}
+
+    put = client.put(
+        "/api/v1/admin/review-settings", json={"close_requests_per_day": 3}, headers=admin
+    )
+    assert put.status_code == 200, put.text
+    refused = ask(client, world, as_user, world.an, [FIX])
+    assert refused.status_code == 429 and "tối đa 3" in refused.text
+
+    own = client.put(
+        f"/api/v1/admin/users/{world.an.id}/close-quota", json={"own": 5}, headers=admin
+    )
+    assert own.json()["limit"] == 5 and own.json()["own"] == 5
+    assert ask(client, world, as_user, world.an, [FIX]).status_code == 201
+
+    pending = db_session.scalars(
+        select(FindingClosure).where(FindingClosure.status == "pending")
+    ).one()
+    withdraw(client, as_user, world.an, pending.id)  # none in flight: the limit answers
+    none = client.put(
+        f"/api/v1/admin/users/{world.an.id}/close-quota", json={"own": 0}, headers=admin
+    )
+    assert none.json()["limit"] == 0
+    blocked = ask(client, world, as_user, world.an, [FIX])
+    assert blocked.status_code == 429 and "giới hạn 0" in blocked.text
+    actions = db_session.scalars(select(AuditLog.action)).all()
+    assert "user.close_quota" in actions
+
+    back = client.put(
+        f"/api/v1/admin/users/{world.an.id}/close-quota", json={"own": None}, headers=admin
+    )
+    assert (back.json()["own"], back.json()["limit"]) == (None, 3)
+    for body in ({"own": 1001}, {"own": -1}, {}):
+        bad = client.put(f"/api/v1/admin/users/{world.an.id}/close-quota", json=body, headers=admin)
+        assert bad.status_code == 422, body
+    for value in (0, 1001):
+        bad = client.put(
+            "/api/v1/admin/review-settings", json={"close_requests_per_day": value}, headers=admin
+        )
+        assert bad.status_code == 422, value
+
+
+def test_only_the_review_settings_right_sets_a_persons_limit(
+    client: TestClient, world: World, as_user: Any
+) -> None:
+    path = f"/api/v1/admin/users/{world.an.id}/close-quota"
+    assert client.get(path, headers=as_user(world.manager)).status_code == 403
+    assert client.put(path, json={"own": 50}, headers=as_user(world.an)).status_code == 403
+    assert (
+        client.get(
+            "/api/v1/admin/users/999999/close-quota", headers=as_user(world.admin)
+        ).status_code
+        == 404
+    )
+
+
+def test_a_non_admin_with_the_right_never_sets_their_own_or_an_admins_limit(
+    client: TestClient, world: World, as_user: Any
+) -> None:
+    granted = client.put(
+        f"/api/v1/admin/users/{world.manager.id}/own-permissions",
+        json={"items": {"admin.review_settings": "flag"}, "confirm_sensitive": True},
+        headers=as_user(world.admin),
+    )
+    assert granted.status_code == 200, granted.text
+    manager = as_user(world.manager)
+    put = lambda who: client.put(  # noqa: E731
+        f"/api/v1/admin/users/{who.id}/close-quota", json={"own": 500}, headers=manager
+    )
+    assert put(world.an).status_code == 200
+    assert put(world.manager).status_code == 403  # not their own
+    assert put(world.admin).status_code == 403  # an admin's is an admin's to set

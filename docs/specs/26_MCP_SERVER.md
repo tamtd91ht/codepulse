@@ -68,14 +68,14 @@ Trả **Markdown có cấu trúc** (cho Claude đọc) + `structuredContent` JSO
 - **[Quyết định]** (review 2026-11-05, thay cho "chỉ ẩn `code_excerpt` khi `allow_external_llm = false`") Nội dung suy ra từ code bị **ẩn** khi: không xác định được repo của review, **hoặc** repo có `allow_external_llm = false`, **hoặc** `LLM_PROVIDER` là provider local (`settings.llm_provider == "ollama"`, tức "LLM_PROVIDER=local" của AGENTS.md). Trường bị ẩn: `code_excerpt`, gợi ý sửa (`suggestion`), lý do và bằng chứng kiểm chứng (`verification.reason` / `evidence`), tóm tắt review (`summary`) và `intent`. Vẫn trả: id, severity, category, `rule_id`, `file:line`, tiêu đề, mô tả (`message`), trạng thái, `verified`, link — kèm dòng "nội dung code bị ẩn theo cấu hình (repo/LLM local)". Áp dụng cho **cả** Markdown và `structuredContent` (trường bị ẩn là `null`, `code_hidden` mang câu trên, `code_excerpt_hidden = true`). Mọi chuỗi đi qua `redact` như các luồng khác.
 
 ## 8. `request_closure` **[Đã chốt]**
-Đi đúng luồng `POST /findings/{id}/close-requests` (cùng hàm nghiệp vụ, không nhân bản logic), cùng ràng buộc: chỉ tác giả, chỉ critical/high đang `open`, một yêu cầu đang chờ mỗi finding, **chung** giới hạn 20 yêu cầu/ngày với web, tối đa 5 commit, phản biện chặn chuỗi giống secret.
+Đi đúng luồng `POST /findings/{id}/close-requests` (cùng hàm nghiệp vụ, không nhân bản logic), cùng ràng buộc: chỉ tác giả, chỉ critical/high đang `open`, một yêu cầu đang chờ mỗi finding, **chung** giới hạn yêu cầu đóng trong 24 giờ với web (mặc định 20, chỉnh theo người, §21), tối đa 5 commit, phản biện chặn chuỗi giống secret.
 
 Tham số:
 - `finding_id` (bắt buộc).
 - `commits` (0–5 SHA hoặc link). **Có commit** thì:
   - mỗi SHA phải **tồn tại trên GitLab trong đúng repo của finding** (server gọi GitLab API `GET /projects/:id/repository/commits/:sha`, có retry + timeout); chưa có → lỗi `commit_not_pushed` kèm SHA, không tạo yêu cầu;
   - **[Quyết định]** (review 2026-11-05) commit GitLab trả về phải **bắt đầu bằng** chuỗi đã gửi (một nhánh/tag tên giống SHA, vd `deadbeef`, được GitLab hiểu thành commit khác) → lỗi `invalid_argument` "… không phải mã commit"; luôn lưu SHA đầy đủ GitLab trả, không bao giờ lưu chuỗi người gọi gửi;
-  - **[Quyết định]** (review 2026-11-05) thứ tự: kiểm tham số → mọi từ chối chỉ cần DB (`check_close_request`: quyền, xem được finding, tác giả, critical/high, `open`, đang có yêu cầu, 20/ngày — **không gọi GitLab** nếu sẽ bị từ chối) → **kết thúc transaction** (không giữ kết nối/khoá DB khi chờ GitLab) → hỏi GitLab: Retry-After chờ tối đa 3 giây, tổng mọi commit tối đa ~20 giây (quá → `gitlab_unavailable`) → transaction mới, `create_close_request` kiểm lại toàn bộ rồi ghi (yêu cầu gửi song song vẫn nhận 409);
+  - **[Quyết định]** (review 2026-11-05) thứ tự: kiểm tham số → mọi từ chối chỉ cần DB (`check_close_request`: quyền, xem được finding, tác giả, critical/high, `open`, đang có yêu cầu, giới hạn 24 giờ của người đó — **không gọi GitLab** nếu sẽ bị từ chối) → **kết thúc transaction** (không giữ kết nối/khoá DB khi chờ GitLab) → hỏi GitLab: Retry-After chờ tối đa 3 giây, tổng mọi commit tối đa ~20 giây (quá → `gitlab_unavailable`) → transaction mới, `create_close_request` kiểm lại toàn bộ rồi ghi (yêu cầu gửi song song vẫn nhận 409);
   - bắt buộc `note`: tóm tắt đã sửa gì và vì sao (**[Quyết định]** 50–1000 ký tự, trần giống web);
   - bắt buộc `files_changed` (list đường dẫn, **[Quyết định]** ≤50);
   - `tests`: list `{command, result: passed|failed|not_run, summary?}` (≤10), khuyến nghị có.
@@ -88,7 +88,7 @@ Lưu trữ (migration trên `finding_closures`):
 Sau khi tạo: trạng thái `pending`, manager/admin duyệt **giống hệt thủ công** (chạy kiểm bằng LLM hoặc từ chối); không tự chạy kiểm. Khi chạy kiểm, `note`, `files_changed`, `tests` được đưa vào prompt của `app/review/resolve.py` như **dữ liệu không tin cậy** (bọc tag, `redact`), không thay đổi quy tắc ra kết luận. Trang "Đóng finding" hiện nhãn "Claude Code (MCP)", tên token, file đã sửa và kết quả test.
 
 ## 9. Giới hạn và bảo mật **[Đã chốt]**
-- **60 lần gọi tool/phút mỗi token** (Redis, cửa sổ phút; vượt → lỗi `rate_limited` kèm số giây chờ). **[Quyết định]** (review 2026-11-05) Thêm **120 lần/phút mỗi người** cộng mọi token của họ (cùng cơ chế Redis; nhiều token không nhân giới hạn). Giới hạn 20 yêu cầu đóng/ngày vẫn áp dụng.
+- **60 lần gọi tool/phút mỗi token** (Redis, cửa sổ phút; vượt → lỗi `rate_limited` kèm số giây chờ). **[Quyết định]** (review 2026-11-05) Thêm **120 lần/phút mỗi người** cộng mọi token của họ (cùng cơ chế Redis; nhiều token không nhân giới hạn). Giới hạn yêu cầu đóng trong 24 giờ (§21) vẫn áp dụng.
 - **[Quyết định]** (review 2026-11-05) `cancel_close_request` cần quyền `finding.close_request` (như web) và không kiểm lại quyền xem sau khi đã rút (không để một lần kiểm xem làm rollback việc rút).
 - **[Quyết định]** (review 2026-11-05) Audit (`mcp.<tool>`): mọi tool ghi, và tool đọc khi đọc việc của **người khác**; tool đọc chỉ chạm việc của chính người gọi (finding của mình, `list_close_requests`) không ghi audit — `mcp_calls` (§13.1) vẫn ghi mọi lần gọi. Lần gọi bị từ chối vẫn audit (trừ `rate_limited`).
 - `/mcp` từ chối request không có Bearer `cpat_…` hợp lệ (401, header `WWW-Authenticate: Bearer`). **[Quyết định]** Kiểm `Origin` nếu có (chống DNS rebinding theo khuyến nghị MCP).
@@ -144,7 +144,7 @@ Mỗi dòng một thành viên (trong phạm vi + bộ lọc), có dòng tổng:
 
 ## 14. Dữ liệu đủ để sửa và gửi yêu cầu đóng
 
-- **[Quyết định]** (user 2026-11-05) Mỗi finding trong `list_findings` (không chỉ `get_finding`) mang đủ để agent hiểu, sửa và gửi yêu cầu đóng: id, mức, category, rule, nguồn, tiêu đề, **mô tả**, **gợi ý sửa** (khi repo cho phép gửi code ra ngoài), file:dòng, repo + URL + nhánh mặc định, `reviewed_sha`, MR (iid, tiêu đề, trạng thái, nhánh nguồn → đích, head_sha, link) hoặc commit (sha, commit message dòng đầu, thời điểm, link), ngày review, ngày thay đổi, tác giả, độ tin cậy, verified, link CodePulse, yêu cầu đóng đang chờ, và `close_request` = {allowed, reason, requires}: người gọi có gửi được yêu cầu đóng không (cùng luật `check_close_request`: quyền, tác giả, critical/high, còn mở, không có yêu cầu đang chờ, hạn 20/ngày) và các trường `request_closure` cần.
+- **[Quyết định]** (user 2026-11-05) Mỗi finding trong `list_findings` (không chỉ `get_finding`) mang đủ để agent hiểu, sửa và gửi yêu cầu đóng: id, mức, category, rule, nguồn, tiêu đề, **mô tả**, **gợi ý sửa** (khi repo cho phép gửi code ra ngoài), file:dòng, repo + URL + nhánh mặc định, `reviewed_sha`, MR (iid, tiêu đề, trạng thái, nhánh nguồn → đích, head_sha, link) hoặc commit (sha, commit message dòng đầu, thời điểm, link), ngày review, ngày thay đổi, tác giả, độ tin cậy, verified, link CodePulse, yêu cầu đóng đang chờ, và `close_request` = {allowed, reason, requires}: người gọi có gửi được yêu cầu đóng không (cùng luật `check_close_request`: quyền, tác giả, critical/high, còn mở, không có yêu cầu đang chờ, giới hạn 24 giờ của người đó) và các trường `request_closure` cần.
 - `get_finding` thêm đoạn code lúc review, kết quả kiểm chứng, tiêu chí, số lần lặp 90 ngày, tóm tắt và intent của review, lịch sử đóng.
 
 ## 15. Finding đã đóng hay chưa
@@ -225,3 +225,21 @@ Mỗi dòng một thành viên (trong phạm vi + bộ lọc), có dòng tổng:
   bước tự đóng, **chỉ** với các finding nằm đúng trong file bị xoá (không có thì không gọi
   model), và không chạy khi LLM đang được ghi nhận là sập. Chi phí lượt kiểm ghi vào review đó
   dù review `skipped`.
+
+## 21. Giới hạn yêu cầu đóng theo người
+
+- **[Quyết định]** (user 2026-11-06) Giới hạn số yêu cầu đóng mỗi người trong 24 giờ (cửa sổ trượt, tính chung
+  web và MCP) chỉnh được trên web:
+  - mặc định cho mọi người: Admin › Cấu hình, khoá `close_requests_per_day` (biến môi trường
+    `CLOSE_REQUESTS_PER_DAY`, mặc định 20, 1–1000);
+  - riêng từng người: Admin › Người & Team › hồ sơ thành viên, mục "Yêu cầu đóng finding" (theo mặc định, hoặc
+    số riêng 0–1000; 0 = không được gửi). Cột `users.close_requests_per_day` (NULL = mặc định), migration
+    `c4e6a8b0d2f3`.
+- Quyền chỉnh: `admin.review_settings` (như mức mặc định: mỗi yêu cầu có thể tốn một lượt kiểm). Người không
+  phải admin không đặt cho chính mình và không đặt cho admin (như các sửa đổi theo người khác). API
+  `GET/PUT /admin/users/{id}/close-quota` → `{own, default, limit, used_24h}`; audit `user.close_quota`.
+- `check_close_request` (web và MCP) và `close_request.allowed` của MCP dùng `quota()`; lỗi 429 ghi giới hạn
+  của người đó và số đã gửi; giới hạn 0 báo "admin đặt giới hạn 0".
+- `create_close_request` khoá dòng `users` của người gửi (`SELECT … FOR UPDATE`) trước khi đếm, nên các yêu
+  cầu gửi cùng lúc (nhiều finding, agent gửi liên tiếp) không cùng lọt qua giới hạn.
+

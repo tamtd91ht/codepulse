@@ -64,6 +64,9 @@ EDITABLE: dict[str, Editable] = {
     # how many days back each review looks; on needs the days (check_auto_close).
     "auto_close_findings": Editable("AUTO_CLOSE_FINDINGS", "bool"),
     "auto_close_days": Editable("AUTO_CLOSE_DAYS", "int", 1, 90),
+    # Close requests one person may send in 24 hours (each may cost a check); a person's own
+    # number (users.close_requests_per_day) wins over it.
+    "close_requests_per_day": Editable("CLOSE_REQUESTS_PER_DAY", "int", 1, 1000),
     # "Yêu cầu review": how many commits per repo the list fetches from GitLab at most.
     "review_commits_list_max": Editable("REVIEW_COMMITS_LIST_MAX", "int", 20, 2000),
     # A review failed because the LLM was down is reviewed again once it answers (probed every
@@ -92,6 +95,7 @@ def defaults(settings: Settings) -> dict[str, Value]:
         "monthly_llm_budget_usd": settings.monthly_llm_budget_usd,
         "auto_close_findings": settings.auto_close_findings,
         "auto_close_days": settings.auto_close_days,
+        "close_requests_per_day": settings.close_requests_per_day,
         "review_commits_list_max": settings.review_commits_list_max,
         "llm_auto_resume": settings.llm_auto_resume,
         "llm_probe_interval_min": settings.llm_probe_interval_min,
@@ -139,6 +143,17 @@ def check_auto_close(session: Session, settings: Settings) -> None:
     values = effective(session, settings)
     if values["auto_close_findings"] and int(values["auto_close_days"]) < 1:
         raise ValueError("auto_close_days: bật tự đóng finding thì phải nhập số ngày N (1-90)")
+
+
+def close_requests_per_day(session: Session, settings: Settings, user_id: int) -> int:
+    """How many close requests this person may send in 24 hours: their own number, else the
+    default of Admin > Cấu hình, else CLOSE_REQUESTS_PER_DAY."""
+    from app.models import User  # the models import nothing from here; keep it local anyway
+
+    own = session.scalar(select(User.close_requests_per_day).where(User.id == user_id))
+    if own is not None:
+        return int(own)
+    return int(effective(session, settings)["close_requests_per_day"])
 
 
 def link_base(session: Session, settings: Settings) -> str:

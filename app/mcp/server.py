@@ -974,7 +974,8 @@ def build_server() -> MCPServer:
             "passed|failed|not_run, summary}). If the finding is wrong and no code change is "
             "needed, send no commits and an `argument` instead (50-4000 chars: why it does not "
             "hold in production and which file proves it; never paste secrets). Only open "
-            "critical/high findings, one pending request per finding, 20 requests per day."
+            "critical/high findings, one pending request per finding, a per-person limit of "
+            "requests per 24 hours set by an admin (close_request.reason says when it is reached)."
             + UNTRUSTED
         ),
     )

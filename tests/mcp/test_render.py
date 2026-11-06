@@ -706,3 +706,16 @@ def test_commit_review_has_no_jira_block() -> None:
         "- Jira: MR nhắc `SEC-7`, issue của dự án khác (không hiện chi tiết).",
         "- Jira: MR nhắc `ABC-99` nhưng CodePulse chưa đồng bộ issue này.",
     ]
+
+
+def test_mcp_says_the_persons_limit_is_reached(env: Env, world: Any) -> None:
+    """user 2026-11-06: the limit is the person's own (0: none) or the default."""
+    _setup(env, world)
+    world.an.close_requests_per_day = 0
+    env.session.commit()
+    an = caller_for(env.session, env.settings, world.an)
+    result = invoke(an, "get_mr_findings", {"repo": "demo/p", "iid": 7})
+    assert not result.is_error, result.content[0].text
+    (item,) = result.structured_content["findings"]
+    assert item["close_request"]["allowed"] is False
+    assert "giới hạn 0" in item["close_request"]["reason"]

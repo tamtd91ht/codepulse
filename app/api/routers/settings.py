@@ -17,9 +17,11 @@ from app.admin_settings import (
 )
 from app.api.audit import audit
 from app.api.deps import get_session
-from app.api.schemas import ReviewSettingOut, ReviewSettingsIn
+from app.api.routers.closures import requests_last_day
+from app.api.schemas import CloseQuotaIn, CloseQuotaOut, ReviewSettingOut, ReviewSettingsIn
 from app.api.security import Principal, require
 from app.config import Settings, get_settings
+from app.models import User
 
 router = APIRouter(tags=["admin"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -102,3 +104,62 @@ def llm_probe_now(principal: ReviewSettingsAdmin, session: SessionDep) -> dict[s
     session.commit()
     session.expire_all()
     return llm_recovery.status(session)
+
+
+# -- a person's close-request limit (user 2026-11-06) ------------------------------------------
+# Same right as the default on Admin > Cấu hình: each request may cost a paid check.
+
+
+def _quota(session: Session, settings: Settings, user: User) -> CloseQuotaOut:
+    default = int(effective(session, settings)["close_requests_per_day"])
+    own = user.close_requests_per_day
+    return CloseQuotaOut(
+        user_id=user.id,
+        own=own,
+        default=default,
+        limit=default if own is None else own,
+        used_24h=requests_last_day(session, user.id),
+    )
+
+
+@router.get("/admin/users/{user_id}/close-quota", response_model=CloseQuotaOut)
+def close_quota(
+    user_id: int, principal: ReviewSettingsAdmin, session: SessionDep, settings: SettingsDep
+) -> CloseQuotaOut:
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(404, "user not found")
+    return _quota(session, settings, user)
+
+
+@router.put("/admin/users/{user_id}/close-quota", response_model=CloseQuotaOut)
+def set_close_quota(
+    user_id: int,
+    body: CloseQuotaIn,
+    principal: ReviewSettingsAdmin,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> CloseQuotaOut:
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(404, "user not found")
+    if not principal.is_admin:
+        # As for every other per-person edit (app/api/routers/admin.py): an admin's limit is an
+        # admin's to set, and nobody raises their own.
+        if user.id == principal.user_id:
+            raise HTTPException(403, "không tự đặt giới hạn cho chính mình")
+        admins = {e.lower() for e in settings.admin_emails}
+        if (user.primary_email or "").lower() in admins:
+            raise HTTPException(403, "chỉ admin đặt giới hạn cho admin")
+    old = user.close_requests_per_day
+    user.close_requests_per_day = body.own
+    audit(
+        session,
+        principal.user_id,
+        "user.close_quota",
+        f"user:{user.id}",
+        old=old,
+        new=body.own,
+    )
+    session.commit()
+    return _quota(session, settings, user)
