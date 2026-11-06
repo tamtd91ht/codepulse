@@ -1,12 +1,16 @@
 """Jira issue <-> MR links by key (docs/specs/27 §8)."""
 
+from decimal import Decimal
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.jira.links import MAX_KEYS, extract_keys, link_issues, link_merge_requests
-from app.jira.settings import JIRA_ID_OFFSET
-from app.models import Issue, IssueMrLink, JiraProject, MergeRequest, Project
+from app.config import get_settings
+from app.jira.links import MAX_KEYS, extract_keys, link_issues, link_merge_requests, mr_issues
+from app.jira.scopes import Rule, replace_scopes
+from app.jira.settings import JIRA_ID_OFFSET, set_task_source
+from app.models import BusinessProject, Issue, IssueMrLink, JiraProject, MergeRequest, Project
 
 
 def test_extract_keys_in_order_without_duplicates() -> None:
@@ -133,3 +137,77 @@ def test_issues_link_in_chunks_of_keys(
     assert links(db_session, issues[0]) == {by_title.id: "closes"}
     assert links(db_session, issues[1]) == {by_branch.id: "closes"}  # lower-case branch
     assert links(db_session, issues[2]) == {by_branch.id: "mention"}
+
+
+@pytest.mark.integration
+def test_mr_issues_lists_linked_jira_issues_and_unsynced_keys(
+    db_session: Session, setup: tuple[Project, Issue]
+) -> None:
+    repo, issue = setup
+    shop, sec = BusinessProject(name="Shop"), BusinessProject(name="Sec")
+    other_jira = JiraProject(key="SEC", name="Bảo mật")
+    db_session.add_all([shop, sec, other_jira])
+    db_session.flush()
+    repo.business_project_id = shop.id
+    abc = db_session.get(JiraProject, issue.jira_project_id)
+    assert abc is not None
+    replace_scopes(db_session, abc, [Rule(shop.id)])
+    replace_scopes(db_session, other_jira, [Rule(sec.id)])
+    issue.state, issue.type, issue.story_points = "opened", "feature", Decimal("3")
+    issue.web_url = "https://jira.x.vn/browse/ABC-5"
+    db_session.add_all([
+        Issue(id=JIRA_ID_OFFSET + 2, source="jira", jira_project_id=abc.id, iid=2,
+              key="ABC-2", title="Ghi chú", state="closed"),
+        Issue(id=JIRA_ID_OFFSET + 10, source="jira", jira_project_id=abc.id, iid=10,
+              key="ABC-10", title="Mười", state="opened"),
+        Issue(id=JIRA_ID_OFFSET + 7, source="jira", jira_project_id=other_jira.id, iid=7,
+              key="SEC-7", title="Lỗ hổng chưa công bố", state="opened"),
+    ])  # fmt: skip
+    mr = MergeRequest(
+        project_id=repo.id,
+        iid=9,
+        title="OTP",
+        source_branch="feature/ABC-5-otp",
+        jira_keys=["ABC-10", "ABC-2", "ABC-5", "ABC-99", "SEC-7", "UTF-8"],
+    )
+    db_session.add(mr)
+    db_session.flush()
+    link_merge_requests(db_session, [mr.id])
+    set_task_source(db_session, "jira", None)
+
+    out = mr_issues(db_session, get_settings(), mr, shop.id)
+
+    # The branch link first, then description-only ones by number (2 before 10).
+    assert [(i["key"], i["link"]) for i in out["issues"]] == [
+        ("ABC-5", "closes"),
+        ("ABC-2", "mention"),
+        ("ABC-10", "mention"),
+    ]
+    assert out["issues"][0] == {
+        "key": "ABC-5",
+        "title": "OTP",
+        "state": "opened",
+        "type": "feature",
+        "story_points": 3.0,
+        "url": "https://jira.x.vn/browse/ABC-5",
+        "link": "closes",
+    }
+    # Another dự án's issue: key only, never its title (anyone can type a key in an MR).
+    assert out["other_keys"] == ["SEC-7"]
+    assert "Lỗ hổng" not in str(out)
+    assert out["missing_keys"] == ["ABC-99"]  # UTF is no Jira project
+    assert out["expected"] is True
+    # A repo without a dự án: nothing in detail.
+    bare_scope = mr_issues(db_session, get_settings(), mr, None)
+    assert bare_scope["issues"] == [] and len(bare_scope["other_keys"]) == 4
+
+    set_task_source(db_session, "gitlab", None)
+    bare = MergeRequest(project_id=repo.id, iid=10, title="x")
+    db_session.add(bare)
+    db_session.flush()
+    assert mr_issues(db_session, get_settings(), bare, shop.id) == {
+        "issues": [],
+        "other_keys": [],
+        "missing_keys": [],
+        "expected": False,
+    }

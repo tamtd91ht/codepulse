@@ -11,12 +11,15 @@ Jira sync for the issues it just wrote (`link_issues`).
 
 import re
 from collections.abc import Iterable
+from typing import Any
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import case, delete, false, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.jira.settings import JIRA_ID_OFFSET
+from app.config import Settings
+from app.jira.scopes import jira_issue_in
+from app.jira.settings import JIRA_ID_OFFSET, task_source
 from app.models import Issue, IssueMrLink, JiraProject, MergeRequest
 
 # A key ends before a letter or digit; `_` may follow (`feature/ABC-123_login`).
@@ -133,3 +136,67 @@ def link_issues(session: Session, issue_ids: Iterable[int]) -> int:
                 if key in issue_of:
                     wanted[(issue_of[key], int(mr.id))] = _source(key, mr.title, mr.source_branch)
     return _write(session, wanted)
+
+
+MAX_SHOWN = 20  # Jira issues shown for one MR (review page, MCP)
+
+
+def _issue_row(row: Any) -> dict[str, Any]:
+    return {
+        "key": row.key,
+        "title": row.title,
+        "state": row.state,
+        "type": row.type,
+        "story_points": float(row.story_points) if row.story_points is not None else None,
+        "url": row.web_url,
+        # closes: the key is in the MR title or source branch; mention: description only.
+        "link": "mention" if row.source == "mention" else "closes",
+    }
+
+
+def mr_issues(
+    session: Session, settings: Settings, mr: MergeRequest, business_project_id: int | None
+) -> dict[str, Any]:
+    """The Jira side of an MR (docs/specs/27 §17).
+
+    - `issues`: linked Jira issues counted for the repo's dự án (`jira_issue_in`), title/branch
+      links first, then by Jira project and number, at most MAX_SHOWN.
+    - `other_keys`: linked issues of another dự án (or a repo without one): key only. Anyone may
+      type any key in an MR; that must not show a title the reader has no business seeing.
+    - `missing_keys`: keys of registered Jira projects the MR names whose issue is not synced.
+    - `expected`: the task source is Jira (an MR is then expected to name an issue).
+    """
+    rank = case((IssueMrLink.source == "mention", 1), else_=0)
+    in_scope = jira_issue_in([business_project_id]) if business_project_id is not None else false()
+    rows = session.execute(
+        select(
+            Issue.key,
+            Issue.title,
+            Issue.state,
+            Issue.type,
+            Issue.story_points,
+            Issue.web_url,
+            IssueMrLink.source,
+            in_scope.label("in_scope"),
+        )
+        .join(IssueMrLink, IssueMrLink.issue_id == Issue.id)
+        .where(IssueMrLink.mr_id == mr.id, Issue.source == "jira")
+        .order_by(rank, Issue.jira_project_id, Issue.iid)
+        .limit(MAX_SHOWN)
+    ).all()
+    issues = [_issue_row(r) for r in rows if r.in_scope]
+    others = [str(r.key) for r in rows if not r.in_scope]
+    registered = _registered(session)
+    named = [k for k in mr.jira_keys or [] if k.rsplit("-", 1)[0] in registered]
+    synced = (
+        set(session.scalars(select(Issue.key).where(Issue.source == "jira", Issue.key.in_(named))))
+        if named
+        else set()
+    )
+    missing = [k for k in named if k not in synced][:MAX_SHOWN]
+    return {
+        "issues": issues,
+        "other_keys": others,
+        "missing_keys": missing,
+        "expected": task_source(session, settings) == "jira",
+    }

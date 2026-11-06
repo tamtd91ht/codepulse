@@ -609,6 +609,47 @@ def status_words(status: str) -> str:
     return " hoặc ".join(STATUS_WORDS.get(s, f"trạng thái {s}") for s in status.split(","))
 
 
+JIRA_STATES = {"opened": "đang mở", "closed": "đã xong"}
+
+
+def jira_data(jira: dict[str, Any] | None) -> dict[str, Any] | None:
+    """An MR's Jira issues for structuredContent (docs/specs/26 §19); titles redacted."""
+    if jira is None:
+        return None
+    return {
+        "issues": [{**i, "title": clean(i["title"])} for i in jira["issues"]],
+        "other_keys": list(jira.get("other_keys", [])),
+        "missing_keys": list(jira["missing_keys"]),
+        "expected": bool(jira["expected"]),
+    }
+
+
+def _jira_md(jira: dict[str, Any] | None) -> list[str]:
+    """The task(s) this MR implements: what the change is supposed to do."""
+    if jira is None:
+        return []
+    out: list[str] = []
+    for i in jira["issues"]:
+        facts = [JIRA_STATES.get(i["state"] or "", i["state"] or "?")]
+        if i["type"]:
+            facts.append(inline(str(i["type"])))
+        if i["story_points"] is not None:
+            facts.append(f"{i['story_points']:g} SP")
+        if i["link"] == "mention":
+            facts.append("chỉ nhắc trong mô tả MR")
+        line = f"- Jira {inline(i['key'])}: {inline(i['title'])} ({', '.join(facts)})"
+        out.append(line + (f" {i['url']}" if i["url"] else ""))
+    if jira.get("other_keys"):
+        keys = ", ".join(inline(k) for k in jira["other_keys"])
+        out.append(f"- Jira: MR nhắc {keys}, issue của dự án khác (không hiện chi tiết).")
+    if jira["missing_keys"]:
+        keys = ", ".join(inline(k) for k in jira["missing_keys"])
+        out.append(f"- Jira: MR nhắc {keys} nhưng CodePulse chưa đồng bộ issue này.")
+    if not out and jira["expected"]:
+        out.append("- Jira: MR chưa gắn issue nào (ghi key ABC-123 vào tiêu đề hoặc tên nhánh).")
+    return out
+
+
 def review_result(
     review: Review,
     project: Project | None,
@@ -619,6 +660,7 @@ def review_result(
     *,
     local_llm: bool = False,
     filters: dict[str, Any] | None = None,
+    jira: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     at = now or datetime.now(UTC)
     tag = new_tag()
@@ -629,6 +671,7 @@ def review_result(
         f"# Review #{review.id} của {target} ở `{repo}`",
         f"- reviewed_sha `{review.reviewed_sha}` · round {review.round} · verdict {review.verdict}",
         f"- CodePulse: {base}/reviews/{review.id}",
+        *_jira_md(jira),
     ]
     head += _review_context_md(review, tag, ok) if ok else [f"- _({HIDDEN})_"]
     applied = filters or {"status": "open"}
@@ -646,6 +689,7 @@ def review_result(
             "round": review.round,
             "verdict": review.verdict,
             "mr": {"iid": mr.iid, "title": clean(mr.title)} if mr else None,
+            "jira": jira_data(jira),
             "summary": clean(review.summary) if ok else None,
             "intent": _intent(review) if ok else None,
             "code_hidden": None if ok else HIDDEN,

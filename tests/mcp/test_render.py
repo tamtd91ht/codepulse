@@ -3,6 +3,7 @@ between random tags, redaction, the excerpt hidden for a repo that forbids outsi
 to the dashboard."""
 
 import re
+from decimal import Decimal
 from typing import Any
 
 from app.mcp import queries, render
@@ -650,3 +651,58 @@ def test_commit_and_mr_findings_filter_by_status(env: Env, world: Any) -> None:
     assert commit_ids(status="open,closed") == {open_f.id, closed_f.id}
     assert commit_ids(status=["any"]) == {open_f.id, closed_f.id}
     assert invoke(an, "get_commit_findings", {"sha": sha[:8], "status": "done"}).is_error
+
+
+def _link_jira(s: Any, world: Any, title: str) -> None:
+    from app.jira.scopes import Rule, replace_scopes
+    from app.jira.settings import JIRA_ID_OFFSET
+    from app.models import Issue, IssueMrLink, JiraProject
+
+    jira = JiraProject(key="SHOP", name="Shop")
+    s.add(jira)
+    s.flush()
+    replace_scopes(s, jira, [Rule(world.project.business_project_id)])
+    issue = Issue(
+        id=JIRA_ID_OFFSET + 12, source="jira", jira_project_id=jira.id, iid=12, key="SHOP-12",
+        title=title, state="opened", type="feature", story_points=Decimal("5"),
+        web_url="https://jira.example.com/browse/SHOP-12",
+    )  # fmt: skip
+    s.add(issue)
+    s.flush()
+    s.add(IssueMrLink(issue_id=issue.id, mr_id=world.an_review.mr_id, source="closes"))
+    s.commit()
+
+
+def test_mr_findings_carry_the_jira_issue_of_the_mr(env: Env, world: Any) -> None:
+    """user 2026-11-06 (docs/specs/26 §19): get_mr_findings says which Jira task the MR does;
+    the title is untrusted (inline, redacted)."""
+    _setup(env, world)
+    _link_jira(env.session, world, 'Đăng nhập OTP `rm -rf` token="hunter2hunter2"')
+    an = caller_for(env.session, env.settings, world.an)
+    result = invoke(an, "get_mr_findings", {"repo": "demo/p", "iid": 7})
+    assert not result.is_error, result.content[0].text
+    jira = result.structured_content["review"]["jira"]
+    assert [i["key"] for i in jira["issues"]] == ["SHOP-12"]
+    issue = jira["issues"][0]
+    assert issue["state"] == "opened" and issue["story_points"] == 5.0
+    assert issue["link"] == "closes" and issue["url"].endswith("/browse/SHOP-12")
+    text = result.content[0].text
+    assert "Jira `SHOP-12`" in text and "5 SP" in text and "đang mở" in text
+    assert "hunter2hunter2" not in text and "hunter2hunter2" not in str(jira)
+    assert "`rm -rf`" not in text  # backticks cannot break out of the inline span
+
+
+def test_commit_review_has_no_jira_block() -> None:
+    assert render.jira_data(None) is None
+    assert render._jira_md(None) == []
+    assert render._jira_md({"issues": [], "missing_keys": [], "expected": True}) == [
+        "- Jira: MR chưa gắn issue nào (ghi key ABC-123 vào tiêu đề hoặc tên nhánh)."
+    ]
+    assert render._jira_md({"issues": [], "missing_keys": [], "expected": False}) == []
+    other = render._jira_md(
+        {"issues": [], "other_keys": ["SEC-7"], "missing_keys": ["ABC-99"], "expected": True}
+    )
+    assert other == [
+        "- Jira: MR nhắc `SEC-7`, issue của dự án khác (không hiện chi tiết).",
+        "- Jira: MR nhắc `ABC-99` nhưng CodePulse chưa đồng bộ issue này.",
+    ]

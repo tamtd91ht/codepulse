@@ -180,3 +180,17 @@ Mỗi dòng một thành viên (trong phạm vi + bộ lọc), có dòng tổng:
 ## 18. Lọc `status` ở `get_commit_findings` / `get_mr_findings`
 
 - **[Quyết định]** (user 2026-11-06) Hai tool nhận `status` (giá trị và nhiều giá trị như `list_findings`, §15-§17), `include_disputed`, `include_pending`. Mặc định giữ hành vi cũ: `status=open` với `include_disputed = true` và `include_pending = true` — mọi finding critical/high còn phải sửa của review, kể cả đang khiếu nại và đang Chờ duyệt / Chưa đủ điều kiện (khác mặc định của `list_findings`, nơi hai cờ là false). Ví dụ `status=["closed"]` xem những finding của commit/MR đã đóng, `status="any"` xem tất cả. Kết quả có `filters` (status đã chuẩn hoá + hai cờ); dòng đếm trong Markdown nói theo bộ lọc ("… chờ duyệt hoặc chưa đủ điều kiện, chờ quyết định"). Giá trị sai bị từ chối trước khi tra commit/MR.
+
+## 19. Issue Jira của MR trong `get_mr_findings`
+
+- **[Quyết định]** (user 2026-11-06) `review.jira` = `{issues, other_keys, missing_keys,
+  expected}` theo
+  spec 27 §17 (null nếu review không phải MR). Mỗi issue: `key`, `title`, `state`, `type`,
+  `story_points`, `url`, `link` (`closes` | `mention`).
+- Markdown: dưới phần đầu review, mỗi issue một dòng "Jira KEY: tiêu đề (đang mở | đã xong,
+  loại, N SP[, chỉ nhắc trong mô tả MR]) url", key và tiêu đề trong dấu `…`; key chưa đồng bộ
+  một dòng; key của dự án khác một dòng, chỉ key; nguồn task là Jira mà MR không gắn issue thì
+  nhắc ghi key.
+- Tiêu đề issue là văn bản người dùng nhập: che giá trị nhạy cảm (`redact`), in inline trong dấu
+  `…` như các giá trị không tin cậy khác. Không phụ thuộc `code_allowed` (không phải code).
+- `get_commit_findings` và `get_finding` không thêm Jira ở đợt này.

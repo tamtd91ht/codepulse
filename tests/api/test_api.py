@@ -228,6 +228,8 @@ def test_reviews_are_scoped_and_reads_of_others_are_audited(
     detail = client.get(f"/api/v1/reviews/{world.an_review.id}", headers=as_user(world.lead)).json()
     assert detail["findings"][0]["title"] == "SQL injection"
     assert detail["web_url"] == "https://gitlab.example.com/demo/p/-/merge_requests/7"
+    # docs/specs/27 §17: an MR review carries its Jira side (none linked here).
+    assert detail["jira"]["issues"] == [] and detail["jira"]["missing_keys"] == []
     actions = db_session.scalars(select(AuditLog.action)).all()
     assert "review.read" in actions
 

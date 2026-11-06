@@ -462,3 +462,37 @@ Mỗi thay đổi đều ghi audit.
   `full` cho job (lấy lại khoảng lấy lùi). `sync_all(keys=…, full=…)`,
   `sync_all_job(manual, keys, full)`. Audit `dpi.jira.sync`
   ghi `keys`, `full`.
+
+## 17. Issue Jira của MR trên trang review và MCP
+
+> **[Quyết định]** (user 2026-11-06) Jira không chỉ là nguồn số liệu DPI: người xem review MR và
+> agent sửa finding cần biết MR đang làm task nào. Vẫn chỉ đọc (§1).
+
+- `app.jira.links.mr_issues(session, settings, mr, business_project_id)` trả:
+  - `issues`: issue Jira nối với MR (`issue_mr_links`) **được tính cho dự án CodePulse của
+    repo** (`jira_issue_in`, §15), tối đa 20 liên kết; liên kết `closes` (key ở tiêu đề MR hoặc
+    tên nhánh) trước, `mention` (chỉ trong mô tả) sau, rồi theo dự án Jira và số. Mỗi issue:
+    `key`, `title`, `state` (opened|closed), `type`, `story_points`, `url` (`…/browse/KEY`),
+    `link`.
+  - `other_keys`: issue nối với MR nhưng thuộc dự án khác (hoặc repo chưa gắn dự án): **chỉ
+    key**. **[Quyết định]** ai cũng gõ được key bất kỳ vào MR; không để việc đó thành cách đọc
+    tiêu đề issue của dự án mình không được xem.
+  - `missing_keys`: key thuộc dự án Jira **đã đăng ký** mà MR nhắc nhưng issue chưa có trong
+    CodePulse (issue mới chưa tới kỳ sync, hoặc tài khoản dịch vụ không xem được). Key của dự án
+    chưa đăng ký (`UTF-8`…) bỏ qua như §8.
+  - `expected`: nguồn task là Jira (§9), tức MR nên ghi key.
+- **API**: `GET /reviews/{id}` thêm `jira` (null với review commit). Ai xem được review thì
+  thấy, không cần quyền Jira: tiêu đề issue (đã giới hạn trong dự án của repo) là thông tin
+  task, không phải code.
+- **Trang review** (MR): dải "Jira" dưới tiêu đề: key (mở Jira), tiêu đề, Đang mở / Đã xong,
+  loại · SP, "chỉ nhắc trong mô tả"; key dự án khác chỉ hiện key; key chưa đồng bộ ghi lý do; MR không gắn issue mà nguồn
+  task là Jira thì nhắc cách ghi key. Không có gì để nói thì không hiện.
+- **MCP** `get_mr_findings`: `review.jira` (như API, tiêu đề đã che giá trị nhạy cảm) và các dòng
+  "Jira `KEY`: `tiêu đề` (trạng thái, loại, N SP) url" trong Markdown — tiêu đề là dữ liệu
+  không tin cậy, in trong dấu `…` (spec 26 §19).
+- Trợ lý (Hỏi Stetho) khi đang xem review: ngữ cảnh thêm dòng issue Jira của MR (tiêu đề che
+  giá trị nhạy cảm).
+- Key đã đồng bộ nhưng chưa kịp nối (job nối chạy sau) không hiện ở đâu cho tới lần nối kế
+  tiếp; tự hết.
+- Ngoài phạm vi: trạng thái chi tiết của Jira (In Review…), người được giao, tạo ticket từ
+  finding (cần ghi lên Jira, trái §1).

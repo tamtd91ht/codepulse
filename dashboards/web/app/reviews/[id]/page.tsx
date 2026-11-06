@@ -10,7 +10,7 @@ import { announceReviewQueued } from "@/components/ReviewActivity";
 import { Alert, Card, EmptyState, ExternalLink, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { ApiError, api, can, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, TRIGGER_LABEL, VERDICT_LABEL, date, num } from "@/lib/format";
-import type { Finding, FindingClosure, Me, Repo, ReviewDetail } from "@/lib/types";
+import type { Finding, FindingClosure, Me, MrJira, Repo, ReviewDetail } from "@/lib/types";
 
 const STATUS_LABEL: Record<string, string> = {
   open: "Đang mở",
@@ -466,6 +466,8 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
       {/* can_rerun already says whether this person manages the review's dự án. */}
       {(review.can_rerun || rerun) && <RerunBar review={review} state={rerun} onRun={startRerun} />}
 
+      {review.jira && <MrJiraCard jira={review.jira} />}
+
       <div className="grid kpis">
         {review.status === "done" && (
           <div className="card kpi">
@@ -705,5 +707,53 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
         })}
       </Card>
     </>
+  );
+}
+
+/** The Jira task(s) this MR implements (docs/specs/27 §17): key, title, state, type, points. */
+function MrJiraCard({ jira }: { jira: MrJira }) {
+  const others = jira.other_keys ?? [];
+  const named = jira.issues.length + others.length + jira.missing_keys.length;
+  if (named === 0 && !jira.expected) return null;
+  return (
+    <div className="card mr-jira">
+      <span className="mr-jira-label">Jira</span>
+      {named === 0 && (
+        <span className="muted small">
+          MR chưa gắn issue nào. Ghi key (ABC-123) vào tiêu đề MR hoặc tên nhánh <code>feature/ABC-123-mo-ta</code>.
+        </span>
+      )}
+      <ul className="mr-jira-list">
+        {jira.issues.map((i) => (
+          <li key={i.key}>
+            {i.url ? <ExternalLink href={i.url}>{i.key}</ExternalLink> : <code>{i.key}</code>}
+            <span className="mr-jira-title">{i.title ?? "—"}</span>
+            {i.state && <Pill tone={i.state === "closed" ? "good" : "info"}>{i.state === "closed" ? "Đã xong" : "Đang mở"}</Pill>}
+            {(i.type || i.story_points !== null) && (
+              <span className="muted small">
+                {[i.type, i.story_points !== null ? `${i.story_points} SP` : null].filter(Boolean).join(" · ")}
+              </span>
+            )}
+            {i.link === "mention" && (
+              <span className="muted small" title="Key chỉ có trong mô tả MR, không ở tiêu đề hay tên nhánh">
+                chỉ nhắc trong mô tả
+              </span>
+            )}
+          </li>
+        ))}
+        {others.map((k) => (
+          <li key={k}>
+            <code>{k}</code>
+            <span className="muted small">issue của dự án khác, không hiện chi tiết</span>
+          </li>
+        ))}
+        {jira.missing_keys.map((k) => (
+          <li key={k}>
+            <code>{k}</code>
+            <span className="muted small">chưa đồng bộ về CodePulse (issue mới, hoặc tài khoản Jira không xem được)</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

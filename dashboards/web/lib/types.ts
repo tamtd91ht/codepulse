@@ -461,6 +461,29 @@ export interface ReviewDetail extends Review {
   can_rerun: boolean;
   /** docs/specs/22 §6: one score per criteria set of the review's dự án (absent before 22.2). */
   criteria_scores?: ReviewCriteriaScore[];
+  /** docs/specs/27 §17: the Jira issues an MR names; null for a commit review. */
+  jira?: MrJira | null;
+}
+
+export interface JiraIssueRef {
+  key: string;
+  title: string | null;
+  state: "opened" | "closed" | null;
+  type: string | null;
+  story_points: number | null;
+  url: string | null;
+  /** closes: key in the MR title or source branch; mention: only in the description. */
+  link: "closes" | "mention";
+}
+
+export interface MrJira {
+  issues: JiraIssueRef[];
+  /** Linked issues of another dự án (or a repo without one): key only, no details. */
+  other_keys?: string[];
+  /** Keys of registered Jira projects the MR names whose issue is not synced (yet). */
+  missing_keys: string[];
+  /** The task source is Jira: an MR is expected to name its issue. */
+  expected: boolean;
 }
 
 /* ---- weighted criteria sets (docs/specs/22) ---- */

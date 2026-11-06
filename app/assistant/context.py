@@ -34,6 +34,7 @@ from app.api.security import Principal
 from app.config import Settings
 from app.models import BusinessProject, MetricsTeamPeriod, Team, User
 from app.reporting.report import build_team_report, render
+from app.review.prepare import redact
 from app.scoring.aggregate import period_start_of
 
 MAX_CHARS = 60_000
@@ -372,7 +373,7 @@ def reviews_section(
 def review_section(
     session: Session, principal: Principal, settings: Settings, review_id: int
 ) -> list[str]:
-    r = get_review(review_id, principal, session)
+    r = get_review(review_id, principal, session, settings)
     tz = ZoneInfo(settings.report_tz)
     author = session.get(User, r["author_user_id"]) if r["author_user_id"] else None
     lines = [
@@ -388,6 +389,15 @@ def review_section(
         lines.append(f"Tóm tắt của review: {_short(r['summary'], 1500)}")
     if r.get("error"):
         lines.append(f"Lỗi: {_short(r['error'], 500)}")
+    jira = r.get("jira") or {}
+    if jira.get("issues"):
+        lines.append(
+            "Issue Jira của MR: "
+            + "; ".join(
+                f"{i['key']} {_short(redact(i['title'] or ''), 160)} ({i['state'] or '?'})"
+                for i in jira["issues"]
+            )
+        )
     findings = sorted(
         r["findings"], key=lambda f: SEVERITIES.index(f.severity) if f.severity in SEVERITIES else 9
     )

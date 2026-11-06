@@ -595,6 +595,26 @@ class CriteriaScoreOut(BaseModel):
     breakdown: dict[str, Any]
 
 
+class JiraIssueRef(BaseModel):
+    """A Jira issue an MR names (docs/specs/27 §17)."""
+
+    key: str
+    title: str | None
+    state: str | None  # opened|closed
+    type: str | None
+    story_points: float | None
+    url: str | None
+    link: Literal["closes", "mention"]  # closes: key in MR title/branch; mention: description
+
+
+class MrJiraOut(BaseModel):
+    issues: list[JiraIssueRef]
+    # Linked issues of another dự án (or a repo without one): key only, no title (§17).
+    other_keys: list[str] = []
+    missing_keys: list[str]  # keys of registered Jira projects not synced (yet)
+    expected: bool  # the task source is Jira: an MR should name its issue
+
+
 class ReviewDetail(ReviewOut):
     findings: list[FindingOut]
     project: str | None
@@ -603,6 +623,8 @@ class ReviewDetail(ReviewOut):
     can_rerun: bool = False  # a deliberate new round is possible (commit, or MR still open)
     # docs/specs/22 §6: the score under each criteria set, the dự án's primary first.
     criteria_scores: list[CriteriaScoreOut] = []
+    # docs/specs/27 §17: an MR review's Jira issues; None for a commit review.
+    jira: MrJiraOut | None = None
 
 
 class RerunIn(BaseModel):

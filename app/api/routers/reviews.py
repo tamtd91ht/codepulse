@@ -49,6 +49,7 @@ from app.api.security import CurrentPrincipal, Principal, require
 from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.identity.attribution import Attribution, attribute_reviews, rebuild_after_commit
+from app.jira.links import mr_issues
 from app.models import (
     Account,
     Commit,
@@ -383,7 +384,12 @@ def _visible_review(session: Session, principal: Principal, review_id: int) -> R
 
 
 @router.get("/reviews/{review_id}", response_model=ReviewDetail)
-def get_review(review_id: int, principal: ViewPrincipal, session: SessionDep) -> dict[str, Any]:
+def get_review(
+    review_id: int,
+    principal: ViewPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict[str, Any]:
     review = _visible_review(session, principal, review_id)
     findings = list(
         session.scalars(
@@ -393,6 +399,9 @@ def get_review(review_id: int, principal: ViewPrincipal, session: SessionDep) ->
         )
     )
     project, url, _ = _target(session, review)
+    mr = session.get(MergeRequest, review.mr_id) if review.mr_id is not None else None
+    bp_id = project.business_project_id if project else None
+    jira = mr_issues(session, settings, mr, bp_id) if mr is not None else None
     if review.author_user_id not in (None, principal.user_id):
         audit(session, principal.user_id, "review.read", f"review:{review.id}")
         session.commit()
@@ -407,6 +416,7 @@ def get_review(review_id: int, principal: ViewPrincipal, session: SessionDep) ->
         "criteria_scores": review_scores(
             session, review.id, project.business_project_id if project else None
         ),
+        "jira": jira,
     }
 
 

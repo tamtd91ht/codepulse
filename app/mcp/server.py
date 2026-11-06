@@ -57,6 +57,7 @@ from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.config import Settings, get_settings
 from app.crypto import secret_box
 from app.db import get_redis, get_sessionmaker
+from app.jira.links import mr_issues
 from app.mcp import queries, render
 from app.mcp.tokens import SCOPE_CLOSE, SCOPE_READ, TokenError, authenticate
 from app.models import Connection, McpCall, MergeRequest, Review, ReviewFinding, User
@@ -481,6 +482,11 @@ def mr_findings_work(
         _base(session, settings),
         local_llm=_local_llm(settings),
         filters=_review_filters(wanted),
+        jira=(
+            mr_issues(session, settings, mr, project.business_project_id if project else None)
+            if mr is not None
+            else None
+        ),
     )
     return markdown, data, f"review:{review.id}"
 
@@ -906,7 +912,9 @@ def build_server() -> MCPServer:
         annotations=READ_ONLY,
         description=(
             "The latest review of a merge request and its critical/high findings, in full "
-            "detail. Default: every one still to fix; `status` filters as in list_findings (one "
+            "detail, plus the Jira issue(s) the MR implements (key, title, state, type, story "
+            "points, link: what the change is supposed to do). Default: every one still to "
+            "fix; `status` filters as in list_findings (one "
             "or a list). `repo`: GitLab path (group/name) or id; `iid`: the MR number (!iid)."
             + UNTRUSTED
         ),
