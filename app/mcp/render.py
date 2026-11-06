@@ -171,7 +171,27 @@ CLOSED_LABELS = {
     "fixed": "đã sửa",
     "accepted_risk": "chấp nhận rủi ro",
     "false_positive": "không phải lỗi",
-    "rejected": "kiểm chứng bác bỏ",
+    "refuted": "kiểm chứng bác bỏ",
+}
+# docs/specs/26 §16: the "Đóng finding" page's words for a finding's close_state and for a
+# close request's own status (dashboards/web/app/closures/page.tsx).
+STATE_LABELS = {
+    "open": "Đang mở",
+    "pending": "Chờ duyệt",
+    "unmet": "Chưa đủ điều kiện · chờ quyết định",
+    "rejected": "Bị từ chối",
+    "closed": "Đã đóng",
+}
+REQUEST_LABELS = {
+    "pending": "Chờ duyệt",
+    "checking": "Đang review",
+    "proposed": "Đề xuất chấp nhận rủi ro",
+    "unmet": "Chưa đủ điều kiện · chờ quyết định",
+    "closed": "Đã đóng",
+    "rejected": "Bị từ chối",
+    "failed": "Chưa kiểm được",
+    "cancelled": "Đã rút",
+    "reopened": "Mở lại",
 }
 
 
@@ -194,6 +214,25 @@ def _closing_data(view: FindingView, allowed: bool) -> dict[str, Any] | None:
     }
 
 
+def _request_data(view: FindingView, allowed: bool) -> dict[str, Any] | None:
+    """The latest close request since the finding was last reopened (§16); its `reason` (the
+    check's or the decider's, code-derived) withheld as in §7."""
+    c = view.request
+    if c is None:
+        return None
+    return {
+        "id": c.id,
+        "status": c.status,
+        "status_label": REQUEST_LABELS.get(c.status, c.status),
+        "via": c.via,
+        "created_at": _iso(c.created_at),
+        "decided_at": _iso(c.decided_at),
+        "decided_by": view.decider,
+        "decided_by_user_id": c.decided_by,
+        "reason": clean(c.reason) if allowed else None,
+    }
+
+
 def _rejection_data(view: FindingView, allowed: bool) -> dict[str, Any] | None:
     """The refused latest close request of a finding still to fix (§15): it may be sent again.
     `reason` is the decider's "Từ chối: …" (with the check's reason after an unmet check, so it
@@ -204,45 +243,61 @@ def _rejection_data(view: FindingView, allowed: bool) -> dict[str, Any] | None:
     return {
         "closure_id": c.id,
         "rejected_at": _iso(c.decided_at),
-        "rejected_by": view.rejecter,
+        "rejected_by": view.decider,
         "rejected_by_user_id": c.decided_by,
         "reason": clean(c.reason) if allowed else None,
         "can_request_again": view.close_block is None,
     }
 
 
-def _rejection_md(view: FindingView, tag: str, allowed: bool) -> list[str]:
-    c = view.rejection
-    if c is None:
-        return []
-    line = f"- Yêu cầu đóng #{c.id} **bị từ chối**"
+def _state_md(view: FindingView, tag: str, allowed: bool) -> list[str]:
+    """The first thing to read about a finding: its close_state (§16) and what it means for
+    the agent: fix it, wait for the decider, fix further and ask again, or nothing."""
+    state = view.close_state
+    label = STATE_LABELS[state]
+    c = view.request
+    if state == "closed":
+        done = view.closing
+        parts = [CLOSED_LABELS.get(view.closed_as or "", view.closed_as or "")]
+        if done is not None:
+            parts.append(f"lúc {_iso(done.decided_at or done.created_at)}")
+            parts.append(f"bởi {inline(view.closer)}" if view.closer else "bởi hệ thống")
+        return [f"- Trạng thái: **{label}** ({', '.join(parts)}): **không cần sửa nữa**"]
+    if state == "open" or c is None:
+        if view.finding.status == "disputed":
+            return [
+                f"- Trạng thái: **{label}**, đang khiếu nại (chưa đóng; khiếu nại bị bác thì "
+                "vẫn phải sửa)"
+            ]
+        return [f"- Trạng thái: **{label}**: còn phải sửa"]
+    head = f"- Trạng thái: **{label}** (yêu cầu đóng #{c.id}"
+    if state == "pending":
+        return [
+            head + f", {REQUEST_LABELS.get(c.status, c.status)}): đang chờ người duyệt, không "
+            "sửa thêm và không gửi yêu cầu mới"
+        ]
+    if state == "unmet":
+        out = [
+            head + "): bước kiểm thấy chưa đạt; người duyệt sẽ vẫn đóng, chạy lại hoặc từ "
+            "chối. Chưa cần làm gì, trừ khi muốn sửa tiếp"
+        ]
+        if c.reason and allowed:
+            out += ["  Kết quả kiểm:", wrap(tag, c.reason)]
+        return out
+    line = head + ")"  # rejected
     if c.decided_at:
         line += f" lúc {_iso(c.decided_at)}"
-    if view.rejecter:
-        line += f" bởi {inline(view.rejecter)}"
+    if view.decider:
+        line += f" bởi {inline(view.decider)}"
     line += (
-        ": vẫn được gửi lại `request_closure` sau khi sửa tiếp theo ghi chú."
+        ": còn phải sửa; vẫn được gửi lại `request_closure` sau khi sửa tiếp theo lý do."
         if view.close_block is None
-        else "."
+        else ": còn phải sửa."
     )
     out = [line]
     if c.reason and allowed:
         out += ["  Lý do từ chối:", wrap(tag, c.reason)]
     return out
-
-
-def _state_md(view: FindingView) -> str:
-    """The first thing to read about a finding: still to fix, or closed (nothing to do)."""
-    if view.closed_as is None:
-        if view.finding.status == "disputed":
-            return "- Trạng thái: **đang khiếu nại** (chưa đóng; khiếu nại bị bác thì vẫn phải sửa)"
-        return "- Trạng thái: **còn phải sửa**"
-    c = view.closing
-    parts = [CLOSED_LABELS.get(view.closed_as, view.closed_as)]
-    if c is not None:
-        parts.append(f"lúc {_iso(c.decided_at or c.created_at)}")
-        parts.append(f"bởi {inline(view.closer)}" if view.closer else "bởi hệ thống")
-    return f"- **ĐÃ ĐÓNG** ({', '.join(parts)}): **không cần sửa nữa**"
 
 
 def _verification(view: FindingView, allowed: bool = True) -> dict[str, Any] | None:
@@ -299,11 +354,14 @@ def finding_data(
     # docs/specs/26 §15 (user 2026-11-06): whether there is anything left to do.
     data.update(
         {
+            "close_state": view.close_state,
+            "close_state_label": STATE_LABELS[view.close_state],
             "closed": view.closed_as is not None,
             "needs_fix": view.closed_as is None,
             "closed_as": view.closed_as,
             "closing": _closing_data(view, ok),
             "last_rejection": _rejection_data(view, ok),
+            "latest_request": _request_data(view, ok),
         }
     )
     # Enough to understand and plan the fix from the list alone (user 2026-11-05); the code
@@ -402,7 +460,7 @@ def _short_md(
         f"- repo `{where}` · reviewed_sha `{r.reviewed_sha}`"
         + (f" · rule {inline(f.rule_id)}" if f.rule_id else "")
         + f" · {f.status} · verified={f.verified}{conf}",
-        _state_md(view),
+        *_state_md(view, tag, ok),
         *_change_md(view),
     ]
     if dates := _dates_md(view, now):
@@ -410,7 +468,6 @@ def _short_md(
     lines.append(f"- CodePulse: {finding_link(base, r.id, f.id)}")
     if view.pending:
         lines.append(f"- đang có yêu cầu đóng #{view.pending.id} ({view.pending.status})")
-    lines += _rejection_md(view, tag, ok)
     lines.append(_close_md(view))
     lines += ["", "**Tiêu đề**", wrap(tag, f.title or "(không tiêu đề)")]
     lines += ["", "**Mô tả**", wrap(tag, f.message or "(không có)")]
@@ -439,13 +496,12 @@ def _full_md(view: FindingView, base: str, tag: str, now: datetime, local_llm: b
         ),
         f"- reviewed_sha: `{r.reviewed_sha}`"
         + (f" · commit_sha: `{r.commit_sha}`" if r.commit_sha else ""),
-        _state_md(view),
+        *_state_md(view, tag, not hidden),
         *_change_md(view),
     ]
     if dates := _dates_md(view, now):
         out.append(dates)
     out.append(f"- CodePulse: {data['link']}")
-    out += _rejection_md(view, tag, not hidden)
     out.append(_close_md(view))
     if view.repeats > 1:
         out.append(f"- Lặp lại: cùng lỗi xuất hiện ở {view.repeats} thay đổi trong 90 ngày")
@@ -515,7 +571,10 @@ def list_result(
         "open": "còn phải sửa",
         "closed": "đã đóng",
         "any": "(mở và đã đóng)",
-        "close_rejected": "còn phải sửa, yêu cầu đóng bị từ chối",
+        "pending": "chờ duyệt",
+        "unmet": "chưa đủ điều kiện, chờ quyết định",
+        "rejected": "bị từ chối yêu cầu đóng",
+        "close_rejected": "bị từ chối yêu cầu đóng",
     }.get(status, f"trạng thái {status}")
     head = f"# Finding critical/high {what} của {owner_label}: {len(views)}"
     if applied:

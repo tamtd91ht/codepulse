@@ -190,13 +190,14 @@ def test_closed_finding_says_there_is_nothing_to_fix(env: Env, world: Any) -> No
     assert closing["closed_by"] == world.lead.full_name
     assert closing["closed_at"].startswith("2026-11-06")
     assert closing["reason"] == "Đã sửa ở commit sau."
-    assert "**ĐÃ ĐÓNG** (đã sửa" in result.content[0].text
+    assert "**Đã đóng** (đã sửa" in result.content[0].text
+    assert data["close_state"] == "closed" and data["close_state_label"] == "Đã đóng"
     assert "không cần sửa nữa" in result.content[0].text
 
     listed = invoke(an, "list_findings", {"status": "any"})
     [item] = [f for f in listed.structured_content["findings"] if f["id"] == world.an_finding.id]
     assert item["closed"] is True and item["closing"]["closed_as"] == "fixed"
-    assert "**ĐÃ ĐÓNG**" in listed.content[0].text
+    assert "**Đã đóng**" in listed.content[0].text
 
 
 def test_refuted_finding_counts_as_closed_and_hides_reason_when_code_hidden(
@@ -208,7 +209,8 @@ def test_refuted_finding_counts_as_closed_and_hides_reason_when_code_hidden(
     env.session.commit()
     an = caller_for(env.session, env.settings, world.an)
     data = invoke(an, "get_finding", {"id": world.an_finding.id}).structured_content
-    assert data["closed"] is True and data["closed_as"] == "rejected"
+    assert data["closed"] is True and data["closed_as"] == "refuted"
+    assert data["close_state"] == "closed"
     assert data["closing"]["closure_id"] is None and data["closing"]["reason"] is None
 
 
@@ -219,7 +221,8 @@ def test_disputed_finding_is_not_closed(env: Env, world: Any) -> None:
     an = caller_for(env.session, env.settings, world.an)
     result = invoke(an, "get_finding", {"id": world.an_finding.id})
     assert result.structured_content["needs_fix"] is True
-    assert "**đang khiếu nại**" in result.content[0].text
+    assert "đang khiếu nại" in result.content[0].text
+    assert result.structured_content["close_state"] == "open"
 
 
 def test_list_filters_open_closed_or_both(env: Env, world: Any) -> None:
@@ -247,7 +250,7 @@ def test_list_filters_open_closed_or_both(env: Env, world: Any) -> None:
 
 
 def test_refused_close_request_is_still_open_and_may_be_asked_again(env: Env, world: Any) -> None:
-    """user 2026-11-06 (docs/specs/26 §15): status=close_rejected, `last_rejection`."""
+    """user 2026-11-06 (docs/specs/26 §15): status=rejected, `last_rejection`."""
     from datetime import UTC, datetime
 
     from app.models import FindingClosure
@@ -261,7 +264,7 @@ def test_refused_close_request_is_still_open_and_may_be_asked_again(env: Env, wo
         assert not result.is_error, result.content[0].text
         return {f["id"] for f in result.structured_content["findings"]}
 
-    assert fid not in ids("close_rejected")
+    assert fid not in ids("rejected")
     env.session.add(
         FindingClosure(
             finding_id=fid,
@@ -276,8 +279,8 @@ def test_refused_close_request_is_still_open_and_may_be_asked_again(env: Env, wo
         )
     )
     env.session.commit()
-    assert fid in ids("close_rejected") and fid in ids("open") and fid not in ids("closed")
-    result = invoke(an, "list_findings", {"status": "close_rejected"})
+    assert fid in ids("rejected") and fid in ids("open") and fid not in ids("closed")
+    result = invoke(an, "list_findings", {"status": "rejected"})
     [item] = [f for f in result.structured_content["findings"] if f["id"] == fid]
     assert item["closed"] is False and item["needs_fix"] is True
     rejection = item["last_rejection"]
@@ -285,7 +288,8 @@ def test_refused_close_request_is_still_open_and_may_be_asked_again(env: Env, wo
     assert rejection["reason"] == "Từ chối: Chưa xử lý nhánh lỗi khi tham số rỗng."
     assert rejection["can_request_again"] is True and item["close_request"]["allowed"] is True
     text = result.content[0].text
-    assert "**bị từ chối**" in text and "vẫn được gửi lại `request_closure`" in text
+    assert item["close_state"] == "rejected" and item["close_state_label"] == "Bị từ chối"
+    assert "**Bị từ chối**" in text and "vẫn được gửi lại `request_closure`" in text
     assert "Chưa xử lý nhánh lỗi" in text and "Đã thêm kiểm tra tham số." not in text
     # The reason may carry the check's code-derived text: hidden with the code (§7).
     world.project.allow_external_llm = False
@@ -307,7 +311,7 @@ def test_refused_close_request_is_still_open_and_may_be_asked_again(env: Env, wo
         )
     )
     env.session.commit()
-    assert fid not in ids("close_rejected")
+    assert fid not in ids("rejected")
     data = invoke(an, "get_finding", {"id": fid}).structured_content
     assert data["last_rejection"] is None
 
@@ -334,7 +338,7 @@ def test_system_answer_on_reopen_is_not_a_refusal(env: Env, world: Any) -> None:
         )
     )
     env.session.commit()
-    listed = invoke(an, "list_findings", {"status": "close_rejected"}).structured_content
+    listed = invoke(an, "list_findings", {"status": "rejected"}).structured_content
     assert fid not in {f["id"] for f in listed["findings"]}
     assert invoke(an, "get_finding", {"id": fid}).structured_content["last_rejection"] is None
 
@@ -352,10 +356,81 @@ def test_system_answer_on_reopen_is_not_a_refusal(env: Env, world: Any) -> None:
         )
     )
     env.session.commit()
-    listed = invoke(an, "list_findings", {"status": "close_rejected"}).structured_content
+    listed = invoke(an, "list_findings", {"status": "rejected"}).structured_content
     assert fid in {f["id"] for f in listed["findings"]}
     env.session.add(FindingClosure(finding_id=fid, kind="reopen", status="reopened", note="mở lại"))
     env.session.commit()
-    listed = invoke(an, "list_findings", {"status": "close_rejected"}).structured_content
+    listed = invoke(an, "list_findings", {"status": "rejected"}).structured_content
     assert fid not in {f["id"] for f in listed["findings"]}
     assert invoke(an, "get_finding", {"id": fid}).structured_content["last_rejection"] is None
+
+
+def test_close_states_and_their_filters(env: Env, world: Any) -> None:
+    """user 2026-11-06 (docs/specs/26 §16): close_state as the "Đóng finding" page (Chờ duyệt,
+    Chưa đủ điều kiện · chờ quyết định, Bị từ chối, Đã đóng, Đang mở) and status filters."""
+    from datetime import UTC, datetime
+
+    from app.models import FindingClosure
+
+    _setup(env, world)
+    an = caller_for(env.session, env.settings, world.an)
+    fid = world.an_finding.id
+
+    def states(**args: Any) -> dict[int, str]:
+        result = invoke(an, "list_findings", args)
+        assert not result.is_error, result.content[0].text
+        return {f["id"]: f["close_state"] for f in result.structured_content["findings"]}
+
+    assert states(status="open").get(fid) == "open"
+    assert fid not in states(status="pending")
+
+    request = FindingClosure(
+        finding_id=fid,
+        kind="request",
+        status="pending",
+        requested_by=world.an.id,
+        argument="x" * 60,
+    )
+    env.session.add(request)
+    env.session.commit()
+    assert states(status="pending").get(fid) == "pending"
+    assert fid not in states(status="open") and fid not in states(status="unmet")
+    assert states(status="open", include_pending=True).get(fid) == "pending"
+    assert states(status="any").get(fid) == "pending"
+    result = invoke(an, "get_finding", {"id": fid})
+    data = result.structured_content
+    assert data["close_state_label"] == "Chờ duyệt"
+    assert data["latest_request"]["id"] == request.id
+    assert data["latest_request"]["status_label"] == "Chờ duyệt"
+    assert "**Chờ duyệt** (yêu cầu đóng #" in result.content[0].text
+
+    # A check that did not run stays with the decider: still Chờ duyệt.
+    request.status = "failed"
+    env.session.commit()
+    assert states(status="pending").get(fid) == "pending"
+
+    request.status, request.reason = "unmet", "Commit chưa xử lý trường hợp rỗng."
+    request.decided_by, request.decided_at = world.lead.id, datetime(2026, 11, 6, tzinfo=UTC)
+    env.session.commit()
+    assert states(status="unmet").get(fid) == "unmet"
+    assert fid not in states(status="pending") and fid not in states(status="rejected")
+    result = invoke(an, "list_findings", {"status": "unmet"})
+    [item] = result.structured_content["findings"]
+    assert item["close_state_label"] == "Chưa đủ điều kiện · chờ quyết định"
+    assert item["latest_request"]["reason"] == "Commit chưa xử lý trường hợp rỗng."
+    assert "**Chưa đủ điều kiện · chờ quyết định**" in result.content[0].text
+
+    request.status, request.reason = "rejected", "Từ chối: chưa đủ."
+    env.session.commit()
+    assert states(status="rejected").get(fid) == "rejected"
+    assert states(status="open").get(fid) == "rejected"  # still to fix
+
+    world.an_finding.status = "fixed"
+    env.session.commit()
+    assert states(status="closed").get(fid) == "closed"
+    for state in ("open", "pending", "unmet", "rejected"):
+        assert fid not in states(status=state)
+
+    # Its name of a day still works below the tool's schema.
+    found = queries.list_findings(env.session, an.principal, status="close_rejected")
+    assert fid not in {v.finding.id for v in found.views}

@@ -310,7 +310,7 @@ export default function McpGuidePage() {
                   ["business_project", "chuỗi, tuỳ chọn", "Tên hoặc id dự án."],
                   ["repo", "chuỗi", <>Đường dẫn GitLab (<code>group/name</code>) hoặc id.</>],
                   ["severity", "danh sách", <>Thu hẹp: <code>[&quot;critical&quot;]</code> hoặc <code>[&quot;high&quot;]</code>; mặc định cả hai.</>],
-                  ["status", "chuỗi", <><code>open</code> (mặc định, còn phải sửa), <code>closed</code> (đã đóng, không cần sửa), <code>any</code> (cả hai), <code>close_rejected</code> (còn phải sửa, yêu cầu đóng gần nhất bị người duyệt từ chối: sửa tiếp rồi gửi lại); hoặc một trạng thái cụ thể: <code>disputed</code>, <code>fixed</code>, <code>accepted_risk</code>, <code>false_positive</code>.</>],
+                  ["status", "chuỗi", <>Như trang Đóng finding: <code>pending</code> (Chờ duyệt), <code>unmet</code> (Chưa đủ điều kiện · chờ quyết định), <code>rejected</code> (Bị từ chối: sửa tiếp rồi gửi lại), <code>closed</code> (Đã đóng). <code>open</code> (mặc định): còn phải sửa (Đang mở và Bị từ chối). <code>any</code>: tất cả. Hoặc một trạng thái finding cụ thể: <code>disputed</code>, <code>fixed</code>, <code>accepted_risk</code>, <code>false_positive</code>.</>],
                   ["since", "ngày ISO", <>Từ ngày (tính cả ngày đó), ví dụ <code>2026-10-01</code>. Theo ngày của thay đổi, múi giờ báo cáo.</>],
                   ["until", "ngày ISO", <>Đến ngày (tính cả ngày đó), ví dụ <code>2026-10-31</code>.</>],
                   ["include_disputed", "true/false", <>Với <code>status=open</code>: thêm finding đang bị khiếu nại. Mặc định false.</>],
@@ -349,12 +349,12 @@ export default function McpGuidePage() {
                 cùng loại lặp lại trong 90 ngày, và lịch sử yêu cầu đóng của nó.
               </p>
               <p>
-                Mọi tool đọc finding đều trả <code>closed</code> / <code>needs_fix</code> cho từng finding. Finding đã đóng (
-                <code>closed_as</code> là <code>fixed</code>, <code>accepted_risk</code>, <code>false_positive</code> hoặc{" "}
-                <code>rejected</code>) kèm <code>closing</code>: đóng lúc nào, theo cách nào, ai duyệt. Markdown ghi{" "}
-                <strong>ĐÃ ĐÓNG … không cần sửa nữa</strong>: Claude bỏ qua finding đó, không sửa và không gửi yêu cầu đóng. Finding có yêu cầu đóng gần nhất bị từ chối vẫn còn mở và
-                kèm <code>last_rejection</code> (ai từ chối, lúc nào, lý do): sửa tiếp theo lý do rồi gọi lại{" "}
-                <code>request_closure</code>.
+                Mọi tool đọc finding đều trả <code>close_state</code> (kèm <code>close_state_label</code>) đúng như trang Đóng finding:{" "}
+                <code>open</code> Đang mở (sửa), <code>pending</code> Chờ duyệt (chờ, không gửi thêm), <code>unmet</code> Chưa đủ
+                điều kiện · chờ quyết định (người duyệt quyết), <code>rejected</code> Bị từ chối (sửa tiếp theo{" "}
+                <code>last_rejection.reason</code> rồi gọi lại <code>request_closure</code>), <code>closed</code> Đã đóng (bỏ qua; kèm{" "}
+                <code>closing</code>: lúc nào, cách nào, ai duyệt). <code>latest_request</code> là yêu cầu đóng gần nhất và trạng thái
+                của nó; <code>closed</code> / <code>needs_fix</code> vẫn có.
               </p>
               <Params rows={[["id", "số", "Id finding (có trong kết quả các tool trên và trên trang review)."]]} />
             </Tool>
