@@ -29,7 +29,7 @@
 - [x] **[Quyết định]** (user 2026-11-06) Id finding ở cuối ô **Vấn đề** (sau tiêu đề và nhãn trạng thái), dạng ô nhỏ
   `#id` (`IdChip`, components/ui.tsx): chữ mono nhạt, viền mảnh; hover/focus hiện biểu tượng chép (màn hình cảm ứng luôn
   hiện); bấm chép số id (không có `#`), ô chuyển xanh "✓ Đã chép" 1,6 giây; không có Clipboard API (HTTP) thì chép qua
-  textarea. Dùng chung ở trang Đóng finding (thay nút copy cũ).
+  textarea. Trang Đóng finding cũng đặt ô này ở cuối tiêu đề finding (user 2026-11-06), dòng phụ còn repo và file.
 
 ### 4. Review Detail
 - [ ] Summary, điểm, findings với code excerpt, nút Dispute

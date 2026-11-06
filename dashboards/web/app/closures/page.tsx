@@ -302,10 +302,10 @@ export default function ClosuresPage() {
                             ) : (
                               <strong>{c.finding.title ?? `Finding #${c.finding.id}`}</strong>
                             )}
+                            {/* At the end of the title, as on the Critical Board. */}
+                            <IdChip id={c.finding.id} />
                           </div>
                           <div className="muted small">
-                            <IdChip id={c.finding.id} />
-                            {" · "}
                             {c.repo?.path ?? "—"}
                             {c.finding.file_path && (
                               <>
