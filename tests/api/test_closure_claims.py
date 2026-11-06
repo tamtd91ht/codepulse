@@ -70,8 +70,10 @@ def test_an_mcp_request_shows_its_claims_inside_the_tags(
     assert "laptop" not in user and "claude-code" not in user
 
 
-def test_a_web_request_note_is_not_shown(
+def test_a_web_request_note_is_read_too(
     client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
 ) -> None:
+    """User 2026-11-06 (spec 26 §20): the note explains the change (why a diff is empty, ...),
+    whoever sent it; still an untrusted claim."""
     user = asked_prompt(client, world, as_user, db_session, settings, "web")
-    assert "CLAIMS" not in user and NOTE not in user
+    assert "AUTHOR'S CLAIMS" in user and NOTE in user
