@@ -331,6 +331,66 @@ export function CountLink({ n, href }: { n: number; href: string | null }) {
   return n && href ? <Link href={href}>{n}</Link> : <>{n}</>;
 }
 
+/** Copies `text`; the textarea route covers pages served without HTTPS (no Clipboard API). */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fall through to the textarea */
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    area.remove();
+  }
+}
+
+/**
+ * A record's id as a small chip: quiet next to its title, a copy icon shows on hover or focus
+ * (always on touch screens), a click copies the bare number and says so for a moment.
+ */
+export function IdChip({ id, what = "finding" }: { id: number; what?: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  useEffect(() => {
+    if (state === "idle") return;
+    const timer = window.setTimeout(() => setState("idle"), 1600);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+  const label =
+    state === "copied" ? "Đã chép" : state === "failed" ? "Không chép được" : `Chép id ${what} ${id}`;
+  return (
+    <button
+      type="button"
+      className={`id-chip${state !== "idle" ? ` ${state}` : ""}`}
+      title={label}
+      aria-label={label}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        void copyText(String(id)).then((ok) => setState(ok ? "copied" : "failed"));
+      }}
+    >
+      <span className="id-chip-text">#{id}</span>
+      <Icon name={state === "copied" ? "check" : "copy"} size={12} className="id-chip-icon" />
+      <span className="id-chip-done" aria-live="polite">
+        {state === "copied" ? "Đã chép" : state === "failed" ? "Lỗi" : ""}
+      </span>
+    </button>
+  );
+}
+
 export function SeverityBadge({ severity }: { severity: Severity }) {
   return <span className={`sev ${severity}`}>{SEVERITY_LABEL[severity]}</span>;
 }

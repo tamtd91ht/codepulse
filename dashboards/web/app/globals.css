@@ -8456,19 +8456,6 @@ div.jira-auth > span:first-child .pill {
   }
 }
 
-/* Đóng finding: a finding's id with a small copy button, inline in the row's muted line. */
-.copy-id {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.copy-id .icon-btn {
-  width: 22px;
-  height: 22px;
-}
-
 /* Review page: the MR's Jira issues (docs/specs/27 §17). */
 .mr-jira {
   display: flex;
@@ -8506,4 +8493,77 @@ div.jira-auth > span:first-child .pill {
 .mr-jira-title {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* IdChip: a record's id, copy on click (Critical Board, Đóng finding). `button.` beats the
+   generic button rules (36px, padding, hover background). */
+button.id-chip {
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  vertical-align: 1px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font: 500 11.5px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+button.id-chip:active:not(:disabled) {
+  transform: none;
+}
+.id-chip .id-chip-icon {
+  width: 0;
+  opacity: 0;
+  margin-left: -4px;
+  transition: opacity var(--duration-fast) var(--ease-standard), width var(--duration-fast) var(--ease-standard),
+    margin var(--duration-fast) var(--ease-standard);
+}
+button.id-chip:hover:not(:disabled),
+button.id-chip:focus-visible {
+  border-color: var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+button.id-chip:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.id-chip:hover .id-chip-icon,
+.id-chip:focus-visible .id-chip-icon,
+.id-chip.copied .id-chip-icon,
+.id-chip.failed .id-chip-icon {
+  width: 12px;
+  opacity: 1;
+  margin-left: 0;
+}
+button.id-chip.copied,
+button.id-chip.copied:hover:not(:disabled) {
+  border-color: var(--good);
+  background: var(--good-soft);
+  color: var(--good);
+}
+button.id-chip.failed,
+button.id-chip.failed:hover:not(:disabled) {
+  border-color: var(--bad);
+  background: var(--bad-soft);
+  color: var(--bad-text);
+}
+.id-chip-done {
+  font: 500 11px/1 var(--font-sans);
+}
+.id-chip-done:empty {
+  display: none;
+}
+@media (hover: none) {
+  .id-chip .id-chip-icon {
+    width: 12px;
+    opacity: 1;
+    margin-left: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .id-chip .id-chip-icon {
+    transition: none;
+  }
 }

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { type DayRange, DateRangePicker } from "@/components/DateRangePicker";
-import { Card, EmptyState, ExternalLink, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
+import { Card, EmptyState, ExternalLink, IdChip, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { api, qs, useApi } from "@/lib/api";
 import { date, localDay, shiftDays } from "@/lib/format";
 import type { BoardFinding, Me, Page, Team } from "@/lib/types";
@@ -301,6 +301,8 @@ export default function CriticalBoard() {
                           <Pill tone={f.status === "fixed" ? "good" : "info"}>{STATUS_LABEL[f.status] ?? f.status}</Pill>
                         </>
                       )}
+                      {" "}
+                      <IdChip id={f.id} />
                     </td>
                     <td>
                       <code>

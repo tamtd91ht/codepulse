@@ -26,6 +26,10 @@
   (`Review.counted_at`: giờ commit, MR là lúc mở MR), API trả `committed_at`. Bộ lọc **Ngày commit** dạng từ–đến
   (lịch `DateRangePicker` như Tổng quan, có "Mọi thời gian"): ngày theo giờ máy người xem, gửi `found_from`/`found_to`
   ([from, to) như link từ dashboard), giữ trên URL (`from`, `to`). Bỏ khoảng ngày thì về danh sách finding đang mở.
+- [x] **[Quyết định]** (user 2026-11-06) Id finding ở cuối ô **Vấn đề** (sau tiêu đề và nhãn trạng thái), dạng ô nhỏ
+  `#id` (`IdChip`, components/ui.tsx): chữ mono nhạt, viền mảnh; hover/focus hiện biểu tượng chép (màn hình cảm ứng luôn
+  hiện); bấm chép số id (không có `#`), ô chuyển xanh "✓ Đã chép" 1,6 giây; không có Clipboard API (HTTP) thì chép qua
+  textarea. Dùng chung ở trang Đóng finding (thay nút copy cũ).
 
 ### 4. Review Detail
 - [ ] Summary, điểm, findings với code excerpt, nút Dispute

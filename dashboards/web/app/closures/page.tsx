@@ -8,7 +8,7 @@ import { DateRangePicker } from "@/components/DateRangePicker";
 import { ClosureMcpMeta, ViaMcpBadge } from "@/components/ClosureMeta";
 import { CLOSED_AS, ConfirmSettle, OverrideClose, shortShas } from "@/components/FindingClose";
 import { Icon, IconButton } from "@/components/icons";
-import { Card, EmptyState, Loading, Message, PageHeader, Pill, Segmented, SeverityBadge } from "@/components/ui";
+import { Card, EmptyState, IdChip, Loading, Message, PageHeader, Pill, Segmented, SeverityBadge } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, dateTimeMin, localDay } from "@/lib/format";
 import type { ClosureFacets, ClosureListItem } from "@/lib/types";
@@ -304,7 +304,7 @@ export default function ClosuresPage() {
                             )}
                           </div>
                           <div className="muted small">
-                            <CopyId id={c.finding.id} />
+                            <IdChip id={c.finding.id} />
                             {" · "}
                             {c.repo?.path ?? "—"}
                             {c.finding.file_path && (
@@ -624,22 +624,4 @@ function firstStep(c: ClosureListItem): string {
 }
 
 /** "#123" and a small copy button: the finding's id, e.g. for get_finding in Claude Code. */
-function CopyId({ id }: { id: number }) {
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = window.setTimeout(() => setCopied(false), 1500);
-    return () => window.clearTimeout(timer);
-  }, [copied]);
-  return (
-    <span className="copy-id">
-      <span title="Id của finding">#{id}</span>
-      <IconButton
-        icon={copied ? "check" : "copy"}
-        size={14}
-        label={copied ? "Đã copy" : `Copy id ${id}`}
-        onClick={() => void navigator.clipboard?.writeText(String(id)).then(() => setCopied(true))}
-      />
-    </span>
-  );
-}
+
