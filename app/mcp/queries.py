@@ -13,7 +13,7 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import ColumnElement, String, case, cast, exists, func, or_, select
+from sqlalchemy import ColumnElement, String, and_, case, cast, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.api.access import team_reach, whole_projects, work_scope
@@ -81,7 +81,8 @@ class FindingView:
     # The closing that ended it (latest `closed` row), for a finding that is closed.
     closing: FindingClosure | None = None
     closer: str | None = None  # who decided that closing (name), None for the system
-    # The latest close request since the finding was last reopened (§16), and who decided it.
+    # The close request its close_state comes from (§16): the one in flight, else the latest
+    # since the finding was last reopened; and who decided it.
     request: FindingClosure | None = None
     decider: str | None = None
 
@@ -135,9 +136,20 @@ def close_state(closed_as: str | None, request: FindingClosure | None) -> str:
         return "pending"
     if request.status == "unmet":
         return "unmet"
-    if request.status == "rejected" and request.decided_by is not None:
+    if refused_by_person(request):
         return "rejected"
     return "open"
+
+
+REFUSAL_PREFIX = "Từ chối:"  # closures.reject_request's reason; the web page reads it too
+
+
+def refused_by_person(request: FindingClosure) -> bool:
+    """A decider refused it (`decided_by`, or its "Từ chối: …" reason once that user is gone),
+    not the system answering a request left waiting when the finding was reopened."""
+    return request.status == "rejected" and (
+        request.decided_by is not None or (request.reason or "").startswith(REFUSAL_PREFIX)
+    )
 
 
 # -- arguments -------------------------------------------------------------------------------------
@@ -326,6 +338,29 @@ def _latest_request_is(*where: ColumnElement[bool]) -> ColumnElement[bool]:
     )
 
 
+def _in_flight_is(*where: ColumnElement[bool]) -> ColumnElement[bool]:
+    """The finding has a close request in flight (CLOSURE_OPEN, at most one: the unique index)
+    matching `where`. It decides close_state before the latest request (§16): a `failed` one
+    run again after a newer request was settled is in flight, though not the latest."""
+    return exists().where(
+        FindingClosure.finding_id == ReviewFinding.id,
+        FindingClosure.kind == "request",
+        FindingClosure.status.in_(CLOSURE_OPEN),
+        *where,
+    )
+
+
+def _person_refused() -> ColumnElement[bool]:
+    """As `refused_by_person`, on the FindingClosure in scope."""
+    return and_(
+        FindingClosure.status == "rejected",
+        or_(
+            FindingClosure.decided_by.is_not(None),
+            FindingClosure.reason.startswith(REFUSAL_PREFIX, autoescape=True),
+        ),
+    )
+
+
 def _closed() -> ColumnElement[bool]:
     """As `finding_closed_as`: a closed status, or refuted by the verification."""
     return or_(
@@ -338,19 +373,23 @@ def _state_is(state: str) -> list[ColumnElement[bool]]:
     """`close_state == state` as filters (§16)."""
     if state == "closed":
         return [_closed()]
-    request: list[ColumnElement[bool]]
     if state == "pending":
-        request = [FindingClosure.status.in_(PENDING_REQUEST)]
-    elif state == "unmet":
-        request = [FindingClosure.status == "unmet"]
-    else:  # rejected: by a person
-        request = [FindingClosure.status == "rejected", FindingClosure.decided_by.is_not(None)]
-    return [~_closed(), _latest_request_is(*request)]
+        return [
+            ~_closed(),
+            or_(
+                _in_flight_is(FindingClosure.status.in_(("pending", "checking", "proposed"))),
+                and_(~_in_flight_is(), _latest_request_is(FindingClosure.status == "failed")),
+            ),
+        ]
+    if state == "unmet":
+        return [~_closed(), _in_flight_is(FindingClosure.status == "unmet")]
+    # rejected: by a person, and nothing in flight since
+    return [~_closed(), ~_in_flight_is(), _latest_request_is(_person_refused())]
 
 
 def _waiting() -> ColumnElement[bool]:
-    """close_state pending or unmet: a request is with the decider."""
-    return _latest_request_is(FindingClosure.status.in_((*PENDING_REQUEST, "unmet")))
+    """close_state pending or unmet (for a finding not closed): a request is with the decider."""
+    return or_(_in_flight_is(), _latest_request_is(FindingClosure.status == "failed"))
 
 
 def _top_order() -> list[Any]:
@@ -437,7 +476,8 @@ def _status_filter(
         ]
     else:
         out = [ReviewFinding.status == wanted]  # one exact status: what was decided
-    if not include_pending:
+    if not include_pending and wanted in ("open", "disputed"):
+        # Still to fix but with the decider; a closed one is closed whatever was left waiting.
         out.append(~_waiting())
     return out
 
@@ -600,11 +640,12 @@ def _closings(session: Session, ids: list[int]) -> dict[int, FindingClosure]:
 
 
 def _latest_requests(session: Session, ids: list[int]) -> dict[int, FindingClosure]:
-    """finding id -> its latest close request, when the finding was not reopened since (§16,
-    as `_latest_request_is`)."""
+    """finding id -> the close request its close_state comes from (§16, as `_state_is`): the
+    one in flight, else the latest when the finding was not reopened since."""
     if not ids:
         return {}
     latest: dict[int, FindingClosure] = {}
+    in_flight: dict[int, FindingClosure] = {}
     reopened: dict[int, int] = {}
     for row in session.scalars(
         select(FindingClosure)
@@ -613,9 +654,13 @@ def _latest_requests(session: Session, ids: list[int]) -> dict[int, FindingClosu
     ):
         if row.kind == "reopen":
             reopened[row.finding_id] = row.id
-        else:
-            latest[row.finding_id] = row
-    return {fid: row for fid, row in latest.items() if reopened.get(fid, 0) < row.id}
+            continue
+        latest[row.finding_id] = row
+        if row.status in CLOSURE_OPEN:
+            in_flight[row.finding_id] = row
+    out = {fid: row for fid, row in latest.items() if reopened.get(fid, 0) < row.id}
+    out.update(in_flight)
+    return out
 
 
 def repo_urls(session: Session, projects: list[Project | None]) -> dict[int, str]:

@@ -751,6 +751,7 @@ def build_server() -> MCPServer:
                 "rejected",
                 "closed",
                 "any",
+                "close_rejected",
                 "disputed",
                 "fixed",
                 "accepted_risk",
@@ -763,7 +764,7 @@ def build_server() -> MCPServer:
                 "hoặc bị kiểm chứng bác bỏ). open (mặc định): còn phải sửa (Đang mở và Bị từ "
                 "chối; thêm Chờ duyệt / Chưa đủ điều kiện khi include_pending). any: tất cả. "
                 "Hoặc một trạng thái finding cụ thể: disputed, fixed, accepted_risk, "
-                "false_positive."
+                "false_positive. close_rejected: tên cũ của rejected (sẽ bỏ)."
             ),
         ] = "open",
         include_disputed: Annotated[

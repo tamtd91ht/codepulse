@@ -434,3 +434,88 @@ def test_close_states_and_their_filters(env: Env, world: Any) -> None:
     # Its name of a day still works below the tool's schema.
     found = queries.list_findings(env.session, an.principal, status="close_rejected")
     assert fid not in {v.finding.id for v in found.views}
+
+
+def test_close_state_follows_the_request_in_flight_and_the_edge_cases(env: Env, world: Any) -> None:
+    """Review 2026-11-06 (docs/specs/26 §16): the request in flight decides the state even when
+    a newer one exists; a refusal is a person's (or its "Từ chối:" reason); a closed finding
+    stays listed under its own status whatever was left waiting; the old filter name works."""
+    from datetime import UTC, datetime
+
+    from app.models import FindingClosure
+
+    _setup(env, world)
+    an = caller_for(env.session, env.settings, world.an)
+    fid = world.an_finding.id
+
+    def states(**args: Any) -> dict[int, str]:
+        result = invoke(an, "list_findings", args)
+        assert not result.is_error, result.content[0].text
+        return {f["id"]: f["close_state"] for f in result.structured_content["findings"]}
+
+    def state() -> str:
+        return str(invoke(an, "get_finding", {"id": fid}).structured_content["close_state"])
+
+    old = FindingClosure(
+        finding_id=fid,
+        kind="request",
+        status="failed",
+        requested_by=world.an.id,
+        argument="a" * 60,
+    )
+    env.session.add(old)
+    env.session.commit()
+    assert state() == "pending" and states(status="pending").get(fid) == "pending"
+    text = invoke(an, "get_finding", {"id": fid}).content[0].text
+    assert "Chưa kiểm được" in text and "người duyệt sẽ chạy lại" in text
+    assert fid not in states(status="open")
+
+    # A newer request, refused; then the old failed one is run again: in flight, not latest.
+    newer = FindingClosure(
+        finding_id=fid,
+        kind="request",
+        status="rejected",
+        requested_by=world.an.id,
+        decided_by=world.lead.id,
+        decided_at=datetime(2026, 11, 6, tzinfo=UTC),
+        reason="Từ chối: chưa đủ.",
+        argument="b" * 60,
+    )
+    env.session.add(newer)
+    env.session.commit()
+    assert state() == "rejected" and states(status="rejected").get(fid) == "rejected"
+    old.status = "checking"
+    env.session.commit()
+    assert state() == "pending" and states(status="pending").get(fid) == "pending"
+    assert fid not in states(status="rejected") and fid not in states(status="open")
+    old.status = "unmet"
+    env.session.commit()
+    assert state() == "unmet" and states(status="unmet").get(fid) == "unmet"
+    old.status = "cancelled"
+    env.session.commit()
+
+    # The decider's account is gone: still a person's refusal, as on the web page.
+    newer.decided_by = None
+    env.session.commit()
+    assert state() == "rejected" and states(status="rejected").get(fid) == "rejected"
+    assert states(status="close_rejected").get(fid) == "rejected"  # through the tool schema
+    newer.reason = "Finding đã được đóng cách khác trong lúc chờ duyệt."
+    env.session.commit()
+    assert state() == "open" and states(status="open").get(fid) == "open"
+
+    # Closed another way while a request was left waiting: listed as closed, also by status.
+    env.session.add(
+        FindingClosure(
+            finding_id=fid,
+            kind="request",
+            status="pending",
+            requested_by=world.an.id,
+            argument="c" * 60,
+        )
+    )
+    world.an_finding.status = "fixed"
+    env.session.commit()
+    assert state() == "closed"
+    assert states(status="fixed").get(fid) == "closed"
+    assert states(status="closed").get(fid) == "closed"
+    assert fid not in states(status="pending")

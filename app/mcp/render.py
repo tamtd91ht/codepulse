@@ -272,6 +272,11 @@ def _state_md(view: FindingView, tag: str, allowed: bool) -> list[str]:
         return [f"- Trạng thái: **{label}**: còn phải sửa"]
     head = f"- Trạng thái: **{label}** (yêu cầu đóng #{c.id}"
     if state == "pending":
+        if c.status == "failed":
+            return [
+                head + f", {REQUEST_LABELS['failed']}): lần kiểm bị gián đoạn, người duyệt sẽ "
+                "chạy lại; không cần sửa thêm hay gửi yêu cầu mới"
+            ]
         return [
             head + f", {REQUEST_LABELS.get(c.status, c.status)}): đang chờ người duyệt, không "
             "sửa thêm và không gửi yêu cầu mới"
