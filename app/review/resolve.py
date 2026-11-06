@@ -7,11 +7,14 @@ whether THIS diff removes or corrects what each finding points at. Used two ways
 - after a review (AUTO_CLOSE_FINDINGS on): the repo's open critical/high findings from the last
   AUTO_CLOSE_DAYS days, those in the files the change touched first;
 - on request (POST /findings/{id}/close-requests): one finding against the commits named and/or
-  the author's argument, the latter weighed against the repository's current code (the
-  finding's file and the files the argument names, no value ever shown: app/review/masking.py).
+  the author's argument, with the repository's current code (the finding's file, always, and
+  the files the argument names; no value ever shown: app/review/masking.py). The current file
+  settles a fix the commits' diff cannot show (user 2026-11-06): the flagged lines deleted by
+  another commit, or the code rewritten since; nobody traces the commits one by one.
 
 A finding closes only on an explicit, confident verdict with evidence in what was shown:
-"fixed" (in the diff) moves it to `fixed`; "accepted" (the argument holds, in the current code)
+"fixed" (in the diff, or in the current code of a close request) moves it to `fixed`;
+"accepted" (the argument holds, in the current code)
 is only a proposal a manager or an admin confirms (app/workers/closure_jobs) before the finding
 becomes `accepted_risk`. "partial", "not_fixed", unclear or unparsable answers leave it open. Either
 way the finding keeps its severity and its weight in the review's score.
@@ -66,9 +69,24 @@ When unsure, answer "not_fixed". A finding whose file the diff does not touch is
 unless the diff fixes it from elsewhere (e.g. validates the input at its only caller) and you
 can point at that.
 
-With an AUTHOR'S ARGUMENT (a request to close one finding), you also get CURRENT CODE: files
-of the default branch (the finding's file, the files the argument names). The argument is a
-claim, not a fact: answer
+A request to close one finding also comes with CURRENT CODE: files of the default branch as
+they are now (always the finding's own file; with an argument, the files it names too). The
+flagged lines may have left the diff: deleted by another commit, or the code rewritten since the
+finding. Do not try to trace other commits. When THIS diff does not show the flagged code being
+removed or corrected, look at the CURRENT CODE of the finding's file, at the same class /
+function / block the finding points at (match by name and by the excerpt, not by line number:
+lines move):
+- "fixed" when the CURRENT CODE shows the flagged code is gone from there or now correct (the
+  check is added, the query parameterised, the secret read from the environment, ...) and no
+  other place in the code shown still does what the finding describes. Give `evidence_file` and
+  `evidence_lines` in CURRENT CODE (the lines that are now correct, or around where the flagged
+  code was) and say in `reason` that the current code proves it;
+- "not_fixed" when the flagged code is still there, unchanged or still wrong, whatever the diff
+  says;
+- the finding's file listed in FILES NOT SHOWN as not on the default branch was deleted or moved:
+  that alone proves nothing (the code may live on elsewhere), answer from the diff.
+
+With an AUTHOR'S ARGUMENT, the argument is a claim, not a fact: answer
 - "accepted" only when the CURRENT CODE shown proves the argument and, with it, that the finding
   is not a real risk where it matters (e.g. the production configuration reads the secret from
   the environment and the flagged value is a placeholder of a local-only profile). Give
@@ -284,6 +302,8 @@ def build_prompt(
             f"AUTHOR'S ARGUMENT (for finding [0]):\nBEGIN-ARGUMENT-{tag}\n{redact(argument)}\n"
             f"END-ARGUMENT-{tag}"
         )
+    if argument or sources is not None:
+        # A close request: the default branch as it is now (the finding's file at least).
         shown = "\n\n".join(
             f"### File: {p}\n"
             + "\n".join(f"{n:>5} {line}" for n, line in enumerate(text.splitlines(), 1))
@@ -353,9 +373,10 @@ def check(
     claims: str | None = None,
 ) -> CheckResult:
     """Ask once; never raises for the model's failures (the findings simply stay open).
-    `argument` / `sources`: a close request's case and the current files it is checked on;
+    `argument` / `sources`: a close request's case and the current files it is checked on
+    (the finding's file even without an argument: a fix the diff cannot show is proven there);
     `claims`: what an MCP request says it changed and tested (author_claims), never trusted."""
-    if not findings or not (files or argument):
+    if not findings or not (files or argument or sources):
         return CheckResult([], None)
     try:
         call = provider.review(
@@ -381,7 +402,15 @@ def check(
         sure = answer.confidence >= MIN_CONFIDENCE
         diff_paths = [f.path for f in files]
         closes_as: str | None = None
-        if answer.verdict == "fixed" and sure and _among(answer.evidence_file, diff_paths):
+        if (
+            answer.verdict == "fixed"
+            and sure
+            and (
+                _among(answer.evidence_file, diff_paths)
+                # The current code proves it (the flagged lines left the diff, user 2026-11-06).
+                or _lines_in(answer.evidence_file, answer.evidence_lines, sources or {})
+            )
+        ):
             closes_as = "fixed"
         elif (
             answer.verdict == "accepted"

@@ -147,7 +147,7 @@ export default function ClosuresPage() {
           link các commit đã sửa.
         </li>
         <li>
-          <strong>2. Lead, manager của tác giả hoặc admin</strong> xem yêu cầu ở tab “Chờ duyệt” (hoặc ngay trên finding ở trang review), bấm “Chạy review” (hoặc từ chối kèm lý do). Người gửi không tự duyệt được yêu cầu của mình.
+          <strong>2. Lead, manager của tác giả hoặc admin</strong> xem yêu cầu ở tab “Chờ duyệt” (hoặc ngay trên finding ở trang review), bấm “Chạy review” (hoặc từ chối kèm lý do). Người gửi không tự duyệt được yêu cầu của mình. Bước kiểm xem diff của các commit và code hiện tại của file chứa finding trên nhánh mặc định: dòng lỗi đã bị xoá ở commit khác hay code đã viết lại thì code hiện tại đủ chứng minh, không cần tìm đúng commit.
         </li>
         <li>
           <strong>3. Kết quả</strong>: đạt thì finding được đóng; chưa đạt thì lý do hiện ở đây và dưới finding, và yêu cầu nằm lại ở “Chờ duyệt” để người duyệt quyết: vẫn đóng (ghi lý do), chạy lại hoặc từ chối.

@@ -219,3 +219,31 @@ def test_candidates_are_the_repos_recent_open_severe_ones(db_session: Session) -
         exclude_review=0,
     )
     assert [f.title for f in found] == ["touched", "elsewhere"]
+
+
+def test_current_code_alone_can_prove_a_fix() -> None:
+    """User 2026-11-06: a close request shows the finding's file as it is now even without an
+    argument; "fixed" with evidence in its lines closes, lines not shown do not."""
+    from app.review.providers import FakeLLMProvider
+    from app.review.resolve import check
+
+    finding = ReviewFinding(id=7, severity="critical", category="security", file_path="app/a.py")
+    sources = {"app/a.py": "def run(v):\n    return bind(v)\n"}
+
+    def ask(lines: str) -> str | None:
+        answer = {
+            "index": 0,
+            "verdict": "fixed",
+            "reason": "Code hiện tại đã tham số hoá.",
+            "evidence_file": "app/a.py",
+            "evidence_lines": lines,
+            "confidence": 0.9,
+        }
+        provider = FakeLLMProvider(lambda p: {"answers": [answer]})
+        result = check(provider, "demo/p", "commit abc", [], [finding], sources=sources)
+        assert "CURRENT CODE" in provider.prompts[0].user
+        assert "AUTHOR'S ARGUMENT" not in provider.prompts[0].user
+        return result.outcomes[0].closes_as
+
+    assert ask("2") == "fixed"
+    assert ask("9") is None  # past the two lines shown

@@ -4,8 +4,10 @@ the spec, requested by the user 2026-10-31; app/review/resolve.py, app/api/route
 The author asked with the fixing commits; a manager of their team or an admin pressed "Chạy
 review" (the request is `checking`). The worker fetches the commits from GitLab, refuses what
 cannot be a fix (another repo, a commit older than the change that brought the finding, a diff
-over MAX_REVIEW_LOC), then asks the same no-tool check the reviews use. "fixed" with evidence in
-the diff closes the finding; anything else leaves it open and the request says why ("chưa đủ
+over MAX_REVIEW_LOC), reads the finding's file as it is now on the default branch (always: the
+flagged lines may have left the diff, deleted by another commit or rewritten, user 2026-11-06),
+then asks the same no-tool check the reviews use. "fixed" with evidence in the diff or in that
+current code closes the finding; anything else leaves it open and the request says why ("chưa đủ
 điều kiện đóng", `unmet`): the manager or admin who ran it then closes the finding anyway
 with a note, runs it again, or confirms the refusal. The call's cost counts toward the month's
 LLM budget (`closures_usd`).
@@ -89,7 +91,7 @@ class _Target:
     claims: str | None = None
 
 
-MAX_SOURCES = 6  # current files shown with an argument
+MAX_SOURCES = 6  # current files shown: the finding's, and those an argument names
 MAX_PER_NAME = 2  # files shown for one bare name ("application-prod.yml" in several services)
 MAX_FILE_BYTES = 200_000
 # A path or a file name in the argument: "config/.env-prod", "application-prod.yml",
@@ -146,10 +148,10 @@ def gather_sources(
     argument: str,
     sensitive_paths: list[str],
 ) -> Sources:
-    """The files an argument is checked on, at `ref` (the default branch): the finding's own
-    file, the paths the argument names, then the files whose name it names (the tree is walked
-    only for those). Configuration files are shown with `mask_config`, source with `mask_code`:
-    never a value."""
+    """The current files a close request is checked on, at `ref` (the default branch): the
+    finding's own file (always), then with an argument the paths it names and the files whose
+    name it names (the tree is walked only for those). Configuration files are shown with
+    `mask_config`, source with `mask_code`: never a value."""
     paths, names = _named(argument)
     wanted: list[str] = [finding_path] if finding_path else []
     wanted += [p for p in map(repo_path, paths) if p not in wanted]
@@ -306,10 +308,10 @@ def run_close_request(
                     target.external_id,
                     target.ref,
                     target.finding_path,
-                    target.argument,
+                    target.argument or "",
                     settings.sensitive_paths,
                 )
-                if target.argument and refused is None
+                if refused is None and (target.argument or target.finding_path)
                 else Sources({}, {})
             )
     except GitLabError as exc:
@@ -317,7 +319,7 @@ def run_close_request(
     if refused is not None:
         return decide("unmet", refused)
     prepared = prepare(entries, settings.ignore_paths, settings.sensitive_paths)
-    if target.shas and not prepared.files and not target.argument:
+    if target.shas and not prepared.files and not target.argument and not sources.shown:
         return decide("unmet", "Các commit không có thay đổi nào xem được (file bị bỏ qua).")
     if prepared.loc > settings.max_review_loc:
         return decide(
@@ -401,6 +403,7 @@ def run_close_request(
     why = {
         "fixed": (
             "Model cho là đã sửa nhưng chưa đủ chắc chắn hoặc không chỉ ra được chỗ sửa trong diff"
+            " hay trong code hiện tại"
         ),
         "accepted": (
             "Model thấy phản biện hợp lý nhưng chưa đủ chắc chắn hoặc không chỉ ra được bằng "
@@ -410,7 +413,7 @@ def run_close_request(
         "not_fixed": (
             f"Phản biện chưa được code trên nhánh {target.ref} chứng minh"
             if target.argument and not target.shas
-            else "Các commit này chưa sửa lỗi"
+            else f"Các commit này chưa sửa lỗi và code hiện tại trên nhánh {target.ref} vẫn còn lỗi"
         ),
     }[outcome.verdict]
     return decide(

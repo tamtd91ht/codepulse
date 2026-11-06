@@ -413,7 +413,9 @@ export default function McpGuidePage() {
             </ul>
             <p>
               Sau khi gửi, yêu cầu ở trạng thái <code>pending</code>. Lead, manager của team bạn hoặc admin bấm “Chạy review” để
-              AI kiểm commit (ghi chú, file đã sửa và kết quả test chỉ là lời khai của bạn, bước kiểm đối chiếu với diff thật),
+              AI kiểm commit (ghi chú, file đã sửa và kết quả test chỉ là lời khai của bạn, bước kiểm đối chiếu với diff thật và
+              với code hiện tại của file chứa finding trên nhánh mặc định: dòng lỗi đã bị xoá ở commit khác hay code đã viết lại
+              thì code hiện tại đủ chứng minh, không cần đúng commit sửa),
               hoặc từ chối. Trang <Link href="/closures">Đóng finding</Link> hiện nhãn <em>Claude Code (MCP)</em>, tên token,
               file đã sửa và kết quả test. Bạn nhận thông báo ở chuông khi có kết quả.
             </p>

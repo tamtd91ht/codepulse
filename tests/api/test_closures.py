@@ -1021,3 +1021,57 @@ def test_a_request_of_a_finding_closed_another_way_leaves_the_todo(
     db_session.refresh(closure)
     assert closure.status == "rejected"
     assert ask(client, world, as_user, world.an, [FIX]).status_code == 201
+
+
+def test_a_fix_the_diff_cannot_show_is_proven_by_the_current_code(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    db_session: Session,
+    settings: Settings,
+) -> None:
+    """User 2026-11-06: the flagged lines left the diff (deleted by another commit, or the code
+    rewritten): the finding's file as it is now on the default branch settles it, nobody
+    traces the commits."""
+    elsewhere = {**DIFF, "old_path": "app/b.py", "new_path": "app/b.py"}
+
+    class Moved(FakeClient):
+        def commit_diff(self, project_id: int, sha: str) -> list[dict[str, Any]]:
+            return [elsewhere]  # the commit does not touch the finding's file
+
+    prompts: list[str] = []
+
+    def answer(prompt: Any) -> dict[str, Any]:
+        prompts.append(prompt.user)
+        return {"answers": [{**FIXED, "evidence_file": "app/a.py", "evidence_lines": "1"}]}
+
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    run(client, as_user, world.admin, closure_id)
+    token = token_of(db_session, closure_id)
+    provider = FakeLLMProvider(answer)
+    assert work(db_session, settings, closure_id, token, None, Moved(), provider) == "closed"
+    assert "CURRENT CODE" in prompts[0] and "key = load_key()" in prompts[0]
+    assert "Do not try to trace other commits" in provider.prompts[0].system
+    db_session.refresh(world.an_finding)
+    assert world.an_finding.status == "fixed"
+
+
+def test_current_code_evidence_must_be_lines_that_were_shown(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    db_session: Session,
+    settings: Settings,
+) -> None:
+    elsewhere = {**DIFF, "old_path": "app/b.py", "new_path": "app/b.py"}
+
+    class Moved(FakeClient):
+        def commit_diff(self, project_id: int, sha: str) -> list[dict[str, Any]]:
+            return [elsewhere]
+
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    run(client, as_user, world.admin, closure_id)
+    past_the_end = {**FIXED, "evidence_file": "app/a.py", "evidence_lines": "40"}  # 1 line shown
+    assert check(db_session, settings, closure_id, past_the_end, Moved()) == "unmet"
+    db_session.refresh(world.an_finding)
+    assert world.an_finding.status == "open"
