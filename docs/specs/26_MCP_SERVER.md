@@ -146,3 +146,12 @@ Mỗi dòng một thành viên (trong phạm vi + bộ lọc), có dòng tổng:
 
 - **[Quyết định]** (user 2026-11-05) Mỗi finding trong `list_findings` (không chỉ `get_finding`) mang đủ để agent hiểu, sửa và gửi yêu cầu đóng: id, mức, category, rule, nguồn, tiêu đề, **mô tả**, **gợi ý sửa** (khi repo cho phép gửi code ra ngoài), file:dòng, repo + URL + nhánh mặc định, `reviewed_sha`, MR (iid, tiêu đề, trạng thái, nhánh nguồn → đích, head_sha, link) hoặc commit (sha, commit message dòng đầu, thời điểm, link), ngày review, ngày thay đổi, tác giả, độ tin cậy, verified, link CodePulse, yêu cầu đóng đang chờ, và `close_request` = {allowed, reason, requires}: người gọi có gửi được yêu cầu đóng không (cùng luật `check_close_request`: quyền, tác giả, critical/high, còn mở, không có yêu cầu đang chờ, hạn 20/ngày) và các trường `request_closure` cần.
 - `get_finding` thêm đoạn code lúc review, kết quả kiểm chứng, tiêu chí, số lần lặp 90 ngày, tóm tắt và intent của review, lịch sử đóng.
+
+## 15. Finding đã đóng hay chưa
+
+- **[Quyết định]** (user 2026-11-06) Mỗi finding trả về bởi `list_findings`, `get_finding`, `get_commit_findings`, `get_mr_findings` mang cờ rõ ràng để agent bên kia biết **không cần sửa nữa**:
+  - `closed` (bool), `needs_fix` (= `not closed`), `closed_as`: `fixed` | `accepted_risk` | `false_positive` | `rejected` (bước kiểm chứng bác bỏ, §4: cũng không còn phải sửa), `null` khi còn mở hoặc đang khiếu nại (`disputed` chưa phải đã đóng).
+  - `closing` (null khi chưa đóng): `closed_as`, `label` (tiếng Việt), `closure_id`, `kind` (auto/request/admin), `via`, `closed_at`, `closed_by` (tên người duyệt; `null` = hệ thống), `closed_by_user_id`, `reason` — lấy từ bản ghi `finding_closures` `closed` mới nhất; `reason` bị ẩn cùng nội dung suy ra từ code (§7). Finding bị bác bởi kiểm chứng không có bản ghi đóng: `closing` chỉ có `closed_as`/`label`.
+  - Markdown: dòng trạng thái ngay dưới tiêu đề mỗi finding — `**ĐÃ ĐÓNG** (đã sửa, lúc …, bởi …): **không cần sửa nữa**` hoặc `**còn phải sửa**` / `**đang khiếu nại**`; hướng dẫn đầu kết quả, `instructions` của server và mô tả tool nói rõ: finding `closed` thì bỏ qua, không gửi yêu cầu đóng.
+  - `list_close_requests`: mỗi yêu cầu kèm `finding.closed` / `finding.closed_as`.
+- Mặc định của `list_findings` (`status=open`) và `get_commit/mr_findings` vẫn chỉ trả finding còn phải sửa; cờ trên hữu ích khi agent gọi lại `get_finding` với id đã lưu, hoặc dùng `status=any`/`fixed`/….

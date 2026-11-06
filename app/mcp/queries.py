@@ -78,6 +78,28 @@ class FindingView:
     commit: Commit | None = None  # the reviewed commit (a commit's review)
     # Whether the caller may send a close request now: None = yes, else why not (Vietnamese).
     close_block: str | None = None
+    # The closing that ended it (latest `closed` row), for a finding that is closed.
+    closing: FindingClosure | None = None
+    closer: str | None = None  # who decided that closing (name), None for the system
+
+    @property
+    def closed_as(self) -> str | None:
+        """How the finding ended (docs/specs/26 §15), None while it still has to be fixed."""
+        return finding_closed_as(self.finding)
+
+
+# docs/specs/26 §15: a finding in one of these is done with, nothing to fix any more.
+CLOSED_STATUSES = ("fixed", "accepted_risk", "false_positive", "rejected")
+
+
+def finding_closed_as(finding: ReviewFinding) -> str | None:
+    """`fixed` / `accepted_risk` / `false_positive`, or `rejected` (the verification refuted
+    it, §4: not still to fix either); None: open or disputed, still to fix."""
+    if finding.status in CLOSED_STATUSES:
+        return finding.status
+    if finding.verified == "rejected":
+        return "rejected"
+    return None
 
 
 # -- arguments -------------------------------------------------------------------------------------
@@ -426,13 +448,42 @@ def _views(session: Session, rows: Any) -> list[FindingView]:
             if shas
             else {}
         )
+        closings = _closings(session, [v.finding.id for v in views if v.closed_as])
+        closer_ids = {c.decided_by for c in closings.values() if c.decided_by}
+        closers = (
+            {
+                int(uid): name
+                for uid, name in session.execute(
+                    select(User.id, User.full_name).where(User.id.in_(closer_ids))
+                )
+            }
+            if closer_ids
+            else {}
+        )
         for view in views:
+            view.closing = closings.get(view.finding.id)
+            if view.closing is not None and view.closing.decided_by:
+                view.closer = closers.get(view.closing.decided_by)
             view.commit = commits.get(view.review.commit_sha or "") if view.mr is None else None
             view.author = names.get(view.review.author_user_id or 0)
             view.pending = pending.get(view.finding.id)
             view.repeats = repeats.get(view.finding.fingerprint or "", 0)
             view.repo_url = urls.get(view.project.id) if view.project else None
     return views
+
+
+def _closings(session: Session, ids: list[int]) -> dict[int, FindingClosure]:
+    """finding id -> its latest `closed` row (a reopened finding closed again: the new one)."""
+    if not ids:
+        return {}
+    out: dict[int, FindingClosure] = {}
+    for row in session.scalars(
+        select(FindingClosure)
+        .where(FindingClosure.finding_id.in_(ids), FindingClosure.status == "closed")
+        .order_by(FindingClosure.id)
+    ):
+        out[row.finding_id] = row
+    return out
 
 
 def repo_urls(session: Session, projects: list[Project | None]) -> dict[int, str]:

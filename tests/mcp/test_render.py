@@ -154,3 +154,69 @@ def test_a_commit_review_links_its_commit(env: Env, world: Any) -> None:
     assert data["commit"]["sha"] == sha and data["commit"]["title"] == "fix: chặn SQL injection"
     assert data["commit"]["url"].endswith(f"/demo/p/-/commit/{sha}")
     assert data["commit"]["authored_at"].startswith("2026-10-07T02:00")
+
+
+def test_closed_finding_says_there_is_nothing_to_fix(env: Env, world: Any) -> None:
+    """user 2026-11-06 (docs/specs/26 §15): a closed finding says so, with when and by whom."""
+    from datetime import UTC, datetime
+
+    from app.models import FindingClosure
+
+    _setup(env, world)
+    an = caller_for(env.session, env.settings, world.an)
+    open_item = invoke(an, "get_finding", {"id": world.an_finding.id}).structured_content
+    assert open_item["closed"] is False and open_item["needs_fix"] is True
+    assert open_item["closed_as"] is None and open_item["closing"] is None
+
+    world.an_finding.status = "fixed"
+    env.session.add(
+        FindingClosure(
+            finding_id=world.an_finding.id,
+            kind="admin",
+            status="closed",
+            closed_as="fixed",
+            reason="Đã sửa ở commit sau.",
+            decided_by=world.lead.id,
+            decided_at=datetime(2026, 11, 6, tzinfo=UTC),
+        )
+    )
+    env.session.commit()
+    result = invoke(an, "get_finding", {"id": world.an_finding.id})
+    data = result.structured_content
+    assert data["closed"] is True and data["needs_fix"] is False
+    assert data["closed_as"] == "fixed"
+    closing = data["closing"]
+    assert closing["kind"] == "admin" and closing["closed_by_user_id"] == world.lead.id
+    assert closing["closed_by"] == world.lead.full_name
+    assert closing["closed_at"].startswith("2026-11-06")
+    assert closing["reason"] == "Đã sửa ở commit sau."
+    assert "**ĐÃ ĐÓNG** (đã sửa" in result.content[0].text
+    assert "không cần sửa nữa" in result.content[0].text
+
+    listed = invoke(an, "list_findings", {"status": "any"})
+    [item] = [f for f in listed.structured_content["findings"] if f["id"] == world.an_finding.id]
+    assert item["closed"] is True and item["closing"]["closed_as"] == "fixed"
+    assert "**ĐÃ ĐÓNG**" in listed.content[0].text
+
+
+def test_refuted_finding_counts_as_closed_and_hides_reason_when_code_hidden(
+    env: Env, world: Any
+) -> None:
+    _setup(env, world)
+    world.an_finding.verified = "rejected"
+    world.project.allow_external_llm = False
+    env.session.commit()
+    an = caller_for(env.session, env.settings, world.an)
+    data = invoke(an, "get_finding", {"id": world.an_finding.id}).structured_content
+    assert data["closed"] is True and data["closed_as"] == "rejected"
+    assert data["closing"]["closure_id"] is None and data["closing"]["reason"] is None
+
+
+def test_disputed_finding_is_not_closed(env: Env, world: Any) -> None:
+    _setup(env, world)
+    world.an_finding.status = "disputed"
+    env.session.commit()
+    an = caller_for(env.session, env.settings, world.an)
+    result = invoke(an, "get_finding", {"id": world.an_finding.id})
+    assert result.structured_content["needs_fix"] is True
+    assert "**đang khiếu nại**" in result.content[0].text

@@ -348,6 +348,12 @@ export default function McpGuidePage() {
                 <code>file:dòng</code>, mô tả, gợi ý sửa, đoạn code (tối đa 40 dòng), độ tin cậy, kết quả kiểm chứng, số lần lỗi
                 cùng loại lặp lại trong 90 ngày, và lịch sử yêu cầu đóng của nó.
               </p>
+              <p>
+                Mọi tool đọc finding đều trả <code>closed</code> / <code>needs_fix</code> cho từng finding. Finding đã đóng (
+                <code>closed_as</code> là <code>fixed</code>, <code>accepted_risk</code>, <code>false_positive</code> hoặc{" "}
+                <code>rejected</code>) kèm <code>closing</code>: đóng lúc nào, theo cách nào, ai duyệt. Markdown ghi{" "}
+                <strong>ĐÃ ĐÓNG … không cần sửa nữa</strong>: Claude bỏ qua finding đó, không sửa và không gửi yêu cầu đóng.
+              </p>
               <Params rows={[["id", "số", "Id finding (có trong kết quả các tool trên và trên trang review)."]]} />
             </Tool>
 
