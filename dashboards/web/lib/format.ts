@@ -75,6 +75,15 @@ export function dateTime(value: string | null): string {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("vi-VN", { hour12: false });
 }
 
+/** "14:05 06/11/2026": hour and minute, then the day, in the viewer's time zone. */
+export function dateTimeMin(value: string | null): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  const two = (x: number) => String(x).padStart(2, "0");
+  return `${two(d.getHours())}:${two(d.getMinutes())} ${two(d.getDate())}/${two(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
 /** "3 phút trước" style, for last-seen columns. */
 export function relative(value: string, now = new Date()): string {
   const seconds = Math.round((now.getTime() - new Date(value).getTime()) / 1000);

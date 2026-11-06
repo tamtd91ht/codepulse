@@ -10,7 +10,7 @@ import { CLOSED_AS, ConfirmSettle, OverrideClose, shortShas } from "@/components
 import { Icon, IconButton } from "@/components/icons";
 import { Card, EmptyState, Loading, Message, PageHeader, Pill, Segmented, SeverityBadge } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
-import { CATEGORY_LABEL, date, localDay } from "@/lib/format";
+import { CATEGORY_LABEL, dateTimeMin, localDay } from "@/lib/format";
 import type { ClosureFacets, ClosureListItem } from "@/lib/types";
 
 /**
@@ -337,7 +337,7 @@ export default function ClosuresPage() {
                             {c.status === "closed" && c.closed_as ? ` · ${CLOSED_AS[c.closed_as]}` : ""}
                             {c.severity_before && c.severity_after ? ` (${c.severity_before} → ${c.severity_after})` : ""}
                           </Pill>
-                          <div className="muted small">{date(c.decided_at ?? c.created_at)}</div>
+                          <div className="muted small">{dateTimeMin(c.decided_at ?? c.created_at)}</div>
                           {c.status !== "closed" && c.finding.status && FINDING_NOW[c.finding.status] && (
                             <div className="small" title="Yêu cầu này không còn là trạng thái của finding">
                               <Pill tone="good">Finding hiện: {FINDING_NOW[c.finding.status]}</Pill>
@@ -443,7 +443,7 @@ function Detail({
           </span>
           <div>
             <div className="step-title">{firstStep(c)}</div>
-            <div className="muted small">{date(c.created_at)}</div>
+            <div className="muted small">{dateTimeMin(c.created_at)}</div>
             {c.shas.length > 0 && (
               <div className="small">
                 Commit: <code>{c.shas.join(", ")}</code>
@@ -482,7 +482,7 @@ function Detail({
                         ? `${c.decided_by_name ?? "Người duyệt"} từ chối, không chạy review`
                       : `${c.decided_by_name ?? "Người duyệt"} chạy review ${[c.shas.length ? "các commit" : "", c.argument ? "phản biện" : ""].filter(Boolean).join(" và ")}`}
               </div>
-              {c.decided_at && c.status !== "pending" && <div className="muted small">{date(c.decided_at)}</div>}
+              {c.decided_at && c.status !== "pending" && <div className="muted small">{dateTimeMin(c.decided_at)}</div>}
             </div>
           </li>
         )}
