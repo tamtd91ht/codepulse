@@ -8455,3 +8455,16 @@ div.jira-auth > span:first-child .pill {
     grid-template-columns: 1fr;
   }
 }
+
+/* Đóng finding: a finding's id with a small copy button, inline in the row's muted line. */
+.copy-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.copy-id .icon-btn {
+  width: 22px;
+  height: 22px;
+}

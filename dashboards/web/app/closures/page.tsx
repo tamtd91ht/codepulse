@@ -304,6 +304,8 @@ export default function ClosuresPage() {
                             )}
                           </div>
                           <div className="muted small">
+                            <CopyId id={c.finding.id} />
+                            {" · "}
                             {c.repo?.path ?? "—"}
                             {c.finding.file_path && (
                               <>
@@ -619,4 +621,25 @@ function firstStep(c: ClosureListItem): string {
   if (c.kind === "admin") return `${c.requested_by_name ?? "Admin"} đóng thủ công`;
   if (c.kind === "reopen") return `${c.requested_by_name ?? "Admin"} mở lại finding`;
   return `${c.requested_by_name ?? "Thành viên"} gửi yêu cầu đóng`;
+}
+
+/** "#123" and a small copy button: the finding's id, e.g. for get_finding in Claude Code. */
+function CopyId({ id }: { id: number }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  return (
+    <span className="copy-id">
+      <span title="Id của finding">#{id}</span>
+      <IconButton
+        icon={copied ? "check" : "copy"}
+        size={14}
+        label={copied ? "Đã copy" : `Copy id ${id}`}
+        onClick={() => void navigator.clipboard?.writeText(String(id)).then(() => setCopied(true))}
+      />
+    </span>
+  );
 }
