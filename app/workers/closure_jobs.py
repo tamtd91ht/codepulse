@@ -107,7 +107,8 @@ class Sources:
     shown: dict[str, str]
     not_shown: dict[str, str]
     # The finding's file is not on the default branch and no file of its name is left anywhere
-    # in the repo: deleted, with the flagged code (user 2026-11-06).
+    # in the repo. Information only, never proof: the file may never have been on the default
+    # branch (a branch's new file) or moved under another name.
     gone: list[str] = field(default_factory=list)
 
 
@@ -211,7 +212,7 @@ def gather_sources(
                     not_shown[path] += "; có file cùng tên ở chỗ khác (đã gửi kèm)"
                 elif whole_tree:
                     gone.append(path)
-                    not_shown[path] += "; không còn file nào cùng tên trong repo (đã xoá)"
+                    not_shown[path] += "; không còn file nào cùng tên trong repo"
             continue
         if len(raw) > MAX_FILE_BYTES or "\x00" in raw:
             not_shown[path] = "file quá lớn hoặc nhị phân, không gửi"
@@ -354,7 +355,6 @@ def run_close_request(
         target.shas
         and not prepared.files
         and not prepared.deleted
-        and not sources.gone
         and not target.argument
         and not sources.shown
     ):
@@ -386,7 +386,7 @@ def run_close_request(
         sources=sources.shown,
         not_shown=sources.not_shown,
         claims=target.claims,
-        deleted=prepared.deleted + [p for p in sources.gone if p not in prepared.deleted],
+        deleted=prepared.deleted,
     )
     if checked.call is not None:
         # Paid whatever comes next: recorded and committed before anything else can fail. The

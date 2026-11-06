@@ -1121,26 +1121,31 @@ def test_a_commit_deleting_the_finding_file_is_checked_and_closes(
     assert world.an_finding.status == "fixed"
 
 
-def test_a_file_deleted_by_another_commit_counts_when_no_namesake_is_left(
+def test_a_file_missing_from_the_default_branch_is_no_proof_alone(
     client: TestClient,
     world: World,
     as_user: Any,
     db_session: Session,
     settings: Settings,
 ) -> None:
+    """The finding's file is not on the default branch and no namesake is left, but the request's
+    commits do not delete it: it may never have been merged (a branch's new file) or been moved
+    under another name. Told to the model, never taken as the fix."""
     elsewhere = {**DIFF, "old_path": "app/b.py", "new_path": "app/b.py"}
 
     class Earlier(Deleted):
         def commit_diff(self, project_id: int, sha: str) -> list[dict[str, Any]]:
-            return [elsewhere]  # this commit does not delete it; an earlier one did
+            return [elsewhere]
 
     closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
     run(client, as_user, world.admin, closure_id)
     token = token_of(db_session, closure_id)
     provider = FakeLLMProvider(lambda p: {"answers": [GONE]})
-    assert work(db_session, settings, closure_id, token, None, Earlier(), provider) == "closed"
+    assert work(db_session, settings, closure_id, token, None, Earlier(), provider) == "unmet"
     prompt = provider.prompts[0].user
-    assert "không còn file nào cùng tên trong repo" in prompt and "- app/a.py" in prompt
+    assert "không còn file nào cùng tên trong repo" in prompt and "FILES DELETED" not in prompt
+    db_session.refresh(world.an_finding)
+    assert world.an_finding.status == "open"
 
 
 def test_a_moved_file_is_shown_and_its_old_path_proves_nothing(

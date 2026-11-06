@@ -206,11 +206,15 @@ Mỗi dòng một thành viên (trong phạm vi + bộ lọc), có dòng tổng:
 - File của finding không còn trên nhánh mặc định: bước kiểm tìm file cùng tên trong cây thư mục
   (tối đa 5000 file):
   - có file cùng tên ở chỗ khác (dời chỗ) → gửi kèm file đó, đường dẫn cũ không chứng minh gì;
-  - không còn file nào cùng tên (và đọc được hết cây) → coi là đã xoá (xoá ở commit khác), vào
-    **FILES DELETED**.
-- Finding có **file của chính nó** trong FILES DELETED là `fixed`, bằng chứng là đường dẫn file
-  (không cần dòng). Model chỉ được trả khác khi code hiện tại cho thấy đoạn lỗi còn ở file
-  khác. Hệ thống chỉ nhận bằng chứng "file đã xoá" khi đúng là file của finding.
+  - không còn file nào cùng tên (và đọc được hết cây) → ghi vào FILES NOT SHOWN để model biết,
+    **không** phải bằng chứng: file có thể chưa từng lên nhánh mặc định (file mới của nhánh/MR
+    chưa merge) hoặc đã dời và đổi tên. Muốn đóng vì file bị xoá ở commit khác thì gửi kèm chính
+    commit xoá file đó.
+- Finding có **file của chính nó** bị các commit của yêu cầu xoá (FILES DELETED) là `fixed`,
+  bằng chứng là đường dẫn file (không cần dòng). Model chỉ được trả khác khi code hiện tại cho
+  thấy đoạn lỗi còn ở file khác. Hệ thống chỉ nhận bằng chứng này khi đường dẫn bằng chứng
+  **trùng đúng** file của finding (chuẩn hoá `./`, không khớp theo đuôi) và file đó có trong
+  danh sách xoá. File đổi tên (`renamed_file`) không tính là xoá.
 - **Ghi chú** của yêu cầu (cùng `files_changed`, `tests` nếu có) luôn gửi cho model, cả yêu
   cầu gửi trên web, như lời giải thích của tác giả (ví dụ vì sao diff rỗng); vẫn là lời khai,
   phải đối chiếu với diff, file đã xoá và code hiện tại.
@@ -218,4 +222,6 @@ Mỗi dòng một thành viên (trong phạm vi + bộ lọc), có dòng tổng:
   không đọc được code hiện tại; lý do liệt kê file bị bỏ qua và vì sao (`img/logo.png
   (binary_or_empty)`).
 - Tự đóng sau review: commit chỉ xoá file (review `skipped`, "no reviewable files") vẫn chạy
-  bước tự đóng cho các finding của file bị xoá.
+  bước tự đóng, **chỉ** với các finding nằm đúng trong file bị xoá (không có thì không gọi
+  model), và không chạy khi LLM đang được ghi nhận là sập. Chi phí lượt kiểm ghi vào review đó
+  dù review `skipped`.

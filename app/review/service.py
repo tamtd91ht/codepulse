@@ -69,7 +69,7 @@ from app.review.prompt import (
     target_header,
 )
 from app.review.providers.base import AgenticProvider, LLMError, LLMProvider, ReviewResult
-from app.review.resolve import check, close_finding, current_files, recent_open
+from app.review.resolve import check, close_finding, current_files, recent_open, repo_path
 from app.review.rubric import RUBRIC_LENS, RUBRIC_VERSION
 from app.review.rules import collect_rules
 from app.review.schema import AgentFinding, Intent, LLMFinding
@@ -416,6 +416,8 @@ class ReviewService:
         deleted = self._reviewed_deleted.get(review.id) or []
         if days <= 0 or not (files or deleted):
             return
+        if not files and self._settings.llm_auto_resume and llm_recovery.is_down(self._session):
+            return  # a skipped review never asked the model: do not start now
         try:
             until = review.changed_at if review.changed_at > CHANGE_TIME_UNKNOWN else self._clock()
             # A savepoint: a database error here never aborts the caller's transaction (single-
@@ -430,6 +432,11 @@ class ReviewService:
                     exclude_review=review.id,
                     exclude_mr=mr_id,
                 )
+                if not files:
+                    # Only deletions: only the findings of a deleted file can be fixed; the
+                    # others are not worth a paid call (and a deleted image costs nothing).
+                    gone = {repo_path(p) for p in deleted}
+                    candidates = [f for f in candidates if repo_path(f.file_path) in gone]
                 over_budget = self._over_budget(review, project) if candidates else None
             if not candidates or over_budget is not None:
                 return

@@ -90,17 +90,14 @@ lines move):
   may not be merged yet); answer "not_fixed" only when neither THIS diff nor the CURRENT CODE
   shows it fixed;
 - a finding whose file is not in CURRENT CODE is judged on THIS diff alone;
-- the finding's file listed in FILES NOT SHOWN as not on the default branch but not in FILES
-  DELETED (a file of the same name is left, or the repo could not be listed whole) was moved
-  or cannot be told: that alone proves nothing (the code may live on elsewhere); judge the
-  files of the same name shown in CURRENT CODE, or the diff.
+- the finding's file listed in FILES NOT SHOWN as not on the default branch, but not in FILES
+  DELETED, may have been moved or renamed, or never merged: that alone proves nothing (the code
+  may live on elsewhere); judge the files of the same name shown in CURRENT CODE, or the diff.
 
-FILES DELETED lists files the change removes whole (their content is not shown: an empty diff
-for them is normal, not "nothing to check"), and a finding's file that is no longer on the
-default branch with no file of the same name left anywhere in the repository (deleted by another
-commit). A finding whose own file is in that list is "fixed": the flagged code went with its
-file. Give `evidence_file` = that path (no
-lines needed) and say so in `reason`. Answer otherwise only when the CURRENT CODE shown proves
+FILES DELETED lists files THIS change removes whole (their content is not shown: an empty diff
+for them is normal, not "nothing to check"). A finding whose own file is in that list is
+"fixed": the flagged code went with its file. Give `evidence_file` = that path (no lines
+needed) and say so in `reason`. Answer otherwise only when the CURRENT CODE shown proves
 the same flagged code lives on in another file (then judge that file).
 
 With an AUTHOR'S ARGUMENT, the argument is a claim, not a fact: answer
@@ -422,6 +419,14 @@ def _lines_in(path: str | None, lines: str | None, sources: dict[str, str]) -> b
     return all(1 <= int(n) <= count for n in found[:2])
 
 
+def _deleted_own(evidence: str | None, own: str | None, deleted: Iterable[str]) -> bool:
+    """The evidence is the finding's own file, exactly, and the change deletes that file."""
+    wanted = repo_path(own)
+    return (
+        bool(wanted) and repo_path(evidence) == wanted and wanted in {repo_path(p) for p in deleted}
+    )
+
+
 def _among(path: str | None, known: Iterable[str]) -> bool:
     wanted = repo_path(path)
     return bool(wanted) and any(p == wanted or p.endswith(f"/{wanted}") for p in known)
@@ -478,7 +483,7 @@ def check(
             and (
                 _among(answer.evidence_file, diff_paths)
                 # Its own file deleted by the change (user 2026-11-06).
-                or (_among(answer.evidence_file, deleted) and _among(finding.file_path, deleted))
+                or _deleted_own(answer.evidence_file, finding.file_path, deleted)
                 # The current code proves it (the flagged lines left the diff, user 2026-11-06).
                 or _lines_in(answer.evidence_file, answer.evidence_lines, sources or {})
             )

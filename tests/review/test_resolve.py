@@ -333,3 +333,49 @@ def test_deleted_file_evidence_needs_the_findings_own_file_deleted() -> None:
     own = finding(id=6, file_path="app/old.py")
     result = check(provider, "demo/p", "commit d", [], [own], deleted=["app/old.py"])
     assert result.outcomes[0].closes is True
+
+
+def test_deleted_file_evidence_matches_the_exact_path() -> None:
+    gone = {**FIXED, "evidence_file": "src/utils.py", "evidence_lines": None}
+    provider = FakeLLMProvider(lambda p: {"answers": [gone]})
+    kept = finding(id=8, file_path="src/utils.py")  # still there: another utils.py went
+    result = check(provider, "demo/p", "commit d", [], [kept], deleted=["legacy/src/utils.py"])
+    assert result.outcomes[0].closes is False
+    own = finding(id=9, file_path="./src/utils.py")  # the same file, written another way
+    result = check(provider, "demo/p", "commit d", [], [own], deleted=["src/utils.py"])
+    assert result.outcomes[0].closes is True
+
+
+def test_a_renamed_file_is_not_deleted() -> None:
+    from app.review.prepare import prepare
+
+    entries = [
+        {"old_path": "a.py", "new_path": "b.py", "renamed_file": True, "diff": ""},
+        {"old_path": "c.py", "new_path": "c.py", "deleted_file": True, "diff": ""},
+    ]
+    assert prepare(entries, [], []).deleted == ["c.py"]
+
+
+@pytest.mark.integration
+def test_a_commit_deleting_an_unrelated_file_asks_nothing(db_session: Session) -> None:
+    """A skipped commit that only deletes files checks only the findings of those files."""
+    project = make_project(db_session)
+    other = finding(file_path="app/kept.py", title="Elsewhere")
+    earlier(db_session, project, "e" * 40, MADE - timedelta(hours=20), other)
+    deleted = [
+        {
+            "old_path": "docs/old.md",
+            "new_path": "docs/old.md",
+            "new_file": False,
+            "renamed_file": False,
+            "deleted_file": True,
+            "diff": "",
+        }
+    ]
+    provider = FakeLLMProvider(answers(FIXED))
+
+    review = review_head(db_session, project, provider, diff=deleted, auto_close_days=2)
+
+    assert review.status == "skipped"
+    assert not any("EARLIER FINDINGS" in p.user for p in provider.prompts)
+    assert other.status == "open"
