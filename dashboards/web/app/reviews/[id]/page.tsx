@@ -7,7 +7,7 @@ import { ReviewCriteriaCard } from "@/components/CriteriaScores";
 import { CloseActions, ClosureNote } from "@/components/FindingClose";
 import { BasisCard, basisSummary, changedRules, previousRun } from "@/components/ReviewBasis";
 import { announceReviewQueued } from "@/components/ReviewActivity";
-import { Alert, Card, EmptyState, ExternalLink, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
+import { Alert, Card, EmptyState, ExternalLink, IdChip, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { ApiError, api, can, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, TRIGGER_LABEL, VERDICT_LABEL, date, num } from "@/lib/format";
 import type { Finding, FindingClosure, Me, MrJira, Repo, ReviewDetail } from "@/lib/types";
@@ -668,6 +668,7 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
                     )}
                   </span>
                 )}
+                <IdChip id={f.id} />
               </div>
               <div className="finding-meta">
                 <span>{CATEGORY_LABEL[f.category] ?? f.category}</span>
