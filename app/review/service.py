@@ -69,7 +69,7 @@ from app.review.prompt import (
     target_header,
 )
 from app.review.providers.base import AgenticProvider, LLMError, LLMProvider, ReviewResult
-from app.review.resolve import check, close_finding, recent_open
+from app.review.resolve import check, close_finding, current_files, recent_open
 from app.review.rubric import RUBRIC_LENS, RUBRIC_VERSION
 from app.review.rules import collect_rules
 from app.review.schema import AgentFinding, Intent, LLMFinding
@@ -388,10 +388,12 @@ class ReviewService:
     def _auto_close(
         self, review: Review, project: Project, change: str, mr_id: int | None = None
     ) -> None:
-        """AUTO_CLOSE_FINDINGS: does this change fix open critical/high findings the repo got in
-        the last AUTO_CLOSE_DAYS days? Their stored text is checked against this diff in one
-        no-tool call (app/review/resolve.py); nothing is reviewed again. A re-judgment of the
-        same change (round > 1) fixes nothing. Never fails the review: it is already saved."""
+        """AUTO_CLOSE_FINDINGS: are open critical/high findings the repo got in the last
+        AUTO_CLOSE_DAYS days fixed? Their stored text is checked against this diff and the
+        current code of their files on the default branch (user 2026-11-06: one fixed by another
+        commit closes too, its lines in no diff any more) in one no-tool call
+        (app/review/resolve.py); nothing is reviewed again. A re-judgment of the same change
+        (round > 1) fixes nothing. Never fails the review: it is already saved."""
         days = self._settings.auto_close_days
         files = self._reviewed_files.get(review.id)
         if days <= 0 or not files:
@@ -414,8 +416,22 @@ class ReviewService:
             if not candidates or over_budget is not None:
                 return
             self._step(review.id, "close", f"{len(candidates)} finding")
-            self._commit_step("close-prepare")  # no transaction open while the model works
-            checked = check(self._provider, project.path_with_namespace, change, files, candidates)
+            self._commit_step("close-prepare")  # no transaction open while GitLab / the model work
+            ref = project.default_branch or "HEAD"
+            sources, not_shown = current_files(
+                lambda path: self._client.file_raw(project.external_id, path, ref),
+                [f.file_path or "" for f in candidates],  # the touched files' findings first
+                self._settings.sensitive_paths,
+            )
+            checked = check(
+                self._provider,
+                project.path_with_namespace,
+                change,
+                files,
+                candidates,
+                sources=sources,
+                not_shown=not_shown,
+            )
         except Exception:
             log.exception("auto-close check failed", extra={"review_id": review.id})
             if self._short:  # the review is saved; only this step's reads are dropped

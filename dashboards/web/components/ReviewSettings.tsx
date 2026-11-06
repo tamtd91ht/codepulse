@@ -451,9 +451,11 @@ function AutoCloseForm({
       )}
       <p className="muted small">
         Mỗi review xong, CodePulse lấy các finding critical/high còn mở của repo trong N ngày (từ lịch sử, không review
-        lại code cũ) và hỏi model diff mới có sửa chúng không, tốn thêm một lượt gọi nhỏ khi có finding cần rà. Chỉ đóng
-        khi model chỉ ra được chỗ sửa trong diff; finding vẫn giữ mức critical/high và vẫn tính điểm. Finding quá N ngày
-        thì tác giả của thay đổi dùng “Yêu cầu đóng” ở trang review.
+        lại code cũ) và hỏi model chúng đã được sửa chưa, tốn thêm một lượt gọi nhỏ khi có finding cần rà. Model xem diff
+        mới và code hiện tại trên nhánh mặc định của các file chứa finding (tối đa 6 file): lỗi đã sửa ở commit khác, dòng
+        lỗi không còn trong diff nào, vẫn được đóng. Chỉ đóng khi model chỉ ra được chỗ sửa trong diff hoặc trong code hiện
+        tại; finding vẫn giữ mức critical/high và vẫn tính điểm. Finding quá N ngày thì tác giả của thay đổi dùng “Yêu cầu
+        đóng” ở trang review.
       </p>
       <div className="toolbar">
         <button type="submit" disabled={busy}>

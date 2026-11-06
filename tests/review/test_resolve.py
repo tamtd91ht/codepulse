@@ -247,3 +247,34 @@ def test_current_code_alone_can_prove_a_fix() -> None:
 
     assert ask("2") == "fixed"
     assert ask("9") is None  # past the two lines shown
+
+
+@pytest.mark.integration
+def test_after_a_review_the_current_code_closes_a_fix_no_diff_shows(db_session: Session) -> None:
+    """User 2026-11-06: a finding in a file this change does not touch, fixed by another commit
+    (its lines in no diff any more), closes on the current code of its file."""
+    project = make_project(db_session)
+    elsewhere = finding(file_path="app/db/query.py", title="Raw SQL in query.py")
+    earlier(db_session, project, "e" * 40, MADE - timedelta(hours=20), elsewhere)
+    current = {**FIXED, "evidence_file": "app/db/query.py", "evidence_lines": "2"}
+    provider = FakeLLMProvider(answers(current))
+
+    review = review_head(db_session, project, provider, auto_close_days=2)
+
+    asked = provider.prompts[-1].user
+    assert "CURRENT CODE" in asked and "### File: app/db/query.py" in asked
+    assert "def parse():" in asked  # what the mocked default branch holds
+    assert review.basis is not None and review.basis["auto_close"]["closed"] == [elsewhere.id]
+    assert elsewhere.status == "fixed"
+    closure = db_session.scalars(select(FindingClosure)).one()
+    assert closure.evidence == "app/db/query.py:2"
+
+
+@pytest.mark.integration
+def test_after_a_review_current_code_evidence_must_exist(db_session: Session) -> None:
+    project = make_project(db_session)
+    elsewhere = finding(file_path="app/db/query.py")
+    earlier(db_session, project, "e" * 40, MADE - timedelta(hours=20), elsewhere)
+    past_the_end = {**FIXED, "evidence_file": "app/db/query.py", "evidence_lines": "40"}
+    review_head(db_session, project, FakeLLMProvider(answers(past_the_end)), auto_close_days=2)
+    assert elsewhere.status == "open"

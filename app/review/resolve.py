@@ -3,9 +3,11 @@
 
 One no-tool call: the change's diff and the findings as they were stored (title, message,
 file:lines, the 40-line excerpt). The old code is never reviewed again: the question is only
-whether THIS diff removes or corrects what each finding points at. Used two ways:
+whether each finding is fixed, by THIS diff or in the current code. Used two ways:
 - after a review (AUTO_CLOSE_FINDINGS on): the repo's open critical/high findings from the last
-  AUTO_CLOSE_DAYS days, those in the files the change touched first;
+  AUTO_CLOSE_DAYS days, those in the files the change touched first, with the current code of
+  their files on the default branch (AUTO_SOURCE_FILES of them, user 2026-11-06: a finding
+  fixed by another commit, its lines no longer in any diff, closes too);
 - on request (POST /findings/{id}/close-requests): one finding against the commits named and/or
   the author's argument, with the repository's current code (the finding's file, always, and
   the files the argument names; no value ever shown: app/review/masking.py). The current file
@@ -23,7 +25,7 @@ way the finding keeps its severity and its weight in the review's score.
 import logging
 import re
 import secrets
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -47,6 +49,8 @@ MAX_EXCERPT_CHARS = 2_500
 MIN_CONFIDENCE = 0.7
 VERDICTS = ("fixed", "accepted", "partial", "not_fixed")
 MAX_SOURCE_CHARS = 20_000  # one current file shown with an argument
+AUTO_SOURCE_FILES = 6  # current files shown with the auto-close check after a review
+AUTO_SOURCE_CHARS = 60_000  # all of them together
 # What an MCP close request carries (docs/specs/26 §8): shown as the author's claims.
 MAX_CLAIM_FILES = 50
 MAX_CLAIM_TESTS = 10
@@ -69,8 +73,9 @@ When unsure, answer "not_fixed". A finding whose file the diff does not touch is
 unless the diff fixes it from elsewhere (e.g. validates the input at its only caller) and you
 can point at that.
 
-A request to close one finding also comes with CURRENT CODE: files of the default branch as
-they are now (always the finding's own file; with an argument, the files it names too). The
+CURRENT CODE, when given, holds files of the default branch as they are now: the findings' own
+files (after a review, those of the first findings; for a request to close one finding, its
+file and, with an argument, the files the argument names). The
 flagged lines may have left the diff: deleted by another commit, or the code rewritten since the
 finding. Do not try to trace other commits. When THIS diff does not show the flagged code being
 removed or corrected, look at the CURRENT CODE of the finding's file, at the same class /
@@ -81,8 +86,10 @@ lines move):
   other place in the code shown still does what the finding describes. Give `evidence_file` and
   `evidence_lines` in CURRENT CODE (the lines that are now correct, or around where the flagged
   code was) and say in `reason` that the current code proves it;
-- "not_fixed" when the flagged code is still there, unchanged or still wrong, whatever the diff
-  says;
+- a fix shown in THIS diff counts even when CURRENT CODE still has the old code (the change
+  may not be merged yet); answer "not_fixed" only when neither THIS diff nor the CURRENT CODE
+  shows it fixed;
+- a finding whose file is not in CURRENT CODE is judged on THIS diff alone;
 - the finding's file listed in FILES NOT SHOWN as not on the default branch was deleted or moved:
   that alone proves nothing (the code may live on elsewhere), answer from the diff.
 
@@ -330,6 +337,46 @@ def build_prompt(
         user="\n\n".join(parts),
         json_schema=Answers.model_json_schema(),
     )
+
+
+def current_files(
+    fetch: Callable[[str], str],
+    paths: Iterable[str],
+    sensitive_paths: Sequence[str],
+    *,
+    max_files: int = AUTO_SOURCE_FILES,
+    max_chars: int = AUTO_SOURCE_CHARS,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """(shown, not_shown): the files at `paths` (in that order, each once) as `fetch` reads them
+    from the default branch, masked like the files of a close request (no value ever sent:
+    app/review/masking.py), at most `max_files` and `max_chars` together. `fetch` raises
+    GitLabError (404: not on the branch)."""
+    from app.collector.gitlab.client import GitLabError
+    from app.review.masking import is_config, mask_code, mask_config
+
+    shown: dict[str, str] = {}
+    not_shown: dict[str, str] = {}
+    size = 0
+    for path in dict.fromkeys(repo_path(p) for p in paths if p):
+        if len(shown) >= max_files or size >= max_chars:
+            break
+        try:
+            raw = fetch(path)
+        except GitLabError as exc:
+            not_shown[path] = (
+                "không có trên nhánh mặc định"
+                if getattr(exc, "status_code", None) == 404
+                else "không lấy được từ GitLab"
+            )
+            continue
+        if len(raw) > 200_000 or "\x00" in raw:
+            not_shown[path] = "file quá lớn hoặc nhị phân, không gửi"
+            continue
+        masked = mask_config(raw) if is_config(path, list(sensitive_paths)) else mask_code(raw)
+        text = masked[: min(MAX_SOURCE_CHARS, max_chars - size)]
+        shown[path] = text
+        size += len(text)
+    return shown, not_shown
 
 
 def repo_path(path: str | None) -> str:
