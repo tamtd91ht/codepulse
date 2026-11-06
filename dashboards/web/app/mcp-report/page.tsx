@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { SubPanel, type SubTab, SubTabs } from "@/components/AdminTabs";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { Icon } from "@/components/icons";
-import { Alert, Card, EmptyState, Kpi, Loading, PageHeader, Pager, PersonLink, Pill, Segmented, SeverityBadge, SortTh, useSort } from "@/components/ui";
+import { Alert, Card, EmptyState, Kpi, Loading, PageHeader, Pagination, PersonLink, Pill, Segmented, SeverityBadge, SortTh, useSort } from "@/components/ui";
 import { can, qs, useApi } from "@/lib/api";
 import { dateTime, localDay, rangeLabel, relative, shiftDays, shiftMonths, thisMonth } from "@/lib/format";
 import type { Me, Person, Repo, Severity, Team } from "@/lib/types";
@@ -132,7 +132,7 @@ interface CallRow {
   client: string | null;
 }
 
-/** One page of a log: `items` (or `rows`), the total and the page size (50, §13.5). */
+/** One page of a log: `items` (or `rows`), the total and the page size (default 10, §13.5). */
 interface Paged<T> {
   items?: T[];
   rows?: T[];
@@ -803,40 +803,57 @@ function MembersTable({ summary, error, search }: { summary?: Summary; error?: E
 
 type Filters = Record<string, string | number | null | undefined>;
 
+const DEFAULT_PAGE_SIZE = 10;
+
 function usePage(filters: Filters, extra: Filters = {}) {
   const [page, setPage] = useState(1);
-  const key = qs({ ...filters, ...extra });
-  // A new filter starts again on page 1.
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const key = qs({ ...filters, ...extra, page_size: pageSize });
+  // A new filter or page size starts again on page 1.
   useEffect(() => setPage(1), [key]);
-  return { page, setPage, path: (base: string) => `${base}${qs({ ...filters, ...extra, page })}` };
+  return {
+    page,
+    setPage,
+    pageSize,
+    setPageSize,
+    path: (base: string) => `${base}${qs({ ...filters, ...extra, page, page_size: pageSize })}`,
+  };
 }
 
-function LogPager<T>({ data, page, setPage }: { data: Paged<T>; page: number; setPage: (p: number) => void }) {
-  const size = data.page_size ?? 50;
-  const total = data.total ?? null;
-  const pages = total !== null ? Math.max(1, Math.ceil(total / size)) : null;
+function LogPager<T>({
+  data,
+  page,
+  setPage,
+  pageSize,
+  setPageSize,
+  label,
+}: {
+  data: Paged<T>;
+  page: number;
+  setPage: (p: number) => void;
+  pageSize: number;
+  setPageSize: (s: number) => void;
+  label: string;
+}) {
+  const size = data.page_size ?? pageSize;
   const shown = (data.items ?? data.rows ?? []).length;
-  if (page === 1 && pages === 1) return null;
-  const from = (page - 1) * size + 1;
+  // Without a total (older server): at least this page, and one more when it is full.
+  const total = data.total ?? (page - 1) * size + shown + (shown === size ? 1 : 0);
   return (
-    <div className="mcp-pager">
-      <span className="muted small">
-        {shown ? `${count(from)}–${count(from + shown - 1)}` : "0"}
-        {total !== null ? ` / ${count(total)}` : ""}
-      </span>
-      <Pager
-        label={pages !== null ? `Trang ${page} / ${pages}` : `Trang ${page}`}
-        onPrev={() => setPage(page - 1)}
-        onNext={() => setPage(page + 1)}
-        prevDisabled={page <= 1}
-        nextDisabled={pages !== null ? page >= pages : shown < size}
-      />
-    </div>
+    <Pagination
+      page={page}
+      pageSize={size}
+      total={total}
+      shown={shown}
+      onPage={setPage}
+      onPageSize={setPageSize}
+      label={label}
+    />
   );
 }
 
 function RequestsLog({ filters }: { filters: Filters }) {
-  const { page, setPage, path } = usePage(filters);
+  const { page, setPage, pageSize, setPageSize, path } = usePage(filters);
   const res = useApi<Paged<RequestRow>>(path("/mcp-report/requests"), { keepPreviousData: true });
   const rows = res.data?.items ?? res.data?.rows ?? [];
   return (
@@ -926,7 +943,7 @@ function RequestsLog({ filters }: { filters: Filters }) {
               </tbody>
             </table>
           </div>
-          <LogPager data={res.data} page={page} setPage={setPage} />
+          <LogPager data={res.data} page={page} setPage={setPage} pageSize={pageSize} setPageSize={setPageSize} label="yêu cầu" />
         </div>
       )}
     </Card>
@@ -938,7 +955,7 @@ function RequestsLog({ filters }: { filters: Filters }) {
 function CallsLog({ filters }: { filters: Filters }) {
   const [tool, setTool] = useState("");
   const [ok, setOk] = useState<"" | "true" | "false">("");
-  const { page, setPage, path } = usePage(filters, { tool: tool || null, ok: ok || null });
+  const { page, setPage, pageSize, setPageSize, path } = usePage(filters, { tool: tool || null, ok: ok || null });
   const res = useApi<Paged<CallRow>>(path("/mcp-report/calls"), { keepPreviousData: true });
   const rows = res.data?.items ?? res.data?.rows ?? [];
   return (
@@ -1020,7 +1037,7 @@ function CallsLog({ filters }: { filters: Filters }) {
               </tbody>
             </table>
           </div>
-          <LogPager data={res.data} page={page} setPage={setPage} />
+          <LogPager data={res.data} page={page} setPage={setPage} pageSize={pageSize} setPageSize={setPageSize} label="lần gọi" />
         </div>
       )}
     </Card>

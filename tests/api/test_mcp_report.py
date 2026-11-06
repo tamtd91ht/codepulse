@@ -282,7 +282,7 @@ def test_requests_log(client: TestClient, world: World, as_user: Any, facts: Fac
     res = client.get(f"{API}/requests", params=OCT, headers=as_user(world.an))
     assert res.status_code == 200, res.text
     body = res.json()
-    assert (body["total"], body["page"], body["page_size"]) == (4, 1, 50)
+    assert (body["total"], body["page"], body["page_size"]) == (4, 1, 10)
     first = body["items"][0]  # newest first: f3 pending
     assert first["finding"]["id"] == facts.f3.id and first["status"] == "pending"
     assert first["finding"]["severity"] == "critical" and first["finding"]["title"]
@@ -297,6 +297,20 @@ def test_requests_log(client: TestClient, world: World, as_user: Any, facts: Fac
     assert unmet["reason"] == "chưa đủ"
     page2 = client.get(f"{API}/requests", params={**OCT, "page": 2}, headers=as_user(world.an))
     assert page2.json()["items"] == [] and page2.json()["total"] == 4
+    # page_size (user 2026-11-06): 3 a page, the 4th row on page 2; bounds 1-100.
+    small = {**OCT, "page_size": 3}
+    first3 = client.get(f"{API}/requests", params=small, headers=as_user(world.an)).json()
+    assert len(first3["items"]) == 3 and first3["page_size"] == 3 and first3["total"] == 4
+    rest = client.get(f"{API}/requests", params={**small, "page": 2}, headers=as_user(world.an))
+    assert len(rest.json()["items"]) == 1
+    assert [i["id"] for i in first3["items"]] + [rest.json()["items"][0]["id"]] == [
+        i["id"] for i in body["items"]
+    ]
+    for wrong in (0, 101):
+        res = client.get(
+            f"{API}/requests", params={**OCT, "page_size": wrong}, headers=as_user(world.an)
+        )
+        assert res.status_code == 422
 
 
 def test_calls_log_is_for_admins(

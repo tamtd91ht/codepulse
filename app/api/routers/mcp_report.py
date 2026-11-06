@@ -58,7 +58,8 @@ SessionDep = Annotated[Session, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 Viewer = Annotated[Principal, require("report.mcp")]
 
-PAGE_SIZE = 50
+PAGE_SIZE = 10  # the logs' default page size (user 2026-11-06), at most MAX_PAGE_SIZE
+MAX_PAGE_SIZE = 100
 EXPORT_ROWS = 5000
 # Close-request outcomes (docs/specs/26 §13.3): `pending` gathers what is still in flight.
 BUCKETS: dict[str, tuple[str, ...]] = {
@@ -716,6 +717,7 @@ def call_rows(
 From = Annotated[date | None, Query(alias="from")]
 To = Annotated[date | None, Query(alias="to")]
 Page = Annotated[int, Query(ge=1, le=10_000)]
+PageSize = Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)]
 
 
 @router.get("/mcp-report/summary")
@@ -762,6 +764,7 @@ def requests_log(
     user_id: int | None = None,
     severity: str | None = None,
     page: Page = 1,
+    page_size: PageSize = PAGE_SIZE,
 ) -> dict[str, Any]:
     f = _filters(
         session,
@@ -775,8 +778,8 @@ def requests_log(
         user_id,
         severity,
     )
-    items, total = request_rows(session, principal, f, (page - 1) * PAGE_SIZE, PAGE_SIZE)
-    return {"items": items, "total": total, "page": page, "page_size": PAGE_SIZE}
+    items, total = request_rows(session, principal, f, (page - 1) * page_size, page_size)
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/mcp-report/calls")
@@ -794,6 +797,7 @@ def calls_log(
     tool: str | None = None,
     ok: bool | None = None,
     page: Page = 1,
+    page_size: PageSize = PAGE_SIZE,
 ) -> dict[str, Any]:
     """The tool-call log (docs/specs/26 §13.1): admins only."""
     f = _filters(
@@ -808,8 +812,8 @@ def calls_log(
         user_id,
         severity,
     )
-    items, total = call_rows(session, f, tool, ok, (page - 1) * PAGE_SIZE, PAGE_SIZE)
-    return {"items": items, "total": total, "page": page, "page_size": PAGE_SIZE}
+    items, total = call_rows(session, f, tool, ok, (page - 1) * page_size, page_size)
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/mcp-report/export.xlsx")

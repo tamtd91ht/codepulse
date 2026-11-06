@@ -137,7 +137,7 @@ Mỗi dòng một thành viên (trong phạm vi + bộ lọc), có dòng tổng:
 
 ### 13.5 API
 - `GET /api/v1/mcp-report/summary?from&to&business_project_id&project_id&team_id&user_id&severity` → `{period:{from,to}, previous:{from,to}, kpis:{calls, active_users, requests, first_pass_rate, median_hours_to_close, ...prev}, members:[{user_id, name, email, calls, active_days, findings_read, error_rate, rate_limited, requests:{closed, unmet, rejected, pending, cancelled, failed}, first_pass_rate, resubmits, median_hours_to_request, median_hours_to_close, with_tests_rate, tests_pass_rate, backlog, web:{requests, closed, pass_rate}}], total:{…same}}`.
-- `GET /api/v1/mcp-report/requests?…same filters…&page` → nhật ký yêu cầu đóng qua MCP (phân trang 50).
+- `GET /api/v1/mcp-report/requests?…same filters…&page` → nhật ký yêu cầu đóng qua MCP (phân trang: `page`, `page_size` mặc định 10, tối đa 100 — **[Quyết định]** user 2026-11-06, trước là 50 cố định; nhật ký gọi `/mcp-report/calls` cũng vậy). Trên web hai bảng "Yêu cầu đóng qua MCP" và "Nhật ký gọi" có thanh phân trang (Hiển thị a–b / tổng, Số dòng / trang 10/20/50/100, trang đầu / trước / số trang / sau / cuối) thay cho danh sách dài phải cuộn.
 - `GET /api/v1/mcp-report/calls?…same filters…&tool&ok&page` → nhật ký gọi tool (admin).
 - `GET /api/v1/mcp-report/export.xlsx?…same filters…` → file Excel.
 - Tỉ lệ là số 0–1 hoặc `null` khi mẫu số bằng 0.

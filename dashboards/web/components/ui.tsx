@@ -524,6 +524,98 @@ export function Segmented<T extends string>({
   );
 }
 
+/* ---------- Pagination for server-paged tables ---------- */
+
+export const PAGE_SIZES = [10, 20, 50, 100];
+
+/** Page numbers to show: the first, the last, the current one and its neighbours; "gap" between. */
+export function pageItems(page: number, pages: number): (number | "gap")[] {
+  const keep = new Set([1, pages, page - 1, page, page + 1].filter((p) => p >= 1 && p <= pages));
+  const sorted = [...keep].sort((a, b) => a - b);
+  const out: (number | "gap")[] = [];
+  sorted.forEach((p, i) => {
+    // A single hidden page is shown rather than a gap of one.
+    if (i && p - sorted[i - 1] > 1) out.push(p - sorted[i - 1] === 2 ? p - 1 : "gap");
+    out.push(p);
+  });
+  return out;
+}
+
+/**
+ * "Hiển thị a–b / tổng", rows per page, and first / previous / page numbers / next / last for a
+ * table the server pages (`total` rows, `shown` on this page).
+ */
+export function Pagination({
+  page,
+  pageSize,
+  total,
+  shown,
+  onPage,
+  onPageSize,
+  sizes = PAGE_SIZES,
+  label = "dòng",
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  shown: number;
+  onPage: (page: number) => void;
+  onPageSize?: (size: number) => void;
+  sizes?: number[];
+  label?: string;
+}) {
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const from = shown ? (page - 1) * pageSize + 1 : 0;
+  const to = shown ? from + shown - 1 : 0;
+  const fmt = (n: number) => n.toLocaleString("vi-VN");
+  const go = (p: number) => onPage(Math.min(pages, Math.max(1, p)));
+  return (
+    <nav className="pagination" aria-label="Phân trang">
+      <span className="pagination-info muted small">
+        Hiển thị {fmt(from)}–{fmt(to)} / {fmt(total)} {label}
+      </span>
+      <div className="pagination-controls">
+        {onPageSize && (
+          <label className="pagination-size small muted">
+            <span>Số dòng / trang</span>
+            <select className="compact" value={pageSize} onChange={(e) => onPageSize(Number(e.target.value))} aria-label="Số dòng mỗi trang">
+              {sizes.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <div className="pagination-pages">
+          <IconButton icon="chevronsLeft" label="Trang đầu" onClick={() => go(1)} disabled={page <= 1} />
+          <IconButton icon="chevronLeft" label="Trang trước" onClick={() => go(page - 1)} disabled={page <= 1} />
+          {pageItems(page, pages).map((p, i) =>
+            p === "gap" ? (
+              <span key={`gap-${i}`} className="pagination-gap" aria-hidden="true">
+                …
+              </span>
+            ) : (
+              <button
+                key={p}
+                type="button"
+                className={`pagination-page${p === page ? " active" : ""}`}
+                aria-current={p === page ? "page" : undefined}
+                aria-label={`Trang ${p}`}
+                onClick={() => go(p)}
+              >
+                {p}
+              </button>
+            ),
+          )}
+          <IconButton icon="chevronRight" label="Trang sau" onClick={() => go(page + 1)} disabled={page >= pages} />
+          <IconButton icon="chevronsRight" label="Trang cuối" onClick={() => go(pages)} disabled={page >= pages} />
+        </div>
+      </div>
+    </nav>
+  );
+}
+
 /** Previous / label / next, e.g. for stepping through weeks. */
 export function Pager({
   label,

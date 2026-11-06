@@ -7724,13 +7724,74 @@ td.num .mcp-sub {
 td.mcp-reason {
   min-width: 200px;
 }
-.mcp-pager {
+/* Pagination (components/ui Pagination) under a server-paged table. */
+.pagination {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px 16px;
   padding: 10px 16px;
   border-top: 1px solid var(--border);
+}
+.pagination-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+.pagination-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.pagination-size select {
+  width: auto;
+}
+.pagination-pages {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+.pagination-pages .icon-btn {
+  width: 32px;
+  height: 32px;
+}
+.pagination-page {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border-color: transparent;
+  background: none;
+  color: var(--text);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.pagination-page:hover:not(.active) {
+  background: var(--surface-hover);
+  border-color: transparent;
+}
+.pagination-page.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+  font-weight: 600;
+  cursor: default;
+}
+.pagination-gap {
+  min-width: 20px;
+  text-align: center;
+  color: var(--muted);
+}
+@media (max-width: 640px) {
+  .pagination {
+    padding: 10px 12px;
+  }
+  .pagination-info {
+    width: 100%;
+  }
 }
 .mcp-call-filters {
   display: inline-flex;
