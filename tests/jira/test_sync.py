@@ -319,3 +319,58 @@ def test_unlinked_accounts_are_retried_on_every_run(db_session: Session) -> None
     db_session.expire_all()
     assert db_session.get(Account, accounts["JIRAUSER7"].id).user_id == chi.id  # type: ignore[union-attr]
     assert db_session.get(Account, accounts["JIRAUSER8"].id).user_id == dung.id  # type: ignore[union-attr]
+
+
+# -- the dự án of each issue (docs/specs/27 §15) -----------------------------------------
+
+
+def _with_components(issue: dict[str, Any], *names: str) -> dict[str, Any]:
+    issue["fields"]["components"] = [{"name": n} for n in names]
+    return issue
+
+
+def test_sync_routes_issues_by_component_and_reroutes_when_scopes_change_meanwhile(
+    db_session: Session,
+) -> None:
+    from app.jira.scopes import Rule, replace_scopes
+    from app.models import BusinessProject
+
+    fe, be = BusinessProject(name="FE"), BusinessProject(name="BE")
+    db_session.add_all([fe, be])
+    p = project(db_session, "SHOP")
+    db_session.flush()
+    replace_scopes(
+        db_session, p, [Rule(fe.id, components=("Frontend",)), Rule(be.id, components=("Backend",))]
+    )
+    db_session.commit()
+    issues = [
+        _with_components(jira_issue(31, "SHOP-1"), "Frontend"),
+        _with_components(jira_issue(32, "SHOP-2"), "Backend"),
+        _with_components(jira_issue(33, "SHOP-3")),
+    ]
+
+    class Moving(FakeJira):
+        """The admin moves "Frontend" to BE after the first issue is written."""
+
+        def search_all(self, jql: str, fields: Sequence[str]) -> Iterator[dict[str, Any]]:
+            for n, item in enumerate(super().search_all(jql, fields)):
+                if n == 1:
+                    replace_scopes(db_session, p, [Rule(be.id, components=("Frontend", "Backend"))])
+                yield item
+
+    assert sync_project(db_session, Moving({"SHOP": issues}), p, settings(), NOW) == 3
+    db_session.flush()
+    routed = {i.key: i.business_project_ids for i in db_session.scalars(select(Issue))}
+    # SHOP-1 was written with the old scopes (FE): routed again with the new ones.
+    assert routed == {"SHOP-1": [be.id], "SHOP-2": [be.id], "SHOP-3": None}
+    assert db_session.get(Issue, JIRA_ID_OFFSET + 31).components == ["Frontend"]  # type: ignore[union-attr]
+
+
+def test_full_is_a_job_argument_not_only_a_mark(db_session: Session) -> None:
+    before = NOW - timedelta(hours=1)
+    p = project(db_session, synced_until=before)
+    assert window_minutes(p, NOW, 180, full=True) == 180 * 1440
+    db_session.commit()
+    fake = FakeJira({"ABC": []})
+    sync_all(db_session, settings(), fake, keys=["ABC"], full=True)
+    assert fake.queries == [jql(p, 180 * 1440)]  # the backfill, although synced_until was set

@@ -161,11 +161,13 @@
 
 ## 4. Chọn dự án Jira
 
-- **[Đã chốt]** Admin chọn dự án Jira (theo key) trong Admin › DPI › Jira và gán mỗi dự án cho
-  một **dự án CodePulse** (`business_projects`) để lọc báo cáo và phân quyền.
-- Dự án Jira không gán dự án CodePulse thì chỉ admin thấy trong báo cáo cấp team.
-- Bảng `jira_projects`: `key` (unique), `name`, `business_project_id`, `enabled`,
-  `synced_until`, `last_synced_at`, `last_error`, `issues_count`.
+- **[Đã chốt]** Admin chọn dự án Jira (theo key) trong Admin › DPI › Jira và gán nó cho
+  **dự án CodePulse** (`business_projects`) để lọc báo cáo và phân quyền. **[Quyết định]**
+  (user 2026-11-06) một dự án Jira có thể tính cho **nhiều** dự án CodePulse, xem §15.
+- Dự án Jira không gán dự án CodePulse nào thì chỉ admin thấy trong báo cáo cấp team.
+- Bảng `jira_projects`: `key` (unique), `name`, `enabled`, `synced_until`, `last_synced_at`,
+  `last_error`, `issues_count`. Cột `business_project_id` cũ chuyển thành bảng
+  `jira_project_scopes` (§15, migration `b2d4f6a8c0e1`).
 
 ## 5. Quy đổi trường (mặc định; Admin sửa được)
 
@@ -283,13 +285,14 @@ production của issue Jira có `rca_status` khác `pending`.
 - Trên Jira, tài khoản dịch vụ chỉ cần Browse Projects trên các dự án cần đồng bộ; Hướng dẫn › Tích hợp Jira có cách tạo Personal Access Token.
 - Báo cáo cấp team và lỗi production lọc theo dự án CodePulse:
   - issue GitLab theo `projects.business_project_id` như cũ;
-  - issue Jira theo `jira_projects.business_project_id`.
+  - issue Jira theo dự án nó được tính cho (§15: `issues.business_project_ids`, NULL = mọi dự
+    án đã gắn của dự án Jira).
 - AI gợi ý điểm (spec 25 §R6) gửi tiêu đề issue Jira như issue GitLab. Không có code.
 
 ## 12. Giao diện
 
 - **Admin › Jira** và **DPI › Jira** (cùng một màn hình; tab Admin hiện cho admin và người có
-  `jira.admin`):
+  `jira.admin`). Bố cục thiết kế lại theo §16 (2026-11-06); các nội dung dưới đây vẫn đúng:
   - **[Quyết định]** (user 2026-11-05) **Cách đăng nhập** là lựa chọn phân đoạn "Personal Access
     Token (Jira ≥ 8.14)" / "Tài khoản + mật khẩu (Jira cũ hơn 8.14)". Chọn basic thì hiện
     Username và **Mật khẩu** (ô mật khẩu, chỉ ghi như token, cùng trạng thái đã lưu / biến môi
@@ -329,10 +332,12 @@ Tiền tố `/dpi/jira`, quyền `jira.admin` (admin có mọi quyền).
 | DELETE | `/dpi/jira/connection` | Xoá giá trị đã lưu trên web, biến môi trường áp dụng lại |
 | POST | `/dpi/jira/test` | Gọi serverInfo + myself + field: phiên bản, tài khoản, custom field tìm được; body tuỳ chọn để thử giá trị chưa lưu |
 | GET | `/dpi/jira/remote-projects` | Dự án trên Jira (key, name) để chọn |
-| PUT | `/dpi/jira/projects` | Đăng ký, cập nhật dự án (key, name, enabled, business_project_id) |
+| PUT | `/dpi/jira/projects` | Đăng ký, cập nhật dự án (key, name, enabled, `scopes` §15; `business_project_id` cũ vẫn nhận = một dòng "mọi issue") |
+| GET | `/dpi/jira/projects/{key}/options` | Gợi ý cho quy tắc §15: component trên Jira (lỗi thì từ issue đã lưu), label của issue đã lưu |
+| POST | `/dpi/jira/projects/{key}/preview` | Issue đã lưu sẽ chia thế nào với `scopes` gửi lên (không lưu) |
 | PUT | `/dpi/jira/mapping` | Lưu bảng quy đổi |
 | PUT | `/dpi/jira/source` | `gitlab` \| `jira` |
-| POST | `/dpi/jira/sync` | Đưa job sync vào hàng đợi (202) |
+| POST | `/dpi/jira/sync` | Đưa job sync vào hàng đợi (202); body tuỳ chọn `{keys?, full?}` (§16) |
 
 Mỗi thay đổi đều ghi audit.
 
@@ -375,3 +380,85 @@ Mỗi thay đổi đều ghi audit.
   CodePulse của Jira; key hiển thị.
 - GitLab: `jira_keys` trích từ tiêu đề, mô tả và nhánh; collector ngừng lấy issue khi nguồn là
   Jira.
+
+## 15. Một dự án Jira cho nhiều dự án CodePulse
+
+- **[Quyết định]** (user 2026-11-06: "1 project trên Jira có thể liên quan đến 2 project ở
+  CodePulse, ví dụ Jira có project chung nhưng CodePulse tách ra FE, BE") Mỗi dự án Jira có
+  0..20 **dòng gắn** (`jira_project_scopes`: `jira_project_id`, `business_project_id` — mỗi dự
+  án CodePulse một lần, `components`, `labels` (JSONB, tối đa 50 giá trị mỗi loại, 1–200 ký
+  tự, không lặp, không phân biệt hoa thường), `position`).
+  - Dòng có `components` / `labels`: các issue có **một** component **hoặc** label trong đó
+    (không phân biệt hoa thường).
+  - Dòng không có cả hai: khi dự án có dòng theo quy tắc thì là **"các issue còn lại"** (issue
+    không khớp quy tắc nào); khi không có dòng nào theo quy tắc thì là **mọi issue**.
+  - Issue khớp nhiều dòng tính cho tất cả các dự án đó (việc chung FE + BE).
+  - Issue không khớp quy tắc nào và không có dòng "còn lại": tính cho **mọi** dự án đã gắn
+    (không issue nào bị mất; màn hình báo số issue như vậy để admin thêm dòng "còn lại" hoặc
+    sửa component). Lý do chọn: chia theo Component là cách phổ biến nhất trên Jira, label bổ
+    sung cho đội không dùng component; chia theo repo của MR thì phụ thuộc thứ tự đồng bộ nên
+    không dùng.
+- Lưu trên issue Jira: `components` (JSONB, tên component; đồng bộ lấy thêm trường
+  `components`) và `business_project_ids` (`int[]`, GIN): kết quả chia, **NULL** = mọi dự án
+  đã gắn của dự án Jira. Nhờ vậy dự án Jira không có quy tắc không cần ghi gì cho từng issue, và
+  đổi dòng gắn "mọi issue" không phải ghi lại issue. Điều kiện "issue Jira thuộc dự án X" =
+  `business_project_ids && {X}` hoặc (`NULL` và dự án Jira có dòng gắn X)
+  (`app.jira.scopes.jira_issue_in`), dùng cho R4 Delivery, lỗi production (danh sách, xác nhận
+  RCA) và phạm vi người xem; dự án Jira "thuộc" X khi có dòng gắn X (`projects_in`: trang Sẵn
+  sàng dữ liệu, R4).
+- Đồng bộ chia từng issue theo dòng gắn lúc ghi. Lưu dòng gắn (`PUT /projects`) chia lại ngay
+  mọi issue đã lưu của dự án (không gọi Jira). Dòng theo component mà dự án có issue lưu từ
+  trước khi có cột `components` (NULL hoặc JSON null) thì `synced_until` về NULL (đồng bộ lại từ
+  khoảng lấy lùi) và đưa job đồng bộ dự án đó vào hàng đợi khi Jira đã cấu hình, với `full`
+  là tham số của job (một lần đồng bộ đang chạy ghi `synced_until` cũng không huỷ được yêu cầu);
+  trả `refetch`, `refetch_queued`. Issue cập nhật lần cuối trước khoảng lấy lùi không lấy lại
+  được nên vẫn thiếu component (đi về dòng "còn lại" / mọi dự án); tăng số ngày lấy lùi nếu cần.
+- Review 2026-11-06: dòng gắn đổi trong lúc một lần đồng bộ đang chạy thì cuối lần đồng bộ chia
+  lại toàn bộ issue của dự án; xoá một dự án CodePulse thì xoá dòng gắn của nó và chia lại issue
+  của các dự án Jira liên quan; trang Sẵn sàng dữ liệu chỉ đếm issue của dự án người xem thấy.
+  Issue không khớp quy tắc nào (NULL) thuộc mọi dự án đã gắn nên lead của từng dự án đều xác
+  nhận RCA lỗi production của nó được — chấp nhận, vì đây là việc chưa phân loại; thêm dòng "các
+  issue còn lại" để giao rõ cho một dự án.
+- `GET /dpi/jira`: mỗi dự án có `scopes: [{business_project, components, labels, issues}]`
+  (issue đã lưu tính cho dòng đó) và `unmatched` (issue không khớp quy tắc nào, đang tính cho
+  mọi dự án), thay `business_project`. Trang Sẵn sàng dữ liệu: `business_projects` (danh sách)
+  thay `business_project`.
+- Migration `b2d4f6a8c0e1`: mỗi `jira_projects.business_project_id` cũ thành một dòng "mọi
+  issue"; downgrade giữ một dự án mỗi dự án Jira (dòng "mọi issue" đầu tiên, nếu không thì dòng
+  đầu).
+
+## 16. Màn hình Jira (thiết kế lại)
+
+- **[Quyết định]** (user 2026-11-06: cấu hình và đồng bộ "rối, khó dùng, không hợp lý") Bố cục
+  mới của Admin › Jira / DPI › Jira, theo phong cách OMICX (trang cài đặt: thẻ chỉ đọc + "Chỉnh
+  sửa"; thiết lập lần đầu: các bước đánh số; một nút chính mỗi màn):
+  - **Thẻ trạng thái** luôn ở đầu: trạng thái (Đang hoạt động / Hoạt động, N dự án lỗi / Chưa
+    bật dự án nào / Tạm dừng: Jira từ chối đăng nhập / Đang tắt / Chưa cấu hình), máy chủ và cách
+    đăng nhập, đồng bộ (chu kỳ, lần gần nhất, số dự án lỗi), số dự án đang đồng bộ / đã thêm và
+    tổng issue, số tài khoản Jira đã nối người, **nguồn task của DPI** với "Đổi nguồn" (xác nhận
+    ngay trong thẻ), nút **Đồng bộ ngay**. Cảnh báo đăng nhập bị từ chối / token không giải mã
+    được nằm trong thẻ. `GET /dpi/jira` thêm `sync: {last_at, failed, enabled, never}`.
+  - **Chưa cấu hình**: ba bước đánh số — 1. Kết nối máy chủ (form), 2. Thêm dự án và gắn dự án
+    CodePulse, 3. Dùng Jira làm nguồn task — bước 2–3 mờ cho tới khi kết nối xong. Lưu kết nối
+    lần đầu bật luôn tích hợp. Tích hợp đang tắt: bước 1 có nút "Bật lại".
+  - **Đã cấu hình**: tab **Dự án & đồng bộ** (mặc định) · **Kết nối** · **Quy đổi trường**.
+    - Dự án & đồng bộ: bảng (dự án Jira; tính cho dự án CodePulse nào và theo quy tắc gì, số
+      issue mỗi dòng, cảnh báo "chưa gắn" / "N issue không khớp quy tắc"; trạng thái đồng bộ —
+      lỗi, chờ lần đầu, thời điểm; số issue; nút **Đồng bộ** từng dự án và **Sửa**), ô tìm khi
+      có hơn 5 dự án, nút chính **Thêm dự án** (ngăn kéo: tìm và chọn dự án trên Jira, rồi sang
+      ngăn sửa). Ngăn **Sửa** dự án: bật/tắt đồng bộ; các dòng dự án CodePulse, mỗi dòng chọn
+      "Mọi issue / Các issue còn lại" hoặc "Theo component / label" (ô nhập dạng thẻ, gợi ý từ
+      `/options`), số issue ước tính mỗi dòng (`/preview`, cập nhật khi sửa), giải thích luật
+      chia, cảnh báo phải đồng bộ lại khi issue cũ thiếu component; **Đồng bộ lại từ đầu**.
+    - Kết nối: thẻ chỉ đọc (URL, cách đăng nhập, token/mật khẩu — xoá được, CA, chu kỳ / lấy
+      lùi / timeout, công tắc bật/tắt tích hợp, hỏi xác nhận khi tắt), **Kiểm tra kết nối**,
+      **Chỉnh sửa** mở form: URL, cách đăng nhập, username, token/mật khẩu; CA, chu kỳ, lấy lùi,
+      timeout nằm trong "Nâng cao" (tự mở khi có lỗi ở đó). **Dùng lại biến môi trường** khi có
+      giá trị lưu trên web.
+    - Quy đổi trường: ba thẻ (Trường tuỳ chỉnh, Loại issue → loại DPI, Lỗi production và
+      blocked) và thanh lưu dính dưới cùng (Huỷ thay đổi / Lưu quy đổi).
+- `POST /dpi/jira/sync` body tuỳ chọn `{keys?: [KEY], full?: bool}`: chỉ các dự án đó (đang
+  bật; có `keys` mà không dự án nào khớp thì 409), `full` đặt `synced_until = NULL` và truyền
+  `full` cho job (lấy lại khoảng lấy lùi). `sync_all(keys=…, full=…)`,
+  `sync_all_job(manual, keys, full)`. Audit `dpi.jira.sync`
+  ghi `keys`, `full`.

@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -28,6 +29,7 @@ from app.models import (
     AuditLog,
     BusinessProject,
     JiraProject,
+    JiraProjectScope,
     PermissionSet,
     PermissionSetItem,
     StoredSecret,
@@ -75,6 +77,11 @@ class FakeApi:
         if self.fail:
             raise JiraError(None, "GET /project: ConnectError")
         return [{"key": "XYZ", "name": "Xyz"}, {"key": "ABC", "name": "Alpha"}]
+
+    def components(self, key: str) -> list[dict[str, Any]]:
+        if self.fail:
+            raise JiraError(None, f"GET /project/{key}/components: ConnectError")
+        return [{"name": "Frontend"}, {"name": "Backend"}, {"id": "x"}]
 
     def close(self) -> None:
         self.closed = True
@@ -154,11 +161,14 @@ def test_overview(
     db_session.add_all(
         [
             JiraProject(key="ZED", name="Zed", enabled=False),
-            JiraProject(key="ABC", name="Alpha", business_project_id=bp.id, issues_count=4),
+            JiraProject(key="ABC", name="Alpha", issues_count=4),
             Account(kind="jira_user", external_key="JIRAUSER1", user_id=world.an.id),
             Account(kind="jira_user", external_key="JIRAUSER2"),
         ]
     )
+    db_session.flush()
+    abc_row = db_session.scalars(select(JiraProject).where(JiraProject.key == "ABC")).one()
+    db_session.add(JiraProjectScope(jira_project_id=abc_row.id, business_project_id=bp.id))
     db_session.flush()
     body = client.get(API, headers=as_user(world.admin)).json()
     assert body["configured"] is True
@@ -175,15 +185,24 @@ def test_overview(
         "key",
         "name",
         "enabled",
-        "business_project",
+        "scopes",
+        "unmatched",
         "last_synced_at",
         "synced_until",
         "last_error",
         "issues_count",
     }
-    assert abc["business_project"] == {"id": bp.id, "name": bp.name}
+    assert abc["scopes"] == [
+        {
+            "business_project": {"id": bp.id, "name": bp.name},
+            "components": [],
+            "labels": [],
+            "issues": 0,
+        }
+    ]
     assert abc["issues_count"] == 4 and abc["enabled"] is True
-    assert body["projects"][1]["business_project"] is None
+    assert body["projects"][1]["scopes"] == []
+    assert body["sync"] == {"last_at": None, "failed": 0, "enabled": 1, "never": 1}
     assert TOKEN not in str(body)
 
 
@@ -249,7 +268,8 @@ def test_put_projects(client: TestClient, world: World, as_user: Any, db_session
         ("ABC", "Alpha", True),
         ("OLD", "Old", False),  # no name given: kept
     ]
-    assert projects[0]["business_project"]["id"] == bp_id
+    assert projects[0]["scopes"][0]["business_project"]["id"] == bp_id
+    assert projects[1]["scopes"] == []
     assert db_session.scalars(select(AuditLog).where(AuditLog.action == "dpi.jira.projects")).one()
     bad = [{"key": "abc", "enabled": True}]
     assert client.put(f"{API}/projects", headers=admin, json={"items": bad}).status_code == 422
@@ -800,3 +820,191 @@ def test_switching_off_is_allowed_whatever_the_login(
     assert off.status_code == 200 and off.json()["connection"]["enabled"] is False
     login = client.put(f"{API}/connection", headers=admin, json={"token": TOKEN})
     assert login.status_code == 422 and "username" in login.json()["detail"]
+
+
+# -- several CodePulse dự án per Jira project (docs/specs/27 §15-16) -----------------------
+
+
+def _shop(db_session: Session) -> tuple[JiraProject, int, int]:
+    from app.jira.settings import JIRA_ID_OFFSET
+    from app.models import Issue
+
+    fe = BusinessProject(name="FE")
+    be = BusinessProject(name="BE")
+    shop = JiraProject(key="SHOP", name="Shop", synced_until=datetime(2026, 11, 1, tzinfo=UTC))
+    db_session.add_all([fe, be, shop])
+    db_session.flush()
+    for n, comps, labels in [(1, ["Frontend"], []), (2, ["Backend"], ["api"]), (3, [], [])]:
+        db_session.add(
+            Issue(
+                id=JIRA_ID_OFFSET + 9000 + n,
+                source="jira",
+                jira_project_id=shop.id,
+                iid=n,
+                key=f"SHOP-{n}",
+                components=comps,
+                labels=labels,
+            )
+        )
+    db_session.flush()
+    return shop, fe.id, be.id
+
+
+def test_put_projects_with_scopes_routes_the_stored_issues(
+    client: TestClient, world: World, as_user: Any, db_session: Session, queue: FakeQueue
+) -> None:
+    from app.models import Issue
+
+    admin = as_user(world.admin)
+    _project, fe, be = _shop(db_session)
+    scopes = [
+        {"business_project_id": fe, "components": ["frontend", " Frontend "]},
+        {"business_project_id": be, "components": ["Backend"], "labels": ["api"]},
+    ]
+    item = {"key": "SHOP", "enabled": True, "scopes": scopes}
+    response = client.put(f"{API}/projects", headers=admin, json={"items": [item]})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    row = next(p for p in body["projects"] if p["key"] == "SHOP")
+    assert [
+        (s["business_project"]["name"], s["components"], s["labels"], s["issues"])
+        for s in row["scopes"]
+    ] == [
+        ("FE", ["frontend"], [], 2),  # SHOP-1, and SHOP-3 (no match: every dự án)
+        ("BE", ["Backend"], ["api"], 2),
+    ]
+    assert row["unmatched"] == 1
+    assert body["refetch"] == [] and queue.jobs == []  # components were stored already
+    routed = dict(db_session.execute(select(Issue.key, Issue.business_project_ids)).all())
+    assert routed == {"SHOP-1": [fe], "SHOP-2": [be], "SHOP-3": None}
+
+    # Left out: the scopes are kept. The old one-dự án shape still works (one catch-all).
+    keep = client.put(
+        f"{API}/projects", headers=admin, json={"items": [{"key": "SHOP", "enabled": False}]}
+    )
+    assert len(next(p for p in keep.json()["projects"] if p["key"] == "SHOP")["scopes"]) == 2
+    legacy = {"key": "SHOP", "enabled": True, "business_project_id": fe}
+    again = client.put(f"{API}/projects", headers=admin, json={"items": [legacy]}).json()
+    assert [
+        s["components"] for s in next(p for p in again["projects"] if p["key"] == "SHOP")["scopes"]
+    ] == [[]]
+    db_session.expire_all()
+    assert set(db_session.scalars(select(Issue.business_project_ids))) == {None}
+
+    twice = {"key": "SHOP", "enabled": True, "scopes": [scopes[0], scopes[0]]}
+    assert client.put(f"{API}/projects", headers=admin, json={"items": [twice]}).status_code == 422
+    unknown = {"key": "SHOP", "enabled": True, "scopes": [{"business_project_id": 999999}]}
+    assert (
+        client.put(f"{API}/projects", headers=admin, json={"items": [unknown]}).status_code == 422
+    )
+
+
+def test_a_component_rule_on_issues_stored_without_components_refetches(
+    client: TestClient, world: World, as_user: Any, db_session: Session, queue: FakeQueue
+) -> None:
+    from app.models import Issue
+
+    shop, fe, _be = _shop(db_session)
+    db_session.execute(
+        Issue.__table__.update().where(Issue.key == "SHOP-3").values(components=None)
+    )
+    item = {
+        "key": "SHOP",
+        "enabled": True,
+        "scopes": [{"business_project_id": fe, "components": ["Frontend"]}],
+    }
+    body = client.put(
+        f"{API}/projects", headers=as_user(world.admin), json={"items": [item]}
+    ).json()
+    assert body["refetch"] == ["SHOP"] and body["refetch_queued"] is True
+    db_session.refresh(shop)
+    assert shop.synced_until is None  # the backfill window again, components included
+    assert queue.jobs[-1][2]["keys"] == ["SHOP"]
+
+
+def test_preview_and_options(
+    client: TestClient, world: World, as_user: Any, db_session: Session, jira: dict[str, FakeApi]
+) -> None:
+    admin = as_user(world.admin)
+    _project, fe, be = _shop(db_session)
+    scopes = [
+        {"business_project_id": fe, "components": ["Frontend"]},
+        {"business_project_id": be},
+    ]
+    body = client.post(
+        f"{API}/projects/SHOP/preview", headers=admin, json={"scopes": scopes}
+    ).json()
+    # SHOP-1 to FE; SHOP-2 and SHOP-3 match no rule: to the catch-all BE.
+    assert body == {
+        "total": 3,
+        "per_business_project": {str(fe): 1, str(be): 2},
+        "unmatched": 2,
+        "components_missing": False,
+    }
+    assert (
+        client.post(f"{API}/projects/NEW/preview", headers=admin, json={"scopes": []}).json()[
+            "total"
+        ]
+        == 0
+    )
+    assert (
+        client.post(f"{API}/projects/bad/preview", headers=admin, json={"scopes": []}).status_code
+        == 422
+    )
+
+    options = client.get(f"{API}/projects/SHOP/options", headers=admin).json()
+    assert options == {
+        "components": ["Backend", "Frontend"],
+        "components_source": "jira",
+        "labels": ["api"],
+    }
+    jira["api"] = FakeApi(fail=True)  # Jira unreachable: the components seen on stored issues
+    local = client.get(f"{API}/projects/SHOP/options", headers=admin).json()
+    assert local["components_source"] == "local" and set(local["components"]) == {
+        "Frontend",
+        "Backend",
+    }
+
+
+def test_sync_one_project_or_from_the_start(
+    client: TestClient, world: World, as_user: Any, db_session: Session, queue: FakeQueue
+) -> None:
+    admin = as_user(world.admin)
+    shop, _fe, _be = _shop(db_session)
+    body = client.post(f"{API}/sync", headers=admin, json={"keys": ["SHOP"], "full": True}).json()
+    assert body["keys"] == ["SHOP"] and body["full"] is True
+    assert queue.jobs[-1][2]["keys"] == ["SHOP"] and queue.jobs[-1][2]["manual"] is True
+    db_session.refresh(shop)
+    assert shop.synced_until is None
+    shop.enabled = False
+    db_session.flush()
+    assert client.post(f"{API}/sync", headers=admin, json={"keys": ["SHOP"]}).status_code == 409
+
+
+def test_deleting_a_dự_án_routes_its_jira_issues_again(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    from app.models import Issue
+
+    admin = as_user(world.admin)
+    _project, fe, be = _shop(db_session)
+    scopes = [
+        {"business_project_id": fe, "components": ["Frontend"]},
+        {"business_project_id": be},
+    ]
+    item = {"key": "SHOP", "enabled": True, "scopes": scopes}
+    assert client.put(f"{API}/projects", headers=admin, json={"items": [item]}).status_code == 200
+    assert client.delete(f"/api/v1/business-projects/{fe}", headers=admin).status_code == 204
+    db_session.expire_all()
+    # Only BE is left, without rules: every issue counts for it (NULL), none for the dead FE.
+    assert set(db_session.scalars(select(Issue.business_project_ids))) == {None}
+    row = next(p for p in client.get(API, headers=admin).json()["projects"] if p["key"] == "SHOP")
+    assert [(s["business_project"]["id"], s["issues"]) for s in row["scopes"]] == [(be, 3)]
+
+
+def test_sync_full_is_passed_to_the_job(
+    client: TestClient, world: World, as_user: Any, db_session: Session, queue: FakeQueue
+) -> None:
+    _shop(db_session)
+    client.post(f"{API}/sync", headers=as_user(world.admin), json={"keys": ["SHOP"], "full": True})
+    assert queue.jobs[-1][2]["full"] is True

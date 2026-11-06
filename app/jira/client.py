@@ -191,6 +191,12 @@ class JiraClient:
     def projects(self) -> list[dict[str, Any]]:
         return [p for p in self.request("GET", "/project") or [] if isinstance(p, dict)]
 
+    def components(self, key: str) -> list[dict[str, Any]]:
+        """A project's components (docs/specs/27 §15: the rules' suggestions). `key` is checked
+        by the caller (KEY_PATTERN), so it is safe in the path."""
+        found = self.request("GET", f"/project/{key}/components") or []
+        return [c for c in found if isinstance(c, dict)]
+
     def search(
         self, jql: str, fields: Sequence[str], start_at: int = 0, max_results: int = PAGE_SIZE
     ) -> dict[str, Any]:

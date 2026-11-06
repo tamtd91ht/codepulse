@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.audit import audit
@@ -1187,18 +1187,21 @@ def _report_repos(
 
 def _report_jira_projects(
     session: Session, principal: Principal, business_project_id: int | None
-) -> list[Any]:
-    """Registered Jira projects of the dự án one sees (docs/specs/27 §11), as `_report_repos`
-    (whose permission check runs first): one without a dự án is the admins'."""
+) -> tuple[list[Any], set[int] | None]:
+    """Registered Jira projects feeding a dự án one sees (docs/specs/27 §11, §15), as
+    `_report_repos` (whose permission check runs first), and those dự án (None: no limit, an
+    admin without a filter). A project without a dự án is the admins'."""
+    from app.jira.scopes import projects_in
     from app.models import JiraProject
 
-    query = select(JiraProject)
     visible = principal.visible_projects()
-    if visible is not None:
-        query = query.where(JiraProject.business_project_id.in_(visible or {0}))
+    bps: set[int] | None = set(visible) if visible is not None else None
     if business_project_id is not None:
-        query = query.where(JiraProject.business_project_id == business_project_id)
-    return list(session.scalars(query.order_by(JiraProject.key)))
+        bps = {business_project_id} if bps is None else bps & {business_project_id}
+    query = select(JiraProject)
+    if bps is not None:
+        query = query.where(projects_in(bps))
+    return list(session.scalars(query.order_by(JiraProject.key))), bps
 
 
 @router.get("/quality")
@@ -1232,12 +1235,21 @@ def delivery_report(
 
     repos = _report_repos(session, principal, business_project_id)
     source = task_source(session, settings)
-    jira = (
-        _report_jira_projects(session, principal, business_project_id) if source == "jira" else []
+    jira, jira_bps = (
+        _report_jira_projects(session, principal, business_project_id)
+        if source == "jira"
+        else ([], None)
     )
     return {
         "task_source": source,
-        **delivery(session, repos, datetime.now(UTC), source=source, jira_projects=jira),
+        **delivery(
+            session,
+            repos,
+            datetime.now(UTC),
+            source=source,
+            jira_projects=jira,
+            jira_bps=jira_bps,
+        ),
     }
 
 
@@ -1269,13 +1281,12 @@ def defects(
     from app.jira.settings import task_source
 
     source = task_source(session, settings)
-    bp = _defect_bp()
     query = _defect_query().where(Issue.source == source)
     allowed = _defect_projects(principal)
     if allowed is not None:
-        query = query.where(bp.in_(allowed or {0}))
+        query = query.where(_defect_in(allowed))
     if business_project_id is not None:
-        query = query.where(bp == business_project_id)
+        query = query.where(_defect_in({business_project_id}))
     if status:
         query = query.where(ProdDefect.rca_status == status)
     rows = session.execute(query.order_by(Issue.created_at_src.desc()).limit(100)).all()
@@ -1335,11 +1346,16 @@ def defects(
     }
 
 
-def _defect_bp() -> Any:
-    """The dự án of a production bug: its repo's (GitLab) or its Jira project's."""
-    from app.models import JiraProject, Project
+def _defect_in(bps: set[int]) -> Any:
+    """A production bug of one of `bps`: by its repo (GitLab), or for a Jira issue by the dự án
+    it counts for (docs/specs/27 §15: a shared Jira project may feed FE and BE)."""
+    from app.jira.scopes import jira_issue_in
+    from app.models import Project
 
-    return func.coalesce(Project.business_project_id, JiraProject.business_project_id)
+    return or_(
+        Project.business_project_id.in_(bps or {0}),
+        and_(Issue.source == "jira", jira_issue_in(bps)),
+    )
 
 
 def _defect_query(*columns: Any) -> Any:
@@ -1378,8 +1394,10 @@ def confirm_rca(
         raise HTTPException(404, "defect not found")
     allowed = _defect_projects(principal)
     if allowed is not None:
-        bp = session.scalar(_defect_query(_defect_bp()).where(ProdDefect.id == defect.id))
-        if bp is None or bp not in allowed:
+        found = session.scalar(
+            _defect_query(ProdDefect.id).where(ProdDefect.id == defect.id, _defect_in(allowed))
+        )
+        if found is None:
             raise HTTPException(404, "defect not found")
     responsible = [
         {"user_id": int(r.get("user_id", 0)), "share": float(r.get("share", 0))}

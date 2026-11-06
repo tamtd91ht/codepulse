@@ -351,10 +351,10 @@ export default function JiraGuidePage() {
                 <a href="#no-pat">Jira cũ hơn 8.14</a>). Người cấu hình cần quyền <code>jira.admin</code> (mục <a href="#permission">Phân quyền</a>).
               </li>
               <li>
-                Mở <Link href="/admin#jira">Admin › Jira</Link> (hoặc <Link href="/dpi">DPI</Link> › <strong>Jira</strong>), thẻ <strong>Kết nối</strong>:
-                nhập URL Jira, chọn <strong>Cách đăng nhập</strong> (Personal Access Token, hoặc Tài khoản + mật khẩu cho Jira cũ hơn 8.14) và nhập token
-                hoặc username + mật khẩu; tuỳ chọn CA nội bộ (PEM), chu kỳ đồng bộ (mặc định 15 phút), số ngày lấy lùi lần đầu (180),
-                timeout (20 giây). Bấm <strong>Kiểm tra kết nối</strong> để thử ngay giá trị đang nhập, rồi <strong>Lưu</strong>. Không cần khởi động
+                Mở <Link href="/admin#jira">Admin › Jira</Link> (hoặc <Link href="/dpi">DPI</Link> › <strong>Jira</strong>). Lần đầu màn hình hiện ba
+                bước; ở <strong>bước 1 · Kết nối máy chủ</strong> (sau này là tab <strong>Kết nối</strong> › Chỉnh sửa): nhập URL Jira, chọn <strong>Cách đăng nhập</strong> (Personal Access Token, hoặc Tài khoản + mật khẩu cho Jira cũ hơn 8.14) và nhập token
+                hoặc username + mật khẩu; trong <strong>Nâng cao</strong>: CA nội bộ (PEM), chu kỳ đồng bộ (mặc định 15 phút), số ngày lấy lùi lần đầu
+                (180), timeout (20 giây). Bấm <strong>Kiểm tra kết nối</strong> để thử ngay giá trị đang nhập, rồi <strong>Lưu</strong>. Không cần khởi động
                 lại: lịch đồng bộ đọc cấu hình mới trong vòng một phút.
               </li>
               <li>
@@ -369,14 +369,21 @@ export default function JiraGuidePage() {
                 không cần.
               </li>
               <li>
-                <strong>Thêm dự án</strong>, bật và gán mỗi dự án Jira cho một dự án CodePulse (để lọc báo cáo và phân quyền), rồi Lưu. Dự án chưa
-                gán chỉ admin thấy trong báo cáo cấp team.
+                Tab <strong>Dự án &amp; đồng bộ</strong> › <strong>Thêm dự án</strong>: chọn dự án trên Jira, rồi gắn nó với một hoặc nhiều dự án
+                CodePulse (để lọc báo cáo và phân quyền). Dự án Jira chung cho nhiều đội thì thêm nhiều dòng, mỗi dòng chọn{" "}
+                <strong>Theo component / label</strong>: ví dụ dự án Jira <code>SHOP</code> → FE với component <code>Frontend</code>, BE với component{" "}
+                <code>Backend</code>, và một dòng <strong>Các issue còn lại</strong> nếu muốn dồn issue không có component về một dự án. Issue khớp nhiều
+                dòng tính cho cả các dự án đó; không khớp dòng nào và không có dòng &ldquo;còn lại&rdquo; thì tính cho mọi dự án đã gắn. Ngăn sửa cho biết
+                trước mỗi dự án CodePulse nhận bao nhiêu issue. Dự án Jira chưa gắn chỉ admin thấy trong báo cáo cấp team.
               </li>
               <li>
-                Bấm <strong>Đồng bộ ngay</strong>, đợi xong, xem DPI › Sẵn sàng dữ liệu (% Story Points, % assignee đã nối).
+                Bấm <strong>Đồng bộ ngay</strong> ở thẻ trạng thái (hoặc nút đồng bộ trên dòng của một dự án), đợi xong, xem DPI › Sẵn sàng dữ liệu
+                (% Story Points, % assignee đã nối). Đổi quy đổi trường thì dùng <strong>Đồng bộ lại từ đầu</strong> trong ngăn sửa dự án để áp cho
+                issue cũ.
               </li>
               <li>
-                Chuyển <strong>Nguồn task</strong> sang Jira, rồi chạy lại dữ liệu DPI (tab Tổng quan) cho các tháng cần tính lại.
+                Ở thẻ trạng thái, <strong>Nguồn task của DPI</strong> › <strong>Đổi nguồn</strong> sang Jira, rồi chạy lại dữ liệu DPI (tab Tổng quan)
+                cho các tháng cần tính lại.
               </li>
             </ol>
             <p className="muted">

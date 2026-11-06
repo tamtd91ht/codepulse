@@ -5,7 +5,7 @@ its dự án, a protected default branch, the standard labels."""
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy import and_, exists, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.collector.gitlab.client import GitLabError
@@ -47,17 +47,21 @@ def jira_readiness(
     without a dự án: admins only, `visible` None), the issues closed since `since` (sub-tasks
     without points left out, as in the DPI), how many have Story Points, how many are over
     8 points; and how many of their assignees are linked to a person."""
+    from app.jira.scopes import jira_issue_in, projects_in, scopes_json
+
     query = select(JiraProject).order_by(JiraProject.key)
     if visible is not None:
-        query = query.where(JiraProject.business_project_id.in_(visible or {0}))
+        query = query.where(projects_in(visible))
     projects = session.scalars(query).all()
-    bps = {b.id: b.name for b in session.scalars(select(BusinessProject))}
+    linked_bps = scopes_json(session, [p.id for p in projects])
     ids = [p.id for p in projects] or [0]
     closed = and_(
         Issue.source == "jira",
         Issue.jira_project_id.in_(ids),
         Issue.closed_at_src >= since,
         counted_task(),
+        # §15: of a shared project, only the issues of the dự án one sees.
+        jira_issue_in(visible) if visible is not None else true(),
     )
     stats = {
         int(pid): (int(n), int(c), int(big))
@@ -91,13 +95,13 @@ def jira_readiness(
     rows = []
     for p in projects:
         n, pointed, big = stats.get(p.id, (0, 0, 0))
-        bp = p.business_project_id
         rows.append(
             {
                 "key": p.key,
                 "name": p.name,
                 "enabled": p.enabled,
-                "business_project": {"id": bp, "name": bps.get(bp)} if bp in bps else None,
+                # §15: every dự án the project feeds (FE, BE…), in screen order.
+                "business_projects": [s["business_project"] for s in linked_bps[p.id]],
                 "issues_closed": n,
                 "pointed": pointed,
                 "story_points_pct": _share(pointed, n),

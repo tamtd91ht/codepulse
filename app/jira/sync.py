@@ -33,6 +33,7 @@ from app.identity.autolink import BOT_PATTERNS, is_bot
 from app.jira.client import JiraAuthError, JiraClient, JiraError
 from app.jira.links import link_issues
 from app.jira.mapping import FieldIds, JiraUser, map_issue, resolve_fields, search_fields
+from app.jira.scopes import recompute, route, rules_of
 from app.jira.settings import (
     JiraConnection,
     JiraMapping,
@@ -59,9 +60,12 @@ class JiraSource(Protocol):
     def search_all(self, jql: str, fields: Sequence[str]) -> Iterator[dict[str, Any]]: ...
 
 
-def window_minutes(project: JiraProject, now: datetime, backfill_days: int) -> int:
-    """§3: minutes since the last whole sync plus the overlap; never synced: the backfill."""
-    if project.synced_until is None:
+def window_minutes(
+    project: JiraProject, now: datetime, backfill_days: int, *, full: bool = False
+) -> int:
+    """§3: minutes since the last whole sync plus the overlap; never synced, or `full` (§16:
+    "Đồng bộ lại từ đầu", components to fetch): the backfill."""
+    if full or project.synced_until is None:
         return backfill_days * 1440
     elapsed = max((now - project.synced_until).total_seconds(), 0.0)
     return math.ceil(elapsed / 60) + OVERLAP_MIN
@@ -213,10 +217,13 @@ def sync_project(
     rules: JiraMapping | None = None,
     ids: FieldIds | None = None,
     conn: JiraConnection | None = None,
+    full: bool = False,
 ) -> int | None:
     """Fetch and store one project's updated issues; the caller commits. Returns the issues
     written, None when another sync of the project holds its lock (skipped, nothing changed).
-    Raises on any failure (nothing of the project's marks then moves)."""
+    Raises on any failure (nothing of the project's marks then moves). `full`: the backfill
+    window whatever `synced_until` says (a job argument, so a sync running meanwhile and
+    setting `synced_until` cannot cancel it)."""
     # Two syncs of a project (the scheduler's and "Đồng bộ ngay") never run side by side: the
     # lock is held until the caller's commit or rollback.
     locked = session.scalar(select(func.pg_try_advisory_xact_lock(LOCK_NAMESPACE, project.id)))
@@ -227,16 +234,22 @@ def sync_project(
     rules = rules if rules is not None else mapping(session)
     ids = ids if ids is not None else resolve_fields(client.fields(), rules)
     people = People(session, list(settings.allowed_email_domains))
-    query = jql(project, window_minutes(project, now, conn.backfill_days))
+    scopes = rules_of(session, project.id)  # the dự án each issue counts for (§15)
+    query = jql(project, window_minutes(project, now, conn.backfill_days, full=full))
     written: list[int] = []
     for raw in client.search_all(query, search_fields(ids)):
         mapped = map_issue(raw, rules, ids, conn.base_url, project.id)
         row = dict(mapped.row)
         row["assignee_account_ids"] = [people.account(mapped.assignee)] if mapped.assignee else []
+        row["business_project_ids"] = route(scopes, row.get("components"), row.get("labels"))
         _upsert_issue(session, row)
         _defect(session, int(row["id"]), row["prod_severity"])
         written.append(int(row["id"]))
     link_issues(session, written)
+    if rules_of(session, project.id) != scopes:
+        # The scopes were saved while this ran (§15): what was written with the old ones is
+        # routed again, so nothing keeps a stale dự án until the next scope change.
+        recompute(session, project.id)
     project.synced_until = now
     project.last_synced_at = now
     project.last_error = None
@@ -261,11 +274,14 @@ def sync_all(
     client: JiraSource | None = None,
     *,
     manual: bool = False,
+    keys: Sequence[str] | None = None,
+    full: bool = False,
 ) -> dict[str, Any]:
     """Every enabled project, each committed on its own. No-op unless Jira is configured (the
     connection in effect: saved on the web, else JIRA_*) and some project is enabled (whatever
     the task source: data is ready before a switch). A scheduled run (not `manual`, i.e. not
-    "Đồng bộ ngay") is skipped while the last login was refused with these credentials."""
+    "Đồng bộ ngay") is skipped while the last login was refused with these credentials.
+    `keys`: only these projects (enabled ones), as "Đồng bộ" on one project's row (§16)."""
     conn = connection(session, settings)
     if not conn.configured:
         return {"skipped": "not_configured"}
@@ -274,12 +290,11 @@ def sync_all(
         session.commit()  # a marker of other credentials dropped
         if paused:
             return {"skipped": "paused"}
-    keys = list(
-        session.scalars(
-            select(JiraProject.key).where(JiraProject.enabled.is_(True)).order_by(JiraProject.key)
-        )
-    )
-    if not keys:
+    query = select(JiraProject.key).where(JiraProject.enabled.is_(True))
+    if keys is not None:
+        query = query.where(JiraProject.key.in_(list(keys)))
+    todo = list(session.scalars(query.order_by(JiraProject.key)))
+    if not todo:
         return {"skipped": "no_project"}
     own = client is None
     if client is not None:
@@ -288,20 +303,28 @@ def sync_all(
         try:
             source = JiraClient.from_connection(conn)
         except Exception as exc:  # e.g. the CA saved on the web: kept on every project
-            return _all_failed(session, keys, _error_text(exc))
+            return _all_failed(session, todo, _error_text(exc))
     rules = mapping(session)
     ids: FieldIds | None = None
     out: dict[str, Any] = {"projects": {}}
     refused: str | None = None
     try:
-        for index, key in enumerate(keys):
+        for index, key in enumerate(todo):
             project = session.scalars(select(JiraProject).where(JiraProject.key == key)).one()
             now = datetime.now(UTC)
             try:
                 if ids is None:
                     ids = resolve_fields(source.fields(), rules)
                 count = sync_project(
-                    session, source, project, settings, now, rules=rules, ids=ids, conn=conn
+                    session,
+                    source,
+                    project,
+                    settings,
+                    now,
+                    rules=rules,
+                    ids=ids,
+                    conn=conn,
+                    full=full,
                 )
                 session.commit()
                 if count is None:  # another sync of it is running: not an error
@@ -313,7 +336,7 @@ def sync_all(
                 session.rollback()
                 refused = _error_text(exc)
                 log.warning("jira login refused, sync stopped", extra={"jira_project": key})
-                _all_failed(session, keys[index:], refused, out=out)
+                _all_failed(session, todo[index:], refused, out=out)
                 record_auth_failure(session, refused, conn)
                 session.commit()
                 out["auth_failed"] = True
@@ -362,11 +385,14 @@ def _all_failed(
     return result
 
 
-def sync_all_job(manual: bool = False) -> dict[str, Any]:
+def sync_all_job(
+    manual: bool = False, keys: list[str] | None = None, full: bool = False
+) -> dict[str, Any]:
     """RQ entry point (the scheduler's tick once per sync interval, and "Đồng bộ ngay" with
-    `manual`: it runs even while a refused login pauses the schedule)."""
+    `manual`: it runs even while a refused login pauses the schedule; `keys`: one project's
+    row)."""
     with get_sessionmaker()() as session:
-        return sync_all(session, get_settings(), manual=manual)
+        return sync_all(session, get_settings(), manual=manual, keys=keys, full=full)
 
 
 class DueStore(Protocol):

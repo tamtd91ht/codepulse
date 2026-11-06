@@ -23,6 +23,7 @@ BASE_FIELDS = (
     "issuetype",
     "parent",
     "labels",
+    "components",
     "priority",
     "assignee",
     "duedate",
@@ -292,6 +293,9 @@ def map_issue(
     ):
         labels.append(f"blocked::{status_name}")
     parent_key = _dict(fields.get("parent")).get("key")
+    components = [
+        str(_dict(c).get("name")) for c in fields.get("components") or [] if _dict(c).get("name")
+    ]
     row: dict[str, Any] = {
         "id": JIRA_ID_OFFSET + int(issue["id"]),
         "source": "jira",
@@ -304,6 +308,7 @@ def map_issue(
         "title": fields.get("summary"),
         "state": "closed" if done else "opened",
         "labels": labels,
+        "components": components,
         "type": dpi_type,
         "complexity": size,
         "complexity_points": size_points,

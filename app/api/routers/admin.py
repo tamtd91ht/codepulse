@@ -369,11 +369,26 @@ def update_business_project(
 
 @router.delete("/business-projects/{bp_id}", status_code=204)
 def delete_business_project(bp_id: int, principal: ProjectsAdmin, session: SessionDep) -> None:
-    """Only the grouping goes: its repos (and their history) stay, unassigned."""
+    """Only the grouping goes: its repos (and their history) stay, unassigned. Jira projects it
+    was fed by lose that scope, and their issues routed to it are routed again (docs/specs/27
+    §15): to the other scopes, else to every dự án left."""
+    from app.jira.scopes import recompute
+    from app.models import JiraProjectScope
+
     bp = _get(session, BusinessProject, bp_id, "dự án")
     session.execute(
         update(Project).where(Project.business_project_id == bp.id).values(business_project_id=None)
     )
+    jira_ids = list(
+        session.scalars(
+            select(JiraProjectScope.jira_project_id).where(
+                JiraProjectScope.business_project_id == bp.id
+            )
+        )
+    )
+    session.execute(delete(JiraProjectScope).where(JiraProjectScope.business_project_id == bp.id))
+    for jira_id in jira_ids:
+        recompute(session, jira_id)
     session.delete(bp)
     audit(session, principal.user_id, "business_project.delete", f"business_project:{bp_id}")
     session.commit()

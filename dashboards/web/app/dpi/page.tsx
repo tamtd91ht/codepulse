@@ -1140,7 +1140,7 @@ interface Readiness {
     projects: {
       key: string;
       name: string;
-      business_project: { id: number; name: string } | null;
+      business_projects: { id: number; name: string }[];
       issues_closed: number;
       story_points_pct: number | null;
       oversized: number;
@@ -1186,7 +1186,7 @@ function JiraReadiness({ jira }: { jira: NonNullable<Readiness["jira"]> }) {
                 <tr key={p.key}>
                   <td>
                     <code>{p.key}</code> {p.name}
-                    <div className="muted small">{p.business_project?.name ?? "chưa thuộc dự án"}</div>
+                    <div className="muted small">{p.business_projects.length ? p.business_projects.map((b) => b.name).join(", ") : "chưa gắn dự án CodePulse"}</div>
                   </td>
                   <td className="num">{p.issues_closed}</td>
                   <td className="num">

@@ -24,6 +24,7 @@ from app.models import (
     Issue,
     IssueMrLink,
     JiraProject,
+    JiraProjectScope,
     MergeRequest,
     MrCommit,
     PermissionSet,
@@ -45,9 +46,13 @@ def use_jira(session: Session) -> None:
 
 
 def jira_project(session: Session, key: str, bp_id: int | None) -> JiraProject:
-    project = JiraProject(key=key, name=f"Team {key}", business_project_id=bp_id)
+    """A Jira project feeding one dự án (one catch-all scope, docs/specs/27 §15), or none."""
+    project = JiraProject(key=key, name=f"Team {key}")
     session.add(project)
     session.flush()
+    if bp_id is not None:
+        session.add(JiraProjectScope(jira_project_id=project.id, business_project_id=bp_id))
+        session.flush()
     return project
 
 
@@ -153,8 +158,8 @@ def test_readiness_has_a_jira_block_when_jira_is_the_source(
     assert set(rows) == {"ABC", "LONE"}  # the admin sees the one without a dự án too
     assert rows["ABC"]["issues_closed"] == 2 and rows["ABC"]["story_points_pct"] == 50.0
     assert rows["ABC"]["oversized"] == 1 and rows["ABC"]["last_error"] == "401"
-    assert rows["ABC"]["business_project"] == {"id": bp, "name": "Demo"}
-    assert rows["LONE"]["business_project"] is None
+    assert rows["ABC"]["business_projects"] == [{"id": bp, "name": "Demo"}]
+    assert rows["LONE"]["business_projects"] == []
     assert body["jira"]["assignees"] == {"total": 2, "linked": 1}
     assert body["acceptance"]["issues_with_complexity_pct"] == round(100 * 2 / 3, 1)
 
@@ -328,3 +333,94 @@ def test_the_ai_suggestion_sees_jira_titles_of_the_chosen_source_only(
     data, refs = gather(Loader(db_session, month, TZ, source="jira"), world.an.id, month, {})
     assert [i["title"] for i in data["issue_da_dong"]] == ["ABC việc 4"]
     assert refs[data["issue_da_dong"][0]["ref"]]["label"] == "ABC-4 ABC việc 4"
+
+
+def test_a_shared_jira_project_splits_between_fe_and_be(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    """docs/specs/27 §15 (user 2026-11-06): one Jira project, two CodePulse dự án by component;
+    an issue matching neither counts for both. R4 and production bugs follow."""
+    from app.jira.scopes import Rule, recompute, replace_scopes
+
+    use_jira(db_session)
+    fe_id = world.project.business_project_id
+    be = BusinessProject(name="BE")
+    db_session.add(be)
+    db_session.flush()
+    shop = jira_project(db_session, "SHOP", None)
+    replace_scopes(
+        db_session,
+        shop,
+        [Rule(fe_id, components=("Frontend",)), Rule(be.id, components=("Backend",))],
+    )
+    old = datetime.now(UTC) - timedelta(days=3)
+    jira_issue(db_session, shop, 1, state="opened", created_at_src=old, components=["Frontend"])
+    jira_issue(db_session, shop, 2, state="opened", created_at_src=old, components=["Backend"])
+    shared = jira_issue(db_session, shop, 3, state="opened", created_at_src=old, components=[])
+    bug = jira_issue(
+        db_session, shop, 4, prod_severity="P1", created_at_src=old, components=["Backend"]
+    )
+    db_session.add(ProdDefect(issue_id=bug.id, severity="P1"))
+    assert recompute(db_session, shop.id) == 3  # FE, BE, BE; the shared one stays NULL
+    db_session.flush()
+    assert shared.business_project_ids is None
+
+    def delivery(bp: int) -> int:
+        url = f"{API}/delivery?business_project_id={bp}"
+        return int(client.get(url, headers=as_user(world.admin)).json()["open_issues"])
+
+    assert delivery(fe_id) == 2  # SHOP-1 and the shared SHOP-3
+    assert delivery(be.id) == 2  # SHOP-2 and SHOP-3 (SHOP-4 is not opened)
+    # The lead sees Demo (FE) only: no BE issue, and not the BE production bug.
+    body = client.get(f"{API}/delivery", headers=as_user(world.lead)).json()
+    assert body["open_issues"] == 2
+    assert client.get(f"{API}/defects", headers=as_user(world.lead)).json()["items"] == []
+    defects = client.get(f"{API}/defects?business_project_id={be.id}", headers=as_user(world.admin))
+    assert [d["issue"]["key"] for d in defects.json()["items"]] == ["SHOP-4"]
+
+
+def test_readiness_counts_only_the_issues_of_the_dự_án_one_sees(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    """Review 2026-11-06 (§15): an FE lead's readiness leaves out the BE issues of SHOP."""
+    from app.jira.scopes import Rule, recompute, replace_scopes
+
+    use_jira(db_session)
+    fe_id = world.project.business_project_id
+    be = BusinessProject(name="BE")
+    db_session.add(be)
+    db_session.flush()
+    shop = jira_project(db_session, "SHOP", None)
+    replace_scopes(
+        db_session,
+        shop,
+        [Rule(fe_id, components=("Frontend",)), Rule(be.id, components=("Backend",))],
+    )
+    when = datetime.now(UTC) - timedelta(days=2)
+    jira_issue(
+        db_session,
+        shop,
+        1,
+        state="closed",
+        closed_at_src=when,
+        type="feature",
+        components=["Frontend"],
+    )
+    jira_issue(
+        db_session,
+        shop,
+        2,
+        state="closed",
+        closed_at_src=when,
+        type="feature",
+        components=["Backend"],
+    )
+    recompute(db_session, shop.id)
+    db_session.flush()
+    since = datetime.now(UTC) - timedelta(days=30)
+    fe_view = repo_readiness(db_session, since, "jira", visible={fe_id or 0})
+    every = repo_readiness(db_session, since, "jira", visible=None)
+    assert fe_view["jira"] is not None and every["jira"] is not None
+    fe_row = next(p for p in fe_view["jira"]["projects"] if p["key"] == "SHOP")
+    all_row = next(p for p in every["jira"]["projects"] if p["key"] == "SHOP")
+    assert (fe_row["issues_closed"], all_row["issues_closed"]) == (1, 2)

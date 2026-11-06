@@ -12,10 +12,11 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -52,6 +53,12 @@ class Issue(TimestampMixin, Base):
         Index("uq_issues_key", "key", unique=True, postgresql_where="key IS NOT NULL"),
         Index("ix_issues_closed_at_src", "closed_at_src"),
         Index("ix_issues_due_date", "due_date"),
+        # "Counts for one of these dự án" (docs/specs/27 §15).
+        Index(
+            "ix_issues_business_project_ids",
+            "business_project_ids",
+            postgresql_using="gin",
+        ),
         # "Assigned to one of these accounts" (JSONB containment).
         Index(
             "ix_issues_assignee_account_ids",
@@ -89,6 +96,11 @@ class Issue(TimestampMixin, Base):
     closed_at_src: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     time_estimate_s: Mapped[int | None]
     time_spent_s: Mapped[int | None]
+    # Jira only (docs/specs/27 §15): its components, and the dự án its project's scopes route it
+    # to; NULL: every dự án of its Jira project (no rule applies, or none matched without a
+    # catch-all), so a plain project needs nothing per issue.
+    components: Mapped[list[str] | None] = mapped_column(JSONB)
+    business_project_ids: Mapped[list[int] | None] = mapped_column(ARRAY(Integer))
 
 
 class IssueMrLink(TimestampMixin, Base):

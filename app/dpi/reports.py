@@ -201,9 +201,12 @@ def delivery(
     now: datetime,
     source: str = "gitlab",
     jira_projects: list[JiraProject] | None = None,
+    jira_bps: set[int] | None = None,
 ) -> dict[str, Any]:
     """`source`: the DPI task source (docs/specs/27 §9). Jira: the open issues are those of
-    `jira_projects` (the ones one sees), each a row "Jira · KEY" next to the repos."""
+    `jira_projects` (the ones one sees), each a row "Jira · KEY" next to the repos, and of them
+    only the ones counting for `jira_bps` (§15: a shared project split into FE and BE; None: no
+    limit)."""
     ids = [r.id for r in repos] or [0]
     names: dict[tuple[str, int], str] = {("repo", r.id): r.path_with_namespace for r in repos}
     today = now.date()
@@ -223,6 +226,10 @@ def delivery(
             Issue.source == "jira",
             Issue.jira_project_id.in_([j.id for j in jira] or [0]),
         ]
+        if jira_bps is not None:
+            from app.jira.scopes import jira_issue_in
+
+            where.append(jira_issue_in(jira_bps))
     else:
         where = [Issue.source == "gitlab", Issue.project_id.in_(ids)]
     open_issues = session.execute(

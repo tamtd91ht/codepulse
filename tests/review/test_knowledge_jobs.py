@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy import BigInteger, create_engine, event, select
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
@@ -32,6 +33,12 @@ from app.workers.knowledge_jobs import (
 def _bigint_as_integer(type_: Any, compiler: Any, **kw: Any) -> str:
     """SQLite only auto-numbers an INTEGER primary key."""
     return "INTEGER"
+
+
+@compiles(ARRAY, "sqlite")
+def _array_as_json(type_: Any, compiler: Any, **kw: Any) -> str:
+    """issues.business_project_ids (Postgres int[]): only created here, never read."""
+    return "JSON"
 
 
 @pytest.fixture

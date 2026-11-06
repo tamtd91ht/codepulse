@@ -8045,3 +8045,413 @@ div.jira-auth > span:first-child .pill {
   width: 100%;
   min-width: 0;
 }
+
+/* Jira screen, redesigned (docs/specs/27 §16): status card, setup steps, projects with their
+   CodePulse dự án, connection summary, mapping cards. Tokens only. */
+.jira-admin {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.jira-admin .req {
+  color: var(--danger);
+}
+.jira-status-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.jira-status-head h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 16px;
+}
+.jira-status-head p {
+  margin: 4px 0 0;
+}
+.jira-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 12px;
+  margin: 16px 0 0;
+}
+.jira-fact {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  background: var(--surface-2);
+}
+.jira-fact dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.jira-fact dd {
+  margin: 4px 0 0;
+  min-width: 0;
+}
+.jira-fact-value {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.jira-url {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+}
+.jira-status .alert {
+  margin-top: 12px;
+}
+.jira-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Setup: numbered steps, later ones muted until the connection works. */
+.jira-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.jira-step {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.jira-step.active {
+  box-shadow: var(--shadow-sm);
+}
+.jira-step.muted-step {
+  opacity: 0.6;
+}
+.jira-step-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.jira-step-head h3 {
+  margin: 2px 0 0;
+  font-size: 15px;
+}
+.jira-step-head p {
+  margin: 4px 0 0;
+}
+.jira-step-no {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary-text);
+  font-weight: 600;
+}
+.jira-step.active .jira-step-no {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.jira-step .jira-form {
+  margin-left: 40px;
+}
+
+/* Connection form and summary. */
+.jira-form {
+  display: flex;
+  flex-direction: column;
+}
+.jira-advanced {
+  margin-top: 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+}
+.jira-advanced summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.jira-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+.jira-test-fields {
+  margin: 4px 0 0;
+}
+.jira-kvs {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+.jira-kv {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) 1fr;
+  gap: 4px 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.jira-kv:last-child {
+  border-bottom: none;
+}
+.jira-kv dt {
+  color: var(--muted);
+}
+.jira-kv dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.jira-kv dd .pill {
+  margin-left: 4px;
+}
+.jira-switch,
+.jira-switch-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.jira-switch-row {
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+}
+.jira-switch-row input {
+  margin-top: 3px;
+}
+
+/* Projects tab. */
+.jira-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.jira-toolbar h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 16px;
+}
+.jira-search {
+  width: min(280px, 100%);
+  height: 32px;
+}
+.jira-search.wide {
+  width: 100%;
+  margin: 8px 0 12px;
+}
+.jira-projects td {
+  vertical-align: top;
+}
+.jira-projects tr.jira-off td {
+  color: var(--muted);
+}
+.jira-scope-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.jira-error {
+  display: -webkit-box;
+  max-width: 260px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.jira-row-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+.jira-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.jira-pick-list button {
+  display: flex;
+  justify-content: flex-start;
+  gap: 12px;
+  width: 100%;
+  height: auto;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-color: var(--border);
+  color: var(--text);
+  font-weight: 400;
+  text-align: left;
+  white-space: normal;
+}
+.jira-pick-list button:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+.jira-pick-list code {
+  min-width: 72px;
+  font-weight: 600;
+}
+
+/* Project editor (drawer). */
+.jira-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.jira-editor h3 {
+  margin: 8px 0 0;
+  font-size: 15px;
+}
+.jira-editor > p {
+  margin: 0;
+}
+.jira-scopes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.jira-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  background: var(--surface-2);
+}
+.jira-scope-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.jira-scope-head select {
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 220px;
+}
+.jira-scope .jira-field {
+  margin-top: 0;
+}
+.jira-scope-empty {
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-field);
+}
+.jira-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  background: var(--surface);
+}
+.jira-chips:focus-within {
+  outline: 2px solid var(--ring);
+}
+.jira-chips input {
+  flex: 1 1 80px;
+  min-width: 80px;
+  height: 28px;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+}
+.jira-chips input:focus-visible {
+  outline: none; /* the box above shows the ring */
+}
+.jira-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 2px 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--primary-soft);
+  font-size: 13px;
+}
+.jira-chip button {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+}
+.jira-chip button:hover:not(:disabled) {
+  color: var(--text);
+}
+.jira-danger {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+}
+
+/* Mapping tab. */
+.jira-mapping {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.jira-h4 {
+  margin: 12px 0 4px;
+}
+.jira-savebar {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  background: var(--surface);
+}
+.jira-savebar.dirty {
+  box-shadow: var(--shadow-sm);
+}
+@media (max-width: 640px) {
+  .jira-step .jira-form {
+    margin-left: 0;
+  }
+  .jira-kv {
+    grid-template-columns: 1fr;
+  }
+}
