@@ -499,6 +499,9 @@ class BoardFindingOut(FindingOut):
     target: str  # "MR !12" or "commit abc12345"
     web_url: str | None
     age_days: int
+    # When the change was made (Review.counted_at: the commit's time, an MR's opening): what
+    # found_from/found_to filter on (user 2026-11-06: a date column and a date filter).
+    committed_at: datetime | None = None
 
 
 class ReviewOut(ORM):

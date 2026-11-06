@@ -294,6 +294,20 @@ def test_critical_board(client: TestClient, world: World, as_user: Any) -> None:
     (item,) = board
     assert (item["title"], item["author"], item["target"]) == ("SQL injection", "An", "MR !7")
     assert item["age_days"] >= 0
+    # user 2026-11-06: the day of the change, and open findings filtered by it.
+    assert item["committed_at"] is not None
+    day = item["committed_at"][:10]
+    lead = as_user(world.lead)
+
+    def ids(found_from: str, found_to: str) -> list[int]:
+        params = {"found_from": found_from, "found_to": found_to}
+        return [
+            f["id"]
+            for f in client.get("/api/v1/findings", params=params, headers=lead).json()["items"]
+        ]
+
+    assert ids(f"{day}T00:00:00Z", "2100-01-01T00:00:00Z") == [item["id"]]
+    assert ids("2000-01-01T00:00:00Z", f"{day}T00:00:00Z") == []
     assert client.get("/api/v1/findings", headers=as_user(world.binh)).json()["items"] == []
     forbidden = client.get(
         f"/api/v1/findings?team_id={world.backend.id}", headers=as_user(world.outsider)

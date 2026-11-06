@@ -724,6 +724,7 @@ def list_findings(
                 "target": label,
                 "web_url": url,
                 "age_days": max(0, (now - opened).days),
+                "committed_at": review.counted_at,
             }
         )
     more = len(rows) > limit

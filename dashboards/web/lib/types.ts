@@ -209,6 +209,8 @@ export interface BoardFinding extends Finding {
   target: string;
   web_url: string | null;
   age_days: number;
+  /** When the change was made: the commit's time (an MR: when it was opened). */
+  committed_at?: string | null;
 }
 
 export interface Review {

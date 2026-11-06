@@ -22,6 +22,10 @@
 
 ### 3. Critical Board
 - [ ] Mọi finding critical/high `open`, lọc theo project/team/người, thời gian tồn tại
+- [x] **[Quyết định]** (user 2026-11-06) Cột **Ngày commit** (ngày/tháng/năm, không giờ): thời điểm của thay đổi
+  (`Review.counted_at`: giờ commit, MR là lúc mở MR), API trả `committed_at`. Bộ lọc **Ngày commit** dạng từ–đến
+  (lịch `DateRangePicker` như Tổng quan, có "Mọi thời gian"): ngày theo giờ máy người xem, gửi `found_from`/`found_to`
+  ([from, to) như link từ dashboard), giữ trên URL (`from`, `to`). Bỏ khoảng ngày thì về danh sách finding đang mở.
 
 ### 4. Review Detail
 - [ ] Summary, điểm, findings với code excerpt, nút Dispute

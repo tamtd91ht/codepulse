@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { type DayRange, DateRangePicker } from "@/components/DateRangePicker";
 import { Card, EmptyState, ExternalLink, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { api, qs, useApi } from "@/lib/api";
+import { date, localDay, shiftDays } from "@/lib/format";
 import type { BoardFinding, Me, Page, Team } from "@/lib/types";
 
 type Level = "" | "critical" | "high";
@@ -73,6 +75,15 @@ const STATUS_LABEL: Record<string, string> = {
   accepted_risk: "Chấp nhận rủi ro",
   false_positive: "Không phải lỗi",
 };
+
+const ALL_TIME: DayRange = { from: "", to: "" };
+
+/** The days a [from, to) pair of instants covers, in the viewer's time zone ("": all time). */
+function daysOf(scope: Scope | null): DayRange {
+  if (!scope?.from) return ALL_TIME;
+  const to = scope.to ? new Date(Date.parse(scope.to) - 1) : new Date();
+  return { from: localDay(new Date(scope.from)), to: localDay(to) };
+}
 
 /** Every open critical/high finding (docs/specs/10 "Critical Board"). */
 export default function CriticalBoard() {
@@ -144,6 +155,25 @@ export default function CriticalBoard() {
     else url.searchParams.delete("severity");
     window.history.replaceState(null, "", url);
     setScope((s) => (s ? { ...s, severity } : s));
+  };
+  // The commit-time filter (user 2026-11-06): days in the viewer's time zone, sent as the
+  // [from, to) instants the dashboards' links use; kept in the URL like the level.
+  const setRange = (range: DayRange) => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("period");
+    if (range.from && range.to) {
+      const from = new Date(`${range.from}T00:00:00`).toISOString();
+      const to = new Date(`${shiftDays(range.to, 1)}T00:00:00`).toISOString();
+      url.searchParams.set("from", from);
+      url.searchParams.set("to", to);
+      window.history.replaceState(null, "", url);
+      setScope((s) => (s ? { ...s, from, to, period: "" } : s));
+    } else {
+      // Without a period, "found in the period" means nothing: back to the open findings.
+      for (const key of ["from", "to", "status"]) url.searchParams.delete(key);
+      window.history.replaceState(null, "", url);
+      setScope((s) => (s ? { ...s, from: "", to: "", period: "", status: "" } : s));
+    }
   };
   const setRepo = (repo: string) => {
     // The link's repo filter is applied by the server; picking another one is local.
@@ -221,6 +251,7 @@ export default function CriticalBoard() {
             </option>
           ))}
         </select>
+        <DateRangePicker label="Ngày commit" value={daysOf(scope)} max={localDay()} onChange={setRange} clearable />
         {filtering && (
           <button className="ghost" onClick={clear}>
             Bỏ lọc
@@ -252,6 +283,7 @@ export default function CriticalBoard() {
                   <th>Vị trí</th>
                   <th>Người</th>
                   <th>Thay đổi</th>
+                  <th title="Thời điểm commit; với MR là lúc mở MR">Ngày commit</th>
                   <th className="num">Tồn tại</th>
                 </tr>
               </thead>
@@ -277,6 +309,7 @@ export default function CriticalBoard() {
                     </td>
                     <td>{f.author_user_id ? <Link href={`/members/${f.author_user_id}`}>{f.author ?? "—"}</Link> : (f.author ?? "—")}</td>
                     <td>{f.web_url ? <ExternalLink href={f.web_url}>{f.target}</ExternalLink> : f.target}</td>
+                    <td>{date(f.committed_at ?? null)}</td>
                     <td className={`num${f.age_days >= 14 ? " bad" : ""}`}>{f.age_days} ngày</td>
                   </tr>
                 ))}
