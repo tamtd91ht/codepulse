@@ -31,6 +31,19 @@
   hiện); bấm chép số id (không có `#`), ô chuyển xanh "✓ Đã chép" 1,6 giây; không có Clipboard API (HTTP) thì chép qua
   textarea. Trang Đóng finding cũng đặt ô này ở cuối tiêu đề finding (user 2026-11-06), dòng phụ còn repo và file.
 
+### 3b. Đóng finding — trạng thái mỗi dòng
+- [x] **[Quyết định]** (user 2026-11-06) Danh sách và trang finding phải nói cùng một điều. Mỗi dòng là một yêu
+  cầu/lần đóng, nhưng ô **Trạng thái** hiện `shown_status` (app/models/review.py `shown_status`):
+  - finding đang đóng (`fixed`, `accepted_risk`, `false_positive`) → **Đã đóng · <cách đóng của finding>**, dù yêu
+    cầu này bị từ chối, đã rút hay đang chờ;
+  - yêu cầu này đã đóng finding mà finding mở lại sau đó → **Mở lại**;
+  - còn lại → trạng thái của yêu cầu.
+  Khác với kết quả riêng của yêu cầu thì có dòng phụ "Yêu cầu này: Bị từ chối". Chi tiết ghi "Kết quả của yêu
+  cầu" và "Finding hiện giờ". Bộ lọc Trạng thái lọc theo `shown_status` (SQL `_shown_status`), API trả `shown_status`,
+  `shown_closed_as`.
+- [x] Bước kiểm gặp finding đã đóng cách khác trước khi chạy: yêu cầu thành `cancelled` với lý do "Finding đã được
+  đóng trước khi kiểm …: không cần nữa" (trước là `rejected`, dễ đọc thành bị từ chối); UI ghi "Không cần nữa".
+
 ### 4. Review Detail
 - [ ] Summary, điểm, findings với code excerpt, nút Dispute
 

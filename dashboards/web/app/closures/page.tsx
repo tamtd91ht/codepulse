@@ -40,12 +40,47 @@ const STATUS: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "
   cancelled: { label: "Đã rút" },
   reopened: { label: "Mở lại", tone: "warn" },
 };
-/** A finding closed after this request (another request, a later push, a dispute): its state now. */
-const FINDING_NOW: Record<string, string> = {
-  fixed: "đã sửa",
-  accepted_risk: "chấp nhận rủi ro",
-  false_positive: "không phải lỗi",
-};
+/** The check found the finding already closed another way (app/models/review.py ALREADY_CLOSED). */
+const ALREADY_CLOSED = "Finding đã được đóng trước khi kiểm";
+
+/** The request's own outcome, in words (a moot request is not "withdrawn"). */
+function requestLabel(c: ClosureListItem): string {
+  if (c.status === "cancelled" && (c.reason ?? "").startsWith(ALREADY_CLOSED)) return "Không cần nữa (finding đã đóng trước)";
+  return STATUS[c.status]?.label ?? c.status;
+}
+
+/** The finding's own state now, as the row shows it (`shown_status`). */
+function FindingNow({ closure: c }: { closure: ClosureListItem }) {
+  const shown = c.shown_status ?? c.status;
+  const st = STATUS[shown] ?? { label: shown };
+  const how = shown === "closed" ? (c.shown_closed_as ?? c.closed_as) : null;
+  return (
+    <Pill tone={st.tone}>
+      {shown === "checking" && <span className="spinner inline" aria-hidden="true" />} {st.label}
+      {how ? ` · ${CLOSED_AS[how] ?? how}` : ""}
+      {c.status === "closed" && c.severity_before && c.severity_after ? ` (${c.severity_before} → ${c.severity_after})` : ""}
+    </Pill>
+  );
+}
+
+/**
+ * The row's state (user 2026-11-06: the list must say what the finding's page says): a finding
+ * closed now shows "Đã đóng · <how>", whatever became of this request; the request's own result
+ * is told beside it when it differs.
+ */
+function RowState({ closure: c }: { closure: ClosureListItem }) {
+  const shown = c.shown_status ?? c.status;
+  return (
+    <>
+      <FindingNow closure={c} />
+      {shown !== c.status && (
+        <div className="muted small" title="Kết quả riêng của yêu cầu này; trạng thái trên là của finding hiện giờ">
+          Yêu cầu này: {requestLabel(c)}
+        </div>
+      )}
+    </>
+  );
+}
 const KIND: Record<string, string> = {
   request: "Thành viên yêu cầu",
   auto: "Tự động sau review",
@@ -334,17 +369,8 @@ export default function ClosuresPage() {
                           )}
                         </td>
                         <td>
-                          <Pill tone={st.tone}>
-                            {c.status === "checking" && <span className="spinner inline" aria-hidden="true" />} {st.label}
-                            {c.status === "closed" && c.closed_as ? ` · ${CLOSED_AS[c.closed_as]}` : ""}
-                            {c.severity_before && c.severity_after ? ` (${c.severity_before} → ${c.severity_after})` : ""}
-                          </Pill>
+                          <RowState closure={c} />
                           <div className="muted small">{dateTimeMin(c.decided_at ?? c.created_at)}</div>
-                          {c.status !== "closed" && c.finding.status && FINDING_NOW[c.finding.status] && (
-                            <div className="small" title="Yêu cầu này không còn là trạng thái của finding">
-                              <Pill tone="good">Finding hiện: {FINDING_NOW[c.finding.status]}</Pill>
-                            </div>
-                          )}
                         </td>
                         <td style={{ width: 44 }}>
                           <IconButton
@@ -477,7 +503,9 @@ function Detail({
                     ? "Chờ lead, manager hoặc admin duyệt (bạn không tự duyệt yêu cầu của mình)"
                     : "Chờ lead, manager hoặc admin duyệt"
                   : c.status === "cancelled"
-                    ? "Người gửi đã rút yêu cầu"
+                    ? (c.reason ?? "").startsWith(ALREADY_CLOSED)
+                      ? "Không kiểm: finding đã được đóng trước đó"
+                      : "Người gửi đã rút yêu cầu"
                     : refusedAfterCheck
                       ? `${c.decided_by_name ?? "Người duyệt"} chạy review, chưa đạt, rồi từ chối`
                       : refusedByPerson
@@ -494,13 +522,18 @@ function Detail({
           </span>
           <div>
             <div className="step-title">
-              Kết quả:{" "}
+              Kết quả của yêu cầu:{" "}
               <Pill tone={st.tone}>
-                {st.label}
+                {requestLabel(c)}
                 {c.status === "closed" && c.closed_as ? ` · ${CLOSED_AS[c.closed_as]}` : ""}
-                            {c.severity_before && c.severity_after ? ` (${c.severity_before} → ${c.severity_after})` : ""}
+                {c.severity_before && c.severity_after ? ` (${c.severity_before} → ${c.severity_after})` : ""}
               </Pill>
             </div>
+            {(c.shown_status ?? c.status) !== c.status && (
+              <div className="small">
+                Finding hiện giờ: <FindingNow closure={c} />
+              </div>
+            )}
             {c.status === "checking" && <div className="muted small">Đang lấy diff và hỏi model, thường dưới 1 phút…</div>}
             {c.status === "proposed" && (
               <div className="small">

@@ -731,6 +731,11 @@ export interface ClosureListItem extends FindingClosure {
     status: string | null;
   };
   finding_review_id: number;
+  /** What the row shows: "closed" when the finding is closed now (whatever became of this
+   * request), "reopened" when this request closed it and it is open again, else `status`. */
+  shown_status?: string;
+  /** The finding's outcome when it is closed now (fixed, accepted_risk, false_positive). */
+  shown_closed_as?: string | null;
   repo: { id: number; path: string } | null;
   business_project: { id: number; name: string } | null;
   author: { id: number; name: string | null } | null;

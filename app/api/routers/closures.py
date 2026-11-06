@@ -29,7 +29,19 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import ColumnElement, String, and_, cast, func, or_, select, true, update
+from sqlalchemy import (
+    ColumnElement,
+    String,
+    and_,
+    case,
+    cast,
+    func,
+    literal,
+    or_,
+    select,
+    true,
+    update,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -58,7 +70,7 @@ from app.models import (
     ReviewFinding,
     User,
 )
-from app.models.review import CLOSURE_OPEN
+from app.models.review import CLOSURE_OPEN, FINDING_CLOSED, shown_status
 from app.notifications import inbox
 from app.permissions.catalog import BY_KEY
 from app.review.masking import looks_secret
@@ -1069,6 +1081,15 @@ def _after(cursor: str | None) -> int | None:
         raise HTTPException(422, "invalid cursor") from None
 
 
+def _shown_status() -> ColumnElement[str]:
+    """`shown_status` in SQL: what the row shows and the status filter matches."""
+    return case(
+        (ReviewFinding.status.in_(FINDING_CLOSED), literal("closed")),
+        (FindingClosure.status == "closed", literal("reopened")),
+        else_=FindingClosure.status,
+    )
+
+
 @router.get("/close-requests")
 def list_closures(
     principal: ViewPrincipal,
@@ -1123,7 +1144,8 @@ def list_closures(
             *_decides_where(principal),
         )
     if status:
-        query = query.where(FindingClosure.status.in_(status))
+        # The state the row shows (the finding's when it is closed), not the request's alone.
+        query = query.where(_shown_status().in_(status))
     if kind:
         query = query.where(FindingClosure.kind.in_(kind))
     if severity:
@@ -1175,6 +1197,10 @@ def list_closures(
                     "status": finding.status,
                 },
                 "finding_review_id": review.id,
+                # What the row shows (user 2026-11-06): the finding's state when closed, the
+                # request's own `status` beside it when they differ.
+                "shown_status": shown_status(closure.status, finding.status),
+                "shown_closed_as": finding.status if finding.status in FINDING_CLOSED else None,
                 "repo": {"id": project.id, "path": project.path_with_namespace}
                 if project
                 else None,

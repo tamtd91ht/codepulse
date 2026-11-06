@@ -1215,3 +1215,65 @@ def test_an_empty_diff_without_note_or_code_says_what_was_skipped(
     assert closure is not None
     db_session.refresh(closure)
     assert "img/logo.png (binary_or_empty)" in (closure.reason or "")
+
+
+def test_history_shows_the_findings_state_when_it_was_closed_later(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    """User 2026-11-06: a refused request whose finding was closed later (another request, a
+    later review) showed "Bị từ chối" while the finding's page said "Đã đóng · Đã sửa". The row
+    shows the finding's state, the request's own result beside it; the filter matches it."""
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    refused = client.post(
+        f"/api/v1/close-requests/{closure_id}/reject",
+        json={"note": "Chưa thấy chỗ sửa"},
+        headers=as_user(world.manager),
+    )
+    assert refused.json()["status"] == "rejected"
+    world.an_finding.status = "fixed"  # closed later, another way
+    db_session.flush()
+    manager = as_user(world.manager)
+
+    def rows(**params: str) -> list[dict[str, Any]]:
+        res = client.get("/api/v1/close-requests", params=params, headers=manager)
+        assert res.status_code == 200, res.text
+        return list(res.json()["items"])
+
+    (row,) = rows()
+    assert (row["status"], row["shown_status"], row["shown_closed_as"]) == (
+        "rejected",
+        "closed",
+        "fixed",
+    )
+    assert [r["id"] for r in rows(status="closed")] == [closure_id]
+    assert rows(status="rejected") == []
+    # Open again: the refused request is what the row shows once more.
+    world.an_finding.status = "open"
+    db_session.flush()
+    (row,) = rows()
+    assert (row["shown_status"], row["shown_closed_as"]) == ("rejected", None)
+    assert [r["id"] for r in rows(status="rejected")] == [closure_id]
+
+
+def test_a_check_of_a_finding_already_closed_is_moot_not_refused(
+    client: TestClient, world: World, as_user: Any, db_session: Session, settings: Settings
+) -> None:
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    run(client, as_user, world.admin, closure_id)
+    world.an_finding.status = "fixed"
+    db_session.commit()
+    assert check(db_session, settings, closure_id, FIXED) == "cancelled"
+    closure = db_session.get(FindingClosure, closure_id)
+    assert closure is not None
+    db_session.refresh(closure)
+    assert (closure.reason or "").startswith("Finding đã được đóng trước khi kiểm")
+
+
+def test_a_request_that_closed_a_finding_reopened_since_shows_reopened() -> None:
+    from app.models.review import shown_status
+
+    assert shown_status("closed", "open") == "reopened"
+    assert shown_status("closed", "fixed") == "closed"
+    assert shown_status("pending", "open") == "pending"
+    assert shown_status("pending", "accepted_risk") == "closed"
+    assert shown_status("rejected", "disputed") == "rejected"

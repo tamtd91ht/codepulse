@@ -42,7 +42,7 @@ from app.models import (
     Review,
     ReviewFinding,
 )
-from app.models.review import CHANGE_TIME_UNKNOWN
+from app.models.review import ALREADY_CLOSED, CHANGE_TIME_UNKNOWN
 from app.notifications import inbox
 from app.review.masking import is_config, mask_code, mask_config
 from app.review.prepare import prepare
@@ -290,7 +290,11 @@ def run_close_request(
     if finding is None or review is None or project is None:
         return decide("failed", "Không tìm thấy finding, review hoặc repo của nó.")
     if finding.status != "open":
-        return decide("rejected", f"Finding không còn mở (trạng thái {finding.status}).")
+        # Closed another way meanwhile (an earlier request, a later push, an admin): this
+        # request is moot, not refused.
+        return decide(
+            "cancelled", f"{ALREADY_CLOSED} (trạng thái {finding.status}): không cần nữa."
+        )
     if project.allow_external_llm is False:
         return decide("unmet", "Repo này không cho dùng LLM bên ngoài nên không kiểm được.")
     budget = monthly_budget_usd(session, settings)

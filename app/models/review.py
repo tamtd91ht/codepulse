@@ -183,6 +183,24 @@ class FindingDispute(TimestampMixin, Base):
 
 
 CLOSURE_KINDS = ("auto", "request", "admin", "reopen")
+# A finding no longer to fix (its closing outcome).
+FINDING_CLOSED = ("fixed", "accepted_risk", "false_positive")
+# Why the check dropped a request: the finding was closed another way before it ran.
+ALREADY_CLOSED = "Finding đã được đóng trước khi kiểm"
+
+
+def shown_status(closure_status: str, finding_status: str | None) -> str:
+    """What a row of "Đóng finding" shows (user 2026-11-06: the list and the finding's page
+    must agree): a closed finding shows "closed" whatever became of this request; a request
+    that closed it, the finding open again since, shows "reopened"; otherwise the request's
+    own status."""
+    if finding_status in FINDING_CLOSED:
+        return "closed"
+    if closure_status == "closed":
+        return "reopened"
+    return closure_status
+
+
 CLOSURE_STATUSES = (
     "pending",
     "checking",
