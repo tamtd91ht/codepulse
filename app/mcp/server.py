@@ -423,8 +423,9 @@ def commit_findings_work(
     *,
     sha: str,
     repo: str | None = None,
+    wanted: queries.StatusFilter | None = None,
 ) -> tuple[str, dict[str, Any], str | None]:
-    review, views = queries.commit_findings(session, caller.principal, sha, repo)
+    review, views = queries.commit_findings(session, caller.principal, sha, repo, wanted)
     queries.mark_closable(session, caller.principal, views)
     project = review_repo(session, review)
     facts.project_id = project.id if project else None
@@ -432,15 +433,38 @@ def commit_findings_work(
     facts.result_count = len(views)
     facts.own_only = review.author_user_id == caller.user_id
     markdown, data = render.review_result(
-        review, project, None, views, _base(session, settings), local_llm=_local_llm(settings)
+        review,
+        project,
+        None,
+        views,
+        _base(session, settings),
+        local_llm=_local_llm(settings),
+        filters=_review_filters(wanted),
     )
     return markdown, data, f"review:{review.id}"
 
 
+def _review_filters(wanted: queries.StatusFilter | None) -> dict[str, Any]:
+    """What a review tool applied (§18), as list_findings reports its filters."""
+    w = wanted or queries.StatusFilter()
+    return {
+        "status": ",".join(queries.parse_statuses(w.status)),
+        "include_disputed": w.include_disputed,
+        "include_pending": w.include_pending,
+    }
+
+
 def mr_findings_work(
-    session: Session, caller: Caller, settings: Settings, facts: CallFacts, *, repo: str, iid: int
+    session: Session,
+    caller: Caller,
+    settings: Settings,
+    facts: CallFacts,
+    *,
+    repo: str,
+    iid: int,
+    wanted: queries.StatusFilter | None = None,
 ) -> tuple[str, dict[str, Any], str | None]:
-    review, views = queries.mr_findings(session, caller.principal, repo, iid)
+    review, views = queries.mr_findings(session, caller.principal, repo, iid, wanted)
     queries.mark_closable(session, caller.principal, views)
     project = review_repo(session, review)
     facts.project_id = project.id if project else None
@@ -450,7 +474,13 @@ def mr_findings_work(
     if mr is None and review.mr_id is not None:
         mr = session.get(MergeRequest, review.mr_id)
     markdown, data = render.review_result(
-        review, project, mr, views, _base(session, settings), local_llm=_local_llm(settings)
+        review,
+        project,
+        mr,
+        views,
+        _base(session, settings),
+        local_llm=_local_llm(settings),
+        filters=_review_filters(wanted),
     )
     return markdown, data, f"review:{review.id}"
 
@@ -693,6 +723,26 @@ StatusName = Literal[
     "false_positive",
 ]
 
+ReviewStatusArg = Annotated[
+    StatusName | list[StatusName] | str,
+    Field(
+        description="Lọc finding của review như status của list_findings: một giá trị hoặc "
+        'danh sách (lấy hợp), vd ["pending", "unmet"] hoặc "closed". Mặc định open: còn phải '
+        "sửa, ở đây gồm cả finding đang khiếu nại và đang Chờ duyệt / Chưa đủ điều kiện. "
+        "pending, unmet, rejected, closed, any, hoặc trạng thái finding cụ thể."
+    ),
+]
+ReviewDisputedArg = Annotated[
+    bool, Field(description="Với status=open: gồm cả finding đang khiếu nại (mặc định true).")
+]
+ReviewPendingArg = Annotated[
+    bool,
+    Field(
+        description="Với status=open/disputed: gồm cả finding có yêu cầu đóng Chờ duyệt / "
+        "Chưa đủ điều kiện (mặc định true)."
+    ),
+]
+
 UserArg = Annotated[
     str | None,
     Field(
@@ -825,21 +875,29 @@ def build_server() -> MCPServer:
         name="get_commit_findings",
         annotations=READ_ONLY,
         description=(
-            "The review of one commit (latest round) and every open critical/high finding in it, "
-            "in full detail (description, fix suggestion, code excerpt, verification). `sha`: at "
-            "least 7 hex characters or a GitLab commit link; give `repo` when a short SHA "
-            "matches several repos." + UNTRUSTED
+            "The review of one commit (latest round) and its critical/high findings, in full "
+            "detail (description, fix suggestion, code excerpt, verification, close_state). "
+            "Default: every one still to fix; `status` filters as in list_findings (one or a "
+            "list: open | pending | unmet | rejected | closed | any, or an exact finding "
+            "status). `sha`: at least 7 hex characters or a GitLab commit link; give `repo` "
+            "when a short SHA matches several repos." + UNTRUSTED
         ),
     )
     def get_commit_findings(
         sha: Annotated[str, Field(description="SHA (≥7 ký tự) hoặc link commit GitLab.")],
         repo: RepoArg = None,
+        status: ReviewStatusArg = "open",
+        include_disputed: ReviewDisputedArg = True,
+        include_pending: ReviewPendingArg = True,
         ctx: Context | None = None,
     ) -> CallToolResult:
+        wanted = queries.StatusFilter(status, include_disputed, include_pending)
         return run_tool(
             "get_commit_findings",
             SCOPE_READ,
-            lambda s, c, st, f: commit_findings_work(s, c, st, f, sha=sha, repo=repo),
+            lambda s, c, st, f: commit_findings_work(
+                s, c, st, f, sha=sha, repo=repo, wanted=wanted
+            ),
             client=_client_info(ctx),
         )
 
@@ -847,20 +905,25 @@ def build_server() -> MCPServer:
         name="get_mr_findings",
         annotations=READ_ONLY,
         description=(
-            "The latest review of a merge request and every open critical/high finding in it, in "
-            "full detail. `repo`: GitLab path (group/name) or id; `iid`: the MR number (!iid)."
+            "The latest review of a merge request and its critical/high findings, in full "
+            "detail. Default: every one still to fix; `status` filters as in list_findings (one "
+            "or a list). `repo`: GitLab path (group/name) or id; `iid`: the MR number (!iid)."
             + UNTRUSTED
         ),
     )
     def get_mr_findings(
         repo: Annotated[str, Field(description="Repo: đường dẫn GitLab (group/name) hoặc id.")],
         iid: Annotated[int, Field(ge=1, description="Số MR (!iid).")],
+        status: ReviewStatusArg = "open",
+        include_disputed: ReviewDisputedArg = True,
+        include_pending: ReviewPendingArg = True,
         ctx: Context | None = None,
     ) -> CallToolResult:
+        wanted = queries.StatusFilter(status, include_disputed, include_pending)
         return run_tool(
             "get_mr_findings",
             SCOPE_READ,
-            lambda s, c, st, f: mr_findings_work(s, c, st, f, repo=repo, iid=iid),
+            lambda s, c, st, f: mr_findings_work(s, c, st, f, repo=repo, iid=iid, wanted=wanted),
             client=_client_info(ctx),
         )
 

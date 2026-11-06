@@ -323,11 +323,12 @@ export default function McpGuidePage() {
             </Tool>
 
             <Tool name="get_commit_findings" scope="đọc">
-              <p>Review mới nhất của một commit và mọi finding critical/high còn mở, đủ chi tiết để sửa.</p>
+              <p>Review mới nhất của một commit và các finding critical/high, đủ chi tiết để sửa. Mặc định: mọi finding còn phải sửa (kể cả đang khiếu nại, đang chờ duyệt).</p>
               <Params
                 rows={[
                   ["sha", "chuỗi", "SHA từ 7 ký tự hoặc link commit GitLab."],
                   ["repo", "chuỗi, tuỳ chọn", <>Bắt buộc khi SHA rút gọn trùng nhiều repo (lỗi <code>ambiguous_sha</code>).</>],
+                  ["status", "chuỗi hoặc danh sách, tuỳ chọn", <>Như <code>status</code> của <code>list_findings</code>, ví dụ <code>[&quot;closed&quot;]</code> hoặc <code>&quot;any&quot;</code>. Kèm <code>include_disputed</code>, <code>include_pending</code> (mặc định true).</>],
                 ]}
               />
             </Tool>
@@ -338,6 +339,7 @@ export default function McpGuidePage() {
                 rows={[
                   ["repo", "chuỗi", "Đường dẫn GitLab hoặc id của repo."],
                   ["iid", "số", "Số MR (phần sau dấu !)."],
+                  ["status", "chuỗi hoặc danh sách, tuỳ chọn", <>Như <code>get_commit_findings</code>.</>],
                 ]}
               />
             </Tool>

@@ -305,15 +305,6 @@ def _base() -> Any:
     )
 
 
-def _still_to_fix(sev: tuple[str, ...], include_disputed: bool) -> list[ColumnElement[bool]]:
-    statuses = ["open", "disputed"] if include_disputed else ["open"]
-    return [
-        ReviewFinding.severity.in_(sev),
-        ReviewFinding.status.in_(statuses),
-        ReviewFinding.verified != "rejected",
-    ]
-
-
 def _latest_request() -> Any:
     """Id of the finding's latest close request (kind "request")."""
     return (
@@ -726,13 +717,28 @@ def repeat_counts(
     return {str(fp): int(n) for fp, n in rows}
 
 
+@dataclass(frozen=True)
+class StatusFilter:
+    """`status` with its two flags, as list_findings takes them (§15-§17). The review tools'
+    default (§18): every critical/high still to fix, disputed and with the decider included."""
+
+    status: str | Sequence[str] | None = None
+    include_disputed: bool = True
+    include_pending: bool = True
+
+
 def _review_findings(
-    session: Session, review: Review, include_disputed: bool = True
+    session: Session, review: Review, wanted: StatusFilter | None = None
 ) -> list[FindingView]:
-    """Every critical/high still open of one review, a pending request shown, not hidden."""
+    """The critical/high findings of one review matching `wanted` (default: still to fix)."""
+    w = wanted or StatusFilter()
     rows = session.execute(
         _base()
-        .where(ReviewFinding.review_id == review.id, *_still_to_fix(SEVERE, include_disputed))
+        .where(
+            ReviewFinding.review_id == review.id,
+            ReviewFinding.severity.in_(SEVERE),
+            *_status_filter(w.status, w.include_disputed, w.include_pending),
+        )
         .order_by(*_top_order())
     ).all()
     return _views(session, rows)
@@ -746,9 +752,15 @@ def _visible(session: Session, principal: Principal, review: Review) -> None:
 
 
 def commit_findings(
-    session: Session, principal: Principal, sha: str, repo: str | None = None
+    session: Session,
+    principal: Principal,
+    sha: str,
+    repo: str | None = None,
+    filter_by: StatusFilter | None = None,
 ) -> tuple[Review, list[FindingView]]:
-    """The latest round of a commit's review and its open critical/high findings."""
+    """The latest round of a commit's review and its critical/high findings (`filter_by`, default
+    still to fix)."""
+    parse_statuses(filter_by.status if filter_by else None)  # a wrong status before any lookup
     try:
         wanted = parse_commit(sha)
     except ValueError as exc:
@@ -801,13 +813,19 @@ def commit_findings(
             "get_mr_findings)",
         )
     _visible(session, principal, review)
-    return review, _review_findings(session, review)
+    return review, _review_findings(session, review, filter_by)
 
 
 def mr_findings(
-    session: Session, principal: Principal, repo: str, iid: int
+    session: Session,
+    principal: Principal,
+    repo: str,
+    iid: int,
+    filter_by: StatusFilter | None = None,
 ) -> tuple[Review, list[FindingView]]:
-    """The latest finished review of an MR (its newest head) and its open critical/high."""
+    """The latest finished review of an MR (its newest head) and its critical/high findings
+    (`filter_by`, default still to fix)."""
+    parse_statuses(filter_by.status if filter_by else None)  # a wrong status before any lookup
     project = resolve_repo(session, principal, repo)
     mr = session.scalar(
         select(MergeRequest).where(MergeRequest.project_id == project.id, MergeRequest.iid == iid)
@@ -822,7 +840,7 @@ def mr_findings(
     if review is None:
         raise McpError("not_reviewed", f"MR !{iid} chưa có review xong")
     _visible(session, principal, review)
-    return review, _review_findings(session, review)
+    return review, _review_findings(session, review, filter_by)
 
 
 def finding_view(session: Session, principal: Principal, finding_id: int) -> FindingView:

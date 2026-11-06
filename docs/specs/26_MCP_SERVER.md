@@ -176,3 +176,7 @@ Mỗi dòng một thành viên (trong phạm vi + bộ lọc), có dòng tổng:
 ## 17. `status` nhiều giá trị
 
 - **[Quyết định]** (user 2026-11-06) `status` của `list_findings` nhận một giá trị, một **danh sách** (`["pending", "unmet"]`) hoặc chuỗi phân cách bằng dấu phẩy (`"pending,unmet"`). Kết quả là **hợp** (OR): finding khớp bất kỳ giá trị nào, mỗi giá trị lọc đúng như khi dùng riêng (kể cả `include_disputed` / `include_pending` áp cho `open` / `disputed`). Có `any` trong danh sách = tất cả. Giá trị lặp bị bỏ, `close_rejected` = `rejected`, giá trị sai → `invalid_argument`. `filters.status` trong kết quả là các giá trị đã chuẩn hoá nối bằng dấu phẩy.
+
+## 18. Lọc `status` ở `get_commit_findings` / `get_mr_findings`
+
+- **[Quyết định]** (user 2026-11-06) Hai tool nhận `status` (giá trị và nhiều giá trị như `list_findings`, §15-§17), `include_disputed`, `include_pending`. Mặc định giữ hành vi cũ: `status=open` với `include_disputed = true` và `include_pending = true` — mọi finding critical/high còn phải sửa của review, kể cả đang khiếu nại và đang Chờ duyệt / Chưa đủ điều kiện (khác mặc định của `list_findings`, nơi hai cờ là false). Ví dụ `status=["closed"]` xem những finding của commit/MR đã đóng, `status="any"` xem tất cả. Kết quả có `filters` (status đã chuẩn hoá + hai cờ); dòng đếm trong Markdown nói theo bộ lọc ("… chờ duyệt hoặc chưa đủ điều kiện, chờ quyết định"). Giá trị sai bị từ chối trước khi tra commit/MR.

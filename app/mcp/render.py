@@ -571,17 +571,7 @@ def list_result(
     at = now or datetime.now(UTC)
     tag = new_tag()
     applied = {k: v for k, v in (filters or {}).items() if v not in (None, "", [], False)}
-    words = {
-        "open": "còn phải sửa",
-        "closed": "đã đóng",
-        "any": "(mở và đã đóng)",
-        "pending": "chờ duyệt",
-        "unmet": "chưa đủ điều kiện, chờ quyết định",
-        "rejected": "bị từ chối yêu cầu đóng",
-    }
-    what = " hoặc ".join(
-        words.get(s, f"trạng thái {s}") for s in str(applied.get("status", "open")).split(",")
-    )
+    what = status_words(str(applied.get("status", "open")))
     head = f"# Finding critical/high {what} của {owner_label}: {len(views)}"
     if applied:
         head += "\n- Bộ lọc: " + ", ".join(f"{k}={inline(str(v))}" for k, v in applied.items())
@@ -604,6 +594,21 @@ def list_result(
     return f"{guidance(tag)}\n\n{head}\n\n{body}", data
 
 
+STATUS_WORDS = {
+    "open": "còn phải sửa",
+    "closed": "đã đóng",
+    "any": "(mở và đã đóng)",
+    "pending": "chờ duyệt",
+    "unmet": "chưa đủ điều kiện, chờ quyết định",
+    "rejected": "bị từ chối yêu cầu đóng",
+}
+
+
+def status_words(status: str) -> str:
+    """`filters.status` (comma-separated, normalised) in words for a result's heading."""
+    return " hoặc ".join(STATUS_WORDS.get(s, f"trạng thái {s}") for s in status.split(","))
+
+
 def review_result(
     review: Review,
     project: Project | None,
@@ -613,6 +618,7 @@ def review_result(
     now: datetime | None = None,
     *,
     local_llm: bool = False,
+    filters: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     at = now or datetime.now(UTC)
     tag = new_tag()
@@ -625,7 +631,10 @@ def review_result(
         f"- CodePulse: {base}/reviews/{review.id}",
     ]
     head += _review_context_md(review, tag, ok) if ok else [f"- _({HIDDEN})_"]
-    head.append(f"\n{len(views)} finding critical/high còn mở.")
+    applied = filters or {"status": "open"}
+    head.append(
+        f"\n{len(views)} finding critical/high {status_words(str(applied.get('status', 'open')))}."
+    )
     body = "\n\n---\n\n".join(_full_md(v, base, tag, at, local_llm) for v in views)
     data = {
         "review": {
@@ -642,6 +651,7 @@ def review_result(
             "code_hidden": None if ok else HIDDEN,
             "link": f"{base}/reviews/{review.id}",
         },
+        "filters": applied,
         "findings": [finding_data(v, base, at, local_llm=local_llm) for v in views],
     }
     return "\n".join([guidance(tag), "", *head, "", body]), data

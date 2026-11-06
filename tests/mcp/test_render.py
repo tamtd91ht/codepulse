@@ -568,3 +568,85 @@ def test_status_takes_several_values(env: Env, world: Any) -> None:
     with pytest.raises(ToolError):
         invoke(an, "list_findings", {"status": ["pending", "done"]})
     assert invoke(an, "list_findings", {"status": "pending,done"}).is_error
+
+
+def test_commit_and_mr_findings_filter_by_status(env: Env, world: Any) -> None:
+    """user 2026-11-06 (docs/specs/26 §18): status on get_commit_findings / get_mr_findings;
+    the default stays every finding still to fix, disputed and with the decider included."""
+    from datetime import UTC, datetime
+
+    from app.models import Commit, FindingClosure, Review, ReviewFinding
+    from app.review.rubric import RUBRIC_VERSION
+
+    _setup(env, world)
+    s = env.session
+    an = caller_for(s, env.settings, world.an)
+
+    # The MR review of the world: its finding, open, then with a request waiting, then closed.
+    fid = world.an_finding.id
+
+    def mr_ids(**args: Any) -> set[int]:
+        result = invoke(an, "get_mr_findings", {"repo": "demo/p", "iid": 7, **args})
+        assert not result.is_error, result.content[0].text
+        return {f["id"] for f in result.structured_content["findings"]}
+
+    assert fid in mr_ids() and fid in mr_ids(status="open") and fid not in mr_ids(status="closed")
+    s.add(
+        FindingClosure(
+            finding_id=fid,
+            kind="request",
+            status="pending",
+            requested_by=world.an.id,
+            argument="x" * 60,
+        )
+    )
+    s.commit()
+    assert fid in mr_ids()  # the default shows a finding with the decider
+    assert fid not in mr_ids(include_pending=False)
+    assert fid in mr_ids(status=["pending", "unmet"])
+    result = invoke(an, "get_mr_findings", {"repo": "demo/p", "iid": 7, "status": "pending"})
+    assert result.structured_content["filters"]["status"] == "pending"
+    assert "chờ duyệt" in result.content[0].text
+    world.an_finding.status = "fixed"
+    s.commit()
+    assert fid not in mr_ids() and fid in mr_ids(status="closed") and fid in mr_ids(status="any")
+
+    # A commit review: one open, one closed.
+    sha = "e" * 40
+    s.add(Commit(sha=sha, project_id=world.project.id, message="fix", authored_at=None))
+    s.flush()
+    review = Review(
+        target_type="commit",
+        commit_sha=sha,
+        reviewed_sha=sha,
+        status="done",
+        author_user_id=world.an.id,
+        finished_at=datetime(2026, 11, 6, tzinfo=UTC),
+        rubric_version=RUBRIC_VERSION,
+    )
+    s.add(review)
+    s.flush()
+    open_f = ReviewFinding(
+        review_id=review.id, severity="high", category="bug", file_path="a.py", title="a"
+    )
+    closed_f = ReviewFinding(
+        review_id=review.id,
+        severity="critical",
+        category="bug",
+        file_path="b.py",
+        title="b",
+        status="accepted_risk",
+    )
+    s.add_all([open_f, closed_f])
+    s.commit()
+
+    def commit_ids(**args: Any) -> set[int]:
+        result = invoke(an, "get_commit_findings", {"sha": sha[:8], **args})
+        assert not result.is_error, result.content[0].text
+        return {f["id"] for f in result.structured_content["findings"]}
+
+    assert commit_ids() == {open_f.id}
+    assert commit_ids(status="closed") == {closed_f.id}
+    assert commit_ids(status="open,closed") == {open_f.id, closed_f.id}
+    assert commit_ids(status=["any"]) == {open_f.id, closed_f.id}
+    assert invoke(an, "get_commit_findings", {"sha": sha[:8], "status": "done"}).is_error
