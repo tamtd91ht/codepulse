@@ -1545,6 +1545,11 @@ button.drp-field.active:hover:not(:disabled) {
   padding: 0;
   overflow: hidden;
 }
+/* An open date picker (or other popover) in a card's head must not be cut off by the card's
+   clipping when the card is short (Của tôi › Kết quả review, user 2026-11-06). */
+.card.flush:has(.drp-pop) {
+  overflow: visible;
+}
 .card.flush > .card-head {
   padding: 18px 20px 0;
 }
