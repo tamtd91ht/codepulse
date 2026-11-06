@@ -519,3 +519,52 @@ def test_close_state_follows_the_request_in_flight_and_the_edge_cases(env: Env, 
     assert states(status="fixed").get(fid) == "closed"
     assert states(status="closed").get(fid) == "closed"
     assert fid not in states(status="pending")
+
+
+def test_status_takes_several_values(env: Env, world: Any) -> None:
+    """user 2026-11-06 (docs/specs/26 §17): a list or comma-separated, OR-ed."""
+    from app.mcp.queries import McpError, parse_statuses
+    from app.models import FindingClosure
+
+    _setup(env, world)
+    an = caller_for(env.session, env.settings, world.an)
+    fid = world.an_finding.id
+
+    def ids(status: Any) -> set[int]:
+        result = invoke(an, "list_findings", {"status": status})
+        assert not result.is_error, result.content[0].text
+        return {f["id"] for f in result.structured_content["findings"]}
+
+    env.session.add(
+        FindingClosure(
+            finding_id=fid,
+            kind="request",
+            status="pending",
+            requested_by=world.an.id,
+            argument="x" * 60,
+        )
+    )
+    env.session.commit()
+    assert fid not in ids("unmet") and fid not in ids(["closed", "rejected"])
+    assert fid in ids(["pending", "unmet"]) and fid in ids("unmet,pending")
+    assert fid in ids(["closed", "any"])
+    result = invoke(an, "list_findings", {"status": ["pending", "unmet"]})
+    assert result.structured_content["filters"]["status"] == "pending,unmet"
+    assert "chờ duyệt hoặc chưa đủ điều kiện" in result.content[0].text
+
+    assert parse_statuses(None) == ["open"]
+    assert parse_statuses(" Pending , unmet,pending") == ["pending", "unmet"]
+    assert parse_statuses(["close_rejected", "rejected"]) == ["rejected"]
+    try:
+        parse_statuses("pending,done")
+    except McpError as exc:
+        assert "done" in str(exc)
+    else:
+        raise AssertionError("a wrong value must be refused")
+    # A wrong value in a list is refused by the tool's schema; in a string, by parse_statuses.
+    import pytest
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    with pytest.raises(ToolError):
+        invoke(an, "list_findings", {"status": ["pending", "done"]})
+    assert invoke(an, "list_findings", {"status": "pending,done"}).is_error

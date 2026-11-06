@@ -21,7 +21,7 @@ from parsing its result). The business rules are the dashboard's own functions
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractContextManager, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -348,7 +348,7 @@ def list_findings_work(
     team: str | None = None,
     since: str | None = None,
     until: str | None = None,
-    status: str | None = None,
+    status: str | Sequence[str] | None = None,
     include_disputed: bool = False,
     include_pending: bool = False,
     order: queries.Order = "priority",
@@ -389,7 +389,7 @@ def list_findings_work(
         if found.team is not None:
             label += f" (team {found.team.name})"
     filters = {
-        "status": (status or "open").strip().lower(),
+        "status": ",".join(queries.parse_statuses(status)),
         "severity": severity,
         "repo": repo,
         "business_project": found.business_project.name if found.business_project else None,
@@ -678,6 +678,21 @@ UNTRUSTED = (
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
 WRITES = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=True)
 
+# list_findings `status` values (docs/specs/26 §15-§17).
+StatusName = Literal[
+    "open",
+    "pending",
+    "unmet",
+    "rejected",
+    "closed",
+    "any",
+    "close_rejected",
+    "disputed",
+    "fixed",
+    "accepted_risk",
+    "false_positive",
+]
+
 UserArg = Annotated[
     str | None,
     Field(
@@ -703,10 +718,10 @@ def build_server() -> MCPServer:
         description=(
             "List critical/high findings with the dashboard's (Critical Board) filters. Default: "
             "the token owner's own findings still to fix (status open). Filters: user, team, "
-            "business_project (dự án), repo, severity, status (open | pending | unmet | "
-            "rejected | closed | any, or one exact finding status), since/until (review period "
-            "by the change's date, both days inclusive, REPORT_TZ), include_disputed, "
-            "include_pending. "
+            "business_project (dự án), repo, severity, status (one or a list, OR-ed: open | "
+            "pending | unmet | rejected | closed | any, or an exact finding status), "
+            "since/until (review period by the change's date, both days inclusive, "
+            "REPORT_TZ), include_disputed, include_pending. "
             "Sorted critical first, then verified=confirmed, confidence, newest review "
             "(order=newest: newest change first). Paged: when next_offset is set, call again "
             "with offset=next_offset. Each item: id, severity, file:line, title, repo, commit, "
@@ -744,21 +759,12 @@ def build_server() -> MCPServer:
             Field(description="Đến ngày (ISO YYYY-MM-DD, tính cả ngày đó) theo ngày của thay đổi."),
         ] = None,
         status: Annotated[
-            Literal[
-                "open",
-                "pending",
-                "unmet",
-                "rejected",
-                "closed",
-                "any",
-                "close_rejected",
-                "disputed",
-                "fixed",
-                "accepted_risk",
-                "false_positive",
-            ],
+            # A plain string too: comma-separated values, checked by queries.parse_statuses.
+            StatusName | list[StatusName] | str,
             Field(
-                description="Lọc theo close_state như trang Đóng finding: pending (Chờ duyệt), "
+                description="Một giá trị hoặc danh sách (lấy hợp: finding khớp bất kỳ giá trị "
+                'nào), vd ["pending", "unmet"] hoặc "pending,unmet". '
+                "Lọc theo close_state như trang Đóng finding: pending (Chờ duyệt), "
                 "unmet (Chưa đủ điều kiện · chờ quyết định), rejected (Bị từ chối, được gửi "
                 "lại request_closure), closed (Đã đóng: fixed, accepted_risk, false_positive "
                 "hoặc bị kiểm chứng bác bỏ). open (mặc định): còn phải sửa (Đang mở và Bị từ "

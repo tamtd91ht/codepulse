@@ -7,6 +7,7 @@ Visibility is the dashboard's, never a parallel model: lists are filtered by `wo
 of the review page. Errors are `McpError` (a code and a Vietnamese sentence saying what to do).
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
@@ -454,18 +455,43 @@ def resolve_team(session: Session, principal: Principal, raw: str) -> Team:
     return found
 
 
+def parse_statuses(status: str | Sequence[str] | None) -> list[str]:
+    """`status` of list_findings: one value, a list, or comma-separated (§17), normalised, in
+    order, without repeats; `close_rejected` is `rejected` (§16); none given: open."""
+    raw = [status] if status is None or isinstance(status, str) else list(status)
+    out: list[str] = []
+    for part in (p for item in raw for p in (item or "").split(",")):
+        wanted = part.strip().lower()
+        if not wanted:
+            continue
+        wanted = {"close_rejected": "rejected"}.get(wanted, wanted)  # its name for a day (§16)
+        if wanted not in FINDING_STATUSES:
+            raise McpError(
+                "invalid_argument",
+                f"status chỉ nhận {', '.join(FINDING_STATUSES)}, nhận {part.strip()!r}",
+            )
+        if wanted not in out:
+            out.append(wanted)
+    return out or ["open"]
+
+
 def _status_filter(
-    status: str | None, include_disputed: bool, include_pending: bool
+    status: str | Sequence[str] | None, include_disputed: bool, include_pending: bool
 ) -> list[ColumnElement[bool]]:
-    """`status` of list_findings as filters (§4, §15, §16); none for `any`."""
-    wanted = (status or "open").strip().lower()
-    wanted = {"close_rejected": "rejected"}.get(wanted, wanted)  # its name for a day (§16)
-    if wanted not in FINDING_STATUSES:
-        raise McpError(
-            "invalid_argument", f"status chỉ nhận {', '.join(FINDING_STATUSES)}, nhận {status!r}"
-        )
-    if wanted == "any":
+    """`status` of list_findings as filters (§4, §15, §16, §17): several values are an OR of
+    each value's filter; none for `any`."""
+    wanted = parse_statuses(status)
+    if "any" in wanted:
         return []
+    each = [_one_status(w, include_disputed, include_pending) for w in wanted]
+    if len(each) == 1:
+        return each[0]
+    return [or_(*(and_(*conds) for conds in each))]
+
+
+def _one_status(
+    wanted: str, include_disputed: bool, include_pending: bool
+) -> list[ColumnElement[bool]]:
     if wanted in CLOSE_STATES and wanted != "open":
         return _state_is(wanted)
     if wanted == "open":
@@ -502,7 +528,7 @@ def list_findings(
     team: str | None = None,
     since: str | None = None,
     until: str | None = None,
-    status: str | None = None,
+    status: str | Sequence[str] | None = None,
     include_disputed: bool = False,
     include_pending: bool = False,
     order: Order = "priority",

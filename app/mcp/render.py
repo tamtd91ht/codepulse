@@ -571,16 +571,17 @@ def list_result(
     at = now or datetime.now(UTC)
     tag = new_tag()
     applied = {k: v for k, v in (filters or {}).items() if v not in (None, "", [], False)}
-    status = applied.get("status", "open")
-    what = {
+    words = {
         "open": "còn phải sửa",
         "closed": "đã đóng",
         "any": "(mở và đã đóng)",
         "pending": "chờ duyệt",
         "unmet": "chưa đủ điều kiện, chờ quyết định",
         "rejected": "bị từ chối yêu cầu đóng",
-        "close_rejected": "bị từ chối yêu cầu đóng",
-    }.get(status, f"trạng thái {status}")
+    }
+    what = " hoặc ".join(
+        words.get(s, f"trạng thái {s}") for s in str(applied.get("status", "open")).split(",")
+    )
     head = f"# Finding critical/high {what} của {owner_label}: {len(views)}"
     if applied:
         head += "\n- Bộ lọc: " + ", ".join(f"{k}={inline(str(v))}" for k, v in applied.items())
