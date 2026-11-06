@@ -220,3 +220,142 @@ def test_disputed_finding_is_not_closed(env: Env, world: Any) -> None:
     result = invoke(an, "get_finding", {"id": world.an_finding.id})
     assert result.structured_content["needs_fix"] is True
     assert "**đang khiếu nại**" in result.content[0].text
+
+
+def test_list_filters_open_closed_or_both(env: Env, world: Any) -> None:
+    """user 2026-11-06 (docs/specs/26 §15): status=open | closed | any."""
+    _setup(env, world)
+    an = caller_for(env.session, env.settings, world.an)
+    fid = world.an_finding.id
+
+    def ids(status: str) -> set[int]:
+        result = invoke(an, "list_findings", {"status": status})
+        assert not result.is_error, result.content[0].text
+        return {f["id"] for f in result.structured_content["findings"]}
+
+    assert fid in ids("open") and fid not in ids("closed") and fid in ids("any")
+    world.an_finding.status = "accepted_risk"
+    env.session.commit()
+    assert fid not in ids("open") and fid in ids("closed") and fid in ids("any")
+    closed = invoke(an, "list_findings", {"status": "closed"})
+    assert "đã đóng" in closed.content[0].text
+    assert all(f["closed"] for f in closed.structured_content["findings"])
+    # Refuted by the verification: closed too, whatever its status says.
+    world.an_finding.status, world.an_finding.verified = "open", "rejected"
+    env.session.commit()
+    assert fid not in ids("open") and fid in ids("closed")
+
+
+def test_refused_close_request_is_still_open_and_may_be_asked_again(env: Env, world: Any) -> None:
+    """user 2026-11-06 (docs/specs/26 §15): status=close_rejected, `last_rejection`."""
+    from datetime import UTC, datetime
+
+    from app.models import FindingClosure
+
+    _setup(env, world)
+    an = caller_for(env.session, env.settings, world.an)
+    fid = world.an_finding.id
+
+    def ids(status: str) -> set[int]:
+        result = invoke(an, "list_findings", {"status": status})
+        assert not result.is_error, result.content[0].text
+        return {f["id"] for f in result.structured_content["findings"]}
+
+    assert fid not in ids("close_rejected")
+    env.session.add(
+        FindingClosure(
+            finding_id=fid,
+            kind="request",
+            status="rejected",
+            requested_by=world.an.id,
+            decided_by=world.lead.id,
+            decided_at=datetime(2026, 11, 6, tzinfo=UTC),
+            note="Đã thêm kiểm tra tham số.",
+            reason="Từ chối: Chưa xử lý nhánh lỗi khi tham số rỗng.",
+            argument="x" * 60,
+        )
+    )
+    env.session.commit()
+    assert fid in ids("close_rejected") and fid in ids("open") and fid not in ids("closed")
+    result = invoke(an, "list_findings", {"status": "close_rejected"})
+    [item] = [f for f in result.structured_content["findings"] if f["id"] == fid]
+    assert item["closed"] is False and item["needs_fix"] is True
+    rejection = item["last_rejection"]
+    assert rejection["rejected_by"] == world.lead.full_name
+    assert rejection["reason"] == "Từ chối: Chưa xử lý nhánh lỗi khi tham số rỗng."
+    assert rejection["can_request_again"] is True and item["close_request"]["allowed"] is True
+    text = result.content[0].text
+    assert "**bị từ chối**" in text and "vẫn được gửi lại `request_closure`" in text
+    assert "Chưa xử lý nhánh lỗi" in text and "Đã thêm kiểm tra tham số." not in text
+    # The reason may carry the check's code-derived text: hidden with the code (§7).
+    world.project.allow_external_llm = False
+    env.session.commit()
+    hidden = invoke(an, "get_finding", {"id": fid})
+    assert hidden.structured_content["last_rejection"]["reason"] is None
+    assert "Chưa xử lý nhánh lỗi" not in hidden.content[0].text
+    world.project.allow_external_llm = True
+    env.session.commit()
+
+    # A newer request in flight: the latest is no longer the refused one.
+    env.session.add(
+        FindingClosure(
+            finding_id=fid,
+            kind="request",
+            status="pending",
+            requested_by=world.an.id,
+            argument="y" * 60,
+        )
+    )
+    env.session.commit()
+    assert fid not in ids("close_rejected")
+    data = invoke(an, "get_finding", {"id": fid}).structured_content
+    assert data["last_rejection"] is None
+
+
+def test_system_answer_on_reopen_is_not_a_refusal(env: Env, world: Any) -> None:
+    """A request left waiting while the finding was closed another way is set `rejected` by the
+    system when the finding is reopened (no decider): not "refused", nothing to show."""
+    from datetime import UTC, datetime
+
+    from app.models import FindingClosure
+
+    _setup(env, world)
+    an = caller_for(env.session, env.settings, world.an)
+    fid = world.an_finding.id
+    env.session.add(
+        FindingClosure(
+            finding_id=fid,
+            kind="request",
+            status="rejected",
+            requested_by=world.an.id,
+            decided_at=datetime(2026, 11, 6, tzinfo=UTC),
+            reason="Finding đã được đóng cách khác trong lúc chờ duyệt.",
+            argument="x" * 60,
+        )
+    )
+    env.session.commit()
+    listed = invoke(an, "list_findings", {"status": "close_rejected"}).structured_content
+    assert fid not in {f["id"] for f in listed["findings"]}
+    assert invoke(an, "get_finding", {"id": fid}).structured_content["last_rejection"] is None
+
+    # Refused by a person, then the finding was reopened: it starts afresh.
+    env.session.add(
+        FindingClosure(
+            finding_id=fid,
+            kind="request",
+            status="rejected",
+            requested_by=world.an.id,
+            decided_by=world.lead.id,
+            decided_at=datetime(2026, 11, 6, tzinfo=UTC),
+            reason="Từ chối: chưa đủ.",
+            argument="y" * 60,
+        )
+    )
+    env.session.commit()
+    listed = invoke(an, "list_findings", {"status": "close_rejected"}).structured_content
+    assert fid in {f["id"] for f in listed["findings"]}
+    env.session.add(FindingClosure(finding_id=fid, kind="reopen", status="reopened", note="mở lại"))
+    env.session.commit()
+    listed = invoke(an, "list_findings", {"status": "close_rejected"}).structured_content
+    assert fid not in {f["id"] for f in listed["findings"]}
+    assert invoke(an, "get_finding", {"id": fid}).structured_content["last_rejection"] is None

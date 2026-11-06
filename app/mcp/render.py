@@ -194,6 +194,43 @@ def _closing_data(view: FindingView, allowed: bool) -> dict[str, Any] | None:
     }
 
 
+def _rejection_data(view: FindingView, allowed: bool) -> dict[str, Any] | None:
+    """The refused latest close request of a finding still to fix (§15): it may be sent again.
+    `reason` is the decider's "Từ chối: …" (with the check's reason after an unmet check, so it
+    is withheld with the other code-derived text, §7)."""
+    c = view.rejection
+    if c is None:
+        return None
+    return {
+        "closure_id": c.id,
+        "rejected_at": _iso(c.decided_at),
+        "rejected_by": view.rejecter,
+        "rejected_by_user_id": c.decided_by,
+        "reason": clean(c.reason) if allowed else None,
+        "can_request_again": view.close_block is None,
+    }
+
+
+def _rejection_md(view: FindingView, tag: str, allowed: bool) -> list[str]:
+    c = view.rejection
+    if c is None:
+        return []
+    line = f"- Yêu cầu đóng #{c.id} **bị từ chối**"
+    if c.decided_at:
+        line += f" lúc {_iso(c.decided_at)}"
+    if view.rejecter:
+        line += f" bởi {inline(view.rejecter)}"
+    line += (
+        ": vẫn được gửi lại `request_closure` sau khi sửa tiếp theo ghi chú."
+        if view.close_block is None
+        else "."
+    )
+    out = [line]
+    if c.reason and allowed:
+        out += ["  Lý do từ chối:", wrap(tag, c.reason)]
+    return out
+
+
 def _state_md(view: FindingView) -> str:
     """The first thing to read about a finding: still to fix, or closed (nothing to do)."""
     if view.closed_as is None:
@@ -266,6 +303,7 @@ def finding_data(
             "needs_fix": view.closed_as is None,
             "closed_as": view.closed_as,
             "closing": _closing_data(view, ok),
+            "last_rejection": _rejection_data(view, ok),
         }
     )
     # Enough to understand and plan the fix from the list alone (user 2026-11-05); the code
@@ -372,6 +410,7 @@ def _short_md(
     lines.append(f"- CodePulse: {finding_link(base, r.id, f.id)}")
     if view.pending:
         lines.append(f"- đang có yêu cầu đóng #{view.pending.id} ({view.pending.status})")
+    lines += _rejection_md(view, tag, ok)
     lines.append(_close_md(view))
     lines += ["", "**Tiêu đề**", wrap(tag, f.title or "(không tiêu đề)")]
     lines += ["", "**Mô tả**", wrap(tag, f.message or "(không có)")]
@@ -406,6 +445,7 @@ def _full_md(view: FindingView, base: str, tag: str, now: datetime, local_llm: b
     if dates := _dates_md(view, now):
         out.append(dates)
     out.append(f"- CodePulse: {data['link']}")
+    out += _rejection_md(view, tag, not hidden)
     out.append(_close_md(view))
     if view.repeats > 1:
         out.append(f"- Lặp lại: cùng lỗi xuất hiện ở {view.repeats} thay đổi trong 90 ngày")
@@ -471,7 +511,12 @@ def list_result(
     tag = new_tag()
     applied = {k: v for k, v in (filters or {}).items() if v not in (None, "", [], False)}
     status = applied.get("status", "open")
-    what = "còn phải sửa" if status == "open" else f"trạng thái {status}"
+    what = {
+        "open": "còn phải sửa",
+        "closed": "đã đóng",
+        "any": "(mở và đã đóng)",
+        "close_rejected": "còn phải sửa, yêu cầu đóng bị từ chối",
+    }.get(status, f"trạng thái {status}")
     head = f"# Finding critical/high {what} của {owner_label}: {len(views)}"
     if applied:
         head += "\n- Bộ lọc: " + ", ".join(f"{k}={inline(str(v))}" for k, v in applied.items())
@@ -537,7 +582,10 @@ def review_result(
     return "\n".join([guidance(tag), "", *head, "", body]), data
 
 
-def closure_data(closure: FindingClosure, review_id: int | None, base: str) -> dict[str, Any]:
+def closure_data(
+    closure: FindingClosure, review_id: int | None, base: str, allowed: bool = True
+) -> dict[str, Any]:
+    """One close request / closing; `reason` (the check's, code-derived) withheld as in §7."""
     meta = closure.meta or {}
     return {
         "id": closure.id,
@@ -548,7 +596,7 @@ def closure_data(closure: FindingClosure, review_id: int | None, base: str) -> d
         "commits": list(closure.shas or []),
         "note": clean(closure.note),
         "argument": clean(closure.argument),
-        "reason": clean(closure.reason),
+        "reason": clean(closure.reason) if allowed else None,
         "closed_as": closure.closed_as,
         "files_changed": meta.get("files_changed"),
         "tests": meta.get("tests"),
@@ -559,7 +607,9 @@ def closure_data(closure: FindingClosure, review_id: int | None, base: str) -> d
     }
 
 
-def _closure_md(closure: FindingClosure, review_id: int | None, base: str, tag: str) -> str:
+def _closure_md(
+    closure: FindingClosure, review_id: int | None, base: str, tag: str, allowed: bool = True
+) -> str:
     lines = [
         f"### Yêu cầu #{closure.id} ({closure.kind}) · finding #{closure.finding_id} · "
         f"**{closure.status}**" + (f" · {closure.closed_as}" if closure.closed_as else ""),
@@ -571,7 +621,7 @@ def _closure_md(closure: FindingClosure, review_id: int | None, base: str, tag: 
         lines += ["- Ghi chú:", wrap(tag, closure.note)]
     if closure.argument:
         lines += ["- Phản biện:", wrap(tag, closure.argument)]
-    if closure.reason:
+    if closure.reason and allowed:
         lines += ["- Lý do (bước kiểm / người duyệt):", wrap(tag, closure.reason)]
     return "\n".join(lines)
 
@@ -589,9 +639,10 @@ def finding_result(
     parts = [guidance(tag), "", _full_md(view, base, tag, at, local_llm)]
     parts += ["", *_review_context_md(view.review, tag, code_allowed(view.project, local_llm))]
     parts += ["", f"## Lịch sử đóng ({len(history)})"]
-    parts += [_closure_md(c, view.review.id, base, tag) for c in history] or ["_(chưa có)_"]
+    ok = code_allowed(view.project, local_llm)
+    parts += [_closure_md(c, view.review.id, base, tag, ok) for c in history] or ["_(chưa có)_"]
     data = finding_data(view, base, at, local_llm=local_llm)
-    data["closures"] = [closure_data(c, view.review.id, base) for c in history]
+    data["closures"] = [closure_data(c, view.review.id, base, ok) for c in history]
     return "\n".join(parts), data
 
 

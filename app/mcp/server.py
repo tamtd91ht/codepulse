@@ -700,13 +700,18 @@ def build_server() -> MCPServer:
         description=(
             "List critical/high findings with the dashboard's (Critical Board) filters. Default: "
             "the token owner's own findings still to fix (status open). Filters: user, team, "
-            "business_project (dự án), repo, severity, status, since/until (review period by the "
-            "change's date, both days inclusive, REPORT_TZ), include_disputed, include_pending. "
+            "business_project (dự án), repo, severity, status (open | closed | any | "
+            "close_rejected: close request refused, may be sent again; or one exact status), "
+            "since/until "
+            "(review period by the change's date, both days inclusive, REPORT_TZ), "
+            "include_disputed, include_pending. "
             "Sorted critical first, then verified=confirmed, confidence, newest review "
             "(order=newest: newest change first). Paged: when next_offset is set, call again "
             "with offset=next_offset. Each item: id, severity, file:line, title, repo, commit, "
             "author, review date (reviewed_at), change date (counted_at), age, and `closed` / "
-            "`needs_fix` / `closing` (closed: nothing left to do, skip it). Then call "
+            "`needs_fix` / `closing` (closed: nothing left to do, skip it), `last_rejection` (the "
+            "latest close request was refused: read its reason, fix further, request again). "
+            "Then call "
             "get_finding(id) for the full detail and fix suggestion." + UNTRUSTED
         ),
     )
@@ -736,10 +741,22 @@ def build_server() -> MCPServer:
             Field(description="Đến ngày (ISO YYYY-MM-DD, tính cả ngày đó) theo ngày của thay đổi."),
         ] = None,
         status: Annotated[
-            Literal["open", "disputed", "fixed", "accepted_risk", "false_positive", "any"],
+            Literal[
+                "open",
+                "closed",
+                "any",
+                "close_rejected",
+                "disputed",
+                "fixed",
+                "accepted_risk",
+                "false_positive",
+            ],
             Field(
-                description="Trạng thái finding: open (mặc định, còn phải sửa), disputed, fixed, "
-                "accepted_risk, false_positive, hoặc any."
+                description="open (mặc định): còn phải sửa; closed: đã đóng (fixed, "
+                "accepted_risk, false_positive, hoặc bị kiểm chứng bác bỏ), không cần sửa; any: "
+                "cả hai; close_rejected: còn phải sửa và yêu cầu đóng gần nhất bị người duyệt "
+                "từ chối (được gửi lại request_closure). Hoặc một trạng thái cụ thể: disputed, "
+                "fixed, accepted_risk, false_positive."
             ),
         ] = "open",
         include_disputed: Annotated[

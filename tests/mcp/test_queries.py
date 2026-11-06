@@ -337,8 +337,10 @@ def test_board_filters_period_status_project_team_and_paging(env: Env, world: An
     assert ids(views) == [late_fixed.id]
     views, _ = listed(s, an.principal, status="any")
     assert set(ids(views)) == {world.an_finding.id, late_open.id, late_fixed.id}
+    views, _ = listed(s, an.principal, status="closed")  # docs/specs/26 §15
+    assert ids(views) == [late_fixed.id]
     with pytest.raises(McpError):
-        listed(s, an.principal, status="closed")
+        listed(s, an.principal, status="done")
 
     # dự án by name or id; one not visible does not exist.
     views, _ = listed(s, an.principal, business_project="demo")

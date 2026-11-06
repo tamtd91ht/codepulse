@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from sqlalchemy import ColumnElement, String, case, cast, exists, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.api.access import team_reach, whole_projects, work_scope
 from app.api.routers.closures import parse_commit
@@ -81,6 +81,9 @@ class FindingView:
     # The closing that ended it (latest `closed` row), for a finding that is closed.
     closing: FindingClosure | None = None
     closer: str | None = None  # who decided that closing (name), None for the system
+    # A finding still to fix whose latest close request was refused (§15): it may be sent again.
+    rejection: FindingClosure | None = None
+    rejecter: str | None = None
 
     @property
     def closed_as(self) -> str | None:
@@ -263,6 +266,33 @@ def _still_to_fix(sev: tuple[str, ...], include_disputed: bool) -> list[ColumnEl
     ]
 
 
+def _latest_request() -> Any:
+    """Id of the finding's latest close request (kind "request")."""
+    return (
+        select(func.max(FindingClosure.id))
+        .where(FindingClosure.finding_id == ReviewFinding.id, FindingClosure.kind == "request")
+        .correlate(ReviewFinding)
+        .scalar_subquery()
+    )
+
+
+def _last_request_refused() -> ColumnElement[bool]:
+    """§15: the latest close request of the finding was refused by a person (`decided_by`; the
+    system's answer to a request left waiting when the finding was reopened is not a refusal),
+    and the finding was not reopened since (a reopened finding starts afresh)."""
+    reopen = aliased(FindingClosure)
+    return exists().where(
+        FindingClosure.id == _latest_request(),
+        FindingClosure.status == "rejected",
+        FindingClosure.decided_by.is_not(None),
+        ~exists().where(
+            reopen.finding_id == ReviewFinding.id,
+            reopen.kind == "reopen",
+            reopen.id > FindingClosure.id,
+        ),
+    )
+
+
 def _in_flight() -> ColumnElement[bool]:
     return exists().where(
         FindingClosure.finding_id == ReviewFinding.id, FindingClosure.status.in_(CLOSURE_OPEN)
@@ -281,7 +311,19 @@ def _top_order() -> list[Any]:
     ]
 
 
-FINDING_STATUSES = ("open", "disputed", "fixed", "accepted_risk", "false_positive", "any")
+# open: still to fix; closed: done with (§15, CLOSED_STATUSES or refuted); any: both;
+# close_rejected: still to fix, its latest close request refused (it may be asked again; not
+# `closed_as = rejected`, refuted by the verification, which is closed).
+FINDING_STATUSES = (
+    "open",
+    "closed",
+    "close_rejected",
+    "disputed",
+    "fixed",
+    "accepted_risk",
+    "false_positive",
+    "any",
+)
 Order = Literal["priority", "newest"]
 MAX_OFFSET = 1000
 
@@ -317,18 +359,29 @@ def resolve_team(session: Session, principal: Principal, raw: str) -> Team:
     return found
 
 
-def _statuses(status: str | None, include_disputed: bool) -> list[str] | None:
-    """The finding statuses wanted; None: any."""
+def _status_filter(status: str | None, include_disputed: bool) -> list[ColumnElement[bool]]:
+    """`status` of list_findings as filters (§4, §15); none for `any`."""
     wanted = (status or "open").strip().lower()
     if wanted not in FINDING_STATUSES:
         raise McpError(
             "invalid_argument", f"status chỉ nhận {', '.join(FINDING_STATUSES)}, nhận {status!r}"
         )
     if wanted == "any":
-        return None
-    if wanted == "open" and include_disputed:
-        return ["open", "disputed"]
-    return [wanted]
+        return []
+    if wanted == "closed":  # as `finding_closed_as`: a refuted one whatever its status
+        return [
+            or_(ReviewFinding.status.in_(CLOSED_STATUSES), ReviewFinding.verified == "rejected")
+        ]
+    if wanted in ("open", "close_rejected"):
+        # Still to fix: a refuted one is not (§4).
+        out = [
+            ReviewFinding.status.in_(["open", "disputed"] if include_disputed else ["open"]),
+            ReviewFinding.verified != "rejected",
+        ]
+        if wanted == "close_rejected":
+            out.append(_last_request_refused())
+        return out
+    return [ReviewFinding.status == wanted]  # one exact status: what was decided
 
 
 @dataclass
@@ -367,13 +420,11 @@ def list_findings(
     owner: int | None = None
     if team_row is None or (user and user.strip()):
         owner = resolve_user(session, principal, user)
-    statuses = _statuses(status, include_disputed)
-    query = _base().where(Review.status == "done", ReviewFinding.severity.in_(severities(severity)))
-    if statuses is not None:
-        query = query.where(ReviewFinding.status.in_(statuses))
-    if statuses is not None and "open" in statuses:
-        # A rejected one is not still to fix (§4); other statuses list what was decided.
-        query = query.where(ReviewFinding.verified != "rejected")
+    query = _base().where(
+        Review.status == "done",
+        ReviewFinding.severity.in_(severities(severity)),
+        *_status_filter(status, include_disputed),
+    )
     if owner is not None:
         query = query.where(Review.author_user_id == owner)
     if team_row is not None:
@@ -449,7 +500,10 @@ def _views(session: Session, rows: Any) -> list[FindingView]:
             else {}
         )
         closings = _closings(session, [v.finding.id for v in views if v.closed_as])
-        closer_ids = {c.decided_by for c in closings.values() if c.decided_by}
+        refusals = _refusals(session, [v.finding.id for v in views if not v.closed_as])
+        closer_ids = {
+            c.decided_by for c in [*closings.values(), *refusals.values()] if c.decided_by
+        }
         closers = (
             {
                 int(uid): name
@@ -464,6 +518,9 @@ def _views(session: Session, rows: Any) -> list[FindingView]:
             view.closing = closings.get(view.finding.id)
             if view.closing is not None and view.closing.decided_by:
                 view.closer = closers.get(view.closing.decided_by)
+            view.rejection = refusals.get(view.finding.id)
+            if view.rejection is not None and view.rejection.decided_by:
+                view.rejecter = closers.get(view.rejection.decided_by)
             view.commit = commits.get(view.review.commit_sha or "") if view.mr is None else None
             view.author = names.get(view.review.author_user_id or 0)
             view.pending = pending.get(view.finding.id)
@@ -484,6 +541,29 @@ def _closings(session: Session, ids: list[int]) -> dict[int, FindingClosure]:
     ):
         out[row.finding_id] = row
     return out
+
+
+def _refusals(session: Session, ids: list[int]) -> dict[int, FindingClosure]:
+    """finding id -> its latest close request, when a person refused it and the finding was not
+    reopened since (§15, as `_last_request_refused`)."""
+    if not ids:
+        return {}
+    latest: dict[int, FindingClosure] = {}
+    reopened: dict[int, int] = {}
+    for row in session.scalars(
+        select(FindingClosure)
+        .where(FindingClosure.finding_id.in_(ids), FindingClosure.kind.in_(("request", "reopen")))
+        .order_by(FindingClosure.id)
+    ):
+        if row.kind == "reopen":
+            reopened[row.finding_id] = row.id
+        else:
+            latest[row.finding_id] = row
+    return {
+        fid: row
+        for fid, row in latest.items()
+        if row.status == "rejected" and row.decided_by is not None and reopened.get(fid, 0) < row.id
+    }
 
 
 def repo_urls(session: Session, projects: list[Project | None]) -> dict[int, str]:
