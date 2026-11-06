@@ -1094,9 +1094,23 @@ function ProjectEditor({ project, isNew, onClose, onDone }: { project: JiraProje
                         values={s.components}
                         onChange={(components) => set(s.uid, { components })}
                         suggestions={options.data?.components ?? []}
-                        hint={options.data?.components_source === "local" ? "Gợi ý từ issue đã lưu (không gọi được Jira)." : "Gợi ý từ Jira."}
+                        hint={
+                          !options.data
+                            ? options.error
+                              ? "Không tải được gợi ý; vẫn gõ tay được."
+                              : "Đang tải gợi ý…"
+                            : options.data.components_source === "local"
+                              ? "Gợi ý từ issue đã lưu (không gọi được Jira)."
+                              : "Gợi ý từ Jira."
+                        }
                       />
-                      <ChipInput label="Label" values={s.labels} onChange={(labels) => set(s.uid, { labels })} suggestions={options.data?.labels ?? []} hint="Gợi ý từ issue đã lưu." />
+                      <ChipInput
+                        label="Label"
+                        values={s.labels}
+                        onChange={(labels) => set(s.uid, { labels })}
+                        suggestions={options.data?.labels ?? []}
+                        hint={options.data ? "Gợi ý từ issue đã lưu." : options.error ? "Không tải được gợi ý; vẫn gõ tay được." : "Đang tải gợi ý…"}
+                      />
                     </div>
                   )}
                   {s.mode === "rule" && !s.components.length && !s.labels.length && <div className="tone-warn small">Nhập ít nhất một component hoặc label.</div>}
@@ -1377,17 +1391,17 @@ function MappingEditor({ data, onDone }: { data: JiraView; onDone: (msg: string)
         </div>
       </section>
       {errors && <Alert tone="error">{errors.rest.length ? `Chưa lưu được: ${errors.rest.join("; ")}` : "Chưa lưu được: sửa các ô báo lỗi ở trên."}</Alert>}
+      {/* Buttons on the left: the floating assistant button sits at the bottom right. */}
       <div className={`jira-savebar${dirty ? " dirty" : ""}`}>
-        <span className="muted small">{dirty ? "Có thay đổi chưa lưu." : "Không có thay đổi."}</span>
-        <span className="dpi-spacer" />
+        <button type="button" className="primary ink sm" disabled={!dirty || saving} onClick={() => void save()}>
+          {saving ? "Đang lưu…" : "Lưu quy đổi"}
+        </button>
         {dirty && (
           <button type="button" className="ghost sm" onClick={reset} disabled={saving}>
             Huỷ thay đổi
           </button>
         )}
-        <button type="button" className="primary ink sm" disabled={!dirty || saving} onClick={() => void save()}>
-          {saving ? "Đang lưu…" : "Lưu quy đổi"}
-        </button>
+        <span className="muted small">{dirty ? "Có thay đổi chưa lưu." : "Không có thay đổi."}</span>
       </div>
     </div>
   );
