@@ -194,3 +194,28 @@ Mỗi dòng một thành viên (trong phạm vi + bộ lọc), có dòng tổng:
 - Tiêu đề issue là văn bản người dùng nhập: che giá trị nhạy cảm (`redact`), in inline trong dấu
   `…` như các giá trị không tin cậy khác. Không phụ thuộc `code_allowed` (không phải code).
 - `get_commit_findings` và `get_finding` không thêm Jira ở đợt này.
+
+## 20. Kiểm yêu cầu đóng: file bị xoá và ghi chú
+
+> **[Quyết định]** (user 2026-11-06) Sửa lỗi: commit xoá hẳn file chứa finding (dead code) có
+> diff rỗng, nên bước kiểm báo "Các commit không có thay đổi nào xem được (file bị bỏ qua)" mà
+> không đọc ghi chú. Áp dụng cho yêu cầu đóng gửi qua MCP lẫn web, và tự đóng sau review.
+
+- File bị commit xoá (`deleted_file`) không còn bị coi là "bỏ qua": `PreparedDiff.deleted` liệt
+  kê chúng, gửi cho model ở mục **FILES DELETED**.
+- File của finding không còn trên nhánh mặc định: bước kiểm tìm file cùng tên trong cây thư mục
+  (tối đa 5000 file):
+  - có file cùng tên ở chỗ khác (dời chỗ) → gửi kèm file đó, đường dẫn cũ không chứng minh gì;
+  - không còn file nào cùng tên (và đọc được hết cây) → coi là đã xoá (xoá ở commit khác), vào
+    **FILES DELETED**.
+- Finding có **file của chính nó** trong FILES DELETED là `fixed`, bằng chứng là đường dẫn file
+  (không cần dòng). Model chỉ được trả khác khi code hiện tại cho thấy đoạn lỗi còn ở file
+  khác. Hệ thống chỉ nhận bằng chứng "file đã xoá" khi đúng là file của finding.
+- **Ghi chú** của yêu cầu (cùng `files_changed`, `tests` nếu có) luôn gửi cho model, cả yêu
+  cầu gửi trên web, như lời giải thích của tác giả (ví dụ vì sao diff rỗng); vẫn là lời khai,
+  phải đối chiếu với diff, file đã xoá và code hiện tại.
+- Chỉ báo "không có gì để kiểm" khi không có diff, không có file bị xoá, không có phản biện và
+  không đọc được code hiện tại; lý do liệt kê file bị bỏ qua và vì sao (`img/logo.png
+  (binary_or_empty)`).
+- Tự đóng sau review: commit chỉ xoá file (review `skipped`, "no reviewable files") vẫn chạy
+  bước tự đóng cho các finding của file bị xoá.

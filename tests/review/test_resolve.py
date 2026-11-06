@@ -91,7 +91,13 @@ def earlier(
     return review
 
 
-def review_head(session: Session, project: Project, provider: Any, **kw: Any) -> Review:
+def review_head(
+    session: Session,
+    project: Project,
+    provider: Any,
+    diff: list[dict[str, Any]] | None = None,
+    **kw: Any,
+) -> Review:
     commit = Commit(sha=HEAD, project_id=project.id, message="fix: bind\n", authored_at=MADE)
     session.add(commit)
     session.flush()
@@ -99,6 +105,10 @@ def review_head(session: Session, project: Project, provider: Any, **kw: Any) ->
         router.get(url__regex=r".*/repository/files/.*").mock(
             return_value=httpx.Response(200, text="def parse():\n    pass\n")
         )
+        if diff is not None:  # before mount: the first matching route answers
+            router.get(url__regex=rf".*/repository/commits/{HEAD}/diff.*").mock(
+                return_value=httpx.Response(200, json=diff)
+            )
         mount(router)
         settings = ReviewSettings(**{**SETTINGS.__dict__, **kw})
         review = ReviewService(session, client, provider, settings).review_commit(project, commit)
@@ -278,3 +288,48 @@ def test_after_a_review_current_code_evidence_must_exist(db_session: Session) ->
     past_the_end = {**FIXED, "evidence_file": "app/db/query.py", "evidence_lines": "40"}
     review_head(db_session, project, FakeLLMProvider(answers(past_the_end)), auto_close_days=2)
     assert elsewhere.status == "open"
+
+
+@pytest.mark.integration
+def test_a_commit_only_deleting_a_file_closes_its_findings(db_session: Session) -> None:
+    """User 2026-11-06: a commit that deletes a dead file has nothing to review (skipped), yet
+    the findings of that file are fixed with it: auto-close still runs."""
+    project = make_project(db_session)
+    dead = finding(file_path="app/legacy/repo.py", title="Query without maxTime")
+    earlier(db_session, project, "e" * 40, MADE - timedelta(hours=20), dead)
+    deleted = [
+        {
+            "old_path": "app/legacy/repo.py",
+            "new_path": "app/legacy/repo.py",
+            "new_file": False,
+            "renamed_file": False,
+            "deleted_file": True,
+            "diff": "",
+        }
+    ]
+    gone = {**FIXED, "evidence_file": "app/legacy/repo.py", "evidence_lines": None}
+    provider = FakeLLMProvider(answers(gone))
+
+    review = review_head(db_session, project, provider, diff=deleted, auto_close_days=2)
+
+    assert review.status == "skipped"
+    asked = provider.prompts[-1].user
+    assert "FILES DELETED" in asked and "- app/legacy/repo.py" in asked
+    assert dead.status == "fixed"
+    closure = db_session.scalars(select(FindingClosure)).one()
+    assert (closure.kind, closure.status, closure.evidence) == (
+        "auto",
+        "closed",
+        "app/legacy/repo.py",
+    )
+
+
+def test_deleted_file_evidence_needs_the_findings_own_file_deleted() -> None:
+    other = finding(id=5, file_path="app/kept.py")
+    gone = {**FIXED, "evidence_file": "app/old.py", "evidence_lines": None}
+    provider = FakeLLMProvider(lambda p: {"answers": [gone]})
+    result = check(provider, "demo/p", "commit d", [], [other], deleted=["app/old.py"])
+    assert result.outcomes[0].closes is False  # another file's deletion fixes nothing here
+    own = finding(id=6, file_path="app/old.py")
+    result = check(provider, "demo/p", "commit d", [], [own], deleted=["app/old.py"])
+    assert result.outcomes[0].closes is True

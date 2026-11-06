@@ -57,7 +57,7 @@ class FakeClient:
     def commit_diff(self, project_id: int, sha: str) -> list[dict[str, Any]]:
         return [DIFF]
 
-    def tree_paths(self, project_id: int, ref: str) -> list[str]:
+    def tree_paths(self, project_id: int, ref: str, limit: int = 5000) -> list[str]:
         return list(FILES)
 
     def file_raw(self, project_id: int, path: str, ref: str) -> str:
@@ -701,7 +701,7 @@ def test_a_name_matches_whole_names_and_the_nearest_first() -> None:
     from app.workers.closure_jobs import gather_sources
 
     class Tree(FakeClient):
-        def tree_paths(self, project_id: int, ref: str) -> list[str]:
+        def tree_paths(self, project_id: int, ref: str, limit: int = 5000) -> list[str]:
             return [
                 "svc-a/config/application-prod.yml",
                 "svc-b/config/application-prod.yml",
@@ -1075,3 +1075,138 @@ def test_current_code_evidence_must_be_lines_that_were_shown(
     assert check(db_session, settings, closure_id, past_the_end, Moved()) == "unmet"
     db_session.refresh(world.an_finding)
     assert world.an_finding.status == "open"
+
+
+DELETED_FILE = {**DIFF, "deleted_file": True, "diff": ""}  # GitLab: a deleted file, no text
+GONE = {**FIXED, "evidence_file": "app/a.py", "evidence_lines": None}
+
+
+class Deleted(FakeClient):
+    """The commit deletes the finding's file: not on the default branch any more."""
+
+    def commit_diff(self, project_id: int, sha: str) -> list[dict[str, Any]]:
+        return [DELETED_FILE]
+
+    def tree_paths(self, project_id: int, ref: str, limit: int = 5000) -> list[str]:
+        return [p for p in FILES if p != "app/a.py"]
+
+    def file_raw(self, project_id: int, path: str, ref: str) -> str:
+        if path == "app/a.py":
+            raise GitLabError("404", status_code=404)
+        return super().file_raw(project_id, path, ref)
+
+
+def test_a_commit_deleting_the_finding_file_is_checked_and_closes(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    db_session: Session,
+    settings: Settings,
+) -> None:
+    """User 2026-11-06: the commit deletes the whole file (dead code), so its diff is empty; that
+    is the fix, not "nothing to review", and the request's note is read."""
+    closure_id = client.post(
+        f"/api/v1/findings/{world.an_finding.id}/close-requests",
+        json={"commits": [FIX], "note": "Xoá hẳn file a.py (dead code), không còn caller."},
+        headers=as_user(world.an),
+    ).json()["id"]
+    run(client, as_user, world.admin, closure_id)
+    token = token_of(db_session, closure_id)
+    provider = FakeLLMProvider(lambda p: {"answers": [GONE]})
+    assert work(db_session, settings, closure_id, token, None, Deleted(), provider) == "closed"
+    prompt = provider.prompts[0].user
+    assert "FILES DELETED" in prompt and "- app/a.py" in prompt
+    assert "Xoá hẳn file a.py" in prompt  # the note, read on a web request too
+    db_session.refresh(world.an_finding)
+    assert world.an_finding.status == "fixed"
+
+
+def test_a_file_deleted_by_another_commit_counts_when_no_namesake_is_left(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    db_session: Session,
+    settings: Settings,
+) -> None:
+    elsewhere = {**DIFF, "old_path": "app/b.py", "new_path": "app/b.py"}
+
+    class Earlier(Deleted):
+        def commit_diff(self, project_id: int, sha: str) -> list[dict[str, Any]]:
+            return [elsewhere]  # this commit does not delete it; an earlier one did
+
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    run(client, as_user, world.admin, closure_id)
+    token = token_of(db_session, closure_id)
+    provider = FakeLLMProvider(lambda p: {"answers": [GONE]})
+    assert work(db_session, settings, closure_id, token, None, Earlier(), provider) == "closed"
+    prompt = provider.prompts[0].user
+    assert "không còn file nào cùng tên trong repo" in prompt and "- app/a.py" in prompt
+
+
+def test_a_moved_file_is_shown_and_its_old_path_proves_nothing(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    db_session: Session,
+    settings: Settings,
+) -> None:
+    class MovedFile(Deleted):
+        def tree_paths(self, project_id: int, ref: str, limit: int = 5000) -> list[str]:
+            return ["lib/a.py", "README.md"]
+
+        def file_raw(self, project_id: int, path: str, ref: str) -> str:
+            if path == "lib/a.py":
+                return "q = 'x' + v\n"
+            return super().file_raw(project_id, path, ref)
+
+    class Unrelated(MovedFile):
+        def commit_diff(self, project_id: int, sha: str) -> list[dict[str, Any]]:
+            return [{**DIFF, "old_path": "app/b.py", "new_path": "app/b.py"}]
+
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    run(client, as_user, world.admin, closure_id)
+    token = token_of(db_session, closure_id)
+    provider = FakeLLMProvider(lambda p: {"answers": [GONE]})
+    # The model says "gone" but the file only moved: a deleted-file evidence is refused.
+    assert work(db_session, settings, closure_id, token, None, Unrelated(), provider) == "unmet"
+    prompt = provider.prompts[0].user
+    assert "### File: lib/a.py" in prompt and "FILES DELETED" not in prompt
+    db_session.refresh(world.an_finding)
+    assert world.an_finding.status == "open"
+
+
+def test_a_tree_cut_at_the_limit_never_says_deleted() -> None:
+    from app.workers.closure_jobs import TREE_LIMIT, gather_sources
+
+    class Huge(Deleted):
+        def tree_paths(self, project_id: int, ref: str, limit: int = 5000) -> list[str]:
+            return [f"x/{n}.py" for n in range(limit)]
+
+    out = gather_sources(Huge(), 1, "main", "app/a.py", "", [])
+    assert out.gone == [] and TREE_LIMIT == 5000
+    assert gather_sources(Deleted(), 1, "main", "app/a.py", "", []).gone == ["app/a.py"]
+
+
+def test_an_empty_diff_without_note_or_code_says_what_was_skipped(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    db_session: Session,
+    settings: Settings,
+) -> None:
+    binary = {**DIFF, "old_path": "img/logo.png", "new_path": "img/logo.png", "diff": ""}
+
+    class Binary(FakeClient):
+        def commit_diff(self, project_id: int, sha: str) -> list[dict[str, Any]]:
+            return [binary]
+
+        def file_raw(self, project_id: int, path: str, ref: str) -> str:
+            raise GitLabError("500", status_code=500)
+
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    run(client, as_user, world.admin, closure_id)
+    assert check(db_session, settings, closure_id, FIXED, Binary()) == "unmet"
+    closure = db_session.get(FindingClosure, closure_id)
+    assert closure is not None
+    db_session.refresh(closure)
+    assert "img/logo.png (binary_or_empty)" in (closure.reason or "")

@@ -18,7 +18,7 @@ No transaction stays open while GitLab or the model work (docs/specs/19 §4.6).
 import logging
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -106,6 +106,12 @@ class Sources:
 
     shown: dict[str, str]
     not_shown: dict[str, str]
+    # The finding's file is not on the default branch and no file of its name is left anywhere
+    # in the repo: deleted, with the flagged code (user 2026-11-06).
+    gone: list[str] = field(default_factory=list)
+
+
+TREE_LIMIT = 5000  # files listed to find a name in the repo
 
 
 def _named(argument: str) -> tuple[list[str], list[str]]:
@@ -156,12 +162,23 @@ def gather_sources(
     wanted: list[str] = [finding_path] if finding_path else []
     wanted += [p for p in map(repo_path, paths) if p not in wanted]
     not_shown: dict[str, str] = {}
+    tree: list[str] | None = None
+    whole_tree = True
+
+    def read_tree() -> list[str]:
+        nonlocal tree, whole_tree
+        if tree is None:
+            try:
+                tree = client.tree_paths(project_id, ref, TREE_LIMIT)
+                whole_tree = len(tree) < TREE_LIMIT  # cut at the limit: maybe not all
+            except GitLabError as exc:
+                tree = list(getattr(exc, "partial", []) or [])
+                whole_tree = False
+                not_shown["(cây thư mục)"] = "không đọc được hết danh sách file của repo"
+        return tree
+
     if names and len(wanted) < MAX_SOURCES:
-        try:
-            tree = client.tree_paths(project_id, ref)
-        except GitLabError as exc:
-            tree = list(getattr(exc, "partial", []) or [])
-            not_shown["(cây thư mục)"] = "không đọc được hết danh sách file của repo"
+        tree = read_tree()
         for name in names:
             found = sorted(
                 (p for p in tree if _matches(name, p) and p not in wanted),
@@ -173,15 +190,28 @@ def gather_sources(
                     f"không thấy file nào tên như vậy trên nhánh {ref} (xét tối đa 5000 file)"
                 )
     shown: dict[str, str] = {}
-    for path in wanted[:MAX_SOURCES]:
+    gone: list[str] = []
+    index = 0
+    while index < min(len(wanted), MAX_SOURCES):  # a moved file's namesakes join
+        path = wanted[index]
+        index += 1
         try:
             raw = client.file_raw(project_id, path, ref)
         except GitLabError as exc:
+            missing = getattr(exc, "status_code", None) == 404
             not_shown[path] = (
-                f"không có trên nhánh {ref}"
-                if getattr(exc, "status_code", None) == 404
-                else "không lấy được từ GitLab"
+                f"không có trên nhánh {ref}" if missing else "không lấy được từ GitLab"
             )
+            if missing and path == finding_path:
+                # Moved (a file of the same name elsewhere: shown) or deleted (none left).
+                file = path.rsplit("/", 1)[-1]
+                same = [p for p in read_tree() if p.rsplit("/", 1)[-1] == file]
+                if same:
+                    wanted += [p for p in same[:MAX_PER_NAME] if p not in wanted]
+                    not_shown[path] += "; có file cùng tên ở chỗ khác (đã gửi kèm)"
+                elif whole_tree:
+                    gone.append(path)
+                    not_shown[path] += "; không còn file nào cùng tên trong repo (đã xoá)"
             continue
         if len(raw) > MAX_FILE_BYTES or "\x00" in raw:
             not_shown[path] = "file quá lớn hoặc nhị phân, không gửi"
@@ -191,7 +221,7 @@ def gather_sources(
         ]
     for path in wanted[MAX_SOURCES:]:
         not_shown[path] = f"vượt giới hạn {MAX_SOURCES} file một lần kiểm"
-    return Sources(shown, not_shown)
+    return Sources(shown, not_shown, gone)
 
 
 def _still_mine(closure_id: int, token: str) -> tuple[Any, ...]:
@@ -280,7 +310,8 @@ def run_close_request(
         finding_path=finding.file_path,
         since=review.changed_at if review.changed_at > CHANGE_TIME_UNKNOWN else None,
         connection=connection,
-        claims=author_claims(closure.note, closure.meta) if closure.via == "mcp" else None,
+        # The note explains the change (why a diff is empty, ...): read on every request.
+        claims=author_claims(closure.note, closure.meta),
     )
     session.commit()  # nothing open while GitLab answers
 
@@ -319,8 +350,20 @@ def run_close_request(
     if refused is not None:
         return decide("unmet", refused)
     prepared = prepare(entries, settings.ignore_paths, settings.sensitive_paths)
-    if target.shas and not prepared.files and not target.argument and not sources.shown:
-        return decide("unmet", "Các commit không có thay đổi nào xem được (file bị bỏ qua).")
+    if (
+        target.shas
+        and not prepared.files
+        and not prepared.deleted
+        and not sources.gone
+        and not target.argument
+        and not sources.shown
+    ):
+        skipped = ", ".join(f"{p} ({why})" for p, why in list(prepared.excluded.items())[:5])
+        return decide(
+            "unmet",
+            "Các commit không có thay đổi nào xem được"
+            + (f": {skipped}." if skipped else " (diff rỗng)."),
+        )
     if prepared.loc > settings.max_review_loc:
         return decide(
             "unmet",
@@ -343,6 +386,7 @@ def run_close_request(
         sources=sources.shown,
         not_shown=sources.not_shown,
         claims=target.claims,
+        deleted=prepared.deleted + [p for p in sources.gone if p not in prepared.deleted],
     )
     if checked.call is not None:
         # Paid whatever comes next: recorded and committed before anything else can fail. The

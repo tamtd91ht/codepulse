@@ -80,6 +80,8 @@ from app.scoring.criteria_store import SetVersion, clean_criteria, project_sets,
 from app.scoring.formula import ScoredFinding, review_score, weights_for
 from app.scoring.verdict import assess
 
+NOTHING_TO_REVIEW = "no reviewable files"
+
 log = logging.getLogger(__name__)
 
 FINISHED = ("done", "skipped", "superseded")
@@ -228,6 +230,8 @@ class ReviewService:
         self._pending_basis: dict[int, dict[str, Any]] = {}
         # The reviewed diff per review, for the auto-close check after the save.
         self._reviewed_files: dict[int, list[DiffFile]] = {}
+        # Files a reviewed change deletes whole: a finding in one is fixed (auto-close).
+        self._reviewed_deleted: dict[int, list[str]] = {}
         # docs/specs/22 §4: the criteria sets of the review's dự án, read before the passes.
         self._criteria: dict[int, list[SetVersion]] = {}
         self._client = client
@@ -320,9 +324,10 @@ class ReviewService:
             # After the save: the comment points at a review that is already there.
             body = comment.render(result, findings)
             comment.post_or_update(self._client, project.external_id, mr.iid, body)
-        if result.status == "done" and review.round == 1:
+        if self._closes_after(result) and review.round == 1:
             self._auto_close(result, project, f"MR !{mr.iid} (head {head_sha[:12]})", mr.id)
         self._reviewed_files.pop(review.id, None)
+        self._reviewed_deleted.pop(review.id, None)
         return result
 
     def review_commit(
@@ -380,10 +385,22 @@ class ReviewService:
         )
         result = self._run(review, project, target, entries, commit.sha)
         self._commit_step("save")
-        if result.status == "done" and review.round == 1:
+        if self._closes_after(result) and review.round == 1:
             self._auto_close(result, project, f"commit {commit.sha[:12]} {title[:120]}")
         self._reviewed_files.pop(review.id, None)
+        self._reviewed_deleted.pop(review.id, None)
         return result
+
+    def _closes_after(self, review: Review) -> bool:
+        """Auto-close follows a finished review, and a change skipped for having nothing to
+        review that deletes files (a finding in a deleted file is fixed, user 2026-11-06)."""
+        if review.status == "done":
+            return True
+        return (
+            review.status == "skipped"
+            and review.error == NOTHING_TO_REVIEW
+            and bool(self._reviewed_deleted.get(review.id))
+        )
 
     def _auto_close(
         self, review: Review, project: Project, change: str, mr_id: int | None = None
@@ -395,8 +412,9 @@ class ReviewService:
         (app/review/resolve.py); nothing is reviewed again. A re-judgment of the same change
         (round > 1) fixes nothing. Never fails the review: it is already saved."""
         days = self._settings.auto_close_days
-        files = self._reviewed_files.get(review.id)
-        if days <= 0 or not files:
+        files = self._reviewed_files.get(review.id) or []
+        deleted = self._reviewed_deleted.get(review.id) or []
+        if days <= 0 or not (files or deleted):
             return
         try:
             until = review.changed_at if review.changed_at > CHANGE_TIME_UNKNOWN else self._clock()
@@ -408,7 +426,7 @@ class ReviewService:
                     project.id,
                     since=until - timedelta(days=days),
                     until=until,
-                    touched=[f.path for f in files],
+                    touched=[f.path for f in files] + deleted,
                     exclude_review=review.id,
                     exclude_mr=mr_id,
                 )
@@ -431,6 +449,7 @@ class ReviewService:
                 candidates,
                 sources=sources,
                 not_shown=not_shown,
+                deleted=deleted,
             )
         except Exception:
             log.exception("auto-close check failed", extra={"review_id": review.id})
@@ -800,9 +819,10 @@ class ReviewService:
 
         prepared = prepare(entries, settings.ignore_paths, settings.sensitive_paths)
         self._reviewed_files[review.id] = prepared.files
+        self._reviewed_deleted[review.id] = prepared.deleted
         review.loc_reviewed = prepared.loc
         if not prepared.files:
-            return self._finish(review, "skipped", "no reviewable files")
+            return self._finish(review, "skipped", NOTHING_TO_REVIEW)
         over_limit = prepared.loc > settings.max_review_loc
         if over_limit and not settings.ignore_loc_limit:
             return self._finish(review, "skipped", f"{TOO_LARGE}: {prepared.loc} LOC")

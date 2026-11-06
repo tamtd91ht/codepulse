@@ -128,6 +128,12 @@ class PreparedDiff:
     def loc(self) -> int:
         return sum(f.additions + f.deletions for f in self.files)
 
+    @property
+    def deleted(self) -> list[str]:
+        """Files the change deletes whole (never in `files`: their text is not reviewed), but
+        a finding in one of them is gone with it (user 2026-11-06)."""
+        return [path for path, why in self.excluded.items() if why == "deleted"]
+
 
 def prepare(
     entries: list[dict[str, Any]], ignore_paths: list[str], sensitive_paths: list[str]
