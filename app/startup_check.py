@@ -74,12 +74,25 @@ def warn_open_services(database_url: str, redis_url: str) -> list[str]:
     return open_
 
 
+def log_claude_token(env_token: str) -> None:
+    """Length and last 4 characters of the Claude token (stored from the dashboard and from the
+    environment), never the token: a valid `claude setup-token` token is about 108 characters."""
+    from app.review.credentials import load_stored_claude_token
+
+    for source, token in (("stored", load_stored_claude_token()), ("env", env_token)):
+        log.info(
+            "claude token",
+            extra={"source": source, "length": len(token), "tail": token[-4:] if token else ""},
+        )
+
+
 def main() -> None:
     configure_logging()
     settings = get_settings()
     check_postgres(str(settings.database_url))
     check_redis(str(settings.redis_url))
     warn_open_services(str(settings.database_url), str(settings.redis_url))
+    log_claude_token(settings.claude_code_oauth_token.get_secret_value())
     if settings.command_sandbox == "local":
         log.error(
             "COMMAND_SANDBOX=local: .claude commands run inside the worker, next to every "
