@@ -41,6 +41,15 @@ def test_finds_the_login_url_and_the_token() -> None:
     assert find_token(SCREEN) is None
 
 
+def test_the_token_stops_at_a_cursor_move() -> None:
+    # Ink draws the next line after a cursor escape, with no "\n": the token must not take the
+    # next line's first word ("Store this token securely.").
+    token = "sk-ant-oat01-AbC_def-123456789012345678rwAA"
+    for move in ("\x1b[1B\x1b[G", "\x1b[E", "\x1b[2K\x1b[1G", "\x1b[39m"):
+        assert find_token(f"{token}{move}Store this token securely.") == token
+        assert find_token(f"{token}{move}Store", complete=False) == token
+
+
 def test_finds_a_rejected_code() -> None:
     # As setup-token 2.1.308 drew it for a wrong code (the code itself is masked).
     screen = "*****#state\nOAuth error: Request failed with status code 400Press Enter to retry. "

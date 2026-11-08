@@ -66,8 +66,12 @@ def find_url(text: str) -> str | None:
 def find_token(text: str, complete: bool = True) -> str | None:
     """The token, only once something follows it. The CLI's output arrives in pieces, and a piece
     that ends inside the token would otherwise hand over its first part: stored, it fails every
-    call with "401 OAuth access token is invalid". `complete=False` once the CLI has exited."""
-    cleaned = clean(text)
+    call with "401 OAuth access token is invalid". `complete=False` once the CLI has exited.
+
+    Escapes become line breaks here, not nothing: Ink moves to the next line with a cursor escape
+    rather than "\\n", and dropping it glued the next line's "Store this token…" onto the token
+    (113 characters ending in "Store", rejected with the same 401)."""
+    cleaned = _ANSI_RE.sub("\n", text).replace("\r", "\n")
     for match in _TOKEN_RE.finditer(cleaned):
         # Greedy: a match that ends before the text does is followed by a non-token character.
         if not complete or match.end() < len(cleaned):
