@@ -301,7 +301,7 @@ function RangeFilter({ value, onChange }: { value: Range | null; onChange: (r: R
         ]}
       />
       {value.preset === "custom" && (
-        <DateRangePicker label="Thời gian" value={{ from: value.from, to: value.to }} max={localDay()} maxSpan={366} onChange={(r) => onChange({ preset: "custom", ...r })} />
+        <DateRangePicker label="Thời gian" showLabel={false} value={{ from: value.from, to: value.to }} max={localDay()} maxSpan={366} onChange={(r) => onChange({ preset: "custom", ...r })} />
       )}
     </div>
   );
@@ -327,6 +327,16 @@ export default function McpReportPage() {
   const scope = me.data?.is_admin ? "all" : me.data?.permissions?.["report.mcp"];
   const ownOnly = scope === "own";
   const isAdmin = !!me.data?.is_admin;
+  // Phone: the filters fold behind "Bộ lọc (n)"; wider screens always show them.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeFilters = [bp, repo, severity, ...(ownOnly ? [] : [teamId, user])].filter(Boolean).length;
+  const clearFilters = () => {
+    setBp("");
+    setRepo("");
+    setTeamId("");
+    setUser("");
+    setSeverity("");
+  };
   const tab: Tab = tabParam === "requests" || (tabParam === "calls" && isAdmin) ? tabParam : "members";
 
   const people = useApi<Person[]>(!ownOnly && scope ? "/people" : null);
@@ -411,22 +421,31 @@ export default function McpReportPage() {
       />
 
       <div className="report-bar no-print">
-        <div className="report-filters" role="group" aria-label="Bộ lọc báo cáo">
-          <div className="report-filter report-range">
-            <span className="small muted">Thời gian</span>
+        <div className="report-bar-top">
+          <div className="report-range">
             <RangeFilter value={range} onChange={setRange} />
           </div>
-          <label className="report-filter">
-            <span className="small muted">Dự án</span>
+          <button
+            type="button"
+            className={`report-filter-toggle sm${filtersOpen ? " open" : ""}`}
+            aria-expanded={filtersOpen}
+            aria-controls="mcp-filters"
+            onClick={() => setFiltersOpen((o) => !o)}
+          >
+            <Icon name="filter" size={14} /> Bộ lọc{activeFilters ? ` (${activeFilters})` : ""}
+          </button>
+        </div>
+        <div id="mcp-filters" className={`report-filters${filtersOpen ? " open" : ""}`} role="group" aria-label="Bộ lọc báo cáo">
+          <label className={`fsel${bp ? " set" : ""}`}>
+            <span>Dự án</span>
             <select
               value={bp}
               onChange={(e) => {
                 setBp(e.target.value);
                 setRepo("");
               }}
-              aria-label="Lọc theo dự án"
             >
-              <option value="">Mọi dự án</option>
+              <option value="">Tất cả</option>
               {projects.map(([id, label]) => (
                 <option key={id} value={id}>
                   {label}
@@ -434,10 +453,10 @@ export default function McpReportPage() {
               ))}
             </select>
           </label>
-          <label className="report-filter">
-            <span className="small muted">Repo</span>
-            <select value={repo} onChange={(e) => setRepo(e.target.value)} aria-label="Lọc theo repo">
-              <option value="">{bp ? "Mọi repo của dự án" : "Mọi repo"}</option>
+          <label className={`fsel${repo ? " set" : ""}`}>
+            <span>Repo</span>
+            <select value={repo} onChange={(e) => setRepo(e.target.value)}>
+              <option value="">{bp ? "Mọi repo của dự án" : "Tất cả"}</option>
               {repoOptions.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.path_with_namespace}
@@ -447,10 +466,10 @@ export default function McpReportPage() {
           </label>
           {!ownOnly && (
             <>
-              <label className="report-filter">
-                <span className="small muted">Team</span>
-                <select value={teamId} onChange={(e) => setTeamId(e.target.value)} aria-label="Lọc theo team">
-                  <option value="">Mọi team</option>
+              <label className={`fsel${teamId ? " set" : ""}`}>
+                <span>Team</span>
+                <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+                  <option value="">Tất cả</option>
                   {(teams.data ?? []).map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.name}
@@ -458,10 +477,10 @@ export default function McpReportPage() {
                   ))}
                 </select>
               </label>
-              <label className="report-filter">
-                <span className="small muted">Thành viên</span>
-                <select value={user} onChange={(e) => setUser(e.target.value)} aria-label="Lọc theo thành viên">
-                  <option value="">Mọi người</option>
+              <label className={`fsel${user ? " set" : ""}`}>
+                <span>Thành viên</span>
+                <select value={user} onChange={(e) => setUser(e.target.value)}>
+                  <option value="">Tất cả</option>
                   {(people.data ?? []).map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.full_name ?? p.primary_email ?? `#${p.id}`}
@@ -471,14 +490,19 @@ export default function McpReportPage() {
               </label>
             </>
           )}
-          <label className="report-filter">
-            <span className="small muted">Mức độ</span>
-            <select value={severity} onChange={(e) => setSeverity(e.target.value)} aria-label="Lọc theo mức độ">
+          <label className={`fsel${severity ? " set" : ""}`}>
+            <span>Mức độ</span>
+            <select value={severity} onChange={(e) => setSeverity(e.target.value)}>
               <option value="">Critical và high</option>
               <option value="critical">Critical</option>
               <option value="high">High</option>
             </select>
           </label>
+          {activeFilters > 0 && (
+            <button type="button" className="ghost sm report-clear" onClick={clearFilters}>
+              <Icon name="close" size={14} /> Bỏ lọc
+            </button>
+          )}
         </div>
       </div>
 

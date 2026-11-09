@@ -6322,32 +6322,133 @@ button.crit-info-btn:focus-visible {
   display: inline-flex;
   gap: 8px;
 }
+/* Filter bar of a report page: view tabs and period on one row, compact filters under it.
+   Each filter carries its label inside the control (.fsel), so the bar is two 36 px rows. On a
+   phone the filters fold behind "Bộ lọc (n)" and the period spans the width. */
 .report-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin: 0 0 16px;
+}
+.report-bar-top {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 10px 16px;
-  margin: 0 0 12px;
+  align-items: center;
+  gap: 8px;
+}
+.report-bar-top .report-range {
+  margin-left: auto;
+  min-width: 0;
+}
+.report-filter-toggle {
+  display: none;
 }
 .report-filters {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 8px 10px;
-  flex: 1;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
-.report-filter {
-  display: grid;
-  gap: 2px;
-  min-width: 140px;
-  max-width: 220px;
+.report-clear {
+  color: var(--muted);
 }
-.report-filter select {
-  width: 100%;
+
+/* A select with its label inside: "Dự án  OMICX CRM ▾". */
+.fsel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  min-width: 0;
+  max-width: 280px;
+  padding-left: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  background: var(--surface);
+  transition: border-color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard);
 }
-.report-filters .report-range {
-  max-width: none;
+.fsel:hover {
+  border-color: var(--border-strong);
+}
+label.fsel:focus-within,
+.people-picker > summary.fsel:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 0;
+}
+.fsel > span {
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.fsel select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px 0 0;
+  border: 0;
+  background: transparent;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.fsel select:focus-visible {
+  outline: none; /* the .fsel ring shows focus */
+}
+/* A filter that narrows the report reads as set. */
+.fsel.set,
+.people-picker.set > .fsel {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+
+@media (max-width: 700px) {
+  .report-filter-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .report-filter-toggle.open {
+    border-color: var(--border-strong);
+    background: var(--surface-2);
+  }
+  .report-bar-top .report-range {
+    flex: 1 0 100%;
+    margin-left: 0;
+    order: 3;
+  }
+  .report-bar-top .sub-tabs-row.bar {
+    flex: 1 1 auto;
+  }
+  .report-range .range-picker .segmented {
+    display: flex;
+    width: 100%;
+  }
+  .report-range .range-picker .segmented button {
+    flex: 1 1 0;
+    padding: 0 6px;
+  }
+  .report-range .range-picker .drp,
+  .report-range .range-picker .drp-trigger {
+    width: 100%;
+  }
+  .report-filters {
+    display: none;
+  }
+  .report-filters.open {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .report-filters .fsel,
+  .report-filters .people-picker {
+    width: 100%;
+    max-width: none;
+  }
+  .report-clear {
+    justify-self: start;
+  }
 }
 .report-scope {
   margin: 0 0 10px;
@@ -6505,13 +6606,22 @@ button.crit-info-btn:focus-visible {
 .people-picker > summary {
   list-style: none;
   cursor: pointer;
-  padding: 7px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-field);
-  background: var(--surface);
+  padding-right: 10px;
+  white-space: nowrap;
+}
+.people-picker > summary > b {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  font-weight: 500;
+}
+.people-picker > summary > svg {
+  flex: none;
+  color: var(--muted);
+}
+.people-picker[open] > summary > svg {
+  transform: rotate(180deg);
 }
 .people-picker > summary::-webkit-details-marker {
   display: none;
@@ -8578,4 +8688,30 @@ button.id-chip.failed:hover:not(:disabled) {
 /* A week/month-only screen showing the period around a shared custom range. */
 .scope-note {
   margin: -8px 0 16px;
+}
+/* No view tabs before it (Tích hợp MCP): the period leads the row. */
+.report-bar-top .report-range:first-child {
+  margin-left: 0;
+}
+/* Period chips of a report bar: a little tighter, so tabs and a custom range share one row at 1024 px. */
+.report-range .range-picker .segmented button {
+  padding: 0 10px;
+}
+@media (max-width: 700px) {
+  /* Six periods (Tích hợp MCP) do not fit a phone: one row that scrolls sideways. */
+  .report-range .range-picker .segmented,
+  .report-range .mcp-range .segmented {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .report-range .range-picker .segmented button {
+    flex: 1 0 auto;
+    white-space: nowrap;
+  }
+  .report-range .range-picker,
+  .report-range .range-picker > .segmented {
+    min-width: 0;
+    max-width: 100%;
+  }
 }

@@ -72,6 +72,8 @@ const PATHS = {
     </>
   ),
   close: <path d="M18 6L6 18M6 6l12 12" />,
+  filter: <path d="M3 5h18l-7 8.5V19l-4 2v-7.5L3 5z" />,
+  "chevron-down": <path d="M6 9l6 6 6-6" />,
   copy: (
     <>
       <rect x="9" y="9" width="13" height="13" rx="2" />

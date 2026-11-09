@@ -154,6 +154,16 @@ export default function MemberReportPage() {
         ? `/api/v1/members/${shownUser}/report.xlsx${qs(filters ?? {})}`
         : undefined;
 
+  // Phone: the filters fold behind "Bộ lọc (n)"; wider screens always show them.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeFilters = [bp, repo, ...(view === "overview" ? [teamId, picked] : [])].filter(Boolean).length;
+  const clearFilters = () => {
+    setBp("");
+    setRepo("");
+    setTeamId("");
+    setPicked("");
+  };
+
   const openMember = (id: number) => {
     setUser(String(id));
     setViewParam("detail");
@@ -207,12 +217,26 @@ export default function MemberReportPage() {
       />
 
       <div className="report-bar no-print">
-        {views.length > 0 && <SubTabs<View> id="rp-view" label="Kiểu báo cáo" variant="bar" tabs={views} value={view} onChange={setViewParam} />}
-        <div className="report-filters" role="group" aria-label="Bộ lọc báo cáo">
+        <div className="report-bar-top">
+          {views.length > 0 && <SubTabs<View> id="rp-view" label="Kiểu báo cáo" variant="bar" tabs={views} value={view} onChange={setViewParam} />}
+          <button
+            type="button"
+            className={`report-filter-toggle sm${filtersOpen ? " open" : ""}`}
+            aria-expanded={filtersOpen}
+            aria-controls="rp-filters"
+            onClick={() => setFiltersOpen((o) => !o)}
+          >
+            <Icon name="filter" size={14} /> Bộ lọc{activeFilters ? ` (${activeFilters})` : ""}
+          </button>
+          <div className="report-range">
+            <RangePicker value={range} onChange={setRange} compact />
+          </div>
+        </div>
+        <div id="rp-filters" className={`report-filters${filtersOpen ? " open" : ""}`} role="group" aria-label="Bộ lọc báo cáo">
           {view === "detail" && !ownOnly && (
-            <label className="report-filter">
-              <span className="small muted">Thành viên</span>
-              <select value={user} onChange={(e) => setUser(e.target.value)} aria-label="Chọn thành viên">
+            <label className={`fsel${user ? " set" : ""}`}>
+              <span>Thành viên</span>
+              <select value={user} onChange={(e) => setUser(e.target.value)}>
                 <option value="">{people.data ? "Chọn người…" : "Đang tải…"}</option>
                 {(people.data ?? []).map((p) => (
                   <option key={p.id} value={p.id}>
@@ -222,17 +246,16 @@ export default function MemberReportPage() {
               </select>
             </label>
           )}
-          <label className="report-filter">
-            <span className="small muted">Dự án</span>
+          <label className={`fsel${bp ? " set" : ""}`}>
+            <span>Dự án</span>
             <select
               value={bp}
               onChange={(e) => {
                 setBp(e.target.value);
                 setRepo("");
               }}
-              aria-label="Lọc theo dự án"
             >
-              <option value="">Mọi dự án</option>
+              <option value="">Tất cả</option>
               {projects.map(([id, label]) => (
                 <option key={id} value={id}>
                   {label}
@@ -240,10 +263,10 @@ export default function MemberReportPage() {
               ))}
             </select>
           </label>
-          <label className="report-filter">
-            <span className="small muted">Repo</span>
-            <select value={repo} onChange={(e) => setRepo(e.target.value)} aria-label="Lọc theo repo">
-              <option value="">{bp ? "Mọi repo của dự án" : "Mọi repo"}</option>
+          <label className={`fsel${repo ? " set" : ""}`}>
+            <span>Repo</span>
+            <select value={repo} onChange={(e) => setRepo(e.target.value)}>
+              <option value="">{bp ? "Mọi repo của dự án" : "Tất cả"}</option>
               {repoOptions.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.path_with_namespace}
@@ -253,10 +276,10 @@ export default function MemberReportPage() {
           </label>
           {view === "overview" && (
             <>
-              <label className="report-filter">
-                <span className="small muted">Team</span>
-                <select value={teamId} onChange={(e) => setTeamId(e.target.value)} aria-label="Lọc theo team">
-                  <option value="">Mọi team</option>
+              <label className={`fsel${teamId ? " set" : ""}`}>
+                <span>Team</span>
+                <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+                  <option value="">Tất cả</option>
                   {(teams.data ?? []).map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.name}
@@ -267,10 +290,11 @@ export default function MemberReportPage() {
               <PeoplePicker people={people.data ?? []} value={pickedIds} onChange={(ids) => setPicked(ids.join(","))} />
             </>
           )}
-          <div className="report-filter report-range">
-            <span className="small muted">Thời gian</span>
-            <RangePicker value={range} onChange={setRange} />
-          </div>
+          {activeFilters > 0 && (
+            <button type="button" className="ghost sm report-clear" onClick={clearFilters}>
+              <Icon name="close" size={14} /> Bỏ lọc
+            </button>
+          )}
         </div>
       </div>
 
@@ -730,12 +754,14 @@ function PeoplePicker({ people, value, onChange }: { people: Person[]; value: st
         .map((p) => p.full_name ?? p.primary_email)
         .slice(0, 3)
         .join(", ") + (value.length > 3 ? ` +${value.length - 3}` : "")
-    : "Cả team / mọi người";
+    : "Tất cả";
   return (
-    <div className="report-filter">
-      <span className="small muted">Người</span>
-      <details className="people-picker">
-        <summary>{label}</summary>
+    <details className={`people-picker${value.length ? " set" : ""}`}>
+      <summary className="fsel" aria-label={`Người: ${label}`}>
+        <span>Người</span>
+        <b>{label}</b>
+        <Icon name="chevron-down" size={14} />
+      </summary>
         <div className="people-picker-pop">
           <input type="search" placeholder="Tìm người…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Tìm người" />
           <ul>
@@ -761,7 +787,6 @@ function PeoplePicker({ people, value, onChange }: { people: Person[]; value: st
             </button>
           )}
         </div>
-      </details>
-    </div>
+    </details>
   );
 }

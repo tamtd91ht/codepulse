@@ -124,7 +124,7 @@ export function rangeProblem(from: string, to: string): string | null {
  * 7 / 30 / 90 days, or two dates. Typed dates stay a draft until they make a valid range, so a
  * half-typed year never reaches the API.
  */
-export function RangePicker({ value, onChange }: { value: Range | null; onChange: (r: Range) => void }) {
+export function RangePicker({ value, onChange, compact = false }: { value: Range | null; onChange: (r: Range) => void; compact?: boolean }) {
   if (!value) return null;
   return (
     <div className="range-picker">
@@ -144,6 +144,7 @@ export function RangePicker({ value, onChange }: { value: Range | null; onChange
       {value.preset === "custom" && (
         <DateRangePicker
           label="Thời gian"
+          showLabel={!compact}
           value={{ from: value.from, to: value.to }}
           max={localDay()}
           maxSpan={MAX_SPAN_DAYS}
