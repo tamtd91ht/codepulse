@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.models import LlmHealth, MergeRequest, Project, Review
 from app.review.rubric import RUBRIC_VERSION
+from app.workers.queues import ASKED_TRIGGERS
 
 log = logging.getLogger(__name__)
 
@@ -176,6 +177,8 @@ def requeue_waiting(session: Session, enqueue: Any) -> dict[str, int]:
             enqueue(
                 f"app.workers.review_jobs.{func_name}",
                 *args,
+                # What a person asked for goes first again (app/workers/queues.py).
+                first=review.trigger in ASKED_TRIGGERS,
                 # A re-run of the same review (the queue view reads "-rerun" job ids).
                 trigger="rerun",
                 requested_by=review.requested_by_user_id,

@@ -24,6 +24,7 @@ from app.api.security import Principal, require
 from app.db import get_redis
 from app.models import Account, Commit, Connection, MergeRequest, Project, Review, User
 from app.review.progress import ProgressReader, RedisProgress, queued_reviews
+from app.workers.queues import review_queue
 
 router = APIRouter(tags=["reviews"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -48,8 +49,11 @@ def get_progress() -> ProgressReader:
 
 
 def get_backlog() -> Backlog:
+    """Reviews wait in the asked-for queue (served first), the automatic one, and knowledge
+    builds on `default` (app/workers/queues.py): in the order workers take them."""
     queue = get_queue()
-    return lambda: queued_reviews(queue)
+    queues = [review_queue(queue, asked=True), review_queue(queue), queue]
+    return lambda: [item for q in queues for item in queued_reviews(q)]
 
 
 @router.get("/activity/reviews", response_model=ActivityOut)

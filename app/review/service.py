@@ -38,7 +38,7 @@ from app.models import (
 )
 from app.models.review import CHANGE_TIME_UNKNOWN
 from app.notifications import inbox
-from app.review import claude_kit, comment, knowledge, llm_recovery
+from app.review import claude_kit, comment, knowledge, llm_accounts, llm_recovery
 from app.review.agent import (
     agent_findings,
     build_agent_prompt,
@@ -801,6 +801,21 @@ class ReviewService:
         )
         return review
 
+    def _member_may_try(self, review: Review) -> bool:
+        """While the LLM is marked down, a member's own request (app/workers/queues.py) does not
+        wait for the next probe when a Claude account is usable again (a backup, or one whose
+        retry time has come): it runs now, and the probe is brought forward so the reviews
+        waiting for the LLM follow soon (user 2026-11-09)."""
+        from app.workers.queues import ASKED_TRIGGERS  # lazy: the queue module pulls in rq
+
+        if review.trigger not in ASKED_TRIGGERS:
+            return False
+        if not llm_accounts.stored_account_ready(self._session):
+            return False
+        llm_recovery.probe_soon(self._session)
+        log.info("llm down, a member's review tries an account", extra={"review_id": review.id})
+        return True
+
     def _fail(self, review: Review, error: str) -> Review:
         settings = self._settings
         # Only the LLM's own errors ("llm: ..."); a GitLab connection error is not an outage.
@@ -833,7 +848,11 @@ class ReviewService:
         over_limit = prepared.loc > settings.max_review_loc
         if over_limit and not settings.ignore_loc_limit:
             return self._finish(review, "skipped", f"{TOO_LARGE}: {prepared.loc} LOC")
-        if settings.llm_auto_resume and llm_recovery.is_down(self._session):
+        if (
+            settings.llm_auto_resume
+            and llm_recovery.is_down(self._session)
+            and not self._member_may_try(review)
+        ):
             # The LLM is known down: do not call it; this review waits for the resume.
             review.llm_retry = True
             return self._finish(review, "failed", llm_recovery.WAITING_ERROR)

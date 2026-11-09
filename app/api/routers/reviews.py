@@ -594,7 +594,7 @@ def _queue_rerun(
     # waits for it instead of being overwritten by this "queued".
     session.flush()
     try:
-        review_queue(queue).enqueue(
+        review_queue(queue, asked=True).enqueue(
             f"app.workers.review_jobs.{func}",
             *args,
             trigger="rerun",

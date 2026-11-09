@@ -28,8 +28,12 @@ def test_backlog(monkeypatch: pytest.MonkeyPatch) -> None:
     assert review_backlog(Fake()) is None
     sentinel: Any = object()
     monkeypatch.setattr(queues.Worker, "count", staticmethod(lambda queue: 3))
-    monkeypatch.setattr(Queue, "__len__", lambda self: 7)
-    assert review_backlog(Queue("default", connection=sentinel)) == (7, 3)
+    sizes = {"reviews_asked": 2, "reviews": 7}
+    monkeypatch.setattr(Queue, "__len__", lambda self: sizes[self.name])
+    # An automatic review waits behind both queues; a member's request only behind the asked
+    # ones, which workers take first (user 2026-11-09).
+    assert review_backlog(Queue("default", connection=sentinel)) == (9, 3)
+    assert review_backlog(Queue("default", connection=sentinel), asked=True) == (2, 3)
 
     def broken(queue: Any) -> int:
         raise ConnectionError("redis down")

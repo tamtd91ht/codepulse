@@ -78,6 +78,7 @@ from app.review.masking import looks_secret
 from app.review.resolve import close_finding, mark_fixed
 from app.review.status import SEVERE, carry_decision, settle_open_requests
 from app.scoring.rescore import rescore_copies, rescore_review
+from app.workers.queues import review_queue
 
 router = APIRouter(tags=["closures"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -611,7 +612,8 @@ def run_request(
     audit(session, principal.user_id, "finding.close_request.run", f"finding:{closure.finding_id}")
     session.commit()
     try:
-        queue.enqueue(
+        # A member's request: served before automatic reviews (app/workers/queues.py).
+        review_queue(queue, asked=True).enqueue(
             "app.workers.closure_jobs.close_request_job",
             closure.id,
             token,

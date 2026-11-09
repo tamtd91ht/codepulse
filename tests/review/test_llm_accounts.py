@@ -485,3 +485,20 @@ def test_a_429_back_right_after_its_pause_counts_as_the_usage_limit(
     assert row.failures == 2 and row.state == "quota"
     assert row.retry_at is not None and row.retry_at > datetime.now(UTC) + timedelta(minutes=14)
     assert len(session.scalars(told).all()) == 1
+
+
+def test_only_a_members_requests_go_to_the_queue_served_first() -> None:
+    """User 2026-11-09: what a member asked for runs before automatic reviews; the scanning
+    "Yêu cầu review" page (trigger "dashboard") is not a member's own request."""
+    from redis import Redis
+    from rq import Queue
+
+    from app.workers.queues import ASKED_TRIGGERS, review_queue, worker_queues
+
+    assert worker_queues(["reviews"]) == ["reviews_asked", "reviews"]
+    assert worker_queues(["default", "reviews"]) == ["default", "reviews_asked", "reviews"]
+    assert worker_queues(["commands"]) == ["commands"]
+    base = Queue("default", connection=Redis())  # never connects: names only
+    assert getattr(review_queue(base, asked=True), "name", None) == "reviews_asked"
+    assert getattr(review_queue(base), "name", None) == "reviews"
+    assert {"telegram", "rerun"} == ASKED_TRIGGERS and "dashboard" not in ASKED_TRIGGERS

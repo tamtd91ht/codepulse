@@ -13,7 +13,7 @@ from app.db import get_redis, get_sessionmaker
 from app.models import LlmHealth
 from app.review import llm_recovery
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
-from app.workers.queues import REVIEW_QUEUE
+from app.workers.queues import ASKED_REVIEW_QUEUE, REVIEW_QUEUE
 
 log = logging.getLogger(__name__)
 
@@ -85,11 +85,14 @@ def llm_resume_job() -> dict[str, int]:
         row.status = "ok"
         row.recovered_at = datetime.now(UTC)
         session.commit()
-        queue = Queue(REVIEW_QUEUE, connection=get_redis())
+        redis = get_redis()
+        queue = Queue(REVIEW_QUEUE, connection=redis)
+        asked = Queue(ASKED_REVIEW_QUEUE, connection=redis)
         timeout = review_job_timeout(settings)
 
-        def enqueue(func: str, *args: Any, **kwargs: Any) -> None:
-            queue.enqueue(func, *args, job_timeout=timeout, retry=REVIEW_RETRY, **kwargs)
+        def enqueue(func: str, *args: Any, first: bool = False, **kwargs: Any) -> None:
+            target = asked if first else queue
+            target.enqueue(func, *args, job_timeout=timeout, retry=REVIEW_RETRY, **kwargs)
 
         result = llm_recovery.requeue_waiting(session, enqueue)
         row = session.get(LlmHealth, llm_recovery.HEALTH_ID)

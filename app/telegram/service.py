@@ -853,7 +853,7 @@ class BotService:
             *notes,
             f"Đã đưa <b>{len(queued)}</b> review vào hàng đợi; tôi sẽ báo kết quả ở đây khi xong.",
         ]
-        if note := backlog_note(review_backlog(self._queue), len(queued)):
+        if note := backlog_note(review_backlog(self._queue, asked=True), len(queued)):
             lines.append(note)
         lines += [f"• {esc(t.label)}" for t in queued[:10]]
         if len(queued) > 10:
@@ -1241,7 +1241,7 @@ class BotService:
         queued: list[Target] = []
         for t in targets:
             if t.kind == "mr":
-                review_queue(self._queue).enqueue(
+                review_queue(self._queue, asked=True).enqueue(
                     "app.workers.review_jobs.review_mr_job",
                     t.project_id,
                     int(t.ref),
@@ -1256,7 +1256,7 @@ class BotService:
                     retry=REVIEW_RETRY,
                 )
             else:
-                review_queue(self._queue).enqueue(
+                review_queue(self._queue, asked=True).enqueue(
                     "app.workers.review_jobs.review_commit_job",
                     t.project_id,
                     t.sha,
@@ -2068,7 +2068,7 @@ class BotService:
         ]
         if len(queued) > 10:
             lines.append(f"… và {len(queued) - 10} mục nữa")
-        if note := backlog_note(review_backlog(self._queue), len(queued)):
+        if note := backlog_note(review_backlog(self._queue, asked=True), len(queued)):
             lines.append(note)
         return CallbackOutcome(answer=f"Đã xếp hàng {len(queued)} review.", text="\n".join(lines))
 

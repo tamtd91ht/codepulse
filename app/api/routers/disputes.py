@@ -30,6 +30,7 @@ from app.review.status import carry_decision, settle_open_requests
 from app.scoring.rescore import rescore_copies, rescore_review
 from app.scoring.verdict import assess
 from app.workers.dispute_jobs import running as ai_running
+from app.workers.queues import review_queue
 
 router = APIRouter(tags=["disputes"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -285,7 +286,8 @@ def ai_check(
     audit(session, principal.user_id, "dispute.ai_check", f"dispute:{dispute.id}")
     session.commit()
     try:
-        queue.enqueue(
+        # A member's request: served before automatic reviews (app/workers/queues.py).
+        review_queue(queue, asked=True).enqueue(
             "app.workers.dispute_jobs.dispute_check_job",
             dispute.id,
             now.isoformat(),

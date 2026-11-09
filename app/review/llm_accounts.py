@@ -110,6 +110,18 @@ def active(found: list[Account], model: str, now: datetime | None = None) -> Acc
     return next((a for a in found if a.usable(when, model)), None)
 
 
+def stored_account_ready(session: Session, now: datetime | None = None) -> bool:
+    """A stored, enabled account a call may use now: working, or failed and due to be tried
+    again (not one whose plan lacks the model). Read from the rows, no token decrypted."""
+    when = now or datetime.now(UTC)
+    for row in _ordered(session, enabled_only=True):
+        if row.state == "ok":
+            return True
+        if row.state in ("quota", "auth") and row.retry_at is not None and row.retry_at <= when:
+            return True
+    return False
+
+
 def current_token(session: Session, box: SecretBox, settings: Settings) -> str:
     """For one-shot users of a single token (Stetho, the evidence draft, commands, the startup
     check): the account a review would use now, else the first one ("" for the CLI login)."""

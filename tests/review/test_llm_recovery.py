@@ -213,3 +213,59 @@ def test_switched_off_while_down_closes_the_watch(
     db_session.flush()
     assert llm_jobs.llm_watch_job(provider_factory=FakeLLMProvider) == "switched off"
     assert health(db_session).status == "ok" and jobs_on == []
+
+
+def run_as(
+    session: Session, provider: Any, project: Project, merge_request: MergeRequest, trigger: str
+) -> Review:
+    """`run`, started by `trigger` (who asked for it decides whether it may skip the wait)."""
+    import respx
+
+    from app.collector.gitlab.client import GitLabClient
+    from app.review.service import ReviewService, ReviewSettings
+    from tests.collector.fake_gitlab import API, BASE, fixture, mount
+    from tests.review.test_service import HEAD, SETTINGS
+
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount(router)
+        router.get(f"{API}/projects/1001/merge_requests/1").respond(
+            json={**fixture("merge_requests.json")[0], "description": "Adds the parser"}
+        )
+        settings = ReviewSettings(**{**SETTINGS.__dict__, "llm_auto_resume": True})
+        service = ReviewService(session, client, provider, settings)
+        result: Review = service.review_mr(project, merge_request, HEAD, trigger=trigger)
+        return result
+
+
+def test_while_down_a_members_request_tries_an_account_that_works_again(
+    db_session: Session,
+    mr: tuple[Project, MergeRequest],  # noqa: F811
+) -> None:
+    """User 2026-11-09: a member's own request does not wait for the next probe when a Claude
+    account is usable again; the probe is brought forward for the others."""
+    from app.models import LlmAccount
+
+    project, merge_request = mr
+    run(db_session, FakeLLMProvider(boom), project, merge_request, llm_auto_resume=True)
+    assert health(db_session).status == "down"
+    later = health(db_session).next_probe_at
+    assert later is not None and later > datetime.now(UTC)
+
+    # No stored account is usable: even a member's request waits.
+    provider = FakeLLMProvider()
+    waiting = run_as(db_session, provider, project, merge_request, "telegram")
+    assert waiting.error == llm_recovery.WAITING_ERROR and provider.prompts == []
+
+    # An automatic review (a webhook) waits for the probe even with an account usable.
+    account = LlmAccount(label="Dự phòng", token_encrypted="x", source="paste", state="ok")
+    db_session.add(account)
+    db_session.flush()
+    auto = FakeLLMProvider()
+    still = run_as(db_session, auto, project, merge_request, "webhook")
+    assert auto.prompts == [] and still.error == llm_recovery.WAITING_ERROR
+
+    # A backup works (or the default's retry time came): the member's request runs now.
+    done = run_as(db_session, provider, project, merge_request, "telegram")
+    assert done.status == "done" and provider.prompts
+    probe = health(db_session).next_probe_at
+    assert probe is not None and probe <= datetime.now(UTC)  # the others follow soon

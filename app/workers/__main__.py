@@ -10,8 +10,10 @@ from rq.job import Job
 
 from app.db import get_redis
 from app.logging import configure_logging, job_id_var
+from app.workers.queues import worker_queues
 
-# The default worker also takes reviews when it has nothing else (app/workers/queues.py).
+# The default worker also takes reviews when it has nothing else (app/workers/queues.py); a
+# worker of "reviews" serves the asked-for ones ("reviews_asked") first.
 QUEUES = ["default", "reviews"]
 
 
@@ -29,7 +31,7 @@ class JobContextWorker(Worker):
 def main(argv: list[str] | None = None) -> None:
     configure_logging()
     redis = get_redis()
-    names = (sys.argv[1:] if argv is None else argv) or QUEUES
+    names = worker_queues((sys.argv[1:] if argv is None else argv) or QUEUES)
     worker = JobContextWorker([Queue(name, connection=redis) for name in names], connection=redis)
     # with_scheduler: delayed retries (REVIEW_RETRY waits 60/120/300 s) live in RQ's scheduled
     # registry and only run when a worker also acts as scheduler; without it they never run.
