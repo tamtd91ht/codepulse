@@ -85,3 +85,15 @@ def _fresh_dpi_caches() -> Iterator[None]:
     clear_caches()
     yield
     clear_caches()
+
+
+@pytest.fixture(autouse=True)
+def _no_builtin_doc_sync() -> Iterator[None]:
+    """Stetho's built-in documents sync on a session of their own (app/assistant/knowledge.py),
+    which in tests would wait on the real DATABASE_URL: skipped unless a test turns it on (on
+    its own session, tests/api/test_assistant_docs.py)."""
+    from app.assistant import knowledge
+
+    knowledge._synced = True
+    yield
+    knowledge._synced = False

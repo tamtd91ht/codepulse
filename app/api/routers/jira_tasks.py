@@ -2,17 +2,23 @@
 issue's detail, and the MRs that name no issue. Read only; app/jira/tasks.py says who sees what.
 """
 
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from pydantic import BaseModel, StringConstraints
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.security import CurrentPrincipal
 from app.config import Settings, get_settings
 from app.jira import tasks
-from app.jira.settings import effective_base_url, task_source
+from app.jira.client import JiraClient, JiraError
+from app.jira.settings import connection, effective_base_url, task_source
+from app.models import Commit, Issue, IssueCommitLink, Project, Review, User
 
 router = APIRouter(tags=["jira"])
 
@@ -139,3 +145,209 @@ def get_task(
     if detail is None:
         raise HTTPException(404, "issue not found")
     return detail
+
+
+# -- §20: commits linked by hand, the issue moved on Jira (user 2026-11-10) ---------------------
+
+KeyPath = Annotated[str, Path(pattern=r"^[A-Za-z][A-Za-z0-9_]{1,19}-\d{1,9}$")]
+ShaPath = Annotated[str, Path(pattern=r"^[0-9a-fA-F]{7,40}$")]
+
+
+def _issue(session: Session, principal: CurrentPrincipal, key: str) -> Issue:
+    issue = tasks.find_issue(session, principal, key.upper())
+    if issue is None:
+        raise HTTPException(404, "issue not found")
+    return issue
+
+
+@router.get("/jira/tasks/{key}/commit-candidates")
+def commit_candidates(
+    key: KeyPath,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    q: Annotated[str | None, Query(max_length=200)] = None,
+) -> dict[str, Any]:
+    """Reviewed commits of the issue's dự án one may link: by sha prefix or message text."""
+    issue = _issue(session, principal, key)
+    return {"items": tasks.candidates(session, principal, issue, q)}
+
+
+class LinkIn(BaseModel):
+    sha: Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^[0-9a-fA-F]{7,40}$")]
+    # fixes: this commit fixes the issue (counts in "Bug đã có bản sửa"); refs: only related.
+    kind: Literal["fixes", "refs"] = "fixes"
+
+
+@router.post("/jira/tasks/{key}/commits", status_code=201)
+def link_commit(
+    key: KeyPath, body: LinkIn, principal: CurrentPrincipal, session: SessionDep
+) -> dict[str, Any]:
+    """Link a reviewed commit to the issue by hand (several per issue). Managers of the issue's
+    dự án, jira.admin and admins link any; anyone else only their own commits."""
+    issue = _issue(session, principal, key)
+    sha = body.sha.lower()
+    found = session.scalars(
+        select(Commit).where(Commit.sha.startswith(sha), tasks.commit_scope(principal)).limit(2)
+    ).all()
+    if not found:
+        raise HTTPException(404, "không thấy commit này trong các repo bạn xem được")
+    if len(found) > 1:
+        raise HTTPException(409, "nhiều commit trùng đoạn mã này: nhập SHA dài hơn")
+    commit = found[0]
+    reviewed = session.scalar(
+        select(Review.id).where(Review.commit_sha == commit.sha, Review.status == "done").limit(1)
+    )
+    if reviewed is None:
+        raise HTTPException(409, "commit này chưa được review: yêu cầu review trước khi liên kết")
+    bps = tasks.issue_projects(session, issue)
+    if not tasks.may_link(principal, bps, tasks.commit_author(session, commit.sha)):
+        raise HTTPException(403, "chỉ quản lý dự án hoặc tác giả commit mới liên kết được")
+    if bps:  # only a commit of the issue's dự án (as the search offers)
+        commit_bp = session.scalar(
+            select(Project.business_project_id).where(Project.id == commit.project_id)
+        )
+        if commit_bp not in bps:
+            raise HTTPException(409, "commit này không thuộc dự án của issue")
+    stmt = insert(IssueCommitLink).values(
+        issue_id=issue.id, sha=commit.sha, kind=body.kind, manual=True, linked_by=principal.user_id
+    )
+    # A link read from the message stays the message's (not turned into a manual one).
+    done = session.execute(
+        stmt.on_conflict_do_update(
+            index_elements=["issue_id", "sha"],
+            set_={"kind": body.kind, "linked_by": principal.user_id},
+            where=IssueCommitLink.manual.is_(True),
+        ).returning(IssueCommitLink.sha)
+    ).first()
+    if done is None:
+        raise HTTPException(409, "commit đã được liên kết từ message của nó")
+    audit(
+        session,
+        principal.user_id,
+        "jira.commit.link",
+        f"issue:{issue.key}",
+        sha=commit.sha,
+        kind=body.kind,
+    )
+    session.commit()
+    return {"key": issue.key, "sha": commit.sha, "kind": body.kind}
+
+
+@router.delete("/jira/tasks/{key}/commits/{sha}", status_code=204)
+def unlink_commit(
+    key: KeyPath, sha: ShaPath, principal: CurrentPrincipal, session: SessionDep
+) -> None:
+    """Remove a link made by hand (a link read from the message goes with the message)."""
+    issue = _issue(session, principal, key)
+    links = session.scalars(
+        select(IssueCommitLink)
+        .where(IssueCommitLink.issue_id == issue.id, IssueCommitLink.sha.startswith(sha.lower()))
+        .limit(2)
+    ).all()
+    if not links:
+        raise HTTPException(404, "link not found")
+    if len(links) > 1:
+        raise HTTPException(409, "nhiều commit trùng đoạn mã này: dùng SHA đầy đủ")
+    link = links[0]
+    if not link.manual:
+        raise HTTPException(409, "liên kết này đọc từ message của commit, không gỡ tay được")
+    bps = tasks.issue_projects(session, issue)
+    mine = link.linked_by == principal.user_id
+    if not (mine or tasks.may_move(principal, bps)):
+        raise HTTPException(403, "chỉ người đã liên kết hoặc quản lý dự án mới gỡ được")
+    session.delete(link)
+    audit(session, principal.user_id, "jira.commit.unlink", f"issue:{issue.key}", sha=link.sha)
+    session.commit()
+
+
+def _jira(session: Session, settings: Settings) -> JiraClient:
+    if not effective_base_url(session, settings):
+        raise HTTPException(409, "Jira chưa được kết nối")
+    return JiraClient.from_connection(connection(session, settings))
+
+
+@router.get("/jira/tasks/{key}/transitions")
+def transitions(
+    key: KeyPath,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict[str, Any]:
+    """The statuses the issue can move to now (Jira's workflow for the service account)."""
+    issue = _issue(session, principal, key)
+    if not tasks.may_move(principal, tasks.issue_projects(session, issue)):
+        raise HTTPException(403, "chỉ manager của dự án hoặc admin chuyển trạng thái được")
+    try:
+        with _jira(session, settings) as client:
+            moves = client.transitions(str(issue.key))
+    except JiraError as exc:
+        raise HTTPException(502, f"Jira: {exc}") from None
+    return {
+        "items": [
+            {
+                "id": str(t.get("id")),
+                "name": t.get("name"),
+                "to": (t.get("to") or {}).get("name"),
+                "done": ((t.get("to") or {}).get("statusCategory") or {}).get("key") == "done",
+            }
+            for t in moves
+        ]
+    }
+
+
+class MoveIn(BaseModel):
+    transition_id: Annotated[str, StringConstraints(pattern=r"^\d{1,10}$")]
+    comment: Annotated[str, StringConstraints(max_length=2000)] | None = None
+
+
+@router.post("/jira/tasks/{key}/transition")
+def move_issue(
+    key: KeyPath,
+    body: MoveIn,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict[str, Any]:
+    """Move the issue on Jira (with a comment saying who did it from CodePulse), then read its
+    status back so Task Jira shows it at once."""
+    issue = _issue(session, principal, key)
+    if not tasks.may_move(principal, tasks.issue_projects(session, issue)):
+        raise HTTPException(403, "chỉ manager của dự án hoặc admin chuyển trạng thái được")
+    who = session.get(User, principal.user_id)
+    name = (who.full_name or who.primary_email) if who else f"#{principal.user_id}"
+    note = (body.comment or "").strip()
+    comment = (
+        f"[CodePulse] {name}: {note}" if note else f"[CodePulse] Chuyển trạng thái bởi {name}."
+    )
+    try:
+        with _jira(session, settings) as client:
+            client.transition(str(issue.key), body.transition_id, comment)
+            fields = client.issue_status(str(issue.key))
+    except JiraError as exc:
+        hint = (
+            " (tài khoản dịch vụ Jira cần quyền Transition issues trên dự án này)"
+            if exc.status_code in (400, 401, 403)
+            else ""
+        )
+        raise HTTPException(502, f"Jira không chuyển được: {exc}{hint}") from None
+    status = fields.get("status") or {}
+    done = (status.get("statusCategory") or {}).get("key") == "done"
+    issue.state = "closed" if done else "opened"
+    if done:
+        resolved = fields.get("resolutiondate")
+        try:
+            issue.closed_at_src = datetime.fromisoformat(str(resolved).replace("Z", "+00:00"))
+        except ValueError:
+            issue.closed_at_src = datetime.now(UTC)
+    else:
+        issue.closed_at_src = None
+    audit(
+        session,
+        principal.user_id,
+        "jira.issue.transition",
+        f"issue:{issue.key}",
+        transition=body.transition_id,
+        status=status.get("name"),
+    )
+    session.commit()
+    return {"key": issue.key, "status": status.get("name"), "state": issue.state}

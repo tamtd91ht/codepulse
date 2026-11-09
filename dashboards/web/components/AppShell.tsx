@@ -115,6 +115,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       : []),
     // Tri thức Stetho (docs/specs/28): whoever may teach Stetho (admins by default).
     ...(can(me, "assistant.train") ? [{ href: "/stetho", label: "Tri thức Stetho", icon: "stethoscope" } as Item] : []),
+    // Lịch sử Stetho (docs/specs/28 §9): admins only (ADMIN_EMAILS).
+    ...(isAdmin ? [{ href: "/stetho/history", label: "Lịch sử Stetho", icon: "inbox" } as Item] : []),
     { href: "/guide", label: "Hướng dẫn", icon: "book" },
   ];
 

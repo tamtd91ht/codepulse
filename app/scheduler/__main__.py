@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 
+from app.assistant.history import enqueue_tag_job
 from app.collector.sync import enqueue_syncs_job
 from app.commands.store import enqueue_cleanup_job
 from app.config import get_settings
@@ -140,6 +141,15 @@ def build_scheduler(
         "interval",
         minutes=TICK_MIN,
         id="llm-watch",
+        max_instances=1,
+        coalesce=True,
+    )
+    # docs/specs/28 §9: tag Stetho conversations quiet for 15 minutes, one cheap batch.
+    scheduler.add_job(
+        enqueue_tag_job,
+        "interval",
+        minutes=10,
+        id="stetho-tag",
         max_instances=1,
         coalesce=True,
     )

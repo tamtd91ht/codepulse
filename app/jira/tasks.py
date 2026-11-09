@@ -10,6 +10,7 @@ Read only, like the rest of the integration. Who sees what:
   sees only their own reviews does not learn others' scores through an issue.
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
@@ -18,7 +19,7 @@ from typing import Any
 from sqlalchemy import ColumnElement, and_, exists, false, func, or_, select, true
 from sqlalchemy.orm import Session, aliased
 
-from app.api.access import work_scope
+from app.api.access import may_rerun, work_scope
 from app.api.security import Principal
 from app.jira.scopes import jira_issue_in, projects_in
 from app.models import (
@@ -29,6 +30,7 @@ from app.models import (
     IssueCommitLink,
     IssueMrLink,
     JiraProject,
+    JiraProjectScope,
     MergeRequest,
     MrCommit,
     Project,
@@ -385,7 +387,14 @@ def commit_summaries(
     if not issue_ids:
         return {}
     links = session.execute(
-        select(IssueCommitLink.issue_id, IssueCommitLink.kind, Commit, Project)
+        select(
+            IssueCommitLink.issue_id,
+            IssueCommitLink.kind,
+            IssueCommitLink.manual,
+            IssueCommitLink.linked_by,
+            Commit,
+            Project,
+        )
         .join(Commit, Commit.sha == IssueCommitLink.sha)
         .outerjoin(Project, Project.id == Commit.project_id)
         .where(IssueCommitLink.issue_id.in_(issue_ids), commit_scope(principal))
@@ -401,9 +410,12 @@ def commit_summaries(
     authors = _people(
         session, {c.author_account_id for c in commits.values() if c.author_account_id}
     )
+    linkers = _user_names(session, {int(link.linked_by) for link in links if link.linked_by})
     out: dict[int, list[dict[str, Any]]] = {}
     for link in links:
         c, repo = link.Commit, link.Project
+        bp = repo.business_project_id if repo is not None else None
+        author = authors.get(c.author_account_id or 0)
         rows = out.setdefault(int(link.issue_id), [])
         if per_issue is not None and len(rows) >= per_issue:
             continue
@@ -414,9 +426,126 @@ def commit_summaries(
                 "title": (c.message or "").split("\n", 1)[0][:300],
                 "repo": repo.path_with_namespace if repo is not None else None,
                 "url": f"{base}/-/commit/{c.sha}" if base else None,
-                "author": authors.get(c.author_account_id or 0),
+                "author": author,
                 "authored_at": c.authored_at,
                 "kind": link.kind,
+                "manual": bool(link.manual),
+                "linked_by": linkers.get(int(link.linked_by)) if link.linked_by else None,
+                "review": reviews.get(c.sha),
+                # "Review lại": the review's own rule (review.rerun, a dự án one manages).
+                "can_rerun": bool(reviews.get(c.sha)) and may_rerun(principal, None, bp),
+            }
+        )
+    return out
+
+
+def _user_names(session: Session, ids: set[int]) -> dict[int, str]:
+    if not ids:
+        return {}
+    return {
+        u.id: u.full_name or u.primary_email or f"#{u.id}"
+        for u in session.scalars(select(User).where(User.id.in_(ids)))
+    }
+
+
+# -- linking commits by hand and moving issues (docs/specs/27 §20) ---------------------------
+
+MAX_CANDIDATES = 20
+
+
+def issue_projects(session: Session, issue: Issue) -> set[int]:
+    """The dự án an issue counts for (§15): its own routing, else every scope of its Jira
+    project."""
+    if issue.business_project_ids:
+        return set(issue.business_project_ids)
+    return set(
+        session.scalars(
+            select(JiraProjectScope.business_project_id).where(
+                JiraProjectScope.jira_project_id == issue.jira_project_id
+            )
+        )
+    )
+
+
+def may_move(principal: Principal, bps: set[int]) -> bool:
+    """Change the issue's status on Jira: admins, jira.admin, managers of one of its dự án."""
+    if principal.is_admin or principal.can("jira.admin"):
+        return True
+    return any(principal.can_manage_project(bp) for bp in bps)
+
+
+def may_link(principal: Principal, bps: set[int], author_user_id: int | None = None) -> bool:
+    """Link a commit to an issue by hand: who may move it, and a commit's own author."""
+    if may_move(principal, bps):
+        return True
+    return author_user_id is not None and author_user_id == principal.user_id
+
+
+def commit_author(session: Session, sha: str) -> int | None:
+    return session.scalar(
+        select(Account.user_id)
+        .join(Commit, Commit.author_account_id == Account.id)
+        .where(Commit.sha == sha)
+    )
+
+
+def find_issue(session: Session, principal: Principal, key: str) -> Issue | None:
+    return session.scalar(
+        select(Issue).where(Issue.source == "jira", Issue.key == key, issue_scope(principal))
+    )
+
+
+def candidates(
+    session: Session, principal: Principal, issue: Issue, q: str | None
+) -> list[dict[str, Any]]:
+    """Reviewed commits one may see, in the issue's dự án, not linked to it yet: by sha prefix
+    or text of the message, newest first."""
+    bps = issue_projects(session, issue)
+    repo = aliased(Project)
+    where: list[ColumnElement[bool]] = [
+        commit_scope(principal),
+        Commit.is_merge.is_not(True),
+        exists().where(Review.commit_sha == Commit.sha, Review.status == "done"),
+        ~exists().where(IssueCommitLink.issue_id == issue.id, IssueCommitLink.sha == Commit.sha),
+    ]
+    if bps:
+        where.append(
+            exists().where(repo.id == Commit.project_id, repo.business_project_id.in_(bps))
+        )
+    elif not principal.is_admin:
+        return []
+    text = (q or "").strip()
+    if text:
+        if re.fullmatch(r"[0-9a-fA-F]{4,40}", text):
+            where.append(Commit.sha.startswith(text.lower()))
+        else:
+            like = "%" + text.replace("%", r"\%").replace("_", r"\_") + "%"
+            where.append(Commit.message.ilike(like))
+    rows = session.execute(
+        select(Commit, Project)
+        .outerjoin(Project, Project.id == Commit.project_id)
+        .where(*where)
+        .order_by(Commit.authored_at.desc().nulls_last(), Commit.sha)
+        .limit(MAX_CANDIDATES)
+    ).all()
+    shas = [r.Commit.sha for r in rows]
+    reviews = commit_reviews(session, principal, shas)
+    urls = _repo_urls(session, [r.Project for r in rows if r.Project is not None])
+    authors = _people(
+        session, {r.Commit.author_account_id for r in rows if r.Commit.author_account_id}
+    )
+    out = []
+    for r in rows:
+        c, proj = r.Commit, r.Project
+        base = urls.get(proj.id) if proj is not None else None
+        out.append(
+            {
+                "sha": c.sha,
+                "title": (c.message or "").split("\n", 1)[0][:300],
+                "repo": proj.path_with_namespace if proj is not None else None,
+                "url": f"{base}/-/commit/{c.sha}" if base else None,
+                "author": authors.get(c.author_account_id or 0),
+                "authored_at": c.authored_at,
                 "review": reviews.get(c.sha),
             }
         )
@@ -584,6 +713,11 @@ def issue_detail(session: Session, principal: Principal, key: str) -> dict[str, 
         "children": [_brief(i) for i in family if i.parent_key == issue.key],
         "merge_requests": mr_summaries(session, principal, [issue.id], MAX_MRS).get(issue.id, []),
         "commits": commit_summaries(session, principal, [issue.id], MAX_MRS).get(issue.id, []),
+        # §20: link reviewed commits by hand (who may move it, or a commit's author: then
+        # only their own commits), move the issue on Jira.
+        "can_link": may_link(principal, issue_projects(session, issue))
+        or principal.can("review.view"),
+        "can_move": may_move(principal, issue_projects(session, issue)),
     }
 
 

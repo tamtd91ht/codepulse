@@ -102,7 +102,9 @@ def _write(session: Session, wanted: dict[tuple[int, str], str]) -> int:
             stmt.on_conflict_do_update(
                 index_elements=["issue_id", "sha"],
                 set_={"kind": stmt.excluded.kind},
-                where=IssueCommitLink.kind != stmt.excluded.kind,
+                # A link made by hand keeps what its maker chose.
+                where=(IssueCommitLink.kind != stmt.excluded.kind)
+                & IssueCommitLink.manual.is_(False),
             )
         )
     return len(wanted)
@@ -139,7 +141,9 @@ def link_commits(session: Session, shas: Iterable[str]) -> int:
         ]
         session.execute(
             delete(IssueCommitLink).where(
-                IssueCommitLink.sha.in_(chunk), *([~or_(*keep)] if keep else [])
+                IssueCommitLink.sha.in_(chunk),
+                IssueCommitLink.manual.is_(False),  # a link made by hand stays (§20)
+                *([~or_(*keep)] if keep else []),
             )
         )
         written += _write(session, wanted)

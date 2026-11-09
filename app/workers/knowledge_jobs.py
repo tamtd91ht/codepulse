@@ -178,7 +178,9 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
     )
     assistant = session.scalar(
         select(func.coalesce(func.sum(AuditLog.details["cost_usd"].as_float()), 0)).where(
-            AuditLog.action == "assistant.chat", AuditLog.at >= month_start
+            # Stetho's turns, and the tagging of its conversations (docs/specs/28 §9).
+            AuditLog.action.in_(("assistant.chat", "assistant.tag.cost")),
+            AuditLog.at >= month_start,
         )
     )
     # AI second looks at disputes (app/workers/dispute_jobs.py), one audit row each.

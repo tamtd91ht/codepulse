@@ -31,6 +31,7 @@ def test_scheduler_enqueues_syncs_on_the_configured_interval() -> None:
         "dpi-lock",
         "llm-watch",
         "jira-tick",
+        "stetho-tag",
     }
     assert str(jobs["evidence-drafts"].trigger.timezone) == "Asia/Ho_Chi_Minh"
     assert jobs["command-cleanup"].trigger.interval.total_seconds() == 3600

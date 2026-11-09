@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 
 import { type SubTab, SubTabs } from "@/components/AdminTabs";
 import { RangePicker, Score, useUrlRange } from "@/components/Evaluation";
 import { Icon } from "@/components/icons";
 import { Card, Drawer, EmptyState, ExternalLink, Loading, PageHeader, Pagination, Pill, Segmented, StatStrip, StripStat } from "@/components/ui";
-import { qs, useApi } from "@/lib/api";
+import { ApiError, api, qs, useApi } from "@/lib/api";
 import { VERDICT_LABEL, date, relative } from "@/lib/format";
 import type {
   JiraTask,
@@ -16,6 +16,7 @@ import type {
   JiraTaskList,
   JiraTaskMr,
   JiraTaskOptions,
+  JiraTransition,
   JiraUnlinkedCommits,
   JiraUnlinkedMrs,
   Me,
@@ -123,8 +124,23 @@ function MrLine({ mr }: { mr: JiraTaskMr }) {
 }
 
 /** A commit naming the issue: its fix (`Fixes:`) or a reference, with its own review. */
-function CommitLine({ c }: { c: JiraTaskCommit }) {
+function CommitLine({ c, issueKey, onChanged }: { c: JiraTaskCommit; issueKey?: string; onChanged?: () => void }) {
   const r = c.review;
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const act = async (action: () => Promise<unknown>, done: string) => {
+    setBusy(true);
+    setNote(null);
+    try {
+      await action();
+      setNote({ ok: true, text: done });
+      onChanged?.();
+    } catch (e) {
+      setNote({ ok: false, text: e instanceof ApiError ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <li className="jt-mr">
       <div className="jt-mr-head">
@@ -138,6 +154,9 @@ function CommitLine({ c }: { c: JiraTaskCommit }) {
           <span className="muted small" title="Message nhắc mã issue nhưng không nói là sửa">
             liên quan
           </span>
+        )}
+        {c.manual && (
+          <Pill title={c.linked_by ? `Liên kết tay bởi ${c.linked_by}` : "Liên kết tay"}>Liên kết tay</Pill>
         )}
       </div>
       <div className="muted small">
@@ -153,12 +172,199 @@ function CommitLine({ c }: { c: JiraTaskCommit }) {
           <Severe critical={r.critical} high={r.high} />
         </div>
       )}
+      {(c.can_rerun || (c.manual && issueKey)) && (
+        <div className="jt-commit-actions">
+          {c.can_rerun && r && (
+            <button
+              type="button"
+              className="sm"
+              disabled={busy}
+              title="Review lại commit này (lượt mới) để xem bản sửa đã ổn chưa"
+              onClick={() =>
+                void act(
+                  () => api.post(`/reviews/${r.id}/rerun`, { force: true }),
+                  "Đã xếp hàng review lại; kết quả mới hiện ở đây khi xong.",
+                )
+              }
+            >
+              <Icon name="sync" size={14} /> Review lại
+            </button>
+          )}
+          {c.manual && issueKey && (
+            <button
+              type="button"
+              className="sm ghost"
+              disabled={busy}
+              onClick={() =>
+                void act(() => api.delete(`/jira/tasks/${encodeURIComponent(issueKey)}/commits/${c.sha}`), "Đã gỡ liên kết.")
+              }
+            >
+              Gỡ liên kết
+            </button>
+          )}
+          {note && <span className={`small ${note.ok ? "good" : "bad"}`}>{note.text}</span>}
+        </div>
+      )}
     </li>
   );
 }
 
+/** "Liên kết commit": search reviewed commits of the issue's dự án and link one or more. */
+function LinkCommits({ issueKey, onLinked, onClose }: { issueKey: string; onLinked: () => void; onClose: () => void }) {
+  const [q, setQ] = useState("");
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => {
+    const t = window.setTimeout(() => setQuery(q.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [q]);
+  const found = useApi<{ items: JiraTaskCommit[] }>(
+    `/jira/tasks/${encodeURIComponent(issueKey)}/commit-candidates${qs({ q: query || null })}`,
+    { keepPreviousData: true },
+  );
+  const link = async (sha: string, kind: "fixes" | "refs") => {
+    setBusy(sha);
+    setProblem(null);
+    try {
+      await api.post(`/jira/tasks/${encodeURIComponent(issueKey)}/commits`, { sha, kind });
+      await found.mutate();
+      onLinked();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="jt-link">
+      <div className="jt-link-head">
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Nhập SHA (vd. 3f2a9c1) hoặc nội dung commit…"
+          aria-label="Tìm commit đã review"
+        />
+        <button type="button" className="sm ghost" onClick={onClose}>
+          Đóng
+        </button>
+      </div>
+      <p className="muted small">Chỉ commit đã review, thuộc dự án của issue, chưa liên kết. Liên kết được nhiều commit.</p>
+      {problem && <div className="small bad">{problem}</div>}
+      {!found.data ? (
+        <Loading error={found.error} rows={3} />
+      ) : found.data.items.length === 0 ? (
+        <p className="muted small">Không thấy commit nào khớp.</p>
+      ) : (
+        <ul className="jt-link-list">
+          {found.data.items.map((c) => (
+            <li key={c.sha}>
+              <div className="jt-link-main">
+                <code>{c.sha.slice(0, 8)}</code> <span className="jt-mr-title">{c.title || "—"}</span>
+                <div className="muted small">
+                  {c.repo ?? "—"}
+                  {c.author && <> · {c.author.name}</>}
+                  {c.authored_at && <> · {relative(c.authored_at)}</>}
+                  {c.review && (
+                    <>
+                      {" · "}điểm <Score value={c.review.score} />
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="jt-link-actions">
+                <button type="button" className="sm primary" disabled={busy !== null} onClick={() => void link(c.sha, "fixes")}>
+                  {busy === c.sha ? "…" : "Sửa issue"}
+                </button>
+                <button type="button" className="sm" disabled={busy !== null} onClick={() => void link(c.sha, "refs")}>
+                  Liên quan
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** Managers / admins: move the issue on Jira (the moves Jira's workflow allows now). */
+function MoveIssue({ issueKey, onMoved }: { issueKey: string; onMoved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const moves = useApi<{ items: JiraTransition[] }>(open ? `/jira/tasks/${encodeURIComponent(issueKey)}/transitions` : null);
+  const [choice, setChoice] = useState("");
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!choice) return;
+    setBusy(true);
+    setNote(null);
+    try {
+      const res = await api.post<{ status: string | null }>(`/jira/tasks/${encodeURIComponent(issueKey)}/transition`, {
+        transition_id: choice,
+        comment: comment.trim() || null,
+      });
+      setNote({ ok: true, text: `Đã chuyển sang ${res.status ?? "trạng thái mới"} trên Jira.` });
+      setOpen(false);
+      setChoice("");
+      setComment("");
+      onMoved();
+    } catch (err) {
+      setNote({ ok: false, text: err instanceof ApiError ? err.message : String(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!open)
+    return (
+      <span className="jt-move">
+        <button type="button" className="sm" onClick={() => setOpen(true)}>
+          Chuyển trạng thái
+        </button>
+        {note && <span className={`small ${note.ok ? "good" : "bad"}`}>{note.text}</span>}
+      </span>
+    );
+  return (
+    <form className="jt-move-form" onSubmit={(e) => void submit(e)}>
+      {!moves.data ? (
+        <Loading error={moves.error} rows={1} />
+      ) : moves.data.items.length === 0 ? (
+        <span className="muted small">Jira không cho chuyển issue này lúc này.</span>
+      ) : (
+        <>
+          <select value={choice} onChange={(e) => setChoice(e.target.value)} required aria-label="Trạng thái mới">
+            <option value="">Chọn trạng thái…</option>
+            {moves.data.items.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+                {t.to && t.to !== t.name ? ` → ${t.to}` : ""}
+                {t.done ? " ✓" : ""}
+              </option>
+            ))}
+          </select>
+          <input value={comment} onChange={(e) => setComment(e.target.value)} maxLength={2000} placeholder="Ghi chú lên Jira (tuỳ chọn)" aria-label="Ghi chú" />
+        </>
+      )}
+      <div className="toolbar">
+        <button type="submit" className="sm primary" disabled={busy || !choice}>
+          {busy ? "Đang chuyển…" : "Chuyển trên Jira"}
+        </button>
+        <button type="button" className="sm ghost" onClick={() => setOpen(false)}>
+          Huỷ
+        </button>
+      </div>
+      {note && <span className={`small ${note.ok ? "good" : "bad"}`}>{note.text}</span>}
+    </form>
+  );
+}
+
 function IssueDrawer({ issueKey, onClose, onOpen }: { issueKey: string; onClose: () => void; onOpen: (key: string) => void }) {
-  const { data, error } = useApi<JiraTaskDetail>(`/jira/tasks/${encodeURIComponent(issueKey)}`);
+  const { data, error, mutate } = useApi<JiraTaskDetail>(`/jira/tasks/${encodeURIComponent(issueKey)}`);
+  const [linking, setLinking] = useState(false);
+  const refresh = () => void mutate();
   return (
     <Drawer
       title={
@@ -189,9 +395,10 @@ function IssueDrawer({ issueKey, onClose, onOpen }: { issueKey: string; onClose:
               </>
             )}
             <dt>Trạng thái</dt>
-            <dd>
+            <dd className="jt-state">
               <StateChip state={data.state} />
               {data.closed_at && <span className="muted small"> {date(data.closed_at)}</span>}
+              {data.can_move && <MoveIssue issueKey={data.key} onMoved={refresh} />}
             </dd>
             <dt>Loại · SP</dt>
             <dd>
@@ -273,14 +480,22 @@ function IssueDrawer({ issueKey, onClose, onOpen }: { issueKey: string; onClose:
           </section>
 
           <section>
-            <h3>
-              Commit ({data.commits.length}
-              {data.commits.some((c) => c.kind === "fixes") && <>, {data.commits.filter((c) => c.kind === "fixes").length} commit sửa</>})
-            </h3>
+            <div className="jt-section-head">
+              <h3>
+                Commit ({data.commits.length}
+                {data.commits.some((c) => c.kind === "fixes") && <>, {data.commits.filter((c) => c.kind === "fixes").length} commit sửa</>})
+              </h3>
+              {data.can_link && !linking && (
+                <button type="button" className="sm" onClick={() => setLinking(true)}>
+                  <Icon name="plus" size={14} /> Liên kết commit
+                </button>
+              )}
+            </div>
+            {linking && <LinkCommits issueKey={data.key} onLinked={refresh} onClose={() => setLinking(false)} />}
             {data.commits.length ? (
               <ul className="jt-mrs">
                 {data.commits.map((c) => (
-                  <CommitLine key={c.sha} c={c} />
+                  <CommitLine key={c.sha} c={c} issueKey={data.key} onChanged={refresh} />
                 ))}
               </ul>
             ) : (

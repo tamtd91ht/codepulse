@@ -13,6 +13,7 @@ import json
 import logging
 import queue
 import threading
+import uuid
 from collections.abc import AsyncIterator, Callable
 from functools import lru_cache
 from typing import Annotated, Any, Literal
@@ -26,7 +27,7 @@ from app.admin_settings import effective, monthly_budget_usd
 from app.api.audit import audit
 from app.api.deps import get_secret_box, get_session
 from app.api.security import Principal, require
-from app.assistant import knowledge
+from app.assistant import history, knowledge
 from app.assistant.chat import (
     LOGIN_PLACE,
     MAX_QUESTION,
@@ -82,6 +83,9 @@ class ChatIn(BaseModel):
     history: list[TurnIn] = Field(default_factory=list, max_length=200)
     screen: ScreenIn | None = None
     model: str = ""
+    # Lịch sử Stetho (docs/specs/28 §9): the client's id of this conversation (a UUID; a new
+    # one per "Cuộc trò chuyện mới"). Missing: each turn is a conversation of its own.
+    conversation_id: str | None = Field(default=None, pattern=r"^[0-9a-fA-F-]{8,64}$")
 
 
 @lru_cache
@@ -107,6 +111,20 @@ def _record(user_id: int, details: dict[str, Any]) -> None:
 
 def get_assistant_recorder() -> Recorder:
     return _record
+
+
+# (user id, the turn) -> None: Lịch sử Stetho, in a session of its own (docs/specs/28 §9).
+HistoryWriter = Callable[[int, dict[str, Any]], None]
+
+
+def _write_history(user_id: int, turn: dict[str, Any]) -> None:
+    with get_sessionmaker()() as session:
+        history.record_turn(session, user_id=user_id, **turn)
+        session.commit()
+
+
+def get_history_writer() -> HistoryWriter:
+    return _write_history
 
 
 def _token(session: Session, box: SecretBox, settings: Settings) -> str:
@@ -162,6 +180,7 @@ def chat(
     box: Annotated[SecretBox, Depends(get_secret_box)],
     streamer: Annotated[Streamer, Depends(get_assistant_streamer)],
     recorder: Annotated[Recorder, Depends(get_assistant_recorder)],
+    writer: Annotated[HistoryWriter, Depends(get_history_writer)],
 ) -> StreamingResponse:
     question = body.question.strip()
     if not question:
@@ -184,6 +203,7 @@ def chat(
     if screen is not None and screen.search and not screen.search.startswith("?"):
         screen.search = f"?{screen.search}"
     user_id = principal.user_id
+    conversation_id = (body.conversation_id or uuid.uuid4().hex).lower()
     with _busy_lock:
         if user_id in _busy:
             raise HTTPException(
@@ -248,7 +268,8 @@ def chat(
                         "status": "cancelled"
                         if outcome.cancelled
                         else ("ok" if outcome.ok else "error"),
-                        "question": question[:300],
+                        # The question itself is in Lịch sử Stetho (kept 30 days), not here.
+                        "conversation": conversation_id,
                         "turns": len(history),
                         "screen": f"{screen.path}{screen.search}" if screen else None,
                         "context_chars": len(context),
@@ -263,6 +284,26 @@ def chat(
                 )
             except Exception:
                 log.exception("assistant turn not audited")
+            try:
+                writer(
+                    user_id,
+                    {
+                        "conversation_id": conversation_id,
+                        "question": question,
+                        "answer": outcome.text,
+                        "status": "cancelled"
+                        if outcome.cancelled
+                        else ("ok" if outcome.ok else "error"),
+                        "screen": f"{screen.path}{screen.search}" if screen else None,
+                        "model": outcome.model or model,
+                        "cost_usd": outcome.cost_usd,
+                        "duration_ms": outcome.duration_ms,
+                        "docs": len(hits),
+                        "web": web,
+                    },
+                )
+            except Exception:
+                log.exception("assistant turn not kept in the history")
             finally:
                 release()
                 events.put(("end", outcome))

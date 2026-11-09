@@ -14,8 +14,13 @@ from sqlalchemy.orm import Session
 
 from app.api.audit import audit
 from app.api.main import app
-from app.api.routers.assistant import get_assistant_recorder, get_assistant_streamer
+from app.api.routers.assistant import (
+    get_assistant_recorder,
+    get_assistant_streamer,
+    get_history_writer,
+)
 from app.api.security import load_principal
+from app.assistant import history
 from app.assistant.context import Screen, build_context
 from app.config import Settings
 from app.models import AuditLog, CommandRun, ReviewKnowledge
@@ -79,11 +84,16 @@ def streamer(db_session: Session) -> Iterator[FakeStreamer]:
         audit(db_session, user_id, "assistant.chat", "assistant", **details)
         db_session.flush()
 
+    def keep(user_id: int, turn: dict[str, Any]) -> None:  # Lịch sử Stetho, on the test session
+        history.record_turn(db_session, user_id=user_id, **turn)
+
     app.dependency_overrides[get_assistant_streamer] = lambda: fake
     app.dependency_overrides[get_assistant_recorder] = lambda: record
+    app.dependency_overrides[get_history_writer] = lambda: keep
     yield fake
     app.dependency_overrides.pop(get_assistant_streamer, None)
     app.dependency_overrides.pop(get_assistant_recorder, None)
+    app.dependency_overrides.pop(get_history_writer, None)
 
 
 def sse(text: str) -> list[tuple[str, dict[str, Any]]]:

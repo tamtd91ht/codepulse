@@ -32,6 +32,16 @@ interface Msg {
 const STORE_KEY = "codepulse-stetho-chat";
 /** The model this browser picked; "" = the server's default (the review model). */
 const MODEL_KEY = "codepulse-stetho-model";
+// The conversation's id (Lịch sử Stetho groups turns by it); a new one per "Cuộc trò chuyện mới".
+const CONVERSATION_KEY = "codepulse-stetho-conversation";
+
+function newConversation(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
+  }
+}
 const MAX_QUESTION = 4000;
 
 const TITLES: Record<string, string> = {
@@ -43,6 +53,7 @@ const TITLES: Record<string, string> = {
   "/reviews/request": "Yêu cầu review",
   "/jira": "Task Jira",
   "/stetho": "Tri thức Stetho",
+  "/stetho/history": "Lịch sử Stetho",
   "/critical": "Critical Board",
   "/disputes": "Khiếu nại",
   "/admin": "Admin",
@@ -120,6 +131,7 @@ export function Stetho() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [draft, setDraft] = useState("");
   const [model, setModelState] = useState("");
+  const [conversation, setConversation] = useState("");
   const abort = useRef<AbortController | null>(null);
 
   // Restored after mount (not in the initial state): the server render has no storage.
@@ -128,7 +140,16 @@ export function Stetho() {
     // A turn still streaming when the page reloaded lost its connection: say so instead of hanging.
     setMsgs(stored.map((m) => (m.streaming ? { ...m, streaming: false, error: m.error ?? "Đã ngắt khi tải lại trang" } : m)));
     setModelState(load<string>(() => localStorage, MODEL_KEY, ""));
+    const kept = load<string>(() => sessionStorage, CONVERSATION_KEY, "");
+    const id = kept || newConversation();
+    setConversation(id);
+    save(() => sessionStorage, CONVERSATION_KEY, id);
   }, []);
+  const startOver = () => {
+    const id = newConversation();
+    setConversation(id);
+    save(() => sessionStorage, CONVERSATION_KEY, id);
+  };
   useEffect(() => save(() => sessionStorage, STORE_KEY, msgs.slice(-40)), [msgs]);
 
   const busy = msgs.some((m) => m.streaming);
@@ -153,7 +174,13 @@ export function Stetho() {
     const patch = (fn: (m: Msg) => Msg) => setMsgs((list) => list.map((m) => (m.id === answerId ? fn(m) : m)));
     try {
       const done = await askAssistant(
-        { question, history, screen: currentScreen(pathname), ...(activeModel ? { model: activeModel } : {}) },
+        {
+          question,
+          history,
+          screen: currentScreen(pathname),
+          ...(activeModel ? { model: activeModel } : {}),
+          ...(conversation ? { conversation_id: conversation } : {}),
+        },
         { signal: controller.signal, onDelta: (piece) => patch((m) => ({ ...m, content: m.content + piece })) },
       );
       patch((m) => ({ ...m, streaming: false, meta: { model: done.model, seconds: done.duration_ms / 1000 } }));
@@ -222,6 +249,7 @@ export function Stetho() {
                   onClick={() => {
                     abort.current?.abort();
                     setMsgs([]);
+                    startOver();
                   }}
                 />
               )}
@@ -380,6 +408,9 @@ function Chat({
             <p>
               {name} đọc số liệu của màn hình bạn đang mở trước, rồi tới tổng quan các dự án và team bạn được xem để phân
               tích. {name} chỉ thấy những gì bạn được xem, không đọc mã nguồn và không thay đổi gì.
+            </p>
+            <p className="small muted stetho-privacy">
+              Câu hỏi của bạn và vài ý chính của câu trả lời được lưu 30 ngày để admin cải thiện {name}; nội dung đầy đủ không lưu.
             </p>
             <div className="stetho-suggest">
               {suggestions(screen.path).map((s) => (

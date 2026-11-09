@@ -2227,6 +2227,17 @@ export interface JiraTaskDetail extends JiraTask {
   children: JiraTaskBrief[];
   merge_requests: JiraTaskMr[];
   commits: JiraTaskCommit[];
+  /** §20: may link reviewed commits by hand (others than one's own: managers, admins). */
+  can_link: boolean;
+  /** §20: may move the issue on Jira (managers of its dự án, jira.admin, admins). */
+  can_move: boolean;
+}
+
+export interface JiraTransition {
+  id: string;
+  name: string | null;
+  to: string | null;
+  done: boolean;
 }
 
 /** A commit naming an issue in its message (docs/specs/27 §19). */
@@ -2243,6 +2254,11 @@ export interface JiraTaskCommit {
   keys?: string[];
   /** It is in an MR that names an issue (only the commit lacks the key). */
   in_linked_mr?: boolean;
+  /** Linked by hand on Task Jira (§20), and by whom. */
+  manual?: boolean;
+  linked_by?: string | null;
+  /** "Review lại" allowed (review.rerun on its dự án). */
+  can_rerun?: boolean;
   review: JiraMrReview | null;
 }
 

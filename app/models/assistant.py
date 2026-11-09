@@ -7,9 +7,11 @@ pieces, each with a full-text vector over the accent-folded text, which is what 
 matched against.
 """
 
+from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, String
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -60,3 +62,68 @@ class AssistantDocChunk(TimestampMixin, Base):
     body: Mapped[str]
     # TSVECTOR on PostgreSQL; plain text where tests build the schema on SQLite.
     search: Mapped[Any | None] = mapped_column(TSVECTOR().with_variant(String(), "sqlite"))
+
+
+# -- Lịch sử Stetho (docs/specs/28 §9, user 2026-11-09): what people asked, kept 30 days --------
+
+CONVERSATION_TAGS = (
+    "codepulse_howto",
+    "jira_commit",
+    "quality_analysis",
+    "findings_fix",
+    "people_team",
+    "dpi",
+    "admin_config",
+    "tech_general",
+    "other",
+)
+
+
+class AssistantConversation(TimestampMixin, Base):
+    """One Stetho conversation (a "Cuộc trò chuyện mới" starts the next), with its topic tag
+    from the fixed list (app/assistant/history.py). Admins only see these; deleted after
+    HISTORY_KEEP_DAYS."""
+
+    __tablename__ = "assistant_conversations"
+    __table_args__ = (
+        CheckConstraint(f"tag IS NULL OR tag IN {CONVERSATION_TAGS}", name="tag"),
+        CheckConstraint(
+            "tag_source IS NULL OR tag_source IN ('ai', 'rule', 'manual')", name="tag_source"
+        ),
+        Index("ix_assistant_conversations_last_at", "last_at"),
+        Index("ix_assistant_conversations_user_id_last_at", "user_id", "last_at"),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True)  # a UUID the client makes
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    title: Mapped[str]  # its first question, cut
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    turns: Mapped[int] = mapped_column(server_default="0", default=0)
+    cost_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4), server_default="0", default=0)
+    tag: Mapped[str | None]
+    tag_source: Mapped[str | None]  # ai | rule (keywords, when the AI could not) | manual
+    tagged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AssistantTurn(TimestampMixin, Base):
+    """One question and the gist of its answer (a few points, never the whole answer)."""
+
+    __tablename__ = "assistant_turns"
+    __table_args__ = (CheckConstraint("status IN ('ok', 'error', 'cancelled')", name="status"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("assistant_conversations.id", ondelete="CASCADE"), index=True
+    )
+    asked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    question: Mapped[str]
+    answer_points: Mapped[str | None]  # up to 3 key points, one per line
+    answer_chars: Mapped[int] = mapped_column(server_default="0", default=0)
+    status: Mapped[str]
+    screen: Mapped[str | None]  # the page the question was asked on
+    model: Mapped[str | None]
+    cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    duration_ms: Mapped[int | None]
+    docs: Mapped[int] = mapped_column(server_default="0", default=0)  # knowledge pieces read
+    web: Mapped[bool] = mapped_column(server_default="false", default=False)

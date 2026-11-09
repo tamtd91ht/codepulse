@@ -110,13 +110,14 @@ class JiraClient:
 
     # -- transport ---------------------------------------------------------------------------
 
-    def request(self, method: str, path: str, **kwargs: Any) -> Any:
-        for attempt in range(self._max_retries + 1):
+    def request(self, method: str, path: str, *, retries: int | None = None, **kwargs: Any) -> Any:
+        max_retries = self._max_retries if retries is None else retries
+        for attempt in range(max_retries + 1):
             self._limiter.acquire()
             try:
                 response = self._http.request(method, path, **kwargs)
             except httpx.TransportError as exc:
-                if attempt == self._max_retries:
+                if attempt == max_retries:
                     raise JiraError(None, f"{method} {path}: {exc.__class__.__name__}") from exc
                 delay = self._backoff(attempt)
                 log.warning(
@@ -125,7 +126,7 @@ class JiraClient:
                 )
                 self._sleep(delay)
                 continue
-            if response.status_code in RETRY_STATUS and attempt < self._max_retries:
+            if response.status_code in RETRY_STATUS and attempt < max_retries:
                 delay = self._delay(attempt, response)
                 log.warning(
                     "jira request retried",
@@ -143,6 +144,8 @@ class JiraClient:
                     response.status_code,
                     f"{method} {path} -> HTTP {response.status_code}{_reason(response)}",
                 )
+            if response.status_code == 204 or not response.content:
+                return None  # a write with no body (a transition)
             try:
                 return response.json()
             except ValueError as exc:
@@ -196,6 +199,26 @@ class JiraClient:
         by the caller (KEY_PATTERN), so it is safe in the path."""
         found = self.request("GET", f"/project/{key}/components") or []
         return [c for c in found if isinstance(c, dict)]
+
+    # -- writes (docs/specs/27 §20: the only ones; the service account needs "Transition
+    # issues" on the projects where people move issues from Task Jira) ------------------------
+
+    def transitions(self, key: str) -> list[dict[str, Any]]:
+        """The moves the service account may make on `key` now (Jira's workflow decides)."""
+        data = self.request("GET", f"/issue/{key}/transitions")
+        return list((data or {}).get("transitions") or [])
+
+    def transition(self, key: str, transition_id: str, comment: str | None = None) -> None:
+        body: dict[str, Any] = {"transition": {"id": transition_id}}
+        if comment:
+            body["update"] = {"comment": [{"add": {"body": comment}}]}
+        # Not retried: a POST that reached Jira but timed out would move the issue twice.
+        self.request("POST", f"/issue/{key}/transitions", json=body, retries=0)
+
+    def issue_status(self, key: str) -> dict[str, Any]:
+        """`fields.status` and `fields.resolutiondate` of one issue."""
+        data = self.request("GET", f"/issue/{key}", params={"fields": "status,resolutiondate"})
+        return dict((data or {}).get("fields") or {})
 
     def search(
         self, jql: str, fields: Sequence[str], start_at: int = 0, max_results: int = PAGE_SIZE

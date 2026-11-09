@@ -40,7 +40,14 @@ export interface AssistantDone {
  * Aborting `signal` rejects with AbortError and the server kills the CLI.
  */
 export async function askAssistant(
-  body: { question: string; history: AssistantTurn[]; screen: AssistantScreen; model?: string },
+  body: {
+    question: string;
+    history: AssistantTurn[];
+    screen: AssistantScreen;
+    model?: string;
+    /** Lịch sử Stetho (docs/specs/28 §9): this conversation's id. */
+    conversation_id?: string;
+  },
   { onDelta, signal }: { onDelta: (text: string) => void; signal?: AbortSignal },
 ): Promise<AssistantDone> {
   let response: Response;

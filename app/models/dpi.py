@@ -131,6 +131,9 @@ class IssueCommitLink(TimestampMixin, Base):
         ForeignKey("commits.sha", ondelete="CASCADE"), primary_key=True, index=True
     )
     kind: Mapped[str]
+    # Linked by hand on Task Jira (§20): kept when the message is read again.
+    manual: Mapped[bool] = mapped_column(server_default="false", default=False)
+    linked_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
 
 
 class ProdDefect(TimestampMixin, Base):

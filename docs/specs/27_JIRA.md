@@ -572,3 +572,30 @@ Mỗi thay đổi đều ghi audit.
   từ tên nhánh; chạy cả Git Bash Windows), job GitLab CI `jira-key` chặn MR có commit thiếu mã (mọi
   bản GitLab), push rules cho GitLab Premium (regex commit message và tên nhánh). Thứ tự triển khai:
   hook → theo dõi tỉ lệ ở Task Jira → bật CI bắt buộc.
+
+## 20. Liên kết commit bằng tay, review lại, chuyển trạng thái Jira (2026-11-10)
+
+> **[Quyết định]** (user 2026-11-10: "vào task Jira và 1 issue bất kỳ, chọn liên kết với commit đã
+> review… cho phép 1 task liên kết nhiều commit… nút review lại… manager hoặc admin chuyển trạng thái
+> Jira ngay tại màn hình này"). **Đổi §1**: CodePulse không còn chỉ đọc Jira — chỉ có MỘT thao tác
+> ghi là chuyển trạng thái (transition) kèm bình luận; tài khoản dịch vụ cần quyền *Transition
+> issues* (và *Add comments*) trên các dự án đó. Không tạo/sửa ticket.
+
+- **Liên kết tay** (`issue_commit_links.manual`, `linked_by`; migration `b0d2f4a6c8e1`): trong drawer
+  issue › Commit › "Liên kết commit": tìm commit **đã review** (review commit `done`) thuộc dự án của
+  issue, theo SHA (≥ 4 ký tự hex, tiền tố) hoặc nội dung message, chưa liên kết; chọn `fixes` ("Sửa
+  issue", tính vào Bug đã có bản sửa) hoặc `refs`. Nhiều commit mỗi issue. Liên kết tay không bị xoá khi
+  đọc lại message (`link_commits` chỉ xoá liên kết tự động) và giữ loại người chọn.
+  - Quyền: manager của một dự án của issue, `jira.admin`, admin: mọi commit; người khác: chỉ commit của
+    chính mình (tác giả). Gỡ: người đã liên kết hoặc manager/admin; chỉ gỡ được liên kết tay.
+- **Review lại**: nút trên commit đã review, khi `review.rerun` cho phép trên dự án của repo; gọi
+  `POST /reviews/{id}/rerun {force: true}` (lượt review mới, lượt cũ giữ lại).
+- **Chuyển trạng thái**: manager của dự án của issue, `jira.admin`, admin. Danh sách bước lấy từ Jira
+  (`GET /issue/{key}/transitions`: chỉ những bước workflow cho phép), chọn + ghi chú tuỳ chọn →
+  `POST /issue/{key}/transitions` kèm bình luận `[CodePulse] <tên>: <ghi chú>`; đọc lại `status` để
+  cập nhật `issues.state`/`closed_at_src` ngay (lần sync sau xác nhận). Lỗi 400/401/403 báo thiếu quyền
+  Transition. Audit `jira.issue.transition`, `jira.commit.link`, `jira.commit.unlink`.
+- **API**: `GET /jira/tasks/{KEY}/commit-candidates?q=`, `POST /jira/tasks/{KEY}/commits {sha, kind}`,
+  `DELETE /jira/tasks/{KEY}/commits/{sha}`, `GET /jira/tasks/{KEY}/transitions`,
+  `POST /jira/tasks/{KEY}/transition {transition_id, comment?}`; `GET /jira/tasks/{KEY}` thêm
+  `can_link`, `can_move`, mỗi commit `manual`, `linked_by`, `can_rerun`.

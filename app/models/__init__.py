@@ -1,4 +1,9 @@
-from app.models.assistant import AssistantDoc, AssistantDocChunk
+from app.models.assistant import (
+    AssistantConversation,
+    AssistantDoc,
+    AssistantDocChunk,
+    AssistantTurn,
+)
 from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.commands import CommandRun
@@ -54,8 +59,10 @@ __all__ = [
     "Account",
     "ApiToken",
     "AppSetting",
+    "AssistantConversation",
     "AssistantDoc",
     "AssistantDocChunk",
+    "AssistantTurn",
     "AuditLog",
     "Base",
     "BusinessProject",

@@ -92,3 +92,25 @@
 ## 8. Ngoài phạm vi (ghi IDEAS.md nếu cần)
 - PDF, Google Docs/Confluence có đăng nhập (tải file lên thay), tìm kiếm ngữ nghĩa bằng embedding,
   lịch tự lấy lại link định kỳ.
+
+## 9. Lịch sử Stetho (user 2026-11-09)
+- **Lưu gì:** mỗi câu hỏi (nguyên văn) + tối đa 3 ý chính của câu trả lời (`app/assistant/history.py`
+  `key_points`: tiêu đề/gạch đầu dòng, không code/bảng); số ký tự trả lời, model, chi phí, thời gian,
+  số đoạn tài liệu, có tra web. Không lưu nguyên câu trả lời. Câu hỏi không còn nằm trong audit log.
+- **Nhóm theo cuộc trò chuyện:** khung Stetho sinh `conversation_id` (UUID, sessionStorage), đổi khi bấm
+  "Cuộc trò chuyện mới". Id của người khác gửi lên → tạo cuộc mới. Bảng `assistant_conversations`,
+  `assistant_turns` (migration a9c1e3f5b7d9).
+- **Giữ 30 ngày:** retention xoá cuộc trò chuyện có `last_at` cũ hơn 30 ngày. Khung Stetho báo cho người
+  dùng biết điều này.
+- **Tag cố định** (báo cáo được): Cách dùng CodePulse, Jira & commit, Phân tích chất lượng, Finding & cách
+  sửa, Thành viên & team, DPI, Cấu hình/quản trị, Kỹ thuật chung, Khác. Job `stetho-tag` mỗi 10 phút gắn
+  tag các cuộc đã dừng 15 phút: một lần gọi Haiku cho tối đa 40 cuộc, chỉ gửi câu hỏi (≤220 ký tự);
+  lỗi/hết ngân sách → gắn theo từ khoá. Không cần chính xác tuyệt đối; admin sửa tay (`manual`, không bị
+  ghi đè). Chi phí tính vào ngân sách Stetho (`assistant.tag.cost`).
+- **Ai xem:** chỉ admin (ADMIN_EMAILS). Người có quyền admin.* hay assistant.train cũng không xem được.
+  Mở một cuộc trò chuyện ghi audit `stetho.history.read`.
+- **Màn hình** `/stetho/history` (menu chỉ hiện với admin): KPI, tab Theo thành viên / Theo chủ đề /
+  Cuộc trò chuyện, lọc thời gian (≤30 ngày), thành viên, chủ đề, tìm trong câu hỏi; drawer xem từng câu
+  hỏi + ý chính, đổi tag, xoá; nút "Gắn tag ngay".
+- **API** (`app/api/routers/stetho_history.py`): `GET /stetho/history/summary`, `GET /stetho/history/conversations`,
+  `GET|PATCH|DELETE /stetho/history/conversations/{id}`, `POST /stetho/history/tag-now`.
