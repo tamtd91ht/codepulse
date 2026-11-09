@@ -882,6 +882,16 @@ textarea {
   padding: 8px 12px;
   resize: vertical;
 }
+/* The open list of a select: theme colours, never the browser's white under light text (a
+   transparent select, as in .fsel, otherwise shows its options white on white in dark mode). */
+select option,
+select optgroup {
+  background-color: var(--surface);
+  color: var(--text);
+}
+select option:disabled {
+  color: var(--muted);
+}
 select:hover,
 input:hover,
 textarea:hover {
