@@ -34,6 +34,7 @@ from app.api.routers import (
     inbox,
     insights,
     jira,
+    jira_tasks,
     knowledge,
     knowledge_stats,
     llm,
@@ -121,6 +122,7 @@ for api_router in (
     inbox.router,
     dpi.router,
     jira.router,
+    jira_tasks.router,
     tokens.router,
     mcp_report.router,
 ):

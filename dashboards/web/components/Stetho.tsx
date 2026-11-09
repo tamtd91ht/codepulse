@@ -40,6 +40,7 @@ const TITLES: Record<string, string> = {
   "/members": "Thành viên",
   "/reviews": "Kết quả review",
   "/reviews/request": "Yêu cầu review",
+  "/jira": "Task Jira",
   "/critical": "Critical Board",
   "/disputes": "Khiếu nại",
   "/admin": "Admin",

@@ -216,6 +216,15 @@ def logout() -> Response:
     return response
 
 
+def _jira_connected(session: Session, settings: Settings) -> bool:
+    from app.jira.settings import effective_base_url
+
+    try:
+        return bool(effective_base_url(session, settings))
+    except Exception:  # never break /auth/me over the Jira settings
+        return False
+
+
 @router.get("/me")
 def me(
     principal: CurrentPrincipal,
@@ -242,6 +251,8 @@ def me(
         "insights": principal.can("insights.view"),
         # Thành viên: lead and above too (app/api/security.require_members_page).
         "members_page": principal.can("members.view"),
+        # Task Jira (docs/specs/27 §18): shown once Jira is connected.
+        "jira_tasks": _jira_connected(session, settings),
         # docs/specs/21: what this person may do (catalog key -> scope, or "flag").
         "permissions": principal.perms,
     }

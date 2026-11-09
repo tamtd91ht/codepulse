@@ -22,6 +22,8 @@ export interface Me {
   insights?: boolean;
   /** Thành viên (per-person evaluation of a team): lead and above too. */
   members_page?: boolean;
+  /** Task Jira (docs/specs/27 §18): Jira is connected. */
+  jira_tasks?: boolean;
   /** docs/specs/21: permission key -> scope ("own" | "team" | "project" | "all") or "flag"; read with can(). */
   permissions?: Record<string, string>;
 }
@@ -2149,4 +2151,104 @@ export interface LlmHealth {
   recovered_at: string | null;
   requeued_last: number | null;
   waiting_reviews: number;
+}
+
+/* ---- Task Jira (docs/specs/27 §18, GET /jira/tasks…) ---- */
+
+export interface JiraPerson {
+  user_id: number | null;
+  name: string;
+}
+
+export interface JiraMrReview {
+  id: number;
+  score: number | null;
+  verdict: string | null;
+  finished_at: string | null;
+  critical: number;
+  high: number;
+}
+
+export interface JiraTaskMr {
+  id: number;
+  iid: number;
+  title: string | null;
+  state: string | null;
+  repo: string | null;
+  url: string | null;
+  author: JiraPerson | null;
+  created_at: string | null;
+  merged_at: string | null;
+  link?: "closes" | "mention";
+  branch?: string | null;
+  keys?: string[];
+  review: JiraMrReview | null;
+}
+
+export interface JiraTask {
+  key: string;
+  title: string | null;
+  url: string | null;
+  state: "opened" | "closed" | null;
+  type: string | null;
+  story_points: number | null;
+  jira_project: string | null;
+  parent_key: string | null;
+  assignees: JiraPerson[];
+  created_at: string | null;
+  closed_at: string | null;
+  due_date: string | null;
+  mrs: number;
+  mrs_merged: number;
+  reviews: number;
+  score: number | null;
+  critical: number;
+  high: number;
+}
+
+export interface JiraTaskBrief {
+  key: string;
+  title: string | null;
+  state: string | null;
+  type: string | null;
+}
+
+export interface JiraTaskDetail extends JiraTask {
+  labels: string[];
+  components: string[];
+  business_projects: { id: number; name: string }[];
+  parent: JiraTaskBrief | null;
+  children: JiraTaskBrief[];
+  merge_requests: JiraTaskMr[];
+}
+
+export interface JiraTaskList {
+  items: JiraTask[];
+  total: number;
+  page: number;
+  page_size: number;
+  kpis: {
+    issues: number;
+    open: number;
+    closed_in_period: number;
+    with_mr: number;
+    with_points: number;
+    severe_open: number;
+  };
+}
+
+export interface JiraUnlinkedMrs {
+  items: JiraTaskMr[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface JiraTaskOptions {
+  jira_projects: { key: string; name: string | null }[];
+  business_projects: { id: number; name: string }[];
+  types: string[];
+  configured: boolean;
+  task_source: "jira" | "gitlab";
+  can_admin: boolean;
 }

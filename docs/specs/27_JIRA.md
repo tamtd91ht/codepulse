@@ -496,3 +496,36 @@ Mỗi thay đổi đều ghi audit.
   tiếp; tự hết.
 - Ngoài phạm vi: trạng thái chi tiết của Jira (In Review…), người được giao, tạo ticket từ
   finding (cần ghi lên Jira, trái §1).
+
+## 18. Task Jira: dùng được dữ liệu Jira (thiết kế lại 2026-11-09)
+
+> **[Quyết định]** (user 2026-11-09: "không thể dùng hay liên kết được gì, chỉ hiện được số lượng
+> issue") Jira không chỉ là số đếm cho DPI: có một màn để tra cứu task và đi từ task tới MR, review,
+> người làm, và ngược lại. Vẫn chỉ đọc (§1).
+
+- **Màn Task Jira** (`/jira`, menu Theo dõi; hiện khi Jira đã kết nối, `GET /auth/me` có
+  `jira_tasks`):
+  - Tab **Issue**: KPI trong kỳ (issue làm trong kỳ, đang mở, xong trong kỳ, có MR %, có Story
+    Points %, còn lỗi nặng); bảng issue: key (mở drawer) + nút mở Jira, tiêu đề, loại, thuộc
+    issue cha, người làm (link trang thành viên), trạng thái, SP, MR đã merge/tổng (0 tô đỏ),
+    điểm review trung bình của các MR, critical/high đang mở. Lọc: tìm key/tiêu đề, dự án
+    CodePulse, dự án Jira, trạng thái, loại, người làm (có "Tôi"), có/chưa có MR; thời gian dùng
+    bộ lọc thời gian chung (issue "làm trong kỳ": tạo trước cuối kỳ, chưa đóng trước đầu kỳ).
+    Bộ lọc giữ trên URL (`?jira=ABC&issue=ABC-1…`), chia sẻ link được.
+  - **Drawer issue** (`?issue=KEY`): link Jira, trạng thái, loại · SP, người làm, ngày tạo/hạn, dự
+    án, component · label, issue cha và việc con (bấm để chuyển), mọi MR ghi key (link GitLab,
+    repo, tác giả, "chỉ nhắc trong mô tả", review hiện tại: link trang review, điểm, kết luận,
+    critical/high đang mở). Không có MR thì gợi ý cách đặt key vào tên nhánh.
+  - Tab **MR chưa gắn issue**: MR mở trong kỳ ở repo mình xem, không nối issue nào; nhánh, key có
+    dạng nhưng không khớp, điểm review. Nhắc quy ước khi nguồn task là Jira.
+- **Liên kết vào màn này**: số issue ở Admin › Jira (bảng dự án) mở Task Jira lọc theo dự án Jira
+  đó; dải Jira trên trang review có "Xem task" mở drawer của issue.
+- **Quyền**: issue của dự án Jira đã gắn với dự án CodePulse mình xem được (`jira_issue_in`);
+  admin và `jira.admin` thấy mọi issue (kể cả dự án Jira chưa gắn). MR: repo thuộc dự án mình xem
+  được. Điểm/finding của review chỉ hiện khi `review.view` cho phép (`work_scope`) — người chỉ xem
+  review của mình không thấy điểm của người khác qua issue. Issue không xem được trả 404.
+- **API** (đăng nhập là đủ, phạm vi như trên; `app/jira/tasks.py`, `app/api/routers/jira_tasks.py`):
+  `GET /jira/tasks/options`, `GET /jira/tasks` (lọc + `page`, `page_size` ≤ 100; trả `items`,
+  `total`, `kpis`), `GET /jira/tasks/{KEY}`, `GET /jira/tasks/unlinked-mrs`. Khoảng ngày tối đa
+  400 ngày.
+- Ngoài phạm vi (ghi `IDEAS.md` nếu cần): nối tay issue ↔ MR, tạo/sửa ticket, sprint/board.

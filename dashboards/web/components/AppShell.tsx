@@ -99,6 +99,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         { href: `/members/${me.id}`, label: "Của tôi", icon: "user" },
         { href: "/reviews", label: "Kết quả review", icon: "inbox" },
         { href: "/reviews/request", label: "Yêu cầu review", icon: "review" },
+        // Task Jira (docs/specs/27 §18): once Jira is connected.
+        ...(me.jira_tasks ? [{ href: "/jira", label: "Task Jira", icon: "flag" } as Item] : []),
         { href: "/critical", label: "Critical Board", icon: "alert" },
         { href: "/closures", label: "Đóng finding", icon: "checkCircle" },
         { href: "/disputes", label: isLead ? "Duyệt khiếu nại" : "Khiếu nại", icon: "scale" },

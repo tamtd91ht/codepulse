@@ -741,6 +741,9 @@ function MrJiraCard({ jira }: { jira: MrJira }) {
                 chỉ nhắc trong mô tả
               </span>
             )}
+            <Link className="small" href={`/jira?issue=${encodeURIComponent(i.key)}`} title="Các MR và review khác của task này">
+              Xem task
+            </Link>
           </li>
         ))}
         {others.map((k) => (

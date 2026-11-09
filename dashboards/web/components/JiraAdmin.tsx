@@ -11,6 +11,7 @@
  *   summary, "Chỉnh sửa" opens the form) and "Quy đổi trường".
  * Needs `jira.admin` (or admin); the API answers 403 otherwise.
  */
+import Link from "next/link";
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { SubPanel, type SubTab, SubTabs } from "@/components/AdminTabs";
@@ -858,7 +859,15 @@ function ProjectsPanel({ data, onDone }: { data: JiraView; onDone: (msg: string)
                       {p.unmatched > 0 && <div className="tone-warn small">{n(p.unmatched)} issue không khớp quy tắc nào: tính cho mọi dự án ở trên.</div>}
                     </td>
                     <td className="small">{syncState(p)}</td>
-                    <td className="num">{n(p.issues_count)}</td>
+                    <td className="num">
+                      {p.issues_count ? (
+                        <Link href={`/jira?jira=${encodeURIComponent(p.key)}`} title={`Xem issue của ${p.key} trong Task Jira`}>
+                          {n(p.issues_count)}
+                        </Link>
+                      ) : (
+                        n(p.issues_count)
+                      )}
+                    </td>
                     <td className="jira-row-actions">
                       <IconButton icon="sync" label={`Đồng bộ ${p.key}`} disabled={!p.enabled || busyKey === p.key} onClick={() => void syncOne(p)} />
                       <IconButton icon="edit" label={`Sửa ${p.key}`} onClick={() => setEditing(p)} />
