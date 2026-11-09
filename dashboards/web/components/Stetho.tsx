@@ -1,12 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Icon, IconButton } from "@/components/icons";
 import { Markdown } from "@/components/Markdown";
 import { Drawer } from "@/components/ui";
-import { useApi } from "@/lib/api";
+import { ApiError, api, useApi } from "@/lib/api";
 import { askAssistant, type AssistantScreen, type AssistantStatus, type AssistantTurn } from "@/lib/assistant";
 
 /**
@@ -41,6 +42,7 @@ const TITLES: Record<string, string> = {
   "/reviews": "Kết quả review",
   "/reviews/request": "Yêu cầu review",
   "/jira": "Task Jira",
+  "/stetho": "Tri thức Stetho",
   "/critical": "Critical Board",
   "/disputes": "Khiếu nại",
   "/admin": "Admin",
@@ -208,6 +210,11 @@ export function Stetho() {
                   ))}
                 </select>
               )}
+              {status?.can_train && (
+                <Link href="/stetho" className="icon-btn" aria-label={`Tri thức của ${name}`} data-tip={`Tri thức của ${name}`} onClick={() => setOpen(false)}>
+                  <Icon name="book" size={16} />
+                </Link>
+              )}
               {msgs.length > 0 && (
                 <IconButton
                   icon="plus"
@@ -238,6 +245,61 @@ export function Stetho() {
   );
 }
 
+/** "Lưu thành tri thức": a trainer corrects an answer and keeps it; the same question then
+ * finds it (docs/specs/28). */
+function SaveAnswer({ question, answer, onDone }: { question: string; answer: string; onDone: () => void }) {
+  const [title, setTitle] = useState(question.slice(0, 200));
+  const [body, setBody] = useState(answer);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [everyone, setEveryone] = useState(false);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setProblem(null);
+    try {
+      await api.post("/assistant/docs", {
+        title: title.trim(),
+        body,
+        source: "qa",
+        question,
+        audience: everyone ? "all" : "trainers",
+      });
+      setSaved(true);
+      setTimeout(onDone, 1200);
+    } catch (err) {
+      setProblem(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (saved) return <div className="small good stetho-saved">Đã lưu vào tri thức Stetho.</div>;
+  return (
+    <form className="stetho-save" onSubmit={(e) => void submit(e)}>
+      <span className="small muted">Sửa cho đúng rồi lưu: lần sau Stetho trả lời theo nội dung này.</span>
+      <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} required aria-label="Tiêu đề tri thức" />
+      <textarea rows={8} value={body} onChange={(e) => setBody(e.target.value)} required aria-label="Nội dung tri thức" />
+      <label className="small stetho-save-who">
+        <input type="checkbox" checked={everyone} onChange={(e) => setEveryone(e.target.checked)} />
+        Cho mọi người dùng Stetho đọc (mặc định chỉ người dạy Stetho)
+      </label>
+      {everyone && (
+        <div className="small tone-warn">Câu trả lời này dựa trên số liệu bạn được xem: xoá tên người, điểm, finding trước khi chia sẻ cho mọi người.</div>
+      )}
+      {problem && <div className="error small">{problem}</div>}
+      <div className="toolbar">
+        <button type="submit" className="sm primary" disabled={busy || !body.trim() || !title.trim()}>
+          {busy ? "Đang lưu…" : "Lưu thành tri thức"}
+        </button>
+        <button type="button" className="sm ghost" onClick={onDone}>
+          Huỷ
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function Chat({
   name,
   status,
@@ -265,6 +327,7 @@ function Chat({
   const stick = useRef(true);
   const count = useRef(msgs.length);
   const [copied, setCopied] = useState<string | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
 
   useEffect(() => {
     // After the drawer focused its close button: the question box is what one types into.
@@ -327,7 +390,7 @@ function Chat({
             </div>
           </div>
         ) : (
-          msgs.map((m) =>
+          msgs.map((m, i) =>
             m.role === "user" ? (
               <div key={m.id} className="stetho-msg user">
                 <div className="stetho-bubble">{m.content}</div>
@@ -345,7 +408,22 @@ function Chat({
                     {m.meta?.model && <span>{m.meta.model}</span>}
                     {m.meta && <span>{m.meta.seconds.toFixed(1)} giây</span>}
                     <IconButton icon={copied === m.id ? "check" : "copy"} size={14} label="Sao chép câu trả lời" onClick={() => copy(m.id, m.content)} />
+                    {status?.can_train && (
+                      <IconButton
+                        icon="book"
+                        size={14}
+                        label="Lưu thành tri thức (sửa rồi lưu)"
+                        onClick={() => setSaving((s) => (s === m.id ? null : m.id))}
+                      />
+                    )}
                   </div>
+                )}
+                {saving === m.id && (
+                  <SaveAnswer
+                    question={msgs[i - 1]?.role === "user" ? msgs[i - 1].content : ""}
+                    answer={m.content}
+                    onDone={() => setSaving(null)}
+                  />
                 )}
               </div>
             ),

@@ -9,6 +9,10 @@ export interface AssistantStatus {
   models: { id: string; label: string; hint: string }[];
   /** The review model set on Admin: what "Mặc định" runs. */
   default_model: string;
+  /** May teach Stetho (docs/specs/28): save answers as knowledge, manage documents. */
+  can_train?: boolean;
+  /** Stetho may look things up on the web. */
+  web?: boolean;
 }
 
 export interface AssistantTurn {

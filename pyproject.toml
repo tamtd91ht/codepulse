@@ -61,6 +61,8 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
 "app/reporting/report.py" = ["RUF001"]
 "tests/api/test_reports.py" = ["RUF001", "S101"]
 "tests/**" = ["S101", "S105", "S106"]
+# Stetho's built-in how-tos: Vietnamese prose (›) and shell / CI scripts copied as they are.
+"app/assistant/howto.py" = ["E501", "RUF001", "RUF003"]
 
 [tool.mypy]
 strict = true

@@ -113,6 +113,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const secondary: Item[] = [
     ...(isAdmin ? [{ href: "/admin", label: "Admin", icon: "settings" } as Item]
       : []),
+    // Tri thức Stetho (docs/specs/28): whoever may teach Stetho (admins by default).
+    ...(can(me, "assistant.train") ? [{ href: "/stetho", label: "Tri thức Stetho", icon: "stethoscope" } as Item] : []),
     { href: "/guide", label: "Hướng dẫn", icon: "book" },
   ];
 

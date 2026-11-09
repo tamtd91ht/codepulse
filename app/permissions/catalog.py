@@ -141,6 +141,13 @@ CATALOG: tuple[Permission, ...] = (
     _p("gitlab_members.import", "Người & Team", "Tra cứu, nhập người từ GitLab"),
     _p("telegram.self", "Telegram", "Liên kết Telegram của mình"),
     _p("assistant.use", "Trợ lý", "Dùng trợ lý Stetho"),
+    # docs/specs/28: Stetho's knowledge base (documents, saved answers, web lookup). No built-in
+    # set holds it: admins, or a set an admin grants it in.
+    _p(
+        "assistant.train",
+        "Trợ lý",
+        "Dạy Stetho: nhập tài liệu (file, link), lưu câu trả lời làm tri thức, bật tra web",
+    ),
     _p("admin.connections", "Quản trị", "Kết nối GitLab"),
     _p(
         "admin.projects",

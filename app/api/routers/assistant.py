@@ -26,6 +26,7 @@ from app.admin_settings import effective, monthly_budget_usd
 from app.api.audit import audit
 from app.api.deps import get_secret_box, get_session
 from app.api.security import Principal, require
+from app.assistant import knowledge
 from app.assistant.chat import (
     LOGIN_PLACE,
     MAX_QUESTION,
@@ -142,6 +143,9 @@ def status(
         "reason": reason,
         "models": MODELS,
         "default_model": str(effective(session, settings)["llm_model"]),
+        # docs/specs/28: may teach Stetho (save answers as knowledge, manage documents).
+        "can_train": principal.can("assistant.train"),
+        "web": knowledge.web_enabled(session),
     }
 
 
@@ -199,6 +203,16 @@ def chat(
     stop = threading.Event()
     try:
         context = build_context(session, principal, settings, screen, question)
+        # docs/specs/28: the pieces of Stetho's documents that answer the question.
+        knowledge.ensure_builtin()
+        hits = knowledge.search(
+            session,
+            question,
+            path=screen.path if screen else None,
+            trainer=principal.can("assistant.train"),
+        )
+        reference = knowledge.render(hits)
+        web = knowledge.web_enabled(session)
         model = body.model or str(effective(session, settings)["llm_model"])
         token = _token(session, box, settings)
         history = [Turn(t.role, t.content) for t in body.history]
@@ -217,6 +231,8 @@ def chat(
                         context=context,
                         history=history,
                         question=question,
+                        knowledge=reference,
+                        web=web,
                         on_delta=lambda text: events.put(("delta", text)),
                         cancelled=stop.is_set,
                         streamer=streamer,
@@ -236,6 +252,8 @@ def chat(
                         "turns": len(history),
                         "screen": f"{screen.path}{screen.search}" if screen else None,
                         "context_chars": len(context),
+                        "docs": [h.doc_id for h in hits] or None,
+                        "web": web or None,
                         "model": outcome.model or model,
                         "cost_usd": outcome.cost_usd,
                         "cost_estimated": outcome.cost_estimated or None,

@@ -9035,3 +9035,126 @@ button.id-chip.failed:hover:not(:disabled) {
   padding: 10px 18px;
   border-bottom: 1px solid var(--border);
 }
+
+/* ---------- Tri thức Stetho (app/stetho/page.tsx, docs/specs/28) ---------- */
+
+.kb-top {
+  margin-bottom: 16px;
+}
+.kb-import {
+  display: grid;
+  gap: 12px;
+}
+.kb-field {
+  display: grid;
+  gap: 4px;
+}
+.kb-inline {
+  max-width: 320px;
+}
+.kb-url {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.kb-switch {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+.kb-table tr.kb-off td {
+  opacity: 0.55;
+}
+.kb-title {
+  font-weight: 600;
+  text-align: left;
+}
+.kb-origin {
+  overflow-wrap: anywhere;
+  max-width: 48ch;
+}
+.kb-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.kb-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+.kb-editor {
+  display: grid;
+  gap: 12px;
+}
+.kb-editor textarea {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  min-height: 360px;
+}
+.kb-body-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.kb-preview {
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  max-height: 60vh;
+  overflow: auto;
+}
+.kb-try input {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.kb-hits ol {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 10px;
+}
+.kb-hit-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.kb-hit-body {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 200px;
+  overflow: auto;
+}
+.kb-foot {
+  margin-top: 12px;
+}
+.stetho-save {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  background: var(--surface);
+}
+.stetho-save textarea {
+  font-size: 13px;
+}
+.stetho-saved {
+  margin-top: 6px;
+}
+
+.stetho-save-who {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}

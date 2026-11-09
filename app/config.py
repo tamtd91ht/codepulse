@@ -216,6 +216,9 @@ class Settings(BaseSettings):
     # without saying when it resets is tried again after this many minutes, doubling on every
     # further failure up to 8x; a failed login waits 8x.
     llm_account_retry_min: int = Field(default=15, ge=5, le=240)
+    # Tri thức Stetho (docs/specs/28 §2): intranet hosts (comma separated, subdomains included)
+    # whose private addresses a "Thêm từ link" may fetch from; other private addresses refused.
+    assistant_url_hosts: str = ""
     # Use the LLM to label review comments for D1 (§4.5); off: the keyword rule only.
     dpi_classify_comments: bool = True
 
