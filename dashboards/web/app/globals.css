@@ -4395,6 +4395,7 @@ td.check-col {
   flex: 1;
   flex-direction: column;
   min-height: 0;
+  min-width: 0; /* a wide code block or table must not widen the drawer's column */
 }
 .stetho-focus {
   padding: 8px 20px;
@@ -4410,7 +4411,22 @@ td.check-col {
   gap: 16px;
   min-height: 0;
   padding: 16px 20px;
+  overflow-x: hidden;
   overflow-y: auto;
+}
+.stetho-msg {
+  min-width: 0;
+  max-width: 100%;
+}
+/* Code and tables of an answer scroll inside it instead of pushing the conversation sideways. */
+.stetho-msg.assistant pre,
+.stetho-msg.assistant table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.stetho-msg.assistant img {
+  max-width: 100%;
 }
 .stetho-empty h3 {
   margin: 8px 0 6px;
@@ -9139,12 +9155,20 @@ button.id-chip.failed:hover:not(:disabled) {
 }
 .stetho-save {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 6px;
   margin-top: 8px;
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-field);
   background: var(--surface);
+}
+.stetho-save input:not([type="checkbox"]),
+.stetho-save textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .stetho-save textarea {
   font-size: 13px;
@@ -9157,4 +9181,11 @@ button.id-chip.failed:hover:not(:disabled) {
   display: flex;
   gap: 6px;
   align-items: center;
+}
+
+/* A link styled as an icon button (Tri thức Stetho in the Stetho header) sits like the others. */
+a.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
