@@ -495,11 +495,11 @@ def find_issue(session: Session, principal: Principal, key: str) -> Issue | None
     )
 
 
-def candidates(
-    session: Session, principal: Principal, issue: Issue, q: str | None
-) -> list[dict[str, Any]]:
-    """Reviewed commits one may see, in the issue's dự án, not linked to it yet: by sha prefix
-    or text of the message, newest first."""
+def _candidate_where(
+    session: Session, principal: Principal, issue: Issue
+) -> list[ColumnElement[bool]] | None:
+    """What makes a commit linkable to the issue: reviewed, one may see it, in the issue's
+    dự án, not linked yet. None: nothing is (an issue of no dự án, for anyone but admins)."""
     bps = issue_projects(session, issue)
     repo = aliased(Project)
     where: list[ColumnElement[bool]] = [
@@ -513,14 +513,45 @@ def candidates(
             exists().where(repo.id == Commit.project_id, repo.business_project_id.in_(bps))
         )
     elif not principal.is_admin:
+        return None
+    return where
+
+
+def candidates(
+    session: Session,
+    principal: Principal,
+    issue: Issue,
+    q: str | None,
+    business_project_id: int | None = None,
+    user_id: int | None = None,
+) -> list[dict[str, Any]]:
+    """Reviewed commits one may link to the issue, newest first; narrowed by dự án, by author
+    and by text: a commit id (sha prefix) or words of the message."""
+    where = _candidate_where(session, principal, issue)
+    if where is None:
         return []
+    if business_project_id is not None:
+        bp_repo = aliased(Project)
+        where.append(
+            exists().where(
+                bp_repo.id == Commit.project_id,
+                bp_repo.business_project_id == business_project_id,
+            )
+        )
+    if user_id is not None:
+        where.append(
+            exists().where(Account.id == Commit.author_account_id, Account.user_id == user_id)
+        )
     text = (q or "").strip()
     if text:
-        if re.fullmatch(r"[0-9a-fA-F]{4,40}", text):
-            where.append(Commit.sha.startswith(text.lower()))
-        else:
-            like = "%" + text.replace("%", r"\%").replace("_", r"\_") + "%"
-            where.append(Commit.message.ilike(like))
+        like = "%" + text.replace("%", r"\%").replace("_", r"\_") + "%"
+        by_text = Commit.message.ilike(like)
+        # A hex word is a commit id or a word ("add", "fix" is not hex; "face" is): both.
+        where.append(
+            or_(Commit.sha.startswith(text.lower()), by_text)
+            if re.fullmatch(r"[0-9a-fA-F]{4,40}", text)
+            else by_text
+        )
     rows = session.execute(
         select(Commit, Project)
         .outerjoin(Project, Project.id == Commit.project_id)
@@ -550,6 +581,38 @@ def candidates(
             }
         )
     return out
+
+
+def candidate_filters(session: Session, principal: Principal, issue: Issue) -> dict[str, Any]:
+    """The dự án and the authors the linkable commits come from (the filter choices)."""
+    where = _candidate_where(session, principal, issue)
+    if where is None:
+        return {"projects": [], "members": []}
+    projects = session.execute(
+        select(BusinessProject.id, BusinessProject.name)
+        .where(
+            exists().where(
+                Project.business_project_id == BusinessProject.id,
+                Project.id == Commit.project_id,
+                *where,
+            )
+        )
+        .order_by(BusinessProject.name)
+    ).all()
+    members = session.execute(
+        select(User.id, User.full_name, User.primary_email)
+        .where(
+            exists().where(
+                Account.user_id == User.id, Account.id == Commit.author_account_id, *where
+            )
+        )
+        .order_by(User.full_name, User.id)
+        .limit(300)
+    ).all()
+    return {
+        "projects": [{"id": i, "name": n} for i, n in projects],
+        "members": [{"user_id": i, "name": n or e or f"#{i}"} for i, n, e in members],
+    }
 
 
 def commit_counts(

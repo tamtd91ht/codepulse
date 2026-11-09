@@ -166,10 +166,16 @@ def commit_candidates(
     principal: CurrentPrincipal,
     session: SessionDep,
     q: Annotated[str | None, Query(max_length=200)] = None,
+    business_project_id: int | None = None,
+    user_id: int | None = None,
+    filters: bool = False,
 ) -> dict[str, Any]:
-    """Reviewed commits of the issue's dự án one may link: by sha prefix or message text."""
+    """Reviewed commits of the issue's dự án one may link: by dự án, author, commit id (sha
+    prefix) or message text. `filters=true`: only the dự án and authors to choose from."""
     issue = _issue(session, principal, key)
-    return {"items": tasks.candidates(session, principal, issue, q)}
+    if filters:
+        return {"filters": tasks.candidate_filters(session, principal, issue)}
+    return {"items": tasks.candidates(session, principal, issue, q, business_project_id, user_id)}
 
 
 class LinkIn(BaseModel):

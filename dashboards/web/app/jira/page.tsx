@@ -210,9 +210,30 @@ function CommitLine({ c, issueKey, onChanged }: { c: JiraTaskCommit; issueKey?: 
 }
 
 /** "Liên kết commit": search reviewed commits of the issue's dự án and link one or more. */
-function LinkCommits({ issueKey, onLinked, onClose }: { issueKey: string; onLinked: () => void; onClose: () => void }) {
+interface CandidateFilters {
+  projects: { id: number; name: string }[];
+  members: { user_id: number; name: string }[];
+}
+
+function LinkCommits({
+  issueKey,
+  mine,
+  onLinked,
+  onClose,
+}: {
+  issueKey: string;
+  /** Someone who links only their own commits: the author filter starts on them. */
+  mine: number | null;
+  onLinked: () => void;
+  onClose: () => void;
+}) {
   const [q, setQ] = useState("");
   const [query, setQuery] = useState("");
+  const [project, setProject] = useState("");
+  const [member, setMember] = useState(mine ? String(mine) : "");
+  const choices = useApi<{ filters: CandidateFilters }>(
+    `/jira/tasks/${encodeURIComponent(issueKey)}/commit-candidates${qs({ filters: "true" })}`,
+  );
   const [busy, setBusy] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   useEffect(() => {
@@ -220,7 +241,11 @@ function LinkCommits({ issueKey, onLinked, onClose }: { issueKey: string; onLink
     return () => window.clearTimeout(t);
   }, [q]);
   const found = useApi<{ items: JiraTaskCommit[] }>(
-    `/jira/tasks/${encodeURIComponent(issueKey)}/commit-candidates${qs({ q: query || null })}`,
+    `/jira/tasks/${encodeURIComponent(issueKey)}/commit-candidates${qs({
+      q: query || null,
+      business_project_id: project || null,
+      user_id: member || null,
+    })}`,
     { keepPreviousData: true },
   );
   const link = async (sha: string, kind: "fixes" | "refs") => {
@@ -243,12 +268,39 @@ function LinkCommits({ issueKey, onLinked, onClose }: { issueKey: string; onLink
           autoFocus
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Nhập SHA (vd. 3f2a9c1) hoặc nội dung commit…"
+          placeholder="Mã commit (vd. 3f2a9c1) hoặc từ khoá trong commit…"
           aria-label="Tìm commit đã review"
         />
         <button type="button" className="sm ghost" onClick={onClose}>
           Đóng
         </button>
+      </div>
+      <div className="jt-link-filters">
+        <label className={`fsel${project ? " set" : ""}`}>
+          <span>Dự án</span>
+          <select value={project} onChange={(e) => setProject(e.target.value)}>
+            <option value="">Tất cả</option>
+            {(choices.data?.filters.projects ?? []).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className={`fsel${member ? " set" : ""}`}>
+          <span>Thành viên</span>
+          <select value={member} onChange={(e) => setMember(e.target.value)}>
+            <option value="">Tất cả</option>
+            {(choices.data?.filters.members ?? []).map((m) => (
+              <option key={m.user_id} value={m.user_id}>
+                {m.name}
+              </option>
+            ))}
+            {mine && !(choices.data?.filters.members ?? []).some((m) => m.user_id === mine) && (
+              <option value={mine}>Tôi</option>
+            )}
+          </select>
+        </label>
       </div>
       <p className="muted small">Chỉ commit đã review, thuộc dự án của issue, chưa liên kết. Liên kết được nhiều commit.</p>
       {problem && <div className="small bad">{problem}</div>}
@@ -364,6 +416,7 @@ function MoveIssue({ issueKey, onMoved }: { issueKey: string; onMoved: () => voi
 function IssueDrawer({ issueKey, onClose, onOpen }: { issueKey: string; onClose: () => void; onOpen: (key: string) => void }) {
   const { data, error, mutate } = useApi<JiraTaskDetail>(`/jira/tasks/${encodeURIComponent(issueKey)}`);
   const [linking, setLinking] = useState(false);
+  const { data: me } = useApi<Me>("/auth/me");
   const refresh = () => void mutate();
   return (
     <Drawer
@@ -491,7 +544,7 @@ function IssueDrawer({ issueKey, onClose, onOpen }: { issueKey: string; onClose:
                 </button>
               )}
             </div>
-            {linking && <LinkCommits issueKey={data.key} onLinked={refresh} onClose={() => setLinking(false)} />}
+            {linking && <LinkCommits issueKey={data.key} mine={data.can_move ? null : me?.id ?? null} onLinked={refresh} onClose={() => setLinking(false)} />}
             {data.commits.length ? (
               <ul className="jt-mrs">
                 {data.commits.map((c) => (

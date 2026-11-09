@@ -63,6 +63,20 @@ def test_a_reviewed_commit_is_linked_by_hand_and_survives_rereading(
     assert [c["sha"] for c in found["items"]] == [mine.sha]
     every = client.get(f"{API}/ABC-2/commit-candidates", headers=an).json()["items"]
     assert {c["sha"] for c in every} == {mine.sha, theirs.sha}  # not the unreviewed one
+    # Filters: by author, by dự án, by words of the message; a hex word is an id or a word.
+    cand = f"{API}/ABC-2/commit-candidates"
+    by_binh = client.get(cand, params={"user_id": world.binh.id}, headers=an).json()["items"]
+    assert [c["sha"] for c in by_binh] == [theirs.sha]
+    bp = world.project.business_project_id
+    in_bp = client.get(cand, params={"business_project_id": bp}, headers=an).json()["items"]
+    assert len(in_bp) == 2
+    other_bp = client.get(cand, params={"business_project_id": bp + 999}, headers=an).json()
+    assert other_bp["items"] == []
+    by_word = client.get(cand, params={"q": "dọn"}, headers=an).json()["items"]
+    assert [c["sha"] for c in by_word] == [theirs.sha]
+    choices = client.get(cand, params={"filters": "true"}, headers=an).json()["filters"]
+    assert [p["id"] for p in choices["projects"]] == [bp]
+    assert {m["user_id"] for m in choices["members"]} == {world.an.id, world.binh.id}
 
     # A member links their own commit, not someone else's.
     ok = client.post(f"{API}/ABC-2/commits", json={"sha": mine.sha[:10]}, headers=an)

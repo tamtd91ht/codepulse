@@ -583,7 +583,9 @@ Mỗi thay đổi đều ghi audit.
 
 - **Liên kết tay** (`issue_commit_links.manual`, `linked_by`; migration `b0d2f4a6c8e1`): trong drawer
   issue › Commit › "Liên kết commit": tìm commit **đã review** (review commit `done`) thuộc dự án của
-  issue, theo SHA (≥ 4 ký tự hex, tiền tố) hoặc nội dung message, chưa liên kết; chọn `fixes` ("Sửa
+  issue, chưa liên kết; lọc theo **dự án** và **thành viên** (tác giả; người chỉ liên kết được commit
+  của mình thì mặc định là chính họ), tìm theo mã commit (SHA ≥ 4 ký tự hex, tiền tố) hoặc từ khoá
+  trong message (từ dạng hex khớp cả hai). `?filters=true` trả các lựa chọn lọc; chọn `fixes` ("Sửa
   issue", tính vào Bug đã có bản sửa) hoặc `refs`. Nhiều commit mỗi issue. Liên kết tay không bị xoá khi
   đọc lại message (`link_commits` chỉ xoá liên kết tự động) và giữ loại người chọn.
   - Quyền: manager của một dự án của issue, `jira.admin`, admin: mọi commit; người khác: chỉ commit của

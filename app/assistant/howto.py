@@ -160,8 +160,8 @@ Màn **Task Jira** (/jira, menu Theo dõi; hiện khi Jira đã kết nối) —
   có "Xem task".
 - Ai thấy gì: issue của dự án mình được xem (admin, quyền jira.admin: tất cả); điểm/finding review
   chỉ hiện khi được xem review đó.
-- **Liên kết commit bằng tay**: trong chi tiết issue, mục Commit › "Liên kết commit": gõ SHA (vd.
-  3f2a9c1) hoặc nội dung commit, chọn "Sửa issue" (tính vào "Bug đã có bản sửa") hoặc "Liên quan".
+- **Liên kết commit bằng tay**: trong chi tiết issue, mục Commit › "Liên kết commit": lọc theo dự
+  án và thành viên, gõ mã commit (vd. 3f2a9c1) hoặc từ khoá trong commit, chọn "Sửa issue" (tính vào "Bug đã có bản sửa") hoặc "Liên quan".
   Chỉ commit đã review, thuộc dự án của issue; một issue liên kết được nhiều commit. Thành viên liên
   kết được commit của chính mình; manager dự án, jira.admin, admin liên kết được mọi commit. Liên kết
   tay có nhãn "Liên kết tay", gỡ được ("Gỡ liên kết"); liên kết đọc từ message thì không gỡ tay.
