@@ -158,8 +158,12 @@ def next_retry(
     `failures` counts this one too (1 for the first)."""
     if kind == "model":
         return None
-    if kind == "rate":  # a burst limit the CLI's own retries could not wait out
-        return now + RATE_PAUSE
+    if kind == "rate":
+        # A 429 that did not say it was the plan's limit: a short pause the first time; when it
+        # is back right after, it is the usage limit (which also answers 429), backing off.
+        if failures <= 1:
+            return now + RATE_PAUSE
+        failures -= 1
     longest = timedelta(minutes=base_min * MAX_BACKOFF)
     if kind == "auth":
         return now + longest
@@ -210,8 +214,9 @@ def record_failure(
             row.last_error = message[:500]
             row.last_failed_at = now
             row.last_used_at = now
-            if was_ok and kind != "rate":  # a burst limit is not worth a notification
-                _tell(session, row, kind)
+            # A first 429 may be a burst: told only once it comes back (then it is the limit).
+            if (was_ok and kind != "rate") or (kind == "rate" and row.failures == 2):
+                _tell(session, row, "quota" if kind == "rate" else kind)
             session.commit()
         log.warning(
             "llm account failed, using the next one",

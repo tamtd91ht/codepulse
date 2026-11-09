@@ -377,9 +377,10 @@ class ClaudeCodeProvider:
                     "claude call failed",
                     extra={"attempt": attempt + 1, "error": exc.__class__.__name__},
                 )
-                if isinstance(exc, LLMError) and classify_account_error(str(exc)) in LONG_LIVED:
+                kind = classify_account_error(str(exc)) if isinstance(exc, LLMError) else None
+                if kind in LONG_LIVED or (kind == "rate" and attempt >= 1):
                     # A failed login, a used-up usage limit or a model the plan lacks does not
-                    # heal in seconds (a burst 429 may: it keeps the retries): say so now, so
+                    # heal in seconds; a 429 that may be a burst gets one retry: say so now, so
                     # another account can take over
                     # (app/review/llm_accounts.py).
                     raise LLMError(f"claude failed after {attempt + 1} attempts") from exc

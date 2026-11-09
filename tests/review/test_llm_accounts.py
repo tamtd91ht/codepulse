@@ -66,6 +66,14 @@ E = "claude reported an error: success"
         (f"{E}: You've hit your limit · resets 3pm", "quota"),
         (f"{E}: Your credit balance is too low", "quota"),
         (f"{E} (HTTP 429): rate_limit_error", "rate"),  # a burst: retried, short pause
+        # The plan's usage limit also answers 429: its wording decides.
+        (f"{E} (HTTP 429): 5-hour limit reached ∙ resets 3pm (Asia/Ho_Chi_Minh)", "quota"),
+        (f"{E} (HTTP 429): rate_limit_error: Weekly limit reached", "quota"),
+        (f"{E} (HTTP 429): You've reached your Opus limit", "quota"),
+        (f"{E} (HTTP 429): Claude AI usage limit reached|1762678800", "quota"),
+        (f"{E} (HTTP 429): rate_limit_error: exceeded your per-minute rate limit", "rate"),
+        (f"{E} (HTTP 429): rate limit, resets in 30 seconds", "rate"),
+        (f"{E} (HTTP 429): This request would exceed your rate limit", "rate"),
         (f"{E}: model: claude-opus-5-5 is not available on your plan", "model"),
         (f"{E} (HTTP 404): not_found_error: model: claude-x", "model"),
         (f"{E} (HTTP 529): Overloaded", None),
@@ -91,6 +99,15 @@ def test_a_reset_time_in_the_message_is_read_and_sanity_checked() -> None:
     assert reset_time("limit; resets at 2026-11-09T12:30:00Z", NOW) == datetime(
         2026, 11, 9, 12, 30, tzinfo=UTC
     )
+    # "resets 3pm (Asia/Ho_Chi_Minh)": 15:00 in Hà Nội is 08:00 UTC, already past at NOW
+    # (08:00 UTC): the next day.
+    assert reset_time("5-hour limit reached ∙ resets 3pm (Asia/Ho_Chi_Minh)", NOW) == datetime(
+        2026, 11, 10, 8, 0, tzinfo=UTC
+    )
+    assert reset_time("limit · resets 4:30pm (Asia/Ho_Chi_Minh)", NOW) == datetime(
+        2026, 11, 9, 9, 30, tzinfo=UTC
+    )
+    assert reset_time("resets 3pm", NOW) is None  # no zone: the hour is ambiguous
     assert reset_time("usage limit reached|1000000000", NOW) is None  # in the past
     assert reset_time("rate limit", NOW) is None
 
@@ -103,8 +120,11 @@ def test_when_a_failed_account_is_tried_again() -> None:
     assert [accts.next_retry("quota", n, 15, NOW, "429") for n in (1, 2, 3, 4, 5)] == [
         NOW + timedelta(minutes=m) for m in (15, 30, 60, 120, 120)
     ]
-    # A burst limit the CLI could not wait out: one minute.
-    assert accts.next_retry("rate", 3, 15, NOW, "429") == NOW + timedelta(minutes=1)
+    # A 429 that does not say which limit: one minute; back right after, it is the usage
+    # limit (which answers 429 too) and backs off like one.
+    assert [accts.next_retry("rate", n, 15, NOW, "429") for n in (1, 2, 3)] == [
+        NOW + timedelta(minutes=m) for m in (1, 15, 30)
+    ]
     # A failed login does not heal by itself: 8x the base.
     assert accts.next_retry("auth", 1, 15, NOW, "401") == NOW + timedelta(minutes=120)
     # A model the plan lacks: not by itself.
@@ -409,3 +429,59 @@ def test_a_crash_whose_stderr_mentions_limits_never_parks_an_account() -> None:
     with pytest.raises(LLMError):
         failover(runner, [DEFAULT, BACKUP], rec).review(PROMPT)
     assert rec.failures == [] and set(tokens(runner)) == {"sk-ant-oat01-default"}
+
+
+def test_a_429_that_does_not_say_which_limit_gets_one_retry_then_the_backup() -> None:
+    unclear = json.dumps(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": True,
+            "api_error_status": 429,
+            "result": "This request would exceed your rate limit",
+        }
+    )
+    runner = FakeRunner((1, unclear, ""), (1, unclear, ""), (0, json.dumps(SUCCESS), ""))
+    rec = Recorder()
+    result = failover(runner, [DEFAULT, BACKUP], rec).review(PROMPT)
+    assert tokens(runner) == ["sk-ant-oat01-default"] * 2 + ["sk-ant-oat01-backup"]
+    assert rec.failures == [(1, "rate")] and result.raw["llm_account"] == "Dự phòng"
+
+
+def test_a_429_with_the_plans_limit_wording_moves_on_at_once() -> None:
+    limit = json.dumps(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": True,
+            "api_error_status": 429,
+            "result": "5-hour limit reached ∙ resets 3pm (Asia/Ho_Chi_Minh)",
+        }
+    )
+    runner = FakeRunner((1, limit, ""), (0, json.dumps(SUCCESS), ""))
+    rec = Recorder()
+    failover(runner, [DEFAULT, BACKUP], rec).review(PROMPT)
+    assert tokens(runner) == ["sk-ant-oat01-default", "sk-ant-oat01-backup"]
+    assert rec.failures == [(1, "quota")]
+
+
+def test_a_429_back_right_after_its_pause_counts_as_the_usage_limit(
+    same_session: Session,
+) -> None:
+    session = same_session
+    admin = _admin(session)
+    row = add(session, "Chính", "a", source="login", user_id=admin.id)
+    settings = Settings(llm_account_retry_min=15)
+    accts.record_failure(accts.to_account(row, BOX), "rate", "(HTTP 429)", settings, MODEL)
+    session.refresh(row)
+    assert row.failures == 1 and row.retry_at is not None
+    assert row.retry_at < datetime.now(UTC) + timedelta(minutes=2)  # a short pause
+    told = select(UserNotification).where(UserNotification.kind == "llm_account")
+    assert session.scalars(told).all() == []  # maybe a burst: nobody told yet
+    row.retry_at = datetime.now(UTC) - timedelta(seconds=1)
+    session.flush()
+    accts.record_failure(accts.to_account(row, BOX), "rate", "(HTTP 429)", settings, MODEL)
+    session.refresh(row)
+    assert row.failures == 2 and row.state == "quota"
+    assert row.retry_at is not None and row.retry_at > datetime.now(UTC) + timedelta(minutes=14)
+    assert len(session.scalars(told).all()) == 1

@@ -13,8 +13,9 @@ mentions "rate_limit" or "model" must never park an account.
 """
 
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # "rate": a burst limit (plain 429) that clears in seconds or minutes; "quota": the plan's usage
 # limit, which lasts until its reset.
@@ -33,9 +34,18 @@ _AUTH = re.compile(
     r"|permission_error",
     re.IGNORECASE,
 )
+# The plan's usage limit. It also comes back as HTTP 429 / rate_limit_error, so a 429 is read
+# for these first: a reset time, or wording about the plan's 5-hour / weekly / model limits.
 _USAGE = re.compile(
-    r"usage.?limit|limit reached|hit your limit|out of (?:extra )?usage|weekly limit"
-    r"|credit balance|quota",
+    r"usage.?limit|limit reached|limit exceeded for|hit your limit|reached your (?:\S+ )?limit"
+    r"|out of (?:extra )?usage|(?:5|five).?hour|session limit|weekly|opus limit|sonnet limit"
+    r"|subscription|your plan|credit balance|quota|\|\s*\d{10}\b|\bresets?\b",
+    re.IGNORECASE,
+)
+# A burst limit that clears in seconds: requests or tokens per minute, concurrency.
+_BURST = re.compile(
+    r"per.?minute|requests per|tokens per|\brpm\b|\btpm\b|acceleration limit|concurren"
+    r"|(?:retry after|resets? in|try again in) \d+ ?(?:s\b|sec)",
     re.IGNORECASE,
 )
 _RATE = re.compile(r"\(HTTP 429\)|rate_limit_error|rate.?limit|too many requests", re.IGNORECASE)
@@ -58,9 +68,11 @@ def account_error(message: str) -> tuple[AccountFailure, str] | None:
         return "model", part
     if _AUTH.search(part):
         return "auth", part
-    if _USAGE.search(part):
+    if _USAGE.search(part) and not _BURST.search(part):
         return "quota", part
-    if _RATE.search(part):
+    if _RATE.search(part) or _USAGE.search(part):
+        # A burst, or a 429 that does not say which: retried once, then a short pause; if it
+        # keeps coming back it is treated as the usage limit (app/review/llm_accounts.py).
         return "rate", part
     return None
 
@@ -79,6 +91,34 @@ _RESET_ISO = re.compile(
 )
 
 
+# "resets 3pm (Asia/Ho_Chi_Minh)" / "resets at 15:30 (Europe/Berlin)": a time of day in a
+# named zone (without a zone the hour is ambiguous, so it is not read).
+_RESET_CLOCK = re.compile(
+    r"resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*\(([A-Za-z_]+(?:/[A-Za-z_+-]+)+|UTC)\)",
+    re.IGNORECASE,
+)
+
+
+def _clock_reset(match: re.Match[str], now: datetime) -> datetime | None:
+    hour, minute = int(match.group(1)), int(match.group(2) or 0)
+    half = (match.group(3) or "").lower()
+    if half == "pm" and hour < 12:
+        hour += 12
+    elif half == "am" and hour == 12:
+        hour = 0
+    if hour > 23 or minute > 59:
+        return None
+    try:
+        zone = ZoneInfo(match.group(4)) if match.group(4).upper() != "UTC" else UTC
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+    local = now.astimezone(zone)
+    at = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if at <= local:
+        at += timedelta(days=1)
+    return at.astimezone(UTC)
+
+
 def reset_time(message: str, now: datetime) -> datetime | None:
     """When a usage limit says it resets, if it says so in a form we can read; None otherwise.
 
@@ -86,6 +126,8 @@ def reset_time(message: str, now: datetime) -> datetime | None:
     found: datetime | None = None
     if match := _RESET_EPOCH.search(message):
         found = datetime.fromtimestamp(int(match.group(1)), UTC)
+    elif clock := _RESET_CLOCK.search(message):
+        found = _clock_reset(clock, now)
     elif match := _RESET_ISO.search(message):
         text = match.group(1).replace(" ", "T").replace("Z", "+00:00")
         try:
