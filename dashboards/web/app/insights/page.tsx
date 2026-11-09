@@ -12,7 +12,8 @@ import { type SubNav, SubPanel, type SubTab, SubTabs, pickSub } from "@/componen
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { Alert, Card, ChartTip, EmptyState, ExternalLink, Loading, Pager, Pill, Segmented, SplitBar, StatStrip, StripStat } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
-import { date, dateTime, localDay, num, periodLabel, rangeLabel, shiftDays, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
+import { date, dateTime, localDay, num, periodLabel, rangeLabel, weekLabel } from "@/lib/format";
+import { useCycleScope } from "@/lib/timeScope";
 import type {
   InsightConfidence,
   InsightPerson,
@@ -246,13 +247,11 @@ function InsightsBody() {
   // null until the hash is read, so a deep link never fetches the wrong tab first.
   const [tab, setTab] = useState<Tab | null>(null);
   const [sub, setSub] = useState<string | null>(null);
-  const [period, setPeriod] = useState<Period>("week");
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [range, setRange] = useState<{ from: string; to: string }>({ from: "", to: "" });
+  // The dashboard-wide period (lib/timeScope): Tổng quan and the other screens share it.
+  const time = useCycleScope({ range: true, rangeMin: RANGE_MIN, rangeMaxDays: RANGE_MAX_DAYS });
   const [bpId, setBpId] = useState("");
   const [repoId, setRepoId] = useState("");
   useEffect(() => {
-    setCursor(thisWeek());
     const fromHash = () => {
       const [key, part] = readHash();
       if (isTab(key)) {
@@ -283,26 +282,16 @@ function InsightsBody() {
   const current: Tab = tab ?? "flow";
   const nav: SubNav = { sub, onSub: (part) => go(current, part) };
 
-  const today = localDay();
-  const start = cursor === null ? null : period === "week" ? cursor : `${cursor.slice(0, 7)}-01`;
-  const latest = period === "week" ? thisWeek() : thisMonth();
+  const period: Period = time?.period ?? "week";
+  const start = time && time.period !== "range" ? time.start : null;
+  const range = time?.range ?? { from: "", to: "" };
+  const today = time?.today ?? localDay();
+  const latest = time?.latest ?? "";
   const rangeOk =
-    range.from >= RANGE_MIN && range.from <= range.to && range.to <= today && daysBetween(range.from, range.to) <= RANGE_MAX_DAYS;
-  const changePeriod = (p: Period) => {
-    if (p === "range") {
-      if (start !== null && period !== "range") {
-        const last = period === "week" ? shiftDays(start, 6) : shiftDays(shiftMonths(start, 1), -1);
-        const to = last < today ? last : today;
-        const from = start > RANGE_MIN ? start : RANGE_MIN;
-        setRange({ from, to: to > from ? to : from });
-      }
-      setPeriod(p);
-      return;
-    }
-    setPeriod(p);
-    setCursor((c) => (c === null ? c : p === "month" ? `${c.slice(0, 7)}-01` : c >= thisMonth() ? thisWeek() : weekOf(c)));
-  };
-  const step = (by: number) => setCursor((c) => (c === null ? c : period === "week" ? shiftWeeks(c, by) : shiftMonths(c, by)));
+    time !== null && range.from >= RANGE_MIN && range.from <= range.to && range.to <= today && daysBetween(range.from, range.to) <= RANGE_MAX_DAYS;
+  const changePeriod = (p: Period) => time?.changePeriod(p);
+  const step = (by: number) => time?.step(by);
+  const setRange = (r: { from: string; to: string }) => time?.setRange(r);
   const periodQuery: Query | null =
     period === "range" ? (rangeOk ? { period, start: range.from, end: range.to } : null) : start ? { period, start } : null;
 

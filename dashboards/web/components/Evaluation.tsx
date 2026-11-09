@@ -6,6 +6,7 @@ import { DateRangePicker } from "@/components/DateRangePicker";
 import { Icon } from "@/components/icons";
 import { Segmented } from "@/components/ui";
 import { VERDICT_LABEL, localDay, num } from "@/lib/format";
+import { fromPreset, setTimeScope, toPreset, useMounted, useTimeScope } from "@/lib/timeScope";
 import type { EvaluationBucket, Verdict } from "@/lib/types";
 
 /* Shared pieces of the per-member evaluation (the Thành viên page and the member page). */
@@ -41,9 +42,10 @@ export function useRange(initial: Exclude<Preset, "custom"> = "30"): [Range | nu
 /** A range and its setter, shared by several cards of one page so they move together. */
 export type SharedRange = [Range | null, (r: Range) => void];
 
-/* The range in the URL: ?range=7|30|90 (rolling, ends today) or ?from=…&to=…. It survives a
-   reload and the back button, and links between the Thành viên page and a member's page carry
-   it, so both show the same period. */
+/* The range in the URL: ?range=7|30|90 (rolling, ends today) or ?from=…&to=…, and also the
+   dashboard-wide period (lib/timeScope): a period picked on Tổng quan, Insights or a team opens
+   here as its days, and a range picked here is what those screens open with. A range in the URL
+   on arrival (a shared link) becomes the shared period. */
 
 const PRESETS = ["7", "30", "90"] as const;
 
@@ -53,33 +55,41 @@ export function rangeSearch(range: Range | null): string {
   return range.preset === "custom" ? `?from=${range.from}&to=${range.to}` : `?range=${range.preset}`;
 }
 
-function readUrlRange(fallback: Exclude<Preset, "custom">): Range {
+function readUrlRange(): Range | null {
   const p = new URLSearchParams(window.location.search);
   const preset = PRESETS.find((x) => x === p.get("range"));
   if (preset) return { preset, ...presetRange(preset) };
   const from = p.get("from") ?? "";
   const to = p.get("to") ?? "";
   if (!rangeProblem(from, to)) return { preset: "custom", from, to };
-  return { preset: fallback, ...presetRange(fallback) };
+  return null;
 }
 
-/** A page-wide range kept in the URL (read once on arrival, rewritten on every change). */
+/** A page-wide range: the shared period, mirrored in the URL. */
 export function useUrlRange(fallback: Exclude<Preset, "custom"> = "30"): SharedRange {
-  const [range, setRange] = useState<Range | null>(null);
+  const shared = useTimeScope();
+  const mounted = useMounted();
   useEffect(() => {
-    setRange(readUrlRange(fallback));
-  }, [fallback]);
-  const update = useCallback((next: Range) => {
-    setRange(next);
+    const fromUrl = readUrlRange();
+    const scope = fromUrl && fromPreset(fromUrl);
+    if (scope) setTimeScope(scope);
+  }, []);
+  const range: Range | null = !mounted
+    ? null
+    : shared
+      ? toPreset(shared, PRESETS, MAX_SPAN_DAYS)
+      : { preset: fallback, ...presetRange(fallback) };
+  const search = rangeSearch(range);
+  useEffect(() => {
+    if (!search) return;
     const url = new URL(window.location.href);
     for (const key of ["range", "from", "to"]) url.searchParams.delete(key);
-    if (next.preset === "custom") {
-      url.searchParams.set("from", next.from);
-      url.searchParams.set("to", next.to);
-    } else {
-      url.searchParams.set("range", next.preset);
-    }
+    for (const [k, v] of new URLSearchParams(search)) url.searchParams.set(k, v);
     window.history.replaceState(null, "", url);
+  }, [search]);
+  const update = useCallback((next: Range) => {
+    const scope = fromPreset(next);
+    if (scope) setTimeScope(scope);
   }, []);
   return [range, update];
 }

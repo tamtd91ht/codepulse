@@ -8572,3 +8572,10 @@ button.id-chip.failed:hover:not(:disabled) {
     transition: none;
   }
 }
+
+/* ---------- Shared time filter (lib/timeScope) ---------- */
+
+/* A week/month-only screen showing the period around a shared custom range. */
+.scope-note {
+  margin: -8px 0 16px;
+}

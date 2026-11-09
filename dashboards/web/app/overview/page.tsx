@@ -20,7 +20,8 @@ import { Score, scoreTone } from "@/components/Evaluation";
 import { Icon } from "@/components/icons";
 import { Card, ChartTip, CountLink, EmptyState, Loading, PageHeader, Pager, Segmented, Sparkline, SplitBar, StatStrip, StripStat } from "@/components/ui";
 import { type BoardScope, boardLink, qs, useApi } from "@/lib/api";
-import { delta, localDay, num, periodLabel, rangeLabel, shiftDays, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
+import { delta, localDay, num, periodLabel, rangeLabel, weekLabel, weekOf } from "@/lib/format";
+import { useCycleScope } from "@/lib/timeScope";
 import type { Me, ProjectEntry, ProjectsOverview } from "@/lib/types";
 
 /** "range": a custom range of days, from RANGE_MIN on. */
@@ -172,38 +173,20 @@ function ProjectTable({
 }
 
 export default function OverviewPage() {
-  const [period, setPeriod] = useState<Period>("week");
-  const [cursor, setCursor] = useState<string | null>(null);
-  useEffect(() => {
-    setCursor(thisWeek());
-  }, []);
-  const start = cursor === null ? null : period === "week" ? cursor : `${cursor.slice(0, 7)}-01`;
-  const latest = period === "week" ? thisWeek() : thisMonth();
-  // A custom range: the shown period when it is picked, clipped to [RANGE_MIN, today].
-  const [range, setRange] = useState<{ from: string; to: string }>({ from: "", to: "" });
-  const today = localDay();
-  const rangeOk = range.from >= RANGE_MIN && range.from <= range.to && range.to <= today;
-  const changePeriod = (p: Period) => {
-    if (p === "range") {
-      if (start !== null && period !== "range") {
-        const last = period === "week" ? shiftDays(start, 6) : shiftDays(shiftMonths(start, 1), -1);
-        const to = last < today ? last : today;
-        const from = start > RANGE_MIN ? start : RANGE_MIN;
-        setRange({ from, to: to > from ? to : from });
-      }
-      setPeriod(p);
-      return;
-    }
-    setPeriod(p);
-    setCursor((c) => (c === null ? c : p === "month" ? `${c.slice(0, 7)}-01` : c >= thisMonth() ? thisWeek() : weekOf(c)));
-  };
-  const step = (by: number) => setCursor((c) => (c === null ? c : period === "week" ? shiftWeeks(c, by) : shiftMonths(c, by)));
+  // The period is the dashboard-wide one (lib/timeScope): other screens open with it too.
+  const time = useCycleScope({ range: true, rangeMin: RANGE_MIN });
+  const period: Period = time?.period ?? "week";
+  const start = time && time.period !== "range" ? time.start : null;
+  const range = time?.range ?? { from: "", to: "" };
+  const today = time?.today ?? "";
+  const latest = time?.latest ?? "";
+  const rangeOk = time !== null && range.from >= RANGE_MIN && range.from <= range.to && range.to <= today;
+  const changePeriod = (p: Period) => time?.changePeriod(p);
+  const step = (by: number) => time?.step(by);
+  const setRange = (r: { from: string; to: string }) => time?.setRange(r);
   // From a range, "latest review" hints point at weeks; a jump opens that week.
   const cycle: Cycle = period === "range" ? "week" : period;
-  const jump = (s: string) => {
-    if (period === "range") setPeriod("week");
-    setCursor(s);
-  };
+  const jump = (s: string) => time?.goTo(cycle, s);
 
   const url =
     period === "range"

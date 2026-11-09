@@ -10,6 +10,7 @@ import { type FormEvent, type ReactNode, use, useEffect, useRef, useState } from
 import { useSWRConfig } from "swr";
 
 import { Alert, Card, EmptyState, ExternalLink, Loading, Message, PageHeader, Pager, Pill, SeverityBadge, StatStrip, StripStat } from "@/components/ui";
+import { useMonthScope } from "@/components/DpiParts";
 import { ApiError, api, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, dateTime, num } from "@/lib/format";
 import type { EvidenceKind, EvidenceMr, EvidencePack, EvidenceStatus } from "@/lib/types";
@@ -118,27 +119,8 @@ function NoteBox({
 
 export default function EvidencePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const [month, setMonth] = useState<string | null>(null);
-  useEffect(() => {
-    let wanted = thisMonth();
-    try {
-      const m = new URLSearchParams(window.location.search).get("month");
-      if (m && /^\d{4}-\d{2}$/.test(m) && m <= thisMonth() && monthsBetween(m, thisMonth()) <= MAX_BACK) wanted = m;
-    } catch {
-      /* keep this month */
-    }
-    setMonth(wanted);
-  }, []);
-  const go = (m: string) => {
-    setMonth(m);
-    try {
-      const url = new URL(window.location.href);
-      url.searchParams.set("month", m);
-      window.history.replaceState(null, "", url);
-    } catch {
-      /* the month just is not kept in the URL */
-    }
-  };
+  // The dashboard-wide period's month (lib/timeScope); this month when none is chosen.
+  const [month, go] = useMonthScope(thisMonth, (m) => m <= thisMonth() && monthsBetween(m, thisMonth()) <= MAX_BACK);
   const key = month && `/evidence/${id}/${month}`;
   // While an AI draft is being written (a background job), poll until it is in.
   const { data, error, mutate } = useApi<EvidencePack>(key, {

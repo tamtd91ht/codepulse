@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { use, useEffect, useState } from "react";
+import { use, useState } from "react";
 import {
   Bar,
   CartesianGrid,
@@ -21,30 +21,29 @@ import { ReviewResults } from "@/components/ReviewResults";
 import { Card, ChartTip, Drawer, EmptyState, Loading, PageHeader, Pager, Segmented, SplitBar, StatStrip, StripStat } from "@/components/ui";
 import { scoreTone } from "@/components/Evaluation";
 import { type BoardScope, boardLink, can, qs, useApi } from "@/lib/api";
-import { CATEGORY_LABEL, periodLabel, shiftDays, shiftMonths, shiftWeeks, thisMonth, thisWeek, weekLabel, weekOf } from "@/lib/format";
+import { CATEGORY_LABEL, periodLabel, shiftDays, weekLabel } from "@/lib/format";
+import { scopeNote, useCycleScope } from "@/lib/timeScope";
 import type { Me, ProjectDetail } from "@/lib/types";
 
 type Period = "week" | "month";
 
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const [period, setPeriod] = useState<Period>("week");
-  const [cursor, setCursor] = useState<string | null>(null);
+  // The dashboard-wide period (lib/timeScope). This API takes weeks and months only, so a
+  // shared range shows as the week / month around its last day.
+  const time = useCycleScope();
+  const period: Period = time?.period === "month" ? "month" : "week";
+  const start = time?.start ?? null;
+  const latest = time?.latest ?? "";
+  const changePeriod = (p: Period) => time?.changePeriod(p);
+  const step = (by: number) => time?.step(by);
   const [criteriaOpen, setCriteriaOpen] = useState(false);
   const { data: me } = useApi<Me>("/auth/me");
-  useEffect(() => {
-    setCursor(thisWeek());
-  }, []);
-  const start = cursor === null ? null : period === "week" ? cursor : `${cursor.slice(0, 7)}-01`;
-  const latest = period === "week" ? thisWeek() : thisMonth();
-  const changePeriod = (p: Period) => {
-    setPeriod(p);
-    setCursor((c) => (c === null ? c : p === "month" ? `${c.slice(0, 7)}-01` : c >= thisMonth() ? thisWeek() : weekOf(c)));
-  };
-  const step = (by: number) => setCursor((c) => (c === null ? c : period === "week" ? shiftWeeks(c, by) : shiftMonths(c, by)));
   const { data, error } = useApi<ProjectDetail>(start && `/metrics/projects/${id}${qs({ period, start })}`, { keepPreviousData: true });
 
+  const note = scopeNote(time);
   const header = (
+    <>
     <PageHeader
       eyebrow={
         <Link href="/overview" className="muted">
@@ -74,6 +73,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </>
       }
     />
+    {note && <p className="muted small scope-note">{note}</p>}
+    </>
   );
   if (!data)
     return (

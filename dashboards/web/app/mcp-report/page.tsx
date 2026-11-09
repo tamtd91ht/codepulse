@@ -9,6 +9,7 @@ import { Icon } from "@/components/icons";
 import { Alert, Card, EmptyState, Kpi, Loading, PageHeader, Pagination, PersonLink, Pill, Segmented, SeverityBadge, SortTh, useSort } from "@/components/ui";
 import { can, qs, useApi } from "@/lib/api";
 import { dateTime, localDay, rangeLabel, relative, shiftDays, shiftMonths, thisMonth } from "@/lib/format";
+import { fromPreset, setTimeScope, toPreset, useMounted, useTimeScope } from "@/lib/timeScope";
 import type { Me, Person, Repo, Severity, Team } from "@/lib/types";
 
 /* ---- API shapes (docs/specs/26 §13.5). Read defensively: the numbers may be missing or null. ---- */
@@ -238,32 +239,46 @@ function presetRange(p: Exclude<Preset, "custom">): { from: string; to: string }
   return { from: shiftDays(today, -(Number(p) - 1)), to: today };
 }
 
-/** ?range=7|30|90|month|last_month (rolling) or ?from=&to= (custom); default the last 30 days (§13.2). */
+function readUrlRange(): Range | null {
+  const p = new URLSearchParams(window.location.search);
+  const preset = PRESETS.find((x) => x === p.get("range"));
+  const from = p.get("from") ?? "";
+  const to = p.get("to") ?? "";
+  if (preset) return { preset, ...presetRange(preset) };
+  if (/^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) && from <= to) return { preset: "custom", from, to };
+  return null;
+}
+
+/**
+ * ?range=7|30|90|month|last_month (rolling) or ?from=&to= (custom); default the last 30 days (§13.2).
+ * The range is the dashboard-wide period (lib/timeScope): a link's range becomes it on arrival,
+ * a period picked on another screen opens here, and a range picked here carries to the others.
+ */
 function useReportRange(): [Range | null, (r: Range) => void] {
-  const [range, setRange] = useState<Range | null>(null);
+  const shared = useTimeScope();
+  const mounted = useMounted();
   useEffect(() => {
-    const read = () => {
-      const p = new URLSearchParams(window.location.search);
-      const preset = PRESETS.find((x) => x === p.get("range"));
-      const from = p.get("from") ?? "";
-      const to = p.get("to") ?? "";
-      if (preset) setRange({ preset, ...presetRange(preset) });
-      else if (/^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) && from <= to) setRange({ preset: "custom", from, to });
-      else setRange({ preset: "30", ...presetRange("30") });
+    const adopt = () => {
+      const fromUrl = readUrlRange();
+      const scope = fromUrl && fromPreset(fromUrl);
+      if (scope) setTimeScope(scope);
     };
-    read();
-    window.addEventListener("popstate", read);
-    return () => window.removeEventListener("popstate", read);
+    adopt();
+    window.addEventListener("popstate", adopt);
+    return () => window.removeEventListener("popstate", adopt);
   }, []);
-  const update = useCallback((next: Range) => {
-    setRange(next);
+  const range: Range | null = !mounted ? null : shared ? toPreset(shared, PRESETS, 366) : { preset: "30", ...presetRange("30") };
+  const search = range ? (range.preset === "custom" ? `from=${range.from}&to=${range.to}` : `range=${range.preset}`) : "";
+  useEffect(() => {
+    if (!search) return;
     const url = new URL(window.location.href);
     for (const key of ["range", "from", "to"]) url.searchParams.delete(key);
-    if (next.preset === "custom") {
-      url.searchParams.set("from", next.from);
-      url.searchParams.set("to", next.to);
-    } else url.searchParams.set("range", next.preset);
+    for (const [k, v] of new URLSearchParams(search)) url.searchParams.set(k, v);
     window.history.replaceState(null, "", url);
+  }, [search]);
+  const update = useCallback((next: Range) => {
+    const scope = fromPreset(next);
+    if (scope) setTimeScope(scope);
   }, []);
   return [range, update];
 }

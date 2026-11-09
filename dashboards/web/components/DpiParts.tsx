@@ -1,34 +1,48 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 
 import { Alert, Pill } from "@/components/ui";
 import { CONFIDENCE_LABEL, type Confidence, RATING_LABEL, RATING_TONE, type Rating, lastMonth } from "@/lib/dpi";
+import { scopeMonth, setTimeScope, useMounted, useTimeScope } from "@/lib/timeScope";
 
-/** The month in the URL (?month=YYYY-MM), last month by default; kept on change. */
-export function useMonth(): [string | null, (m: string) => void] {
-  const [month, setMonth] = useState<string | null>(null);
+/**
+ * The month (YYYY-MM), mirrored in the URL (?month=). It follows the dashboard-wide period
+ * (lib/timeScope): the month of its last day; a month in the URL on arrival or picked here
+ * becomes the shared period. Last month when none is chosen.
+ */
+export function useMonthScope(fallback: () => string, accept: (m: string) => boolean = () => true): [string | null, (m: string) => void] {
+  const shared = useTimeScope();
+  const mounted = useMounted();
   useEffect(() => {
-    let wanted = lastMonth();
     try {
       const m = new URLSearchParams(window.location.search).get("month");
-      if (m && /^\d{4}-\d{2}$/.test(m)) wanted = m;
+      if (m && /^\d{4}-\d{2}$/.test(m) && accept(m)) setTimeScope({ kind: "month", start: `${m}-01` });
     } catch {
-      /* default month */
+      /* no URL: keep the shared period */
     }
-    setMonth(wanted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- read once on arrival
   }, []);
-  const go = (m: string) => {
-    setMonth(m);
+  const fromShared = shared ? scopeMonth(shared) : null;
+  const month = !mounted ? null : fromShared && accept(fromShared) ? fromShared : fallback();
+  useEffect(() => {
+    if (!month) return;
     try {
       const url = new URL(window.location.href);
-      url.searchParams.set("month", m);
+      if (url.searchParams.get("month") === month) return;
+      url.searchParams.set("month", month);
       window.history.replaceState(null, "", url);
     } catch {
       /* not kept in the URL */
     }
-  };
+  }, [month]);
+  const go = useCallback((m: string) => setTimeScope({ kind: "month", start: `${m}-01` }), []);
   return [month, go];
+}
+
+/** The DPI month: last month by default. */
+export function useMonth(): [string | null, (m: string) => void] {
+  return useMonthScope(lastMonth);
 }
 
 export function MonthPicker({ value, onChange }: { value: string; onChange: (m: string) => void }) {

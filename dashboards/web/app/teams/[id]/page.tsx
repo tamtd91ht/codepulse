@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { Score, scoreTone } from "@/components/Evaluation";
@@ -28,13 +28,9 @@ import {
   num,
   periodLabel,
   ratio,
-  shiftMonths,
-  shiftWeeks,
-  thisMonth,
-  thisWeek,
   weekLabel,
-  weekOf,
 } from "@/lib/format";
+import { scopeNote, useCycleScope } from "@/lib/timeScope";
 import type { Hotspots, Leaderboard, LeaderboardRow, MetricsSeries, Team } from "@/lib/types";
 
 type Period = "week" | "month";
@@ -163,22 +159,14 @@ function MembersTable({ members, scope }: { members: LeaderboardRow[]; scope: Bo
 
 export default function TeamOverview({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const [period, setPeriod] = useState<Period>("week");
-  // One cursor: the Monday of a week, or the first day of a month, depending on `period`.
-  // Set after mount: "this week" is the viewer's, and the server may sit in another timezone.
-  const [cursor, setCursor] = useState<string | null>(null);
-  useEffect(() => {
-    setCursor(thisWeek());
-  }, []);
-  const start = cursor === null ? null : period === "week" ? cursor : `${cursor.slice(0, 7)}-01`;
-  const latest = period === "week" ? thisWeek() : thisMonth();
-  const changePeriod = (p: Period) => {
-    setPeriod(p);
-    setCursor((c) => (c === null ? c : p === "month" ? `${c.slice(0, 7)}-01` : c >= thisMonth() ? thisWeek() : weekOf(c)));
-  };
-  const step = (by: number) =>
-    setCursor((c) => (c === null ? c : period === "week" ? shiftWeeks(c, by) : shiftMonths(c, by)));
-
+  // The dashboard-wide period (lib/timeScope). This API takes weeks and months only, so a
+  // shared range shows as the week / month around its last day.
+  const time = useCycleScope();
+  const period: Period = time?.period === "month" ? "month" : "week";
+  const start = time?.start ?? null;
+  const latest = time?.latest ?? "";
+  const changePeriod = (p: Period) => time?.changePeriod(p);
+  const step = (by: number) => time?.step(by);
   const { data: teams } = useApi<Team[]>("/teams/visible");
   const team = teams?.find((t) => String(t.id) === id);
   const keep = { keepPreviousData: true };
@@ -186,7 +174,9 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
   const { data: board, error: boardError } = useApi<Leaderboard>(start && `/leaderboard${qs({ team_id: id, period, start })}`, keep);
   const { data: hot, error: hotError } = useApi<Hotspots>(start && `/metrics/teams/${id}/hotspots${qs({ period, start })}`, keep);
 
+  const note = scopeNote(time);
   const header = (
+    <>
     <PageHeader
       eyebrow="Team"
       title={team?.name ?? "Team"}
@@ -211,6 +201,8 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
         </>
       }
     />
+    {note && <p className="muted small scope-note">{note}</p>}
+    </>
   );
 
   if (!series)

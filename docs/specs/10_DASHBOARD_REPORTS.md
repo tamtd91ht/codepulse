@@ -55,6 +55,12 @@
 - [x] Bảng: review, điểm TB (+ thấp nhất), kết luận (thanh chia theo verdict), critical/high/khác, lỗi/100 LOC, xu hướng tuần, review gần nhất; dòng đỏ khi có critical hoặc điểm TB < 65
 - [x] Trang Member Detail thêm thẻ **Đánh giá trong kỳ**: tóm tắt, kết luận, loại lỗi, theo tuần, theo repo
 
+### 7. Bộ lọc thời gian dùng chung (người dùng 2026-11-09)
+Thời gian chọn ở một màn (Tổng quan, Insights, Dự án, Team, Thành viên, Báo cáo thành viên, trang một thành viên, Tích hợp MCP, DPI, Minh chứng) là thời gian mọi màn khác mở ra; sửa ở đâu thì các màn sau dùng thời gian mới (`dashboards/web/lib/timeScope.ts`).
+- [x] Lưu ở `localStorage` (`cp:time-scope`), các tab khác theo luôn; hết hạn sau 12 giờ không chọn lại — sang ngày làm việc mới mỗi màn về mặc định của nó. *Lý do: tuần/tháng cũ không bám lại người dùng hôm sau.*
+- [x] Mỗi màn hiện thời gian chung theo cách của nó: tuần/tháng ở màn 7/30/90 ngày là "Tuỳ chọn" với các ngày đó; 7/30/90 ngày ở Tổng quan/Insights là "Khoảng ngày"; màn chỉ có tuần/tháng (Dự án, Team — API chưa nhận khoảng) hiện tuần (khoảng ≤ 7 ngày trong một tuần) hoặc tháng chứa ngày cuối, kèm dòng ghi chú; DPI/Minh chứng lấy tháng của ngày cuối. Chỉ thao tác chọn mới ghi đè thời gian chung; mở màn không đổi nó. Thời gian trên URL (link chia sẻ) khi vào trang trở thành thời gian chung.
+- [x] Không áp dụng cho Critical Board, Đóng finding (hàng đợi việc — lọc ngầm sẽ giấu finding còn mở; link từ Tổng quan vẫn mang kỳ như trước), form Yêu cầu review và Chấm lại tiêu chí (là thao tác, không phải bộ lọc xem).
+
 ### 5. Admin
 - [ ] Projects, connections, unmapped accounts, rubric/weights, chi phí LLM theo tháng
 
