@@ -43,7 +43,7 @@ from app.models.metrics import MetricsTeamPeriod, MetricsUserPeriod
 from app.models.notifications import NotificationWebhook, UserNotification
 from app.models.permissions import PermissionSet, PermissionSetItem, UserPermissionSet
 from app.models.review import FindingClosure, FindingDispute, LlmHealth, Review, ReviewFinding
-from app.models.secrets import AppSetting, StoredSecret
+from app.models.secrets import AppSetting, LlmAccount, StoredSecret
 from app.models.source import BusinessProject, Connection, Project, ProjectGrant, RawGitlab
 from app.models.telegram import TelegramBot, TelegramRequest
 from app.models.tokens import ApiToken
@@ -81,6 +81,7 @@ __all__ = [
     "IssueMrLink",
     "JiraProject",
     "JiraProjectScope",
+    "LlmAccount",
     "LlmHealth",
     "McpCall",
     "MergeRequest",

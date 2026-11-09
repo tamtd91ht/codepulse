@@ -110,15 +110,10 @@ DraftRunner = Callable[[str, Mapping[str, str], Settings, str], draft.DraftOutco
 
 
 def llm_token(session: Session, box: SecretBox, settings: Settings) -> str:
-    """As the reviews pick it (app/review/providers.build_provider)."""
-    from app.review.credentials import stored_claude_token
+    """The Claude account reviews would use now (app/review/llm_accounts.py)."""
+    from app.review.llm_accounts import current_token
 
-    stored = stored_claude_token(session, box)
-    return (
-        (stored.token if stored else "")
-        or settings.claude_code_oauth_token.get_secret_value()
-        or settings.llm_api_key.get_secret_value()
-    )
+    return current_token(session, box, settings)
 
 
 def refused_repos(session: Session, snap: Mapping[str, Any]) -> list[int]:

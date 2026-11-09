@@ -424,6 +424,7 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
             <span>{date(review.finished_at)}</span>
             <span>· rubric {review.rubric_version}</span>
             <span>· {review.model ?? "—"}</span>
+            {review.llm_account && <span title="Tài khoản Claude đã trả lời review này">· {review.llm_account}</span>}
             <span>· {TRIGGER_LABEL[review.trigger] ?? review.trigger}</span>
             {review.mode === "deep" && (
               <Pill tone="primary" icon="search">

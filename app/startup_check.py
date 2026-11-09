@@ -75,11 +75,14 @@ def warn_open_services(database_url: str, redis_url: str) -> list[str]:
 
 
 def log_claude_token(env_token: str) -> None:
-    """Length and last 4 characters of the Claude token (stored from the dashboard and from the
-    environment), never the token: a valid `claude setup-token` token is about 108 characters."""
-    from app.review.credentials import load_stored_claude_token
+    """Length and last 4 characters of each Claude token (the accounts set from the dashboard and
+    the environment's), never the token: a valid `claude setup-token` token is about 108
+    characters."""
+    from app.review.llm_accounts import load_accounts
 
-    for source, token in (("stored", load_stored_claude_token()), ("env", env_token)):
+    stored = [a for a in load_accounts(get_settings()) if a.id is not None]
+    pairs = [(f"account:{a.id}{':default' if a.is_default else ''}", a.token) for a in stored]
+    for source, token in [*pairs, ("env", env_token)]:
         log.info(
             "claude token",
             extra={"source": source, "length": len(token), "tail": token[-4:] if token else ""},

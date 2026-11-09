@@ -73,6 +73,8 @@ EDITABLE: dict[str, Editable] = {
     # N minutes).
     "llm_auto_resume": Editable("LLM_AUTO_RESUME", "bool"),
     "llm_probe_interval_min": Editable("LLM_PROBE_INTERVAL_MIN", "int", 5, 240),
+    # Several Claude accounts: when a failed account is tried again (base minutes).
+    "llm_account_retry_min": Editable("LLM_ACCOUNT_RETRY_MIN", "int", 5, 240),
 }
 
 
@@ -99,6 +101,7 @@ def defaults(settings: Settings) -> dict[str, Value]:
         "review_commits_list_max": settings.review_commits_list_max,
         "llm_auto_resume": settings.llm_auto_resume,
         "llm_probe_interval_min": settings.llm_probe_interval_min,
+        "llm_account_retry_min": settings.llm_account_retry_min,
     }
 
 

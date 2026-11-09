@@ -15,9 +15,9 @@ from app.api.routers.llm import (
     get_setup_token_factory,
 )
 from app.config import Settings
-from app.models import AuditLog, StoredSecret
+from app.models import AuditLog, LlmAccount
 from app.review.claude_login import LoginError, LoginSessions
-from app.review.credentials import CLAUDE_TOKEN, stored_claude_token
+from app.review.llm_accounts import to_account
 from tests.api.conftest import BOX, World
 
 TOKEN = "sk-ant-oat01-LOGINlogin_LOGINlogin-ABCD"
@@ -111,10 +111,10 @@ def test_login_stores_the_token_encrypted_and_never_returns_it(
     assert TOKEN not in done.text
     assert cli[0].codes == ["abcdefgh#state"] and cli[0].closed
 
-    row = db_session.get(StoredSecret, CLAUDE_TOKEN)
-    assert row is not None and TOKEN not in row.value_encrypted
-    stored = stored_claude_token(db_session, BOX)
-    assert stored is not None and stored.token == TOKEN and stored.set_by == world.admin.id
+    row = db_session.scalars(select(LlmAccount)).one()  # the first account is the default
+    assert row.is_default and row.source == "login" and TOKEN not in row.token_encrypted
+    stored = to_account(row, BOX)
+    assert stored.token == TOKEN and stored.set_by == world.admin.id
 
     audit = db_session.scalars(select(AuditLog).where(AuditLog.action == "llm.login")).one()
     assert audit.details == {"ok": True} and TOKEN not in json.dumps(audit.details)
@@ -137,7 +137,7 @@ def test_login_with_a_bad_code_reports_and_stores_nothing(
     )
     assert response.status_code == 502
     assert "invalid code" in response.json()["detail"]
-    assert db_session.get(StoredSecret, CLAUDE_TOKEN) is None
+    assert db_session.scalars(select(LlmAccount)).all() == []
 
 
 def test_a_new_login_cancels_the_previous_one(

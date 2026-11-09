@@ -8715,3 +8715,163 @@ button.id-chip.failed:hover:not(:disabled) {
     max-width: 100%;
   }
 }
+
+/* ---------- Tài khoản Claude (Admin › LLM, components/ClaudeLogin.tsx) ---------- */
+
+.llm-stack {
+  display: grid;
+  gap: 16px;
+}
+.llm-acc-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  padding: 0 18px 12px;
+}
+.llm-acc-empty {
+  padding: 0 18px 8px;
+}
+.llm-acc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--border);
+}
+.llm-acc {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.llm-acc.default {
+  background: var(--surface-2);
+}
+.llm-acc.off .llm-acc-main {
+  opacity: 0.6;
+}
+.llm-acc-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 320px;
+}
+.llm-acc-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.llm-acc-meta {
+  overflow-wrap: anywhere;
+}
+.llm-acc-error {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  max-width: 72ch;
+}
+.llm-acc-rename,
+.llm-acc-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.llm-acc-rename input {
+  height: 32px;
+  min-width: 0;
+  max-width: 260px;
+}
+.llm-acc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.llm-acc-more {
+  position: relative;
+}
+.llm-acc-more > summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  list-style: none;
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+.llm-acc-more > summary:focus-visible {
+  outline: 2px solid var(--ring);
+}
+.llm-acc-more {
+  display: inline-flex;
+}
+.llm-acc-more > summary::-webkit-details-marker {
+  display: none;
+}
+.llm-acc-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  display: grid;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  background: var(--surface);
+  box-shadow: var(--shadow-md, var(--shadow-sm));
+}
+.llm-acc-menu button {
+  justify-content: flex-start;
+  height: 32px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  text-align: left;
+}
+.llm-acc-menu button:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.llm-acc-form {
+  display: grid;
+  gap: 10px;
+  padding: 12px 18px 14px;
+}
+.llm-acc-field {
+  display: grid;
+  gap: 4px;
+}
+.llm-acc-add {
+  padding-top: 12px;
+}
+.llm-acc-add input {
+  flex: 1 1 200px;
+  max-width: 280px;
+}
+.llm-acc-help {
+  padding: 0 18px 14px;
+}
+.llm-acc-help > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+.llm-acc-help ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+@media (max-width: 700px) {
+  .llm-acc {
+    padding: 12px 16px;
+  }
+  .llm-acc-actions {
+    width: 100%;
+  }
+  .llm-acc-add input {
+    max-width: none;
+  }
+}

@@ -38,7 +38,11 @@ export function LlmCheck() {
         ["Provider", report.provider],
         ["Model cấu hình", report.model === "default" ? "mặc định của CLI" : report.model],
         ["CLI", report.cli_binary ? `${report.cli_binary} ${report.cli_version ?? "(không chạy được)"}` : "—"],
-        ["Xác thực", AUTH_LABEL[report.auth.method] ?? report.auth.method],
+        [
+          "Xác thực",
+          AUTH_LABEL[report.auth.method] ??
+            report.auth.method.replace(/^Claude account \(Admin screen\): /, "Tài khoản Claude: "),
+        ],
         ["Token", report.auth.token_hint ?? "—"],
         [
           "Tài khoản",
@@ -61,7 +65,7 @@ export function LlmCheck() {
       <div className="card-head">
         <div>
           <h2>Kết nối LLM</h2>
-          <div className="sub">Provider, model, phiên bản CLI, cách xác thực và một lần gọi thử.</div>
+          <div className="sub">Provider, model, phiên bản CLI, tài khoản đang dùng và một lần gọi thử.</div>
         </div>
       </div>
       <div className="toolbar">

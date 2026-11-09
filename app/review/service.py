@@ -1101,6 +1101,7 @@ class ReviewService:
                 self._add_usage(review, call)
                 outcome.cost_usd += call.cost_usd
             review.model = result.calls[0].model
+            review.llm_account = (result.calls[0].raw or {}).get("llm_account")
             outcome.turns += int((result.calls[0].raw or {}).get("num_turns") or tracker.turns)
             files_read |= tracker.reads
             for name, n in tracker.tools.items():
@@ -1397,5 +1398,6 @@ class ReviewService:
         if not calls:
             return
         review.model = calls[-1].model
+        review.llm_account = (calls[-1].raw or {}).get("llm_account")
         for call in calls:
             self._add_usage(review, call)

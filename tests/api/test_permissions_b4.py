@@ -124,6 +124,7 @@ def test_the_last_active_admin_stays(client: TestClient, world: World, as_user: 
         ("get", "/identity/unmapped"),
         ("get", "/admin/llm-costs"),
         ("get", "/admin/llm-token"),
+        ("get", "/admin/llm-accounts"),
         ("get", "/admin/review-settings"),
         ("get", "/admin/insights/backfill"),
         ("get", "/admin/purge"),

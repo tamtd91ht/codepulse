@@ -39,6 +39,7 @@ PING = ReviewPrompt(
 )
 
 AUTH_STORED = "subscription session (set from the Admin screen)"
+AUTH_ACCOUNT = "Claude account (Admin screen)"
 AUTH_OAUTH = "subscription session (CLAUDE_CODE_OAUTH_TOKEN)"
 AUTH_API_KEY = "API key (LLM_API_KEY)"
 AUTH_NONE = "none"
@@ -194,13 +195,17 @@ def check_llm(
     settings: Settings,
     *,
     stored_token: str = "",
+    account_label: str | None = None,
     runner: Runner = subprocess.run,
     clock: Callable[[], float] = time.monotonic,
 ) -> LLMCheckReport:
     """Configuration, account and one live call; never raises for an LLM/CLI failure.
 
-    `stored_token` is the token set from the Admin screen, if any (it wins, like in reviews)."""
+    `stored_token` is the token of a Claude account set from the Admin screen, if any (it wins,
+    like in reviews); `account_label` names that account in the report."""
     token, method = _auth_token(settings, stored_token)
+    if stored_token and account_label:
+        method = f"{AUTH_ACCOUNT}: {account_label}"
     auth = AuthInfo(method=method, token_hint=mask_token(token))
     model = settings.llm_model or "default"
     if settings.llm_provider != "claude_code":

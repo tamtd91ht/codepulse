@@ -760,7 +760,7 @@ function PeoplePicker({ people, value, onChange }: { people: Person[]; value: st
       <summary className="fsel" aria-label={`Người: ${label}`}>
         <span>Người</span>
         <b>{label}</b>
-        <Icon name="chevron-down" size={14} />
+        <Icon name="chevronDown" size={14} />
       </summary>
         <div className="people-picker-pop">
           <input type="search" placeholder="Tìm người…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Tìm người" />

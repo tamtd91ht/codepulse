@@ -5,10 +5,14 @@ from typing import Any
 import pytest
 from pydantic import SecretStr
 
+from app.admin_settings import DEFAULT_REVIEW_MODEL
 from app.config import Settings
 from app.ratelimit import RateLimiter, RedisRateLimiter
+from app.review.llm_accounts import env_accounts
 from app.review.providers import (
+    Account,
     ClaudeCodeProvider,
+    FailoverProvider,
     FakeLLMProvider,
     LLMError,
     ReviewPrompt,
@@ -18,6 +22,7 @@ from app.review.providers import (
 )
 from tests.test_ratelimit import StubRedis
 
+NO_TOKEN = Account(id=None, label="cli", token="")
 PROMPT = ReviewPrompt(system="sys", user="diff --git a/x", json_schema={"type": "object"})
 
 SUCCESS = {
@@ -113,24 +118,22 @@ def test_auth_token_goes_to_the_right_variable_and_never_into_errors(
 
 
 def test_session_token_wins_over_the_api_key() -> None:
+    """The environment's credential (the last backup): the session token before the API key."""
     settings = Settings(
         claude_code_oauth_token=SecretStr("sk-ant-oat01-session"),
         llm_api_key=SecretStr("sk-ant-api03-key"),
     )
-    provider = build_provider(settings, stored_token=lambda: "")
-    assert isinstance(provider, ClaudeCodeProvider)
-    assert provider._env()["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-session"
-    assert "sk-ant-api03-key" not in provider._env().values()
+    found = env_accounts(settings)
+    assert [a.token for a in found] == ["sk-ant-oat01-session"] and found[0].id is None
+    assert env_accounts(settings, {"sk-ant-oat01-session"}) == []  # an account holds it already
 
 
-def test_token_set_from_the_dashboard_wins_over_the_environment() -> None:
-    settings = Settings(
-        claude_code_oauth_token=SecretStr("sk-ant-oat01-env"),
-        llm_api_key=SecretStr("sk-ant-api03-key"),
-    )
-    provider = build_provider(settings, stored_token=lambda: "sk-ant-oat01-stored")
-    assert isinstance(provider, ClaudeCodeProvider)
-    assert provider._env()["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-stored"
+def test_build_provider_pins_one_model_for_every_account() -> None:
+    provider = build_provider(Settings(llm_model=""), accounts=lambda: [NO_TOKEN])
+    assert isinstance(provider, FailoverProvider)
+    assert provider.model == DEFAULT_REVIEW_MODEL  # never the plan's own default
+    tuned = build_provider(Settings(llm_model="claude-sonnet-5-5"), accounts=lambda: [NO_TOKEN])
+    assert isinstance(tuned, FailoverProvider) and tuned.model == "claude-sonnet-5-5"
 
 
 def test_the_workers_share_one_rate_limiter_through_redis() -> None:
@@ -138,20 +141,20 @@ def test_the_workers_share_one_rate_limiter_through_redis() -> None:
     one (and always under pytest) the provider paces this process alone."""
     settings = Settings(llm_api_key=SecretStr("sk-ant-api03-key"))
     redis = StubRedis([1000.0])
-    shared = build_provider(settings, stored_token=lambda: "", redis=redis)
-    assert isinstance(shared, ClaudeCodeProvider)
+    shared = build_provider(settings, accounts=lambda: [NO_TOKEN], redis=redis)
+    assert isinstance(shared, FailoverProvider)
     assert isinstance(shared.limiter, RedisRateLimiter)
-    agentic = build_agentic_provider(settings, stored_token=lambda: "", redis=redis)
-    assert isinstance(agentic, ClaudeCodeProvider)
+    agentic = build_agentic_provider(settings, accounts=lambda: [NO_TOKEN], redis=redis)
+    assert isinstance(agentic, FailoverProvider)
     assert isinstance(agentic.limiter, RedisRateLimiter)
     shared.limiter.acquire()
     agentic.limiter.acquire()
     assert redis.values["cp:llm:rate"] == 2  # both providers count in the same window
-    local = build_provider(settings, stored_token=lambda: "", redis=None)
-    assert isinstance(local, ClaudeCodeProvider) and isinstance(local.limiter, RateLimiter)
+    local = build_provider(settings, accounts=lambda: [NO_TOKEN], redis=None)
+    assert isinstance(local, FailoverProvider) and isinstance(local.limiter, RateLimiter)
     assert default_redis() is None  # under pytest: never a live Redis
-    by_default = build_provider(settings, stored_token=lambda: "")
-    assert isinstance(by_default, ClaudeCodeProvider)
+    by_default = build_provider(settings, accounts=lambda: [NO_TOKEN])
+    assert isinstance(by_default, FailoverProvider)
     assert isinstance(by_default.limiter, RateLimiter)
 
 

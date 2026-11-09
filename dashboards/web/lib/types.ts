@@ -223,6 +223,8 @@ export interface Review {
   loc_reviewed: number | null;
   summary: string | null;
   model: string | null;
+  /** The Claude account that answered (Admin › LLM); null before 2026-11-09. */
+  llm_account?: string | null;
   rubric_version: string | null;
   cost_usd: Num;
   error: string | null;
@@ -1176,6 +1178,7 @@ export interface ReviewSetting {
     | "auto_close_days"
     | "llm_auto_resume"
     | "llm_probe_interval_min"
+    | "llm_account_retry_min"
     | "close_requests_per_day";
   env: string;
   kind: "int" | "model" | "url" | "bool";
@@ -1204,6 +1207,42 @@ export interface LlmToken {
   stored_source: "login" | "paste" | null;
   stored_by: string | null;
   stored_at: string | null;
+  login_supported: boolean;
+}
+
+/** One Claude account of Admin › LLM (GET /admin/llm-accounts); the token is never sent. */
+export interface LlmAccount {
+  id: number;
+  label: string;
+  token_hint: string | null;
+  source: "login" | "paste" | "migrated";
+  set_by: number | null;
+  set_by_name: string | null;
+  is_default: boolean;
+  position: number;
+  enabled: boolean;
+  /** ok · quota: usage limit · auth: login failed · model: the plan lacks the review model */
+  state: "ok" | "quota" | "auth" | "model";
+  /** A call now would try it. */
+  usable: boolean;
+  retry_at: string | null;
+  failures: number;
+  last_error: string | null;
+  blocked_model: string | null;
+  last_used_at: string | null;
+  last_ok_at: string | null;
+  last_failed_at: string | null;
+  updated_at: string | null;
+}
+
+export interface LlmAccounts {
+  accounts: LlmAccount[];
+  /** The account the next call uses (null with the environment's token, the CLI login, or none). */
+  active_id: number | null;
+  active_label: string | null;
+  model: string;
+  retry_min: number;
+  env_token_hint: string | null;
   login_supported: boolean;
 }
 

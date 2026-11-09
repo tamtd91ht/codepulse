@@ -543,7 +543,7 @@ function LlmTab({ nav }: { nav: SubNav }) {
         {sub === "costs" && <LlmCostsView onSettings={() => nav.onSub("settings")} />}
         {sub === "settings" && <ReviewSettings />}
         {sub === "claude" && (
-          <div className="grid two adm-top">
+          <div className="adm-top llm-stack">
             <ClaudeLogin />
             <LlmCheck />
           </div>

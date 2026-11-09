@@ -56,6 +56,7 @@ export function ReviewSettings() {
   const listMax = find("review_commits_list_max");
   const resume = find("llm_auto_resume");
   const probeEvery = find("llm_probe_interval_min");
+  const accountRetry = find("llm_account_retry_min");
   const closeQuota = find("close_requests_per_day");
 
   async function save(key: Key, value: number | string | boolean | null) {
@@ -399,6 +400,45 @@ export function ReviewSettings() {
           busy={busy}
           onSave={(on, minutes) => saveAll(on ? { llm_auto_resume: true, llm_probe_interval_min: minutes } : { llm_auto_resume: false })}
         />
+      )}
+
+      {accountRetry && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            save("llm_account_retry_min", Number(field(e, "llm_account_retry_min")));
+          }}
+          className="setting-tile"
+        >
+          <label style={{ display: "grid", gap: 4, maxWidth: 320 }}>
+            <span className="small muted">Thử lại tài khoản Claude bị lỗi sau (phút) ({accountRetry.env})</span>
+            <input
+              key={String(accountRetry.value)}
+              name="llm_account_retry_min"
+              type="number"
+              required
+              min={accountRetry.minimum ?? undefined}
+              max={accountRetry.maximum ?? undefined}
+              defaultValue={Number(accountRetry.value)}
+            />
+          </label>
+          <p className="muted small">
+            Khi có nhiều tài khoản (Admin › LLM): tài khoản hết hạn mức mà không báo giờ reset được thử lại sau từng này phút, mỗi lần
+            còn lỗi thì gấp đôi, tối đa 8 lần; báo giờ reset thì thử đúng giờ đó; lỗi đăng nhập thử lại sau 8 lần. Không gửi lệnh thử:
+            lần review kế tiếp sau mốc đó tự thử lại tài khoản mặc định.{" "}
+            {accountRetry.overridden ? `Mặc định trong .env: ${accountRetry.default}.` : "Đang dùng giá trị trong .env."}
+          </p>
+          <div className="toolbar">
+            <button type="submit" disabled={busy}>
+              Lưu
+            </button>
+            {accountRetry.overridden && (
+              <button type="button" onClick={() => save("llm_account_retry_min", null)} disabled={busy}>
+                Về mặc định ({String(accountRetry.default)})
+              </button>
+            )}
+          </div>
+        </form>
       )}
 
       {autoClose && autoDays && (

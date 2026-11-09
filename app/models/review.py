@@ -58,6 +58,9 @@ class Review(TimestampMixin, Base):
     loc_reviewed: Mapped[int | None]
     summary: Mapped[str | None]
     model: Mapped[str | None]
+    # Which Claude account answered (its label then, app/review/llm_accounts.py); null before
+    # 2026-11-09 or with a single credential from the environment.
+    llm_account: Mapped[str | None]
     rubric_version: Mapped[str | None]
     prompt_tokens: Mapped[int | None]
     completion_tokens: Mapped[int | None]

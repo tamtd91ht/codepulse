@@ -18,9 +18,13 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from app.ratelimit import Limiter, RateLimiter
+from app.review.providers.account_errors import classify_account_error
 from app.review.providers.base import LLMError, ReviewPrompt, ReviewResult
 
 log = logging.getLogger(__name__)
+
+# Account failures that retrying in seconds cannot fix.
+LONG_LIVED = ("auth", "quota", "model")
 
 # Calls per minute to the CLI, across every worker when the limiter is the shared one
 # (docs/specs/19 §4.6; app/ratelimit.py).
@@ -373,6 +377,13 @@ class ClaudeCodeProvider:
                     "claude call failed",
                     extra={"attempt": attempt + 1, "error": exc.__class__.__name__},
                 )
+                if isinstance(exc, LLMError) and classify_account_error(str(exc)) in LONG_LIVED:
+                    # A failed login, a used-up usage limit or a model the plan lacks does not
+                    # heal in seconds (a burst 429 may: it keeps the retries): say so now, so
+                    # another account can take over
+                    # (app/review/llm_accounts.py).
+                    raise LLMError(f"claude failed after {attempt + 1} attempts") from exc
+
                 if attempt < self._max_retries:
                     self._sleep(min(2.0**attempt * 2, 30.0))
         else:

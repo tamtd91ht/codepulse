@@ -5,7 +5,6 @@ from typing import Final
 
 from app.config import Settings
 from app.ratelimit import RedisCommands, shared_limiter
-from app.review.credentials import load_stored_claude_token
 from app.review.providers.base import (
     AgenticProvider,
     LLMError,
@@ -14,13 +13,16 @@ from app.review.providers.base import (
     ReviewResult,
 )
 from app.review.providers.claude_code import LLM_MAX_PER_MINUTE, ClaudeCodeProvider
+from app.review.providers.failover import Account, FailoverProvider
 from app.review.providers.fake import FakeLLMProvider
 
 log = logging.getLogger(__name__)
 
 __all__ = [
+    "Account",
     "AgenticProvider",
     "ClaudeCodeProvider",
+    "FailoverProvider",
     "FakeLLMProvider",
     "LLMError",
     "LLMProvider",
@@ -59,33 +61,47 @@ def build_provider(
     *,
     timeout_s: float | None = None,
     max_retries: int | None = None,
-    stored_token: Callable[[], str] = load_stored_claude_token,
+    accounts: Callable[[], list[Account]] | None = None,
     redis: RedisCommands | _Auto | None = AUTO,
 ) -> LLMProvider:
     """Only the Phase 0 provider exists; others raise until they are implemented.
 
     `timeout_s` / `max_retries` override the defaults for short interactive calls (the
-    Telegram resolver), where waiting minutes would stall the poller. The token an admin set
-    from the dashboard (`stored_token`) wins over the environment. `redis` is the client of
-    the shared rate limiter: AUTO resolves it lazily (`default_redis`), None paces this
-    process alone."""
+    Telegram resolver), where waiting minutes would stall the poller. The calls run on the
+    Claude accounts of Admin > LLM: the default one, backups only while it fails
+    (app/review/llm_accounts.py; `accounts` replaces the stored ones in tests), always with the
+    same pinned model. `redis` is the client of the shared rate limiter: AUTO resolves it
+    lazily (`default_redis`), None paces this process alone."""
     if settings.llm_provider == "claude_code":
+        from app.review import llm_accounts  # lazy: it imports this package
+
         extra: dict[str, float | int] = {}
         if timeout_s is not None:
             extra["timeout_s"] = timeout_s
         if max_retries is not None:
             extra["max_retries"] = max_retries
         client = default_redis() if isinstance(redis, _Auto) else redis
-        return ClaudeCodeProvider(
-            binary=settings.claude_code_bin,
-            model=settings.llm_model,
-            auth_token=(
-                stored_token()
-                or settings.claude_code_oauth_token.get_secret_value()
-                or settings.llm_api_key.get_secret_value()
+        limiter = shared_limiter(int(LLM_MAX_PER_MINUTE), client)
+        model = llm_accounts.review_model(settings)
+
+        def make(token: str) -> ClaudeCodeProvider:
+            return ClaudeCodeProvider(
+                binary=settings.claude_code_bin,
+                model=model,
+                auth_token=token,
+                limiter=limiter,
+                **extra,  # type: ignore[arg-type]
+            )
+
+        return FailoverProvider(
+            accounts=accounts or (lambda: llm_accounts.load_accounts(settings)),
+            make=make,
+            model=model,
+            limiter=limiter,
+            on_failure=lambda account, kind, text: llm_accounts.record_failure(
+                account, kind, text, settings, model
             ),
-            limiter=shared_limiter(int(LLM_MAX_PER_MINUTE), client),
-            **extra,  # type: ignore[arg-type]
+            on_success=llm_accounts.record_success,
         )
     raise NotImplementedError(f"LLM_PROVIDER={settings.llm_provider} is not implemented yet")
 
@@ -93,12 +109,12 @@ def build_provider(
 def build_agentic_provider(
     settings: Settings,
     *,
-    stored_token: Callable[[], str] = load_stored_claude_token,
+    accounts: Callable[[], list[Account]] | None = None,
     redis: RedisCommands | _Auto | None = AUTO,
 ) -> AgenticProvider | None:
     """The agentic pass and the verification need a provider with read-only tools; only Claude
     Code has one (docs/specs/19 §4.2-4.3)."""
     if not (settings.review_agent or settings.verify):
         return None
-    provider = build_provider(settings, stored_token=stored_token, redis=redis)
-    return provider if isinstance(provider, ClaudeCodeProvider) else None
+    provider = build_provider(settings, accounts=accounts, redis=redis)
+    return provider if isinstance(provider, FailoverProvider) else None

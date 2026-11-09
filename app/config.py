@@ -212,6 +212,10 @@ class Settings(BaseSettings):
     # often a down LLM is probed.
     llm_auto_resume: bool = False
     llm_probe_interval_min: int = Field(default=30, ge=5, le=240)
+    # Several Claude accounts (app/review/llm_accounts.py): an account that hit its usage limit
+    # without saying when it resets is tried again after this many minutes, doubling on every
+    # further failure up to 8x; a failed login waits 8x.
+    llm_account_retry_min: int = Field(default=15, ge=5, le=240)
     # Use the LLM to label review comments for D1 (§4.5); off: the keyword rule only.
     dpi_classify_comments: bool = True
 

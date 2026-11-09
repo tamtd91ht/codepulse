@@ -516,6 +516,8 @@ class ReviewOut(ORM):
     loc_reviewed: int | None
     summary: str | None
     model: str | None
+    # The Claude account that answered (app/review/llm_accounts.py); null before 2026-11-09.
+    llm_account: str | None = None
     rubric_version: str | None
     cost_usd: Decimal | None
     error: str | None
@@ -941,6 +943,73 @@ class LlmLoginCodeIn(BaseModel):
     code: Annotated[
         str, StringConstraints(strip_whitespace=True, pattern=r"^[A-Za-z0-9_#.\-]{8,512}$")
     ]
+    # Several accounts (app/review/llm_accounts.py): the account this login renews, or the
+    # name of a new one; neither renews the default (or creates it when there is none).
+    account_id: int | None = None
+    label: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] | None = None
+
+
+# A subscription token (`claude setup-token`) or, as a backup, an API key.
+ClaudeToken = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, pattern=r"^sk-ant-(?:oat|api)\d*-[A-Za-z0-9_-]{20,}$"),
+]
+AccountLabel = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
+
+
+class LlmAccountIn(BaseModel):
+    label: AccountLabel
+    token: ClaudeToken
+
+
+class LlmAccountTokenIn(BaseModel):
+    token: ClaudeToken
+
+
+class LlmAccountPatch(BaseModel):
+    label: AccountLabel | None = None
+    enabled: bool | None = None
+    # Only true: the default is moved, never removed (removing it promotes the next one).
+    is_default: Literal[True] | None = None
+
+
+class LlmAccountOrderIn(BaseModel):
+    ids: list[int] = Field(max_length=50)
+
+
+class LlmAccountOut(BaseModel):
+    id: int
+    label: str
+    token_hint: str | None
+    source: str
+    set_by: int | None
+    set_by_name: str | None = None
+    is_default: bool
+    position: int
+    enabled: bool
+    # ok | quota (usage limit) | auth (login failed) | model (plan lacks the review model)
+    state: str
+    usable: bool  # a call now would try it
+    retry_at: datetime | None
+    failures: int
+    last_error: str | None
+    blocked_model: str | None
+    last_used_at: datetime | None
+    last_ok_at: datetime | None
+    last_failed_at: datetime | None
+    updated_at: datetime | None
+
+
+class LlmAccountsOut(BaseModel):
+    accounts: list[LlmAccountOut]
+    # The account the next call uses: a stored one (id), the environment's token (env) or the
+    # CLI's own login (cli); null when every account waits.
+    active_id: int | None
+    active_label: str | None
+    model: str  # pinned on every call, whichever account answers
+    retry_min: int  # Admin > Cấu hình llm_account_retry_min
+    env_token_hint: str | None  # the environment's token, the last backup
+    login_supported: bool
 
 
 # -- review settings edited on the Admin screen (outside the spec; see PROGRESS.md) --------------

@@ -31,7 +31,7 @@ from app.config import Settings, get_settings
 from app.crypto import secret_box
 from app.db import get_redis, get_sessionmaker
 from app.models import BusinessProject, CommandRun, Connection, Project
-from app.review.credentials import load_stored_claude_token
+from app.review.llm_accounts import load_current_token
 from app.review.progress import progress_redis
 from app.review.providers.claude_code import cli_env, stream_lines
 from app.workers.knowledge_jobs import month_spend_usd
@@ -298,9 +298,7 @@ def _execute(
             max_turns=int(limits["command_max_turns"]),
             max_budget_usd=float(limits["command_max_budget_usd"]),
             timeout_s=float(timeout_s),
-            auth_token=load_stored_claude_token()
-            or settings.claude_code_oauth_token.get_secret_value()
-            or settings.llm_api_key.get_secret_value(),
+            auth_token=load_current_token(settings),
             on_entries=lambda entries: store.append(plan.run_id, entries),
             cancelled=lambda: store.cancelled(plan.run_id),
             streamer=boxed or stream_lines,

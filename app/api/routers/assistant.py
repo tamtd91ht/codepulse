@@ -41,7 +41,7 @@ from app.config import Settings, get_settings
 from app.crypto import SecretBox
 from app.db import get_sessionmaker
 from app.ratelimit import Limiter, shared_limiter
-from app.review.credentials import stored_claude_token
+from app.review.llm_accounts import current_token
 from app.review.providers import default_redis
 from app.review.providers.claude_code import LLM_MAX_PER_MINUTE, stream_lines
 
@@ -109,13 +109,8 @@ def get_assistant_recorder() -> Recorder:
 
 
 def _token(session: Session, box: SecretBox, settings: Settings) -> str:
-    """As the reviews pick it (app/review/providers.build_provider)."""
-    stored = stored_claude_token(session, box)
-    return (
-        (stored.token if stored else "")
-        or settings.claude_code_oauth_token.get_secret_value()
-        or settings.llm_api_key.get_secret_value()
-    )
+    """The Claude account reviews would use now (app/review/llm_accounts.py)."""
+    return current_token(session, box, settings)
 
 
 def _unavailable(session: Session, box: SecretBox, settings: Settings) -> str | None:
