@@ -64,7 +64,7 @@ def list_tasks(
     type: Annotated[str | None, Query(max_length=40)] = None,
     assignee: int | None = None,
     q: Annotated[str | None, Query(max_length=200)] = None,
-    linked: Literal["any", "with_mr", "without_mr"] = "any",
+    linked: Literal["any", "with_mr", "without_mr", "bug_unfixed"] = "any",
     start: Day = None,
     end: Day = None,
     page: Page = 1,
@@ -103,6 +103,26 @@ def list_unlinked_mrs(
     _span(start, end)
     _project(principal, business_project_id)
     out = tasks.unlinked_mrs(
+        session, principal, business_project_id, start, end, (page - 1) * page_size, page_size
+    )
+    return {**out, "page": page, "page_size": page_size}
+
+
+@router.get("/jira/tasks/unlinked-commits")
+def list_unlinked_commits(
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    business_project_id: int | None = None,
+    start: Day = None,
+    end: Day = None,
+    page: Page = 1,
+    page_size: PageSize = 25,
+) -> dict[str, Any]:
+    """Commits authored in the period whose message names no Jira issue (§19), and how many of
+    the period's commits do."""
+    _span(start, end)
+    _project(principal, business_project_id)
+    out = tasks.unlinked_commits(
         session, principal, business_project_id, start, end, (page - 1) * page_size, page_size
     )
     return {**out, "page": page, "page_size": page_size}

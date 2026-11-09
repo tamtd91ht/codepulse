@@ -714,17 +714,24 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
 
 /** The Jira task(s) this MR implements (docs/specs/27 §17): key, title, state, type, points. */
 function MrJiraCard({ jira }: { jira: MrJira }) {
+  const commit = jira.target === "commit";
   const others = jira.other_keys ?? [];
   const named = jira.issues.length + others.length + jira.missing_keys.length;
   if (named === 0 && !jira.expected) return null;
   return (
     <div className="card mr-jira">
       <span className="mr-jira-label">Jira</span>
-      {named === 0 && (
-        <span className="muted small">
-          MR chưa gắn issue nào. Ghi key (ABC-123) vào tiêu đề MR hoặc tên nhánh <code>feature/ABC-123-mo-ta</code>.
-        </span>
-      )}
+      {named === 0 &&
+        (commit ? (
+          <span className="muted small">
+            Commit chưa ghi mã Jira. Theo chuẩn: <code>fix(phạm-vi): mô tả [ABC-123]</code> và dòng <code>Fixes: ABC-123</code> khi
+            commit sửa issue đó (<Link href="/guide/jira#commit">Hướng dẫn</Link>).
+          </span>
+        ) : (
+          <span className="muted small">
+            MR chưa gắn issue nào. Ghi key (ABC-123) vào tiêu đề MR hoặc tên nhánh <code>feature/ABC-123-mo-ta</code>.
+          </span>
+        ))}
       <ul className="mr-jira-list">
         {jira.issues.map((i) => (
           <li key={i.key}>
@@ -736,10 +743,22 @@ function MrJiraCard({ jira }: { jira: MrJira }) {
                 {[i.type, i.story_points !== null ? `${i.story_points} SP` : null].filter(Boolean).join(" · ")}
               </span>
             )}
-            {i.link === "mention" && (
-              <span className="muted small" title="Key chỉ có trong mô tả MR, không ở tiêu đề hay tên nhánh">
-                chỉ nhắc trong mô tả
-              </span>
+            {commit ? (
+              i.link === "closes" ? (
+                <Pill tone="good" title="Message có dòng Fixes: hoặc tiêu đề fix(...) ghi mã này">
+                  Commit sửa
+                </Pill>
+              ) : (
+                <span className="muted small" title="Message có nhắc mã này nhưng không nói là sửa (Fixes:)">
+                  có nhắc tới
+                </span>
+              )
+            ) : (
+              i.link === "mention" && (
+                <span className="muted small" title="Key chỉ có trong mô tả MR, không ở tiêu đề hay tên nhánh">
+                  chỉ nhắc trong mô tả
+                </span>
+              )
             )}
             <Link className="small" href={`/jira?issue=${encodeURIComponent(i.key)}`} title="Các MR và review khác của task này">
               Xem task

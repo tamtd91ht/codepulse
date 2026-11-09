@@ -116,6 +116,23 @@ class IssueMrLink(TimestampMixin, Base):
     source: Mapped[str]  # closes|mention|branch (the strongest seen)
 
 
+class IssueCommitLink(TimestampMixin, Base):
+    """A Jira issue a commit message names (docs/specs/27 §19): `fixes` when the message says
+    the commit fixes it (a `Fixes:` / `Closes:` / `Resolves:` line, "fixes ABC-1", or a
+    `fix(...)` subject naming it), `refs` otherwise."""
+
+    __tablename__ = "issue_commit_links"
+    __table_args__ = (CheckConstraint("kind IN ('fixes', 'refs')", name="kind"),)
+
+    issue_id: Mapped[int] = mapped_column(
+        ForeignKey("issues.id", ondelete="CASCADE"), primary_key=True
+    )
+    sha: Mapped[str] = mapped_column(
+        ForeignKey("commits.sha", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    kind: Mapped[str]
+
+
 class ProdDefect(TimestampMixin, Base):
     """A production bug (issue labelled prod-bug::P*) and its root-cause analysis (§4.4).
     Counted in B2 only once a lead confirmed the RCA."""

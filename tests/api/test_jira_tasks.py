@@ -7,7 +7,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models import Account, BusinessProject, IssueMrLink, MergeRequest, Project
+from app.models import Account, BusinessProject, Commit, IssueMrLink, MergeRequest, Project
 from tests.api.conftest import World
 from tests.api.test_dpi_jira import jira_issue, jira_project
 
@@ -77,6 +77,8 @@ def test_issues_come_with_their_mrs_and_reviews(
         "with_mr": 1,
         "with_points": 1,
         "severe_open": 1,
+        "bugs": 1,
+        "bugs_fixed": 0,
     }
 
 
@@ -181,3 +183,46 @@ def test_options_follow_what_one_sees(
     assert binh["types"] == ["bug", "feature"] and binh["can_admin"] is False
     admin = client.get(f"{API}/options", headers=as_user(world.admin)).json()
     assert [p["key"] for p in admin["jira_projects"]] == ["ABC", "NEW", "XYZ"]
+
+
+def test_commits_that_fix_an_issue(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    """§19: a commit naming the bug ABC-2 with `Fixes:` is its fix; one without a key is listed
+    under the commits that name no issue."""
+    from app.jira.commit_links import link_commits
+
+    _setup(db_session, world)
+    admin = as_user(world.admin)
+    unfixed = client.get(API, params={"linked": "bug_unfixed"}, headers=admin).json()
+    assert sorted(_keys(unfixed)) == ["ABC-2"]
+    fix = Commit(
+        sha="9" * 40,
+        project_id=world.project.id,
+        message="fix(export): căn cột [ABC-2]\n\nFixes: ABC-2",
+        authored_at=datetime(2026, 10, 9, tzinfo=UTC),
+    )
+    bare = Commit(
+        sha="8" * 40,
+        project_id=world.project.id,
+        message="sửa nhanh",
+        authored_at=datetime(2026, 10, 9, tzinfo=UTC),
+    )
+    db_session.add_all([fix, bare])
+    db_session.flush()
+    link_commits(db_session, [fix.sha, bare.sha])
+
+    body = client.get(API, headers=admin).json()
+    two = next(i for i in body["items"] if i["key"] == "ABC-2")
+    assert (two["commit_count"], two["fix_commits"]) == (1, 1)
+    assert body["kpis"]["bugs_fixed"] == 1
+    assert client.get(API, params={"linked": "bug_unfixed"}, headers=admin).json()["items"] == []
+
+    detail = client.get(f"{API}/ABC-2", headers=as_user(world.binh)).json()
+    assert [(c["sha"], c["kind"]) for c in detail["commits"]] == [(fix.sha, "fixes")]
+    assert detail["commits"][0]["url"] == f"https://gitlab.example.com/demo/p/-/commit/{fix.sha}"
+
+    out = client.get(f"{API}/unlinked-commits", headers=as_user(world.binh)).json()
+    shas = [c["sha"] for c in out["items"]]
+    assert bare.sha in shas and fix.sha not in shas
+    assert out["with_issue"] == 1 and out["commits_in_period"] == out["total"] + 1

@@ -14,6 +14,12 @@ class Commit(TimestampMixin, Base):
     __table_args__ = (
         Index("ix_commits_project_id_authored_at", "project_id", "authored_at"),
         Index("ix_commits_author_account_id", "author_account_id"),
+        Index(
+            "ix_commits_jira_keys",
+            "jira_keys",
+            postgresql_using="gin",
+            postgresql_ops={"jira_keys": "jsonb_path_ops"},
+        ),
     )
 
     sha: Mapped[str] = mapped_column(primary_key=True)
@@ -25,6 +31,9 @@ class Commit(TimestampMixin, Base):
     deletions: Mapped[int | None]
     files_changed: Mapped[int | None]
     is_merge: Mapped[bool | None]
+    # Jira keys (ABC-123) the message names (docs/specs/27 §19); NULL: not read yet (commits
+    # stored before 2026-11-09, filled once by app.jira.commit_links.backfill_once_job).
+    jira_keys: Mapped[list[str] | None] = mapped_column(JSONB)
 
 
 class MergeRequest(TimestampMixin, Base):

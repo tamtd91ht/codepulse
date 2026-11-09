@@ -490,6 +490,9 @@ export interface MrJira {
   missing_keys: string[];
   /** The task source is Jira: an MR is expected to name its issue. */
   expected: boolean;
+  /** "commit": the Jira side of a commit review (docs/specs/27 §19); "closes" there means the
+   * message says it fixes the issue (`Fixes: KEY`). */
+  target?: "commit";
 }
 
 /* ---- weighted criteria sets (docs/specs/22) ---- */
@@ -2200,6 +2203,9 @@ export interface JiraTask {
   due_date: string | null;
   mrs: number;
   mrs_merged: number;
+  /** Commits whose own message names the issue, and those saying they fix it (§19). */
+  commit_count: number;
+  fix_commits: number;
   reviews: number;
   score: number | null;
   critical: number;
@@ -2220,6 +2226,33 @@ export interface JiraTaskDetail extends JiraTask {
   parent: JiraTaskBrief | null;
   children: JiraTaskBrief[];
   merge_requests: JiraTaskMr[];
+  commits: JiraTaskCommit[];
+}
+
+/** A commit naming an issue in its message (docs/specs/27 §19). */
+export interface JiraTaskCommit {
+  sha: string;
+  title: string;
+  repo: string | null;
+  url: string | null;
+  author: JiraPerson | null;
+  authored_at: string | null;
+  /** fixes: `Fixes: KEY` (or a fix subject naming it); refs: names it otherwise. */
+  kind?: "fixes" | "refs";
+  /** Keys it has that match no synced issue (commits naming none). */
+  keys?: string[];
+  /** It is in an MR that names an issue (only the commit lacks the key). */
+  in_linked_mr?: boolean;
+  review: JiraMrReview | null;
+}
+
+export interface JiraUnlinkedCommits {
+  items: JiraTaskCommit[];
+  total: number;
+  commits_in_period: number;
+  with_issue: number;
+  page: number;
+  page_size: number;
 }
 
 export interface JiraTaskList {
@@ -2234,6 +2267,8 @@ export interface JiraTaskList {
     with_mr: number;
     with_points: number;
     severe_open: number;
+    bugs: number;
+    bugs_fixed: number;
   };
 }
 

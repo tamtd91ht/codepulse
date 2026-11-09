@@ -24,10 +24,13 @@ from app.jira.scopes import jira_issue_in, projects_in
 from app.models import (
     Account,
     BusinessProject,
+    Commit,
     Issue,
+    IssueCommitLink,
     IssueMrLink,
     JiraProject,
     MergeRequest,
+    MrCommit,
     Project,
     Review,
     ReviewFinding,
@@ -46,7 +49,7 @@ class IssueFilter:
     type: str | None = None
     assignee: int | None = None  # a CodePulse person
     q: str | None = None
-    linked: str = "any"  # any | with_mr | without_mr
+    linked: str = "any"  # any | with_mr | without_mr | bug_unfixed
     start: date | None = None
     end: date | None = None
 
@@ -124,12 +127,55 @@ def _base_where(
     return where
 
 
+def commit_scope(principal: Principal) -> ColumnElement[bool]:
+    """Commits one may see: in a repo of a dự án one sees."""
+    if principal.is_admin:
+        return true()
+    bps = principal.visible_projects() or set()
+    if not bps:
+        return false()
+    repo = aliased(Project)
+    return exists().where(repo.id == Commit.project_id, repo.business_project_id.in_(bps))
+
+
 def _has_mr(principal: Principal) -> ColumnElement[bool]:
     return exists().where(
         IssueMrLink.issue_id == Issue.id,
         MergeRequest.id == IssueMrLink.mr_id,
         repo_scope(principal),
     )
+
+
+def _has_commit(principal: Principal, kind: str | None = None) -> ColumnElement[bool]:
+    """A commit one may see names the issue (`kind`: only links of that kind)."""
+    where = [
+        IssueCommitLink.issue_id == Issue.id,
+        Commit.sha == IssueCommitLink.sha,
+        commit_scope(principal),
+    ]
+    if kind is not None:
+        where.append(IssueCommitLink.kind == kind)
+    return exists().where(*where)
+
+
+def _has_code(principal: Principal) -> ColumnElement[bool]:
+    """Some code names the issue: an MR, or a commit of its own."""
+    return or_(_has_mr(principal), _has_commit(principal))
+
+
+def _fixed(principal: Principal) -> ColumnElement[bool]:
+    """Code says it fixes the issue: a commit with `Fixes: KEY` (or a fix subject), or an MR
+    naming it in its title or branch (§8 `closes`)."""
+    by_mr = exists().where(
+        IssueMrLink.issue_id == Issue.id,
+        IssueMrLink.source != "mention",
+        MergeRequest.id == IssueMrLink.mr_id,
+        repo_scope(principal),
+    )
+    return or_(_has_commit(principal, "fixes"), by_mr)
+
+
+BUG = "bug"
 
 
 def _severe_open(principal: Principal) -> ColumnElement[bool]:
@@ -157,9 +203,11 @@ def list_issues(
     if f.state in ("open", "closed"):
         where.append(Issue.state == ("opened" if f.state == "open" else "closed"))
     if f.linked == "with_mr":
-        where.append(_has_mr(principal))
+        where.append(_has_code(principal))
     elif f.linked == "without_mr":
-        where.append(~_has_mr(principal))
+        where.append(~_has_code(principal))
+    elif f.linked == "bug_unfixed":
+        where.extend([Issue.type == BUG, ~_fixed(principal)])
 
     total = int(session.scalar(select(func.count()).select_from(Issue).where(*where)) or 0)
     rows = list(
@@ -196,18 +244,23 @@ def kpis(
             func.count(),
             func.count().filter(Issue.state == "opened"),
             func.count().filter(and_(*closed_in)),
-            func.count().filter(_has_mr(principal)),
+            func.count().filter(_has_code(principal)),
             func.count().filter(Issue.story_points.is_not(None)),
             func.count().filter(_severe_open(principal)),
+            func.count().filter(Issue.type == BUG),
+            func.count().filter(and_(Issue.type == BUG, _fixed(principal))),
         ).where(*base)
     ).one()
     return {
         "issues": int(row[0]),
         "open": int(row[1]),
         "closed_in_period": int(row[2]),
+        # Some code names it: an MR or a commit of its own.
         "with_mr": int(row[3]),
         "with_points": int(row[4]),
         "severe_open": int(row[5]),
+        "bugs": int(row[6]),
+        "bugs_fixed": int(row[7]),
     }
 
 
@@ -324,6 +377,122 @@ def latest_reviews(
     }
 
 
+def commit_summaries(
+    session: Session, principal: Principal, issue_ids: list[int], per_issue: int | None = None
+) -> dict[int, list[dict[str, Any]]]:
+    """issue id -> the commits one may see whose messages name it, fixes first then newest,
+    each with its review when it was reviewed on its own (and one may see it)."""
+    if not issue_ids:
+        return {}
+    links = session.execute(
+        select(IssueCommitLink.issue_id, IssueCommitLink.kind, Commit, Project)
+        .join(Commit, Commit.sha == IssueCommitLink.sha)
+        .outerjoin(Project, Project.id == Commit.project_id)
+        .where(IssueCommitLink.issue_id.in_(issue_ids), commit_scope(principal))
+        .order_by(
+            (IssueCommitLink.kind == "refs").asc(),
+            Commit.authored_at.desc().nulls_last(),
+            Commit.sha,
+        )
+    ).all()
+    commits = {link.Commit.sha: link.Commit for link in links}
+    urls = _repo_urls(session, [link.Project for link in links if link.Project is not None])
+    reviews = commit_reviews(session, principal, list(commits))
+    authors = _people(
+        session, {c.author_account_id for c in commits.values() if c.author_account_id}
+    )
+    out: dict[int, list[dict[str, Any]]] = {}
+    for link in links:
+        c, repo = link.Commit, link.Project
+        rows = out.setdefault(int(link.issue_id), [])
+        if per_issue is not None and len(rows) >= per_issue:
+            continue
+        base = urls.get(repo.id) if repo is not None else None
+        rows.append(
+            {
+                "sha": c.sha,
+                "title": (c.message or "").split("\n", 1)[0][:300],
+                "repo": repo.path_with_namespace if repo is not None else None,
+                "url": f"{base}/-/commit/{c.sha}" if base else None,
+                "author": authors.get(c.author_account_id or 0),
+                "authored_at": c.authored_at,
+                "kind": link.kind,
+                "review": reviews.get(c.sha),
+            }
+        )
+    return out
+
+
+def commit_counts(
+    session: Session, principal: Principal, issue_ids: list[int]
+) -> dict[int, tuple[int, int]]:
+    """issue id -> (commits one may see naming it, those fixing it): one aggregate, for the
+    list (the detail loads the commits themselves)."""
+    if not issue_ids:
+        return {}
+    rows = session.execute(
+        select(
+            IssueCommitLink.issue_id,
+            func.count(),
+            func.count().filter(IssueCommitLink.kind == "fixes"),
+        )
+        .join(Commit, Commit.sha == IssueCommitLink.sha)
+        .where(IssueCommitLink.issue_id.in_(issue_ids), commit_scope(principal))
+        .group_by(IssueCommitLink.issue_id)
+    ).all()
+    return {int(i): (int(n), int(fixes)) for i, n, fixes in rows}
+
+
+def commit_reviews(
+    session: Session, principal: Principal, shas: list[str]
+) -> dict[str, dict[str, Any]]:
+    """sha -> its newest finished commit review one may see, with open critical/high counts."""
+    if not shas:
+        return {}
+    seen = work_scope(principal)
+    newest = (
+        select(Review.commit_sha, func.max(Review.id).label("id"))
+        .where(Review.commit_sha.in_(shas), Review.status == "done")
+        .where(seen if seen is not None else true())
+        .group_by(Review.commit_sha)
+        .subquery()
+    )
+    rows = session.execute(
+        select(Review.id, Review.commit_sha, Review.score, Review.verdict, Review.finished_at).join(
+            newest, newest.c.id == Review.id
+        )
+    ).all()
+    counts = _severe_counts(session, [r.id for r in rows])
+    return {
+        str(r.commit_sha): {
+            "id": r.id,
+            "score": float(r.score) if r.score is not None else None,
+            "verdict": r.verdict,
+            "finished_at": r.finished_at,
+            "critical": counts.get(r.id, {}).get("critical", 0),
+            "high": counts.get(r.id, {}).get("high", 0),
+        }
+        for r in rows
+    }
+
+
+def _severe_counts(session: Session, review_ids: list[int]) -> dict[int, dict[str, int]]:
+    counts: dict[int, dict[str, int]] = {}
+    if not review_ids:
+        return counts
+    for review_id, severity, n in session.execute(
+        select(ReviewFinding.review_id, ReviewFinding.severity, func.count())
+        .where(
+            ReviewFinding.review_id.in_(review_ids),
+            ReviewFinding.status == "open",
+            ReviewFinding.severity.in_(SEVERE),
+        )
+        .group_by(ReviewFinding.review_id, ReviewFinding.severity)
+    ):
+        counts.setdefault(int(review_id or 0), {})[str(severity)] = int(n)
+    return counts
+
+
 def _jira_keys(session: Session, ids: set[int]) -> dict[int, str]:
     if not ids:
         return {}
@@ -338,6 +507,7 @@ def _jira_keys(session: Session, ids: set[int]) -> dict[int, str]:
 def issue_rows(session: Session, principal: Principal, issues: list[Issue]) -> list[dict[str, Any]]:
     people = _people(session, {a for i in issues for a in i.assignee_account_ids or []})
     mrs = mr_summaries(session, principal, [i.id for i in issues])
+    commits = commit_counts(session, principal, [i.id for i in issues])
     projects = _jira_keys(session, {i.jira_project_id for i in issues if i.jira_project_id})
     out = []
     for i in issues:
@@ -360,6 +530,8 @@ def issue_rows(session: Session, principal: Principal, issues: list[Issue]) -> l
                 "due_date": i.due_date,
                 "mrs": len(linked),
                 "mrs_merged": sum(1 for m in linked if m["merged_at"] is not None),
+                "commit_count": commits.get(i.id, (0, 0))[0],
+                "fix_commits": commits.get(i.id, (0, 0))[1],
                 "reviews": len(reviewed),
                 "score": round(sum(scores) / len(scores), 1) if scores else None,
                 "critical": sum(r["critical"] for r in reviewed),
@@ -411,6 +583,7 @@ def issue_detail(session: Session, principal: Principal, key: str) -> dict[str, 
         "parent": next((_brief(i) for i in family if i.key == issue.parent_key), None),
         "children": [_brief(i) for i in family if i.parent_key == issue.key],
         "merge_requests": mr_summaries(session, principal, [issue.id], MAX_MRS).get(issue.id, []),
+        "commits": commit_summaries(session, principal, [issue.id], MAX_MRS).get(issue.id, []),
     }
 
 
@@ -483,6 +656,87 @@ def unlinked_mrs(
             }
         )
     return {"items": items, "total": total}
+
+
+def unlinked_commits(
+    session: Session,
+    principal: Principal,
+    business_project_id: int | None,
+    start: date | None,
+    end: date | None,
+    offset: int,
+    limit: int,
+) -> dict[str, Any]:
+    """Commits authored in the period, in a repo one sees, whose message names no synced Jira
+    issue (merge commits aside), with how many of the period's commits follow the standard."""
+    lo, hi = _bounds(IssueFilter(start=start, end=end))
+    period: list[ColumnElement[bool]] = [commit_scope(principal), Commit.is_merge.is_not(True)]
+    if business_project_id is not None:
+        repo = aliased(Project)
+        period.append(
+            exists().where(
+                repo.id == Commit.project_id, repo.business_project_id == business_project_id
+            )
+        )
+    if lo is not None:
+        period.append(Commit.authored_at >= lo)
+    if hi is not None:
+        period.append(Commit.authored_at < hi)
+    linked = exists().where(IssueCommitLink.sha == Commit.sha)
+    in_period, with_issue = session.execute(
+        select(func.count(), func.count().filter(linked)).select_from(Commit).where(*period)
+    ).one()
+    where = [*period, ~linked]
+    rows = session.execute(
+        select(Commit, Project)
+        .outerjoin(Project, Project.id == Commit.project_id)
+        .where(*where)
+        .order_by(Commit.authored_at.desc().nulls_last(), Commit.sha)
+        .offset(offset)
+        .limit(limit)
+    ).all()
+    shas = [r.Commit.sha for r in rows]
+    # In an MR that names an issue: the work is traceable, only the commit lacks the key.
+    via_mr = (
+        set(
+            session.scalars(
+                select(MrCommit.sha)
+                .join(IssueMrLink, IssueMrLink.mr_id == MrCommit.mr_id)
+                .where(MrCommit.sha.in_(shas))
+            )
+        )
+        if shas
+        else set()
+    )
+    urls = _repo_urls(session, [r.Project for r in rows if r.Project is not None])
+    reviews = commit_reviews(session, principal, shas)
+    registered = set(session.scalars(select(JiraProject.key)))
+    authors = _people(
+        session, {r.Commit.author_account_id for r in rows if r.Commit.author_account_id}
+    )
+    items = []
+    for r in rows:
+        c, repo = r.Commit, r.Project
+        base = urls.get(repo.id) if repo is not None else None
+        items.append(
+            {
+                "sha": c.sha,
+                "title": (c.message or "").split("\n", 1)[0][:300],
+                "repo": repo.path_with_namespace if repo is not None else None,
+                "url": f"{base}/-/commit/{c.sha}" if base else None,
+                "author": authors.get(c.author_account_id or 0),
+                "authored_at": c.authored_at,
+                "keys": [k for k in c.jira_keys or [] if k.rsplit("-", 1)[0] in registered][:5],
+                "in_linked_mr": c.sha in via_mr,
+                "review": reviews.get(c.sha),
+            }
+        )
+    return {
+        "items": items,
+        "total": int(in_period) - int(with_issue),
+        "commits_in_period": int(in_period),
+        "with_issue": int(with_issue),
+    }
 
 
 # -- what the filters offer ------------------------------------------------------------------------

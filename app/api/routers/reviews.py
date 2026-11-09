@@ -49,6 +49,7 @@ from app.api.security import CurrentPrincipal, Principal, require
 from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.identity.attribution import Attribution, attribute_reviews, rebuild_after_commit
+from app.jira.commit_links import commit_issues
 from app.jira.links import mr_issues
 from app.models import (
     Account,
@@ -401,7 +402,13 @@ def get_review(
     project, url, _ = _target(session, review)
     mr = session.get(MergeRequest, review.mr_id) if review.mr_id is not None else None
     bp_id = project.business_project_id if project else None
-    jira = mr_issues(session, settings, mr, bp_id) if mr is not None else None
+    jira = (
+        mr_issues(session, settings, mr, bp_id)
+        if mr is not None
+        else commit_issues(session, settings, review.commit_sha, bp_id)
+        if review.commit_sha
+        else None
+    )
     if review.author_user_id not in (None, principal.user_id):
         audit(session, principal.user_id, "review.read", f"review:{review.id}")
         session.commit()

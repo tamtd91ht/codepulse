@@ -6,10 +6,21 @@ import { useCallback, useEffect, useState } from "react";
 import { type SubTab, SubTabs } from "@/components/AdminTabs";
 import { RangePicker, Score, useUrlRange } from "@/components/Evaluation";
 import { Icon } from "@/components/icons";
-import { Card, Drawer, EmptyState, ExternalLink, Loading, PageHeader, Pagination, Pill, StatStrip, StripStat } from "@/components/ui";
+import { Card, Drawer, EmptyState, ExternalLink, Loading, PageHeader, Pagination, Pill, Segmented, StatStrip, StripStat } from "@/components/ui";
 import { qs, useApi } from "@/lib/api";
 import { VERDICT_LABEL, date, relative } from "@/lib/format";
-import type { JiraTask, JiraTaskDetail, JiraTaskList, JiraTaskMr, JiraTaskOptions, JiraUnlinkedMrs, Me, Person } from "@/lib/types";
+import type {
+  JiraTask,
+  JiraTaskCommit,
+  JiraTaskDetail,
+  JiraTaskList,
+  JiraTaskMr,
+  JiraTaskOptions,
+  JiraUnlinkedCommits,
+  JiraUnlinkedMrs,
+  Me,
+  Person,
+} from "@/lib/types";
 
 /*
  * Task Jira (docs/specs/27 §18, user 2026-11-09): the Jira issues of the dự án one sees, each
@@ -107,6 +118,41 @@ function MrLine({ mr }: { mr: JiraTaskMr }) {
           <span className="muted small">Chưa có review (hoặc bạn không được xem)</span>
         )}
       </div>
+    </li>
+  );
+}
+
+/** A commit naming the issue: its fix (`Fixes:`) or a reference, with its own review. */
+function CommitLine({ c }: { c: JiraTaskCommit }) {
+  const r = c.review;
+  return (
+    <li className="jt-mr">
+      <div className="jt-mr-head">
+        {c.url ? <ExternalLink href={c.url}>{c.sha.slice(0, 8)}</ExternalLink> : <code>{c.sha.slice(0, 8)}</code>}
+        <span className="jt-mr-title">{c.title || "—"}</span>
+        {c.kind === "fixes" ? (
+          <Pill tone="good" title="Message có dòng Fixes: (hoặc tiêu đề fix(...)) ghi mã issue">
+            Commit sửa
+          </Pill>
+        ) : (
+          <span className="muted small" title="Message nhắc mã issue nhưng không nói là sửa">
+            liên quan
+          </span>
+        )}
+      </div>
+      <div className="muted small">
+        {c.repo ?? "—"}
+        {c.author && <> · {c.author.user_id ? <Link href={`/members/${c.author.user_id}`}>{c.author.name}</Link> : c.author.name}</>}
+        {c.authored_at && <> · {relative(c.authored_at)}</>}
+      </div>
+      {r && (
+        <div className="jt-mr-review">
+          <Link href={`/reviews/${r.id}`}>Xem review</Link>
+          <Score value={r.score} />
+          {r.verdict && <span className="small">{VERDICT_LABEL[r.verdict] ?? r.verdict}</span>}
+          <Severe critical={r.critical} high={r.high} />
+        </div>
+      )}
     </li>
   );
 }
@@ -225,6 +271,26 @@ function IssueDrawer({ issueKey, onClose, onOpen }: { issueKey: string; onClose:
               </p>
             )}
           </section>
+
+          <section>
+            <h3>
+              Commit ({data.commits.length}
+              {data.commits.some((c) => c.kind === "fixes") && <>, {data.commits.filter((c) => c.kind === "fixes").length} commit sửa</>})
+            </h3>
+            {data.commits.length ? (
+              <ul className="jt-mrs">
+                {data.commits.map((c) => (
+                  <CommitLine key={c.sha} c={c} />
+                ))}
+              </ul>
+            ) : (
+              <p className="muted">
+                Chưa commit nào ghi <code>{data.key}</code> trong message.{" "}
+                {data.type === "bug" ? "Commit sửa lỗi này nên có dòng" : "Theo chuẩn, commit ghi"}{" "}
+                <code>{data.type === "bug" ? `Fixes: ${data.key}` : `[${data.key}]`}</code> (<Link href="/guide/jira#commit">Hướng dẫn</Link>).
+              </p>
+            )}
+          </section>
         </div>
       )}
     </Drawer>
@@ -241,8 +307,8 @@ function IssueTable({ rows, onOpen }: { rows: JiraTask[]; onOpen: (key: string) 
             <th>Người làm</th>
             <th>Trạng thái</th>
             <th className="num">SP</th>
-            <th className="num" title="MR ghi key của issue (đã merge / tổng)">
-              MR
+            <th className="num" title="MR ghi key (đã merge / tổng) và commit ghi key trong message (số commit sửa)">
+              Code
             </th>
             <th className="num" title="Điểm trung bình review hiện tại của các MR">
               Điểm
@@ -292,7 +358,22 @@ function IssueTable({ rows, onOpen }: { rows: JiraTask[]; onOpen: (key: string) 
                 {t.closed_at && <div className="muted small">{date(t.closed_at)}</div>}
               </td>
               <td className="num">{t.story_points ?? <span className="muted">—</span>}</td>
-              <td className="num">{t.mrs ? `${t.mrs_merged}/${t.mrs}` : <span className="bad">0</span>}</td>
+              <td className="num jt-code">
+                {t.mrs || t.commit_count ? (
+                  <>
+                    {t.mrs > 0 && <div>{`${t.mrs_merged}/${t.mrs} MR`}</div>}
+                    {t.commit_count > 0 && (
+                      <div className="muted small">
+                        {t.commit_count} commit{t.fix_commits ? <span className="good"> · {t.fix_commits} sửa</span> : null}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <span className="bad" title="Chưa MR hay commit nào ghi mã này">
+                    0
+                  </span>
+                )}
+              </td>
               <td className="num">
                 <Score value={t.score} />
               </td>
@@ -352,6 +433,53 @@ function UnlinkedTable({ rows }: { rows: JiraTaskMr[] }) {
   );
 }
 
+function UnlinkedCommitTable({ rows }: { rows: JiraTaskCommit[] }) {
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Commit</th>
+            <th>Tác giả</th>
+            <th>Ghi chú</th>
+            <th className="num">Điểm</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((c) => (
+            <tr key={c.sha}>
+              <td>
+                <div className="jt-issue">
+                  {c.url ? <ExternalLink href={c.url}>{c.sha.slice(0, 8)}</ExternalLink> : <code>{c.sha.slice(0, 8)}</code>}
+                  <span className="jt-title">{c.title || "—"}</span>
+                </div>
+                <div className="muted small">
+                  {c.repo ?? "—"} · {c.authored_at ? relative(c.authored_at) : "—"}
+                </div>
+              </td>
+              <td>{c.author ? c.author.user_id ? <Link href={`/members/${c.author.user_id}`}>{c.author.name}</Link> : c.author.name : "—"}</td>
+              <td className="small">
+                {c.in_linked_mr && <div className="muted">Trong MR đã gắn issue (chỉ commit thiếu mã)</div>}
+                {c.keys && c.keys.length > 0 && <div className="muted">{c.keys.join(", ")} (không khớp issue nào)</div>}
+                {!c.in_linked_mr && !c.keys?.length && <span className="muted">Không có mã Jira</span>}
+              </td>
+              <td className="num">
+                {c.review ? (
+                  <Link href={`/reviews/${c.review.id}`}>
+                    <Score value={c.review.score} />
+                  </Link>
+                ) : (
+                  <span className="muted">—</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function JiraTasksPage() {
   const { data: me } = useApi<Me>("/auth/me");
   const options = useApi<JiraTaskOptions>("/jira/tasks/options");
@@ -366,13 +494,15 @@ export default function JiraTasksPage() {
   const [linked, setLinked] = useParam("linked");
   const [q, setQ] = useParam("q");
   const [openKey, setOpenKey] = useParam("issue");
+  const [what, setWhat] = useParam("what");
+  const unlinkedOf: "mr" | "commit" = what === "commit" ? "commit" : "mr";
   const [draft, setDraft] = useState("");
   const [page, setPage] = useState(1);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const view: View = viewParam === "unlinked" ? "unlinked" : "issues";
   useEffect(() => setDraft(q), [q]);
   // A new filter starts at the first page.
-  useEffect(() => setPage(1), [bp, jiraProject, state, type, assignee, linked, q, range?.from, range?.to, view]);
+  useEffect(() => setPage(1), [bp, jiraProject, state, type, assignee, linked, q, range?.from, range?.to, view, what]);
   // Typing searches after a short pause, not on every key.
   useEffect(() => {
     const t = window.setTimeout(() => {
@@ -397,10 +527,12 @@ export default function JiraTasksPage() {
           page_size: PAGE_SIZE,
         })}`
       : null;
-  const unlinkedPath =
-    period && view === "unlinked" ? `/jira/tasks/unlinked-mrs${qs({ ...period, business_project_id: bp || null, page, page_size: PAGE_SIZE })}` : null;
+  const unlinkedQuery = qs({ ...(period ?? {}), business_project_id: bp || null, page, page_size: PAGE_SIZE });
+  const unlinkedPath = period && view === "unlinked" && unlinkedOf === "mr" ? `/jira/tasks/unlinked-mrs${unlinkedQuery}` : null;
+  const commitsPath = period && view === "unlinked" && unlinkedOf === "commit" ? `/jira/tasks/unlinked-commits${unlinkedQuery}` : null;
   const list = useApi<JiraTaskList>(listPath, { keepPreviousData: true });
   const unlinked = useApi<JiraUnlinkedMrs>(unlinkedPath, { keepPreviousData: true });
+  const unlinkedCommits = useApi<JiraUnlinkedCommits>(commitsPath, { keepPreviousData: true });
   const o = options.data;
 
   const activeFilters = [jiraProject, state, type, assignee, linked, q, ...(bp ? [bp] : [])].filter(Boolean).length;
@@ -411,7 +543,12 @@ export default function JiraTasksPage() {
 
   const views: SubTab<View>[] = [
     { key: "issues", label: "Issue", count: list.data?.total, hint: "Issue Jira và MR, review của chúng" },
-    { key: "unlinked", label: "MR chưa gắn issue", count: unlinked.data?.total, hint: "MR không ghi key issue Jira nào" },
+    {
+      key: "unlinked",
+      label: "Chưa gắn issue",
+      count: unlinkedOf === "mr" ? unlinked.data?.total : unlinkedCommits.data?.total,
+      hint: "MR và commit không ghi mã issue Jira nào",
+    },
   ];
 
   const header = (
@@ -540,11 +677,12 @@ export default function JiraTasksPage() {
                 </select>
               </label>
               <label className={`fsel${linked ? " set" : ""}`}>
-                <span>MR</span>
+                <span>Code</span>
                 <select value={linked} onChange={(e) => setLinked(e.target.value)}>
                   <option value="">Tất cả</option>
-                  <option value="with_mr">Đã có MR</option>
-                  <option value="without_mr">Chưa có MR</option>
+                  <option value="with_mr">Đã có MR/commit</option>
+                  <option value="without_mr">Chưa có MR/commit</option>
+                  <option value="bug_unfixed">Bug chưa có bản sửa</option>
                 </select>
               </label>
             </>
@@ -563,7 +701,19 @@ export default function JiraTasksPage() {
             <StripStat label="Issue trong kỳ" value={k?.issues} sub="làm trong khoảng thời gian" />
             <StripStat label="Đang mở" value={k?.open} />
             <StripStat label="Xong trong kỳ" value={k?.closed_in_period} tone={k?.closed_in_period ? "good" : undefined} />
-            <StripStat label="Có MR" value={k?.with_mr} sub={k ? pct(k.with_mr, k.issues) : undefined} title="Issue có ít nhất một MR ghi key" />
+            <StripStat
+              label="Có code"
+              value={k?.with_mr}
+              sub={k ? pct(k.with_mr, k.issues) : undefined}
+              title="Issue có ít nhất một MR hoặc commit ghi mã"
+            />
+            <StripStat
+              label="Bug đã có bản sửa"
+              value={k?.bugs_fixed}
+              sub={k ? `/ ${k.bugs} bug` : undefined}
+              tone={k && k.bugs > k.bugs_fixed ? "warn" : undefined}
+              title="Bug có commit ghi Fixes: (hoặc MR ghi mã ở tiêu đề/nhánh)"
+            />
             <StripStat label="Có Story Points" value={k?.with_points} sub={k ? pct(k.with_points, k.issues) : undefined} />
             <StripStat
               label="Còn lỗi nặng"
@@ -596,12 +746,51 @@ export default function JiraTasksPage() {
         </>
       ) : (
         <Card collapsible={false} flush>
-          {o?.task_source === "jira" && (
-            <p className="muted small jt-note">
-              Jira đang là nguồn task của DPI: mỗi MR nên ghi key issue ở tiêu đề hoặc tên nhánh (vd. <code>feature/ABC-123-mo-ta</code>).
-            </p>
-          )}
-          {!unlinked.data ? (
+          <div className="jt-note jt-unlinked-head">
+            <Segmented<"mr" | "commit">
+              label="Loại"
+              value={unlinkedOf}
+              onChange={(v) => setWhat(v === "mr" ? "" : v)}
+              options={[
+                { value: "mr", label: "MR" },
+                { value: "commit", label: "Commit" },
+              ]}
+            />
+            <span className="muted small">
+              Chuẩn: nhánh <code>bugfix/ABC-123-mo-ta</code>, commit <code>fix(phạm-vi): mô tả [ABC-123]</code> + dòng{" "}
+              <code>Fixes: ABC-123</code> khi sửa lỗi (<Link href="/guide/jira#commit">Hướng dẫn</Link>).
+            </span>
+          </div>
+          {unlinkedOf === "commit" ? (
+            !unlinkedCommits.data ? (
+              <Loading error={unlinkedCommits.error} rows={6} />
+            ) : (
+              <>
+                <p className="jt-compliance">
+                  <b>
+                    {pct(unlinkedCommits.data.with_issue, unlinkedCommits.data.commits_in_period)}
+                  </b>{" "}
+                  commit trong kỳ ghi mã Jira ({unlinkedCommits.data.with_issue}/{unlinkedCommits.data.commits_in_period}, không tính
+                  merge commit).
+                </p>
+                {unlinkedCommits.data.items.length === 0 ? (
+                  <EmptyState icon="check" title="Mọi commit trong kỳ đều ghi mã Jira" />
+                ) : (
+                  <div className={unlinkedCommits.isLoading ? "eval-dim" : undefined}>
+                    <UnlinkedCommitTable rows={unlinkedCommits.data.items} />
+                    <Pagination
+                      page={page}
+                      pageSize={PAGE_SIZE}
+                      total={unlinkedCommits.data.total}
+                      shown={unlinkedCommits.data.items.length}
+                      onPage={setPage}
+                      label="commit"
+                    />
+                  </div>
+                )}
+              </>
+            )
+          ) : !unlinked.data ? (
             <Loading error={unlinked.error} rows={6} />
           ) : unlinked.data.items.length === 0 ? (
             <EmptyState icon="check" title="Mọi MR trong kỳ đều đã gắn issue" />

@@ -13,7 +13,7 @@ const SECTIONS = [
   { id: "mapping", label: "Quy đổi trường" },
   { id: "points", label: "Story Points" },
   { id: "subtask", label: "Sub-task" },
-  { id: "link", label: "Nối issue với MR" },
+  { id: "link", label: "Chuẩn nhánh, commit, MR" },
   { id: "prod", label: "Lỗi production và blocked" },
   { id: "people", label: "Nối người" },
   { id: "sync", label: "Đồng bộ" },
@@ -53,6 +53,107 @@ const POINTS: [range: string, level: string, score: string][] = [
   ["trên 2 đến 3", "M", "3"],
   ["trên 3 đến 5", "L", "5"],
   ["trên 5", "XL", "8 (trần)"],
+];
+
+/* The commit-msg hook and the CI check of the standard (docs/specs/27 §19). */
+const HOOK = String.raw`#!/bin/sh
+# CodePulse: mỗi commit ghi mã Jira (Hướng dẫn > Tích hợp Jira > Chuẩn nhánh, commit, MR).
+# Thiếu mã mà tên nhánh có mã (bugfix/CRM-415-...) thì tự thêm " [CRM-415]" vào tiêu đề.
+msg="$1"
+subject=$(head -n1 "$msg")
+case "$subject" in
+  Merge*|Revert*|fixup!*|squash!*|amend!*) exit 0 ;;
+esac
+KEY='[A-Z][A-Z0-9_]{1,9}-[1-9][0-9]{0,8}'
+if grep -v '^#' "$msg" | grep -qE "(^|[^A-Za-z0-9_-])$KEY([^A-Za-z0-9]|$)"; then
+  exit 0
+fi
+branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+key=$(printf '%s' "$branch" | grep -oiE "[A-Za-z][A-Za-z0-9_]{1,9}-[1-9][0-9]{0,8}" | head -n1 | tr '[:lower:]' '[:upper:]')
+if [ -n "$key" ]; then
+  sed -i.bak "1s/\$/ [$key]/" "$msg" && rm -f "$msg.bak"
+  exit 0
+fi
+echo "Commit cần mã Jira, ví dụ: fix(export): căn đúng cột [CRM-415]" >&2
+echo "Commit sửa bug: thêm dòng 'Fixes: CRM-415' ở cuối message." >&2
+exit 1`;
+
+const HOOK_INSTALL = `mkdir -p .githooks
+# chép nội dung hook ở trên vào .githooks/commit-msg, rồi:
+chmod +x .githooks/commit-msg
+git config core.hooksPath .githooks   # mỗi người chạy một lần sau khi clone`;
+
+const CI = String.raw`jira-key:
+  stage: .pre
+  image: alpine/git:2.45.2
+  variables:
+    GIT_DEPTH: 0
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - git fetch origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    - |
+      fail=0
+      for sha in $(git rev-list --no-merges "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME..HEAD"); do
+        if ! git log -1 --format=%B "$sha" | grep -qE '(^|[^A-Za-z0-9_-])[A-Z][A-Z0-9_]{1,9}-[1-9][0-9]{0,8}([^A-Za-z0-9]|$)'; then
+          echo "Thiếu mã Jira: $(git log -1 --format='%h %s' "$sha")"
+          fail=1
+        fi
+      done
+      exit $fail`;
+
+const PUSH_RULES: [what: string, regex: string][] = [
+  ["Commit message (GitLab Premium › Push rules › Require expression in commit messages)", "[A-Z][A-Z0-9_]{1,9}-[1-9][0-9]*|^Merge |^Revert "],
+  [
+    "Tên nhánh (Branch name)",
+    "^(main|master|develop|release/.+)$|^(feature|bugfix|hotfix|refactor|chore)/[A-Za-z][A-Za-z0-9_]{1,9}-[0-9]+(-[a-z0-9-]+)?$",
+  ],
+];
+
+const STANDARD: [where: string, rule: ReactNode, example: ReactNode][] = [
+  ["Issue", <>Mọi việc có một issue Jira; lỗi là issue type <code>Bug</code> (lỗi production thêm label <code>production</code>).</>, <code>CRM-415</code>],
+  [
+    "Nhánh",
+    <>
+      <code>&lt;loại&gt;/&lt;KEY&gt;-&lt;mô-tả&gt;</code>, loại: <code>feature</code>, <code>bugfix</code>, <code>hotfix</code>, <code>refactor</code>,{" "}
+      <code>chore</code>.
+    </>,
+    <code>bugfix/CRM-415-export-lech-cot</code>,
+  ],
+  [
+    "Commit",
+    <>
+      Tiêu đề theo Conventional Commits, mã ở <strong>cuối</strong> trong ngoặc vuông. Một commit một việc.
+    </>,
+    <code>feat(contact): đồng bộ danh bạ Zalo [CRM-412]</code>,
+  ],
+  [
+    "Commit sửa lỗi",
+    <>
+      Loại <code>fix</code> (hoặc <code>hotfix</code>) và dòng cuối <code>Fixes: KEY</code>. Đây là cách CodePulse biết commit nào <strong>sửa</strong> bug
+      nào.
+    </>,
+    <code>
+      fix(export): căn đúng cột [CRM-415]
+      <br />
+      <br />
+      Fixes: CRM-415
+    </code>,
+  ],
+  [
+    "Liên quan nhiều issue",
+    <>
+      Dòng <code>Refs: KEY1, KEY2</code> (chỉ liên quan, không sửa). Sửa nhiều bug cùng lúc: <code>Fixes: KEY1, KEY2</code>.
+    </>,
+    <code>Refs: CRM-412, CRM-415</code>,
+  ],
+  [
+    "MR",
+    <>
+      Tiêu đề có mã; mô tả ghi <code>Closes KEY</code>. Squash merge: giữ tiêu đề MR làm message để mã còn trong commit trên nhánh chính.
+    </>,
+    <code>[CRM-415] Sửa lệch cột khi export</code>,
+  ],
 ];
 
 /** The Jira Data Center integration document (docs/specs/27); readable without signing in. */
@@ -175,23 +276,80 @@ export default function JiraGuidePage() {
           </section>
 
           <section id="link" className="card">
-            <h2>6. Nối issue với MR</h2>
-            <p>CodePulse tìm key Jira trong MR để biết MR làm issue nào (C3, truy vết lỗi production):</p>
+            <h2>6. Chuẩn nhánh, commit, MR</h2>
+            <p>
+              Mỗi dòng code đổi phải lần ra được issue Jira của nó, và mỗi bug phải lần ra được commit đã sửa nó. CodePulse đọc mã Jira (
+              <code>ABC-123</code>, viết hoa) ở tên nhánh, tiêu đề và mô tả MR, và trong <strong>message của từng commit</strong>.
+            </p>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Ở đâu</th>
+                    <th>Quy tắc</th>
+                    <th>Ví dụ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {STANDARD.map(([where, rule, example]) => (
+                    <tr key={where}>
+                      <td>
+                        <strong>{where}</strong>
+                      </td>
+                      <td>{rule}</td>
+                      <td>{example}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <h3 id="commit">CodePulse hiểu commit thế nào</h3>
             <ul>
               <li>
-                <strong>Tên nhánh</strong> có key: <code>feature/ABC-123-mo-ta</code>, <code>fix/ABC-456-loi-dang-nhap</code>.
+                <strong>Commit sửa</strong> issue khi message có dòng <code>Fixes:</code> / <code>Closes:</code> / <code>Resolves:</code> ghi mã đó, câu “fixes
+                CRM-415”, hoặc tiêu đề <code>fix(...)</code> / <code>hotfix(...)</code> ghi mã đó.
               </li>
               <li>
-                <strong>Tiêu đề MR</strong> có key: <code>ABC-123 Thêm bộ lọc theo ngày</code>.
-              </li>
-              <li>Key trong tiêu đề hoặc tên nhánh nghĩa là MR <strong>làm</strong> issue đó; key chỉ có trong mô tả chỉ là nhắc tới.</li>
-              <li>
-                Commit nên bắt đầu bằng key, ví dụ <code>ABC-123: thêm validate ngày</code> (quy ước để đọc lịch sử; CodePulse nối theo MR).
+                <strong>Liên quan</strong>: mã có ở chỗ khác trong message (kể cả dạng cũ <code>CRM-415: mô tả</code> và dòng <code>Refs:</code>).
               </li>
               <li>
-                Chỉ key của dự án Jira đã đăng ký mới được nối, nên chuỗi như <code>UTF-8</code> hay <code>SHA-256</code> không bị nhầm.
+                Không tính: merge commit (đã nối qua MR), commit <code>Revert</code> (chỉ liên quan), mã viết thường, mã của dự án Jira chưa đăng ký (
+                <code>UTF-8</code>, <code>SHA-256</code>).
               </li>
+              <li>
+                Kết quả: trang <Link href="/jira">Task Jira</Link> hiện commit và MR của từng issue, “Bug đã có bản sửa”, lọc “Bug chưa có bản sửa”, và tab{" "}
+                <strong>Chưa gắn issue</strong> liệt kê commit/MR thiếu mã cùng tỉ lệ commit trong kỳ có mã. Trang review của commit hiện issue nó sửa.
+              </li>
+              <li>Commit cũ (trước khi có chuẩn này) được đọc lại một lần sau khi nâng cấp; commit mới được nối khi đồng bộ GitLab.</li>
             </ul>
+
+            <h3 id="enforce">Bắt buộc theo chuẩn</h3>
+            <p>
+              <strong>1. Trên máy dev</strong>: hook <code>commit-msg</code> từ chối commit thiếu mã, và tự thêm mã từ tên nhánh khi có (chạy được với Git Bash trên
+              Windows).
+            </p>
+            <CopyBlock text={HOOK} label="Chép hook commit-msg" />
+            <CopyBlock text={HOOK_INSTALL} label="Chép lệnh cài hook" />
+            <p>
+              <strong>2. Trên GitLab CI</strong> (mọi bản GitLab): job chặn MR có commit thiếu mã. Thêm vào <code>.gitlab-ci.yml</code> và bật “Pipelines must
+              succeed” cho MR.
+            </p>
+            <CopyBlock text={CI} label="Chép job CI" />
+            <p>
+              <strong>3. GitLab Premium</strong>: Settings › Repository › Push rules, chặn ngay khi push:
+            </p>
+            <ul>
+              {PUSH_RULES.map(([what, regex]) => (
+                <li key={what}>
+                  {what}: <code>{regex}</code>
+                </li>
+              ))}
+            </ul>
+            <p className="muted small">
+              Nên áp dụng theo thứ tự: hook cho cả đội trước (tự thêm mã nên ít vướng), theo dõi tỉ lệ ở Task Jira › Chưa gắn issue, rồi mới bật job CI
+              bắt buộc.
+            </p>
           </section>
 
           <section id="prod" className="card">

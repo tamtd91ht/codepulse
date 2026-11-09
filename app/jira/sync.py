@@ -31,6 +31,7 @@ from app.config import Settings, get_settings
 from app.db import get_sessionmaker
 from app.identity.autolink import BOT_PATTERNS, is_bot
 from app.jira.client import JiraAuthError, JiraClient, JiraError
+from app.jira.commit_links import link_issue_commits
 from app.jira.links import link_issues
 from app.jira.mapping import FieldIds, JiraUser, map_issue, resolve_fields, search_fields
 from app.jira.scopes import recompute, route, rules_of
@@ -246,6 +247,7 @@ def sync_project(
         _defect(session, int(row["id"]), row["prod_severity"])
         written.append(int(row["id"]))
     link_issues(session, written)
+    link_issue_commits(session, written)
     if rules_of(session, project.id) != scopes:
         # The scopes were saved while this ran (§15): what was written with the old ones is
         # routed again, so nothing keeps a stale dự án until the next scope change.

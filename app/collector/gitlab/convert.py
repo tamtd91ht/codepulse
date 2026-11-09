@@ -22,6 +22,7 @@ from app.collector.gitlab.extract import (
     review_rounds,
 )
 from app.dpi.labels import label_fields
+from app.jira.commit_links import commit_keys, link_commits
 from app.jira.links import link_merge_requests
 from app.jira.settings import JIRA_ID_OFFSET
 from app.models import (
@@ -107,6 +108,8 @@ class Converter:
             "author_account_id": self.email_account(commit.author_email, commit.author_name),
             "authored_at": commit.authored_at,
             "message": commit.message,
+            # docs/specs/27 §19: the Jira keys of the message, for the links (commit_links.py).
+            "jira_keys": commit_keys(commit.message),
             "additions": additions,
             "deletions": deletions,
             "files_changed": files_changed,
@@ -262,6 +265,11 @@ class Converter:
         # docs/specs/27 §8: after the GitLab links of these MRs were re-derived (that step only
         # touches GitLab issues' links), link them to the Jira issues their keys name.
         counts["jira_links"] = link_merge_requests(self._session, converted_mrs)
+        # §19: and the commits written here (their own messages), to the issues they fix / name.
+        shas = set(data.commits) | {
+            c.sha for mr in data.merge_requests.values() for c in mr.commits
+        }
+        counts["jira_commit_links"] = link_commits(self._session, shas)
         self._session.flush()
         return result
 

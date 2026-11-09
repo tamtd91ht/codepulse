@@ -529,3 +529,46 @@ Mỗi thay đổi đều ghi audit.
   `total`, `kpis`), `GET /jira/tasks/{KEY}`, `GET /jira/tasks/unlinked-mrs`. Khoảng ngày tối đa
   400 ngày.
 - Ngoài phạm vi (ghi `IDEAS.md` nếu cần): nối tay issue ↔ MR, tạo/sửa ticket, sprint/board.
+
+## 19. Tiêu chuẩn liên kết Jira ↔ nhánh, commit, MR (2026-11-09)
+
+> **[Quyết định]** (user 2026-11-09: "làm sao để link được issue/bug Jira và commit fix nó; đưa ra
+> tiêu chuẩn chung") Mỗi thay đổi lần ra được issue; mỗi bug lần ra được commit đã sửa nó.
+
+- **Tiêu chuẩn** (Hướng dẫn › Tích hợp Jira › mục 6, `#link`, `#commit`, `#enforce`):
+
+  | Ở đâu | Quy tắc | Ví dụ |
+  |---|---|---|
+  | Issue | mọi việc có issue; lỗi là type Bug (production: label `production`) | `CRM-415` |
+  | Nhánh | `<loại>/<KEY>-<mô-tả>`; loại `feature`, `bugfix`, `hotfix`, `refactor`, `chore` | `bugfix/CRM-415-export-lech-cot` |
+  | Commit | Conventional Commits, mã ở cuối tiêu đề trong `[...]`; một commit một việc | `feat(contact): đồng bộ danh bạ [CRM-412]` |
+  | Commit sửa lỗi | loại `fix`/`hotfix` + dòng cuối `Fixes: KEY` | `fix(export): căn đúng cột [CRM-415]` / `Fixes: CRM-415` |
+  | Nhiều issue | `Refs: K1, K2` (liên quan), `Fixes: K1, K2` (sửa nhiều) | |
+  | MR | tiêu đề có mã, mô tả `Closes KEY`; squash giữ tiêu đề MR | `[CRM-415] Sửa lệch cột khi export` |
+
+  Dạng cũ `CRM-415: mô tả` vẫn được nhận (liên quan). *Lý do chọn mã cuối tiêu đề: giữ được
+  Conventional Commits (commitlint, changelog) mà mã vẫn thấy ngay trong `git log --oneline`;
+  `Fixes:` là git trailer chuẩn, tách ý "sửa" khỏi "nhắc tới".*
+- **CodePulse đọc commit** (`app/jira/commit_links.py`): `commits.jira_keys` (JSONB, GIN) và
+  `issue_commit_links(issue_id, sha, kind)` (migration `e7a9b1c3d5f7`). `kind`:
+  - `fixes`: dòng `Fixes:`/`Closes:`/`Resolves:` (mọi kiểu hoa thường, nhiều mã), câu "fixes KEY",
+    hoặc tiêu đề `fix(...)`/`hotfix(...)`/`bugfix(...)` ghi mã;
+  - `refs`: mã ở chỗ khác. Commit `Revert "…"` chỉ `refs`; merge commit không nối (đã qua MR); mã
+    viết thường và dự án Jira chưa đăng ký bỏ qua (như §8).
+  - Nối hai chiều: GitLab convert nối commit vừa ghi (`link_commits`, đọc lại từ message nên
+    message sửa/amend được nối lại); Jira sync nối issue vừa ghi với commit có mã
+    (`link_issue_commits`). Commit cũ: job một lần `backfill_once_job`
+    (`app_settings["jira_commit_keys_backfill_v1"]`), scheduler đưa vào hàng đợi lúc khởi động.
+- **Giao diện**: Task Jira (§18) thêm cột Code (MR đã merge/tổng, số commit, số commit sửa), KPI
+  "Bug đã có bản sửa" (commit `fixes` hoặc MR ghi mã ở tiêu đề/nhánh), lọc "Bug chưa có bản sửa",
+  drawer có mục Commit (commit sửa trước; link GitLab, tác giả, review riêng của commit nếu có); tab
+  **Chưa gắn issue** chọn MR | Commit, với tỉ lệ commit trong kỳ có mã và ghi chú "trong MR đã gắn
+  issue" / mã không khớp. Trang review của commit hiện dải Jira (Commit sửa / có nhắc tới).
+- **API**: `GET /jira/tasks` thêm `commit_count`, `fix_commits`, `kpis.bugs`, `kpis.bugs_fixed`,
+  `linked=bug_unfixed`; `GET /jira/tasks/{KEY}` thêm `commits`; mới `GET /jira/tasks/unlinked-commits`
+  (`items`, `total`, `commits_in_period`, `with_issue`); `GET /reviews/{id}` có `jira` cho review commit
+  (`target: "commit"`).
+- **Bắt buộc theo chuẩn** (Hướng dẫn có bản chép được): hook `commit-msg` (chặn thiếu mã, tự thêm mã
+  từ tên nhánh; chạy cả Git Bash Windows), job GitLab CI `jira-key` chặn MR có commit thiếu mã (mọi
+  bản GitLab), push rules cho GitLab Premium (regex commit message và tên nhánh). Thứ tự triển khai:
+  hook → theo dõi tỉ lệ ở Task Jira → bật CI bắt buộc.

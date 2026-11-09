@@ -46,10 +46,18 @@ def enqueue_jira_keys_backfill_job() -> None:
     from rq import Queue
 
     from app.db import get_redis
+    from app.jira import commit_links
     from app.jira.backfill import JOB_ID, JOB_TIMEOUT
 
-    Queue("default", connection=get_redis()).enqueue(
+    queue = Queue("default", connection=get_redis())
+    queue.enqueue(
         "app.jira.backfill.backfill_keys_once_job", job_id=JOB_ID, job_timeout=JOB_TIMEOUT
+    )
+    # §19: the keys and links of commits stored before commit links existed.
+    queue.enqueue(
+        "app.jira.commit_links.backfill_once_job",
+        job_id=commit_links.JOB_ID,
+        job_timeout=commit_links.JOB_TIMEOUT,
     )
 
 
