@@ -67,6 +67,8 @@ EDITABLE: dict[str, Editable] = {
     # Close requests one person may send in 24 hours (each may cost a check); a person's own
     # number (users.close_requests_per_day) wins over it.
     "close_requests_per_day": Editable("CLOSE_REQUESTS_PER_DAY", "int", 1, 1000),
+    # Reviews one person may ask for through MCP (Claude Code) in 24 hours (docs/specs/26 §22).
+    "mcp_reviews_per_day": Editable("MCP_REVIEWS_PER_DAY", "int", 1, 1000),
     # "Yêu cầu review": how many commits per repo the list fetches from GitLab at most.
     "review_commits_list_max": Editable("REVIEW_COMMITS_LIST_MAX", "int", 20, 2000),
     # A review failed because the LLM was down is reviewed again once it answers (probed every
@@ -98,6 +100,7 @@ def defaults(settings: Settings) -> dict[str, Value]:
         "auto_close_findings": settings.auto_close_findings,
         "auto_close_days": settings.auto_close_days,
         "close_requests_per_day": settings.close_requests_per_day,
+        "mcp_reviews_per_day": settings.mcp_reviews_per_day,
         "review_commits_list_max": settings.review_commits_list_max,
         "llm_auto_resume": settings.llm_auto_resume,
         "llm_probe_interval_min": settings.llm_probe_interval_min,

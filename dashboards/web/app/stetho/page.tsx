@@ -303,7 +303,7 @@ export default function StethoKnowledgePage() {
               <button onClick={() => files.current?.click()} disabled={busy !== null}>
                 <Icon name="download" size={14} /> {busy === "upload" ? "Đang nhập…" : "Tải file lên"}
               </button>
-              <span className="muted small">.md, .txt, .docx, .xlsx · tối đa {d?.max_file_mb ?? 10} MB mỗi file</span>
+              <span className="muted small">.md, .txt, .doc, .docx, .xlsx · tối đa {d?.max_file_mb ?? 10} MB mỗi file</span>
             </div>
             <form
               className="toolbar"

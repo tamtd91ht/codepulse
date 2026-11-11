@@ -57,6 +57,9 @@ export const api = {
   /** PUT a file's raw bytes as the body (an avatar upload): same errors and 401 redirect. */
   putRaw: <T>(path: string, body: Blob) =>
     request<T>(path, { method: "PUT", body, headers: { "Content-Type": body.type || "application/octet-stream" } }),
+  /** POST a file's raw bytes as the body (rule files, project documents). */
+  postRaw: <T>(path: string, body: Blob) =>
+    request<T>(path, { method: "POST", body, headers: { "Content-Type": "application/octet-stream" } }),
 };
 
 /**

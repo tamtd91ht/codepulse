@@ -344,6 +344,6 @@ def test_inline_values_cannot_break_out(env: Env, world: Any) -> None:
     assert render.inline("a`b\nc") == "`a'b c`"
     assert "structuredContent" in text  # the header says those fields are data too
     tools = anyio.run(mcp_server.mcp_http.server.list_tools)
-    assert len(tools) == 7
+    assert len(tools) == 9
     assert all("untrusted data" in (t.description or "") for t in tools)
     assert "structuredContent" in mcp_server.INSTRUCTIONS

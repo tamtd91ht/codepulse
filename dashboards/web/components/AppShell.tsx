@@ -101,6 +101,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         { href: "/reviews/request", label: "Yêu cầu review", icon: "review" },
         // Task Jira (docs/specs/27 §18): once Jira is connected.
         ...(me.jira_tasks ? [{ href: "/jira", label: "Task Jira", icon: "flag" } as Item] : []),
+        // Tài liệu dự án (docs/specs/29): everyone holding docs.view (every member by default).
+        ...(can(me, "docs.view") ? [{ href: "/docs", label: "Tài liệu dự án", icon: "file" } as Item] : []),
         { href: "/critical", label: "Critical Board", icon: "alert" },
         { href: "/closures", label: "Đóng finding", icon: "checkCircle" },
         { href: "/disputes", label: isLead ? "Duyệt khiếu nại" : "Khiếu nại", icon: "scale" },

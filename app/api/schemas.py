@@ -1050,6 +1050,7 @@ class ReviewSettingsIn(BaseModel):
     llm_auto_resume: Annotated[bool, Field(strict=True)] | None = None
     llm_probe_interval_min: Annotated[int, Field(strict=True)] | None = None
     close_requests_per_day: Annotated[int, Field(strict=True)] | None = None
+    mcp_reviews_per_day: Annotated[int, Field(strict=True)] | None = None
 
 
 class CloseQuotaOut(BaseModel):

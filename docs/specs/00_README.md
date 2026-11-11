@@ -32,6 +32,7 @@ Tự động thu thập commit/MR từ GitLab, cho AI review từng thay đổi,
 | 24 | `24_IN_APP_NOTIFICATIONS.md` | **Thông báo trong ứng dụng**: chuông, toast realtime (SSE), lịch sử | [ ] |
 | 25 | `25_DPI_SCORECARD.md` | **Đánh giá hiệu suất Developer hàng tháng (DPI)**: 70 tự động + 30 quản lý, quy trình tháng, báo cáo R1–R6 | [ ] |
 | 26 | `26_MCP_SERVER.md` | **MCP server cho Claude Code**: đọc finding critical/high theo người/commit/MR, gửi yêu cầu đóng sau khi sửa; token cá nhân | [ ] |
+| 29 | `29_PROJECT_DOCS.md` | **Tài liệu dự án**: tải nhiều file (Word/PDF/Markdown/Excel), hiển thị thống nhất có mục lục, tìm không dấu, phiên bản + so sánh + khôi phục, mẫu tài liệu, độ đầy đủ | [ ] |
 | 27 | `27_JIRA.md` | **Jira Data Center làm nguồn task cho DPI**: chỉ đọc, sync JQL, Story Points → độ phức tạp, nối issue ↔ MR theo key, chọn nguồn task gitlab/jira | [ ] |
 
 ## Cách dùng với AI agent

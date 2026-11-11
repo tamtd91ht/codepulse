@@ -20,6 +20,7 @@ type Days = (typeof DAYS)[number];
 const SCOPE_LABEL: Record<ApiTokenScope, { label: string; hint: string }> = {
   "findings:read": { label: "Đọc finding", hint: "Đọc finding critical/high và yêu cầu đóng của bạn" },
   "findings:close_request": { label: "Gửi yêu cầu đóng", hint: "Gửi và rút yêu cầu đóng finding (vẫn qua manager duyệt)" },
+  "reviews:request": { label: "Yêu cầu review", hint: "Yêu cầu review commit đã push và xem tiến độ (tốn lượt review)" },
 };
 
 const errorText = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
@@ -206,10 +207,11 @@ export function TokenList({
   );
 }
 
-/** Quick-create (omicx-ui): name, the close-request scope, how long it lives. */
+/** Quick-create (omicx-ui): name, the optional scopes (close requests, review requests), how long it lives. */
 function CreateTokenModal({ onClose, onCreated }: { onClose: () => void; onCreated: (t: ApiTokenCreated) => void }) {
   const [name, setName] = useState("");
   const [closeScope, setCloseScope] = useState(true);
+  const [reviewScope, setReviewScope] = useState(true);
   const [days, setDays] = useState<Days>(90);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -220,7 +222,9 @@ function CreateTokenModal({ onClose, onCreated }: { onClose: () => void; onCreat
     setBusy(true);
     setError(null);
     try {
-      const scopes: ApiTokenScope[] = closeScope ? ["findings:read", "findings:close_request"] : ["findings:read"];
+      const scopes: ApiTokenScope[] = ["findings:read"];
+      if (closeScope) scopes.push("findings:close_request");
+      if (reviewScope) scopes.push("reviews:request");
       onCreated(await api.post<ApiTokenCreated>("/me/tokens", { name: name.trim(), scopes, days }));
     } catch (e) {
       setError(
@@ -275,6 +279,13 @@ function CreateTokenModal({ onClose, onCreated }: { onClose: () => void; onCreat
           <span>
             Cho phép gửi yêu cầu đóng finding
             <span className="muted small"> Bỏ tick nếu token chỉ để đọc (CI, script). Đọc finding luôn được bật.</span>
+          </span>
+        </label>
+        <label className="inline-check token-scope">
+          <input type="checkbox" checked={reviewScope} onChange={(e) => setReviewScope(e.target.checked)} />
+          <span>
+            Cho phép yêu cầu review commit đã push
+            <span className="muted small"> Claude Code gọi review ngay sau khi push; mỗi review tốn một lượt, có giới hạn mỗi ngày.</span>
           </span>
         </label>
         <label className="adm-field">

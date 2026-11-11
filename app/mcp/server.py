@@ -54,13 +54,14 @@ from app.api.routers.closures import (
 )
 from app.api.security import Principal
 from app.collector.gitlab.client import GitLabClient, GitLabError
+from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.crypto import secret_box
 from app.db import get_redis, get_sessionmaker
 from app.jira.links import mr_issues
-from app.mcp import queries, render
-from app.mcp.tokens import SCOPE_CLOSE, SCOPE_READ, TokenError, authenticate
-from app.models import Connection, McpCall, MergeRequest, Review, ReviewFinding, User
+from app.mcp import queries, render, reviews
+from app.mcp.tokens import SCOPE_CLOSE, SCOPE_READ, SCOPE_REVIEW, TokenError, authenticate
+from app.models import Connection, McpCall, MergeRequest, Project, Review, ReviewFinding, User
 
 log = logging.getLogger("codepulse.mcp")
 
@@ -126,6 +127,12 @@ def _session() -> AbstractContextManager[Session]:
     return session
 
 
+def _queue() -> Enqueuer:
+    from app.api.deps import get_queue  # lazy: pulls in rq
+
+    return get_queue()
+
+
 @dataclass
 class McpDeps:
     """What the server reaches outside itself; tests swap these."""
@@ -134,6 +141,7 @@ class McpDeps:
     settings: Callable[[], Settings] = get_settings
     redis: Callable[[], RateStore] = get_redis
     gitlab: Callable[[Connection], GitLabClient] = _gitlab
+    queue: Callable[[], Enqueuer] = _queue
     clock: Callable[[], float] = field(default=time.time)
 
 
@@ -296,7 +304,7 @@ def _call(
             code, message = (
                 "forbidden",
                 f"token này không có scope {scope}: tạo token mới có tick "
-                "'Gửi yêu cầu đóng' ở trang Của tôi",
+                f"'{SCOPE_LABEL.get(scope, scope)}' ở trang Của tôi > Tích hợp MCP",
             )
         else:
             try:
@@ -321,6 +329,10 @@ def _call(
     extra.update(error=code, duration_ms=round((time.perf_counter() - started) * 1000, 1))
     log.info("mcp tool %s refused", tool, extra=extra)
     return _error(code, message), code
+
+
+# The token-creation checkbox of each optional scope (ApiTokens.tsx), named in refusals.
+SCOPE_LABEL = {SCOPE_CLOSE: "Gửi yêu cầu đóng", SCOPE_REVIEW: "Yêu cầu review"}
 
 
 def _local_llm(settings: Settings) -> bool:
@@ -676,6 +688,68 @@ def cancel_work(
     return markdown, data, f"finding:{closure.finding_id}"
 
 
+def request_review_work(
+    session: Session,
+    caller: Caller,
+    settings: Settings,
+    facts: CallFacts,
+    *,
+    repo: str,
+    commits: list[str],
+    again: bool = False,
+) -> tuple[str, dict[str, Any], str | None]:
+    """docs/specs/26 §22: arguments, then every refusal the database can give (permission,
+    repo, review switched on, the 24-hour MCP quota), then the transaction is ended before
+    GitLab is asked (every commit must be pushed), then the dashboard's own rules queue each
+    commit in a new transaction (the quota is counted again there)."""
+    shas = reviews.parse_shas(commits, settings.review_batch_max)
+    facts.commit_sha = shas[0]
+    now = reviews.now_utc()
+    project, connection = reviews.check_request(
+        session, caller.principal, settings, repo, len(shas), now
+    )
+    facts.project_id = project_id = project.id
+    gitlab = deps.gitlab(connection)
+    external_id, path = project.external_id, project.path_with_namespace
+    session.commit()  # no transaction open while GitLab answers
+    raws = reviews.fetch_pushed(gitlab, external_id, path, shas, GITLAB_DEADLINE_S)
+    facts.commit_sha = str(raws[0].get("id") or shas[0])
+    fresh = session.get(Project, project_id)
+    if fresh is None:
+        raise queries.McpError("not_found", "repo không còn tồn tại")
+    limit, used = reviews.reserve_quota(session, settings, caller.user_id, len(raws), now)
+    fresh = session.get(Project, project_id) or fresh
+    outcome = reviews.queue_reviews(
+        session, caller.principal, settings, fresh, raws, again=again, queue=deps.queue()
+    )
+    reviews.refund_quota(session, caller.user_id, len(raws), len(outcome.queued))
+    facts.result_count = len(outcome.queued)
+    req = reviews.Requested(project=fresh, outcome=outcome, limit=limit, used=used)
+    markdown, data = reviews.request_result(req, session, _base(session, settings))
+    return markdown, data, f"project:{project_id}"
+
+
+def review_status_work(
+    session: Session,
+    caller: Caller,
+    settings: Settings,
+    facts: CallFacts,
+    *,
+    review_ids: list[int] | None,
+    commits: list[str] | None,
+    repo: str | None,
+) -> tuple[str, dict[str, Any], str | None]:
+    found = reviews.find_reviews(session, caller.principal, review_ids, commits, repo)
+    facts.result_count = len(found)
+    facts.own_only = all(
+        r.author_user_id == caller.user_id or r.requested_by_user_id == caller.user_id
+        for r in found
+    )
+    facts.commit_sha = found[0].commit_sha
+    markdown, data = reviews.status_result(session, found, _base(session, settings))
+    return markdown, data, f"review:{found[0].id}"
+
+
 def _client_info(ctx: Context | None) -> str | None:
     """The MCP client's "name version" from `initialize` (e.g. "claude-code 2.1.0"), when this
     request carries it (a stateless handshake-era request does not: then nothing)."""
@@ -703,7 +777,9 @@ INSTRUCTIONS = (
     "nothing), unmet (the check found the fix not good enough, the decider decides), rejected "
     "(a person refused the request: fix further per its reason and request again), closed "
     "(fixed, accepted risk, not a bug, or refuted; `closing` says when and by whom: no fix and "
-    "no close request)."
+    "no close request). After the developer commits AND pushes new work, request_review asks "
+    "CodePulse to review those commits; poll get_review_status about once a minute until it is "
+    "done, then read the findings with get_commit_findings."
 )
 # Appended to every tool description (docs/specs/26 §7).
 UNTRUSTED = (
@@ -1065,6 +1141,78 @@ def build_server() -> MCPServer:
             lambda s, c, st, f: cancel_work(s, c, st, f, closure_id=id),
             client=_client_info(ctx),
             facts=CallFacts(closure_id=id),
+        )
+
+    @server.tool(
+        name="request_review",
+        annotations=WRITES,
+        description=(
+            "Ask CodePulse to review commits the developer already pushed to GitLab (each review "
+            "spends LLM budget; same rules as the web page 'Yêu cầu review'). Workflow: commit, "
+            "`git push`, then call this with `repo` (GitLab path group/name, its URL, or id: "
+            "read it from `git remote get-url origin`) and `commits` (SHAs or GitLab commit "
+            "links; usually the commits just pushed: `git log origin/<branch> -n <k> "
+            "--format=%H`). Every commit must already be on GitLab (else commit_not_pushed). "
+            "Merge commits, commits already reviewed or in the queue, and other people's "
+            "commits outside your permission are skipped with a reason. `again`: review a "
+            "finished commit once more as a new round (needs the re-run permission). A per-"
+            "person limit of reviews per 24 hours applies. The result has the review id of each "
+            "queued commit and its CodePulse link; the developer is notified on the web when it "
+            "finishes. Then call get_review_status(review_ids) about once a minute." + UNTRUSTED
+        ),
+    )
+    def request_review(
+        repo: Annotated[
+            str, Field(description="Repo: đường dẫn GitLab (group/name), link repo, hoặc id.")
+        ],
+        commits: Annotated[
+            list[str],
+            Field(description="SHA (≥7 ký tự) hoặc link commit đã push lên GitLab."),
+        ],
+        again: Annotated[
+            bool,
+            Field(description="Review lại commit đã có review xong (round mới, tốn thêm lượt)."),
+        ] = False,
+        ctx: Context | None = None,
+    ) -> CallToolResult:
+        return run_tool(
+            "request_review",
+            SCOPE_REVIEW,
+            lambda s, c, st, f: request_review_work(
+                s, c, st, f, repo=repo, commits=commits, again=again
+            ),
+            client=_client_info(ctx),
+        )
+
+    @server.tool(
+        name="get_review_status",
+        annotations=READ_ONLY,
+        description=(
+            "Where reviews stand: queued, running, done, failed or skipped, with, once done, "
+            "the score, the merge verdict, the number of findings by severity and how many "
+            "critical/high are still open, plus the CodePulse link. Give `review_ids` (from "
+            "request_review) or `commits` (SHAs, latest round of each; `repo` when a short SHA "
+            "may match several repos). Call again about once a minute while any is not "
+            "finished; when done, get_commit_findings(sha) returns the findings to fix." + UNTRUSTED
+        ),
+    )
+    def get_review_status(
+        review_ids: Annotated[
+            list[int] | None, Field(description="Id review (≤20), từ kết quả request_review.")
+        ] = None,
+        commits: Annotated[
+            list[str] | None, Field(description="Hoặc SHA / link commit (≤20).")
+        ] = None,
+        repo: RepoArg = None,
+        ctx: Context | None = None,
+    ) -> CallToolResult:
+        return run_tool(
+            "get_review_status",
+            SCOPE_READ,
+            lambda s, c, st, f: review_status_work(
+                s, c, st, f, review_ids=review_ids, commits=commits, repo=repo
+            ),
+            client=_client_info(ctx),
         )
 
     return server

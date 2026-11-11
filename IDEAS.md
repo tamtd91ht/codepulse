@@ -11,3 +11,8 @@
 - DPI (spec 25): nhận GitLab Code Quality report (CodeClimate JSON) / SonarQube cho R3 và complexity delta của B4; adapter Jira cho nguồn task; blame mức dòng cho rework 21 ngày (hiện tính mức file).
 
 - Jira (spec 27): webhook Jira thay polling, tạo ticket Jira từ finding, đồng bộ hai chiều (CodePulse ghi lên Jira); hiện chỉ đọc theo JQL.
+
+- Review qua MCP (spec 26 §22): yêu cầu review MR (`request_review` theo `iid`), tự gọi khi push qua git hook `post-push` (không có sẵn trong git; cần wrapper).
+- Tệp quy tắc (spec 17 §1b): tệp quy tắc riêng từng repo (hiện chỉ cấp dự án; repo có file quy tắc trong repo).
+- Tài liệu dự án (spec 29 §10): ảnh trong Word/PDF, Mermaid, tô màu code; Stetho đọc tài liệu dự án theo quyền dự án; bình luận và chủ sở hữu tài liệu, nhắc cập nhật tài liệu cũ; đồng bộ Confluence/Drive/`docs/` của repo; OCR PDF scan.
+- Tài liệu dự án: khôi phục một phiên bản tải file lên hiện chép lại file gốc (≤ 20 MB) vào phiên bản mới; nên trỏ về file của phiên bản cũ thay vì chép (review 2026-11-11).

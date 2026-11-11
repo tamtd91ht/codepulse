@@ -46,9 +46,11 @@ from app.api.routers import (
     notifications,
     overview,
     permissions,
+    project_docs,
     purge,
     review_reports,
     reviews,
+    rule_files,
     settings,
     stetho_history,
     team_report,
@@ -129,6 +131,8 @@ for api_router in (
     jira_tasks.router,
     tokens.router,
     mcp_report.router,
+    rule_files.router,
+    project_docs.router,
 ):
     app.include_router(api_router, prefix="/api/v1")
 # docs/specs/11: CORS for the dashboard origin only; cookies need credentials.

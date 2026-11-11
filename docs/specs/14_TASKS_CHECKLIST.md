@@ -101,3 +101,12 @@
 - [x] 9.10b Hồ sơ: MR chạm module một người nắm, commit thẳng lên nhánh chính, cảnh báo account chưa gắn người (20 §6.2)
 - [x] 9.12 Lấp dữ liệu Insights cho repo đã sync trước Phase 9 (tự chạy một lần, nút admin, CLI; RUNBOOK §16)
 - [x] 9.11 Bản nháp AI cho hồ sơ (20 §6.4; thay 6.3)
+
+## Phase 10 – Review qua MCP, tệp quy tắc, tài liệu dự án – người dùng yêu cầu 2026-11-11
+- [x] 10.1 MCP `request_review` + `get_review_status`, scope `reviews:request`, giới hạn `mcp_reviews_per_day`, trigger `mcp` vào hàng ưu tiên; tách `queue_commit` dùng chung với trang Yêu cầu review (26 §22)
+- [x] 10.2 Hướng dẫn › Tích hợp MCP mục 8 + lệnh `/review-push`; ô tick token; cấu hình hạn mức trong Admin › Cấu hình review (26 §22.5)
+- [x] 10.3 Tệp quy tắc dự án: bảng `review_rule_files`, nhập .md/.txt/.doc/.docx nhiều file, đưa vào prompt như nguồn riêng; đọc .doc bằng thư viện chuẩn (17 §1b)
+- [x] 10.4 Tài liệu dự án: model + migration + quyền `docs.view`/`docs.edit`, chuyển đổi 7 loại file (thêm .pdf bằng pypdf), phiên bản, tìm toàn văn không dấu, mẫu (29 §3–§9)
+- [x] 10.5 Màn `/docs`: cổng 3 cột, tải nhiều file, trình soạn song song, lịch sử + so sánh + khôi phục, xem PDF gốc, độ đầy đủ, in (29 §5–§6)
+- [ ] **Demo**: push 2 commit → `/review-push` trong Claude Code → thông báo review xong trên web; nhập 3 file quy tắc vào một dự án → review sau ghi "Tệp quy tắc …" trong Căn cứ review; tải 1 Word + 1 PDF vào Tài liệu dự án, tìm không dấu, sửa và khôi phục phiên bản
+

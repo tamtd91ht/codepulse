@@ -3,7 +3,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { GuideNav } from "@/components/GuideNav";
-import { FixFindingsFile, McpAddScoped, McpJsonSample, McpUrl } from "@/components/McpConnect";
+import { FixFindingsFile, McpAddScoped, McpJsonSample, McpUrl, ReviewPushFile } from "@/components/McpConnect";
 
 export const metadata: Metadata = { title: "Tích hợp MCP" };
 
@@ -15,6 +15,7 @@ const SECTIONS = [
   { id: "daily", label: "Dùng hằng ngày" },
   { id: "tools", label: "Tham chiếu tool" },
   { id: "closure", label: "Gửi yêu cầu đóng" },
+  { id: "review", label: "Yêu cầu review sau khi push" },
   { id: "command", label: "Lệnh /fix-findings" },
   { id: "errors", label: "Mã lỗi và cách xử lý" },
   { id: "limits", label: "Giới hạn" },
@@ -53,11 +54,13 @@ function Params({ rows }: { rows: Param[] }) {
   );
 }
 
-function Tool({ name, scope, children }: { name: string; scope: "đọc" | "ghi"; children: ReactNode }) {
+const SCOPE_TEXT = { đọc: "chỉ đọc", ghi: "cần quyền gửi yêu cầu đóng", review: "cần quyền yêu cầu review" } as const;
+
+function Tool({ name, scope, children }: { name: string; scope: keyof typeof SCOPE_TEXT; children: ReactNode }) {
   return (
     <div className="mcp-tool" id={`tool-${name}`}>
       <h3>
-        <code>{name}</code> <span className={`mcp-scope${scope === "ghi" ? " write" : ""}`}>{scope === "ghi" ? "cần quyền gửi yêu cầu đóng" : "chỉ đọc"}</span>
+        <code>{name}</code> <span className={`mcp-scope${scope === "đọc" ? "" : " write"}`}>{SCOPE_TEXT[scope]}</span>
       </h3>
       {children}
     </div>
@@ -73,10 +76,12 @@ const ERRORS: [code: string, meaning: string, fix: ReactNode][] = [
   ["ambiguous_sha", "SHA rút gọn trùng ở nhiều repo.", <>Thêm tham số <code>repo</code> hoặc dùng SHA dài hơn.</>],
   ["ambiguous_repo", "Số repo vừa là id trong CodePulse của một repo vừa là id GitLab của repo khác.", <>Dùng đường dẫn GitLab, ví dụ <code>shop/backend</code>.</>],
   ["invalid_argument", "Tham số sai: thiếu note hoặc files_changed khi có commit, note/argument quá ngắn hoặc quá dài, chuỗi không phải mã commit (tên nhánh/tag), argument có vẻ chứa secret…", "Đọc thông báo tiếng Việt đi kèm, sửa đúng tham số đó rồi gọi lại."],
-  ["commit_not_pushed", "Commit chưa có trên GitLab trong đúng repo của finding.", <>Chạy <code>git push</code> (đúng remote của repo đó) rồi gọi lại <code>request_closure</code>.</>],
+  ["commit_not_pushed", "Commit chưa có trên GitLab trong đúng repo (của finding, hoặc repo truyền cho request_review).", <>Chạy <code>git push</code> (đúng remote của repo đó) rồi gọi lại <code>request_closure</code> / <code>request_review</code>.</>],
+  ["review_disabled", "Repo đang tắt review (Admin → Repo).", "Nhờ admin bật review cho repo, hoặc chờ webhook review tự động khi repo bật lại."],
+  ["repo_not_tracked", "Repo có trong CodePulse nhưng chưa được theo dõi.", "Nhờ admin bật theo dõi repo ở Admin → Dự án & repo."],
   ["gitlab_unavailable", "GitLab không trả lời kịp (quá khoảng 20 giây) hoặc lỗi.", "Thử lại sau ít phút; không cần sửa gì ở phía bạn."],
   ["conflict", "Finding không còn mở, hoặc đã có một yêu cầu đóng đang chờ; yêu cầu cần rút không còn ở trạng thái chờ.", <>Xem <code>list_close_requests</code> hoặc trang review để biết trạng thái hiện tại.</>],
-  ["limit_reached", "Đã gửi đủ số yêu cầu đóng được phép trong 24 giờ (admin đặt mức mặc định và chỉnh được theo người; tính chung web và Claude Code).", "Đợi sang ngày; ưu tiên gửi những finding đã sửa chắc chắn."],
+  ["limit_reached", "Đã gửi đủ số yêu cầu đóng được phép trong 24 giờ (admin đặt mức mặc định và chỉnh được theo người; tính chung web và Claude Code), hoặc đủ số review yêu cầu qua MCP trong 24 giờ.", "Đợi lượt cũ ra khỏi cửa sổ 24 giờ; ưu tiên gửi những finding đã sửa chắc chắn và chỉ review commit thật sự cần."],
   ["rate_limited", "Gọi quá nhanh: hơn 60 lần mỗi phút với một token, hoặc 120 lần mỗi phút trên mọi token của bạn.", <>Đợi số giây trong <code>retry_after_s</code>; đừng để Claude Code gọi tool lặp vô hạn.</>],
   ["internal_error", "Lỗi phía CodePulse.", "Thử lại; nếu lặp lại, báo admin kèm thời điểm (admin xem trong Nhật ký gọi)."],
 ];
@@ -122,9 +127,10 @@ export default function McpGuidePage() {
             <h2>1. Tổng quan</h2>
             <p>
               CodePulse chạy một <strong>máy chủ MCP</strong> (Model Context Protocol) ở địa chỉ <code>/mcp</code>. Claude Code
-              trên máy bạn kết nối tới đó bằng <strong>token cá nhân</strong> và có thêm 7 tool để làm việc với finding{" "}
+              trên máy bạn kết nối tới đó bằng <strong>token cá nhân</strong> và có thêm 9 tool để làm việc với finding{" "}
               <span className="sev critical">critical</span> <span className="sev high">high</span>: đọc danh sách, đọc chi
-              tiết theo commit/MR/finding, gửi, theo dõi và rút yêu cầu đóng. Không cần cài thêm gói nào.
+              tiết theo commit/MR/finding, gửi, theo dõi và rút yêu cầu đóng, và <strong>yêu cầu review commit vừa push</strong>{" "}
+              rồi theo dõi đến khi có kết quả. Không cần cài thêm gói nào.
             </p>
             <ol className="mcp-flow">
               <li>
@@ -141,6 +147,12 @@ export default function McpGuidePage() {
               <li>
                 <strong>Gửi yêu cầu đóng</strong>: Claude gọi <code>request_closure</code> kèm commit, ghi chú, file đã sửa và
                 kết quả test.
+              </li>
+              <li>
+                <strong>Review code mới</strong>: viết tính năng mới xong, push lên GitLab, Claude gọi{" "}
+                <code>request_review</code> để CodePulse review ngay các commit đó; kết quả hiện trên web (và chuông thông
+                báo), Claude theo dõi bằng <code>get_review_status</code> rồi đọc finding để sửa luôn. Xem{" "}
+                <a href="#review">mục 8</a>.
               </li>
               <li>
                 <strong>Duyệt</strong>: lead, manager hoặc admin duyệt ở trang <Link href="/closures">Đóng finding</Link>, đúng
@@ -191,6 +203,10 @@ export default function McpGuidePage() {
               <li>
                 <strong>Cho phép gửi yêu cầu đóng finding</strong> bật sẵn. Bỏ tick nếu token chỉ để đọc (script, CI): token đó
                 gọi <code>request_closure</code> và <code>cancel_close_request</code> sẽ bị từ chối.
+              </li>
+              <li>
+                <strong>Cho phép yêu cầu review commit đã push</strong> bật sẵn: cho <code>request_review</code>. Token tạo trước
+                ngày 11/11/2026 không có quyền này: tạo token mới nếu muốn dùng.
               </li>
               <li>
                 Token có dạng <code>cpat_…</code> và <strong>chỉ hiện một lần</strong>. Chép ngay, hoặc chép luôn lệnh{" "}
@@ -259,7 +275,7 @@ export default function McpGuidePage() {
                 Chạy <code>claude mcp list</code>: dòng <code>codepulse</code> báo đã kết nối.
               </li>
               <li>
-                Trong Claude Code gõ <code>/mcp</code>: thấy <code>codepulse</code> với 7 tool.
+                Trong Claude Code gõ <code>/mcp</code>: thấy <code>codepulse</code> với 9 tool.
               </li>
               <li>
                 Thử hỏi: “liệt kê finding critical/high còn mở của tôi trên CodePulse”. Claude gọi <code>list_findings</code>.
@@ -281,6 +297,8 @@ export default function McpGuidePage() {
               <li>“Các finding của MR !42 ở repo shop/backend.”</li>
               <li>“Đã push rồi, gửi yêu cầu đóng finding 1234 kèm commit vừa rồi và kết quả test.”</li>
               <li>“Yêu cầu đóng của tôi đang ở trạng thái nào? Cái nào bị từ chối, vì sao?”</li>
+              <li>“Push xong rồi, nhờ CodePulse review 3 commit vừa đẩy lên và báo kết quả.”</li>
+              <li>“Review của commit a1b2c3d xong chưa? Có lỗi high nào thì sửa luôn.”</li>
             </ul>
             <p>
               Muốn làm trọn luồng có các bước hỏi xác nhận sẵn, dùng lệnh <a href="#command">/fix-findings</a>.
@@ -377,6 +395,34 @@ export default function McpGuidePage() {
               />
             </Tool>
 
+            <Tool name="request_review" scope="review">
+              <p>
+                Yêu cầu CodePulse review các commit <strong>đã push</strong> lên GitLab, cùng luật với trang{" "}
+                <Link href="/reviews/request">Yêu cầu review</Link>. Xem <a href="#review">mục 8</a>.
+              </p>
+              <Params
+                rows={[
+                  ["repo", "chuỗi", <>Đường dẫn GitLab (<code>group/name</code>), link repo hoặc id. Claude đọc từ <code>git remote get-url origin</code>.</>],
+                  ["commits", "1–N SHA/link", "Commit cần review (N = số commit tối đa một lần của trang Yêu cầu review, mặc định 50)."],
+                  ["again", "true/false", "Review lại commit đã có review xong thành round mới (cần quyền chạy lại review). Mặc định false."],
+                ]}
+              />
+            </Tool>
+
+            <Tool name="get_review_status" scope="đọc">
+              <p>
+                Trạng thái các review: trong hàng đợi, đang review, đã xong (điểm, kết luận merge, số finding theo mức, số
+                critical/high còn mở), lỗi hoặc bỏ qua (kèm lý do), và link trang review.
+              </p>
+              <Params
+                rows={[
+                  ["review_ids", "≤ 20 số", <>Id review có trong kết quả <code>request_review</code>.</>],
+                  ["commits", "≤ 20 SHA/link", "Hoặc theo commit: lấy round mới nhất của mỗi commit."],
+                  ["repo", "chuỗi, tuỳ chọn", "Khi SHA rút gọn có thể trùng nhiều repo."],
+                ]}
+              />
+            </Tool>
+
             <Tool name="list_close_requests" scope="đọc">
               <p>Các yêu cầu đóng của bạn, mới trước: trạng thái, lý do của bước kiểm, ghi chú của người duyệt, link.</p>
               <Params
@@ -445,8 +491,62 @@ export default function McpGuidePage() {
             </p>
           </section>
 
+          <section id="review" className="card">
+            <h2>8. Yêu cầu review sau khi push</h2>
+            <p>
+              Không cần chờ webhook hay mở trang web: code xong, commit và push, rồi nói với Claude Code “nhờ CodePulse review
+              các commit vừa push”. Luồng:
+            </p>
+            <ol className="mcp-flow">
+              <li>
+                <strong>Push</strong>: <code>git push</code> lên GitLab. Claude lấy danh sách commit vừa đẩy (ví dụ{" "}
+                <code>git log origin/&lt;nhánh&gt; -n 3 --format=%H</code>) và repo từ <code>git remote get-url origin</code>.
+              </li>
+              <li>
+                <strong>Gửi yêu cầu</strong>: <code>request_review(repo, commits)</code>. CodePulse kiểm tra rồi xếp hàng; kết
+                quả có id review và link trang review của từng commit.
+              </li>
+              <li>
+                <strong>Theo dõi</strong>: Claude gọi <code>get_review_status(review_ids)</code> khoảng mỗi phút. Review của
+                người yêu cầu được ưu tiên trong hàng đợi.
+              </li>
+              <li>
+                <strong>Nhận kết quả</strong>: trên web, chuông thông báo “Review xong: …” (bạn là người yêu cầu và tác giả) mở
+                thẳng trang review; trong Claude Code, khi trạng thái là <em>Đã xong</em>, Claude gọi{" "}
+                <code>get_commit_findings</code> để đọc finding và đề xuất sửa.
+              </li>
+            </ol>
+            <p>CodePulse kiểm tra (validate) trước khi nhận, theo đúng thứ tự:</p>
+            <ul>
+              <li>Token có quyền <em>Yêu cầu review</em>; tài khoản có quyền <code>review.request</code>.</li>
+              <li>Repo nằm trong dự án bạn xem được, đang được theo dõi, đang bật review và có kết nối GitLab.</li>
+              <li>Chưa vượt giới hạn review qua MCP mỗi người trong 24 giờ (Admin → Cấu hình review, mặc định 30).</li>
+              <li>
+                Mỗi commit <strong>đã có trên GitLab</strong> ở đúng repo đó (tên nhánh/tag giống SHA không được nhận); chưa push
+                thì lỗi <code>commit_not_pushed</code> và không commit nào được xếp hàng.
+              </li>
+              <li>
+                Từng commit như trang Yêu cầu review: bỏ qua merge commit, commit của người ngoài quyền review của bạn, commit đã
+                có review (hoặc đang trong hàng đợi) — kèm id review cũ để xem kết quả. Muốn review lại: <code>again=true</code>{" "}
+                (cần quyền chạy lại).
+              </li>
+            </ul>
+            <p className="muted small">
+              Review tạo theo cách này có nguồn “Claude Code (MCP)” trên trang review, được tính điểm như mọi review khác. Mỗi
+              commit là một lượt review tốn ngân sách LLM: đừng để Claude gọi lặp lại cùng commit.
+            </p>
+            <h3>Lệnh /review-push</h3>
+            <p>
+              Slash command mẫu làm trọn luồng trên: kiểm tra đã push chưa (chưa thì hỏi bạn trước khi push) → chọn commit →{" "}
+              <code>request_review</code> → theo dõi đến khi xong → tóm tắt kết quả và hỏi có sửa finding critical/high luôn
+              không. Gõ <code>/review-push</code> (commit của bạn chưa review trên nhánh hiện tại) hoặc{" "}
+              <code>/review-push 3</code>, <code>/review-push a1b2c3d e4f5a6b</code>.
+            </p>
+            <ReviewPushFile />
+          </section>
+
           <section id="command" className="card">
-            <h2>8. Lệnh /fix-findings</h2>
+            <h2>9. Lệnh /fix-findings</h2>
             <p>
               Slash command mẫu làm trọn luồng: lấy finding (top, theo SHA, theo id hoặc theo MR) → chọn → đọc code hiện tại và{" "}
               <code>git diff</code> → sửa → chạy test → <strong>hỏi bạn trước khi commit và push</strong> → gửi{" "}
@@ -461,7 +561,7 @@ export default function McpGuidePage() {
           </section>
 
           <section id="errors" className="card">
-            <h2>9. Mã lỗi và cách xử lý</h2>
+            <h2>10. Mã lỗi và cách xử lý</h2>
             <p>
               Lỗi của tool có dạng <code>mã: thông báo tiếng Việt</code>; thông báo nói rõ cách sửa. Lỗi kết nối (401, 403) xảy
               ra trước khi gọi tool.
@@ -491,7 +591,7 @@ export default function McpGuidePage() {
           </section>
 
           <section id="limits" className="card">
-            <h2>10. Giới hạn</h2>
+            <h2>11. Giới hạn</h2>
             <div className="table-wrap">
               <table>
                 <tbody>
@@ -527,7 +627,7 @@ export default function McpGuidePage() {
           </section>
 
           <section id="security" className="card">
-            <h2>11. Bảo mật và dữ liệu</h2>
+            <h2>12. Bảo mật và dữ liệu</h2>
             <ul>
               <li>
                 <strong>Token</strong>: CodePulse chỉ lưu bản băm (SHA-256), không lưu token. Token chỉ dùng được ở{" "}
@@ -552,7 +652,7 @@ export default function McpGuidePage() {
           </section>
 
           <section id="report" className="card">
-            <h2>12. Log và báo cáo</h2>
+            <h2>13. Log và báo cáo</h2>
             <p>
               Mỗi lần gọi tool được ghi (thời điểm, người, token, tool, repo/finding/commit liên quan, thành công hay mã lỗi, thời
               gian xử lý), <strong>không</strong> ghi nội dung trả về, ghi chú hay token; giữ 180 ngày.
@@ -577,7 +677,7 @@ export default function McpGuidePage() {
           </section>
 
           <section id="admin" className="card">
-            <h2>13. Dành cho admin</h2>
+            <h2>14. Dành cho admin</h2>
             <ul>
               <li>
                 <strong>Triển khai</strong>: bản cài cần dependency <code>mcp</code> (Python) và chạy{" "}
@@ -606,7 +706,7 @@ export default function McpGuidePage() {
           </section>
 
           <section id="faq" className="card">
-            <h2>14. Câu hỏi thường gặp</h2>
+            <h2>15. Câu hỏi thường gặp</h2>
             <h3>Claude Code có tự đóng finding không?</h3>
             <p>Không. Nó chỉ gửi yêu cầu; người duyệt quyết định, giống yêu cầu gửi trên web.</p>
             <h3>Vì sao không thấy finding medium/low?</h3>

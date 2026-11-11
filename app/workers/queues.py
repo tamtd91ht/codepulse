@@ -26,7 +26,7 @@ REVIEW_QUEUE = "reviews"
 ASKED_REVIEW_QUEUE = "reviews_asked"
 # Review triggers of a member's own request: their reviews go to ASKED_REVIEW_QUEUE ("dashboard"
 # is the scanning "Yêu cầu review" page: not one of them).
-ASKED_TRIGGERS = frozenset({"telegram", "rerun"})
+ASKED_TRIGGERS = frozenset({"telegram", "rerun", "mcp"})
 
 
 def review_queue(queue: Enqueuer, *, asked: bool = False) -> Enqueuer:

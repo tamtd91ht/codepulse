@@ -243,3 +243,40 @@ Mỗi dòng một thành viên (trong phạm vi + bộ lọc), có dòng tổng:
 - `create_close_request` khoá dòng `users` của người gửi (`SELECT … FOR UPDATE`) trước khi đếm, nên các yêu
   cầu gửi cùng lúc (nhiều finding, agent gửi liên tiếp) không cùng lọt qua giới hạn.
 
+
+## 22. Yêu cầu review qua MCP sau khi push
+
+> Bổ sung theo yêu cầu người dùng (2026-11-11): "user code xong, commit và push lên gitlab thì cho phép gọi qua mcp để yêu cầu review luôn, mcp nhận yêu cầu, validate và tiến hành review và gửi kết quả ngược lại cho user trên web". Người dùng giao agent tự quyết; các mục **[Quyết định]** dưới đây.
+
+Luồng: dev code xong → commit + push lên GitLab → Claude Code gọi `request_review(repo, commits)` → CodePulse kiểm tra rồi xếp hàng review (hàng ưu tiên) → khi xong: người yêu cầu (và tác giả) nhận thông báo trong ứng dụng "Review xong: …" mở thẳng trang review (spec 24); Claude theo dõi bằng `get_review_status` rồi đọc finding bằng `get_commit_findings` để sửa.
+
+### 22.1 Scope token **[Quyết định]**
+- Scope mới `reviews:request` ("Yêu cầu review"), ô tick khi tạo token, **mặc định bật**. Token tạo trước 2026-11-11 không có scope này (gọi bị `forbidden` kèm hướng dẫn tạo token mới) — không tự nâng quyền token cũ.
+
+### 22.2 `request_review` (scope `reviews:request`)
+Tham số: `repo` (đường dẫn GitLab, link repo hoặc id, như `resolve_repo` §3), `commits` (1..`REVIEW_BATCH_MAX` SHA ≥7 ký tự hoặc link commit; trùng thì bỏ), `again` (mặc định false).
+
+Kiểm tra theo thứ tự (**[Quyết định]** giống §8: mọi từ chối chỉ cần DB trước, không giữ transaction khi chờ GitLab):
+1. Tham số (SHA/link hợp lệ, số lượng).
+2. Quyền `review.request` của chủ token; repo trong dự án xem được, đang được theo dõi (`repo_not_tracked`), đang bật review (`review_disabled`), có kết nối GitLab.
+3. Giới hạn **review qua MCP mỗi người trong 24 giờ** (cửa sổ trượt, đếm review `trigger = mcp` do người đó yêu cầu): Admin › Cấu hình review, khoá `mcp_reviews_per_day` (biến `MCP_REVIEWS_PER_DAY`, mặc định **30**, 1–1000) — **[Quyết định]** mỗi review tốn ngân sách LLM, chặn agent gọi dồn. Vượt → `limit_reached` (ghi đã dùng/giới hạn). Kiểm lại trong transaction ghi, khoá dòng `users` của người gọi (`FOR UPDATE`) để các yêu cầu đồng thời không cùng lọt.
+4. Kết thúc transaction → hỏi GitLab từng commit (retry + timeout + tổng ≤ 20 giây): chưa có → `commit_not_pushed` (không commit nào được xếp hàng); GitLab hiểu chuỗi thành nhánh/tag khác → `invalid_argument`; GitLab lỗi → `gitlab_unavailable`.
+5. Từng commit đi qua **đúng hàm của trang "Yêu cầu review"** (`app/api/routers/commits.queue_commit`, tách ra dùng chung, không nhân bản luật): bỏ merge commit; commit ngoài quyền review của người gọi (`may_request_review`) → bỏ qua "không thuộc quyền review của bạn"; đã có review `queued/running/done/skipped` → bỏ qua kèm **id review cũ** (Claude dùng luôn kết quả đó); `again=true` với review `done` → round mới (cần `review.rerun`, như web).
+
+Review được tạo ngay ở trạng thái `queued` (`trigger = "mcp"`, `requested_by_user_id` = chủ token) nên trang web hiện "trong hàng đợi" ngay; job vào hàng `reviews_asked` (**[Quyết định]** người đang chờ, như Telegram và Chạy lại) và được coi là yêu cầu của member khi LLM đang hồi phục (spec 06).
+
+Kết quả: `queued[]` (`sha`, `review_id`, `again`, `link`), `skipped[]` (`sha`, `reason`, `review_id?`, `status?`, `link?`), `quota {limit, used}`, `next {tool: get_review_status, review_ids}`; Markdown hướng dẫn Claude chờ ~1 phút giữa các lần hỏi.
+
+### 22.3 `get_review_status` (scope `findings:read`)
+Tham số: `review_ids` (≤ 20) hoặc `commits` (≤ 20, lấy round mới nhất của mỗi commit, `repo` khi SHA rút gọn có thể trùng). Mỗi review phải xem được bằng đúng kiểm tra của trang review. Trả: `status` + nhãn (Trong hàng đợi, Đang review, Đã xong, Lỗi, Bỏ qua, Đã có round mới), `finished`, thời điểm yêu cầu/bắt đầu/xong, khi xong: điểm, verdict + nhãn, số finding theo mức, số critical/high còn mở; lỗi/bỏ qua: lý do (qua `redact`); link. `pending[]` = các review chưa xong. Đọc chỉ việc của mình (tác giả hoặc người yêu cầu) không ghi audit (như §9).
+
+### 22.4 Gửi kết quả về web
+- Không cần kênh mới: `review_finished` (spec 24) đã báo người yêu cầu và tác giả khi review `done`/`failed`/`skipped`. Trang review hiện nguồn **"Claude Code (MCP)"** (`TRIGGER_LABEL.mcp`).
+- `mcp_calls` ghi `request_review` (project, commit đầu, số commit đã xếp hàng) và `get_review_status`; audit `mcp.request_review`.
+
+### 22.5 Tài liệu và lệnh mẫu
+- Hướng dẫn › Tích hợp MCP: mục 8 "Yêu cầu review sau khi push" (luồng, các bước kiểm tra, mã lỗi `review_disabled`, `repo_not_tracked`, `limit_reached`), tham chiếu 2 tool mới, 9 tool.
+- Slash command mẫu `dashboards/web/public/downloads/review-push.md` (`/review-push [k | sha…]`): kiểm đã push (chưa thì **hỏi** trước khi push) → chọn commit → `request_review` → theo dõi ≤ 15 lần, mỗi lần cách 60 giây → tóm tắt → hỏi có sửa critical/high luôn không (luồng `/fix-findings`).
+
+### 22.6 Kiểm thử
+`tests/mcp/test_review_tools.py`: xếp hàng đúng trigger/người/hàng ưu tiên/job id, bỏ merge, gọi lại trỏ về review cũ; commit chưa push không xếp hàng gì; tên nhánh giống SHA bị từ chối; token cũ thiếu scope; tham số sai; commit của người khác bị bỏ qua; repo tắt review; giới hạn 24 giờ; trạng thái theo id và theo commit, người ngoài không xem được.

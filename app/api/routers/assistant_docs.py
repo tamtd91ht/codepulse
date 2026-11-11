@@ -215,7 +215,7 @@ async def upload_doc(
     audience: Audience = "all",
     title: Annotated[str | None, Query(max_length=200)] = None,
 ) -> dict[str, Any]:
-    """A file as the request body (raw bytes): .md, .txt, .docx or .xlsx. Its text is kept,
+    """A file as the request body (raw bytes): .md, .txt, .doc, .docx or .xlsx. Its text is kept,
     not the file."""
     name = unquote(filename).replace("\\", "/").rsplit("/", 1)[-1]
     if not name.lower().endswith(importers.FILE_KINDS):

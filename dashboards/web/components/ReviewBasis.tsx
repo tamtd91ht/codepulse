@@ -6,6 +6,7 @@ import type { BasisKnowledge, BasisRule, DeepReport, Finding, ReviewBasis, Revie
 
 const RULE_KIND: Record<string, string> = {
   business_project: "Dự án",
+  rule_file: "Tệp quy tắc dự án",
   project: "Repo",
   file: "File trong repo",
 };

@@ -704,7 +704,7 @@ export interface ClosureMeta {
 
 /* ---- personal access tokens for the MCP server (docs/specs/26 §2) ---- */
 
-export type ApiTokenScope = "findings:read" | "findings:close_request";
+export type ApiTokenScope = "findings:read" | "findings:close_request" | "reviews:request";
 
 export interface ApiToken {
   id: number;
@@ -1185,7 +1185,8 @@ export interface ReviewSetting {
     | "llm_auto_resume"
     | "llm_probe_interval_min"
     | "llm_account_retry_min"
-    | "close_requests_per_day";
+    | "close_requests_per_day"
+    | "mcp_reviews_per_day";
   env: string;
   kind: "int" | "model" | "url" | "bool";
   value: number | string | boolean;

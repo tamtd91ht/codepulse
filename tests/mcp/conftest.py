@@ -16,7 +16,7 @@ from app.mcp import server as mcp_server
 from app.mcp.server import Caller, McpDeps, _caller
 from app.mcp.tokens import SCOPE_CLOSE, SCOPE_READ, authenticate, create_token
 from app.models import User
-from tests.api.conftest import BOX, settings, world  # noqa: F401 - fixtures
+from tests.api.conftest import BOX, FakeQueue, settings, world  # noqa: F401 - fixtures
 
 
 class FakeRedis:
@@ -39,6 +39,7 @@ class Env:
     settings: Settings
     redis: FakeRedis
     clock: list[float]
+    queue: FakeQueue
 
 
 @pytest.fixture
@@ -58,6 +59,7 @@ def env(
     db_session.commit()
     redis = FakeRedis()
     clock = [1_800_000_000.0]
+    queue = FakeQueue()
     monkeypatch.setattr(
         mcp_server,
         "deps",
@@ -69,9 +71,10 @@ def env(
                 c.base_url, BOX.decrypt(c.token_encrypted), max_retries=0
             ),
             clock=lambda: clock[0],
+            queue=lambda: queue,
         ),
     )
-    yield Env(session=db_session, settings=settings, redis=redis, clock=clock)
+    yield Env(session=db_session, settings=settings, redis=redis, clock=clock, queue=queue)
 
 
 def make_token(

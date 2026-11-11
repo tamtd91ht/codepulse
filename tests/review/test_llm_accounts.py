@@ -501,4 +501,4 @@ def test_only_a_members_requests_go_to_the_queue_served_first() -> None:
     base = Queue("default", connection=Redis())  # never connects: names only
     assert getattr(review_queue(base, asked=True), "name", None) == "reviews_asked"
     assert getattr(review_queue(base), "name", None) == "reviews"
-    assert {"telegram", "rerun"} == ASKED_TRIGGERS and "dashboard" not in ASKED_TRIGGERS
+    assert {"telegram", "rerun", "mcp"} == ASKED_TRIGGERS and "dashboard" not in ASKED_TRIGGERS

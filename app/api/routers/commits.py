@@ -10,6 +10,7 @@ so scores, findings and verdicts land in the same tables as webhook reviews.
 
 import logging
 import re
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
@@ -49,7 +50,7 @@ from app.models import Account, BusinessProject, Connection, Project, Review, Us
 from app.models.review import CHANGE_TIME_UNKNOWN
 from app.review.rubric import RUBRIC_VERSION
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
-from app.workers.queues import review_queue
+from app.workers.queues import ASKED_TRIGGERS, review_queue
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["review-requests"])
@@ -434,6 +435,117 @@ def list_commits(
     )
 
 
+@dataclass
+class QueueOutcome:
+    """What queueing a set of commits did: the shas queued (with their review rows), those given
+    a new round, and the ones left out with why."""
+
+    queued: list[str] = field(default_factory=list)
+    again: list[str] = field(default_factory=list)  # each one spends LLM budget again
+    skipped: list[dict[str, str]] = field(default_factory=list)
+    review_ids: dict[str, int] = field(default_factory=dict)
+
+
+def queue_commit(
+    session: Session,
+    principal: Principal,
+    project: Project,
+    converter: Converter,
+    raw: dict[str, Any],
+    *,
+    again: bool,
+    queue: Enqueuer,
+    settings: Settings,
+    trigger: str,
+    outcome: QueueOutcome,
+) -> None:
+    """One commit as GitLab returned it: checked (merge, whose work, an existing review) and
+    queued, its review row inserted first so its state shows at once. Shared by "Yêu cầu
+    review" and the MCP tool `request_review` (docs/specs/26 §22): same rules either way.
+    Commits the session when it starts a new round (see below); the caller commits otherwise.
+    HTTPException 503 when the job queue is down after a new round was committed."""
+    commit = gl_commit(raw)
+    if commit.is_merge:
+        outcome.skipped.append({"sha": commit.sha, "reason": "merge commit"})
+        return
+    account_id = converter.email_account(commit.author_email, commit.author_name)
+    author_user = session.get(Account, account_id).user_id if account_id else None  # type: ignore[union-attr]
+    if not may_request_review(principal, author_user, project.business_project_id):
+        outcome.skipped.append({"sha": commit.sha, "reason": "không thuộc quyền review của bạn"})
+        return
+    existing = _latest_reviews(session, [commit.sha]).get(commit.sha)
+    redo = again and existing is not None and existing.status == "done"
+    if existing is not None and existing.status in TAKEN and not redo:
+        outcome.skipped.append({"sha": commit.sha, "reason": f"đã có review ({existing.status})"})
+        if existing.id is not None:
+            outcome.review_ids[commit.sha] = existing.id
+        return
+    if redo and not may_rerun(principal, author_user, project.business_project_id):
+        outcome.skipped.append(
+            {"sha": commit.sha, "reason": "chỉ quản lý dự án hoặc admin được review lại"}
+        )
+        return
+    converter.commit(commit, only_if_missing=True)
+    values: dict[str, Any] = {
+        "target_type": "commit",
+        "commit_sha": commit.sha,
+        "reviewed_sha": commit.sha,
+        "changed_at": commit.authored_at or CHANGE_TIME_UNKNOWN,
+        "rubric_version": RUBRIC_VERSION,
+        "author_user_id": author_user,
+        "status": "queued",
+        "trigger": trigger,
+        "requested_by_user_id": principal.user_id,
+    }
+    job_id = f"review-commit-{commit.sha[:12]}"
+    fresh: Review | None = None
+    if redo and existing is not None and existing.rubric_version == RUBRIC_VERSION:
+        fresh = _new_round(session, existing.id, values)
+        if fresh is None:
+            outcome.skipped.append({"sha": commit.sha, "reason": "đang được review lại"})
+            return
+        job_id += f"-again-{fresh.round}"
+        outcome.again.append(commit.sha)
+        # Committed before the job exists: the worker's claim cannot see an uncommitted
+        # round N+1 (its own insert does not conflict with it), would find round N done
+        # and leave N+1 queued for good. It also lets go of round N's lock at once.
+        session.commit()
+    else:
+        # The queued row exists before the worker runs, so the list shows "trong hàng
+        # đợi" at once and a second request for the same sha is refused. The worker's
+        # _claim() takes this row over (same unique key) and keeps trigger/requester.
+        # A done review under an older rubric is redone the same way: the current
+        # rubric makes it a row of its own.
+        session.execute(
+            insert(Review).values(**values).on_conflict_do_nothing(constraint="uq_reviews_target")
+        )
+    session.flush()
+    try:
+        review_queue(queue, asked=trigger in ASKED_TRIGGERS).enqueue(
+            "app.workers.review_jobs.review_commit_job",
+            project.id,
+            commit.sha,
+            trigger=trigger,
+            requested_by=principal.user_id,
+            job_id=job_id,
+            job_timeout=review_job_timeout(settings),
+            retry=REVIEW_RETRY,
+        )
+    except Exception:
+        if fresh is None:
+            raise
+        # The new round is committed already: left queued it would block the commit
+        # for good; failed, it may be asked for again.
+        log.exception("review round not queued", extra={"review_id": fresh.id})
+        fresh.status, fresh.error = "failed", "job queue unavailable"
+        session.commit()
+        raise HTTPException(503, "job queue unavailable; try again") from None
+    outcome.queued.append(commit.sha)
+    row = fresh or _latest_reviews(session, [commit.sha]).get(commit.sha)
+    if row is not None:
+        outcome.review_ids[commit.sha] = row.id
+
+
 @router.post("/repos/{project_id}/review-commits", response_model=ReviewCommitsOut, status_code=202)
 def review_commits(
     project_id: int,
@@ -452,9 +564,7 @@ def review_commits(
         raise HTTPException(422, f"at most {settings.review_batch_max} commits per request")
     connection = _connection(session, project)
     converter = Converter(session, project, settings.ignore_paths)
-    queued: list[str] = []
-    again: list[str] = []  # shas given a new round: each one spends LLM budget again
-    skipped: list[dict[str, str]] = []
+    outcome = QueueOutcome()
     seen: set[str] = set()
     with _client(box, connection) as client:
         for short in body.shas:
@@ -465,98 +575,33 @@ def review_commits(
                 raw = client.commit(project.external_id, short)
             except GitLabError as exc:
                 if exc.status_code == 404:
-                    skipped.append({"sha": short, "reason": "không tìm thấy trên GitLab"})
+                    outcome.skipped.append({"sha": short, "reason": "không tìm thấy trên GitLab"})
                     continue
                 # GitLab is in trouble: stop here rather than retrying 50 times on the request
                 # path; what was queued so far stays queued.
                 session.commit()
                 raise _gitlab_error(exc, "commit") from None
-            commit = gl_commit(raw)
-            if commit.is_merge:
-                skipped.append({"sha": commit.sha, "reason": "merge commit"})
-                continue
-            account_id = converter.email_account(commit.author_email, commit.author_name)
-            author_user = session.get(Account, account_id).user_id if account_id else None  # type: ignore[union-attr]
-            if not may_request_review(principal, author_user, project.business_project_id):
-                skipped.append({"sha": commit.sha, "reason": "không thuộc quyền review của bạn"})
-                continue
-            existing = _latest_reviews(session, [commit.sha]).get(commit.sha)
-            redo = body.again and existing is not None and existing.status == "done"
-            if existing is not None and existing.status in TAKEN and not redo:
-                skipped.append({"sha": commit.sha, "reason": f"đã có review ({existing.status})"})
-                continue
-            if redo and not may_rerun(principal, author_user, project.business_project_id):
-                skipped.append(
-                    {"sha": commit.sha, "reason": "chỉ quản lý dự án hoặc admin được review lại"}
-                )
-                continue
-            converter.commit(commit, only_if_missing=True)
-            values: dict[str, Any] = {
-                "target_type": "commit",
-                "commit_sha": commit.sha,
-                "reviewed_sha": commit.sha,
-                "changed_at": commit.authored_at or CHANGE_TIME_UNKNOWN,
-                "rubric_version": RUBRIC_VERSION,
-                "author_user_id": author_user,
-                "status": "queued",
-                "trigger": "dashboard",
-                "requested_by_user_id": principal.user_id,
-            }
-            job_id = f"review-commit-{commit.sha[:12]}"
-            fresh: Review | None = None
-            if redo and existing is not None and existing.rubric_version == RUBRIC_VERSION:
-                fresh = _new_round(session, existing.id, values)
-                if fresh is None:
-                    skipped.append({"sha": commit.sha, "reason": "đang được review lại"})
-                    continue
-                job_id += f"-again-{fresh.round}"
-                again.append(commit.sha)
-                # Committed before the job exists: the worker's claim cannot see an uncommitted
-                # round N+1 (its own insert does not conflict with it), would find round N done
-                # and leave N+1 queued for good. It also lets go of round N's lock at once.
-                session.commit()
-            else:
-                # The queued row exists before the worker runs, so the list shows "trong hàng
-                # đợi" at once and a second request for the same sha is refused. The worker's
-                # _claim() takes this row over (same unique key) and keeps trigger/requester.
-                # A done review under an older rubric is redone the same way: the current
-                # rubric makes it a row of its own.
-                session.execute(
-                    insert(Review)
-                    .values(**values)
-                    .on_conflict_do_nothing(constraint="uq_reviews_target")
-                )
-            session.flush()
-            try:
-                review_queue(queue).enqueue(
-                    "app.workers.review_jobs.review_commit_job",
-                    project.id,
-                    commit.sha,
-                    trigger="dashboard",
-                    requested_by=principal.user_id,
-                    job_id=job_id,
-                    job_timeout=review_job_timeout(settings),
-                    retry=REVIEW_RETRY,
-                )
-            except Exception:
-                if fresh is None:
-                    raise
-                # The new round is committed already: left queued it would block the commit
-                # for good; failed, it may be asked for again.
-                log.exception("review round not queued", extra={"review_id": fresh.id})
-                fresh.status, fresh.error = "failed", "job queue unavailable"
-                session.commit()
-                raise HTTPException(503, "job queue unavailable; try again") from None
-            queued.append(commit.sha)
+            queue_commit(
+                session,
+                principal,
+                project,
+                converter,
+                raw,
+                again=body.again,
+                queue=queue,
+                settings=settings,
+                trigger="dashboard",
+                outcome=outcome,
+            )
     audit(
         session,
         principal.user_id,
         "project.review_commits",
         f"project:{project.id}",
         ref=body.ref,
-        queued=len(queued),
-        skipped=len(skipped),
-        **({"again": again} if again else {}),
+        queued=len(outcome.queued),
+        skipped=len(outcome.skipped),
+        **({"again": outcome.again} if outcome.again else {}),
     )
     session.commit()
-    return ReviewCommitsOut(queued=queued, skipped=skipped)
+    return ReviewCommitsOut(queued=outcome.queued, skipped=outcome.skipped)

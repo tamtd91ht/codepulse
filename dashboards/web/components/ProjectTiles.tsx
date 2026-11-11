@@ -9,6 +9,7 @@ import { Icon, IconButton } from "@/components/icons";
 import { ProjectCriteria } from "@/components/ProjectCriteria";
 import { ProjectGrants } from "@/components/ProjectGrants";
 import { BulkBranch, type RepoActions, repoName, RepoTable, UNASSIGNED } from "@/components/RepoTable";
+import { RuleFilesPanel } from "@/components/RuleFiles";
 import { Drawer, EmptyState, Pill, Segmented } from "@/components/ui";
 import { useApi } from "@/lib/api";
 import { date } from "@/lib/format";
@@ -459,7 +460,8 @@ function RulesEditor({
           <h3 style={{ margin: 0 }}>Quy tắc review</h3>
           <p className="muted small" style={{ margin: "4px 0 0" }}>
             Reviewer đọc các quy tắc này cùng diff (tenant isolation, money safety, PII, convention…). Finding vi
-            phạm sẽ ghi tên quy tắc. Tối đa 12.000 ký tự; viết ngắn, mỗi quy tắc một gạch đầu dòng dưới một tiêu đề.
+            phạm sẽ ghi tên quy tắc. Gõ trực tiếp (tối đa 12.000 ký tự; mỗi quy tắc một gạch đầu dòng dưới một tiêu đề)
+            hoặc nhập nhiều file quy tắc có sẵn ở mục Tệp quy tắc bên dưới.
           </p>
         </div>
       </div>
@@ -488,6 +490,8 @@ function RulesEditor({
           Lưu quy tắc dự án
         </button>
       </div>
+
+      <RuleFilesPanel project={project} typedChars={rules.trim().length} />
 
       {repos.length > 0 && (
         <>

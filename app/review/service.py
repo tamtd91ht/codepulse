@@ -71,7 +71,7 @@ from app.review.prompt import (
 from app.review.providers.base import AgenticProvider, LLMError, LLMProvider, ReviewResult
 from app.review.resolve import check, close_finding, current_files, recent_open, repo_path
 from app.review.rubric import RUBRIC_LENS, RUBRIC_VERSION
-from app.review.rules import collect_rules
+from app.review.rules import collect_rules, rule_files
 from app.review.schema import AgentFinding, Intent, LLMFinding
 from app.review.signals import detect_signals
 from app.review.status import decided_before, mark_fixed_findings, supersede_mr_reviews
@@ -109,7 +109,7 @@ def _off(project: Project) -> str:
 
 # Runs a person asked for (dashboard, Telegram, re-run): when one does not happen, the live view
 # says so. Webhook and backfill duplicates are routine and stay silent.
-ASKED_TRIGGERS = frozenset({"dashboard", "telegram", "rerun"})
+ASKED_TRIGGERS = frozenset({"dashboard", "telegram", "rerun", "mcp"})
 VERIFY_TIMEOUT_S = 120.0  # docs/specs/19 §4.3: one verification call
 # A "running" review older than this was left by a killed worker and may be taken over. It must
 # exceed the RQ job timeout (app.workers.review_jobs.review_job_timeout: 3 x REVIEW_TIMEOUT_S +
@@ -672,7 +672,8 @@ class ReviewService:
             except GitLabError:
                 return None
 
-        text, sources = collect_rules(business, project, fetch, skip=changed)
+        files = rule_files(self._session, business.id) if business else []
+        text, sources = collect_rules(business, project, fetch, skip=changed, files=files)
         # Kept aside: it becomes the review's basis only if the LLM pass actually starts
         # (a skipped or budget-blocked review was not checked against anything).
         self._pending_basis[review.id] = {

@@ -49,7 +49,13 @@ from app.models.mcp import McpCall
 from app.models.metrics import MetricsTeamPeriod, MetricsUserPeriod
 from app.models.notifications import NotificationWebhook, UserNotification
 from app.models.permissions import PermissionSet, PermissionSetItem, UserPermissionSet
+from app.models.project_docs import (
+    ProjectDocument,
+    ProjectDocumentChunk,
+    ProjectDocumentVersion,
+)
 from app.models.review import FindingClosure, FindingDispute, LlmHealth, Review, ReviewFinding
+from app.models.rule_files import ReviewRuleFile
 from app.models.secrets import AppSetting, LlmAccount, StoredSecret
 from app.models.source import BusinessProject, Connection, Project, ProjectGrant, RawGitlab
 from app.models.telegram import TelegramBot, TelegramRequest
@@ -108,6 +114,9 @@ __all__ = [
     "ProdDefect",
     "Project",
     "ProjectCriteriaSet",
+    "ProjectDocument",
+    "ProjectDocumentChunk",
+    "ProjectDocumentVersion",
     "ProjectGrant",
     "RawGitlab",
     "RepoComponentMap",
@@ -117,6 +126,7 @@ __all__ = [
     "ReviewFinding",
     "ReviewKnowledge",
     "ReviewKnowledgeEdit",
+    "ReviewRuleFile",
     "StoredSecret",
     "Team",
     "TeamMember",

@@ -1,14 +1,16 @@
 """Team rules that go into the review prompt (docs/specs/17).
 
-Three sources, merged in this order: the dự án's rules (Admin), the repo's own rules (Admin),
-and files inside the repo (e.g. `.claude/rules/critical/*.md`, read at the reviewed sha). Each
+Four sources, merged in this order: the dự án's rules (Admin), the files imported into the
+dự án's rules (Admin, .md/.txt/.doc/.docx converted to Markdown, user 2026-11-11), the repo's own
+rules (Admin), and files inside the repo (e.g. `.claude/rules/critical/*.md`, read at the
+default branch). Each
 piece keeps its heading so a finding can cite it in `rule_id`. Everything is capped: rules are
 context for the model, not the whole handbook.
 """
 
 import hashlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from app.models import BusinessProject, Project
@@ -55,12 +57,14 @@ def collect_rules(
     project: Project,
     fetch: FileFetcher,
     skip: set[str] | None = None,
+    files: Sequence[tuple[str, str]] = (),
 ) -> tuple[str, list[dict[str, Any]]]:
     """The `conventions` block of the prompt (empty when nobody configured anything) and one
     record per source: kind, name (the heading a finding cites in rule_id), status, size, hash.
 
     `skip`: paths the change under review touches; a rules file among them is not used (the
-    author could have edited it) and the prompt says so."""
+    author could have edited it) and the prompt says so. `files`: (name, Markdown) of the
+    dự án's imported rule files that are switched on, in their order."""
     parts: list[str] = []
     sources: list[dict[str, Any]] = []
     spans: dict[int, tuple[int, int]] = {}  # source index -> (start, end) in the merged text
@@ -91,6 +95,9 @@ def collect_rules(
             f"Quy tắc dự án {business_project.name}",
             _clip(business_project.review_rules, MAX_RULES_CHARS // 2, "business_project"),
         )
+    for name, body in files:
+        if body and body.strip():
+            used("rule_file", f"Tệp quy tắc {name}", _clip(body, MAX_FILE_CHARS, name))
     if project.review_rules:
         used(
             "project",
@@ -127,6 +134,24 @@ def build_rules(
     project: Project,
     fetch: FileFetcher,
     skip: set[str] | None = None,
+    files: Sequence[tuple[str, str]] = (),
 ) -> str:
     """The `conventions` block only (see collect_rules)."""
-    return collect_rules(business_project, project, fetch, skip)[0]
+    return collect_rules(business_project, project, fetch, skip, files)[0]
+
+
+def rule_files(session: Any, business_project_id: int) -> list[tuple[str, str]]:
+    """(name, Markdown) of a dự án's imported rule files that are switched on, in order."""
+    from sqlalchemy import select
+
+    from app.models import ReviewRuleFile
+
+    rows = session.execute(
+        select(ReviewRuleFile.name, ReviewRuleFile.body)
+        .where(
+            ReviewRuleFile.business_project_id == business_project_id,
+            ReviewRuleFile.enabled.is_(True),
+        )
+        .order_by(ReviewRuleFile.position, ReviewRuleFile.id)
+    ).all()
+    return [(str(name), str(body)) for name, body in rows]

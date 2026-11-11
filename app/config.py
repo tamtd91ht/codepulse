@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # Close requests (web and MCP) one person may send in 24 hours, unless an admin set their
     # own (users.close_requests_per_day); Admin > Cấu hình overrides it.
     close_requests_per_day: int = Field(default=20, ge=1, le=1000)
+    # docs/specs/26 §22: reviews one person may ask for through MCP in 24 hours (each one
+    # spends LLM budget); Admin > Cấu hình overrides it.
+    mcp_reviews_per_day: int = Field(default=30, ge=1, le=1000)
     max_review_loc: int = Field(default=1500, gt=0)
     max_tokens_per_chunk: int = Field(default=12000, gt=0)
     # How much of the .claude configuration (rules, skills, agents, CLAUDE.md, review commands)

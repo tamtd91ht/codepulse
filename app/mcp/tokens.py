@@ -21,7 +21,9 @@ from app.models import ApiToken
 TOKEN_PREFIX = "cpat_"  # noqa: S105 - the visible prefix, not a secret
 SCOPE_READ = "findings:read"
 SCOPE_CLOSE = "findings:close_request"
-SCOPES = (SCOPE_READ, SCOPE_CLOSE)
+# docs/specs/26 §22 (user 2026-11-11): ask for a review of pushed commits from Claude Code.
+SCOPE_REVIEW = "reviews:request"
+SCOPES = (SCOPE_READ, SCOPE_CLOSE, SCOPE_REVIEW)
 VALID_DAYS = (30, 90, 180, 365)
 DEFAULT_DAYS = 90
 MAX_ACTIVE_PER_USER = 10

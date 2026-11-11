@@ -108,7 +108,7 @@ class Review(TimestampMixin, Base):
     intent: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     trigger: Mapped[str] = mapped_column(
         server_default="webhook"
-    )  # webhook|dashboard|telegram|backfill|rerun
+    )  # webhook|dashboard|telegram|backfill|rerun|mcp
     requested_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )

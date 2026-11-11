@@ -11,6 +11,16 @@
 - Finding vi phạm một quy tắc ghi tiêu đề quy tắc vào `review_findings.rule_id` (cột có sẵn) → báo cáo được "dự án X vi phạm tenant isolation bao nhiêu lần".
 - Không nạp được file (GitLab lỗi, file không có) → review vẫn chạy, chỉ thiếu phần đó; log warning.
 
+### 1b. Tệp quy tắc: nhập nhiều file (2026-11-11)
+> Theo yêu cầu người dùng (2026-11-11): "Chỗ quy tắc review ở project ngoài việc nhập thủ công thì cho phép import nhiều file lên nhé, hỗ trợ các dạng doc, text, .md". Mục **[Quyết định]** do agent chọn (người dùng giao toàn quyền).
+
+- **[Quyết định]** Mỗi file là một **tệp quy tắc** riêng của dự án (bảng `review_rule_files`, migration `c1e3a5b7d9f0`), **không** dán gộp vào ô nhập tay: ô nhập tay giới hạn 12.000 ký tự, còn file quy tắc của team thường dài hơn; tách file thì cập nhật từng file (tải lại cùng tên = thay nội dung), tắt tạm, đổi thứ tự, và finding ghi được đúng tên file vi phạm.
+- Nhận `.md`, `.markdown`, `.txt`, `.doc` (Word 97-2003, đọc bằng thư viện chuẩn `app/assistant/worddoc.py`), `.docx`; ≤ 10 MB mỗi file; tối đa **20 tệp** mỗi dự án. Chỉ lưu văn bản đã chuyển sang Markdown (không lưu file gốc), như Stetho.
+- Prompt: thứ tự nguồn là quy tắc nhập tay của dự án → **các tệp quy tắc đang bật** (theo thứ tự) → quy tắc repo → file trong repo; mỗi tệp là một nguồn `kind = rule_file`, tiêu đề `## Tệp quy tắc <tên file>`, cắt ở 30.000 ký tự mỗi tệp; tổng vẫn theo trần chung `MAX_RULES_CHARS` (phần vượt bị cắt và căn cứ review ghi `partial`/`cut`). Trang review › Căn cứ review hiện nhãn "Tệp quy tắc dự án".
+- Giao diện (Admin › Dự án & Repo › dự án › Quy tắc review, dưới ô nhập tay): ô kéo thả **nhiều file** (kiểm loại/dung lượng ngay trên trình duyệt, tải tuần tự, tiến độ từng file: đã thêm / đã thay bản cũ / lỗi + lý do), **thanh dung lượng** quy tắc mỗi review (ký tự nhập tay + tệp đang bật / trần, cảnh báo khi vượt), bảng tệp (tên → xem trước đúng nội dung model đọc, số ký tự + nhãn "bị cắt", cập nhật, công tắc "Dùng khi review", lên/xuống, xoá có xác nhận).
+- API (quyền `admin.projects`, như quy tắc nhập tay): `GET /business-projects/{id}/rule-files` (danh sách + dung lượng + giới hạn), `GET …/{file_id}` (nội dung), `POST …?filename=` (thân là byte file; trùng tên → thay), `PATCH …/{file_id}` (`enabled`, `name`, `position`), `DELETE …/{file_id}`. Audit `business_project.rule_file.add|replace|update|delete`.
+- Kiểm thử: `tests/api/test_rule_files.py` (4 loại file, thay theo tên, tắt + thứ tự vào prompt, xoá, audit, từ chối loại sai / file hỏng / rỗng / không có quyền / dự án không tồn tại).
+
 ## 2. Rubric v2 (techlead)
 > Từ 2026-10-26 là **v3**: cùng 4 câu hỏi, thêm tách bạch severity (tác động) và confidence (độ chắc chắn), yêu cầu duyệt từng file theo rubric + checklist theo ngôn ngữ (`app/review/checklists.py`), trọng số/công thức điểm v3 (spec 08). Lượt nhanh nhận thêm hồ sơ dự án đã cache và các file của repo .claude dùng chung hợp với commit.
 

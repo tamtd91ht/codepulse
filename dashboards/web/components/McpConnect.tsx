@@ -92,32 +92,31 @@ export function McpJsonSample() {
   return <CopyBlock label="Nội dung .mcp.json" text={mcpJson(url)} />;
 }
 
-const COMMAND_FILE = "/downloads/fix-findings.md";
-
-/** The /fix-findings slash command, read from the file people download (one source). */
-export function FixFindingsFile() {
+/** A slash command for Claude Code, read from the very file people download (one source). */
+function CommandFile({ name }: { name: string }) {
+  const file = `/downloads/${name}.md`;
   const [text, setText] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let live = true;
     setFailed(false);
-    fetch(COMMAND_FILE)
+    fetch(file)
       .then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
       .then((t) => live && setText(t))
       .catch(() => live && setFailed(true));
     return () => {
       live = false;
     };
-  }, [attempt]);
+  }, [attempt, file]);
   return (
     <>
       <p>
-        <a href={COMMAND_FILE} download="fix-findings.md">
-          Tải fix-findings.md
+        <a href={file} download={`${name}.md`}>
+          Tải {name}.md
         </a>{" "}
-        rồi lưu vào <code>.claude/commands/fix-findings.md</code> trong repo (chỉ repo đó) hoặc{" "}
-        <code>~/.claude/commands/fix-findings.md</code> (mọi repo trên máy bạn).
+        rồi lưu vào <code>.claude/commands/{name}.md</code> trong repo (chỉ repo đó) hoặc{" "}
+        <code>~/.claude/commands/{name}.md</code> (mọi repo trên máy bạn).
       </p>
       {failed ? (
         <p className="error small" role="alert">
@@ -130,9 +129,19 @@ export function FixFindingsFile() {
         <div className="skeleton" style={{ height: 160 }} role="status" aria-label="Đang tải" />
       ) : (
         <div className="copy-tall">
-          <CopyBlock label="Nội dung fix-findings.md" text={text} />
+          <CopyBlock label={`Nội dung ${name}.md`} text={text} />
         </div>
       )}
     </>
   );
+}
+
+/** The /fix-findings slash command (docs/specs/26 §10). */
+export function FixFindingsFile() {
+  return <CommandFile name="fix-findings" />;
+}
+
+/** The /review-push slash command (docs/specs/26 §22): push, ask for a review, follow it. */
+export function ReviewPushFile() {
+  return <CommandFile name="review-push" />;
 }

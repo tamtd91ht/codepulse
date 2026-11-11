@@ -58,6 +58,7 @@ export function ReviewSettings() {
   const probeEvery = find("llm_probe_interval_min");
   const accountRetry = find("llm_account_retry_min");
   const closeQuota = find("close_requests_per_day");
+  const mcpReviews = find("mcp_reviews_per_day");
 
   async function save(key: Key, value: number | string | boolean | null) {
     await saveAll({ [key]: value });
@@ -484,6 +485,44 @@ export function ReviewSettings() {
             {closeQuota.overridden && (
               <button type="button" onClick={() => save("close_requests_per_day", null)} disabled={busy}>
                 Về mặc định ({String(closeQuota.default)})
+              </button>
+            )}
+          </div>
+        </form>
+      )}
+
+      {mcpReviews && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            save("mcp_reviews_per_day", Number(field(e, "mcp_reviews_per_day")));
+          }}
+          className="setting-tile"
+        >
+          <label style={{ display: "grid", gap: 4, maxWidth: 320 }}>
+            <span className="small muted">Review yêu cầu qua MCP tối đa mỗi người trong 24 giờ ({mcpReviews.env})</span>
+            <input
+              key={String(mcpReviews.value)}
+              name="mcp_reviews_per_day"
+              type="number"
+              required
+              min={mcpReviews.minimum ?? 1}
+              max={mcpReviews.maximum ?? 1000}
+              defaultValue={Number(mcpReviews.value)}
+            />
+          </label>
+          <p className="muted small">
+            Claude Code gọi tool <code>request_review</code> sau khi push để review ngay các commit vừa đẩy lên GitLab; mỗi commit là một
+            lượt review tốn ngân sách LLM. Giới hạn này chặn agent gọi dồn.{" "}
+            {mcpReviews.overridden ? `Mặc định trong .env: ${mcpReviews.default}.` : "Đang dùng giá trị trong .env."}
+          </p>
+          <div className="toolbar">
+            <button type="submit" disabled={busy}>
+              Lưu
+            </button>
+            {mcpReviews.overridden && (
+              <button type="button" onClick={() => save("mcp_reviews_per_day", null)} disabled={busy}>
+                Về mặc định ({String(mcpReviews.default)})
               </button>
             )}
           </div>

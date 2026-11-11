@@ -43,6 +43,7 @@ export const TRIGGER_LABEL: Record<string, string> = {
   telegram: "Telegram",
   backfill: "review lại theo khoảng ngày",
   rerun: "chạy lại",
+  mcp: "Claude Code (MCP)",
 };
 
 export function num(value: Num | number | undefined, digits = 1): string {

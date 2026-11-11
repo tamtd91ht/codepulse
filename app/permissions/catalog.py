@@ -127,6 +127,15 @@ CATALOG: tuple[Permission, ...] = (
         "Tích hợp Jira",
         "Cấu hình kết nối Jira (URL, token), dự án Jira, quy đổi trường, nguồn task DPI",
     ),
+    # docs/specs/29: Tài liệu dự án. Reading covers the dự án one sees; editing: the dự án one
+    # manages (project) or every dự án one sees (all).
+    _p("docs.view", "Tài liệu dự án", "Xem tài liệu dự án"),
+    _p(
+        "docs.edit",
+        "Tài liệu dự án",
+        "Thêm, sửa, tải phiên bản mới, lưu trữ tài liệu dự án",
+        "project all",
+    ),
     _p("knowledge.view", "Tiền đề review", "Xem Tiền đề review của repo"),
     _p(
         "knowledge.edit",
@@ -199,6 +208,7 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "dpi.dispute": "own",
             "knowledge.view": FLAG,
             "telegram.self": FLAG,
+            "docs.view": FLAG,
         },
     ),
     BuiltinSet(
@@ -258,6 +268,8 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "criteria.assign": "project",
             "dpi.view": "project",
             "dpi.defects": "project",
+            "docs.view": FLAG,
+            "docs.edit": "project",
         },
     ),
     BuiltinSet(
@@ -281,6 +293,8 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "dpi.distribution": "all",
             "dpi.calibrate": "all",
             "dpi.defects": "all",
+            "docs.view": FLAG,
+            "docs.edit": "all",
         },
     ),
 )

@@ -2,9 +2,12 @@
 
 Files: .md / .markdown / .txt (UTF-8, else Windows-1258/1252 tried), .docx (paragraphs with their
 heading levels, lists and tables, read from word/document.xml with the standard library: no
-macro, no embedded object is ever opened), .xlsx (each sheet as a Markdown table, values only,
-never formulas run). Zip-based files are checked for size and compression ratio before they
-are opened (zip bombs), and Word XML must be UTF-8 without a DTD (entity expansion).
+macro, no embedded object is ever opened), .doc (Word 97-2003: the main text through the piece
+table, app/assistant/worddoc.py), .xlsx (each sheet as a Markdown table, values only, never
+formulas run), .pdf (the text layer of each page with pypdf, at most MAX_PDF_PAGES pages; a
+scanned PDF without text is refused: there is no OCR). Zip-based files are checked for size and
+compression ratio before they are opened (zip bombs), and Word XML must be UTF-8 without a DTD
+(entity expansion).
 
 A web link (`from_url`): http/https on a web port, 2 MB, 30 s in all, redirects followed by
 hand. The address is checked when the connection is made, on the very IP connected to (a name
@@ -20,6 +23,7 @@ import io
 import ipaddress
 import re
 import socket
+import struct
 import time
 import zipfile
 from collections.abc import Iterable
@@ -43,7 +47,13 @@ MAX_ZIP_RATIO = 100
 MAX_WORD_XML_BYTES = 20 * 1024 * 1024
 MAX_SHEET_ROWS = 2_000
 MAX_SHEET_COLS = 30
-FILE_KINDS = (".md", ".markdown", ".txt", ".docx", ".xlsx")
+MAX_PDF_PAGES = 500
+# What Stetho takes (docs/specs/28 §2).
+FILE_KINDS = (".md", ".markdown", ".txt", ".doc", ".docx", ".xlsx")
+# Review rules imported as files (docs/specs/17 §Tệp quy tắc, user 2026-11-11).
+RULE_FILE_KINDS = (".md", ".markdown", ".txt", ".doc", ".docx")
+# Project documents (docs/specs/29): the original is kept, its text indexed and rendered.
+DOCUMENT_KINDS = (".md", ".markdown", ".txt", ".doc", ".docx", ".xlsx", ".pdf")
 
 
 class ImportError_(ValueError):
@@ -69,9 +79,61 @@ def from_file(name: str, data: bytes) -> str:
         return _clip(_text(data))
     if lower.endswith(".docx"):
         return _clip(_docx(data))
+    if lower.endswith(".doc"):
+        return _clip(_doc(data))
     if lower.endswith(".xlsx"):
         return _clip(_xlsx(data))
-    raise ImportError_("chỉ nhận .md, .txt, .docx, .xlsx")
+    if lower.endswith(".pdf"):
+        return _clip(_pdf(data))
+    raise ImportError_("chỉ nhận .md, .txt, .doc, .docx, .xlsx, .pdf")
+
+
+def _doc(data: bytes) -> str:
+    from app.assistant.worddoc import DocError, doc_text
+
+    try:
+        return doc_text(data)
+    except DocError as exc:
+        raise ImportError_(str(exc)) from exc
+    except (IndexError, ValueError, KeyError, UnicodeError, struct.error) as exc:
+        # A corrupt file the reader did not foresee: still the uploader's file, not a 500.
+        raise ImportError_("tệp .doc bị hỏng") from exc
+
+
+# Stop reading a PDF once its text is this long (MAX_TEXT_CHARS is kept anyway): a crafted
+# file with endless pages of text does not keep the API busy past what is stored.
+PDF_STOP_CHARS = MAX_TEXT_CHARS + 10_000
+
+
+def _pdf(data: bytes) -> str:
+    """The text layer, page by page ("--- Trang N ---" between pages, for citing), at most
+    MAX_PDF_PAGES pages and PDF_STOP_CHARS characters. pypdf (>= 6.1.3, past its known
+    decompression-bomb and loop fixes) runs with strict=False on an untrusted file: any failure
+    of the parser is the file's fault and becomes ImportError_."""
+    from pypdf import PdfReader
+
+    pages: list[str] = []
+    try:
+        reader = PdfReader(io.BytesIO(data), strict=False)
+        if reader.is_encrypted:
+            raise ImportError_("PDF có mật khẩu: bỏ mật khẩu rồi tải lại")
+        total = 0
+        for number, page in enumerate(reader.pages, start=1):
+            if number > MAX_PDF_PAGES or total > PDF_STOP_CHARS:
+                break
+            text = (page.extract_text() or "").strip()
+            if text:
+                pages.append(f"--- Trang {number} ---\n\n{text}")
+                total += len(text)
+    except ImportError_:
+        raise
+    except MemoryError as exc:
+        raise ImportError_("PDF quá phức tạp để đọc chữ") from exc
+    except Exception as exc:  # pypdf raises many kinds on a corrupt file
+        raise ImportError_("không phải file PDF đọc được") from exc
+    if not pages:
+        raise ImportError_("PDF không có lớp chữ (bản scan): chưa hỗ trợ nhận dạng chữ")
+    return "\n\n".join(pages)
 
 
 def _text(data: bytes) -> str:
