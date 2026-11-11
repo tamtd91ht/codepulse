@@ -45,7 +45,7 @@ from app.models import (
 from app.models.review import ALREADY_CLOSED, CHANGE_TIME_UNKNOWN
 from app.notifications import inbox
 from app.review.masking import is_config, mask_code, mask_config
-from app.review.prepare import prepare
+from app.review.prepare import DiffFile, PreparedDiff, prepare, redact
 from app.review.providers import LLMProvider, build_provider
 from app.review.resolve import MAX_SOURCE_CHARS, author_claims, check, mark_fixed, repo_path
 
@@ -73,6 +73,42 @@ def _committed(info: Any) -> datetime | None:
         return datetime.fromisoformat(str(raw)) if raw else None
     except ValueError:
         return None
+
+
+Fetched = tuple[datetime | None, int, str, str, list[Any]]  # when, position, sha, title, diff
+MAX_TITLE = 120
+
+
+def _chronological(fetched: list[Fetched]) -> list[Fetched]:
+    """Oldest first by commit date (the order the author typed them in is no order: GitLab lists
+    newest first); a commit with no date keeps its place after the dated ones."""
+    return sorted(
+        fetched,
+        key=lambda c: (c[0] is None, c[0].timestamp() if c[0] else 0.0, c[1]),
+    )
+
+
+def _prepare_commits(fetched: list[Fetched], settings: Settings) -> PreparedDiff:
+    """Each commit's diff prepared on its own, its files labelled with the commit (several of
+    them: `resolve.diff_text` shows them commit by commit), oldest first."""
+    ordered = _chronological(fetched)
+    files: list[DiffFile] = []
+    excluded: dict[str, str] = {}
+    for number, (_when, _position, sha, title, diff) in enumerate(ordered, start=1):
+        part = prepare(diff, settings.ignore_paths, settings.sensitive_paths)
+        if len(ordered) > 1:
+            label = f"{sha[:12]} ({number}/{len(ordered)})"
+            heading = redact(" ".join(title.split()))[:MAX_TITLE]
+            for file in part.files:
+                file.commit = f"{label}: {heading}" if heading else label
+        # The last commit touching a path decides its state: brought back by a later commit, it
+        # is no longer deleted; deleted by a later commit, its earlier diffs are gone with it.
+        for file in part.files:
+            excluded.pop(file.path, None)
+        gone = {path for path, why in part.excluded.items() if why == "deleted"}
+        files = [f for f in files if f.path not in gone] + part.files
+        excluded.update(part.excluded)
+    return PreparedDiff(files, excluded)
 
 
 @dataclass
@@ -320,11 +356,14 @@ def run_close_request(
     )
     session.commit()  # nothing open while GitLab answers
 
-    entries: list[Any] = []
+    # (when, position given, sha, title, diff entries) per commit: shown to the model oldest
+    # first, each labelled, never merged into one unlabelled diff (a file two commits touch
+    # would show twice with no order, and the model would judge the first block only).
+    fetched: list[Fetched] = []
     refused: str | None = None
     try:
         with make_client(target.connection) as client:
-            for sha in target.shas:
+            for position, sha in enumerate(target.shas):
                 try:
                     info = client.commit(target.external_id, sha)
                 except GitLabError:
@@ -337,7 +376,9 @@ def run_close_request(
                         "bản sửa."
                     )
                     break
-                entries += client.commit_diff(target.external_id, sha)
+                title = str(info.get("title") or "") if isinstance(info, dict) else ""
+                diff = list(client.commit_diff(target.external_id, sha))
+                fetched.append((when, position, sha, title, diff))
             sources = (
                 gather_sources(
                     client,
@@ -354,7 +395,8 @@ def run_close_request(
         return decide("failed", f"GitLab: {str(exc)[:200]}")
     if refused is not None:
         return decide("unmet", refused)
-    prepared = prepare(entries, settings.ignore_paths, settings.sensitive_paths)
+    prepared = _prepare_commits(fetched, settings)
+    ordered_shas = [sha for _, _, sha, _, _ in _chronological(fetched)] or target.shas
     if (
         target.shas
         and not prepared.files
@@ -375,7 +417,9 @@ def run_close_request(
             f"({settings.max_review_loc}); chọn đúng commit sửa lỗi.",
         )
     change = (
-        "commit " + ", ".join(sha[:12] for sha in target.shas)
+        "commit "
+        + ", ".join(sha[:12] for sha in ordered_shas)
+        + (" (cũ trước, mới sau)" if len(ordered_shas) > 1 else "")
         if target.shas
         else "không có commit: chỉ phản biện của tác giả"
     )

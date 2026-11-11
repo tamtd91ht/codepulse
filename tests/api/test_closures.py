@@ -1374,3 +1374,70 @@ def test_a_non_admin_with_the_right_never_sets_their_own_or_an_admins_limit(
     assert put(world.an).status_code == 200
     assert put(world.manager).status_code == 403  # not their own
     assert put(world.admin).status_code == 403  # an admin's is an admin's to set
+
+
+FIRST = "a" * 40  # the older commit: half the fix
+SECOND = "b" * 40  # the newer one: finishes it
+
+
+class TwoCommits(FakeClient):
+    """Two fixing commits touching the same file; the newer listed first (GitLab's order)."""
+
+    def commit(self, project_id: int, sha: str) -> dict[str, Any]:
+        when = {FIRST: "2026-10-20T10:00:00+00:00", SECOND: "2026-10-21T10:00:00+00:00"}
+        if sha not in when:
+            raise GitLabError("404")
+        title = "fix: bind q" if sha == FIRST else "fix: bind the other query"
+        return {"id": sha, "committed_date": when[sha], "title": title}
+
+    def commit_diff(self, project_id: int, sha: str) -> list[dict[str, Any]]:
+        if sha == FIRST:
+            return [DIFF]
+        return [{**DIFF, "diff": "@@ -9,1 +9,1 @@\n-r = 'y' + w\n+r = bind(w)\n"}]
+
+
+def test_every_commit_of_a_request_reaches_the_check_labelled_oldest_first(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    db_session: Session,
+    settings: Settings,
+) -> None:
+    """A request with several commits: each commit's diff is shown under its own header, oldest
+    first whatever order they were typed in, so the model judges them together (it used to get
+    one unlabelled diff with the same file twice and judged the first block only)."""
+    closure_id = ask(client, world, as_user, world.an, [SECOND, FIRST]).json()["id"]
+    run(client, as_user, world.admin, closure_id)
+    token = token_of(db_session, closure_id)
+    provider = FakeLLMProvider(lambda p: {"answers": [FIXED]})
+    assert work(db_session, settings, closure_id, token, None, TwoCommits(), provider) == "closed"
+    prompt = provider.prompts[0].user
+    assert f"Change: commit {FIRST[:12]}, {SECOND[:12]} (cũ trước, mới sau)" in prompt
+    older = prompt.index(f"## Commit {FIRST[:12]} (1/2): fix: bind q")
+    newer = prompt.index(f"## Commit {SECOND[:12]} (2/2): fix: bind the other query")
+    assert older < prompt.index("+q = bind(v)") < newer < prompt.index("+r = bind(w)")
+
+
+def test_one_commit_keeps_the_plain_diff() -> None:
+    from app.review.prepare import parse_diff
+    from app.review.resolve import diff_text
+
+    text = diff_text([parse_diff("app/a.py", DIFF["diff"])], ["app/a.py"])
+    assert text.startswith("### File: app/a.py") and "## Commit" not in text
+
+
+def test_the_last_commit_touching_a_file_decides_whether_it_is_deleted(settings: Settings) -> None:
+    """Deleted by an older commit, brought back (bug and all) by a newer
+    one, the file is not "deleted"; deleted by the newer one, the older diff is gone with it."""
+    from app.workers.closure_jobs import _prepare_commits
+
+    old = datetime(2026, 10, 20, tzinfo=UTC)
+    new = datetime(2026, 10, 21, tzinfo=UTC)
+    back = _prepare_commits(
+        [(new, 0, SECOND, "back", [DIFF]), (old, 1, FIRST, "drop", [DELETED_FILE])], settings
+    )
+    assert back.deleted == [] and [f.path for f in back.files] == ["app/a.py"]
+    dropped = _prepare_commits(
+        [(old, 0, FIRST, "edit", [DIFF]), (new, 1, SECOND, "drop", [DELETED_FILE])], settings
+    )
+    assert dropped.deleted == ["app/a.py"] and dropped.files == []

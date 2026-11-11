@@ -73,6 +73,13 @@ When unsure, answer "not_fixed". A finding whose file the diff does not touch is
 unless the diff fixes it from elsewhere (e.g. validates the input at its only caller) and you
 can point at that.
 
+A change of several commits is shown commit by commit, oldest first, each under its
+"## Commit <sha> (i/N): <title>" header; THIS change (THIS diff) means all of them together.
+A file several commits touch appears once per commit, each block with the line numbers of the
+file after that commit: judge the file as the LAST commit touching it leaves it (a later commit
+may finish, or undo, an earlier one's fix), and give `evidence_lines` from the block of that
+commit.
+
 CURRENT CODE, when given, holds files of the default branch as they are now: the findings' own
 files (after a review, those of the first findings; for a request to close one finding, its
 file and, with an argument, the files the argument names). The
@@ -236,18 +243,36 @@ def diff_text(
     files: Sequence[DiffFile], first: Iterable[str] = (), limit: int = MAX_DIFF_CHARS
 ) -> str:
     """The change as the review saw it, the files in `first` (the findings' files) leading, cut
-    at `limit` characters."""
+    at `limit` characters.
+
+    Files of several commits (DiffFile.commit) are shown commit by commit in the order given
+    (oldest first), each under its `## Commit` header: a file two commits touch appears once per
+    commit, and the model must see which diff comes after which (a later commit finishes or
+    undoes an earlier one). The findings' files of every commit get the room first."""
     wanted = set(first)
-    ordered = sorted(files, key=lambda f: (f.path not in wanted, f.path))
-    out: list[str] = []
+    commits: list[str | None] = []
+    for file in files:
+        if file.commit not in commits:
+            commits.append(file.commit)
+    position = {commit: index for index, commit in enumerate(commits)}
+    ordered = sorted(
+        enumerate(files), key=lambda p: (p[1].path not in wanted, position[p[1].commit], p[1].path)
+    )
+    shown: dict[int, str] = {}
     size = 0
-    for file in ordered:
+    for index, file in ordered:
         text = file.render()
         if size + len(text) > limit:
-            out.append(f"### File: {file.path}\n(… lược bớt cho vừa giới hạn)")
+            shown[index] = f"### File: {file.path}\n(… lược bớt cho vừa giới hạn)"
             continue
-        out.append(text)
+        shown[index] = text
         size += len(text)
+    if len(commits) < 2:
+        return "\n\n".join(shown[index] for index, _ in ordered)
+    out: list[str] = []
+    for commit in commits:
+        block = [shown[index] for index, file in ordered if file.commit == commit]
+        out.append(f"## Commit {commit or '?'}\n\n" + "\n\n".join(block))
     return "\n\n".join(out)
 
 

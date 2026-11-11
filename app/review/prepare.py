@@ -78,6 +78,9 @@ class DiffFile:
     additions: int
     deletions: int
     new_file: bool = False
+    # The commit this diff comes from, when a change is several commits shown one by one (a
+    # close request's fixing commits): "<sha12> (2/3): <title>". None: one change.
+    commit: str | None = None
 
     @property
     def added_lines(self) -> dict[int, str]:
