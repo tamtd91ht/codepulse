@@ -4657,6 +4657,48 @@ tr.closure-detail td {
   font-weight: 600;
   font-size: 14px;
 }
+/* What the author sent with a close request: commits (GitLab links), note, argument. */
+.closure-commits {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.closure-commits li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+.closure-commits code {
+  word-break: break-all;
+}
+.closure-commits a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.closure-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.closure-submission {
+  display: grid;
+  gap: 14px;
+}
+.closure-submission section {
+  display: grid;
+  gap: 4px;
+}
+.closure-submission h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.closure-submission p.closure-text {
+  margin: 0;
+}
 .closure-argument {
   margin: 6px 0 0;
   padding: 6px 10px;

@@ -63,6 +63,7 @@ from app.config import Settings, get_settings
 from app.models import (
     BusinessProject,
     Commit,
+    Connection,
     FindingClosure,
     FindingDispute,
     MergeRequest,
@@ -1199,6 +1200,7 @@ def list_closures(
         query = query.where(FindingClosure.id < after)
     rows = session.execute(query.order_by(FindingClosure.id.desc()).limit(PAGE + 1)).tuples().all()
     items = []
+    urls = _repo_web_urls(session, [r[3] for r in rows[:PAGE]])
     for closure, finding, review, project, bp, who, asker, judge in rows[:PAGE]:
         bp_id = project.business_project_id if project else None
         decides = (
@@ -1225,7 +1227,12 @@ def list_closures(
                 # request's own `status` beside it when they differ.
                 "shown_status": shown_status(closure.status, finding.status),
                 "shown_closed_as": finding.status if finding.status in FINDING_CLOSED else None,
-                "repo": {"id": project.id, "path": project.path_with_namespace}
+                # web_url: the commits the author sent open on GitLab (the "Nội dung gửi" dialog).
+                "repo": {
+                    "id": project.id,
+                    "path": project.path_with_namespace,
+                    "web_url": urls.get(project.id),
+                }
                 if project
                 else None,
                 "business_project": {"id": bp.id, "name": bp.name} if bp else None,
@@ -1245,6 +1252,24 @@ def list_closures(
     return {
         "items": items,
         "next_cursor": _cursor(rows[PAGE - 1][0].id) if len(rows) > PAGE else None,
+    }
+
+
+def _repo_web_urls(session: Session, projects: list[Project | None]) -> dict[int, str]:
+    """project id -> its GitLab web URL: the connection's base URL (never its token) and the
+    path. (app/mcp/queries.repo_urls does the same; it imports this module.)"""
+    known = {p.id: p for p in projects if p is not None and p.connection_id is not None}
+    if not known:
+        return {}
+    wanted = {p.connection_id for p in known.values()}
+    rows = session.execute(
+        select(Connection.id, Connection.base_url).where(Connection.id.in_(wanted))
+    ).all()
+    bases = {int(cid): str(url).rstrip("/") for cid, url in rows if url}
+    return {
+        pid: f"{bases[p.connection_id]}/{p.path_with_namespace}"
+        for pid, p in known.items()
+        if p.connection_id in bases
     }
 
 

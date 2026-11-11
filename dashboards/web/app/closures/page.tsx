@@ -6,6 +6,7 @@ import useSWRInfinite from "swr/infinite";
 
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { ClosureMcpMeta, ViaMcpBadge } from "@/components/ClosureMeta";
+import { CommitList, SubmissionButton, hasSubmission } from "@/components/ClosureSubmission";
 import { CLOSED_AS, ConfirmSettle, OverrideClose, shortShas } from "@/components/FindingClose";
 import { Icon, IconButton } from "@/components/icons";
 import { Card, EmptyState, IdChip, Loading, Message, PageHeader, Pill, Segmented, SeverityBadge } from "@/components/ui";
@@ -358,10 +359,14 @@ export default function ClosuresPage() {
                           {KIND[c.kind] ?? c.kind}
                           {c.shas.length > 0 && (
                             <div className="small">
-                              <code>{shortShas(c.shas)}</code>
+                              <code title={c.shas.join("\n")}>{shortShas(c.shas)}</code>
                             </div>
                           )}
-                          {c.argument && <div className="small muted">có phản biện</div>}
+                          {hasSubmission(c) && (
+                            <div>
+                              <SubmissionButton closure={c} />
+                            </div>
+                          )}
                           {c.via === "mcp" && (
                             <div className="small">
                               <ViaMcpBadge closure={c} />
@@ -474,7 +479,8 @@ function Detail({
             <div className="muted small">{dateTimeMin(c.created_at)}</div>
             {c.shas.length > 0 && (
               <div className="small">
-                Commit: <code>{c.shas.join(", ")}</code>
+                Commit ({c.shas.length}):
+                <CommitList shas={c.shas} repoUrl={c.repo?.web_url} />
               </div>
             )}
             {c.kind === "auto" && c.review_id && (
@@ -487,7 +493,11 @@ function Detail({
                 <strong>Phản biện:</strong> {c.argument}
               </blockquote>
             )}
-            {c.note && <div className="small">Ghi chú: {c.note}</div>}
+            {c.note && (
+              <div className="small closure-text">
+                <strong>Ghi chú:</strong> {c.note}
+              </div>
+            )}
             <ClosureMcpMeta closure={c} />
           </div>
         </li>

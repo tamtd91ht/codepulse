@@ -743,7 +743,8 @@ export interface ClosureListItem extends FindingClosure {
   shown_status?: string;
   /** The finding's outcome when it is closed now (fixed, accepted_risk, false_positive). */
   shown_closed_as?: string | null;
-  repo: { id: number; path: string } | null;
+  /** web_url: the repo on GitLab (commit links); null when its connection is unknown. */
+  repo: { id: number; path: string; web_url?: string | null } | null;
   business_project: { id: number; name: string } | null;
   author: { id: number; name: string | null } | null;
   requested_by_name: string | null;

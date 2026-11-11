@@ -207,6 +207,9 @@ def test_member_asks_manager_runs_the_check_and_it_closes(
     )
     assert row["cost_usd"] == 0.01
     assert row["can_decide"] is False  # the author never decides their own request
+    # The commits sent open on GitLab from the page (the connection's URL, never its token).
+    assert row["repo"]["web_url"] == "https://gitlab.example.com/demo/p"
+    assert row["shas"] == [FIX]
 
 
 @pytest.mark.parametrize(
