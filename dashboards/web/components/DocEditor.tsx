@@ -7,6 +7,21 @@ import { Icon } from "@/components/icons";
 import { Alert, Drawer, Segmented } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { CATEGORY_LABEL, CATEGORY_ORDER, type DocCategory, type DocDetail, placeholders } from "@/lib/docs";
+import {
+  type ColumnAlign,
+  type MdTable,
+  type TableAt,
+  alignCol,
+  cellOffset,
+  deleteCol,
+  deleteRow,
+  findTable,
+  formatTable,
+  fromSpreadsheet,
+  insertCol,
+  insertRow,
+  newTable,
+} from "@/lib/mdtable";
 
 type Mode = "split" | "write" | "preview";
 
@@ -45,7 +60,6 @@ const SNIPPETS: { label: string; title: string; before: string; after?: string; 
   { label: "☐ Việc", title: "Danh sách việc", before: "- [ ] ", block: true },
   { label: "Link", title: "Liên kết", before: "[", after: "](https://)" },
   { label: "Code", title: "Khối code", before: "```bash\n", after: "\n```", block: true },
-  { label: "Bảng", title: "Bảng", before: "| Cột 1 | Cột 2 |\n|---|---|\n| ", after: " |  |", block: true },
   { label: "Lưu ý", title: "Khung lưu ý", before: "> [!NOTE]\n> ", block: true },
   { label: "Cảnh báo", title: "Khung cảnh báo", before: "> [!WARNING]\n> ", block: true },
 ];
@@ -83,6 +97,10 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
     src: string;
   } | null>(null);
   const [customSize, setCustomSize] = useState("");
+  // Tables (docs/specs/29 §14): the one the caret is in, and the size picker.
+  const [onTable, setOnTable] = useState<TableAt | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [pick, setPick] = useState<[number, number]>([3, 3]);
   const dirty = body !== initial;
   const left = placeholders(body);
 
@@ -172,6 +190,49 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
   // the text as ![name](asset:<id>). A placeholder marks the spot while it uploads, so typing
   // on meanwhile is fine.
   const isImage = (f: File) => f.type.startsWith("image/");
+  /** Put `md` at the caret as a block of its own (blank lines around); select `[from, to)` of it. */
+  function insertBlock(md: string, select?: [number, number]) {
+    const el = area.current;
+    const text = el ? el.value : body;
+    const at = el ? el.selectionStart : text.length;
+    const before = text.slice(0, at);
+    const after = text.slice(at);
+    const lead = !before || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+    const tail = after.startsWith("\n\n") ? "" : after.startsWith("\n") ? "\n" : "\n\n";
+    setBody(before + lead + md + tail + after);
+    const base = before.length + lead.length;
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(base + (select?.[0] ?? md.length), base + (select?.[1] ?? md.length));
+      trackCaret();
+    });
+  }
+
+  function insertTable(rows: number, cols: number) {
+    setPicking(false);
+    const md = formatTable(newTable(rows, cols));
+    const first = cellOffset(md, -1, 0);
+    insertBlock(md, [first, first + "Cột 1".length]); // typing replaces the first heading
+  }
+
+  /** Change the table under the caret and write it back lined up; the caret goes to (row, col). */
+  function withTable(change: (at: TableAt) => { table: MdTable; row: number; col: number }) {
+    const el = area.current;
+    if (!el) return;
+    const at = findTable(el.value, el.selectionStart);
+    if (!at) return;
+    const next = change(at);
+    const md = formatTable(next.table);
+    setBody(el.value.slice(0, at.start) + md + el.value.slice(at.end));
+    const caret = at.start + cellOffset(md, next.row, next.col);
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(caret, caret);
+      trackCaret();
+    });
+  }
+
   async function addImages(files: File[]) {
     const el = area.current;
     const shots = files.filter(isImage);
@@ -209,6 +270,7 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
     if (!el) return;
     const text = el.value;
     const pos = el.selectionStart;
+    setOnTable(findTable(text, pos));
     const start = text.lastIndexOf("\n", pos - 1) + 1;
     const nl = text.indexOf("\n", pos);
     const end = nl < 0 ? text.length : nl;
@@ -359,6 +421,50 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
                 {s.label}
               </button>
             ))}
+            <span
+              className="doc-table-pick"
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setPicking(false);
+              }}
+              onBlur={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPicking(false);
+              }}
+            >
+              <button
+                type="button"
+                className={`ghost sm${picking ? " active" : ""}`}
+                title="Chèn bảng (dán ô từ Excel / Google Sheets cũng thành bảng)"
+                aria-expanded={picking}
+                aria-haspopup="grid"
+                onClick={() => setPicking(!picking)}
+                disabled={mode === "preview"}
+              >
+                Bảng ▾
+              </button>
+              {picking && (
+                <div className="doc-table-grid" role="grid" aria-label="Chọn số hàng và cột">
+                  <div className="doc-table-cells" onMouseLeave={() => setPick([3, 3])}>
+                    {Array.from({ length: 8 }, (_, r) =>
+                      Array.from({ length: 8 }, (_, c) => (
+                        <button
+                          key={`${r}-${c}`}
+                          type="button"
+                          className={r < pick[0] && c < pick[1] ? "on" : undefined}
+                          aria-label={`${r + 1} hàng × ${c + 1} cột`}
+                          onMouseEnter={() => setPick([r + 1, c + 1])}
+                          onFocus={() => setPick([r + 1, c + 1])}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => insertTable(r + 1, c + 1)}
+                        />
+                      )),
+                    )}
+                  </div>
+                  <div className="small muted doc-table-size">
+                    {pick[0]} hàng × {pick[1]} cột · hàng đầu là tiêu đề
+                  </div>
+                </div>
+              )}
+            </span>
             <button
               type="button"
               className="ghost sm"
@@ -398,6 +504,84 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
             label="Chế độ soạn"
           />
         </div>
+        {onTable && !onImage && mode !== "preview" && (
+          <div className="doc-editor-imagebar doc-editor-tablebar" role="toolbar" aria-label="Bảng">
+            <span className="small muted">
+              Bảng {onTable.table.rows.length + 1} × {onTable.table.head.length} · {onTable.row < 0 ? "hàng tiêu đề" : `hàng ${onTable.row + 1}`}, cột {onTable.col + 1}:
+            </span>
+            {(
+              [
+                { label: "+ Hàng trên", run: (a: TableAt) => ({ table: insertRow(a.table, Math.max(0, a.row)), row: Math.max(0, a.row), col: a.col }), off: false },
+                { label: "+ Hàng dưới", run: (a: TableAt) => ({ table: insertRow(a.table, a.row + 1), row: a.row + 1, col: a.col }), off: false },
+                { label: "+ Cột trái", run: (a: TableAt) => ({ table: insertCol(a.table, a.col), row: a.row, col: a.col }), off: false },
+                { label: "+ Cột phải", run: (a: TableAt) => ({ table: insertCol(a.table, a.col + 1), row: a.row, col: a.col + 1 }), off: false },
+                {
+                  label: "Xoá hàng",
+                  run: (a: TableAt) => ({ table: deleteRow(a.table, a.row), row: Math.min(a.row, a.table.rows.length - 2), col: a.col }),
+                  off: onTable.row < 0,
+                },
+                {
+                  label: "Xoá cột",
+                  run: (a: TableAt) => ({ table: deleteCol(a.table, a.col), row: a.row, col: Math.max(0, a.col - 1) }),
+                  off: onTable.table.head.length <= 1,
+                },
+              ] as { label: string; run: (a: TableAt) => { table: MdTable; row: number; col: number }; off: boolean }[]
+            ).map((o) => (
+              <button
+                key={o.label}
+                type="button"
+                className={`sm ghost${o.label.startsWith("Xoá") ? " danger" : ""}`}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => withTable(o.run)}
+                disabled={o.off}
+                title={o.label.startsWith("Xoá") && o.off ? (onTable.row < 0 ? "Hàng tiêu đề không xoá được" : "Bảng cần ít nhất một cột") : undefined}
+              >
+                {o.label}
+              </button>
+            ))}
+            <span className="doc-editor-sep" aria-hidden="true" />
+            <span className="doc-editor-align" role="group" aria-label="Căn cột">
+              {(
+                [
+                  { label: "Trái", a: "left" },
+                  { label: "Giữa", a: "center" },
+                  { label: "Phải", a: "right" },
+                ] as { label: string; a: ColumnAlign }[]
+              ).map((o) => {
+                const now = onTable.table.align[onTable.col] ?? null;
+                const on = now === o.a || (o.a === "left" && now === null);
+                return (
+                  <button
+                    key={o.label}
+                    type="button"
+                    className={`sm${on ? " active" : " ghost"}`}
+                    aria-pressed={on}
+                    title={`Căn cột ${onTable.col + 1} ${o.label.toLowerCase()}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => withTable((a) => ({ table: alignCol(a.table, a.col, o.a === "left" ? null : o.a), row: a.row, col: a.col }))}
+                  >
+                    <span className={`doc-align-icon ${o.a}`} aria-hidden="true">
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                    {o.label}
+                  </button>
+                );
+              })}
+            </span>
+            <span className="doc-editor-sep" aria-hidden="true" />
+            <button
+              type="button"
+              className="sm ghost"
+              title="Dàn thẳng các cột trong ô soạn (nội dung không đổi)"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => withTable((a) => ({ table: a.table, row: a.row, col: a.col }))}
+            >
+              Dàn thẳng
+            </button>
+          </div>
+        )}
         {onImage && mode !== "preview" && (
           <div className="doc-editor-imagebar" role="toolbar" aria-label="Cỡ và vị trí ảnh">
             <span className="small muted">
@@ -523,6 +707,14 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
               onClick={trackCaret}
               onKeyUp={trackCaret}
               onPaste={(e) => {
+                // Cells copied from Excel / Google Sheets become a table (Excel also puts a
+                // picture of them on the clipboard: the cells win).
+                const grid = fromSpreadsheet(e.clipboardData.getData("text/plain"));
+                if (grid) {
+                  e.preventDefault();
+                  insertBlock(formatTable(grid));
+                  return;
+                }
                 const shots = Array.from(e.clipboardData.files).filter(isImage);
                 if (!shots.length) return; // text pastes as usual
                 e.preventDefault();

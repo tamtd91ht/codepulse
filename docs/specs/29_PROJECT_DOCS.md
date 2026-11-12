@@ -435,3 +435,23 @@ Thay quyết định “chỉ căn” của §13.3 theo yêu cầu người dùn
 Ngoài phạm vi (IDEAS.md): dọn ảnh không còn tài liệu nào dùng; ảnh nhúng sẵn trong file Word/PDF
 tải lên.
 
+## 14. Bảng trong trình soạn — user 2026-11-12 **[Quyết định]**
+
+Yêu cầu: chèn bảng bằng giao diện trong trình soạn.
+
+- **Chèn**: nút **Bảng ▾** mở lưới 8 × 8 ô; rê chuột (hoặc Tab qua các ô) chọn “N hàng × M cột”,
+  bấm để chèn tại con trỏ thành khối riêng. Hàng đầu là tiêu đề (“Cột 1…”), chữ “Cột 1” được chọn
+  sẵn để gõ đè.
+- **Sửa** (`lib/mdtable.ts`): khi con trỏ nằm trong bảng, hiện **thanh bảng** ghi bảng mấy hàng ×
+  mấy cột và ô đang đứng; nút + Hàng trên / + Hàng dưới / + Cột trái / + Cột phải / Xoá hàng /
+  Xoá cột (không xoá hàng tiêu đề, giữ ít nhất 1 cột), căn cột Trái / Giữa / Phải (ghi `:--` /
+  `:-:` / `--:`, trình hiển thị đã hỗ trợ), **Dàn thẳng**. Mỗi thao tác viết lại bảng với các
+  cột thẳng hàng (độ rộng tính theo chữ dựng sẵn, dấu tiếng Việt không làm lệch) và đặt con trỏ
+  vào ô tương ứng. Ô được giữ nguyên như đã viết (`\|` vẫn là ký tự `|` trong ô).
+- **Dán từ Excel / Google Sheets**: chữ dán có tab trên ≥ 2 dòng, ≥ 2 cột thành bảng (dòng đầu là
+  tiêu đề, `|` trong ô được thoát). Excel còn đưa kèm ảnh của vùng ô: khi đó **ô thắng ảnh**.
+- Vì sao vẫn là Markdown (không trình soạn WYSIWYG): tài liệu, lịch sử phiên bản, so sánh và tìm
+  kiếm đều dựa trên Markdown; giao diện chỉ giúp viết đúng cú pháp.
+- Một dấu `|` trong câu thường không làm hiện thanh bảng (bảng phải có dòng phân cách ngay sau
+  tiêu đề).
+
