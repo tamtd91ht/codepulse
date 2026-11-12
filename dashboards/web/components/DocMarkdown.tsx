@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { type CSSProperties, type ReactNode, useState } from "react";
 
 /**
  * The document renderer (docs/specs/29 §5): Markdown as project documents use it, built as React
@@ -271,6 +271,20 @@ function imageSrc(src: string): string | null {
   return null;
 }
 
+/**
+ * An image's size, written after its name (docs/specs/29 §13.1): `![Sơ đồ|50%](asset:12)` is
+ * half the page width, `![Sơ đồ|480](asset:12)` 480 px (never wider than the page). Without
+ * one the image keeps its own size. Other Markdown readers just show "Sơ đồ|50%" as its text.
+ */
+export function imageSize(alt: string): { alt: string; size: string | null; style?: CSSProperties } {
+  const m = /^(.*?)\|\s*(\d{1,4})\s*(px|%)?\s*$/.exec(alt);
+  if (!m) return { alt, size: null };
+  const name = m[1].trim();
+  const n = Number(m[2]);
+  if (m[3] === "%") return n >= 5 && n <= 100 ? { alt: name, size: `${n}%`, style: { width: `${n}%` } } : { alt: name, size: null };
+  return n >= 16 && n <= 2000 ? { alt: name, size: `${n}`, style: { width: `${n}px` } } : { alt: name, size: null };
+}
+
 function ImageLink({ src, alt }: { src: string; alt: string }) {
   const href = safeHref(src);
   return href && /^https?:/i.test(href) ? (
@@ -346,7 +360,14 @@ export function Inline({ text, term }: { text: string; term?: string }) {
       );
     else if (m[9] !== undefined) {
       const src = imageSrc(m[9]);
-      parts.push(src ? <img key={key++} src={src} alt={m[8]} loading="lazy" referrerPolicy="no-referrer" /> : <ImageLink key={key++} src={m[9]} alt={m[8]} />);
+      const sized = imageSize(m[8]);
+      parts.push(
+        src ? (
+          <img key={key++} src={src} alt={sized.alt} style={sized.style} data-md-src={m[9]} loading="lazy" referrerPolicy="no-referrer" />
+        ) : (
+          <ImageLink key={key++} src={m[9]} alt={sized.alt} />
+        ),
+      );
     } else if (m[11] !== undefined) {
       const href = safeHref(m[11]);
       const external = href ? /^https?:/i.test(href) : false;
@@ -486,14 +507,15 @@ function Blocks({ blocks, term, offset }: { blocks: Block[]; term?: string; offs
             );
           case "img": {
             const src = imageSrc(b.src);
+            const sized = imageSize(b.alt);
             return src ? (
-              <figure key={i} className="doc-figure">
-                <img src={src} alt={b.alt} loading="lazy" referrerPolicy="no-referrer" />
-                {b.alt && <figcaption>{b.alt}</figcaption>}
+              <figure key={i} className={`doc-figure${sized.size ? " sized" : ""}`}>
+                <img src={src} alt={sized.alt} style={sized.style} data-md-src={b.src} loading="lazy" referrerPolicy="no-referrer" />
+                {sized.alt && <figcaption>{sized.alt}</figcaption>}
               </figure>
             ) : (
               <p key={i}>
-                <ImageLink src={b.src} alt={b.alt} />
+                <ImageLink src={b.src} alt={sized.alt} />
               </p>
             );
           }

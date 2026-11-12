@@ -385,6 +385,18 @@ Yêu cầu: dán ảnh trực tiếp vào trình soạn tài liệu.
 | Ảnh từ trang khác (`![](https://…)`) | **Không tự tải**: hiện thành link “🖼 tên” để bấm mở | Ảnh ngoài cho trang đó biết ai đang đọc tài liệu, và một địa chỉ dựng sẵn có thể mang nội dung ra ngoài (rủi ro đã nêu ở §12). Chỉ ảnh `asset:` và đường dẫn cùng trang được tải |
 | AI bổ sung / nâng cấp | Giữ nguyên ảnh `asset:` của tài liệu (prompt dặn; bộ lọc đầu ra §12.3 giữ ảnh `asset:`, vẫn gỡ ảnh ngoài) | |
 
-Ngoài phạm vi (IDEAS.md): dọn ảnh không còn tài liệu nào dùng; đổi cỡ / chú thích ảnh bằng giao
-diện; ảnh nhúng sẵn trong file Word/PDF tải lên.
+### 13.1 Cỡ ảnh (user 2026-11-12) **[Quyết định]**
+
+- Cỡ ghi ngay sau tên ảnh, theo quy ước quen thuộc (Obsidian): `![Sơ đồ|50%](asset:12)` = 50% bề
+  rộng trang, `![Sơ đồ|480](asset:12)` = 480 px (không bao giờ rộng hơn trang); không ghi = cỡ
+  gốc. Nhận 5–100% và 16–2000 px; giá trị khác bị bỏ qua. Trình Markdown khác chỉ hiện “Sơ
+  đồ|50%” làm chữ thay thế, ảnh không hỏng. Vì sao không dùng HTML `<img width>`: tài liệu hiển
+  thị không HTML (§6.2).
+- Trình soạn: khi con trỏ nằm trên dòng ảnh, hoặc bấm vào ảnh trong khung xem trước (con trỏ nhảy
+  tới dòng đó), hiện thanh **Cỡ ảnh**: Nhỏ (25%), Vừa (50%), Lớn (75%), Rộng hết (100%), Cỡ gốc,
+  hoặc nhập số px; bấm là viết lại đúng dòng ảnh đó.
+- AI bổ sung / nâng cấp giữ nguyên cả dòng ảnh (tên, cỡ, `asset:`).
+
+Ngoài phạm vi (IDEAS.md): dọn ảnh không còn tài liệu nào dùng; kéo góc để đổi cỡ; ảnh nhúng sẵn
+trong file Word/PDF tải lên.
 

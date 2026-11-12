@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { DocMarkdown } from "@/components/DocMarkdown";
+import { DocMarkdown, imageSize } from "@/components/DocMarkdown";
 import { Icon } from "@/components/icons";
 import { Alert, Drawer, Segmented } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
@@ -72,6 +72,9 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
   const picker = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(0);
   const projectId = start.kind === "edit" ? start.doc.business_project_id : start.projectId;
+  // The image line the caret is on (docs/specs/29 §13.1): its size bar shows.
+  const [onImage, setOnImage] = useState<{ start: number; end: number; name: string; size: string | null; src: string } | null>(null);
+  const [customSize, setCustomSize] = useState("");
   const dirty = body !== initial;
   const left = placeholders(body);
 
@@ -190,6 +193,51 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
         }
       }),
     );
+  }
+
+  const IMAGE_LINE = /^\s*!\[([^\]]*)\]\(([^)\s]+)\)\s*$/;
+  function trackCaret() {
+    const el = area.current;
+    if (!el) return;
+    const text = el.value;
+    const pos = el.selectionStart;
+    const start = text.lastIndexOf("\n", pos - 1) + 1;
+    const nl = text.indexOf("\n", pos);
+    const end = nl < 0 ? text.length : nl;
+    const m = IMAGE_LINE.exec(text.slice(start, end));
+    if (!m) return setOnImage(null);
+    const sized = imageSize(m[1]);
+    setOnImage({ start, end, name: sized.alt, size: sized.size, src: m[2] });
+    setCustomSize(sized.size && !sized.size.endsWith("%") ? sized.size : "");
+  }
+
+  /** Rewrite the image line under the caret with `size` ("50%", "480") or none. */
+  function resize(size: string | null) {
+    const el = area.current;
+    if (!el || !onImage) return;
+    const line = `![${onImage.name}${size ? `|${size}` : ""}](${onImage.src})`;
+    const text = el.value;
+    setBody(text.slice(0, onImage.start) + line + text.slice(onImage.end));
+    setOnImage({ ...onImage, end: onImage.start + line.length, size });
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(onImage.start + line.length, onImage.start + line.length);
+    });
+  }
+
+  /** A click on an image in the preview puts the caret on its line (and shows its size bar). */
+  function pickFromPreview(target: EventTarget) {
+    const img = target instanceof HTMLImageElement ? target : null;
+    const src = img?.dataset.mdSrc;
+    const el = area.current;
+    if (!src || !el) return;
+    const at = el.value.indexOf(`](${src})`);
+    if (at < 0) return;
+    el.focus();
+    el.setSelectionRange(at, at);
+    const lineTop = el.value.slice(0, at).split("\n").length - 1;
+    el.scrollTop = Math.max(0, lineTop * 22 - el.clientHeight / 3);
+    trackCaret();
   }
 
   function nextPlaceholder() {
@@ -323,13 +371,76 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
             label="Chế độ soạn"
           />
         </div>
+        {onImage && mode !== "preview" && (
+          <div className="doc-editor-imagebar" role="toolbar" aria-label="Cỡ ảnh">
+            <span className="small muted">
+              Cỡ ảnh “{onImage.name || "Ảnh"}”:
+            </span>
+            {[
+              { label: "Nhỏ", size: "25%" },
+              { label: "Vừa", size: "50%" },
+              { label: "Lớn", size: "75%" },
+              { label: "Rộng hết", size: "100%" },
+              { label: "Cỡ gốc", size: null },
+            ].map((o) => (
+              <button
+                key={o.label}
+                type="button"
+                className={`sm${onImage.size === o.size ? " active" : " ghost"}`}
+                aria-pressed={onImage.size === o.size}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => resize(o.size)}
+              >
+                {o.label}
+              </button>
+            ))}
+            <label className="doc-editor-px">
+              <input
+                type="number"
+                min={16}
+                max={2000}
+                step={10}
+                value={customSize}
+                onChange={(e) => setCustomSize(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const n = Number(customSize);
+                    if (n >= 16 && n <= 2000) resize(String(Math.round(n)));
+                  }
+                }}
+                placeholder="px"
+                aria-label="Chiều rộng ảnh (px), Enter để áp dụng"
+              />
+              <span className="small muted">px</span>
+            </label>
+            <button
+              type="button"
+              className="sm ghost"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                const n = Number(customSize);
+                if (n >= 16 && n <= 2000) resize(String(Math.round(n)));
+              }}
+              disabled={!(Number(customSize) >= 16 && Number(customSize) <= 2000)}
+            >
+              Áp dụng
+            </button>
+          </div>
+        )}
         <div className={`doc-editor-panes ${mode}`}>
           {mode !== "preview" && (
             <textarea
               ref={area}
               className="doc-editor-text"
               value={body}
-              onChange={(e) => setBody(e.target.value)}
+              onChange={(e) => {
+                setBody(e.target.value);
+                trackCaret();
+              }}
+              onSelect={trackCaret}
+              onClick={trackCaret}
+              onKeyUp={trackCaret}
               onPaste={(e) => {
                 const shots = Array.from(e.clipboardData.files).filter(isImage);
                 if (!shots.length) return; // text pastes as usual
@@ -351,7 +462,7 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
             />
           )}
           {mode !== "write" && (
-            <div className="doc-editor-preview" aria-label="Xem trước">
+            <div className="doc-editor-preview" aria-label="Xem trước" onClick={(e) => pickFromPreview(e.target)}>
               {body.trim() ? <DocMarkdown text={body} /> : <p className="muted">Xem trước hiện ở đây.</p>}
             </div>
           )}

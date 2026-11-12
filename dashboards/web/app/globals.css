@@ -10772,3 +10772,40 @@ button.ghost.danger:hover:not(:disabled) {
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
+
+/* Cỡ ảnh (docs/specs/29 §13.1) */
+.doc-figure.sized img {
+  max-width: 100%;
+}
+.doc-editor-preview img[data-md-src] {
+  cursor: pointer;
+}
+.doc-editor-preview img[data-md-src]:hover {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.doc-editor-imagebar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px;
+  margin: 0 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--info-soft);
+}
+.doc-editor-imagebar button.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+.doc-editor-px {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.doc-editor-px input {
+  width: 84px;
+  height: 30px;
+}

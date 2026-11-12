@@ -685,6 +685,8 @@ def test_images_inside_documents(
         headers=admin,
     )
     assert made.status_code == 201 and asset["markdown"] in made.json()["body"]
+    sized = f"![so-do|50%](asset:{asset['id']})"
+    assert synthesis.defuse(sized) == (sized, 0)  # its size stays with it
     kept, dropped = synthesis.defuse(body + "\n![x](https://evil.example/p)")
     assert (
         asset["markdown"] in kept
