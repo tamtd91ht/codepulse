@@ -516,5 +516,19 @@ Thanh công cụ của tài liệu (user 2026-11-12): các thao tác ít dùng g
   code (`white-space: pre`); còn lại dán chữ như cũ. Đoạn một dòng (câu có link) chèn ngay tại
   con trỏ; nhiều dòng thành khối riêng.
 - Thứ tự: HTML → ô dạng tab (Excel / Sheets không có HTML) → ảnh → chữ thường.
-- Ảnh trong đoạn dán từ Google Docs bị bỏ (địa chỉ ảnh là máy chủ Google, có hạn): dán ảnh riêng.
+- Ảnh trong đoạn dán: xem §18.1.
+
+### 18.1 Giữ ảnh khi dán từ Google Docs / web (user 2026-11-12) **[Quyết định]**
+
+- Clipboard của Google Docs chỉ có **địa chỉ** ảnh (`lh*.googleusercontent.com`, có hạn, trình
+  duyệt không đọc được vì không có CORS). Khi dán, mỗi ảnh thành chỗ giữ `![alt|cỡ](paste-img:…)`
+  (cỡ lấy theo bề rộng ảnh trong Docs) rồi được tải lên thành ảnh của tài liệu (`asset:`, §13):
+  ảnh nhúng sẵn (`data:image/…`) do trình duyệt tải lên; ảnh theo địa chỉ do **server** tải
+  (`POST /docs/assets/fetch`, cần `docs.edit`): cùng bộ tải an toàn của link (chặn địa chỉ nội bộ
+  trừ máy trong ASSISTANT_URL_HOSTS, kiểm từng lần chuyển hướng, ≤ 5 MB, 30 giây), loại ảnh kiểm
+  từ byte đầu, ảnh trùng dùng lại.
+- Ảnh không tải được (Docs riêng tư, link hết hạn): thành link “Ảnh không tải được” tới ảnh gốc,
+  kèm thông báo; chữ quanh nó giữ nguyên. Tối đa 20 ảnh mỗi lần dán.
+- Chép một ảnh đơn lẻ (clipboard có file ảnh, không có chữ): dán như ảnh (§13), không tải lại theo
+  địa chỉ.
 

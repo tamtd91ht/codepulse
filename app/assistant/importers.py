@@ -591,6 +591,23 @@ def _fetch(
     raise ImportError_("chuyển hướng quá nhiều lần")
 
 
+def fetch_bytes(url: str, allowed_hosts: tuple[str, ...], limit: int) -> tuple[str, bytes]:
+    """(content type, body) of `url`, through the same guarded client as a web link (no private
+    address unless listed, redirects checked hop by hop, at most `limit` bytes, URL_DEADLINE_S):
+    an image of a pasted document (docs/specs/29 §18.1)."""
+    http = _client(allowed_hosts)
+    try:
+        _, kind, body, _ = _fetch(http, url, limit, time.monotonic() + URL_DEADLINE_S)
+    except httpx.HTTPError as exc:
+        cause = exc.__cause__ or exc.__context__
+        if isinstance(cause, ImportError_):
+            raise cause from None
+        raise ImportError_(f"không tải được ({exc.__class__.__name__})") from exc
+    finally:
+        http.close()
+    return kind, body
+
+
 def _export_name(headers: httpx.Headers, fallback: str) -> str:
     """The file name Google gives the export (Content-Disposition), without its extension."""
     disposition = headers.get("content-disposition", "")

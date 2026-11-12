@@ -3,7 +3,9 @@
  * pages and Word put HTML on the clipboard next to the plain text, and only the HTML keeps the
  * links. It becomes Markdown: links (Google's redirect wrapper removed), headings, nested lists,
  * bold / italic (Google Docs writes them as styles), tables (links in cells kept), quotes, code.
- * Images are left out (their addresses point at Google's servers): paste them as images.
+ * Images (§18.1) become placeholders `![alt|width](paste-img:…)`, listed with their source
+ * (an address, or the picture itself as a data: URL) for the editor to upload as the document's
+ * own images; Google's addresses expire and cannot be read by the browser.
  *
  * DOMParser builds an inert document: no script runs, no image or style is fetched.
  */
@@ -12,7 +14,31 @@
  * from an editor (whitespace: pre) is left to the plain text. */
 export function richEnough(html: string): boolean {
   if (!html || /white-space:\s*pre/i.test(html)) return false;
-  return /<a\s[^>]*href|<table|<h[1-6][\s>]|<li[\s>]/i.test(html);
+  return /<a\s[^>]*href|<table|<h[1-6][\s>]|<li[\s>]|<img\s[^>]*src=["']?(https?:|data:image\/)/i.test(html);
+}
+
+/** A picture of the pasted text, to be uploaded: `token` stands for it in the Markdown. */
+export interface PastedImage {
+  token: string;
+  src: string;
+  alt: string;
+}
+
+export const MAX_PASTED_IMAGES = 20;
+// The images of the conversion under way (htmlToMarkdown is synchronous).
+let pending: PastedImage[] | null = null;
+let stamp = "";
+
+function image(el: Element): string {
+  const src = (el.getAttribute("src") ?? "").trim();
+  if (!pending || !/^(https?:\/\/|data:image\/(png|jpe?g|webp|gif);base64,)/i.test(src) || pending.length >= MAX_PASTED_IMAGES) return "";
+  const token = `paste-img:${stamp}-${pending.length}`;
+  const alt = (el.getAttribute("alt") ?? "").replace(/[[\]|()]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+  pending.push({ token, src, alt });
+  // Google Docs gives the size it was shown at: kept as the image's width (docs/specs/29 §13.1).
+  const width = Math.round(parseFloat(styled(el, "width")) || Number(el.getAttribute("width")) || 0);
+  const size = width >= 16 && width <= 2000 ? `|${width}` : "";
+  return `![${alt || "Ảnh"}${size}](${token})`;
 }
 
 function cleanUrl(raw: string | null): string | null {
@@ -41,7 +67,8 @@ function inline(node: Node, inLink = false): string {
   const el = node as Element;
   const tag = el.tagName.toLowerCase();
   if (tag === "br") return "\n";
-  if (tag === "img" || tag === "style" || tag === "script") return "";
+  if (tag === "img") return image(el);
+  if (tag === "style" || tag === "script") return "";
   const inner = () => Array.from(el.childNodes, (c) => inline(c, inLink || tag === "a")).join("");
   if (tag === "a" && !inLink) {
     const url = cleanUrl(el.getAttribute("href"));
@@ -90,7 +117,7 @@ function depth(li: Element, nested: number): number {
   return Math.max(nested, Math.round(margin / 36) - 1, 0);
 }
 
-const INLINE = new Set(["a", "span", "b", "strong", "em", "i", "u", "code", "font", "small", "sup", "sub", "mark", "s", "del", "br", "abbr", "label"]);
+const INLINE = new Set(["a", "span", "b", "strong", "em", "i", "u", "code", "font", "small", "sup", "sub", "mark", "s", "del", "br", "abbr", "label", "img"]);
 
 function blocks(parent: Element, out: string[], nested = 0): void {
   // Text and inline elements side by side are one paragraph ("Xem <a>trang này</a>").
@@ -173,15 +200,26 @@ function hasBlock(el: Element): boolean {
 }
 
 /** Markdown of pasted HTML, or null when it is not worth it (see `richEnough`). */
-export function htmlToMarkdown(html: string): string | null {
+export function htmlToMarkdown(html: string): { markdown: string; images: PastedImage[] } | null {
   if (!richEnough(html)) return null;
   const doc = new DOMParser().parseFromString(html, "text/html");
   const out: string[] = [];
-  blocks(doc.body, out);
-  const md = out
-    .join("\n\n")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  return md || null;
+  pending = [];
+  stamp = Math.random().toString(36).slice(2, 8);
+  try {
+    blocks(doc.body, out);
+    const md = out
+      .join("\n\n")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    return md ? { markdown: md, images: pending } : null;
+  } finally {
+    pending = null;
+  }
+}
+
+/** The Markdown without its image placeholders: is there text besides the pictures? */
+export function textOf(markdown: string): string {
+  return markdown.replace(/!\[[^\]]*\]\(paste-img:[^)]+\)/g, "").trim();
 }

@@ -7,7 +7,7 @@ import { Icon } from "@/components/icons";
 import { Alert, Drawer, Segmented } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { CATEGORY_LABEL, CATEGORY_ORDER, type DocCategory, type DocDetail, placeholders } from "@/lib/docs";
-import { htmlToMarkdown } from "@/lib/htmlpaste";
+import { type PastedImage, htmlToMarkdown, textOf } from "@/lib/htmlpaste";
 import {
   type ColumnAlign,
   type MdTable,
@@ -245,6 +245,34 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
       el.setSelectionRange(caret, caret);
       trackCaret();
     });
+  }
+
+  /** The pictures of pasted rich text (Google Docs, web pages): each placeholder becomes the
+   * document's own image once uploaded (an address is fetched by the server: the browser may not
+   * read it and Google's expire); one that fails becomes a link to where it was. */
+  async function resolvePasted(images: PastedImage[]) {
+    setUploading((n) => n + images.length);
+    let failed = 0;
+    for (const img of images) {
+      try {
+        let id: number;
+        if (img.src.startsWith("data:")) {
+          const blob = await (await fetch(img.src)).blob();
+          if (blob.size > 5 * 1024 * 1024) throw new Error("ảnh lớn hơn 5 MB");
+          id = (await api.postRaw<{ id: number }>(`/docs/assets?business_project_id=${projectId}&filename=${encodeURIComponent(img.alt)}`, blob)).id;
+        } else {
+          id = (await api.post<{ id: number }>("/docs/assets/fetch", { business_project_id: projectId, url: img.src, name: img.alt })).id;
+        }
+        setBody((text) => text.split(`(${img.token})`).join(`(asset:${id})`));
+      } catch {
+        failed++;
+        const link = img.src.startsWith("http") ? `[Ảnh không tải được${img.alt ? `: ${img.alt}` : ""}](${img.src})` : "";
+        setBody((text) => text.replace(new RegExp(`!\\[[^\\]]*\\]\\(${img.token.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&")}\\)`, "g"), link));
+      } finally {
+        setUploading((n) => n - 1);
+      }
+    }
+    if (failed) setError(`${failed}/${images.length} ảnh không tải được (ảnh Google Docs riêng tư hoặc link đã hết hạn): đã để lại link tới ảnh gốc, có thể tải ảnh về rồi dán lại.`);
   }
 
   async function addImages(files: File[]) {
@@ -724,10 +752,13 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
                 // Rich text from Google Docs / Sheets, Word, web pages: its HTML keeps the links,
                 // headings, lists and tables the plain text loses (docs/specs/29 §18).
                 const rich = htmlToMarkdown(e.clipboardData.getData("text/html"));
-                if (rich) {
+                const files = Array.from(e.clipboardData.files).filter(isImage);
+                // A copied picture alone (its file is on the clipboard): taken as the file below.
+                if (rich && !(files.length && !textOf(rich.markdown))) {
                   e.preventDefault();
-                  if (/\n|^(#|\||-\s|\d+\.\s|>|```)/.test(rich)) insertBlock(rich);
-                  else insertInline(rich);
+                  if (/\n|^(#|\||-\s|\d+\.\s|>|```|!\[)/.test(rich.markdown)) insertBlock(rich.markdown);
+                  else insertInline(rich.markdown);
+                  if (rich.images.length) void resolvePasted(rich.images);
                   return;
                 }
                 // Cells copied from Excel / Google Sheets become a table (Excel also puts a

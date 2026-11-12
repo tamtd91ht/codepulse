@@ -25,6 +25,7 @@ from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.security import CurrentPrincipal, Principal
 from app.assistant import importers
+from app.config import Settings, get_settings
 from app.docs import service as docs
 from app.docs.templates import BY_KEY, TEMPLATES
 from app.models import (
@@ -993,7 +994,6 @@ async def upload_asset(
 ) -> AssetOut:
     """An image for a document of the dự án (raw bytes: PNG, JPEG, WebP, GIF ≤ 5 MB). The same
     image pasted again is the same asset."""
-    from app.docs.synthesis import image_mime
 
     await run_in_threadpool(docs.project_for, session, principal, business_project_id, True)
     limit = ASSET_MAX_MB * 1024 * 1024
@@ -1007,6 +1007,17 @@ async def upload_asset(
         if len(data) > limit:
             raise HTTPException(413, f"ảnh lớn hơn {ASSET_MAX_MB} MB")
     raw = bytes(data)
+    return await run_in_threadpool(
+        _save_asset, session, principal, business_project_id, raw, filename
+    )
+
+
+def _save_asset(
+    session: Session, principal: Principal, bp_id: int, raw: bytes, filename: str
+) -> AssetOut:
+    """One image of the dự án's documents: checked from its bytes, the same bytes kept once."""
+    from app.docs.synthesis import image_mime
+
     mime = image_mime(raw)
     if mime is None:
         raise HTTPException(422, "chỉ nhận ảnh PNG, JPEG, WebP, GIF")
@@ -1014,45 +1025,70 @@ async def upload_asset(
     base = unquote(filename).replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0]
     name = " ".join("".join(ch for ch in base if ch.isprintable()).replace("]", " ").split())
     name = name[:80] or "Ảnh"
-
-    def store() -> AssetOut:
-        docs.project_for(session, principal, business_project_id, edit=True)
-        row = session.scalar(
-            select(ProjectDocumentAsset).where(
-                ProjectDocumentAsset.business_project_id == business_project_id,
-                ProjectDocumentAsset.sha256 == digest,
-            )
+    docs.project_for(session, principal, bp_id, edit=True)
+    row = session.scalar(
+        select(ProjectDocumentAsset).where(
+            ProjectDocumentAsset.business_project_id == bp_id,
+            ProjectDocumentAsset.sha256 == digest,
         )
-        if row is None:
-            row = ProjectDocumentAsset(
-                business_project_id=business_project_id,
-                uploaded_by=principal.user_id,
-                name=name,
-                mime=mime,
-                size=len(raw),
-                sha256=digest,
-                data=raw,
-            )
-            session.add(row)
-            try:
-                session.commit()
-            except IntegrityError:  # the same image pasted twice at once
-                session.rollback()
-                row = session.scalars(
-                    select(ProjectDocumentAsset).where(
-                        ProjectDocumentAsset.business_project_id == business_project_id,
-                        ProjectDocumentAsset.sha256 == digest,
-                    )
-                ).one()
-        return AssetOut(
-            id=row.id,
+    )
+    if row is None:
+        row = ProjectDocumentAsset(
+            business_project_id=bp_id,
+            uploaded_by=principal.user_id,
             name=name,
-            mime=row.mime,
-            size=row.size,
-            markdown=f"![{name}](asset:{row.id})",
+            mime=mime,
+            size=len(raw),
+            sha256=digest,
+            data=raw,
         )
+        session.add(row)
+        try:
+            session.commit()
+        except IntegrityError:  # the same image pasted twice at once
+            session.rollback()
+            row = session.scalars(
+                select(ProjectDocumentAsset).where(
+                    ProjectDocumentAsset.business_project_id == bp_id,
+                    ProjectDocumentAsset.sha256 == digest,
+                )
+            ).one()
+    return AssetOut(
+        id=row.id,
+        name=name,
+        mime=row.mime,
+        size=row.size,
+        markdown=f"![{name}](asset:{row.id})",
+    )
 
-    return await run_in_threadpool(store)
+
+class AssetUrlIn(BaseModel):
+    business_project_id: int
+    url: str = Field(min_length=8, max_length=4000)
+    name: str = Field(default="", max_length=120)
+
+
+@router.post("/docs/assets/fetch", response_model=AssetOut, status_code=201)
+def fetch_asset(
+    body: AssetUrlIn,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AssetOut:
+    """An image pasted from Google Docs or a web page, by its address (docs/specs/29 §18.1):
+    the browser cannot read Google's images (no CORS) and their addresses expire, so the server
+    fetches it once (the guarded client of web links) and keeps it as the dự án's own."""
+    docs.project_for(session, principal, body.business_project_id, edit=True)
+    if not body.url.startswith(("https://", "http://")):
+        raise HTTPException(422, "chỉ tải ảnh từ địa chỉ http(s)")
+    session.commit()  # nothing held while the image downloads
+    try:
+        _, raw = importers.fetch_bytes(
+            body.url, importers.hosts_of(settings.assistant_url_hosts), ASSET_MAX_MB * 1024 * 1024
+        )
+    except importers.ImportError_ as exc:
+        raise HTTPException(422, f"không tải được ảnh: {exc}") from None
+    return _save_asset(session, principal, body.business_project_id, raw, body.name or "Ảnh")
 
 
 @router.get("/docs/assets/{asset_id}")

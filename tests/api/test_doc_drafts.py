@@ -703,3 +703,59 @@ def delete_grants(bp: int, user_id: int) -> Any:
     return delete(ProjectGrant).where(
         ProjectGrant.business_project_id == bp, ProjectGrant.user_id == user_id
     )
+
+
+def test_images_pasted_by_address_are_fetched_and_kept(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """docs/specs/29 §18.1: an image pasted from Google Docs is an address (no CORS, expiring):
+    the server fetches it through the guarded client and keeps it as an asset."""
+    bp = world.project.business_project_id
+    assert bp is not None
+    admin = as_user(world.admin)
+    asked: list[str] = []
+
+    def fake_fetch(url: str, hosts: tuple[str, ...], limit: int) -> tuple[str, bytes]:
+        asked.append(url)
+        if "broken" in url:
+            raise importers.ImportError_("máy chủ trả mã 403")
+        if "html" in url:
+            return "text/html", b"<html>sign in</html>"
+        return "image/png", PNG
+
+    monkeypatch.setattr(importers, "fetch_bytes", fake_fetch)
+    url = "https://lh7-rt.googleusercontent.com/docsz/AD_4nXabc?key=xyz"
+    got = client.post(
+        "/api/v1/docs/assets/fetch",
+        json={"business_project_id": bp, "url": url, "name": "so-do"},
+        headers=admin,
+    )
+    assert got.status_code == 201, got.text
+    asset = got.json()
+    assert asset["markdown"] == f"![so-do](asset:{asset['id']})" and asked == [url]
+    # The same picture again: the same asset.
+    again = client.post(
+        "/api/v1/docs/assets/fetch", json={"business_project_id": bp, "url": url}, headers=admin
+    )
+    assert again.json()["id"] == asset["id"]
+    for bad, why in (
+        ("https://x.example/broken.png", "403"),
+        ("https://x.example/html", "PNG"),
+        ("ftp://x.example/a.png", "http"),
+    ):
+        r = client.post(
+            "/api/v1/docs/assets/fetch", json={"business_project_id": bp, "url": bad}, headers=admin
+        )
+        assert r.status_code == 422 and why in r.json()["detail"], r.text
+    grant(db_session, world.an, bp, "view")
+    db_session.commit()
+    denied = client.post(
+        "/api/v1/docs/assets/fetch",
+        json={"business_project_id": bp, "url": url},
+        headers=as_user(world.an),
+    )
+    assert denied.status_code == 403
