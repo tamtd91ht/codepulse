@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Modal } from "@/components/CriteriaParts";
 import { Icon } from "@/components/icons";
+import { type UndoNote, UndoNotice, bulkNote } from "@/components/TestcaseBulk";
 import { LinksReview } from "@/components/TestcaseLinks";
 import { PriorityPill, StepsTable, errorText } from "@/components/TestcaseParts";
 import { Alert, Card, Drawer, Loading, Pill } from "@/components/ui";
@@ -15,11 +16,15 @@ import {
   AI_KIND_LABEL,
   AI_STATUS_LABEL,
   type AiRun,
+  type BulkOut,
+  type CaseList,
+  type DuplicateGroup,
   ISSUE_LABEL,
   type Proposal,
   type RunList,
   type Suite,
   TYPE_LABEL,
+  caseKey,
   splitList,
 } from "@/lib/testcases";
 
@@ -309,7 +314,7 @@ export function RunDrawer({
     }
   };
 
-  const open = proposals.filter((_, i) => !applied.has(i)).length;
+  const open = r?.kind === "duplicates" ? 0 : proposals.filter((_, i) => !applied.has(i)).length;
   const actions = r && (
     <>
       {(r.status === "failed" || r.status === "ready") && (
@@ -398,10 +403,19 @@ export function RunDrawer({
               }}
             />
           )}
+          {r.kind === "duplicates" && r.result && (
+            <DuplicatesReview
+              run={r}
+              onApplied={() => {
+                void run.mutate();
+                onChanged();
+              }}
+            />
+          )}
           {r.kind === "impact" && r.result && (
             <p className="small muted">Testcase cần test lại được hiển thị ở thẻ “Testcase liên quan” của review và tab “Cần test lại”. Dưới đây là testcase AI đề xuất thêm.</p>
           )}
-          {proposals.length > 0 && (
+          {proposals.length > 0 && r.kind !== "duplicates" && (
             <section>
               <div className="tc-proposals-head">
                 <h3 className="tc-h3">{r.kind === "generate" ? "Testcase đề xuất" : "Testcase nên có thêm"} ({proposals.length})</h3>
@@ -487,5 +501,128 @@ export function RunDrawer({
         </div>
       )}
     </Drawer>
+  );
+}
+
+/** §15.10: ask the AI for duplicate / near-duplicate cases of a suite (kind "duplicates"). */
+export async function askDuplicates(projectId: number, suiteId: number): Promise<AiRun> {
+  return api.post<AiRun>("/testcases/ai", { kind: "duplicates", business_project_id: projectId, suite_id: suiteId });
+}
+
+/** The groups the AI found: tick the extra cases to mark obsolete (one revision each, with undo). */
+function DuplicatesReview({ run, onApplied }: { run: AiRun; onApplied: () => void }) {
+  const groups = useMemo<DuplicateGroup[]>(() => run.result?.groups ?? [], [run]);
+  const cases = useApi<CaseList>(
+    groups.length && run.suite_id ? `/testcases?business_project_id=${run.business_project_id}&suite_id=${run.suite_id}&limit=500` : null,
+  );
+  const byId = useMemo(() => new Map((cases.data?.items ?? []).map((c) => [c.id, c])), [cases.data]);
+  const [picked, setPicked] = useState<Record<number, Set<number>>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<UndoNote | null>(null);
+  const done = run.status === "applied";
+
+  useEffect(() => {
+    setPicked(Object.fromEntries(groups.map((g, i) => [i, new Set(g.duplicates)])));
+  }, [groups]);
+
+  const chosen = groups.map((g, i) => ({ keep: g.keep, duplicates: g.duplicates.filter((d) => picked[i]?.has(d)) })).filter((g) => g.duplicates.length);
+  const count = chosen.reduce((n, g) => n + g.duplicates.length, 0);
+  const label = (id: number) => {
+    const c = byId.get(id);
+    return c ? (
+      <>
+        <span className="tc-key">{caseKey(c)}</span> {c.title}
+      </>
+    ) : (
+      <span className="tc-key">#{id}</span>
+    );
+  };
+  const toggle = (i: number, ids: number[], on: boolean) =>
+    setPicked((p) => {
+      const next = new Set(p[i] ?? []);
+      for (const id of ids) if (on) next.add(id);
+      else next.delete(id);
+      return { ...p, [i]: next };
+    });
+
+  const apply = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const got = await api.post<BulkOut>(`/testcases/ai/${run.id}/apply-duplicates`, { groups: chosen });
+      setNote(bulkNote(got, `Đã chuyển ${got.changed} testcase trùng sang “Lỗi thời”`));
+      onApplied();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section aria-labelledby="tc-dup-title">
+      <div className="tc-proposals-head">
+        <h3 className="tc-h3" id="tc-dup-title">
+          Nhóm trùng lặp ({groups.length})
+        </h3>
+        {groups.length > 0 && !done && (
+          <button type="button" className="primary sm" onClick={() => void apply()} disabled={busy || !count}>
+            {busy ? "Đang áp dụng…" : `Áp dụng: ${count} testcase sang Lỗi thời`}
+          </button>
+        )}
+      </div>
+      {error && (
+        <Alert tone="error" onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+      <UndoNotice note={note} onClose={() => setNote(null)} onUndone={onApplied} />
+      {done && !note && <Alert tone="info">Đã áp dụng lượt này. Hoàn tác ở “Lịch sử thao tác hàng loạt” (trong 24 giờ).</Alert>}
+      {!groups.length ? (
+        <p className="small muted">AI không thấy testcase nào trùng trong bộ.</p>
+      ) : (
+        <>
+          {cases.error && <Alert tone="warning">Không tải được tiêu đề testcase ({cases.error.message}); vẫn áp dụng được theo mã.</Alert>}
+          <ol className="tc-dup-groups">
+            {groups.map((g, i) => {
+              const set = picked[i] ?? new Set<number>();
+              const all = g.duplicates.every((d) => set.has(d));
+              return (
+                <li key={i} className="tc-dup-group">
+                  <label className="inline-check">
+                    <input
+                      type="checkbox"
+                      disabled={done}
+                      checked={all && g.duplicates.length > 0}
+                      ref={(el) => {
+                        if (el) el.indeterminate = !all && set.size > 0;
+                      }}
+                      onChange={(e) => toggle(i, g.duplicates, e.target.checked)}
+                      aria-label={`Chọn nhóm ${i + 1}`}
+                    />
+                    <strong>Nhóm {i + 1}</strong>
+                  </label>
+                  <p className="small">{g.reason}</p>
+                  <div className="tc-dup-keep small">
+                    <Pill tone="good">Giữ</Pill> {cases.data || cases.error ? label(g.keep) : "…"}
+                  </div>
+                  <ul className="tc-dup-list">
+                    {g.duplicates.map((d) => (
+                      <li key={d}>
+                        <label className="inline-check small">
+                          <input type="checkbox" disabled={done} checked={set.has(d)} onChange={(e) => toggle(i, [d], e.target.checked)} />
+                          <Pill tone="warn">Trùng</Pill> {cases.data || cases.error ? label(d) : "…"}
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              );
+            })}
+          </ol>
+        </>
+      )}
+    </section>
   );
 }

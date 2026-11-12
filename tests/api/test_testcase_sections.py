@@ -236,7 +236,7 @@ def test_steps_template_shared_steps_estimate_and_bulk(
         json={"ids": ids, "action": "section", "section_id": None},
         headers=admin,
     )
-    assert back.json() == {"changed": 2}
+    assert back.json()["changed"] == 2
     assert _list(client, admin, bp, section_id=folder["id"]) == []
 
 
@@ -478,6 +478,13 @@ def test_deletes_refresh_open_runs_and_positions_are_bounded(
 
     monkeypatch.setattr(router, "refresh_open_snapshots", record)
     monkeypatch.setattr(runs, "refresh_open_snapshots", record)
+    # Bulk actions live in their own module (§15.10, G10): patched there too when it imports it.
+    import importlib
+
+    for name in ("app.testcases.bulk", "app.api.routers.test_bulk"):
+        module = importlib.import_module(name)
+        if hasattr(module, "refresh_open_snapshots"):
+            monkeypatch.setattr(module, "refresh_open_snapshots", record)
     bp = world.project.business_project_id
     assert bp is not None
     admin = as_user(world.admin)

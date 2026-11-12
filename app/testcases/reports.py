@@ -55,6 +55,7 @@ from app.models import (
     TestCaseRevision,
     TestConfig,
     TestConfigGroup,
+    TestField,
     TestMilestone,
     TestPlan,
     TestReportSchedule,
@@ -117,6 +118,9 @@ class Filters:
     date_from: date | None = None
     date_to: date | None = None
     tz: str = "UTC"
+    # §15.8 G5: tests of cases whose dropdown field `field` (its key) has the option `value`.
+    field: str | None = None
+    value: str | None = None
 
     def start(self) -> datetime | None:
         if self.date_from is None:
@@ -140,6 +144,8 @@ class Filters:
             "from": self.date_from.isoformat() if self.date_from else None,
             "to": self.date_to.isoformat() if self.date_to else None,
             "tz": self.tz,
+            "field": self.field,
+            "value": self.value,
         }
 
 
@@ -175,11 +181,37 @@ def _suite_cases(suite_id: int) -> Any:
     return select(TestCase.id).where(TestCase.suite_id == suite_id)
 
 
+def _field_cases(f: Filters) -> Any:
+    """Cases whose custom field `f.field` holds `f.value` (§15.8, a dropdown of the case)."""
+    return select(TestCase.id).where(TestCase.custom[str(f.field)].astext == str(f.value))
+
+
+def field_value(session: Session, bp_id: int, key: str, value: str) -> tuple[str, str] | None:
+    """(key, option as stored) of a live dropdown case field of the dự án; None: no such field
+    or option."""
+    found = session.scalar(
+        select(TestField).where(
+            TestField.business_project_id == bp_id,
+            TestField.entity == "case",
+            TestField.key == key,
+            TestField.type == "dropdown",
+            TestField.archived_at.is_(None),
+        )
+    )
+    if found is None:
+        return None
+    wanted = " ".join(value.split()).casefold()
+    option = next((o for o in found.options or [] if o.casefold() == wanted), None)
+    return (found.key, option) if option is not None else None
+
+
 def test_where(f: Filters) -> list[ColumnElement[bool]]:
     """Tests (TestRunTest joined to TestRun) the filters keep."""
     where = _run_where(f)
     if f.suite_id:
         where.append(TestRunTest.case_id.in_(_suite_cases(f.suite_id)))
+    if f.field and f.value is not None:
+        where.append(TestRunTest.case_id.in_(_field_cases(f)))
     if f.branch:
         where.append(exists().where(TestResult.test_id == TestRunTest.id, _branch() == f.branch))
     start, end = f.start(), f.end()
@@ -195,6 +227,8 @@ def result_where(f: Filters) -> list[ColumnElement[bool]]:
     where = [*_run_where(f), TestResult.status.is_not(None)]
     if f.suite_id:
         where.append(TestRunTest.case_id.in_(_suite_cases(f.suite_id)))
+    if f.field and f.value is not None:
+        where.append(TestRunTest.case_id.in_(_field_cases(f)))
     if f.branch:
         where.append(_branch() == f.branch)
     start, end = f.start(), f.end()

@@ -688,3 +688,98 @@ Báo cáo (`app/testcases/reports.py`, `app/api/routers/test_reports.py`, tab "B
   bằng đường webhook của G11 (`WebhookDelivery` sự kiện `testcase.report`, ký HMAC, thử lại 3 lần;
   Slack / Teams nhận một dòng `text`, JSON nhận cả số liệu). Telegram bot riêng, email, Slack native:
   IDEAS.
+
+### 15.8 G5 – trường tuỳ biến **[Quyết định]**
+
+- Bảng `test_fields` (một dự án): `key` (slug duy nhất trong dự án, tự sinh từ tên, không sửa sau khi
+  tạo), `name`, `entity` (`case` | `result`), `type` (`text`, `textarea`, `number`, `date`,
+  `dropdown`, `multiselect`, `checkbox`, `user`, `url`), `options` (dropdown / multi-select: danh
+  sách nhãn), `required`, `default`, `suite_ids` (rỗng = mọi bộ), `templates` (rỗng = mọi template;
+  `text` / `steps`), `position`, `archived_at`. Xoá = lưu trữ (giá trị giữ nguyên, ẩn khỏi form, lọc,
+  cột); khôi phục được. Đọc `tests.view`, sửa `tests.manage`.
+- Giá trị lưu ở `test_cases.custom` / `test_results.custom` (JSONB `{key: value}`): text ≤ 2 000 ký tự,
+  textarea ≤ 20 000, number là số, date `YYYY-MM-DD`, dropdown một nhãn trong `options`,
+  multi-select danh sách nhãn, checkbox bool, user là id người dùng đang hoạt động, url http(s).
+  Khoá lạ bị bỏ; trường đã lưu trữ giữ giá trị cũ.
+- Bắt buộc: chặn lưu ở API (422, nêu tên trường) khi tạo / sửa case (trường áp dụng cho bộ và template
+  của case) và khi ghi kết quả có trạng thái (trường `result`). Nhập Sheet, AI, CI không bị chặn:
+  thiếu thì điền giá trị mặc định nếu có. Giá trị mặc định điền khi tạo.
+- `custom` của case vào revision (khôi phục được) và vào tìm kiếm (text, dropdown, multi-select).
+- Lọc danh sách case: `f.<key>=<giá trị>` (dropdown / multi-select / checkbox / user: bằng; text:
+  chứa). Cột: chọn hiện trên bảng testcase (lưu ở trình duyệt). Nhập Sheet: cột có tiêu đề trùng tên
+  trường được đoán tự động. Xuất Excel: một cột mỗi trường đang dùng. API token: đọc / ghi như trường
+  thường. Báo cáo tổng kết: lọc theo một trường dropdown của case (`field`, `value`).
+
+### 15.9 G7 – vai trò và duyệt **[Quyết định]**
+
+- Hai quyền mới: `tests.delete` (xoá testcase, bộ, thư mục) và `tests.approve` (duyệt testcase).
+  `tests.edit` không còn gồm xoá. Migration chép `tests.edit` → `tests.delete` và `tests.manage` →
+  `tests.approve` cho mọi bộ quyền đang có, nên không ai mất quyền.
+- Năm bộ quyền mẫu (không phải builtin, admin sửa / gán như bộ thường; phạm vi "mọi dự án xem được",
+  tức các dự án người đó là thành viên; vai trò khác nhau giữa các dự án thì tạo bộ riêng): **Testcase – Admin dự án** (mọi quyền tests.*), **Lead** (view, edit, run,
+  delete, approve, manage), **Tester** (view, edit, run), **Developer** (view, run: ghi kết quả test
+  được giao, tạo bug), **Guest** (view). Ma trận hiện trên trang Hướng dẫn.
+- Duyệt: trạng thái case thêm `review` (Chờ duyệt). Khi `require_approval` của dự án bật: đặt
+  `approved` (sửa, nhập, hàng loạt, khôi phục, AI) cần `tests.approve` (403); người sửa gửi duyệt
+  (`draft` → `review`); `POST /testcases/{id}/approve` và `/reject` (`comment` bắt buộc khi từ chối,
+  về `draft`) cần `tests.approve`; sửa nội dung một case `approved` đưa nó về `review`. Khi tắt: như
+  cũ. Mỗi lần duyệt / từ chối ghi `test_case_reviews` (người, quyết định, bình luận, revision) và hiện
+  trong lịch sử case. Hàng đợi "Chờ duyệt" là bộ lọc trạng thái `review`.
+
+### 15.10 G10 – thao tác hàng loạt **[Quyết định]**
+
+- `POST /testcases/bulk` thêm hành động: `tags` (thêm / bỏ), `kind`, `estimate`, `jira` (thêm mã),
+  `custom` (đặt một trường), `copy` (sang bộ / thư mục khác, mã mới, trạng thái `draft`). Mọi hành
+  động sửa ghi revision `bulk` và trả `batch_id`.
+- `POST /testcases/replace` (`suite_id`, `find`, `replace`, `fields` ⊂ title / preconditions / steps /
+  expected / notes / test_data, `case_sensitive`, `regex` (giới hạn 200 ký tự, timeout), `section_id?`,
+  `preview`): xem trước trả từng case khớp với đoạn trước / sau (±80 ký tự quanh chỗ đổi; tối đa 500
+  case, 10 chỗ đổi / case, 1 MB, quá thì `truncated`); áp dụng thay toàn bộ, ghi revision `bulk`, trả
+  `batch_id`. Regex chạy bằng gói `regex` có timeout (tổng 2 s → 422), từ chối lặp lồng nhau, lặp liền
+  nhau cùng một mẫu (`a*a*`, `.*.*`), tham chiếu ngược, cú pháp mờ.
+- Undo: `test_bulk_ops` lưu mỗi lần sửa hàng loạt (người, dự án, loại, case_ids, revision trước, case
+  tạo ra). `POST /testcases/bulk/{batch_id}/undo` (chính người làm hoặc `tests.manage`, trong 24 giờ):
+  khôi phục revision trước cho case chưa bị sửa sau đó (case đã đổi thì bỏ qua và báo), xoá case đã
+  copy chưa có kết quả. Xoá hàng loạt không undo được (vẫn hỏi xác nhận).
+- AI phát hiện trùng: loại AI `duplicates` cho một bộ: nhóm case trùng / gần trùng kèm lý do và case
+  nên giữ; áp dụng = chuyển case thừa sang `obsolete` (revision `ai`, có undo).
+- 200 case một lần ≤ 5 s: một truy vấn khoá, revision ghi theo lô.
+
+### 15.11 API giai đoạn 3 (G5, G7, G10)
+
+Trường tuỳ biến (`app/api/routers/test_fields.py`, `app/testcases/fields.py`):
+
+- `GET /testcases/fields?business_project_id=&entity=case|result&archived=false` →
+  `[{id, key, name, entity, type, options, required, default, suite_ids, templates, position,
+  archived_at}]` theo `position`.
+- `POST /testcases/fields` `{business_project_id, entity, name, type, options?, required?, default?,
+  suite_ids?, templates?}` → 201; `PATCH /testcases/fields/{id}` (mọi trường trừ `key`, `entity`,
+  `type`); `DELETE /testcases/fields/{id}` → lưu trữ (204); `POST /testcases/fields/{id}/restore`;
+  `PUT /testcases/fields/order` `{business_project_id, entity, ids}`.
+- Case: `custom: {key: value}` trong body tạo / sửa và trong `CaseOut` / `CaseDetail`; danh sách
+  `GET /testcases?...&f.<key>=<giá trị>`. Kết quả: `custom` trong body ghi kết quả (một / hàng loạt)
+  và trong kết quả trả về.
+
+Duyệt (`app/api/routers/test_approval.py`, `app/testcases/approval.py`):
+
+- `POST /testcases/{id}/submit` (draft → review, `tests.edit`), `POST /testcases/{id}/approve`
+  `{comment?}`, `POST /testcases/{id}/reject` `{comment}` (`tests.approve`) → `CaseDetail`.
+  `GET /testcases/{id}/reviews` → `[{id, decision, comment, revision, user_id, user_name,
+  created_at}]` mới nhất trước.
+- `CaseDetail` thêm `can_delete`, `can_approve`, `approval_on`.
+
+Hàng loạt (`app/api/routers/test_bulk.py`, `app/testcases/bulk.py`):
+
+- `POST /testcases/bulk` `{ids, action, ...}`; hành động cũ: `delete`, `move` (`suite_id`), `section`
+  (`section_id`), `milestone` (`milestone_id`), `status`, `priority`, `type`; mới: `tags`
+  (`tags_add`, `tags_remove`), `kind`, `estimate` ("1h 30m"), `jira` (`jira_add`), `custom`
+  (`field_key`, `value`), `copy` (`suite_id`, `section_id?`). → `{changed, batch_id, skipped}`.
+- `POST /testcases/replace` `{suite_id, section_id?, find, replace, fields, case_sensitive, regex,
+  preview}` → xem trước `{total, truncated, matches: [{case_id, key, title, changes: [{field,
+  before, after}]}]}`; áp dụng `{changed, batch_id}`.
+- `GET /testcases/bulk-ops?business_project_id=` → 20 lần gần nhất của mình `[{id, kind, summary,
+  count, created_at, undone_at, can_undo}]`; `POST /testcases/bulk-ops/{id}/undo` → `{restored,
+  deleted, skipped: [{case_id, key, reason}]}`.
+- AI trùng: `POST /testcases/ai` `{kind: "duplicates", suite_id}`; kết quả `groups: [{keep,
+  duplicates: [case_id], reason}]`; `POST /testcases/ai/{id}/apply-duplicates` `{groups: [{keep,
+  duplicates}]}` → `{changed, batch_id}`.

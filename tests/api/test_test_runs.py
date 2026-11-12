@@ -14,7 +14,7 @@ from sqlalchemy import event, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from app.models import AuditLog, TestCase, TestRunTest, TestSection, TestSuite, User
+from app.models import AuditLog, TestCase, TestField, TestRunTest, TestSection, TestSuite, User
 from app.testcases import runs as rs
 from tests.api.conftest import World, grant
 
@@ -780,3 +780,75 @@ def test_refresh_open_snapshots(
     shown = client.get(f"{API}/testcases/tests/{login_test['id']}", headers=admin).json()
     assert shown["case_id"] is None and shown["title"] == "Đăng nhập mới"
     assert shown["priority"] == "low" and len(shown["content"]["steps_list"]) == 2
+
+
+def test_bulk_results_custom_fields_without_a_query_per_test(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    """§15.8: the result fields of a bulk result are worked out with a fixed number of queries
+    (the cases' suites in one), and not at all when the dự án has no live result field."""
+    bp = _bp(world)
+    admin = as_user(world.admin)
+    _tree(db_session, bp)
+    run = _run(client, admin, bp, name="R", selection={"all": True})
+    ids = [t["id"] for t in _tests(client, admin, run["id"])["items"]]
+    assert len(ids) >= 4
+    url = f"{API}/testcases/runs/{run['id']}/results"
+    conn = db_session.connection()
+
+    def bulk(test_ids: list[int], **body: Any) -> list[str]:
+        seen: list[str] = []
+
+        def record(_c: Any, _cur: Any, statement: str, *_a: Any) -> None:
+            seen.append(statement)
+
+        event.listen(conn, "before_cursor_execute", record)
+        try:
+            got = client.post(
+                url, json={"test_ids": test_ids, "status": "passed", **body}, headers=admin
+            )
+        finally:
+            event.remove(conn, "before_cursor_execute", record)
+        assert got.status_code == 200, got.text
+        return seen
+
+    def latest_custom(test_id: int) -> dict[str, Any]:
+        detail = client.get(f"{API}/testcases/tests/{test_id}", headers=admin).json()
+        return dict(detail["results"][0]["custom"])
+
+    # No live result field (an archived one does not count): unknown keys dropped, no per-test
+    # read of the case.
+    archived = TestField(
+        business_project_id=bp,
+        entity="result",
+        key="old",
+        name="Old",
+        type="text",
+        archived_at=datetime.now(UTC),
+    )
+    db_session.add(archived)
+    db_session.flush()
+    plain = bulk(ids, custom={"old": "x", "nope": 1})
+    assert not any("test_cases.suite_id" in s for s in plain)
+    assert all(latest_custom(i) == {} for i in ids)
+
+    # With a live one: its default is filled, and the queries do not grow with the tests.
+    db_session.add(
+        TestField(
+            business_project_id=bp,
+            entity="result",
+            key="build",
+            name="Build",
+            type="text",
+            default="1.0",
+        )
+    )
+    db_session.flush()
+    one = bulk(ids[:1])
+    every = bulk(ids)
+    assert latest_custom(ids[-1]) == {"build": "1.0"}
+
+    def case_reads(seen: list[str]) -> int:
+        return sum("FROM test_cases" in s for s in seen)
+
+    assert case_reads(every) == case_reads(one)

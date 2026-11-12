@@ -22,8 +22,9 @@ from sqlalchemy.orm import Session
 
 from app.assistant import importers
 from app.assistant.knowledge import fold
-from app.models import TestMilestone, TestSharedStep
+from app.models import TestField, TestMilestone, TestSharedStep, TestSuite, User
 from app.testcases import content
+from app.testcases import fields as tf
 from app.testcases import service as tc
 
 MAX_ROWS = importers.MAX_SHEET_ROWS
@@ -55,6 +56,8 @@ MAP_FIELDS = (
     "automation",
     "code_paths",
 )
+# §15.8 G5: a column mapped to a custom field of the dự án is "custom.<key>".
+CUSTOM_PREFIX = "custom."
 FIELD_LABEL = {
     "case_id": "ID",
     "code": "Mã gốc",
@@ -332,23 +335,27 @@ def field_of(header: str) -> str | None:
     return None
 
 
-def _mapping(row: list[str]) -> dict[str, int]:
+def _mapping(row: list[str], custom: dict[str, str] | None = None) -> dict[str, int]:
+    """Header cells -> fields; a header equal to a custom field's name (accents and case aside)
+    is that field ("custom.<key>"), before any other guess."""
+    names = {fold(" ".join(n.split())): k for k, n in (custom or {}).items()}
     out: dict[str, int] = {}
     for i, cell in enumerate(row):
         if not cell or len(cell) > 80:
             continue
-        name = field_of(cell)
+        name = names.get(fold(" ".join(cell.split()))) or field_of(cell)
         if name and name not in out:
             out[name] = i
     return out
 
 
-def guess(sheet: Sheet) -> Sheet:
+def guess(sheet: Sheet, custom: dict[str, str] | None = None) -> Sheet:
     """The header row (of the first HEADER_SCAN, the one naming most fields, at least two of
-    them) and its mapping; none found: every row is data, nothing mapped."""
+    them) and its mapping; none found: every row is data, nothing mapped. `custom`:
+    "custom.<key>" -> name of the dự án's case fields."""
     best, best_map = -1, dict[str, int]()
     for i, row in enumerate(sheet.rows[:HEADER_SCAN]):
-        found = _mapping(row)
+        found = _mapping(row, custom)
         if len(found) >= 2 and len(found) > len(best_map):
             best, best_map = i, found
     sheet.header_row, sheet.mapping = best, best_map
@@ -562,6 +569,11 @@ def to_cases(rows: list[list[str]], header_row: int, mapping: dict[str, int]) ->
             values["kind"] = "automated"
         elif kind or "kind" in mapping:
             values["kind"] = kind_of(kind) if kind else "manual"
+        custom_raw = {
+            k[len(CUSTOM_PREFIX) :]: get(row, k) for k in mapping if k.startswith(CUSTOM_PREFIX)
+        }
+        if custom_raw:
+            values["custom_raw"] = custom_raw  # §15.8: read by the import (fields.coerce)
         steps = [{"content": step[0], "expected": step[1]}] if any(step) else []
         pending.append((values, steps, get(row, "template")))
 
@@ -590,7 +602,9 @@ def to_cases(rows: list[list[str]], header_row: int, mapping: dict[str, int]) ->
         elif chosen == "text":
             values["template"] = "text"
         extras: dict[str, Any] = {
-            k: values.pop(k) for k in ("case_id", "section", "milestone") if k in values
+            k: values.pop(k)
+            for k in ("case_id", "section", "milestone", "custom_raw")
+            if k in values
         }
         try:
             cleaned = tc.clean(values)
@@ -656,6 +670,16 @@ class Context:
     paths: dict[int, str] = field(default_factory=dict)
     shared: dict[int, TestSharedStep] = field(default_factory=dict)
     milestones: dict[int, str] = field(default_factory=dict)
+    # §15.8: the live case fields of the suites' home dự án (one column each), user names.
+    fields: list[TestField] = field(default_factory=list)
+    people: dict[int, str] = field(default_factory=dict)
+
+    def custom_headers(self) -> list[str]:
+        return [f.name for f in self.fields]
+
+    def custom_cells(self, case: Any) -> list[str]:
+        values = case.custom if isinstance(getattr(case, "custom", None), dict) else {}
+        return [tf.display(values.get(f.key), f, self.people) for f in self.fields]
 
     def steps(self, case: Any) -> list[dict[str, Any]]:
         return content.expand_steps(case.steps_list, self.shared)
@@ -664,10 +688,48 @@ class Context:
         return self.paths.get(case.section_id, "") if case.section_id else ""
 
 
+def _custom_fields(
+    session: Session, suite_ids: set[int], cases: list[Any]
+) -> tuple[list[TestField], dict[int, str]]:
+    """The live case fields of the suites' home dự án (a key once), and the names of the users
+    the "user" fields of `cases` name."""
+    homes = sorted(
+        set(
+            session.scalars(
+                select(TestSuite.business_project_id).where(TestSuite.id.in_(suite_ids or {0}))
+            )
+        )
+    )
+    out: list[TestField] = []
+    for bp_id in homes:
+        for f in tf.rows(session, bp_id, "case"):
+            if all(o.key != f.key for o in out):
+                out.append(f)
+    user_keys = [f.key for f in out if f.type == "user"]
+    ids = {
+        v
+        for c in cases
+        for k in user_keys
+        if isinstance(v := (getattr(c, "custom", None) or {}).get(k), int)
+    }
+    people: dict[int, str] = {}
+    if ids:
+        people = {
+            int(uid): name or email or f"#{uid}"
+            for uid, name, email in session.execute(
+                select(User.id, User.full_name, User.primary_email).where(User.id.in_(ids))
+            )
+        }
+    return out, people
+
+
 def context_for(session: Session, cases: Iterable[Any]) -> Context:
     listed = list(cases)
     milestone_ids = {c.milestone_id for c in listed if c.milestone_id}
+    custom_fields, people = _custom_fields(session, {c.suite_id for c in listed}, listed)
     return Context(
+        fields=custom_fields,
+        people=people,
         paths=content.section_paths(session, {c.suite_id for c in listed}),
         shared=content.shared_map(
             session, [i for c in listed for i in content.shared_ids(c.steps_list)]
@@ -741,22 +803,29 @@ def write_xlsx(
     book = Workbook()
     book.remove(book.active)  # type: ignore[arg-type]
     taken: set[str] = set()
-    headers = [FIELD_LABEL[f] for f in EXPORT_FIELDS]
+    headers = [FIELD_LABEL[f] for f in EXPORT_FIELDS] + ctx.custom_headers()
     if extra is not None:
         headers.append("Lý do cần test lại")
     headers += list(RUN_COLUMNS)
     widths = (
-        [_WIDTHS[f] for f in EXPORT_FIELDS] + ([36] if extra is not None else []) + [30, 16, 16, 12]
+        [_WIDTHS[f] for f in EXPORT_FIELDS]
+        + [18] * len(ctx.fields)
+        + ([36] if extra is not None else [])
+        + [30, 16, 16, 12]
     )
     for name, cases in groups or [("Testcase", [])]:
         ws = book.create_sheet(_sheet_name(name, taken))
-        ws.append(headers)
+        for col, title in enumerate(headers, start=1):
+            # A custom field's name is a header: text, never a formula (like every cell).
+            head = ws.cell(1, col)
+            head.value = tc.CONTROL.sub("", title)
+            head.data_type = TYPE_STRING
         for c in ws[1]:
             c.font = Font(bold=True, color="FFFFFF")
             c.fill = PatternFill("solid", fgColor="1F3A5F")
             c.alignment = Alignment(vertical="center", wrap_text=True)
         for r, case in enumerate(cases, start=2):
-            row = [_value(case, f, ctx) for f in EXPORT_FIELDS]
+            row = [_value(case, f, ctx) for f in EXPORT_FIELDS] + ctx.custom_cells(case)
             if extra is not None:
                 row.append(extra.get(case.id, ""))
             for col, value in enumerate(row, start=1):
@@ -781,13 +850,14 @@ def write_csv(
     ctx = ctx or Context()
     buf = io.StringIO()
     w = csv.writer(buf)
-    head = ["Bộ testcase", *(FIELD_LABEL[f] for f in EXPORT_FIELDS)]
+    head = ["Bộ testcase", *(FIELD_LABEL[f] for f in EXPORT_FIELDS), *ctx.custom_headers()]
     if extra is not None:
         head.append("Lý do cần test lại")
-    w.writerow(head + list(RUN_COLUMNS))
+    w.writerow([_safe(h) for h in head] + list(RUN_COLUMNS))
     for name, cases in groups:
         for case in cases:
             row = [_safe(name), *(_safe(_value(case, f, ctx)) for f in EXPORT_FIELDS)]
+            row += [_safe(v) for v in ctx.custom_cells(case)]
             if extra is not None:
                 row.append(_safe(extra.get(case.id, "")))
             w.writerow(row + [""] * len(RUN_COLUMNS))

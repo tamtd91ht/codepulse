@@ -11,7 +11,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import TestCase, TestResult, TestRun, TestRunTest, TestSection, TestSuite
+from app.models import (
+    TestCase,
+    TestField,
+    TestResult,
+    TestRun,
+    TestRunTest,
+    TestSection,
+    TestSuite,
+)
 from app.testcases import ci
 from tests.api.conftest import FakeQueue, World, grant
 
@@ -751,3 +759,75 @@ def test_cli_multipart_body_is_accepted(
     )
     assert out.json()["status"] == "done" and out.json()["close_run"] is True
     assert out.json()["file_name"] == "junit.xml" and out.json()["commit_sha"] == "abc"
+
+
+def test_ci_cases_and_results_take_field_defaults(
+    client: TestClient, world: World, as_user: Any, db_session: Session, queue: FakeQueue
+) -> None:
+    """§15.8: a case CI makes takes the case fields' defaults (as one made in the editor), a
+    new CI result the result fields' defaults; a required field never blocks CI."""
+    bp = _bp(world)
+    grant(db_session, world.manager, bp, "manage")
+    h = as_user(world.manager)
+    suite, [mapped] = _suite(db_session, bp, 1)
+    other = TestSuite(business_project_id=bp, name="Khác", position=2)
+    db_session.add(other)
+    db_session.flush()
+    db_session.add_all(
+        [
+            TestField(
+                business_project_id=bp,
+                entity="case",
+                key="env",
+                name="Env",
+                type="text",
+                default="staging",
+            ),
+            TestField(
+                business_project_id=bp,
+                entity="case",
+                key="only_other",
+                name="Only other",
+                type="text",
+                default="x",
+                suite_ids=[other.id],
+            ),
+            TestField(
+                business_project_id=bp,
+                entity="result",
+                key="build",
+                name="Build",
+                type="text",
+                default="ci",
+                required=True,
+            ),
+            TestField(
+                business_project_id=bp,
+                entity="result",
+                key="steps_only",
+                name="Steps only",
+                type="text",
+                default="s",
+                templates=["steps"],
+            ),
+        ]
+    )
+    db_session.flush()
+    out = _import(
+        client,
+        db_session,
+        queue,
+        h,
+        bp,
+        _junit([("pkg.T", f"C{mapped.id} ok", "passed"), ("pkg.New", "test_new", "failed")]),
+        suite_id=suite.id,
+        auto_create="true",
+    )
+    assert out["status"] == "done" and out["created_cases"] == 1, out
+    made = db_session.scalar(select(TestCase).where(TestCase.automation_id == "pkg.New.test_new"))
+    assert made is not None
+    db_session.refresh(made)
+    assert made.custom == {"env": "staging"}
+    results = _results(db_session, out["run_id"])
+    assert len(results) == 2
+    assert all(r.custom == {"build": "ci"} for r in results)

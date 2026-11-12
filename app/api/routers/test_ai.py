@@ -36,7 +36,9 @@ from app.models import (
     TestSuite,
     User,
 )
-from app.testcases import ai, content
+from app.testcases import ai, approval, content
+from app.testcases import bulk as bulk_ops
+from app.testcases import fields as tf
 from app.testcases import links as tl
 from app.testcases import service as tc
 from app.workers.knowledge_jobs import month_spend_usd
@@ -50,7 +52,7 @@ LIST_DAYS = 14
 
 
 class RunIn(BaseModel):
-    kind: Literal["generate", "audit", "impact", "links"]
+    kind: Literal["generate", "audit", "impact", "links", "duplicates"]
     business_project_id: int
     suite_id: int | None = None
     section_id: int | None = None  # links: only the cases of this section (and below)
@@ -209,7 +211,7 @@ def list_runs(
     principal: CurrentPrincipal,
     session: SessionDep,
     business_project_id: int,
-    kind: Literal["generate", "audit", "impact", "links"] | None = None,
+    kind: Literal["generate", "audit", "impact", "links", "duplicates"] | None = None,
     suite_id: int | None = None,
 ) -> RunList:
     bp = tc.project_for(session, principal, business_project_id, edit=True)
@@ -251,7 +253,7 @@ def create_run(
     bp = tc.project_for(session, principal, body.business_project_id, edit=True)
     data: dict[str, Any] = {"instruction": (body.instruction or "").strip() or None}
     suite_id = mr_id = None
-    if body.kind in ("generate", "audit", "links"):
+    if body.kind in ("generate", "audit", "links", "duplicates"):
         if body.suite_id is None:
             raise HTTPException(422, "chọn bộ testcase")
         suite = tc.suite_for(session, principal, body.suite_id, edit=True)
@@ -396,6 +398,8 @@ def apply_run(
         raise HTTPException(409, "lượt AI chưa có kết quả")
     if run.kind == "links":
         raise HTTPException(422, "gợi ý liên kết áp dụng qua /apply-links")
+    if run.kind == "duplicates":
+        raise HTTPException(422, "testcase trùng áp dụng qua /apply-duplicates")
     proposals = (
         run.result.get("missing") if run.kind == "impact" else run.result.get("cases")
     ) or []
@@ -406,6 +410,19 @@ def apply_run(
     if run.business_project_id not in tc.projects_of(session, suite):
         raise HTTPException(422, "bộ testcase không thuộc dự án này")
     session.refresh(suite, with_for_update=True)  # one apply (and its folders) at a time
+    # §15.9: "approved" needs tests.approve while the dự án's approval is on (403).
+    status = (
+        approval.guard_status(
+            session,
+            principal,
+            suite.business_project_id,
+            before=None,
+            wanted=body.status,
+            content_changed=False,
+        )
+        or "draft"
+    )
+    case_fields = tf.rows(session, suite.business_project_id, "case")
     folders: dict[tuple[int | None, str], int] = {}
     applied = set(run.result.get("applied") or [])
     added = []
@@ -415,7 +432,7 @@ def apply_run(
             continue
         base = dict(proposals[item.index])
         base.update(item.model_dump(exclude={"index"}, exclude_none=True))
-        base["status"] = body.status
+        base["status"] = status
         try:
             values = tc.clean(base)
             values.pop("code", None)
@@ -424,6 +441,20 @@ def apply_run(
                     session, suite.id, str(base.get("section") or ""), folders
                 )
             tc.check_refs(session, suite, values)
+            # §15.8: the suite's dự án fields only, values checked; AI is not blocked by a
+            # required field (its default fills it, if any).
+            values["custom"] = tf.clean_custom(
+                session,
+                suite.business_project_id,
+                "case",
+                values.get("custom"),
+                suite_id=suite.id,
+                template=values.get("template") or "text",
+                partial=False,
+                enforce_required=False,
+                defaults=True,
+                fields=case_fields,
+            )
         except tc.FieldError as exc:
             raise HTTPException(422, f"đề xuất {item.index + 1}: {exc}") from None
         case = tc.create(
@@ -433,6 +464,7 @@ def apply_run(
             user_id=principal.user_id,
             source="ai",
             position=position,
+            fields=case_fields,
         )
         position += 1
         applied.add(item.index)
@@ -522,6 +554,81 @@ def apply_links(
     )
     session.commit()
     return LinksOut(changed=len(changed), cases=case_outs(session, changed))
+
+
+class DuplicateGroup(BaseModel):
+    keep: int
+    duplicates: list[int] = Field(min_length=1, max_length=100)
+
+
+class DuplicatesIn(BaseModel):
+    # The accepted groups (a group may be narrowed, or another of its cases kept).
+    groups: list[DuplicateGroup] = Field(min_length=1, max_length=100)
+
+
+class DuplicatesOut(BaseModel):
+    changed: int
+    batch_id: int | None
+
+
+@router.post("/testcases/ai/{run_id}/apply-duplicates", response_model=DuplicatesOut)
+def apply_duplicates(
+    run_id: int, body: DuplicatesIn, principal: CurrentPrincipal, session: SessionDep
+) -> DuplicatesOut:
+    """§15.10: the chosen duplicates become obsolete (revision "ai"), as one bulk op that can be
+    undone. Each group must be within one group the run proposed."""
+    run = _run(session, principal, run_id, lock=True)
+    if run.kind != "duplicates" or run.status not in ("ready", "applied") or not run.result:
+        raise HTTPException(409, "lượt AI chưa có kết quả tìm trùng")
+    group_of: dict[int, int] = {}
+    for n, group in enumerate(run.result.get("groups") or []):
+        if isinstance(group, dict):
+            for case_id in [group.get("keep"), *(group.get("duplicates") or [])]:
+                if isinstance(case_id, int):
+                    group_of[case_id] = n
+    wanted: list[int] = []
+    for item in body.groups:
+        home = group_of.get(item.keep)
+        if home is None or any(group_of.get(d) != home for d in item.duplicates):
+            raise HTTPException(422, "có testcase không nằm trong cùng nhóm trùng của lượt AI")
+        if item.keep in item.duplicates:
+            raise HTTPException(422, "testcase giữ lại không thể là bản trùng")
+        wanted += [d for d in item.duplicates if d not in wanted]
+    kept = {g.keep for g in body.groups}
+    if kept & set(wanted):
+        raise HTTPException(422, "testcase giữ lại không thể là bản trùng")
+    cases = list(
+        session.scalars(
+            select(TestCase).where(TestCase.id.in_(wanted)).order_by(TestCase.id).with_for_update()
+        )
+    )
+    suites: dict[int, TestSuite] = {}
+    for case in cases:
+        if case.suite_id != run.suite_id:
+            raise HTTPException(409, f"{content.key('case', case.id)} đã chuyển sang bộ khác")
+        if case.suite_id not in suites:
+            suites[case.suite_id] = tc.suite_for(session, principal, case.suite_id, edit=True)
+    got = bulk_ops.mark_obsolete(
+        session,
+        principal,
+        cases,
+        suites,
+        summary=f"{bulk_ops.LABEL['duplicates']}: {len(cases)} testcase",
+    )
+    done = set(run.result.get("applied") or []) | set(wanted)
+    run.result = {**run.result, "applied": sorted(done)}
+    run.applied_count = len(done)
+    run.status = "applied"
+    audit(
+        session,
+        principal.user_id,
+        "testcase.ai.duplicates",
+        f"test_ai:{run.id}",
+        changed=got.changed,
+        batch=got.batch_id,
+    )
+    session.commit()
+    return DuplicatesOut(changed=got.changed, batch_id=got.batch_id)
 
 
 @router.delete("/testcases/ai/{run_id}", status_code=204)

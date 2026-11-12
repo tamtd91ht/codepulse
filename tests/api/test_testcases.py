@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -16,8 +16,12 @@ from app.models import (
     Commit,
     CommitFile,
     MrCommit,
+    PermissionSet,
     ProjectGrant,
     TestAiRun,
+    TestField,
+    TestProjectSettings,
+    UserPermissionSet,
 )
 from app.review.providers.fake import FakeLLMProvider
 from app.testcases import ai
@@ -113,7 +117,7 @@ def test_cases_history_and_permissions(
         json={"ids": [case["id"], second["id"]], "action": "status", "status": "obsolete"},
         headers=admin,
     )
-    assert bulk.json() == {"changed": 2}
+    assert bulk.json()["changed"] == 2 and bulk.json()["batch_id"]
     hidden = client.get(f"{API}/testcases", params={"business_project_id": bp}, headers=an).json()
     assert hidden["total"] == 0  # obsolete ones are left out unless asked
     assert client.delete(f"{API}/testcases/{second['id']}", headers=admin).status_code == 204
@@ -561,8 +565,83 @@ def test_bulk_on_a_hidden_project_is_not_found(
         json={"ids": [case["id"]], "action": "move", "suite_id": other["id"]},
         headers=admin,
     )
-    assert moved.json() == {"changed": 1}
+    assert moved.json()["changed"] == 1 and moved.json()["batch_id"]
     after = client.get(f"{API}/testcases/{case['id']}", headers=admin).json()
     assert after["suite_id"] == other["id"] and after["revision"] == 2
     assert after["section_id"] is None
     assert after["revisions"][0]["via"] == "bulk"
+
+
+def test_ai_apply_checks_approval_and_custom_fields(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    bp = world.project.business_project_id
+    assert bp is not None
+    admin = as_user(world.admin)
+    tester_set = db_session.scalar(
+        select(PermissionSet.id).where(PermissionSet.name == "Testcase - Tester")
+    )
+    assert tester_set is not None
+    db_session.add(UserPermissionSet(user_id=world.an.id, set_id=tester_set))
+    db_session.add_all(
+        [
+            TestField(
+                business_project_id=bp,
+                entity="case",
+                key="browser",
+                name="Browser",
+                type="dropdown",
+                options=["Chrome", "Firefox"],
+                required=True,
+            ),
+            TestField(
+                business_project_id=bp,
+                entity="case",
+                key="area",
+                name="Area",
+                type="text",
+                default="Web",
+            ),
+            TestProjectSettings(business_project_id=bp, require_approval=True),
+        ]
+    )
+    db_session.flush()
+    tester = as_user(world.an)
+    suite = _suite(client, admin, bp, "Thanh toán")
+    paste = {"name": "Yêu cầu", "kind": "paste", "size": 20, "text": "Hoàn tiền một phần"}
+    asked = client.post(
+        f"{API}/testcases/ai",
+        json={
+            "kind": "generate",
+            "business_project_id": bp,
+            "suite_id": suite["id"],
+            "files": [paste],
+        },
+        headers=admin,
+    )
+    assert asked.status_code == 201, asked.text
+    run = asked.json()
+    _run(db_session, run["id"], {"summary": "", "cases": [PROPOSAL, PROPOSAL], "gaps": []})
+    url = f"{API}/testcases/ai/{run['id']}/apply"
+
+    # §15.9: "approved" needs tests.approve while approval is on.
+    refused = client.post(url, json={"items": [{"index": 0}], "status": "approved"}, headers=tester)
+    assert refused.status_code == 403
+    # §15.8: custom values are checked; a required field does not block AI.
+    bad = client.post(
+        url, json={"items": [{"index": 0, "custom": {"browser": "IE"}}]}, headers=tester
+    )
+    assert bad.status_code == 422 and "đề xuất 1" in bad.json()["detail"]
+    ok = client.post(
+        url,
+        json={"items": [{"index": 0, "custom": {"browser": "Chrome", "nope": "x"}}]},
+        headers=tester,
+    )
+    assert ok.status_code == 200, ok.text
+    [added] = ok.json()["added"]
+    assert added["status"] == "draft"
+    assert added["custom"] == {"browser": "Chrome", "area": "Web"}
+    approved = client.post(url, json={"items": [{"index": 1}], "status": "approved"}, headers=admin)
+    assert approved.status_code == 200, approved.text
+    [second] = approved.json()["added"]
+    assert second["status"] == "approved" and second["custom"] == {"area": "Web"}

@@ -342,6 +342,7 @@ def case_content(
         "estimate_s": case.estimate_s,
         "refs": list(case.jira_keys or []),
         "automation": case.automation,
+        "custom": dict(case.custom or {}),  # §15.8 G5
     }
 
 

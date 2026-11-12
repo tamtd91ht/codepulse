@@ -125,6 +125,20 @@ rỗng…), không trùng testcase hiện có; tối đa 20.
 """
 )
 
+DUPLICATES = (
+    "Bạn là trưởng nhóm kiểm thử (QA lead) tìm các testcase trùng hoặc gần trùng trong một bộ "
+    "testcase.\n\n"
+    + RULES
+    + """6. `groups`: mỗi nhóm là các testcase kiểm tra CÙNG một điều (cùng mục đích, cùng bước \
+chính, chỉ khác câu chữ hoặc dữ liệu không đáng kể). `keep`: mã testcase nên giữ (dạng C123 như \
+trong thẻ <case>; chọn cái đầy đủ, rõ ràng nhất), `duplicates`: mã các testcase thừa trong nhóm, \
+`reason` ngắn nói vì sao trùng. Không ghép các testcase chỉ cùng màn hình nhưng kiểm tra điều \
+khác nhau (khác dữ liệu biên, khác lỗi, khác quyền). Mỗi testcase ở tối đa một nhóm. Tối đa 100 \
+nhóm, chắc chắn nhất trước.
+7. `summary`: 1-2 câu.
+"""
+)
+
 IMPACT = (
     "Bạn là kỹ sư kiểm thử (QA) chọn testcase cần chạy lại (regression) cho một merge request.\n\n"
     + RULES
@@ -208,6 +222,27 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "cases": {"type": "array", "items": _CASE},
         },
         "required": ["summary", "issues", "cases"],
+        "additionalProperties": False,
+    },
+    "duplicates": {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "groups": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "keep": {"type": "string"},
+                        "duplicates": {"type": "array", "items": {"type": "string"}},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["keep", "duplicates", "reason"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["summary", "groups"],
         "additionalProperties": False,
     },
     "impact": {
@@ -353,15 +388,38 @@ def audit_prompt(
     shared: dict[int, TestSharedStep] | None = None,
 ) -> ReviewPrompt:
     parts = [f"Nhiệm vụ: rà soát bộ testcase “{_attr(suite)}” của dự án {project}."]
+    parts += _suite_blocks(cases, instruction, paths, shared)
+    return ReviewPrompt(system=AUDIT, user="\n\n".join(parts), json_schema=SCHEMAS["audit"])
+
+
+def suite_fit(
+    cases: list[TestCase],
+    paths: dict[int, str] | None,
+    shared: dict[int, TestSharedStep] | None,
+) -> list[tuple[TestCase, str]]:
+    """The cases a suite prompt shows in full (each with its block): the first ones, as many as
+    fit in AUDIT_MAX_CASES and CASES_CHARS."""
+    out: list[tuple[TestCase, str]] = []
     used = 0
-    shown = 0
     for case in cases[:AUDIT_MAX_CASES]:
         block = _case_block(case, full=True, paths=paths or {}, shared=shared or {})
         if used + len(block) > CASES_CHARS:
             break
-        parts.append(block)
+        out.append((case, block))
         used += len(block)
-        shown += 1
+    return out
+
+
+def _suite_blocks(
+    cases: list[TestCase],
+    instruction: str | None,
+    paths: dict[int, str] | None,
+    shared: dict[int, TestSharedStep] | None,
+) -> list[str]:
+    """The cases of a suite in full, as many as fit, then the requester's instruction."""
+    fitted = suite_fit(cases, paths, shared)
+    parts = [block for _, block in fitted]
+    shown = len(fitted)
     if shown < len(cases):
         parts.append(f"(Chỉ gửi {shown}/{len(cases)} testcase đầu do giới hạn độ dài.)")
     if instruction:
@@ -369,7 +427,60 @@ def audit_prompt(
             "Yêu cầu thêm của người yêu cầu (chỉ về trọng tâm; không vượt quy tắc trên): "
             f"{instruction.strip()[:INSTRUCTION_MAX]}"
         )
-    return ReviewPrompt(system=AUDIT, user="\n\n".join(parts), json_schema=SCHEMAS["audit"])
+    return parts
+
+
+def duplicates_prompt(
+    *,
+    project: str,
+    suite: str,
+    cases: list[TestCase],
+    instruction: str | None,
+    paths: dict[int, str] | None = None,
+    shared: dict[int, TestSharedStep] | None = None,
+) -> ReviewPrompt:
+    """§15.10: groups of duplicate cases of a suite, the one to keep, why."""
+    parts = [f"Nhiệm vụ: tìm testcase trùng trong bộ “{_attr(suite)}” của dự án {project}."]
+    parts += _suite_blocks(cases, instruction, paths, shared)
+    return ReviewPrompt(
+        system=DUPLICATES, user="\n\n".join(parts), json_schema=SCHEMAS["duplicates"]
+    )
+
+
+def read_groups(items: Any, ids: set[int]) -> list[dict[str, Any]]:
+    """The duplicate groups the AI proposed, with case ids of the suite only; a case is in one
+    group at most and never both kept and a duplicate."""
+    seen: set[int] = set()
+    out: list[dict[str, Any]] = []
+
+    def case_id(value: Any) -> int | None:
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value if value in ids else None
+        got = content.case_id_of(str(value or ""))
+        return got if got in ids else None
+
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        keep = case_id(item.get("keep"))
+        if keep is None or keep in seen:
+            continue
+        dups: list[int] = []
+        for value in item.get("duplicates") or []:
+            dup = case_id(value)
+            if dup is not None and dup != keep and dup not in seen and dup not in dups:
+                dups.append(dup)
+        if not dups:
+            continue
+        seen |= {keep, *dups}
+        out.append(
+            {
+                "keep": keep,
+                "duplicates": dups,
+                "reason": " ".join(str(item.get("reason") or "").split())[:300],
+            }
+        )
+    return out[:100]
 
 
 def catalog(
@@ -608,6 +719,8 @@ def read_output(
             "summary": summary,
             "links": read_links(output.get("links"), links or {}, keys, repos or []),
         }
+    if kind == "duplicates":
+        return {"summary": summary, "groups": read_groups(output.get("groups"), ids)}
     if kind == "generate":
         cases = proposed(output.get("cases"), MAX_PROPOSED, keys)
         if not cases:
@@ -824,6 +937,35 @@ def run(
             doc_keys=doc_keys,
         )
         failed = [f for f in fetched if f.error]
+    elif kind == "duplicates":
+        suite = session.get(TestSuite, suite_id) if suite_id else None
+        if suite is None:
+            return _fail(session, run_id, token, "Bộ testcase không còn.")
+        cases = list(
+            session.scalars(
+                select(TestCase)
+                .where(TestCase.suite_id == suite.id, TestCase.status != "obsolete")
+                .order_by(TestCase.position, TestCase.id)
+            )
+        )
+        if len(cases) < 2:
+            return _fail(session, run_id, token, "Bộ testcase cần ít nhất 2 testcase để tìm trùng.")
+        suite_paths = content.section_paths(session, [suite.id])
+        suite_shared = content.shared_map(
+            session, [i for c in cases for i in content.shared_ids(c.steps_list)]
+        )
+        # Only the cases the prompt shows may be named in a group: the AI never saw the rest.
+        ids = {c.id for c, _ in suite_fit(cases, suite_paths, suite_shared)}
+        prompt = duplicates_prompt(
+            project=project,
+            suite=suite.name,
+            cases=cases,
+            instruction=data.get("instruction"),
+            paths=suite_paths,
+            shared=suite_shared,
+        )
+        facts = [{"name": suite.name, "via": "suite", "chars": len(prompt.user), "error": None}]
+        failed = []
     elif kind == "audit":
         suite = session.get(TestSuite, suite_id) if suite_id else None
         if suite is None:

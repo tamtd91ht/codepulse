@@ -6,8 +6,10 @@ import { FlakyPill } from "@/components/CiImport";
 import { BugPills } from "@/components/JiraBug";
 import { Modal, ReorderControls, useDragList } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
+import { ApprovalBar, ReviewHistory } from "@/components/TestcaseApproval";
 import { CodePathsField } from "@/components/TestcaseLinks";
 import { SectionOptions } from "@/components/TestcaseSections";
+import { CustomFieldsEditor, CustomFieldsView, defaultValues, useFields, usePeople } from "@/components/TestFields";
 import { Alert, Drawer, Loading, Pill, Segmented } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { dateTimeMin } from "@/lib/format";
@@ -19,6 +21,7 @@ import {
   type CaseTemplate,
   type CaseType,
   type CaseValues,
+  type CustomValues,
   type ImportResult,
   KIND_LABEL,
   PRIORITIES,
@@ -37,8 +40,12 @@ import {
   type Suite,
   type TcProject,
   type TestCase,
+  type TestField,
   TYPE_LABEL,
+  applicableFields,
   caseKey,
+  customProblems,
+  isEmptyValue,
   splitList,
   stepsFromText,
 } from "@/lib/testcases";
@@ -116,7 +123,17 @@ export function ExportMenu({ href }: { href: (format: "xlsx" | "csv" | "testrail
   );
 }
 
-const VIA_LABEL: Record<string, string> = { editor: "Sửa", import: "Nhập lại", ai: "AI", restore: "Khôi phục", bulk: "Sửa hàng loạt" };
+const VIA_LABEL: Record<string, string> = {
+  editor: "Sửa",
+  import: "Nhập lại",
+  ai: "AI",
+  restore: "Khôi phục",
+  bulk: "Sửa hàng loạt",
+  approve: "Duyệt",
+  reject: "Từ chối",
+  submit: "Gửi duyệt",
+  undo: "Hoàn tác",
+};
 
 /* ---- the case form ---- */
 
@@ -147,6 +164,7 @@ type Draft = {
   jira_keys: string;
   code_paths: string;
   status: TestCase["status"];
+  custom: CustomValues;
 };
 
 const toRows = (items: StepItem[] | undefined): StepRow[] =>
@@ -174,7 +192,13 @@ function toDraft(c?: Partial<TestCase>, sectionId?: number | null): Draft {
     jira_keys: (c?.jira_keys ?? []).join(", "),
     code_paths: (c?.code_paths ?? []).join("\n"),
     status: c?.status ?? "draft",
+    custom: { ...(c?.custom ?? {}) },
   };
+}
+
+/** Custom values to send: an emptied value goes as null (clears it). */
+function customOut(values: CustomValues): CustomValues {
+  return Object.fromEntries(Object.entries(values).map(([k, v]) => [k, isEmptyValue(v) ? null : v]));
 }
 
 function fromDraft(d: Draft): CaseValues {
@@ -327,6 +351,10 @@ function CaseForm({
   shared,
   milestones,
   origin,
+  fields,
+  people,
+  invalid,
+  approvalLocked,
 }: {
   draft: Draft;
   set: (d: Draft) => void;
@@ -335,8 +363,14 @@ function CaseForm({
   milestones: CaseMilestone[] | undefined;
   /** The key and "Mã gốc" of a saved case (read only). */
   origin?: { key: string; code: string | null };
+  /** §15.8: the custom fields that apply to this suite and template. */
+  fields: TestField[];
+  people: { id: number; name: string }[] | undefined;
+  invalid: Set<string>;
+  /** §15.9: approval on and no tests.approve: "Đã duyệt" cannot be set here. */
+  approvalLocked: boolean;
 }) {
-  const field = (k: Exclude<keyof Draft, "steps_list">) => ({
+  const field = (k: Exclude<keyof Draft, "steps_list" | "custom">) => ({
     value: draft[k],
     onChange: (e: { target: { value: string } }) => set({ ...draft, [k]: e.target.value }),
   });
@@ -473,13 +507,15 @@ function CaseForm({
           <span className="small muted">Trạng thái</span>
           <select {...field("status")}>
             {STATUSES.map((s) => (
-              <option key={s} value={s}>
+              <option key={s} value={s} disabled={approvalLocked && s === "approved" && draft.status !== "approved"}>
                 {STATUS_LABEL[s]}
+                {approvalLocked && s === "approved" && draft.status !== "approved" ? " (cần quyền duyệt)" : ""}
               </option>
             ))}
           </select>
         </label>
       </div>
+      <CustomFieldsEditor fields={fields} values={draft.custom} onChange={(custom) => set({ ...draft, custom })} people={people} invalid={invalid} />
       <div className="tc-form-row">
         <label className="adm-field">
           <span className="small muted">Nhãn (cách nhau dấu phẩy)</span>
@@ -612,6 +648,8 @@ export function CaseDrawer({
   suite,
   projectId,
   sectionId,
+  approvalOn,
+  canApprove,
   onClose,
   onSaved,
 }: {
@@ -621,6 +659,9 @@ export function CaseDrawer({
   sections?: string[];
   projectId?: number;
   sectionId?: number | null;
+  /** §15.9, for a new case (a saved one carries its own approval_on / can_approve). */
+  approvalOn?: boolean;
+  canApprove?: boolean;
   onClose: () => void;
   onSaved: (c?: TestCase) => void;
 }) {
@@ -629,6 +670,7 @@ export function CaseDrawer({
   const [draft, setDraft] = useState<Draft>(() => toDraft(undefined, sectionId));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [invalid, setInvalid] = useState<Set<string>>(new Set());
   const [showHistory, setShowHistory] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const c = detail.data;
@@ -637,26 +679,49 @@ export function CaseDrawer({
   const sections = useApi<Section[]>(editing && suiteOf ? `/testcases/sections?suite_id=${suiteOf}` : null);
   const shared = useApi<SharedSteps[]>(editing && pid ? `/testcases/shared-steps?business_project_id=${pid}` : null);
   const milestones = useApi<CaseMilestone[]>(pid ? `/testcases/milestones?business_project_id=${pid}` : null);
+  // §15.8: archived fields too, so their kept values still show in the view.
+  const fields = useFields(pid, "case", true);
+  const applicable = useMemo(() => applicableFields(fields.data, suiteOf, draft.template), [fields.data, suiteOf, draft.template]);
+  const people = usePeople(pid, (fields.data ?? []).some((f) => f.type === "user"));
+  const approvalLocked = c ? !!c.approval_on && !c.can_approve : !!approvalOn && !canApprove;
 
   useEffect(() => {
     if (c && !editing) setDraft(toDraft(c));
   }, [c, editing]);
+
+  // A new case starts with each field's default (once the fields are known).
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (caseId !== null || seeded.current || !fields.data) return;
+    seeded.current = true;
+    const live = applicableFields(fields.data, suite?.id ?? null, null);
+    setDraft((d) => ({ ...d, custom: { ...defaultValues(live), ...d.custom } }));
+  }, [caseId, fields.data, suite]);
 
   const save = async () => {
     if (!draft.title.trim()) {
       setError("Testcase cần tiêu đề.");
       return;
     }
+    const problems = customProblems(applicable, draft.custom);
+    if (problems.length) {
+      setInvalid(new Set(applicable.filter((f) => problems.some((p) => p.includes(`“${f.name}”`))).map((f) => f.key)));
+      setError(`Chưa lưu: ${problems.join("; ")}.`);
+      return;
+    }
+    setInvalid(new Set());
     setBusy(true);
     setError(null);
+    // `custom` only once the fields are known (an older server has none).
+    const body = { ...fromDraft(draft), ...(fields.data ? { custom: customOut(draft.custom) } : {}) };
     try {
       if (c) {
-        const got = await api.patch<CaseDetail>(`/testcases/${c.id}`, { ...fromDraft(draft), revision: c.revision });
+        const got = await api.patch<CaseDetail>(`/testcases/${c.id}`, { ...body, revision: c.revision });
         await detail.mutate(got, false);
         setEditing(false);
         onSaved(got);
       } else if (suite) {
-        const got = await api.post<TestCase>("/testcases", { ...fromDraft(draft), suite_id: suite.id });
+        const got = await api.post<TestCase>("/testcases", { ...body, suite_id: suite.id });
         onSaved(got);
         onClose();
       }
@@ -696,6 +761,12 @@ export function CaseDrawer({
 
   const key = c ? caseKey(c) : "";
   const title = c ? `${key} · ${c.title}` : "Testcase mới";
+  // Required fields a saved case lacks (made before the field, or filled by import / AI).
+  const missing = c
+    ? applicableFields(fields.data, c.suite_id, c.template)
+        .filter((f) => f.required && f.type !== "checkbox" && isEmptyValue(c.custom?.[f.key]))
+        .map((f) => f.name)
+    : [];
   const milestone = c?.milestone_id ? milestones.data?.find((m) => m.id === c.milestone_id) : undefined;
   const steps: StepView[] | null =
     c?.template === "steps"
@@ -714,9 +785,11 @@ export function CaseDrawer({
     </>
   ) : c?.can_edit ? (
     <>
-      <button className="ghost sm" onClick={() => setConfirming(true)} disabled={busy}>
-        Xoá
-      </button>
+      {(c.can_delete ?? c.can_edit) && (
+        <button className="ghost sm" onClick={() => setConfirming(true)} disabled={busy}>
+          Xoá
+        </button>
+      )}
       <button className="sm" onClick={() => setEditing(true)}>
         <Icon name="edit" size={14} /> Sửa
       </button>
@@ -748,9 +821,20 @@ export function CaseDrawer({
           shared={pid ? shared.data : []}
           milestones={pid ? milestones.data : []}
           origin={c ? { key, code: c.code } : undefined}
+          fields={applicable}
+          people={people.data}
+          invalid={invalid}
+          approvalLocked={approvalLocked}
         />
       ) : c ? (
         <div className="tc-view">
+          <ApprovalBar
+            detail={c}
+            onChanged={(got) => {
+              void detail.mutate(got, false);
+              onSaved(got);
+            }}
+          />
           <div className="tc-view-pills">
             <PriorityPill value={c.priority} />
             <StatusPill value={c.status} />
@@ -864,7 +948,14 @@ export function CaseDrawer({
                 </dd>
               </>
             )}
+            <CustomFieldsView fields={fields.data} values={c.custom} people={people.data} />
           </dl>
+          {missing.length > 0 && (
+            <p className="small tc-missing">
+              <Icon name="alert" size={12} /> Còn trường bắt buộc chưa điền: {missing.join(", ")}
+            </p>
+          )}
+          {(c.approval_on || c.status === "review" || c.can_approve) && <ReviewHistory key={`${c.revision}-${c.status}`} caseId={c.id} />}
           <CaseResults caseId={c.id} projectId={pid} />
           <p className="small muted">
             Phiên bản {c.revision}

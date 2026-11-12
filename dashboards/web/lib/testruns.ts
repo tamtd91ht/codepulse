@@ -1,7 +1,7 @@
 /* Test runs, plans, milestones, configurations, shared steps (docs/specs/30 §13, API §14.2–§14.4). */
 
 import { ApiError } from "./api";
-import type { Person } from "./testcases";
+import type { CustomValues, Person } from "./testcases";
 
 export type { Person };
 
@@ -160,6 +160,8 @@ export interface TestOut {
   /** §15 G6: of the latest result with a status. */
   elapsed_s?: number | null;
   failed_step?: number | null;
+  /** The case's suite when the server sends it: narrows the result fields that apply (§15.8). */
+  suite_id?: number | null;
 }
 
 export interface TestList {
@@ -219,6 +221,8 @@ export interface ResultOut {
   /** §15 G6: the first failed (else blocked) step, 1-based. */
   failed_step?: number | null;
   ci?: { commit_sha?: string; branch?: string; mr_iid?: number; test_name?: string; file?: string; import_id?: number; attempts?: string[] };
+  /** §15.8 G5: values of the result's custom fields. */
+  custom?: CustomValues;
 }
 
 export interface TestDetail extends TestOut {

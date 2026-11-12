@@ -16,6 +16,24 @@ const SECTIONS = [
   { id: "metrics", label: "Đọc các chỉ số" },
   { id: "insights", label: "Luồng làm việc" },
   { id: "dpi", label: "DPI hàng tháng" },
+  { id: "testcase", label: "Testcase: vai trò, duyệt, hàng loạt" },
+];
+
+/** §15.9 G7: the five sample permission sets of Testcase and what each holds. */
+const TEST_ROLES: [role: string, view: boolean, edit: boolean, del: boolean, approve: boolean, run: boolean, manage: boolean, note: string][] = [
+  ["Admin dự án", true, true, true, true, true, true, "Mọi quyền testcase của dự án"],
+  ["Lead", true, true, true, true, true, true, "Như admin dự án; thường là người duyệt"],
+  ["Tester", true, true, false, false, true, false, "Viết, sửa testcase và chạy test; gửi duyệt"],
+  ["Developer", true, false, false, false, true, false, "Ghi kết quả test được giao, tạo bug"],
+  ["Guest", true, false, false, false, false, false, "Chỉ xem"],
+];
+const TEST_PERMS: [key: string, label: string][] = [
+  ["tests.view", "Xem"],
+  ["tests.edit", "Sửa"],
+  ["tests.delete", "Xoá"],
+  ["tests.approve", "Duyệt"],
+  ["tests.run", "Chạy test"],
+  ["tests.manage", "Quản lý"],
 ];
 
 /** The dashboard copy of docs/USER_GUIDE.md, plus the Admin screen; readable without signing in. */
@@ -705,6 +723,102 @@ export default function GuidePage() {
           Chỉ số thiếu dữ liệu không bị tính 0 mà làm giảm độ phủ; độ tin cậy thấp thì không xếp loại. Không có bảng xếp hạng toàn công
           ty; manager chỉ thấy phân phối của team. Chi tiết công thức: mở một chỉ số trên scorecard, hoặc docs/specs/25.
         </p>
+      </section>
+
+      <section id="testcase" className="card">
+        <h2>11. Testcase: vai trò, duyệt, trường tuỳ biến, sửa hàng loạt</h2>
+        <h3>Vai trò</h3>
+        <p>
+          Admin gán bộ quyền ở Admin › Phân quyền. Có sẵn năm bộ quyền mẫu cho Testcase (sửa và gán như bộ thường; vai trò khác nhau giữa các dự án
+          thì tạo bộ riêng):
+        </p>
+        <div className="table-wrap">
+          <table className="guide-matrix">
+            <caption className="sr-only">Quyền của từng vai trò Testcase</caption>
+            <thead>
+              <tr>
+                <th scope="col">Vai trò</th>
+                {TEST_PERMS.map(([key, label]) => (
+                  <th key={key} scope="col" title={key}>
+                    {label}
+                  </th>
+                ))}
+                <th scope="col">Ghi chú</th>
+              </tr>
+            </thead>
+            <tbody>
+              {TEST_ROLES.map(([role, ...rest]) => {
+                const flags = rest.slice(0, 6) as boolean[];
+                const note = rest[6] as string;
+                return (
+                  <tr key={role}>
+                    <th scope="row">{role}</th>
+                    {flags.map((on, i) => (
+                      <td key={TEST_PERMS[i][0]} className="guide-matrix-cell">
+                        {on ? <span aria-label="Có">✓</span> : <span className="muted" aria-label="Không">—</span>}
+                      </td>
+                    ))}
+                    <td className="small">{note}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <ul>
+          <li>
+            <strong>Sửa</strong> không còn gồm xoá: xoá testcase, bộ, thư mục cần quyền <strong>Xoá</strong>. Bộ quyền có sẵn đã được chép quyền
+            nên không ai mất quyền.
+          </li>
+          <li>
+            <strong>Quản lý</strong>: test run, plan, milestone, cấu hình, trường tuỳ biến và cài đặt dự án của Testcase.
+          </li>
+        </ul>
+        <h3>Duyệt testcase</h3>
+        <ol>
+          <li>
+            Bật “Bắt buộc duyệt testcase” ở Testcase › Thiết lập › Cài đặt dự án. Khi tắt, ai có quyền Sửa vẫn đặt được “Đã duyệt” như cũ.
+          </li>
+          <li>
+            Người viết mở testcase ở trạng thái Nháp và bấm <strong>Gửi duyệt</strong>: testcase chuyển sang <strong>Chờ duyệt</strong>.
+          </li>
+          <li>
+            Người có quyền Duyệt lọc trạng thái “Chờ duyệt” để thấy hàng đợi, mở từng testcase và bấm <strong>Duyệt</strong> hoặc{" "}
+            <strong>Từ chối</strong> (bắt buộc ghi lý do; testcase quay về Nháp).
+          </li>
+          <li>Sửa nội dung một testcase đã duyệt thì nó quay về Chờ duyệt. Mỗi lần duyệt / từ chối hiện ở mục “Duyệt” của testcase.</li>
+        </ol>
+        <h3>Trường tuỳ biến</h3>
+        <ul>
+          <li>
+            Người có quyền Quản lý thêm trường ở Thiết lập › Trường tuỳ biến, cho testcase hoặc cho kết quả test: văn bản, số, ngày, chọn một,
+            chọn nhiều, có / không, người dùng, link. Giới hạn theo bộ và template; đánh dấu bắt buộc; đặt giá trị mặc định.
+          </li>
+          <li>
+            Trường bắt buộc chặn lưu testcase (hoặc ghi kết quả có trạng thái) khi để trống. Nhập Sheet, AI, CI không bị chặn: điền giá trị mặc
+            định.
+          </li>
+          <li>Bảng testcase: nút “Cột” chọn trường hiện thành cột (nhớ trong trình duyệt); bộ lọc “Trường” lọc theo một trường.</li>
+          <li>Lưu trữ một trường thì nó ẩn khỏi form, cột, bộ lọc; giá trị cũ vẫn giữ và khôi phục được.</li>
+        </ul>
+        <h3>Sửa hàng loạt và hoàn tác</h3>
+        <ul>
+          <li>
+            Chọn nhiều testcase để đổi trạng thái, ưu tiên, type, cách chạy, thêm / bỏ nhãn, đặt ước tính, thêm mã Jira, đặt trường tuỳ biến,
+            chuyển hoặc sao chép sang bộ / thư mục khác (bản sao là Nháp, có mã mới).
+          </li>
+          <li>
+            “Tìm &amp; thay” (menu ⋯ của bộ) thay chữ trong tiêu đề, bước, kết quả mong đợi…; bấm Xem trước để thấy từng chỗ đổi rồi mới Áp
+            dụng.
+          </li>
+          <li>
+            “Tìm trùng lặp bằng AI” nhóm testcase trùng, gợi ý testcase nên giữ; áp dụng thì testcase thừa chuyển sang Lỗi thời.
+          </li>
+          <li>
+            Sau mỗi lần sửa hàng loạt có nút <strong>Hoàn tác</strong> (trong 24 giờ, xem lại ở “Lịch sử thao tác hàng loạt”). Testcase đã bị
+            sửa sau đó được giữ nguyên và báo lại; xoá hàng loạt không hoàn tác được.
+          </li>
+        </ul>
       </section>
 
       <p style={{ marginTop: 16 }}>

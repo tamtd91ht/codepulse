@@ -39,9 +39,10 @@ from app.models import (
     TestSuiteLink,
 )
 from app.models.testcases import CASE_STATUSES, CASE_TYPES, PRIORITIES
+from app.testcases import approval, content, sheets
 from app.testcases import ci as tc_ci
-from app.testcases import content, sheets
 from app.testcases import events as tc_events
+from app.testcases import fields as tf
 from app.testcases import impact as imp
 from app.testcases import service as tc
 from app.testcases.runs import refresh_open_snapshots
@@ -51,7 +52,7 @@ SessionDep = Annotated[Session, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 Priority = Literal["critical", "high", "medium", "low"]
 Kind = Literal["manual", "automated"]
-Status = Literal["draft", "approved", "obsolete"]
+Status = Literal["draft", "review", "approved", "obsolete"]
 Template = Literal["text", "steps"]
 CaseType = Literal[
     "acceptance",
@@ -87,6 +88,8 @@ class ProjectRow(BaseModel):
     can_edit: bool  # tests.edit: design the cases
     can_run: bool  # tests.run: record results of any test
     can_manage: bool  # tests.manage: runs, plans, milestones, configurations
+    can_delete: bool = False  # §15.9 tests.delete: cases, suites, sections
+    can_approve: bool = False  # §15.9 tests.approve
 
 
 class SuiteIn(BaseModel):
@@ -119,6 +122,7 @@ class SuiteOut(BaseModel):
     approved: int
     draft: int
     obsolete: int
+    review: int = 0  # §15.9 G7: waiting for approval
     can_edit: bool
     can_delete: bool
     updated_at: str | None
@@ -154,6 +158,8 @@ class CaseFields(BaseModel):
     status: Status | None = None
     milestone_id: int | None = None
     estimate: str | None = Field(default=None, max_length=tc.ESTIMATE_MAX)
+    # §15.8 G5: {key: value} of the dự án's case fields; on PATCH the keys given (null clears).
+    custom: dict[str, Any] | None = Field(default=None, max_length=tf.FIELDS_MAX)
 
 
 class CaseIn(CaseFields):
@@ -198,6 +204,7 @@ class CaseOut(BaseModel):
     estimate: str | None
     milestone_id: int | None
     updated_at: str | None
+    custom: dict[str, Any] = Field(default_factory=dict)  # §15.8 G5
 
 
 class RevisionOut(BaseModel):
@@ -210,6 +217,10 @@ class RevisionOut(BaseModel):
 
 class CaseDetail(CaseOut):
     can_edit: bool
+    # §15.9 G7: tests.delete, tests.approve, and whether the dự án requires approval.
+    can_delete: bool = False
+    can_approve: bool = False
+    approval_on: bool = False
     created_by: Person | None
     updated_by: Person | None
     created_at: str | None
@@ -221,17 +232,6 @@ class CaseList(BaseModel):
     total: int
     tags: list[str]
     can_edit: bool
-
-
-class BulkIn(BaseModel):
-    ids: list[int] = Field(min_length=1, max_length=500)
-    action: Literal["status", "priority", "move", "delete", "section", "type", "milestone"]
-    status: Status | None = None
-    priority: Priority | None = None
-    suite_id: int | None = None
-    section_id: int | None = None  # action "section": None = the suite's root
-    type: CaseType | None = None
-    milestone_id: int | None = None  # action "milestone": None = none
 
 
 class SectionOut(BaseModel):
@@ -266,10 +266,6 @@ class SectionPatch(BaseModel):
 class SectionDeleted(BaseModel):
     sections: int
     cases: int
-
-
-class BulkOut(BaseModel):
-    changed: int
 
 
 class Uncovered(BaseModel):
@@ -433,6 +429,7 @@ def _case_out(case: TestCase, paths: dict[int, str], shared: dict[int, TestShare
         estimate=content.format_estimate(case.estimate_s),
         milestone_id=case.milestone_id,
         updated_at=_iso(case.updated_at),
+        custom=dict(case.custom or {}),
     )
 
 
@@ -480,8 +477,10 @@ def _suite_out(
         approved=counts.approved,
         draft=counts.draft,
         obsolete=counts.obsolete,
+        review=counts.review,
         can_edit=any(tc.may_edit(principal, p) for p in projects),
-        can_delete=tc.may_edit(principal, suite.business_project_id),
+        # §15.9: deleting a suite needs tests.delete in its home dự án only (as DELETE does).
+        can_delete=approval.may_delete(principal, suite.business_project_id),
         updated_at=_iso(suite.updated_at),
         code_paths=list(suite.code_paths or []),
     )
@@ -502,6 +501,82 @@ def _clean(values: dict[str, Any], *, partial: bool) -> dict[str, Any]:
         return tc.clean(values, partial=partial)
     except tc.FieldError as exc:
         raise HTTPException(422, str(exc)) from None
+
+
+def _custom(
+    session: Session,
+    suite: TestSuite,
+    values: dict[str, Any],
+    current: TestCase | None = None,
+) -> None:
+    """§15.8: `values["custom"]` checked against the home dự án's case fields for the editor: a
+    new case takes the defaults, an edit merges the keys given into what the case has (null
+    clears one), and a required field applicable to the suite and template must have a value
+    (422 naming it), also on an edit that does not send `custom`."""
+    template = values.get("template") or (current.template if current else None) or "text"
+    try:
+        values["custom"] = tf.clean_custom(
+            session,
+            suite.business_project_id,
+            "case",
+            values.get("custom"),
+            suite_id=suite.id,
+            template=template,
+            partial=current is not None,
+            current=dict(current.custom or {}) if current is not None else None,
+            defaults=current is None,
+            enforce_required=True,
+        )
+    except tc.FieldError as exc:
+        raise HTTPException(422, str(exc)) from None
+
+
+def _content_changed(case: TestCase, values: dict[str, Any]) -> bool:
+    return any(
+        k not in tc.NOT_CONTENT and getattr(case, k) != v
+        for k, v in values.items()
+        if k in tc.FIELDS
+    )
+
+
+def _guard(
+    session: Session,
+    principal: Principal,
+    suite: TestSuite,
+    values: dict[str, Any],
+    current: TestCase | None = None,
+    *,
+    rule: bool | None = None,
+    approver: bool | None = None,
+) -> None:
+    """§15.9 G7: with the dự án's approval rule on, "approved" needs tests.approve (403) and a
+    content change of an approved case sends it back to "review". `rule` / `approver`: see
+    `approval.guard_status` (an import reads them once)."""
+    before = current.status if current is not None else None
+    wanted = values.get("status")
+    changed = _content_changed(current, values) if current is not None else False
+    status = approval.guard_status(
+        session,
+        principal,
+        suite.business_project_id,
+        before=before,
+        wanted=wanted,
+        content_changed=changed,
+        rule=rule,
+        approver=approver,
+    )
+    if status is not None:
+        values["status"] = status
+
+
+def _may_delete_suite(session: Session, principal: Principal, suite: TestSuite) -> bool:
+    return any(approval.may_delete(principal, bp) for bp in tc.projects_of(session, suite))
+
+
+def _check_delete(session: Session, principal: Principal, suite: TestSuite) -> None:
+    """tests.delete in one of the dự án of the suite (cases, sections)."""
+    if not _may_delete_suite(session, principal, suite):
+        approval.check_delete(principal, suite.business_project_id)
 
 
 def _project_suites(session: Session, bp_id: int, *, archived: bool = False) -> list[TestSuite]:
@@ -549,6 +624,8 @@ def projects(principal: CurrentPrincipal, session: SessionDep) -> list[ProjectRo
             can_edit=tc.may_edit(principal, bp.id),
             can_run=tc.may_run(principal, bp.id),
             can_manage=tc.may_manage(principal, bp.id),
+            can_delete=approval.may_delete(principal, bp.id),
+            can_approve=approval.may_approve(principal, bp.id),
         )
         for bp in seen
     ]
@@ -619,9 +696,11 @@ def update_suite(
 @router.delete("/testcases/suites/{suite_id}", status_code=204)
 def delete_suite(suite_id: int, principal: CurrentPrincipal, session: SessionDep) -> None:
     """The suite and its cases, from its home dự án only (shared ones just stop the share)."""
-    suite = tc.suite_for(session, principal, suite_id, edit=True)
-    if not tc.may_edit(principal, suite.business_project_id):
-        raise HTTPException(403, "chỉ dự án gốc của bộ testcase mới xoá được bộ này")
+    suite = tc.suite_for(session, principal, suite_id)
+    if not approval.may_delete(principal, suite.business_project_id):
+        if _may_delete_suite(session, principal, suite):
+            raise HTTPException(403, "chỉ dự án gốc của bộ testcase mới xoá được bộ này")
+        approval.check_delete(principal, suite.business_project_id)  # §15.9: tests.delete
     total = tc.counts(session, [suite.id])[suite.id].total
     audit(
         session,
@@ -689,6 +768,7 @@ def share_suite(
 
 @router.get("/testcases", response_model=CaseList)
 def list_cases(
+    request: Request,
     principal: CurrentPrincipal,
     session: SessionDep,
     business_project_id: int,
@@ -706,15 +786,20 @@ def list_cases(
     limit: Annotated[int, Query(ge=1, le=500)] = 200,
 ) -> CaseList:
     """`section_id`: the cases of that section and every one below it. `q` also finds a case by
-    its key ("C12")."""
+    its key ("C12"). `f.<key>=<value>` (§15.8): a custom field of the dự án (of the suite's home
+    dự án with `suite_id`) equals (dropdown, multi-select, checkbox, user, number, date) or
+    contains (text, textarea, url) the value."""
     bp = tc.project_for(session, principal, business_project_id)
+    fields_bp = bp.id
     if suite_id is not None:
         suite = tc.suite_for(session, principal, suite_id)
         if bp.id not in tc.projects_of(session, suite):
             raise HTTPException(404, "bộ testcase không thuộc dự án này")
         scope = [suite.id]
+        fields_bp = suite.business_project_id
     else:
         scope = [s.id for s in _project_suites(session, bp.id)]
+    wanted_fields = [(k[2:], v) for k, v in request.query_params.multi_items() if k[:2] == "f."]
     base = select(TestCase).where(TestCase.suite_id.in_(scope or [0]))
     tags = sorted(
         set(
@@ -753,6 +838,18 @@ def list_cases(
         query = query.where(TestCase.tags.contains([tag]))
     if problem:
         query = query.where(tc.problem_clause())
+    if wanted_fields:
+        live = {f.key: f for f in tf.rows(session, fields_bp, "case")}
+        for key, value in wanted_fields[:20]:
+            field = live.get(key)
+            if field is None:
+                raise HTTPException(422, f"không có trường “{key[:40]}”")
+            if not value.strip():
+                continue
+            try:
+                query = query.where(tf.filter_clause(field, value[:200]))
+            except tc.FieldError as exc:
+                raise HTTPException(422, str(exc)) from None
     total = session.scalar(select(func.count()).select_from(query.subquery())) or 0
     rows = list(
         session.scalars(
@@ -775,6 +872,8 @@ def create_case(body: CaseIn, principal: CurrentPrincipal, session: SessionDep) 
     values = _clean(body.model_dump(exclude={"suite_id"}, exclude_none=True), partial=False)
     values.setdefault("status", "draft")
     _check(session, suite, values)
+    _custom(session, suite, values)
+    _guard(session, principal, suite, values)
     case = tc.create(session, suite, values, user_id=principal.user_id, source="manual")
     session.commit()
     return case_outs(session, [case])[0]
@@ -795,6 +894,9 @@ def _detail(session: Session, principal: Principal, case: TestCase, suite: TestS
     return CaseDetail(
         **case_outs(session, [case])[0].model_dump(),
         can_edit=tc.may_edit_suite(session, principal, suite),
+        can_delete=_may_delete_suite(session, principal, suite),
+        can_approve=approval.may_approve_suite(session, principal, suite),
+        approval_on=approval.approval_on(session, suite.business_project_id),
         created_by=people.get(case.created_by or 0),
         updated_by=people.get(case.updated_by or 0),
         created_at=_iso(case.created_at),
@@ -829,6 +931,8 @@ def update_case(
         )
     values = _clean(body.model_dump(exclude={"revision"}, exclude_unset=True), partial=True)
     _check(session, suite, values, current=case)
+    _custom(session, suite, values, current=case)
+    _guard(session, principal, suite, values, current=case)
     before = case.status
     try:
         tc.change(session, case, values, user_id=principal.user_id, via="editor")
@@ -841,7 +945,8 @@ def update_case(
 
 @router.delete("/testcases/{case_id:int}", status_code=204)
 def delete_case(case_id: int, principal: CurrentPrincipal, session: SessionDep) -> None:
-    case, _ = tc.case_for(session, principal, case_id, edit=True)
+    case, suite = tc.case_for(session, principal, case_id)
+    _check_delete(session, principal, suite)  # §15.9: tests.delete
     audit(
         session,
         principal.user_id,
@@ -874,6 +979,7 @@ def restore_case(
         raise HTTPException(409, str(exc)) from None
     # A section, milestone or shared step gone since: dropped rather than refused.
     tc.check_refs(session, suite, values, lenient=True)
+    _guard(session, principal, suite, values, current=case)  # §15.9 G7
     before = case.status
     try:
         tc.change(session, case, values, user_id=principal.user_id, via="restore")
@@ -882,134 +988,6 @@ def restore_case(
     tc_events.case_status_changed(session, suite.business_project_id, case.id, before, case.status)
     session.commit()
     return _detail(session, principal, case, suite)
-
-
-@router.post("/testcases/bulk", response_model=BulkOut)
-def bulk(body: BulkIn, principal: CurrentPrincipal, session: SessionDep) -> BulkOut:
-    found = dict(
-        session.execute(
-            select(TestCase.id, TestCase.suite_id).where(TestCase.id.in_(body.ids))
-        ).all()
-    )
-    if len(found) != len(set(body.ids)):
-        raise HTTPException(404, "có testcase không còn")
-    for suite_id in set(found.values()):
-        suite = session.get(TestSuite, suite_id)
-        if suite is None or not tc.may_view_suite(session, principal, suite):
-            raise HTTPException(404, "có testcase không còn")
-        if not tc.may_edit_suite(session, principal, suite):
-            raise HTTPException(403, "có testcase bạn không có quyền sửa")
-    if body.action == "section":
-        # The section endpoints lock the suite for every tree change (and a section delete then
-        # removes cases): locked first, the same order, so a section deleted meanwhile is seen
-        # as gone (422) rather than a foreign key error.
-        session.execute(
-            select(TestSuite.id)
-            .where(TestSuite.id.in_(set(found.values())))
-            .order_by(TestSuite.id)
-            .with_for_update()
-        )
-    cases = list(
-        session.scalars(
-            select(TestCase)
-            .where(TestCase.id.in_(body.ids), TestCase.suite_id.in_(set(found.values())))
-            .order_by(TestCase.id)
-            .with_for_update()
-        )
-    )
-    if len(cases) != len(found):
-        raise HTTPException(409, "testcase vừa bị chuyển hoặc xoá; tải lại rồi thử lại")
-    changed = 0
-    if body.action == "delete":
-        refresh_open_snapshots(session, [c.id for c in cases])
-        for case in cases:
-            session.delete(case)
-        changed = len(cases)
-        audit(session, principal.user_id, "testcase.bulk_delete", None, ids=body.ids[:500])
-    elif body.action == "move":
-        if body.suite_id is None:
-            raise HTTPException(422, "chọn bộ testcase đích")
-        target = tc.suite_for(session, principal, body.suite_id, edit=True)
-        session.refresh(target, with_for_update=True)
-        taken = {
-            c
-            for c in session.scalars(select(TestCase.code).where(TestCase.suite_id == target.id))
-            if c
-        }
-        target_projects = set(tc.projects_of(session, target))
-        shared_ok = {
-            i
-            for i, s in content.shared_map(
-                session, [i for c in cases for i in content.shared_ids(c.steps_list)]
-            ).items()
-            if s.business_project_id in target_projects
-        }
-        position = tc.next_position(session, target.id)
-        for case in cases:
-            if case.suite_id == target.id:
-                continue
-            tc.record(session, case, user_id=principal.user_id, via="bulk")
-            if case.automation_id and tc.automation_taken(
-                session, target.id, case.automation_id, case.id
-            ):
-                case.automation_id = None  # §15 G1: unique in a suite (checked before moving)
-            case.suite_id = target.id
-            case.section_id = None  # the sections are the old suite's
-            if case.code in taken:
-                case.code = None
-            elif case.code:
-                taken.add(case.code)
-            if case.milestone_id is not None:
-                milestone = session.get(TestMilestone, case.milestone_id)
-                if milestone is None or milestone.business_project_id not in target_projects:
-                    case.milestone_id = None
-            if any(i not in shared_ok for i in content.shared_ids(case.steps_list)):
-                # Shared steps of a dự án the target is not in: copied in as plain steps.
-                block = content.shared_map(session, content.shared_ids(case.steps_list))
-                kept: list[dict[str, Any]] = []
-                for step in case.steps_list or []:
-                    if "shared" in step and step["shared"] not in shared_ok:
-                        kept += [
-                            {"content": s["content"], "expected": s["expected"]}
-                            for s in content.expand_steps([step], block)
-                        ]
-                    else:
-                        kept.append(step)
-                case.steps_list = kept[: content.STEP_MAX]
-            case.position = position
-            position += 1
-            changed += 1
-            session.flush()
-    else:
-        values: dict[str, Any]
-        if body.action == "section":
-            values = {"section_id": body.section_id}
-        elif body.action == "milestone":
-            values = {"milestone_id": body.milestone_id}
-        else:
-            value = {"status": body.status, "priority": body.priority, "type": body.type}[
-                body.action
-            ]
-            if value is None:
-                raise HTTPException(422, "chọn giá trị")
-            values = {body.action: value}
-        suites = {
-            s.id: s
-            for s in session.scalars(select(TestSuite).where(TestSuite.id.in_(set(found.values()))))
-        }
-        for case in cases:
-            before = case.status
-            try:
-                checked = tc.check_refs(session, suites[case.suite_id], dict(values))
-                if tc.change(session, case, checked, user_id=principal.user_id, via="bulk"):
-                    changed += 1
-            except tc.FieldError as exc:
-                raise HTTPException(422, str(exc)) from None
-            tc_events.case_status_changed(
-                session, suites[case.suite_id].business_project_id, case.id, before, case.status
-            )
-    session.commit()
-    return BulkOut(changed=changed)
 
 
 # -- sections --------------------------------------------------------------------------------------
@@ -1106,7 +1084,8 @@ def delete_section(
     section_id: int, principal: CurrentPrincipal, session: SessionDep
 ) -> SectionDeleted:
     """The section, every section below it and their cases (TestRail's way)."""
-    section, suite = _section_for(session, principal, section_id, edit=True)
+    section, suite = _section_for(session, principal, section_id)
+    _check_delete(session, principal, suite)  # §15.9: tests.delete
     session.refresh(suite, with_for_update=True)
     name = section.name
     sections, cases = tc.delete_section(session, section)
@@ -1183,7 +1162,14 @@ def stats(principal: CurrentPrincipal, session: SessionDep, business_project_id:
 # -- import / export -------------------------------------------------------------------------------
 
 
-def _read_out(title: str, url: str | None, found: list[sheets.Sheet]) -> ReadOut:
+def _custom_columns(session: Session, bp_id: int) -> dict[str, str]:
+    """§15.8: "custom.<key>" -> name of the dự án's live case fields (columns an import maps)."""
+    return {f"{sheets.CUSTOM_PREFIX}{f.key}": f.name for f in tf.rows(session, bp_id, "case")}
+
+
+def _read_out(
+    title: str, url: str | None, found: list[sheets.Sheet], custom: dict[str, str] | None = None
+) -> ReadOut:
     if not found:
         raise HTTPException(422, "không có dữ liệu trong bảng tính")
     return ReadOut(
@@ -1197,9 +1183,9 @@ def _read_out(title: str, url: str | None, found: list[sheets.Sheet]) -> ReadOut
                 rows=s.rows,
                 total=max(0, len(s.rows) - s.header_row - 1),
             )
-            for s in (sheets.guess(s) for s in found)
+            for s in (sheets.guess(s, custom) for s in found)
         ],
-        fields={f: sheets.FIELD_LABEL[f] for f in sheets.MAP_FIELDS},
+        fields={**{f: sheets.FIELD_LABEL[f] for f in sheets.MAP_FIELDS}, **(custom or {})},
     )
 
 
@@ -1208,7 +1194,8 @@ def read_url(
     body: UrlIn, principal: CurrentPrincipal, session: SessionDep, settings: SettingsDep
 ) -> ReadOut:
     """The tabs of a Google Sheet shared publicly, with the guessed columns. Nothing kept."""
-    tc.project_for(session, principal, body.business_project_id, edit=True)
+    bp = tc.project_for(session, principal, body.business_project_id, edit=True)
+    custom = _custom_columns(session, bp.id)
     session.commit()  # nothing held while the sheet downloads
     try:
         title, found = sheets.fetch_google(
@@ -1216,7 +1203,7 @@ def read_url(
         )
     except sheets.SheetError as exc:
         raise HTTPException(422, str(exc)) from None
-    return _read_out(title, body.url.strip(), found)
+    return _read_out(title, body.url.strip(), found, custom)
 
 
 @router.post("/testcases/import/read-file", response_model=ReadOut)
@@ -1229,6 +1216,7 @@ async def read_file(
 ) -> ReadOut:
     """The tabs of an uploaded .xlsx / .csv (raw bytes as the body). Nothing kept."""
     await run_in_threadpool(tc.project_for, session, principal, business_project_id, True)
+    custom = await run_in_threadpool(_custom_columns, session, business_project_id)
     await run_in_threadpool(session.commit)
     limit = sheets.MAX_FILE_BYTES
     declared = request.headers.get("content-length")
@@ -1248,7 +1236,7 @@ async def read_file(
             found = sheets.read_file(name, bytes(data))
         except sheets.SheetError as exc:
             raise HTTPException(422, str(exc)) from None
-        return _read_out(name.rsplit(".", 1)[0], None, found)
+        return _read_out(name.rsplit(".", 1)[0], None, found, custom)
 
     return await run_in_threadpool(convert)
 
@@ -1268,7 +1256,10 @@ def import_sheets(body: ImportIn, principal: CurrentPrincipal, session: SessionD
     if cells > MAX_IMPORT_CELLS or chars > MAX_IMPORT_CHARS:
         raise HTTPException(413, "bảng tính quá lớn: chia thành nhiều lần nhập")
     for sheet in body.sheets:
-        if any(f not in sheets.MAP_FIELDS for f in sheet.mapping):
+        if any(
+            f not in sheets.MAP_FIELDS and not f.startswith(sheets.CUSTOM_PREFIX)
+            for f in sheet.mapping
+        ):
             raise HTTPException(422, "cột ghép không hợp lệ")
         if any(len(r) > sheets.MAX_COLS for r in sheet.rows) or any(
             len(c) > MAX_IMPORT_CELL for r in sheet.rows for c in r
@@ -1328,11 +1319,23 @@ def import_sheets(body: ImportIn, principal: CurrentPrincipal, session: SessionD
         seen: set[int] = set()
         created = updated = unchanged = 0
         position = tc.next_position(session, suite.id)
+        # §15.8: the home dự án's case fields; a value that does not fit is left out (an import
+        # is never blocked by a custom field, required or not).
+        case_fields = tf.rows(session, suite.business_project_id, "case")
+        field_by_key = {f.key: f for f in case_fields}
+        approval_rule = approval.approval_on(session, suite.business_project_id)
+        approver = approval.may_approve(principal, suite.business_project_id)
         for values in mapped.cases:
             case_id = values.pop("case_id", None)
             path = values.pop("section", None)
             milestone = values.pop("milestone", None)
             code = values.pop("code", None) or ""
+            raw_custom: dict[str, str] = values.pop("custom_raw", None) or {}
+            imported = {
+                k: tf.coerce(session, field_by_key[k], v)
+                for k, v in raw_custom.items()
+                if k in field_by_key
+            }
             if path is not None:
                 values["section_id"] = content.section_for_path(session, suite.id, path, folders)
             if milestone is not None:
@@ -1359,6 +1362,24 @@ def import_sheets(body: ImportIn, principal: CurrentPrincipal, session: SessionD
                 if code and by_code.get(code, case) is case:
                     values["code"] = code
                     by_code[code] = case
+                if imported:
+                    merged = dict(case.custom or {})
+                    for k, v in imported.items():
+                        if v is None:
+                            merged.pop(k, None)
+                        else:
+                            merged[k] = v
+                    values["custom"] = merged
+                if approval_rule:
+                    _guard(  # §15.9 G7
+                        session,
+                        principal,
+                        suite,
+                        values,
+                        current=case,
+                        rule=approval_rule,
+                        approver=approver,
+                    )
                 if tc.change(session, case, values, user_id=principal.user_id, via="import"):
                     updated += 1
                 else:
@@ -1367,6 +1388,9 @@ def import_sheets(body: ImportIn, principal: CurrentPrincipal, session: SessionD
             if code and code not in by_code:
                 values["code"] = code
             values.setdefault("status", "draft")
+            values["custom"] = {k: v for k, v in imported.items() if v is not None}
+            if approval_rule:
+                _guard(session, principal, suite, values, rule=approval_rule, approver=approver)
             new = tc.create(
                 session,
                 suite,
@@ -1375,6 +1399,7 @@ def import_sheets(body: ImportIn, principal: CurrentPrincipal, session: SessionD
                 source="import",
                 position=position,
                 flush=False,
+                fields=case_fields,
             )
             position += 1
             if new.code:

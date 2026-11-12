@@ -14,7 +14,7 @@ Permissions are decided by the router (`docs.view` / `docs.edit` / `content.may_
 import io
 import itertools
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -29,6 +29,7 @@ from app.models import (
     TestCase,
     TestConfig,
     TestConfigGroup,
+    TestField,
     TestResult,
     TestRun,
     TestRunTest,
@@ -37,8 +38,9 @@ from app.models import (
 )
 from app.models.testcases import CASE_TYPES, PRIORITIES, TEST_STATUSES
 from app.testcases import content
+from app.testcases import fields as tf
 from app.testcases import impact as imp
-from app.testcases.service import suite_in
+from app.testcases.service import FieldError, suite_in
 
 RUN_TESTS_MAX = 5_000
 PLAN_RUNS_MAX = 50
@@ -499,7 +501,9 @@ def add_result(
     assigned_to: int | None = None,
     failed_step: int | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    custom: dict[str, Any] | None = None,
 ) -> TestResult:
+    """`custom`: values of the dự án's result fields, already checked (fields.clean_custom)."""
     if reassign:
         test.assigned_to = assigned_to
     if status is not None:
@@ -516,11 +520,62 @@ def add_result(
         assigned_to=test.assigned_to,
         failed_step=failed_step,
         attachments=attachments or [],
+        custom=dict(custom or {}),
         created_by=user_id,
         created_at=now,
     )
     session.add(result)
     return result
+
+
+def result_custom(
+    session: Session,
+    bp_id: int,
+    test: TestRunTest,
+    values: dict[str, Any] | None,
+    *,
+    status: str | None,
+    template: str | None,
+    fields: Sequence[TestField] | None = None,
+    suite_of: Mapping[int, int] | None = None,
+) -> dict[str, Any]:
+    """§15.8: the custom values of a result recorded for `test`: the run's dự án's result fields
+    that apply to the case's suite and template; required ones only when a status is recorded
+    (defaults filled then). 422 naming the field otherwise. `suite_of` (case id -> suite id,
+    see `suites_of`): read from it rather than one query per test."""
+    if test.case_id is None:
+        suite_id = None
+    elif suite_of is not None:
+        suite_id = suite_of.get(test.case_id)
+    else:
+        suite_id = session.scalar(select(TestCase.suite_id).where(TestCase.id == test.case_id))
+    try:
+        return tf.clean_custom(
+            session,
+            bp_id,
+            "result",
+            values,
+            suite_id=suite_id,
+            template=template,
+            enforce_required=status is not None,
+            defaults=status is not None,
+            fields=fields,
+        )
+    except FieldError as exc:
+        raise HTTPException(422, str(exc)) from None
+
+
+def suites_of(session: Session, tests: Iterable[TestRunTest]) -> dict[int, int]:
+    """case id -> suite id of the cases of `tests`, in one query."""
+    case_ids = {t.case_id for t in tests if t.case_id is not None}
+    if not case_ids:
+        return {}
+    return {
+        cid: sid
+        for cid, sid in session.execute(
+            select(TestCase.id, TestCase.suite_id).where(TestCase.id.in_(case_ids))
+        )
+    }
 
 
 def latest_facts(session: Session, test_ids: list[int]) -> dict[int, tuple[int | None, int | None]]:

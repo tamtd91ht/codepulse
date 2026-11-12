@@ -7,6 +7,7 @@ import { BugCount, BugPills, JiraBugPanel, RetestPill } from "@/components/JiraB
 import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
 import { MoreMenu } from "@/components/MoreMenu";
+import { CustomFieldsEditor, customSummary, defaultValues, pickValues, useFields } from "@/components/TestFields";
 import { CreatePlanModal } from "@/components/TestPlans";
 import {
   ConfirmModal,
@@ -26,7 +27,17 @@ import {
 import { Alert, Card, Drawer, EmptyState, Loading, Segmented } from "@/components/ui";
 import { api, qs, useApi } from "@/lib/api";
 import { dateTimeMin } from "@/lib/format";
-import { type CaseType, PRIORITY_LABEL, type Priority, TYPE_LABEL } from "@/lib/testcases";
+import {
+  type CaseType,
+  type CustomValues,
+  PRIORITY_LABEL,
+  type Priority,
+  type TestField,
+  TYPE_LABEL,
+  applicableFields,
+  customProblems,
+  isEmptyValue,
+} from "@/lib/testcases";
 import {
   RESULT_STATUSES,
   SOURCE_LABEL,
@@ -961,6 +972,9 @@ export function TestDrawer({
   const steps = d ? stepsOf(d) : [];
   const stepMode = d?.content.template === "steps" && steps.length > 0;
   const readOnly = !d || d.run.completed || !d.can_record;
+  // §15.8: the result's custom fields (archived too, for the values kept in the history).
+  const resultFields = useFields(detail.data?.run.business_project_id ?? null, "result", true);
+  const recordFields = useMemo(() => (d ? applicableFields(resultFields.data, d.suite_id ?? null, d.content.template) : []), [d, resultFields.data]);
 
   useEffect(() => {
     // Shortcuts (§15 G6) work while the focus is not in a text field.
@@ -1067,13 +1081,13 @@ export function TestDrawer({
           )}
           <TextBlock label="Dữ liệu test" text={d.content.test_data} />
           <TextBlock label="Ghi chú" text={d.content.notes} />
-          <RecordForm key={d.id} detail={d} steps={stepMode ? steps : []} readOnly={readOnly} people={people} statuses={statuses} pick={pick} onSaved={(goNext) => {
+          <RecordForm key={d.id} detail={d} steps={stepMode ? steps : []} readOnly={readOnly} people={people} statuses={statuses} pick={pick} fields={recordFields} fieldsKnown={!!resultFields.data} onSaved={(goNext) => {
             void detail.mutate();
             onChanged();
             if (goNext && next !== null) onNavigate(next);
           }} hasNext={next !== null} />
           <JiraBugPanel detail={d} onChanged={() => (void detail.mutate(), onChanged())} />
-          <History detail={d} statuses={statuses} />
+          <History detail={d} statuses={statuses} fields={resultFields.data} people={people} />
         </div>
       )}
     </Drawer>
@@ -1089,6 +1103,8 @@ function RecordForm({
   pick,
   onSaved,
   hasNext,
+  fields,
+  fieldsKnown,
 }: {
   detail: TestDetail;
   steps: StepView[];
@@ -1098,8 +1114,23 @@ function RecordForm({
   pick?: MutableRefObject<((s: ResultStatus) => void) | null>;
   onSaved: (goNext: boolean) => void;
   hasNext: boolean;
+  /** §15.8: result fields that apply to this test. */
+  fields: TestField[];
+  /** The fields came back (an older server has none: `custom` is not sent). */
+  fieldsKnown: boolean;
 }) {
   const [status, setStatus] = useState<ResultStatus | null>(null);
+  const [custom, setCustom] = useState<CustomValues>({});
+  const [customTouched, setCustomTouched] = useState(false);
+  const [invalid, setInvalid] = useState<Set<string>>(new Set());
+  // Each field's default, once the fields are known (and again after each save).
+  const seededFor = useRef<string>("");
+  useEffect(() => {
+    const sig = fields.map((f) => f.key).join(",");
+    if (seededFor.current === sig) return;
+    seededFor.current = sig;
+    setCustom((cur) => ({ ...defaultValues(fields), ...cur }));
+  }, [fields]);
   const [files, setFiles] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(0);
   const [over, setOver] = useState(false);
@@ -1149,7 +1180,7 @@ function RecordForm({
   const [error, setError] = useState<string | null>(null);
   const assignChanged = assign !== (detail.assigned_to?.id ?? null);
   const stepsTouched = stepStatus.some(Boolean) || actual.some((a) => a.trim());
-  const ready = (!!status || !!comment.trim() || assignChanged || stepsTouched || files.length > 0) && !uploading;
+  const ready = (!!status || !!comment.trim() || assignChanged || stepsTouched || files.length > 0 || customTouched) && !uploading;
 
   // A failed step usually fails the test: suggest it when nothing is chosen yet.
   const setStep = (i: number, s: TestStatus | "") => {
@@ -1167,6 +1198,19 @@ function RecordForm({
   };
 
   const save = async (goNext: boolean) => {
+    // §15.8: required result fields only when a status is chosen; formats always.
+    const missing = status ? fields.filter((f) => f.required && f.type !== "checkbox" && isEmptyValue(custom[f.key])) : [];
+    const wrong = customProblems(
+      fields.map((f) => ({ ...f, required: false })),
+      custom,
+    );
+    if (missing.length || wrong.length) {
+      setInvalid(new Set([...missing.map((f) => f.key), ...fields.filter((f) => wrong.some((w) => w.includes(`“${f.name}”`))).map((f) => f.key)]));
+      setError(`Chưa lưu: ${[...missing.map((f) => `“${f.name}” là bắt buộc khi có trạng thái`), ...wrong].join("; ")}.`);
+      return;
+    }
+    setInvalid(new Set());
+    const sendCustom = fieldsKnown && fields.length > 0 && (!!status || customTouched);
     setBusy(true);
     setError(null);
     try {
@@ -1179,7 +1223,10 @@ function RecordForm({
         ...(assignChanged ? { assigned_to: assign } : {}),
         ...(steps.length && stepsTouched ? { step_results: steps.map((_, i) => ({ status: stepStatus[i] || "untested", actual: actual[i].trim() || null })) } : {}),
         ...(files.length ? { attachment_ids: files.map((f) => f.id) } : {}),
+        ...(sendCustom ? { custom: pickValues(fields, custom) } : {}),
       });
+      setCustom(defaultValues(fields));
+      setCustomTouched(false);
       setStatus(null);
       setFiles([]);
       setComment("");
@@ -1337,6 +1384,17 @@ function RecordForm({
               <PersonSelect value={assign} onChange={setAssign} people={people} />
             </label>
           </div>
+          <CustomFieldsEditor
+            fields={fields}
+            values={custom}
+            onChange={(v) => {
+              setCustom(v);
+              setCustomTouched(true);
+            }}
+            people={people}
+            invalid={invalid}
+            legend={fields.some((f) => f.required) ? "Trường của kết quả (* bắt buộc khi chọn trạng thái)" : "Trường của kết quả"}
+          />
           <div className="adm-form-foot">
             <span className="small muted tr-save-hint">{hasNext ? "Lưu xong tự mở test kế tiếp · Ctrl+Enter" : "Test cuối của danh sách · Ctrl+Enter"}</span>
             {hasNext && (
@@ -1383,7 +1441,17 @@ function Attachments({ items, onRemove }: { items: Attachment[]; onRemove?: (id:
   );
 }
 
-function History({ detail, statuses }: { detail: TestDetail; statuses?: StatusDef[] }) {
+function History({
+  detail,
+  statuses,
+  fields,
+  people,
+}: {
+  detail: TestDetail;
+  statuses?: StatusDef[];
+  fields?: TestField[];
+  people?: { id: number; name: string }[];
+}) {
   const results = [...detail.results].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
   return (
     <div className="tr-block">
@@ -1406,6 +1474,7 @@ function History({ detail, statuses }: { detail: TestDetail; statuses?: StatusDe
                   {x.assigned_to && <span className="muted"> · giao {x.assigned_to.name}</span>}
                 </div>
                 {x.comment && <div className="tr-pre small">{x.comment}</div>}
+                {customSummary(fields, x.custom, people) && <div className="small tr-custom">{customSummary(fields, x.custom, people)}</div>}
                 {x.source !== "ci" && <Attachments items={x.attachments ?? []} />}
                 <CiResult result={x} />
                 {x.defects.length > 0 && <div className="small">Bug: <BugPills keys={x.defects} bp={detail.run.business_project_id} /></div>}

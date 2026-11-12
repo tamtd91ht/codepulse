@@ -6,7 +6,7 @@ import io
 import pytest
 from openpyxl import Workbook, load_workbook
 
-from app.models import TestCase
+from app.models import TestCase, TestField
 from app.review.testing_hint import is_logic, is_test
 from app.review.testing_hint import testing_hint as hint_of
 from app.testcases import sheets
@@ -438,3 +438,18 @@ def test_testing_hint() -> None:
     assert hint_of(with_test)[0] == ""
     assert hint_of([{"new_path": "app/a.py", "diff": _diff(5)}])[0] == ""  # too small
     assert hint_of([{"new_path": "docs/a.md", "diff": _diff(50)}])[0] == ""
+
+
+def test_a_custom_field_header_is_never_a_formula() -> None:
+    # A field named like a formula before names were checked (or written straight to the DB).
+    field = TestField(key="evil", name='=HYPERLINK("http://x")', type="text")
+    ctx = sheets.Context(paths=CTX.paths, fields=[field])
+    case = _case(custom={"evil": "v"})
+    book = load_workbook(io.BytesIO(sheets.write_xlsx([("A", [case])], None, ctx)))
+    ws = book.worksheets[0]
+    head = [c.value for c in ws[1]]
+    col = head.index('=HYPERLINK("http://x")') + 1
+    assert all(c.data_type == "s" for c in ws[1]) and ws.cell(1, col).data_type == "s"
+    csv_data = sheets.write_csv([("A", [case])], None, ctx).decode("utf-8-sig")
+    header = csv_data.splitlines()[0]
+    assert "'=HYPERLINK" in header and ',"=HYPERLINK' not in header

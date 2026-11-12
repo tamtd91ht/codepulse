@@ -43,11 +43,14 @@ def _suite(db: Session, bp: int) -> tuple[TestSuite, TestCase]:
 
 def test_catalog_and_defaults() -> None:
     assert BY_KEY["tests.view"].is_flag
-    for key in ("tests.edit", "tests.run", "tests.manage"):
+    for key in ("tests.edit", "tests.delete", "tests.approve", "tests.run", "tests.manage"):
         assert BY_KEY[key].scopes == ("project", "all")
     by_role = {s.auto_role: s.items for s in BUILTIN_SETS}
     assert by_role["member"]["tests.view"] == "flag" and "tests.edit" not in by_role["member"]
     assert by_role["project_manager"]["tests.manage"] == "project"
+    assert by_role["project_manager"]["tests.delete"] == "project"
+    assert by_role["project_manager"]["tests.approve"] == "project"
+    assert "tests.delete" not in by_role["member"] and "tests.approve" not in by_role["member"]
     assert by_role["manage_all"]["tests.run"] == "all"
 
 

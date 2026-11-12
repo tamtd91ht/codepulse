@@ -2,15 +2,16 @@
 
 export type Priority = "critical" | "high" | "medium" | "low";
 export type CaseKind = "manual" | "automated";
-export type CaseStatus = "draft" | "approved" | "obsolete";
+/** §15.9 G7: "review" = Chờ duyệt (draft → review → approved; a rejection goes back to draft). */
+export type CaseStatus = "draft" | "review" | "approved" | "obsolete";
 
 export const PRIORITY_LABEL: Record<Priority, string> = { critical: "Rất cao", high: "Cao", medium: "Trung bình", low: "Thấp" };
 export const PRIORITY_TONE: Record<Priority, "bad" | "warn" | "info" | undefined> = { critical: "bad", high: "warn", medium: "info", low: undefined };
 export const KIND_LABEL: Record<CaseKind, string> = { manual: "Thủ công", automated: "Tự động" };
-export const STATUS_LABEL: Record<CaseStatus, string> = { draft: "Nháp", approved: "Đã duyệt", obsolete: "Lỗi thời" };
-export const STATUS_TONE: Record<CaseStatus, "good" | "warn" | undefined> = { draft: "warn", approved: "good", obsolete: undefined };
+export const STATUS_LABEL: Record<CaseStatus, string> = { draft: "Nháp", review: "Chờ duyệt", approved: "Đã duyệt", obsolete: "Lỗi thời" };
+export const STATUS_TONE: Record<CaseStatus, "good" | "warn" | "info" | undefined> = { draft: "warn", review: "info", approved: "good", obsolete: undefined };
 export const PRIORITIES: Priority[] = ["critical", "high", "medium", "low"];
-export const STATUSES: CaseStatus[] = ["draft", "approved", "obsolete"];
+export const STATUSES: CaseStatus[] = ["draft", "review", "approved", "obsolete"];
 
 export interface TcProject {
   id: number;
@@ -21,8 +22,12 @@ export interface TcProject {
   can_edit: boolean;
   /** tests.run: record results of any test. */
   can_run: boolean;
-  /** tests.manage: runs, plans, milestones, configurations. */
+  /** tests.manage: runs, plans, milestones, configurations, custom fields. */
   can_manage: boolean;
+  /** §15.9 tests.delete (absent on older servers: tests.edit decides). */
+  can_delete?: boolean;
+  /** §15.9 tests.approve (absent on older servers: tests.manage decides). */
+  can_approve?: boolean;
 }
 
 export interface Suite {
@@ -234,6 +239,7 @@ export interface CaseValues {
   jira_keys?: string[];
   code_paths?: string[];
   status?: CaseStatus;
+  custom?: CustomValues;
 }
 
 export interface TestCase {
@@ -268,6 +274,8 @@ export interface TestCase {
   jira_keys: string[];
   code_paths: string[];
   status: CaseStatus;
+  /** §15.8 G5: custom field values {key: value}. */
+  custom?: CustomValues;
   source: "manual" | "import" | "ai";
   revision: number;
   problems: string[];
@@ -281,7 +289,7 @@ export interface Person {
 
 export interface Revision {
   number: number;
-  via: "editor" | "import" | "ai" | "restore" | "bulk";
+  via: "editor" | "import" | "ai" | "restore" | "bulk" | (string & {});
   changed_by: Person | null;
   changed_at: string | null;
   snapshot: Record<string, unknown>;
@@ -289,6 +297,12 @@ export interface Revision {
 
 export interface CaseDetail extends TestCase {
   can_edit: boolean;
+  /** §15.9 tests.delete (absent on older servers: can_edit decides). */
+  can_delete?: boolean;
+  /** §15.9 tests.approve. */
+  can_approve?: boolean;
+  /** The dự án requires approval (require_approval). */
+  approval_on?: boolean;
   created_by: Person | null;
   updated_by: Person | null;
   created_at: string | null;
@@ -340,7 +354,7 @@ export interface ImportResult {
   missing: number;
 }
 
-export type AiKind = "generate" | "audit" | "impact" | "links";
+export type AiKind = "generate" | "audit" | "impact" | "links" | "duplicates";
 export type AiStatus = "queued" | "fetching" | "writing" | "ready" | "failed" | "applied" | "discarded";
 
 export interface Proposal {
@@ -385,6 +399,8 @@ export interface AiRun {
     gaps?: string[];
     issues?: AiIssue[];
     links?: LinkSuggestion[];
+    /** §15.10 kind "duplicates": groups of the same case, with the one to keep. */
+    groups?: DuplicateGroup[];
     warnings?: string[];
     applied?: number[];
   } | null;
@@ -403,7 +419,7 @@ export interface RunList {
   max_count: number;
 }
 
-export const AI_KIND_LABEL: Record<AiKind, string> = { generate: "Sinh testcase", audit: "Rà soát bộ", impact: "Phân tích MR", links: "Gợi ý liên kết" };
+export const AI_KIND_LABEL: Record<AiKind, string> = { generate: "Sinh testcase", audit: "Rà soát bộ", impact: "Phân tích MR", links: "Gợi ý liên kết", duplicates: "Tìm trùng lặp" };
 export const AI_STATUS_LABEL: Record<AiStatus, string> = {
   queued: "Đang chờ",
   fetching: "Đang đọc nguồn",
@@ -551,4 +567,181 @@ export interface Trace {
   total: number;
   limit: number;
   offset: number;
+}
+
+/* ---- Custom fields (docs/specs/30 §15.8 G5, API §15.11) ---- */
+
+export type FieldEntity = "case" | "result";
+export type FieldType = "text" | "textarea" | "number" | "date" | "dropdown" | "multiselect" | "checkbox" | "user" | "url";
+/** A stored value: text / textarea / url / date / dropdown a string, number, multi-select a list, checkbox a bool, user an id. */
+export type CustomValue = string | number | boolean | string[] | null;
+export type CustomValues = Record<string, CustomValue>;
+
+export const FIELD_TYPES: FieldType[] = ["text", "textarea", "number", "date", "dropdown", "multiselect", "checkbox", "user", "url"];
+export const FIELD_TYPE_LABEL: Record<FieldType, string> = {
+  text: "Văn bản ngắn",
+  textarea: "Văn bản dài",
+  number: "Số",
+  date: "Ngày",
+  dropdown: "Chọn một",
+  multiselect: "Chọn nhiều",
+  checkbox: "Có / không",
+  user: "Người dùng",
+  url: "Liên kết (URL)",
+};
+export const FIELD_ENTITY_LABEL: Record<FieldEntity, string> = { case: "Testcase", result: "Kết quả" };
+/** Types with a list of options. */
+export const OPTION_TYPES: FieldType[] = ["dropdown", "multiselect"];
+/** Types the case list filter compares for equality; the others match "contains". */
+export const EXACT_FILTER_TYPES: FieldType[] = ["dropdown", "multiselect", "checkbox", "user"];
+/** Limits the server checks (§15.8). */
+export const FIELD_MAX_LEN: Partial<Record<FieldType, number>> = { text: 2000, url: 2000, textarea: 20000 };
+
+export interface TestField {
+  id: number;
+  /** Slug made from the name when created; never changes. */
+  key: string;
+  name: string;
+  entity: FieldEntity;
+  type: FieldType;
+  options: string[];
+  required: boolean;
+  default: CustomValue;
+  /** Empty: every suite. */
+  suite_ids: number[];
+  /** Empty: both templates. */
+  templates: CaseTemplate[];
+  position: number;
+  archived_at: string | null;
+}
+
+/** The live fields that apply to a case of `suiteId` with `template` (§15.8); unknown suite / template: no narrowing. */
+export function applicableFields(fields: TestField[] | undefined, suiteId: number | null | undefined, template: string | null | undefined): TestField[] {
+  return (fields ?? []).filter(
+    (f) =>
+      !f.archived_at &&
+      (!f.suite_ids.length || suiteId == null || f.suite_ids.includes(suiteId)) &&
+      (!f.templates.length || !template || f.templates.includes(template as CaseTemplate)),
+  );
+}
+
+/** No value given (false of a checkbox is a value). */
+export function isEmptyValue(v: CustomValue | undefined): boolean {
+  return v === null || v === undefined || (typeof v === "string" && !v.trim()) || (Array.isArray(v) && !v.length);
+}
+
+/** A value as text for a cell or the case view ("—" when empty). */
+export function fieldText(f: TestField, v: CustomValue | undefined, people?: Person[]): string {
+  if (isEmptyValue(v)) return "—";
+  switch (f.type) {
+    case "checkbox":
+      return v ? "Có" : "Không";
+    case "multiselect":
+      return Array.isArray(v) ? v.join(", ") : String(v);
+    case "user": {
+      const p = people?.find((x) => x.id === Number(v));
+      return p ? p.name : `#${String(v)}`;
+    }
+    case "date":
+      return typeof v === "string" ? v.split("-").reverse().join("/") : String(v);
+    default:
+      return Array.isArray(v) ? v.join(", ") : String(v);
+  }
+}
+
+/**
+ * Names of required fields left empty, and values the server would refuse (§15.8), for the
+ * client-side check before a save. Checkbox: false is a value.
+ */
+export function customProblems(fields: TestField[], values: CustomValues): string[] {
+  const out: string[] = [];
+  for (const f of fields) {
+    const v = values[f.key];
+    if (isEmptyValue(v)) {
+      if (f.required && f.type !== "checkbox") out.push(`“${f.name}” là bắt buộc`);
+      continue;
+    }
+    const max = FIELD_MAX_LEN[f.type];
+    if (max && typeof v === "string" && v.length > max) out.push(`“${f.name}” dài quá ${max.toLocaleString("vi-VN")} ký tự`);
+    if (f.type === "url" && typeof v === "string" && !/^https?:\/\/\S+$/i.test(v.trim())) out.push(`“${f.name}” cần là link http(s)`);
+    if (f.type === "number" && (typeof v !== "number" || !Number.isFinite(v))) out.push(`“${f.name}” cần là số`);
+  }
+  return out;
+}
+
+/* ---- Approval (§15.9 G7) ---- */
+
+export interface CaseReview {
+  id: number;
+  decision: "submit" | "approve" | "reject" | (string & {});
+  comment: string | null;
+  revision: number | null;
+  user_id: number | null;
+  user_name: string | null;
+  created_at: string | null;
+}
+
+/* ---- Bulk changes, find & replace, undo (§15.10 G10) ---- */
+
+export interface BulkOut {
+  changed: number;
+  batch_id?: number | string | null;
+  /** A count, or the cases left as they were. */
+  skipped?: number | { case_id: number; key?: string | null; reason?: string | null }[] | null;
+}
+
+export interface BulkOp {
+  id: number | string;
+  kind: string;
+  summary: string | null;
+  count: number;
+  created_at: string | null;
+  undone_at: string | null;
+  can_undo: boolean;
+}
+
+export interface UndoOut {
+  restored: number;
+  deleted: number;
+  skipped: { case_id: number; key?: string | null; reason?: string | null }[];
+}
+
+export type ReplaceField = "title" | "preconditions" | "steps" | "expected" | "notes" | "test_data";
+export const REPLACE_FIELDS: ReplaceField[] = ["title", "preconditions", "steps", "expected", "notes", "test_data"];
+export const REPLACE_FIELD_LABEL: Record<string, string> = {
+  title: "Tiêu đề",
+  preconditions: "Tiền điều kiện",
+  steps: "Các bước",
+  expected: "Kết quả mong đợi",
+  notes: "Ghi chú",
+  test_data: "Dữ liệu test",
+};
+
+export interface ReplacePreview {
+  total: number;
+  truncated?: boolean;
+  matches: { case_id: number; key: string; title: string; changes: { field: string; before: string; after: string }[] }[];
+}
+
+export const BULK_KIND_LABEL: Record<string, string> = {
+  status: "Đổi trạng thái",
+  priority: "Đổi ưu tiên",
+  type: "Đổi type",
+  kind: "Đổi cách chạy",
+  estimate: "Đặt ước tính",
+  milestone: "Gắn milestone",
+  move: "Chuyển bộ",
+  section: "Chuyển thư mục",
+  tags: "Sửa nhãn",
+  jira: "Thêm mã Jira",
+  custom: "Đặt trường tuỳ biến",
+  copy: "Sao chép",
+  replace: "Tìm & thay",
+  duplicates: "Gộp trùng (AI)",
+};
+
+export interface DuplicateGroup {
+  keep: number;
+  duplicates: number[];
+  reason: string;
 }

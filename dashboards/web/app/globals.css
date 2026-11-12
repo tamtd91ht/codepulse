@@ -13157,3 +13157,245 @@ button.tr-chip[aria-pressed="true"]:hover:not(:disabled) {
     print-color-adjust: exact;
   }
 }
+
+/* ---- Testcase §15.8–§15.10: custom fields, approval, bulk / undo, find & replace ---- */
+.tf-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.tf-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tf-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.tf-row[data-over] {
+  border-color: var(--accent);
+}
+.tf-row.archived {
+  background: var(--surface-2);
+}
+.tf-row.archived .tf-main strong {
+  color: var(--muted);
+}
+.tf-main {
+  flex: 1;
+  min-width: 0;
+}
+.tf-main code {
+  color: var(--muted);
+}
+.tf-req {
+  color: var(--bad-text);
+}
+.tf-fields .tf-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.tf-fields .tf-wide {
+  grid-column: 1 / -1;
+}
+@media (max-width: 640px) {
+  .tf-fields .tf-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.tf-multi {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding: 4px 0;
+}
+.tf-multi[aria-invalid="true"],
+select[aria-invalid="true"] {
+  border-color: var(--bad);
+}
+.tf-multi[aria-invalid="true"] {
+  padding: 4px 8px;
+  border: 1px solid var(--bad);
+  border-radius: var(--radius-field);
+}
+.tc-missing {
+  color: var(--warn);
+}
+.tc-approval {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  background: var(--surface-2);
+}
+.tc-approval-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tc-approval-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tc-reviews {
+  margin-top: 16px;
+}
+.tc-undo-skipped {
+  margin-top: 4px;
+}
+.tc-undo-skipped ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+.tc-bulk-ops {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.tc-bulk-ops > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.tc-bulk-op-main {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+}
+.tc-bulk-op-result {
+  flex-basis: 100%;
+}
+.tc-wrap {
+  flex-wrap: wrap;
+}
+.tc-replace-preview {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.tc-replace-preview.stale {
+  opacity: 0.6;
+}
+.tc-replace-list {
+  display: grid;
+  gap: 12px;
+  max-height: 420px;
+  margin: 8px 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+.tc-replace-list > li {
+  display: grid;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.tc-replace-change {
+  display: grid;
+  gap: 4px;
+}
+.tc-replace-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (max-width: 640px) {
+  .tc-replace-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.tc-diff {
+  padding: 6px 8px;
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+  font-size: 12px;
+}
+.tc-diff del {
+  border-radius: var(--radius-sm);
+  background: var(--bad-soft);
+  color: var(--bad-text);
+}
+.tc-diff ins {
+  border-radius: var(--radius-sm);
+  background: var(--good-soft);
+  color: var(--good);
+  text-decoration: none;
+  font-weight: 600;
+}
+.tc-columns {
+  position: relative;
+}
+.tc-columns-menu {
+  gap: 4px;
+  min-width: 220px;
+  max-height: 320px;
+  padding: 8px 12px;
+  overflow: auto;
+}
+.tc-field-filter {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tc-field-cell {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tc-dup-groups {
+  display: grid;
+  gap: 12px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.tc-dup-group {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+}
+.tc-dup-group p {
+  margin: 0;
+}
+.tc-dup-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0 0 0 16px;
+  list-style: none;
+}
+.tr-custom {
+  color: var(--muted);
+}
+.guide-matrix-cell {
+  text-align: center;
+}

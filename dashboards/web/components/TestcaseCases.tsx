@@ -3,18 +3,34 @@
 import { type DragEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { Modal } from "@/components/CriteriaParts";
-import { Icon, IconButton } from "@/components/icons";
+import { Icon, IconButton, type IconName } from "@/components/icons";
 import { MoreMenu } from "@/components/MoreMenu";
-import { AiModal, RunDrawer, RunsCard } from "@/components/TestcaseAi";
+import { AiModal, RunDrawer, RunsCard, askDuplicates } from "@/components/TestcaseAi";
+import {
+  BULK_EDIT_LABEL,
+  type BulkEditKind,
+  BulkEditModal,
+  BulkOpsModal,
+  ColumnChooser,
+  FieldFilter,
+  ReplaceModal,
+  type UndoNote,
+  UndoNotice,
+  bulkNote,
+  useFieldColumns,
+} from "@/components/TestcaseBulk";
 import { GenerateFromIssue, askLinks } from "@/components/TestcaseLinks";
+import { useFields, usePeople } from "@/components/TestFields";
 import { CaseDrawer, ExportMenu, ImportModal, PriorityPill, ShareModal, StatusPill, SuiteModal, errorText } from "@/components/TestcaseParts";
 import { CASE_DRAG_TYPE, SectionOptions, SectionTree } from "@/components/TestcaseSections";
 import { CreateRunModal } from "@/components/TestRuns";
 import { Alert, EmptyState, Loading, Message, Pill, Skeleton } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
+import type { TestProjectSettings } from "@/lib/testruns";
 import {
   AI_ACTIVE,
   type AiRun,
+  type BulkOut,
   CASE_TYPES,
   type CaseList,
   type CaseMilestone,
@@ -32,6 +48,7 @@ import {
   type TestCase,
   TYPE_LABEL,
   caseKey,
+  fieldText,
 } from "@/lib/testcases";
 
 /*
@@ -64,6 +81,9 @@ export function CasesTab({
   const [term, setTerm] = useState("");
   const [limit, setLimit] = useState(200);
   const [sectionId, setSectionId] = useState<number | null>(null);
+  // §15.8: one custom field filter (f.<key>=<value>) and the custom columns shown.
+  const [fieldFilter, setFieldFilter] = useState<{ key: string; value: string }>({ key: "", value: "" });
+  const [columnKeys, setColumnKeys] = useFieldColumns(project.id);
   useEffect(() => {
     const t = setTimeout(() => setFilters((f) => (f.q === term ? f : { ...f, q: term })), 300);
     return () => clearTimeout(t);
@@ -74,12 +94,14 @@ export function CasesTab({
     setPicked(new Set());
     setLimit(200);
     setSectionId(null);
+    setFieldFilter({ key: "", value: "" });
   }, [project.id, suiteId]);
 
   const query = new URLSearchParams({ business_project_id: String(project.id), limit: String(limit) });
   if (suiteId) query.set("suite_id", String(suiteId));
   if (suiteId && sectionId) query.set("section_id", String(sectionId));
   for (const [k, v] of Object.entries(filters)) if (v) query.set(k, String(v));
+  if (fieldFilter.key && fieldFilter.value !== "") query.set(`f.${fieldFilter.key}`, fieldFilter.value);
   const cases = useApi<CaseList>(`/testcases?${query}`, { keepPreviousData: true });
   const sections = useApi<Section[]>(suite ? `/testcases/sections?suite_id=${suite.id}` : null);
   const milestones = useApi<CaseMilestone[]>(`/testcases/milestones?business_project_id=${project.id}`);
@@ -88,9 +110,24 @@ export function CasesTab({
     refreshInterval: (latest) => (latest?.runs.some((r) => AI_ACTIVE.includes(r.status)) ? 4000 : 0),
   });
 
+  const fields = useFields(project.id, "case");
+  const liveFields = useMemo(() => [...(fields.data ?? [])].filter((f) => !f.archived_at).sort((a, b) => a.position - b.position), [fields.data]);
+  // Fields of this suite only, when one is chosen.
+  const suiteFields = useMemo(() => liveFields.filter((f) => !suiteId || !f.suite_ids.length || f.suite_ids.includes(suiteId)), [liveFields, suiteId]);
+  const shownFields = suiteFields.filter((f) => columnKeys.includes(f.key));
+  const filterField = liveFields.find((f) => f.key === fieldFilter.key);
+  const people = usePeople(project.id, shownFields.some((f) => f.type === "user") || filterField?.type === "user");
+  const settings = useApi<TestProjectSettings>(`/testcases/project-settings?business_project_id=${project.id}`);
+  const approvalOn = !!settings.data?.require_approval;
+  // §15.9: tests.delete / tests.approve (older servers: tests.edit / tests.manage).
+  const canDelete = project.can_delete ?? project.can_edit;
+  const canApprove = project.can_approve ?? project.can_manage;
+
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [open, setOpen] = useState<number | "new" | null>(null);
-  const [modal, setModal] = useState<null | "suite" | "rename" | "share" | "import" | "generate" | "audit" | "delete">(null);
+  const [modal, setModal] = useState<null | "suite" | "rename" | "share" | "import" | "generate" | "audit" | "delete" | "replace" | "bulkops">(null);
+  const [bulkEdit, setBulkEdit] = useState<BulkEditKind | null>(null);
+  const [note, setNote] = useState<UndoNote | null>(null);
   const [run, setRun] = useState<number | null>(null);
   const [testRun, setTestRun] = useState<RunInitial | null>(null);
   // Cases asked to be deleted (one from its row, or the ticked ones): confirmed in a modal.
@@ -104,15 +141,27 @@ export function CasesTab({
     onChanged();
   };
 
+  // After a bulk change: "Đã sửa N testcase · Hoàn tác" when the server gives a batch (§15.10).
+  const bulkDone = (got: BulkOut, text: string) => {
+    if (got.batch_id != null) {
+      setMessage(null);
+      setNote(bulkNote(got, text));
+    } else {
+      setNote(null);
+      setMessage(`${text}.`);
+    }
+    setPicked(new Set());
+    void refresh();
+  };
+
   const bulk = async (body: Record<string, unknown>, ids: number[] = [...picked], done?: (n: number) => string) => {
     if (!ids.length) return;
     setBusy(true);
     try {
-      const got = await api.post<{ changed: number }>("/testcases/bulk", { ids, ...body });
-      setMessage(done ? done(got.changed) : `Đã cập nhật ${got.changed} testcase.`);
-      setPicked(new Set());
-      await refresh();
+      const got = await api.post<BulkOut>("/testcases/bulk", { ids, ...body });
+      bulkDone(got, done ? done(got.changed).replace(/\.$/, "") : `Đã sửa ${got.changed} testcase`);
     } catch (e) {
+      setNote(null);
       setMessage(`Lỗi: ${errorText(e)}`);
     } finally {
       setBusy(false);
@@ -156,6 +205,14 @@ export function CasesTab({
       setMessage(`Lỗi: ${errorText(e)}`);
     }
   };
+  // §15.10: the AI groups duplicate cases of the suite; the run drawer applies them.
+  const findDuplicates = async (id: number) => {
+    try {
+      asked(await askDuplicates(project.id, id));
+    } catch (e) {
+      setMessage(`Lỗi: ${errorText(e)}`);
+    }
+  };
   const [fromIssue, setFromIssue] = useState<{ key: string; title: string | null } | null>(null);
 
   const list = cases.data;
@@ -163,7 +220,7 @@ export function CasesTab({
   const canEdit = project.can_edit;
   const suiteList = suites.data ?? [];
   const sectionList = sections.data;
-  const filtering = JSON.stringify(filters) !== JSON.stringify(NO_FILTERS) || term.trim() !== "";
+  const filtering = JSON.stringify(filters) !== JSON.stringify(NO_FILTERS) || term.trim() !== "" || (!!fieldFilter.key && fieldFilter.value !== "");
   const exportHref = (fmt: string) => `/api/v1/testcases/export?business_project_id=${project.id}${suite ? `&suite_id=${suite.id}` : ""}&format=${fmt}`;
   const chosenSection = sectionId !== null ? sectionList?.find((s) => s.id === sectionId) : undefined;
   const milestoneName = (id: number | null | undefined) => {
@@ -218,7 +275,7 @@ export function CasesTab({
     };
   };
 
-  const menu = suite
+  const menu: { icon: IconName; label: string; danger?: boolean; run: () => void }[] = suite
     ? [
         ...(suite.total && project.can_manage ? [{ icon: "clipboardCheck" as const, label: "Tạo test run cho bộ", run: () => setTestRun({ suite_id: suite.id }) }] : []),
         ...(suite.can_edit ? [{ icon: "edit" as const, label: "Đổi tên", run: () => setModal("rename") }] : []),
@@ -226,12 +283,16 @@ export function CasesTab({
         ...(suite.can_edit && suite.source_url ? [{ icon: "sync" as const, label: "Nhập lại từ Google Sheet", run: () => setModal("import") }] : []),
         ...(suite.can_edit && suite.total ? [{ icon: "sparkle" as const, label: "Rà soát bằng AI", run: () => setModal("audit") }] : []),
         ...(suite.can_edit && suite.total ? [{ icon: "link" as const, label: "Gợi ý Jira / vùng code bằng AI", run: () => void suggestLinks(suite.id) }] : []),
+        ...(suite.can_edit && suite.total > 1 ? [{ icon: "sparkle" as const, label: "Tìm trùng lặp bằng AI", run: () => void findDuplicates(suite.id) }] : []),
+        ...(suite.can_edit && !suite.archived && suite.total ? [{ icon: "search" as const, label: "Tìm & thay", run: () => setModal("replace") }] : []),
         ...(suite.can_edit ? [{ icon: "folder" as const, label: suite.archived ? "Đưa trở lại" : "Lưu trữ", run: () => void archive(suite, !suite.archived) }] : []),
         ...(suite.can_delete ? [{ icon: "remove" as const, label: "Xoá bộ", danger: true, run: () => setModal("delete") }] : []),
       ]
     : [];
+  if (canEdit) menu.push({ icon: "history" as const, label: "Lịch sử thao tác hàng loạt", run: () => setModal("bulkops") });
 
-  const cols = 7 + (canEdit ? 2 : 0);
+  const showDelete = canEdit && canDelete;
+  const cols = 7 + (canEdit ? 1 : 0) + (showDelete ? 1 : 0) + shownFields.length;
   const row = (c: TestCase) => (
     <tr
       key={c.id}
@@ -295,7 +356,12 @@ export function CasesTab({
         <StatusPill value={c.status} />
       </td>
       <td className="small tc-nowrap">{c.jira_keys.join(", ")}</td>
-      {canEdit && (
+      {shownFields.map((f) => (
+        <td key={f.key} className="small tc-field-cell">
+          {fieldText(f, c.custom?.[f.key], people.data)}
+        </td>
+      ))}
+      {showDelete && (
         <td className="tc-row-actions">
           <IconButton icon="remove" tone="danger" label={`Xoá testcase ${caseKey(c)}`} className="tip-left" onClick={() => setDeleting([c])} />
         </td>
@@ -376,6 +442,7 @@ export function CasesTab({
 
       <section className="tc-main">
         <Message text={message} onClose={() => setMessage(null)} />
+        <UndoNotice note={note} onClose={() => setNote(null)} onUndone={() => void refresh()} />
         <CoverageStrip stats={stats.data} error={stats.error} onGenerate={canEdit && (suites.data ?? []).some((s) => s.can_edit) ? setFromIssue : undefined} />
 
         <div className="tc-head">
@@ -395,6 +462,7 @@ export function CasesTab({
             )}
           </div>
           <div className="tc-actions">
+            <ColumnChooser fields={suiteFields} value={columnKeys} onChange={setColumnKeys} />
             <ExportMenu href={exportHref} />
             {suite?.can_edit && (
               <button className="sm" onClick={() => setModal("generate")}>
@@ -430,6 +498,7 @@ export function CasesTab({
             />
           )}
           {(list?.tags.length ?? 0) > 0 && <Select label="Nhãn" value={filters.tag} onChange={(v) => setFilters({ ...filters, tag: v })} options={(list?.tags ?? []).map((t) => [t, t])} all="Mọi nhãn" />}
+          <FieldFilter fields={suiteFields} people={people.data} value={fieldFilter} onChange={setFieldFilter} />
           <label className="inline-check small tc-problem">
             <input type="checkbox" checked={filters.problem} onChange={(e) => setFilters({ ...filters, problem: e.target.checked })} />
             Thiếu bước / kết quả
@@ -440,6 +509,7 @@ export function CasesTab({
               onClick={() => {
                 setFilters(NO_FILTERS);
                 setTerm("");
+                setFieldFilter({ key: "", value: "" });
               }}
             >
               Xoá lọc
@@ -455,9 +525,29 @@ export function CasesTab({
                 <Icon name="clipboardCheck" size={14} /> Tạo test run
               </button>
             )}
-            <button className="ghost sm" disabled={busy} onClick={() => void bulk({ action: "status", status: "approved" })}>
-              <Icon name="check" size={14} /> Duyệt
-            </button>
+            {(canApprove || !approvalOn) && (
+              <button className="ghost sm" disabled={busy} onClick={() => void bulk({ action: "status", status: "approved" }, undefined, (n) => `Đã duyệt ${n} testcase`)}>
+                <Icon name="check" size={14} /> Duyệt
+              </button>
+            )}
+            <BulkSelect label="Đổi trạng thái" busy={busy} onPick={(v) => void bulk({ action: "status", status: v }, undefined, (n) => `Đã chuyển ${n} testcase sang “${STATUS_LABEL[v as keyof typeof STATUS_LABEL]}”`)}>
+              {STATUSES.filter((s) => s !== "approved" || canApprove || !approvalOn).map((s) => (
+                <option key={s} value={s}>
+                  {STATUS_LABEL[s]}
+                </option>
+              ))}
+            </BulkSelect>
+            <BulkSelect label="Đổi cách chạy" busy={busy} onPick={(v) => void bulk({ action: "kind", kind: v }, undefined, (n) => `Đã đổi cách chạy của ${n} testcase`)}>
+              <option value="manual">{KIND_LABEL.manual}</option>
+              <option value="automated">{KIND_LABEL.automated}</option>
+            </BulkSelect>
+            <BulkSelect label="Sửa thêm" busy={busy} onPick={(v) => setBulkEdit(v as BulkEditKind)}>
+              {(Object.keys(BULK_EDIT_LABEL) as BulkEditKind[]).map((k) => (
+                <option key={k} value={k}>
+                  {BULK_EDIT_LABEL[k]}
+                </option>
+              ))}
+            </BulkSelect>
             {suite && sectionList && (
               <BulkSelect label="Chuyển vào thư mục" busy={busy} onPick={(v) => moveCases([...picked], v === "root" ? null : Number(v))}>
                 <option value="root">Gốc của bộ</option>
@@ -499,12 +589,11 @@ export function CasesTab({
                   </option>
                 ))}
             </BulkSelect>
-            <button className="ghost sm" disabled={busy} onClick={() => void bulk({ action: "status", status: "obsolete" })}>
-              Đánh dấu lỗi thời
-            </button>
-            <button className="ghost sm tc-danger" disabled={busy} onClick={() => setDeleting(all.filter((c) => picked.has(c.id)))}>
-              <Icon name="remove" size={14} /> Xoá
-            </button>
+            {canDelete && (
+              <button className="ghost sm tc-danger" disabled={busy} onClick={() => setDeleting(all.filter((c) => picked.has(c.id)))}>
+                <Icon name="remove" size={14} /> Xoá
+              </button>
+            )}
             <button className="ghost sm" disabled={busy} onClick={() => setPicked(new Set())}>
               Bỏ chọn
             </button>
@@ -540,7 +629,10 @@ export function CasesTab({
                     <th>Ước tính</th>
                     <th>Trạng thái</th>
                     <th>Jira</th>
-                    {canEdit && <th className="tc-row-actions" aria-label="Thao tác" />}
+                    {shownFields.map((f) => (
+                      <th key={f.key}>{f.name}</th>
+                    ))}
+                    {showDelete && <th className="tc-row-actions" aria-label="Thao tác" />}
                   </tr>
                 </thead>
                 {groups ? (
@@ -583,10 +675,34 @@ export function CasesTab({
           suite={suite}
           projectId={project.id}
           sectionId={sectionId}
+          approvalOn={approvalOn}
+          canApprove={canApprove}
           onClose={() => setOpen(null)}
           onSaved={() => void refresh()}
         />
       )}
+      {bulkEdit && (
+        <BulkEditModal
+          kind={bulkEdit}
+          ids={[...picked]}
+          suites={suiteList.filter((s) => s.can_edit && !s.archived)}
+          fields={suiteFields}
+          people={people.data}
+          currentSuite={suite?.id ?? null}
+          onClose={() => setBulkEdit(null)}
+          onDone={bulkDone}
+        />
+      )}
+      {modal === "replace" && suite && (
+        <ReplaceModal
+          suite={suite}
+          sections={sectionList}
+          initialSection={sectionId}
+          onClose={() => setModal(null)}
+          onApplied={(got) => bulkDone(got, `Đã thay trong ${got.changed} testcase`)}
+        />
+      )}
+      {modal === "bulkops" && <BulkOpsModal projectId={project.id} onClose={() => setModal(null)} onUndone={() => void refresh()} />}
       {testRun && (
         <CreateRunModal
           projectId={project.id}
@@ -709,7 +825,7 @@ function CoverageStrip({
       <div className="tc-kpis">
         <div>
           <span className="docs-kpi-value">{stats.total}</span>
-          <span className="small muted">testcase đang dùng · {stats.by_status.approved} đã duyệt</span>
+          <span className="small muted">testcase đang dùng · {stats.by_status.approved} đã duyệt{stats.by_status.review ? ` · ${stats.by_status.review} chờ duyệt` : ""}</span>
         </div>
         <div>
           <span className="docs-kpi-value">{pct(stats.automated, stats.total)}</span>

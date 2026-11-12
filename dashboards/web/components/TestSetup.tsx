@@ -5,13 +5,14 @@ import { useState } from "react";
 import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
 import { ProjectSettingsCard } from "@/components/JiraBug";
+import { FieldsCard } from "@/components/TestFields";
 import { ConfirmModal, ResultStatusesCard } from "@/components/TestRunParts";
 import { Alert, Card, EmptyState, Loading } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 import { dateTimeMin } from "@/lib/format";
 import { errorText, type ConfigGroup, type SharedStep } from "@/lib/testruns";
 
-/* Thiết lập (docs/specs/30 §13.4–§13.5, API §14.2): shared steps and configurations of a dự án. */
+/* Thiết lập (docs/specs/30 §13.4–§13.5, API §14.2): shared steps, configurations, custom fields (§15.8) of a dự án. */
 
 type StepDraft = { content: string; expected: string };
 
@@ -402,6 +403,7 @@ export function SetupTab({ projectId, canEdit, canManage }: { projectId: number;
     <div className="tr-tab">
       <SharedSteps projectId={projectId} canEdit={canEdit} />
       <Configurations projectId={projectId} canEdit={canManage} />
+      <FieldsCard projectId={projectId} canEdit={canManage} />
       <ResultStatusesCard projectId={projectId} />
       <ProjectSettingsCard projectId={projectId} />
     </div>

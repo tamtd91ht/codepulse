@@ -58,6 +58,7 @@ from app.models import (
     TestSuite,
 )
 from app.testcases import content, events
+from app.testcases import fields as tf
 from app.testcases import runs as rs
 from app.testcases import service as tc
 
@@ -601,6 +602,11 @@ def _create_cases(
     again. Returns (automation id -> case, how many this call inserted)."""
     section_id = content.section_for_path(session, suite.id, UNMAPPED_SECTION)
     top = tc.next_position(session, suite.id)
+    # §15.8: the defaults of the home dự án's case fields, as `tc.create` gives a new case; the
+    # same for every case made here (one suite, template "text").
+    defaults = tf.with_defaults(
+        session, suite.business_project_id, "case", {}, suite_id=suite.id, template="text"
+    )
     rows: dict[str, dict[str, Any]] = {}
     for t in tests:
         aid = t.automation_id
@@ -622,6 +628,7 @@ def _create_cases(
             jira_keys=[],
             code_paths=[],
             steps_list=[],
+            custom=dict(defaults),
             revision=1,
             position=top + len(rows),
             created_by=user_id,
@@ -849,6 +856,7 @@ def write_results(
     sha = TestResult.ci["commit_sha"].astext
     items = [(cid, m) for cid, m in by_case.items() if m.status is not None]
     failed: list[int] = []
+    result_custom = _result_defaults(session, imp.business_project_id, [cid for cid, _m in items])
     for start in range(0, max(len(items), 1), CHUNK):
         chunk = items[start : start + CHUNK]
         lock_run(session, imp, run_id)
@@ -912,6 +920,7 @@ def write_results(
                         "assigned_to": assigned,
                         "created_by": created_by,
                         "created_at": now,
+                        "custom": dict(result_custom.get(case_id) or {}),
                         **values,
                     }
                 )
@@ -932,6 +941,40 @@ def write_results(
         if isinstance(obj, TestRunTest | TestResult):
             session.expire(obj)
     return failed
+
+
+def _result_defaults(
+    session: Session, bp_id: int, case_ids: list[int]
+) -> dict[int, dict[str, Any]]:
+    """case id -> the `custom` of a new CI result of it (§15.8): the defaults of the dự án's
+    result fields applying to the case's suite and template (a required one is not enforced: CI
+    is never blocked by a field). One query for the fields and one for the cases; the values are
+    worked out once per (suite, template)."""
+    fields = tf.rows(session, bp_id, "result")
+    if not fields or not case_ids:
+        return {}
+    kinds = {
+        int(cid): (int(sid), template)
+        for cid, sid, template in session.execute(
+            select(TestCase.id, TestCase.suite_id, TestCase.template).where(
+                TestCase.id.in_(sorted(set(case_ids)))
+            )
+        )
+    }
+    per_kind: dict[tuple[int, str | None], dict[str, Any]] = {}
+    for kind in set(kinds.values()):
+        per_kind[kind] = tf.clean_custom(
+            session,
+            bp_id,
+            "result",
+            None,
+            suite_id=kind[0],
+            template=kind[1],
+            enforce_required=False,
+            defaults=True,
+            fields=fields,
+        )
+    return {cid: per_kind[kind] for cid, kind in kinds.items() if per_kind[kind]}
 
 
 def _merge_identities(old: Any, new: dict[str, list[str]]) -> dict[str, list[str]]:

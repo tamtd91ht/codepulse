@@ -7,7 +7,7 @@ dự án one manages; `all`: every one).
 """
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -23,6 +23,7 @@ from app.models import (
     Project,
     TestCase,
     TestCaseRevision,
+    TestField,
     TestMilestone,
     TestSection,
     TestSharedStep,
@@ -71,13 +72,22 @@ FIELDS = (
     "status",
     "milestone_id",
     "estimate_s",
+    # §15 G5: custom field values, {key: value}; checked by app/testcases/fields.py.
+    "custom",
 )
 # What a restore puts back: not the sheet's code (only an import sets it).
 RESTORED = tuple(f for f in FIELDS if f != "code")
+# Fields that are not the case's content: changing only these keeps an approved case approved.
+NOT_CONTENT = ("status", "code")
 TEXT_FIELDS = ("preconditions", "steps", "test_data", "expected", "notes")
 PRIORITY_LABEL = {"critical": "Rất cao", "high": "Cao", "medium": "Trung bình", "low": "Thấp"}
 KIND_LABEL = {"manual": "Thủ công", "automated": "Tự động"}
-STATUS_LABEL = {"draft": "Nháp", "approved": "Đã duyệt", "obsolete": "Lỗi thời"}
+STATUS_LABEL = {
+    "draft": "Nháp",
+    "review": "Chờ duyệt",
+    "approved": "Đã duyệt",
+    "obsolete": "Lỗi thời",
+}
 PRIORITY_RANK = {p: i for i, p in enumerate(PRIORITIES)}
 
 
@@ -466,6 +476,11 @@ def clean(values: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
             if value not in CASE_STATUSES:
                 raise FieldError("trạng thái không hợp lệ")
             out[key] = value
+        elif key == "custom":
+            # Checked against the dự án's fields by app/testcases/fields.py (it needs a session).
+            if value is not None and not isinstance(value, dict):
+                raise FieldError("trường tuỳ biến không hợp lệ")
+            out[key] = dict(value or {})
     if not partial and not out.get("title"):
         raise FieldError("testcase cần tiêu đề")
     return out
@@ -551,8 +566,21 @@ def search_text(case: TestCase) -> str:
         steps,
         " ".join(case.tags or []),
         " ".join(case.jira_keys or []),
+        custom_words(case.custom),
     ]
     return fold(" ".join(parts))[:20_000]
+
+
+def custom_words(custom: dict[str, Any] | None) -> str:
+    """The text of a case's custom values the search reads (§15.8): every text or list of texts
+    (text, textarea, dropdown and multi-select values; a url or a date reads as text too)."""
+    parts: list[str] = []
+    for value in (custom or {}).values() if isinstance(custom, dict) else ():
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, list):
+            parts.extend(v for v in value if isinstance(v, str))
+    return " ".join(parts)
 
 
 def snapshot(case: TestCase) -> dict[str, Any]:
@@ -622,9 +650,23 @@ def create(
     source: str,
     position: int | None = None,
     flush: bool = True,
+    fields: Sequence[TestField] | None = None,
 ) -> TestCase:
     """A new case of `suite` from cleaned values. Its key is C<id>; `code` is only the sheet's
-    code of an import (the caller keeps it unique in the suite)."""
+    code of an import (the caller keeps it unique in the suite). Custom fields it lacks take
+    their defaults (§15.8; `fields`: the home dự án's case fields, read when not given)."""
+    from app.testcases import fields as tf  # fields imports this module
+
+    values = dict(values)
+    values["custom"] = tf.with_defaults(
+        session,
+        suite.business_project_id,
+        "case",
+        values.get("custom"),
+        suite_id=suite.id,
+        template=values.get("template") or "text",
+        fields=fields,
+    )
     case = TestCase(
         suite_id=suite.id,
         **values,
@@ -839,6 +881,7 @@ class SuiteCounts:
     approved: int = 0
     draft: int = 0
     obsolete: int = 0
+    review: int = 0
 
 
 def links_of(session: Session, suite_ids: list[int]) -> dict[int, list[int]]:

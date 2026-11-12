@@ -38,7 +38,7 @@ from app.models.base import Base, TimestampMixin
 
 PRIORITIES = ("critical", "high", "medium", "low")
 CASE_KINDS = ("manual", "automated")
-CASE_STATUSES = ("draft", "approved", "obsolete")
+CASE_STATUSES = ("draft", "review", "approved", "obsolete")  # §15 G7 adds "review"
 CASE_SOURCES = ("manual", "import", "ai")
 REVISION_VIA = ("editor", "import", "ai", "restore", "bulk")
 TEMPLATES = ("text", "steps")
@@ -64,7 +64,7 @@ RESULT_STATUSES = ("passed", "failed", "blocked", "retest", "skipped")
 RUN_SOURCES = ("manual", "regression", "plan", "ci")
 RESULT_SOURCES = ("manual", "ci")
 CI_IMPORT_STATUSES = ("queued", "running", "done", "failed")
-AI_KINDS = ("generate", "audit", "impact", "links")
+AI_KINDS = ("generate", "audit", "impact", "links", "duplicates")
 AI_STATUSES = ("queued", "fetching", "writing", "ready", "failed", "applied", "discarded")
 
 
@@ -169,6 +169,8 @@ class TestCase(TimestampMixin, Base):
     automation_id: Mapped[str | None]
     # §15 G1: CI results disagree (pass and fail on one commit, or flipping often).
     flaky: Mapped[bool] = mapped_column(server_default="false", default=False)
+    # §15 G5: values of the dự án's custom fields (TestField, entity "case"), {key: value}.
+    custom: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
     status: Mapped[str] = mapped_column(server_default="draft", default="draft")
     source: Mapped[str] = mapped_column(server_default="manual", default="manual")
     revision: Mapped[int] = mapped_column(server_default="1", default=1)
@@ -422,6 +424,8 @@ class TestResult(Base):
     ci: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
     # §15 G6: the first step that failed (1-based), for template "steps".
     failed_step: Mapped[int | None]
+    # §15 G5: values of the dự án's custom fields (TestField, entity "result"), {key: value}.
+    custom: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -546,3 +550,94 @@ class TestReportSchedule(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(server_default="true", default=True)
     last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+FIELD_ENTITIES = ("case", "result")
+FIELD_TYPES = (
+    "text",
+    "textarea",
+    "number",
+    "date",
+    "dropdown",
+    "multiselect",
+    "checkbox",
+    "user",
+    "url",
+)
+REVIEW_DECISIONS = ("submit", "approve", "reject")
+BULK_KINDS = ("edit", "move", "copy", "replace", "duplicates")
+
+
+class TestField(TimestampMixin, Base):
+    """A custom field of a dự án's cases or results (docs/specs/30 §15.8, G5). Archived, not
+    deleted: the values stay in `custom`."""
+
+    __tablename__ = "test_fields"
+    __test__ = False
+    __table_args__ = (
+        UniqueConstraint(
+            "business_project_id", "entity", "key", name="uq_test_fields_bp_entity_key"
+        ),
+        CheckConstraint(f"entity IN {FIELD_ENTITIES}", name="entity"),
+        CheckConstraint(f"type IN {FIELD_TYPES}", name="type"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
+    entity: Mapped[str]
+    key: Mapped[str]  # slug from the name, fixed once made
+    name: Mapped[str]
+    type: Mapped[str]
+    options: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
+    required: Mapped[bool] = mapped_column(server_default="false", default=False)
+    default: Mapped[Any] = mapped_column(JSONB, nullable=True)
+    # Empty: every suite / template of the dự án.
+    suite_ids: Mapped[list[int]] = mapped_column(JSONB, server_default="[]", default=list)
+    templates: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
+    position: Mapped[int] = mapped_column(server_default="0", default=0)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class TestCaseReview(Base):
+    """One step of a case's approval (§15.9, G7): sent for review, approved or rejected."""
+
+    __tablename__ = "test_case_reviews"
+    __test__ = False
+    __table_args__ = (CheckConstraint(f"decision IN {REVIEW_DECISIONS}", name="decision"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    case_id: Mapped[int] = mapped_column(
+        ForeignKey("test_cases.id", ondelete="CASCADE"), index=True
+    )
+    decision: Mapped[str]
+    comment: Mapped[str | None]
+    revision: Mapped[int]  # the case's revision it was about
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TestBulkOp(Base):
+    """One bulk change of cases (§15.10, G10), kept to undo it: the revision each case had
+    before, and the cases it made (copy)."""
+
+    __tablename__ = "test_bulk_ops"
+    __test__ = False
+    __table_args__ = (CheckConstraint(f"kind IN {BULK_KINDS}", name="kind"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    business_project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    kind: Mapped[str]
+    summary: Mapped[str] = mapped_column(server_default="", default="")
+    # {case id: the revision number it had before} for changed cases.
+    before: Mapped[dict[str, int]] = mapped_column(JSONB, server_default="{}", default=dict)
+    created_ids: Mapped[list[int]] = mapped_column(JSONB, server_default="[]", default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

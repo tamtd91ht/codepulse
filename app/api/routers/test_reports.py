@@ -47,6 +47,9 @@ DateFrom = Annotated[date | None, Query(alias="from")]
 DateTo = Annotated[date | None, Query(alias="to")]
 RunIds = Annotated[str | None, Query(max_length=200, description="2..10 run ids: 1,2,3")]
 PassRate = Annotated[float, Query(ge=0, le=100)]
+# §15.8 G5: summary filtered by a dropdown case field (its key) and one of its options.
+FieldKey = Annotated[str | None, Query(max_length=60)]
+FieldValue = Annotated[str | None, Query(max_length=200)]
 
 
 def _filters(
@@ -60,10 +63,18 @@ def _filters(
     branch: str | None,
     date_from: date | None,
     date_to: date | None,
+    field: str | None = None,
+    value: str | None = None,
 ) -> rp.Filters:
     bp = tc.project_for(session, principal, business_project_id)
     if date_from and date_to and date_from > date_to:
         raise HTTPException(422, "ngày bắt đầu sau ngày kết thúc")
+    chosen: tuple[str, str] | None = None
+    if field and value:
+        # §15.8 G5: a dropdown case field of the dự án and one of its options.
+        chosen = rp.field_value(session, bp.id, field, value)
+        if chosen is None:
+            raise HTTPException(422, "trường hoặc giá trị lọc không hợp lệ")
     if suite_id is not None:
         suite = session.get(TestSuite, suite_id)
         if suite is None or bp.id not in tc.projects_of(session, suite):
@@ -94,6 +105,8 @@ def _filters(
         date_from=date_from,
         date_to=date_to,
         tz=get_settings().report_tz,
+        field=chosen[0] if chosen else None,
+        value=chosen[1] if chosen else None,
     )
 
 
@@ -182,6 +195,8 @@ def report(
     date_to: DateTo = None,
     run_ids: RunIds = None,
     min_pass_rate: PassRate = rp.PASS_RATE_GO,
+    field: FieldKey = None,
+    value: FieldValue = None,
 ) -> dict[str, Any]:
     """One report, filtered (docs/specs/30 §15 G4)."""
     f = _filters(
@@ -195,6 +210,8 @@ def report(
         branch,
         date_from,
         date_to,
+        field,
+        value,
     )
     return _report(kind, session, principal, f, run_ids, min_pass_rate)
 
@@ -214,6 +231,8 @@ def report_export(
     date_to: DateTo = None,
     run_ids: RunIds = None,
     min_pass_rate: PassRate = rp.PASS_RATE_GO,
+    field: FieldKey = None,
+    value: FieldValue = None,
 ) -> Response:
     """The report as Excel: one sheet per section, every cell text (no formula)."""
     f = _filters(
@@ -227,6 +246,8 @@ def report_export(
         branch,
         date_from,
         date_to,
+        field,
+        value,
     )
     data = _report(kind, session, principal, f, run_ids, min_pass_rate)
     meta = rp.status_meta(session, f.bp_id)
@@ -235,15 +256,17 @@ def report_export(
         ("Từ ngày", f.date_from.isoformat() if f.date_from else ""),
         ("Đến ngày", f.date_to.isoformat() if f.date_to else ""),
     ]
-    for label, value in (
+    for label, shown in (
         ("Bộ", f.suite_id),
         ("Milestone", f.milestone_id),
         ("Plan", f.plan_id),
         ("Cấu hình", f.config_id),
         ("Nhánh", f.branch),
+        ("Trường", f.field),
+        ("Giá trị", f.value),
     ):
-        if value:
-            labels.append((label, str(value)))
+        if shown:
+            labels.append((label, str(shown)))
     title = f"Báo cáo testcase: {rp.KIND_LABEL[kind]}"
     body = rp.to_xlsx(title, labels, rp.sheets_for(kind, data, meta))
     name = f"bao-cao-{kind}-{date.today().isoformat()}.xlsx"

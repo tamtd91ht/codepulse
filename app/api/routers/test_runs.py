@@ -42,6 +42,7 @@ from app.models import (
 from app.testcases import bugs as tc_bugs
 from app.testcases import content
 from app.testcases import events as tc_events
+from app.testcases import fields as tf
 from app.testcases import runs as rs
 from app.testcases import service as tc
 from app.testcases import statuses as tst
@@ -267,6 +268,8 @@ class TestOut(BaseModel):
     # §15 G6: of the latest result with a status.
     elapsed_s: int | None = None
     failed_step: int | None = None
+    # §15.8 G5: the case's suite (result fields may apply to some suites only); None: deleted.
+    suite_id: int | None = None
 
 
 class TestsOut(BaseModel):
@@ -295,6 +298,7 @@ class ResultOut(BaseModel):
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     ci: dict[str, Any] = Field(default_factory=dict)
     failed_step: int | None = None  # §15 G6
+    custom: dict[str, Any] = Field(default_factory=dict)  # §15.8 G5: result fields
 
 
 class RunBrief(BaseModel):
@@ -328,6 +332,8 @@ class ResultIn(BaseModel):
     assigned_to: int | None = None
     # §15 G6: files uploaded with POST /testcases/attachments.
     attachment_ids: list[int] = Field(default_factory=list, max_length=tst.ATTACH_PER_RESULT)
+    # §15.8 G5: {key: value} of the dự án's result fields (required ones with a status).
+    custom: dict[str, Any] | None = Field(default=None, max_length=tf.FIELDS_MAX)
 
 
 class BulkResultIn(BaseModel):
@@ -337,6 +343,7 @@ class BulkResultIn(BaseModel):
     version: str | None = Field(default=None, max_length=NAME_MAX)
     defects: list[str] = Field(default_factory=list, max_length=rs.DEFECTS_MAX)
     assigned_to: int | None = None
+    custom: dict[str, Any] | None = Field(default=None, max_length=tf.FIELDS_MAX)
 
 
 class Changed(BaseModel):
@@ -567,11 +574,15 @@ def _test_outs(
     shown = rs.views(session, run, tests)
     defects, comments = rs.result_extras(session, [t.id for t in tests])
     case_ids = {t.case_id for t in tests if t.case_id is not None}
-    flaky = (
-        set(session.scalars(select(TestCase.id).where(TestCase.id.in_(case_ids), TestCase.flaky)))
+    facts_of = (
+        session.execute(
+            select(TestCase.id, TestCase.suite_id, TestCase.flaky).where(TestCase.id.in_(case_ids))
+        ).all()
         if case_ids
-        else set()
+        else []
     )
+    flaky = {cid for cid, _, is_flaky in facts_of if is_flaky}
+    suite_of: dict[int, int] = {cid: sid for cid, sid, _ in facts_of}
     people = _people(session, {t.assigned_to for t in tests})
     retest = tc_bugs.retest_ids(session, run, tests, defects)
     facts = rs.latest_facts(session, [t.id for t in tests])
@@ -581,6 +592,7 @@ def _test_outs(
             key=content.key("test", t.id) or "",
             run_id=t.run_id,
             case_id=t.case_id,
+            suite_id=suite_of.get(t.case_id) if t.case_id is not None else None,
             case_key=content.key("case", t.case_id),
             title=str(shown[t.id].get("title") or t.title),
             section=shown[t.id].get("section"),
@@ -623,6 +635,7 @@ def _result_outs(session: Session, results: list[TestResult]) -> list[ResultOut]
             attachments=list(r.attachments or []),
             ci=dict(r.ci or {}),
             failed_step=r.failed_step,
+            custom=dict(r.custom or {}),
         )
         for r in results
     ]
@@ -1322,12 +1335,20 @@ def add_result(
     if body.elapsed and body.elapsed.strip() and elapsed is None:
         raise HTTPException(422, "thời gian chạy không đọc được (ví dụ: 30s, 5m, 1h 30m)")
     steps: list[dict[str, Any]] = []
+    shown = rs.views(session, run, [test])[test.id]
     if body.step_results:
-        shown = rs.views(session, run, [test])[test.id]
         count = len(shown.get("steps_list") or []) if shown.get("template") == "steps" else 0
         steps = rs.step_results([s.model_dump() for s in body.step_results], count)
     # §15 G6: a failed (blocked) step fails (blocks) the result; all passed: passed.
     status, failed_step = tst.from_steps(status, steps)
+    custom = rs.result_custom(
+        session,
+        run.business_project_id,
+        test,
+        body.custom,
+        status=status,
+        template=shown.get("template"),
+    )
     defects = rs.jira_keys(body.defects)
     if not (
         status
@@ -1338,6 +1359,7 @@ def add_result(
         or steps
         or files
         or reassign
+        or custom
     ):
         raise HTTPException(422, "kết quả trống: chọn trạng thái hoặc nhập bình luận")
     rs.add_result(
@@ -1348,6 +1370,7 @@ def add_result(
         status=status,
         failed_step=failed_step,
         attachments=files,
+        custom=custom,
         comment=body.comment,
         version=body.version,
         elapsed_s=elapsed,
@@ -1384,7 +1407,14 @@ def bulk_results(
     reassign = "assigned_to" in body.model_fields_set
     defects = rs.jira_keys(body.defects)
     status = tst.check(session, run.business_project_id, body.status)
-    if not (status or rs.text(body.comment) or rs.line(body.version) or defects or reassign):
+    if not (
+        status
+        or rs.text(body.comment)
+        or rs.line(body.version)
+        or defects
+        or reassign
+        or body.custom
+    ):
         raise HTTPException(422, "kết quả trống: chọn trạng thái hoặc nhập bình luận")
     assignee = (
         _person(session, settings, run.business_project_id, body.assigned_to) if reassign else None
@@ -1410,6 +1440,26 @@ def bulk_results(
         ):
             raise HTTPException(403, f"bạn không được ghi kết quả cho {content.key('test', t.id)}")
     now = _now()
+    # §15.8: result fields per test (they may apply to some suites / templates only).
+    # No live result field: nothing is kept (unknown keys are dropped), so no per-test work.
+    result_fields = tf.rows(session, run.business_project_id, "result")
+    customs: dict[int, dict[str, Any]] = {t.id: {} for t in tests}
+    if result_fields:
+        shown = rs.views(session, run, tests)
+        suite_of = rs.suites_of(session, tests)
+        customs = {
+            t.id: rs.result_custom(
+                session,
+                run.business_project_id,
+                t,
+                body.custom,
+                status=status,
+                template=shown.get(t.id, {}).get("template"),
+                fields=result_fields,
+                suite_of=suite_of,
+            )
+            for t in tests
+        }
     for t in tests:
         rs.add_result(
             session,
@@ -1422,6 +1472,7 @@ def bulk_results(
             defects=defects,
             reassign=reassign,
             assigned_to=assignee,
+            custom=customs[t.id],
         )
     audit(
         session,

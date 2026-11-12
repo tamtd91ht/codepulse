@@ -142,7 +142,20 @@ CATALOG: tuple[Permission, ...] = (
     _p(
         "tests.edit",
         "Testcase",
-        "Thiết kế testcase: thêm, sửa, nhập, xoá, thư mục, bước dùng chung, AI sinh / rà soát",
+        "Thiết kế testcase: thêm, sửa, nhập, thư mục, bước dùng chung, AI sinh / rà soát",
+        "project all",
+    ),
+    # §15.9 (G7): deleting and approving are their own rights.
+    _p(
+        "tests.delete",
+        "Testcase",
+        "Xoá testcase, bộ testcase, thư mục",
+        "project all",
+    ),
+    _p(
+        "tests.approve",
+        "Testcase",
+        "Duyệt / từ chối testcase khi dự án bật quy trình duyệt",
         "project all",
     ),
     _p(
@@ -294,6 +307,8 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "docs.edit": "project",
             "tests.view": FLAG,
             "tests.edit": "project",
+            "tests.delete": "project",
+            "tests.approve": "project",
             "tests.run": "project",
             "tests.manage": "project",
         },
@@ -323,6 +338,8 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "docs.edit": "all",
             "tests.view": FLAG,
             "tests.edit": "all",
+            "tests.delete": "all",
+            "tests.approve": "all",
             "tests.run": "all",
             "tests.manage": "all",
         },
