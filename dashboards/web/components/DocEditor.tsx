@@ -7,6 +7,7 @@ import { Icon } from "@/components/icons";
 import { Alert, Drawer, Segmented } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { CATEGORY_LABEL, CATEGORY_ORDER, type DocCategory, type DocDetail, placeholders } from "@/lib/docs";
+import { htmlToMarkdown } from "@/lib/htmlpaste";
 import {
   type ColumnAlign,
   type MdTable,
@@ -205,6 +206,19 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
       if (!el) return;
       el.focus();
       el.setSelectionRange(base + (select?.[0] ?? md.length), base + (select?.[1] ?? md.length));
+      trackCaret();
+    });
+  }
+
+  /** Replace the selection with `md` (one line of text: no blank lines added). */
+  function insertInline(md: string) {
+    const el = area.current;
+    if (!el) return;
+    const { selectionStart: a, selectionEnd: b, value } = el;
+    setBody(value.slice(0, a) + md + value.slice(b));
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(a + md.length, a + md.length);
       trackCaret();
     });
   }
@@ -707,6 +721,15 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
               onClick={trackCaret}
               onKeyUp={trackCaret}
               onPaste={(e) => {
+                // Rich text from Google Docs / Sheets, Word, web pages: its HTML keeps the links,
+                // headings, lists and tables the plain text loses (docs/specs/29 §18).
+                const rich = htmlToMarkdown(e.clipboardData.getData("text/html"));
+                if (rich) {
+                  e.preventDefault();
+                  if (/\n|^(#|\||-\s|\d+\.\s|>|```)/.test(rich)) insertBlock(rich);
+                  else insertInline(rich);
+                  return;
+                }
                 // Cells copied from Excel / Google Sheets become a table (Excel also puts a
                 // picture of them on the clipboard: the cells win).
                 const grid = fromSpreadsheet(e.clipboardData.getData("text/plain"));

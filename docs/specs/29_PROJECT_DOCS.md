@@ -475,7 +475,7 @@ tài liệu nhập sai hoặc quá cũ.
 - `.docx`: `w:hyperlink`, `fldSimple HYPERLINK`, field phức hợp → `[chữ](url)`; `.xlsx`: ô có hyperlink → `[giá trị](url)`; trang web: `<a href>` (tương đối được nối với trang) → link. Chỉ giữ http/https/mailto; bỏ lớp chuyển hướng `google.com/url?q=`.
 - Link Google Docs / Sheets được đọc qua bản xuất `.docx` / `.xlsx` của Google (giữ link, mọi tab của sheet), không qua trang (là script). Tài liệu chưa chia sẻ công khai → báo rõ cách bật chia sẻ hoặc tải file lên.
 - AI tổng hợp được dặn giữ nguyên link của nguồn.
-- Còn lại: dán vùng ô / đoạn văn từ Google Sheets/Docs vào trình soạn giữ link (đọc HTML của clipboard).
+- Dán từ Google Docs / Sheets vào trình soạn: xem §18.
 
 ## 17. Một tài liệu dùng cho nhiều dự án — user 2026-11-12 **[Quyết định]**
 
@@ -504,3 +504,17 @@ API: `PUT /docs/{id}/projects {project_ids}` (cả tập dự án liên kết, t
 
 
 Thanh công cụ của tài liệu (user 2026-11-12): các thao tác ít dùng gom vào menu **…** (Đổi tên, nhóm · Dự án dùng tài liệu này · In / lưu PDF · Lưu trữ · Xoá tài liệu, mục Xoá màu đỏ, chỉ hiện ở người sửa được của dự án gốc) để thanh nằm trên một dòng.
+
+## 18. Dán từ Google Docs / Sheets, Word, web vào trình soạn — user 2026-11-12 **[Quyết định]**
+
+- Clipboard có cả chữ thường (mất link) và HTML: trình soạn đọc HTML (`lib/htmlpaste.ts`, qua
+  DOMParser: không chạy script, không tải ảnh) và viết Markdown: link `[chữ](url)` (bỏ lớp
+  `google.com/url?q=`; chỉ http/https/mailto), tiêu đề, danh sách nhiều cấp (Google Docs ghi cấp
+  bằng `aria-level`), đậm / nghiêng (Google ghi bằng style), bảng (link trong ô giữ, `|` thoát),
+  trích dẫn, code.
+- Chỉ đổi khi HTML có link, bảng, tiêu đề hoặc danh sách và không phải code chép từ trình soạn
+  code (`white-space: pre`); còn lại dán chữ như cũ. Đoạn một dòng (câu có link) chèn ngay tại
+  con trỏ; nhiều dòng thành khối riêng.
+- Thứ tự: HTML → ô dạng tab (Excel / Sheets không có HTML) → ảnh → chữ thường.
+- Ảnh trong đoạn dán từ Google Docs bị bỏ (địa chỉ ảnh là máy chủ Google, có hạn): dán ảnh riêng.
+
