@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.api.audit import audit
 from app.api.deps import get_queue, get_secret_box, get_session
+from app.api.locks import busy_as_409, short_lock_wait
 from app.api.schemas import (
     AccountLinked,
     AccountOut,
@@ -314,6 +315,7 @@ def import_gitlab_members(
 
 
 @router.post("/identity/authors", response_model=AccountLinked)
+@busy_as_409()
 def link_author(
     body: AuthorLinkIn,
     principal: ImporterPrincipal,
@@ -323,6 +325,7 @@ def link_author(
 ) -> AccountLinked:
     """A commit author (from the commit list) to an existing person or a new one."""
     email = body.email.strip().lower()
+    short_lock_wait(session)  # a running GitLab sync may hold the account's row (locks.py)
     try:
         if body.create:
             taken = select(User.id).where(func.lower(User.primary_email) == email)

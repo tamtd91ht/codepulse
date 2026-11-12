@@ -23,6 +23,7 @@ from app.api.access import (
 )
 from app.api.audit import audit
 from app.api.deps import get_queue, get_session
+from app.api.locks import busy_as_409, short_lock_wait
 from app.api.schemas import (
     AccountLinked,
     AccountOut,
@@ -854,6 +855,7 @@ def review_author(
 
 
 @router.post("/reviews/{review_id}/author", response_model=AccountLinked)
+@busy_as_409()
 def link_review_author(
     review_id: int,
     body: ReviewAuthorLink,
@@ -865,6 +867,8 @@ def link_review_author(
     """Tie the author of a review (their git email or GitLab account) to a person; with sync,
     every review of that author follows and the affected periods are re-scored."""
     review, bp_id, account = _review_author(session, principal, review_id)
+    # A running GitLab sync may hold the account's row: wait seconds, not minutes (locks.py).
+    short_lock_wait(session)
     # Row lock: an admin linking the same account meanwhile cannot be silently overwritten.
     locked = session.get(Account, account.id, with_for_update=True, populate_existing=True)
     if locked is None:  # deleted meanwhile

@@ -65,23 +65,36 @@ class Converter:
     # -- accounts ----------------------------------------------------------------------------
 
     def account_id(self, kind: str, external_key: str, display_name: str | None) -> int:
+        """The account's id, made when new. An existing one is written only when its name
+        changed: the sync's transaction lasts the whole collection, and a row it writes stays
+        locked that long, so linking that author to a person would wait for it (user
+        2026-11-12: "Gắn" hung, then failed)."""
         key = (kind, external_key)
         if key not in self._accounts:
-            stmt = (
-                insert(Account)
-                .values(kind=kind, external_key=external_key, display_name=display_name)
-                .on_conflict_do_update(
-                    index_elements=["kind", "external_key"],
-                    set_={
-                        "display_name": func.coalesce(
-                            insert(Account).excluded.display_name, Account.display_name
-                        ),
-                        "updated_at": func.now(),
-                    },
+            where = (Account.kind == kind, Account.external_key == external_key)
+            row = self._session.execute(select(Account.id, Account.display_name).where(*where))
+            found = row.first()
+            if found is None:
+                new = self._session.execute(
+                    insert(Account)
+                    .values(kind=kind, external_key=external_key, display_name=display_name)
+                    .on_conflict_do_nothing(index_elements=["kind", "external_key"])
+                    .returning(Account.id)
+                ).scalar_one_or_none()
+                # Made meanwhile by another sync: read it.
+                self._accounts[key] = (
+                    new
+                    if new is not None
+                    else self._session.execute(select(Account.id).where(*where)).scalar_one()
                 )
-                .returning(Account.id)
-            )
-            self._accounts[key] = self._session.execute(stmt).scalar_one()
+            else:
+                self._accounts[key] = found.id
+                if display_name and display_name != found.display_name:
+                    self._session.execute(
+                        update(Account)
+                        .where(Account.id == found.id)
+                        .values(display_name=display_name, updated_at=func.now())
+                    )
         return self._accounts[key]
 
     def gitlab_account(self, user: GlUser) -> int:

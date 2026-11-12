@@ -22,6 +22,7 @@ from app import avatars
 from app.admin_settings import monthly_budget_usd
 from app.api.audit import audit
 from app.api.deps import get_queue, get_secret_box, get_session
+from app.api.locks import busy_as_409, short_lock_wait
 from app.api.schemas import (
     AccountLink,
     AccountLinked,
@@ -1435,6 +1436,7 @@ def list_accounts(principal: PeopleAdmin, session: SessionDep) -> list[Account]:
 
 
 @router.put("/accounts/{account_id}/user", response_model=AccountLinked)
+@busy_as_409()
 def link_account(
     account_id: int,
     body: AccountLink,
@@ -1443,6 +1445,7 @@ def link_account(
     settings: Annotated[Settings, Depends(get_settings)],
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> AccountLinked:
+    short_lock_wait(session)  # a running GitLab sync may hold the account's row (locks.py)
     account = _get(session, Account, account_id, "account")
     # An account acts as its person (sign-in, Telegram): a GitLab sign-in account would log its
     # new owner in as that person, so only admins move one; other accounts never onto or off
