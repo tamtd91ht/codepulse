@@ -18,6 +18,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_session
+from app.audit_trail import set_actor
 from app.config import Settings, get_settings
 from app.models import (
     BusinessProject,
@@ -343,6 +344,8 @@ def current_principal(
     else:
         principal = load_principal(session, read_token(token, settings), settings)
     request.state.principal = principal
+    # §15.14 (G12): the audit trail's actor, a token's owner included.
+    set_actor(session, principal.user_id)
     return principal
 
 

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/CriteriaParts";
 import { Icon } from "@/components/icons";
 import { type UndoNote, UndoNotice, bulkNote } from "@/components/TestcaseBulk";
+import { ConvertReview } from "@/components/TestcaseBdd";
 import { LinksReview } from "@/components/TestcaseLinks";
 import { PriorityPill, StepsTable, errorText } from "@/components/TestcaseParts";
 import { Alert, Card, Drawer, Loading, Pill } from "@/components/ui";
@@ -314,7 +315,7 @@ export function RunDrawer({
     }
   };
 
-  const open = r?.kind === "duplicates" ? 0 : proposals.filter((_, i) => !applied.has(i)).length;
+  const open = r?.kind === "duplicates" || r?.kind === "convert" ? 0 : proposals.filter((_, i) => !applied.has(i)).length;
   const actions = r && (
     <>
       {(r.status === "failed" || r.status === "ready") && (
@@ -412,10 +413,19 @@ export function RunDrawer({
               }}
             />
           )}
+          {r.kind === "convert" && r.result && (
+            <ConvertReview
+              run={r}
+              onApplied={() => {
+                void run.mutate();
+                onChanged();
+              }}
+            />
+          )}
           {r.kind === "impact" && r.result && (
             <p className="small muted">Testcase cần test lại được hiển thị ở thẻ “Testcase liên quan” của review và tab “Cần test lại”. Dưới đây là testcase AI đề xuất thêm.</p>
           )}
-          {proposals.length > 0 && r.kind !== "duplicates" && (
+          {proposals.length > 0 && r.kind !== "duplicates" && r.kind !== "convert" && (
             <section>
               <div className="tc-proposals-head">
                 <h3 className="tc-h3">{r.kind === "generate" ? "Testcase đề xuất" : "Testcase nên có thêm"} ({proposals.length})</h3>

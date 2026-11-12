@@ -468,10 +468,11 @@ def compare(session: Session, bp_id: int, run_ids: Sequence[int]) -> dict[str, A
         return None
     index = {r.id: i for i, r in enumerate(runs)}
     rows: dict[Any, dict[str, Any]] = {}
-    for run_id, case_id, title, section, priority, status in session.execute(
+    for run_id, case_id, param_row, title, section, priority, status in session.execute(
         select(
             TestRunTest.run_id,
             TestRunTest.case_id,
+            TestRunTest.param_row,
             TestRunTest.title,
             TestRunTest.section,
             TestRunTest.priority,
@@ -480,12 +481,14 @@ def compare(session: Session, bp_id: int, run_ids: Sequence[int]) -> dict[str, A
         .where(TestRunTest.run_id.in_(wanted))
         .order_by(TestRunTest.run_id, TestRunTest.position, TestRunTest.id)
     ):
-        ident = case_id if case_id is not None else f"t:{title}"
+        # §15.15: each parameter row of a case is a test of its own (a row of the matrix).
+        ident = (case_id, param_row) if case_id is not None else f"t:{title}"
         row = rows.setdefault(
             ident,
             {
                 "case_id": case_id,
                 "case_key": content.key("case", case_id),
+                "param_row": param_row,
                 "title": title,
                 "section": section,
                 "priority": priority,

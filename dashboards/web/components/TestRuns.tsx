@@ -8,7 +8,9 @@ import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
 import { MoreMenu } from "@/components/MoreMenu";
 import { CustomFieldsEditor, customSummary, defaultValues, pickValues, useFields } from "@/components/TestFields";
+import { GherkinView } from "@/components/TestcaseBdd";
 import { CreatePlanModal } from "@/components/TestPlans";
+import { ExploratorySession } from "@/components/TestSession";
 import {
   ConfirmModal,
   MilestoneSelect,
@@ -37,6 +39,8 @@ import {
   applicableFields,
   customProblems,
   isEmptyValue,
+  paramPairs,
+  type Baseline,
 } from "@/lib/testcases";
 import {
   RESULT_STATUSES,
@@ -47,6 +51,7 @@ import {
   durationText,
   errorText,
   refsText,
+  sessionElapsed,
   statusClass,
   type Attachment,
   type PlanOut,
@@ -84,7 +89,7 @@ function defaultRunName(initial?: CreateRunProps["initial"]): string {
 
 type CreateRunProps = {
   projectId: number;
-  initial?: { suite_id?: number; case_ids?: number[]; section_ids?: number[]; regression?: { days: number; target_branch?: string } };
+  initial?: { suite_id?: number; case_ids?: number[]; section_ids?: number[]; regression?: { days: number; target_branch?: string }; baseline_id?: number };
   onClose: () => void;
   onCreated: (runId: number) => void;
 };
@@ -99,7 +104,17 @@ export function CreateRunModal({ projectId, initial, onClose, onCreated }: Creat
   const [pick, setPick] = useState(() => initialPick(initial as Selection | undefined));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const selection = selectionOf(pick, initial as Selection | undefined);
+  // §15.13 G9: tests taken from a baseline (frozen content) instead of the live cases.
+  const preset = !!initial?.case_ids?.length || !!initial?.regression;
+  const [source, setSource] = useState<"suite" | "baseline">(initial?.baseline_id ? "baseline" : "suite");
+  const [baselineId, setBaselineId] = useState<number | null>(initial?.baseline_id ?? null);
+  const baselines = useApi<Baseline[]>(source === "baseline" ? `/testcases/baselines?business_project_id=${projectId}` : null);
+  const baseline = baselines.data?.find((b) => b.id === baselineId) ?? null;
+  const fromBaseline = source === "baseline" && !preset;
+  useEffect(() => {
+    if (baseline) setPick((p) => ({ ...p, mode: p.mode === "preset" ? "all" : p.mode, suite: baseline.suite_id, sections: p.suite === baseline.suite_id ? p.sections : [] }));
+  }, [baseline]);
+  const selection = fromBaseline && !baseline ? null : selectionOf(pick, initial as Selection | undefined);
 
   const submit = async () => {
     if (!selection) return;
@@ -114,6 +129,7 @@ export function CreateRunModal({ projectId, initial, onClose, onCreated }: Creat
         assigned_to: assignee ?? undefined,
         refs: splitKeys(refs),
         selection,
+        ...(fromBaseline && baseline ? { baseline_id: baseline.id } : {}),
       });
       onCreated(run.id);
     } catch (e) {
@@ -163,7 +179,38 @@ export function CreateRunModal({ projectId, initial, onClose, onCreated }: Creat
           <span className="small muted">Mã Jira (References)</span>
           <input value={refs} onChange={(e) => setRefs(e.target.value)} placeholder="ABC-12, ABC-15" />
         </label>
-        <SelectionPicker projectId={projectId} pick={pick} onChange={setPick} initial={initial as Selection | undefined} />
+        {!preset && (
+          <div className="adm-field">
+            <span className="small muted">Nguồn testcase</span>
+            <Segmented
+              label="Nguồn testcase"
+              value={source}
+              onChange={setSource}
+              options={[
+                { value: "suite", label: "Testcase hiện tại" },
+                { value: "baseline", label: "Từ baseline" },
+              ]}
+            />
+          </div>
+        )}
+        {fromBaseline && (
+          <label className="adm-field">
+            <span className="small muted">Baseline</span>
+            <select value={baselineId ?? ""} onChange={(e) => setBaselineId(e.target.value ? Number(e.target.value) : null)} disabled={!baselines.data}>
+              <option value="">{baselines.data ? (baselines.data.length ? "Chọn baseline…" : "Dự án chưa có baseline") : baselines.error ? "Không tải được baseline" : "Đang tải…"}</option>
+              {(baselines.data ?? []).map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name} · {b.suite_name ?? `bộ #${b.suite_id}`} ({b.case_count} testcase)
+                </option>
+              ))}
+            </select>
+            {baselines.error && <span className="small bad">Lỗi: {baselines.error.message}</span>}
+            <span className="small muted">Nội dung test lấy từ bản chụp của baseline và không đổi theo testcase hiện tại, kể cả khi run đang mở.</span>
+          </label>
+        )}
+        {(!fromBaseline || baseline) && (
+          <SelectionPicker projectId={projectId} pick={pick} onChange={setPick} initial={initial as Selection | undefined} fixedSuite={fromBaseline ? baseline?.suite_id : undefined} />
+        )}
       </div>
     </Modal>
   );
@@ -561,6 +608,11 @@ export function RunView({ runId, projectId, onBack, onOpenPlan }: { runId: numbe
         )}
         {r.config && <span>Cấu hình: {r.config}</span>}
         {r.milestone_name && <span>Milestone: {r.milestone_name}</span>}
+        {r.baseline_id ? (
+          <span className="pill info" title="Nội dung test lấy từ baseline, không đổi theo testcase hiện tại">
+            <Icon name="pin" size={12} /> Baseline: {r.baseline_name ?? `#${r.baseline_id}`}
+          </span>
+        ) : null}
         <span>{r.assigned_to ? `Giao: ${r.assigned_to.name}` : "Chưa giao"}</span>
         {refsText(r.refs) && <span>Jira: {refsText(r.refs)}</span>}
         <span>Nguồn: {SOURCE_LABEL[r.source] ?? r.source}</span>
@@ -864,6 +916,11 @@ function GroupRows({
               <button type="button" className="link tc-row-title" onClick={() => onOpen(t.id)}>
                 {t.title}
               </button>
+              {t.param_row ? (
+                <span className="prm-chip" title="Dòng tham số của testcase">
+                  dòng {t.param_row}
+                </span>
+              ) : null}
               {t.flaky && <> <FlakyPill /></>}
               <RetestPill test={t} spaced />
               <div className="small muted">
@@ -970,7 +1027,10 @@ export function TestDrawer({
 
   const d = detail.data?.id === testId ? detail.data : undefined;
   const steps = d ? stepsOf(d) : [];
-  const stepMode = d?.content.template === "steps" && steps.length > 0;
+  // A BDD test runs its step lines one by one when the server sends them (§15.12).
+  const stepMode = (d?.content.template === "steps" || d?.content.template === "bdd") && steps.length > 0;
+  const exploratory = d?.content.template === "exploratory";
+  const params = d ? paramPairs(d.params, d.content.params?.columns) : [];
   const readOnly = !d || d.run.completed || !d.can_record;
   // §15.8: the result's custom fields (archived too, for the values kept in the history).
   const resultFields = useFields(detail.data?.run.business_project_id ?? null, "result", true);
@@ -1070,10 +1130,32 @@ export function TestDrawer({
             </Alert>
           )}
           {d.content.section && <p className="small muted">{d.content.section}</p>}
+          {d.param_row ? (
+            <div className="tr-block">
+              <h4>Tham số · dòng {d.param_row}</h4>
+              <dl className="prm-pairs">
+                {params.map(([k, v]) => (
+                  <div key={k}>
+                    <dt>
+                      <code>{k}</code>
+                    </dt>
+                    <dd>{v || <span className="muted">(trống)</span>}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ) : null}
           {d.run.completed && <Alert tone="info">Run {d.run.key} đã đóng: chỉ xem, nội dung là bản chốt lúc đóng.</Alert>}
           {!d.run.completed && !d.can_record && <Alert tone="info">Bạn chỉ xem được test này (ghi kết quả cần quyền sửa hoặc được giao test).</Alert>}
           <TextBlock label="Tiền điều kiện" text={d.content.preconditions} />
-          {stepMode ? null : (
+          {exploratory ? (
+            <ExploratorySession detail={d} readOnly={readOnly} onChanged={() => (void detail.mutate(), onChanged())} />
+          ) : d.content.template === "bdd" && d.content.bdd && !stepMode ? (
+            <div className="tr-block">
+              <h4>Kịch bản BDD</h4>
+              <GherkinView text={d.content.bdd} />
+            </div>
+          ) : stepMode ? null : (
             <>
               <TextBlock label="Các bước" text={d.content.steps} />
               <TextBlock label="Kết quả mong đợi" text={d.content.expected} />
@@ -1178,6 +1260,10 @@ function RecordForm({
   const [actual, setActual] = useState<string[]>(() => steps.map(() => ""));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // §15.12: an exploratory session's notes (and its time) go into the result.
+  const sessionNotes = detail.session?.notes.length ?? 0;
+  const [shownAt] = useState(() => Date.now());
+  const sessionTime = detail.session ? sessionElapsed(detail.session, shownAt) : 0;
   const assignChanged = assign !== (detail.assigned_to?.id ?? null);
   const stepsTouched = stepStatus.some(Boolean) || actual.some((a) => a.trim());
   const ready = (!!status || !!comment.trim() || assignChanged || stepsTouched || files.length > 0 || customTouched) && !uploading;
@@ -1314,6 +1400,12 @@ function RecordForm({
             </Alert>
           )}
           <StatusButtons value={status} onChange={(s) => setStatus(status === s ? null : s)} disabled={busy} statuses={statuses} shortcuts />
+          {sessionNotes > 0 && (
+            <p className="small ses-attach-hint">
+              <Icon name="info" size={12} /> {sessionNotes} ghi chú của phiên khám phá sẽ được đính vào kết quả này
+              {sessionTime ? `; để trống “Thời gian chạy” thì lấy thời gian phiên (${durationText(sessionTime)})` : ""}.
+            </p>
+          )}
           <label className="adm-field">
             <span className="small muted">Bình luận</span>
             <textarea
@@ -1373,7 +1465,12 @@ function RecordForm({
             </label>
             <label className="adm-field">
               <span className="small muted">Thời gian chạy</span>
-              <input value={elapsed} onChange={(e) => setElapsed(e.target.value)} placeholder="1m 30s" />
+              <input
+                value={elapsed}
+                onChange={(e) => setElapsed(e.target.value)}
+                placeholder={sessionTime ? `${durationText(sessionTime)} (phiên)` : "1m 30s"}
+                title={sessionTime ? "Để trống: lấy thời gian của phiên khám phá" : undefined}
+              />
             </label>
             <label className="adm-field">
               <span className="small muted">Bug (mã Jira)</span>

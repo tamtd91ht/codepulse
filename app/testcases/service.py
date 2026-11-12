@@ -7,6 +7,7 @@ dự án one manages; `all`: every one).
 """
 
 import re
+import textwrap
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -31,7 +32,8 @@ from app.models import (
     TestSuiteLink,
 )
 from app.models.testcases import CASE_KINDS, CASE_STATUSES, CASE_TYPES, PRIORITIES, TEMPLATES
-from app.testcases import content
+from app.testcases import content, gherkin
+from app.testcases import params as tparams
 
 NAME_MAX = 200
 CODE_MAX = 40
@@ -40,6 +42,8 @@ SECTION_MAX = 200
 SECTION_DESCRIPTION_MAX = 2_000
 ESTIMATE_MAX = 40
 TEXT_MAX = 10_000
+BDD_MAX = 20_000  # §15.12 G8: a case's Gherkin scenario
+CHARTER_MAX = 5_000  # §15.12 G8: an exploratory case's charter
 AUTOMATION_MAX = 500
 LIST_MAX = 20
 TAG_MAX = 40
@@ -74,6 +78,11 @@ FIELDS = (
     "estimate_s",
     # §15 G5: custom field values, {key: value}; checked by app/testcases/fields.py.
     "custom",
+    # §15.12 G8: the Gherkin scenario (template "bdd"), the charter (template "exploratory").
+    "bdd",
+    "charter",
+    # §15.15 G13: the parameter table {columns, rows}.
+    "params",
 )
 # What a restore puts back: not the sheet's code (only an import sets it).
 RESTORED = tuple(f for f in FIELDS if f != "code")
@@ -415,10 +424,13 @@ def estimate_of(value: Any) -> int | None:
     return seconds
 
 
-def clean(values: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
+def clean(
+    values: dict[str, Any], *, partial: bool = False, current: TestCase | None = None
+) -> dict[str, Any]:
     """The case's fields as kept: trimmed, bounded, enums checked. With `partial`, only the
     fields given. `estimate` (text) is read into `estimate_s`. References (section, milestone,
-    shared steps) are checked against the suite by `check_refs`."""
+    shared steps) are checked against the suite by `check_refs`. A whole case (not `partial`),
+    or an edit of `current`, is also checked as a whole (`check_case`: BDD syntax, parameters)."""
     out: dict[str, Any] = {}
     for key, value in values.items():
         if key == "estimate":
@@ -481,9 +493,88 @@ def clean(values: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
             if value is not None and not isinstance(value, dict):
                 raise FieldError("trường tuỳ biến không hợp lệ")
             out[key] = dict(value or {})
+        elif key == "bdd":
+            out[key] = bdd_clean(value)
+        elif key == "charter":
+            if value is not None and len(str(value).strip()) > CHARTER_MAX:
+                raise FieldError(f"charter tối đa {CHARTER_MAX} ký tự")
+            out[key] = _text(value)
+        elif key == "params":
+            try:
+                out[key] = tparams.clean(value)
+            except tparams.ParamError as exc:
+                raise FieldError(str(exc)) from None
     if not partial and not out.get("title"):
         raise FieldError("testcase cần tiêu đề")
+    if not partial or current is not None:
+        check_case(out, current)
     return out
+
+
+def bdd_clean(value: Any) -> str | None:
+    """A Gherkin text as kept: newlines unified, control characters, trailing blanks and the
+    common indent removed. Longer than BDD_MAX: refused (never cut, it would break the syntax)."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise FieldError("kịch bản BDD không hợp lệ")
+    text = CONTROL.sub("", value.replace("\r\n", "\n").replace("\r", "\n"))
+    text = "\n".join(line.rstrip() for line in text.split("\n"))
+    text = textwrap.dedent(text).strip("\n")
+    if len(text) > BDD_MAX:
+        raise FieldError(f"kịch bản BDD tối đa {BDD_MAX} ký tự")
+    return text or None
+
+
+# What a parameter's variables may appear in (§15.15).
+PARAM_TEXTS = ("title", "preconditions", "steps", "expected", "test_data", "bdd")
+# Fields that, given, make `check_case` look at the whole case again.
+_CASE_WIDE = ("template", "bdd", "params", "steps_list", *PARAM_TEXTS)
+
+
+def check_case(values: dict[str, Any], current: TestCase | None = None) -> None:
+    """What only the whole case can tell (§15.12, §15.15), on cleaned `values` over `current`
+    (None: a new case): a BDD case's scenario must parse (one Scenario or Scenario Outline, a
+    Background allowed); a Scenario Outline's Examples become the case's parameter table (they
+    win over `params` sent with it); every {{variable}} (in a BDD case also <variable>) needs a
+    column of the parameter table. Sets `values["params"]` when the Examples give it."""
+    if current is not None and not any(k in values for k in _CASE_WIDE):
+        return
+
+    def now(name: str) -> Any:
+        if name in values:
+            return values[name]
+        return getattr(current, name) if current is not None else None
+
+    template = now("template") or "text"
+    bdd = now("bdd")
+    if template == "bdd" and bdd and ("bdd" in values or "template" in values or current is None):
+        try:
+            feature = gherkin.check_case(bdd)
+        except gherkin.GherkinError as exc:
+            raise FieldError(f"kịch bản BDD {exc}") from None
+        scenario = feature.scenarios[0]
+        if scenario.outline:
+            try:
+                values["params"] = tparams.clean(gherkin.outline_params(scenario.examples))
+            except tparams.ParamError as exc:
+                raise FieldError(f"Examples: {exc}") from None
+    table = now("params") or {}
+    if not table.get("columns"):
+        return
+    steps = [
+        text
+        for step in now("steps_list") or []
+        if isinstance(step, dict)
+        for text in (step.get("content"), step.get("expected"))
+        if isinstance(text, str)
+    ]
+    try:
+        tparams.check_variables(
+            table, *(now(f) for f in PARAM_TEXTS), *steps, outline=template == "bdd"
+        )
+    except tparams.ParamError as exc:
+        raise FieldError(str(exc)) from None
 
 
 def check_refs(
@@ -564,6 +655,9 @@ def search_text(case: TestCase) -> str:
         case.steps or "",
         case.expected or "",
         steps,
+        case.bdd or "",
+        case.charter or "",
+        " ".join(str(v) for row in (case.params or {}).get("rows") or [] for v in row),
         " ".join(case.tags or []),
         " ".join(case.jira_keys or []),
         custom_words(case.custom),
@@ -591,6 +685,14 @@ def problems(case: TestCase, shared: dict[int, TestSharedStep] | None = None) ->
     """What a tester would miss (docs/specs/30 §7, checked here, no AI). A shared step counts as
     a step with its expected result unless `shared` says otherwise."""
     out = []
+    if case.template == "bdd":  # §15.12 G8
+        if not gherkin.scenario_steps(case.bdd):
+            return ["thiếu các bước"]
+        if not gherkin.has_then(case.bdd):
+            out.append("thiếu kết quả mong đợi")
+        return out
+    if case.template == "exploratory":
+        return [] if (case.charter or "").strip() else ["thiếu charter"]
     if case.template == "steps":
         steps = [s for s in case.steps_list or [] if isinstance(s, dict)]
         if shared is not None:
@@ -613,12 +715,23 @@ _STEP_DONE: ColumnElement[Any] = literal_column(
 )
 
 
+_THEN = r"(^|\n)[ \t]*Then[ \t]+[^ \t\n]"
+
+
 def problem_clause() -> ColumnElement[bool]:
     """SQL twin of `problems`: the cases missing steps or an expected result."""
     blank = func.coalesce(func.trim(TestCase.steps), "") == ""
     no_expected = func.coalesce(func.trim(TestCase.expected), "") == ""
+    bdd = func.coalesce(TestCase.bdd, "")
     return or_(
-        and_(TestCase.template != "steps", or_(blank, no_expected)),
+        and_(TestCase.template == "text", or_(blank, no_expected)),
+        # §15.12 G8: a BDD case without a Then step (the parser's twin, close enough for a
+        # filter), an exploratory case without a charter.
+        and_(TestCase.template == "bdd", ~bdd.op("~")(_THEN)),
+        and_(
+            TestCase.template == "exploratory",
+            func.coalesce(func.trim(TestCase.charter), "") == "",
+        ),
         and_(
             TestCase.template == "steps",
             or_(

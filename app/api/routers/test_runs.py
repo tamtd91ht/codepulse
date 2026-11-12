@@ -28,6 +28,7 @@ from app.api.security import CurrentPrincipal, Principal
 from app.assistant.knowledge import fold
 from app.config import Settings, get_settings
 from app.models import (
+    TestBaseline,
     TestCase,
     TestConfig,
     TestConfigGroup,
@@ -201,7 +202,9 @@ class RunIn(BaseModel):
     milestone_id: int | None = None
     assigned_to: int | None = None
     refs: list[str] = Field(default_factory=list, max_length=rs.DEFECTS_MAX)
-    selection: SelectionIn
+    # §15.13 G9: the run takes the baseline's cases (chosen by `selection` inside it) and content.
+    baseline_id: int | None = None
+    selection: SelectionIn = Field(default_factory=SelectionIn)
 
 
 class RunPatch(BaseModel):
@@ -243,6 +246,9 @@ class RunOut(BaseModel):
     # §15 G6: "chỉ người được giao" is on; whether the viewer may record any test of the run.
     assigned_only: bool = False
     can_record_all: bool = False
+    # §15.13 G9: the baseline the run was made from (null once that baseline is deleted).
+    baseline_id: int | None = None
+    baseline_name: str | None = None
 
 
 class TestOut(BaseModel):
@@ -270,6 +276,11 @@ class TestOut(BaseModel):
     failed_step: int | None = None
     # §15.8 G5: the case's suite (result fields may apply to some suites only); None: deleted.
     suite_id: int | None = None
+    # §15.15 G13: the parameter row (from 1) and its values; null / {} for a plain case.
+    param_row: int | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+    # §15.12 G8: the exploratory session ({} when none).
+    session: dict[str, Any] = Field(default_factory=dict)
 
 
 class TestsOut(BaseModel):
@@ -536,6 +547,13 @@ def _run_outs(session: Session, principal: Principal, runs: list[TestRun]) -> li
     bps = {r.business_project_id for r in runs}
     times = rs.run_times(session, runs, tst.not_done(session, bps))
     only = {bp: tst.assigned_only(session, bp) for bp in bps}
+    baselines = dict(
+        session.execute(
+            select(TestBaseline.id, TestBaseline.name).where(
+                TestBaseline.id.in_({r.baseline_id for r in runs if r.baseline_id} or {0})
+            )
+        ).all()
+    )
     return [
         RunOut(
             id=r.id,
@@ -563,6 +581,8 @@ def _run_outs(session: Session, principal: Principal, runs: list[TestRun]) -> li
             assigned_only=only[r.business_project_id],
             can_record_all=r.completed_at is None
             and tst.may_record_any(principal, r.business_project_id, only[r.business_project_id]),
+            baseline_id=r.baseline_id,
+            baseline_name=baselines.get(r.baseline_id) if r.baseline_id else None,
         )
         for r in runs
     ]
@@ -608,6 +628,9 @@ def _test_outs(
             needs_retest=t.id in retest,
             elapsed_s=facts.get(t.id, (None, None))[0],
             failed_step=facts.get(t.id, (None, None))[1],
+            param_row=t.param_row,
+            params=dict(t.params or {}),
+            session=dict(t.session or {}),
         )
         for t in tests
     ]
@@ -1108,9 +1131,15 @@ def _new_run(
     configs: tuple[list[int], str | None] = ([], None),
     chosen: rs.Chosen | None = None,
     shown: dict[int, dict[str, Any]] | None = None,
+    baseline: TestBaseline | None = None,
 ) -> TestRun:
     sel = selection.picked()
-    picked = chosen or rs.resolve(session, bp_id, sel, _now())
+    if chosen is not None:
+        picked = chosen
+    elif baseline is not None:
+        picked = rs.resolve_baseline(session, bp_id, baseline, sel, _now())
+    else:
+        picked = rs.resolve(session, bp_id, sel, _now())
     run = TestRun(
         business_project_id=bp_id,
         plan_id=plan.id if plan else None,
@@ -1123,11 +1152,12 @@ def _new_run(
         refs=rs.jira_keys(refs or []),
         source="plan" if plan else picked.source,
         source_meta=picked.meta,
+        baseline_id=baseline.id if baseline is not None else None,
         created_by=principal.user_id,
     )
     session.add(run)
     session.flush()
-    rs.add_tests(session, run, picked.cases, shown)
+    rs.add_tests(session, run, picked.cases, shown, frozen=picked.frozen)
     return run
 
 
@@ -1159,17 +1189,30 @@ def create_run(
     body: RunIn, principal: CurrentPrincipal, session: SessionDep, settings: SettingsDep
 ) -> RunOut:
     bp = tc.project_for(session, principal, body.business_project_id, manage=True)
+    baseline = (
+        rs.baseline_for_project(session, bp.id, body.baseline_id)
+        if body.baseline_id is not None
+        else None
+    )
     run = _new_run(
         session,
         principal,
         bp.id,
         body.selection,
-        name=body.name,
+        name=body.name or (f"{baseline.name} {_today(settings):%d/%m/%Y}" if baseline else None),
         today=_today(settings),
         description=body.description,
-        milestone_id=_milestone(session, bp.id, body.milestone_id),
+        milestone_id=_milestone(
+            session,
+            bp.id,
+            body.milestone_id
+            if "milestone_id" in body.model_fields_set or baseline is None
+            # A baseline shared from another dự án: its milestone is not this dự án's.
+            else (baseline.milestone_id if baseline.business_project_id == bp.id else None),
+        ),
         assigned_to=_person(session, settings, bp.id, body.assigned_to),
         refs=body.refs,
+        baseline=baseline,
     )
     audit(
         session,
@@ -1178,6 +1221,7 @@ def create_run(
         f"test_run:{run.id}",
         tests=rs.run_size(session, run.id),
         source=run.source,
+        baseline_id=run.baseline_id,
     )
     session.commit()
     return _run_outs(session, principal, [run])[0]
@@ -1221,8 +1265,18 @@ def update_run(
     removed = rs.remove_tests(session, run, body.remove_test_ids)
     added = 0
     if body.add is not None:
-        picked = rs.resolve(session, run.business_project_id, body.add.picked(), _now())
-        added = rs.add_tests(session, run, picked.cases)
+        if rs.is_frozen(run):
+            # §15.13: a run from a baseline takes more cases from that baseline only.
+            if run.baseline_id is None:
+                raise HTTPException(409, "baseline của test run đã bị xoá, không thêm case được")
+            # 404 when the baseline is no longer one the run's dự án sees (suite unshared).
+            baseline = rs.baseline_for_project(session, run.business_project_id, run.baseline_id)
+            picked = rs.resolve_baseline(
+                session, run.business_project_id, baseline, body.add.picked(), _now()
+            )
+        else:
+            picked = rs.resolve(session, run.business_project_id, body.add.picked(), _now())
+        added = rs.add_tests(session, run, picked.cases, frozen=picked.frozen)
     if added or removed:
         audit(
             session,
@@ -1678,7 +1732,7 @@ def _add_entries(
         (entry, combos, rs.resolve(session, bp_id, entry.selection.picked(), now))
         for entry, combos in planned
     ]
-    tests = sum(len(combos) * len(chosen.cases) for _e, combos, chosen in resolved)
+    tests = sum(len(combos) * chosen.size for _e, combos, chosen in resolved)
     if tests > rs.PLAN_TESTS_MAX:
         raise HTTPException(
             422,

@@ -15,7 +15,12 @@ class AuditLog(Base):
     """
 
     __tablename__ = "audit_log"
-    __table_args__ = (Index("ix_audit_log_at", "at"),)
+    __table_args__ = (
+        Index("ix_audit_log_at", "at"),
+        # docs/specs/30 §15.14 (G12): a dự án's trail, newest first; one target's history.
+        Index("ix_audit_log_business_project_id_at", "business_project_id", "at"),
+        Index("ix_audit_log_target", "target"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -24,3 +29,7 @@ class AuditLog(Base):
     target: Mapped[str | None]  # e.g. "project:3", "user:12"
     details: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     request_id: Mapped[str | None]
+    # §15.14: the dự án the change belongs to (null: global, e.g. a permission set or a token).
+    business_project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="SET NULL")
+    )

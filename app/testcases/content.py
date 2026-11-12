@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.api.security import Principal
 from app.models import TestCase, TestSection, TestSharedStep
 from app.models.testcases import CASE_TYPES
+from app.testcases import gherkin
 
 # Keys shown for each object (§13.1): nobody types a code.
 PREFIX = {
@@ -43,7 +44,12 @@ TYPE_LABEL = {
 }
 if set(TYPE_LABEL) != set(CASE_TYPES):  # a type added in one place only
     raise RuntimeError("TYPE_LABEL must name every CASE_TYPES entry")
-TEMPLATE_LABEL = {"text": "Test Case (Text)", "steps": "Test Case (Steps)"}
+TEMPLATE_LABEL = {
+    "text": "Test Case (Text)",
+    "steps": "Test Case (Steps)",
+    "bdd": "Test Case (BDD)",
+    "exploratory": "Exploratory Session",
+}
 TEST_STATUS_LABEL = {
     "untested": "Chưa chạy",
     "passed": "Passed",
@@ -325,7 +331,16 @@ def steps_from_text(steps: str | None, expected: str | None) -> list[dict[str, s
 def case_content(
     case: TestCase, paths: dict[int, str], shared: dict[int, TestSharedStep]
 ) -> dict[str, Any]:
-    """The case as a test shows it (and a closed run keeps)."""
+    """The case as a test shows it (and a closed run keeps). A BDD case's steps are its
+    scenario's (`gherkin.scenario_steps`), so a run records a result per step. Of its parameter
+    table only the columns come along (`param_columns`); a test of one row shows its values
+    through `params.render`."""
+    if case.template == "steps":
+        steps = expand_steps(case.steps_list, shared)
+    elif case.template == "bdd":
+        steps = gherkin.scenario_steps(case.bdd)
+    else:
+        steps = []
     return {
         "case_key": key("case", case.id),
         "title": case.title,
@@ -334,7 +349,7 @@ def case_content(
         "preconditions": case.preconditions,
         "steps": case.steps,
         "expected": case.expected,
-        "steps_list": expand_steps(case.steps_list, shared) if case.template == "steps" else [],
+        "steps_list": steps,
         "test_data": case.test_data,
         "notes": case.notes,
         "priority": case.priority,
@@ -343,7 +358,19 @@ def case_content(
         "refs": list(case.jira_keys or []),
         "automation": case.automation,
         "custom": dict(case.custom or {}),  # §15.8 G5
+        "bdd": case.bdd,  # §15.12 G8
+        "charter": case.charter,
+        "params": param_columns(case.params),  # §15.15 G13
     }
+
+
+def param_columns(table: dict[str, Any] | None) -> dict[str, Any]:
+    """§15.15: what a test's content keeps of its case's parameter table: the column order only.
+    The test's own values are in `test_run_tests.params`; repeating the whole table (up to
+    20 x 200 values) in every test of the case would multiply it by the number of rows. A
+    baseline keeps the whole table, once per case (`baselines.snapshot`)."""
+    columns = (table or {}).get("columns") or []
+    return {"columns": [str(c) for c in columns]} if columns else {}
 
 
 # -- results ---------------------------------------------------------------------------------------

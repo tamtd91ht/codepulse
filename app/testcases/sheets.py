@@ -9,6 +9,7 @@ words (accents folded); the person corrects the guess before importing.
 
 import csv
 import io
+import json
 import re
 import time
 from collections.abc import Iterable
@@ -55,6 +56,9 @@ MAP_FIELDS = (
     "notes",
     "automation",
     "code_paths",
+    "bdd",
+    "charter",
+    "params",
 )
 # §15.8 G5: a column mapped to a custom field of the dự án is "custom.<key>".
 CUSTOM_PREFIX = "custom."
@@ -81,6 +85,10 @@ FIELD_LABEL = {
     "automation": "Test tự động",
     "code_paths": "Vùng code",
     "status": "Trạng thái",
+    # §15.12 G8, §15.15 G13.
+    "bdd": "Kịch bản BDD (Gherkin)",
+    "charter": "Charter (Exploratory)",
+    "params": "Tham số (JSON)",
 }
 # A test run's columns: left out on import, empty on export (a run on Google Sheet).
 RUN_COLUMNS = ("Kết quả thực tế", "Trạng thái chạy", "Người test", "Ngày test")
@@ -132,6 +140,10 @@ _RULES: tuple[tuple[re.Pattern[str], str | None], ...] = tuple(
     (re.compile(p), f)
     for p, f in (
         (r"^(stt|no|so tt|#)$", None),
+        # §15.12 G8, §15.15 G13: before "kich ban" (title) and "data".
+        (r"\bbdd\b|gherkin|^feature file", "bdd"),
+        (r"^charter|^su menh", "charter"),
+        (r"^tham so|^params?$|^parameters?$", "params"),
         (
             r"thuc te|actual|ket qua test|test result|^pass|^fail|nguoi (test|thuc hien|kiem tra)"
             r"|tester|ngay|date|trang thai|^status|run status|build|version|phien ban",
@@ -411,6 +423,10 @@ def type_of(value: str) -> str | None:
 
 def template_of(value: str) -> str | None:
     v = fold(value)
+    if "bdd" in v or "gherkin" in v:
+        return "bdd"
+    if "explor" in v or "kham pha" in v:
+        return "exploratory"
     if "step" in v or "buoc" in v:
         return "steps"
     if "text" in v or "chu" in v or "van ban" in v:
@@ -468,6 +484,18 @@ def _lone(row: list[str]) -> int | None:
     """The column of the only filled cell of a short row, else None."""
     filled = [i for i, c in enumerate(row) if c.strip()]
     return filled[0] if len(filled) == 1 and len(row[filled[0]]) < 120 else None
+
+
+def params_of(value: str) -> Any:
+    """The parameter table of a cell (JSON {columns, rows}, as exported); "" is none. A cell that
+    is not JSON is passed on as is, so cleaning refuses the row."""
+    text = (value or "").strip()
+    if not text:
+        return {}
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
 
 
 @dataclass
@@ -539,9 +567,13 @@ def to_cases(rows: list[list[str]], header_row: int, mapping: dict[str, int]) ->
             "automation",
             "jira_keys",
             "code_paths",
+            "bdd",
+            "charter",
         ):
             if name in mapping:
                 values[name] = get(row, name)
+        if "params" in mapping:
+            values["params"] = params_of(get(row, "params"))
         if "priority" in mapping:
             values["priority"] = priority_of(get(row, "priority"))
         if "type" in mapping and get(row, "type"):
@@ -599,8 +631,8 @@ def to_cases(rows: list[list[str]], header_row: int, mapping: dict[str, int]) ->
             values["steps_list"] = pairs
             values.pop("steps", None)
             values.pop("expected", None)
-        elif chosen == "text":
-            values["template"] = "text"
+        elif chosen in ("text", "bdd", "exploratory"):
+            values["template"] = chosen
         extras: dict[str, Any] = {
             k: values.pop(k)
             for k in ("case_id", "section", "milestone", "custom_raw")
@@ -638,6 +670,9 @@ EXPORT_FIELDS = (
     "notes",
     "automation",
     "code_paths",
+    "bdd",
+    "charter",
+    "params",
 )
 _WIDTHS = {
     "case_id": 9,
@@ -660,6 +695,9 @@ _WIDTHS = {
     "notes": 24,
     "automation": 24,
     "code_paths": 24,
+    "bdd": 48,
+    "charter": 36,
+    "params": 30,
 }
 
 
@@ -757,6 +795,9 @@ def _value(case: Any, name: str, ctx: Context) -> str:
         return content.format_estimate(case.estimate_s) or ""
     if name == "milestone":
         return ctx.milestones.get(case.milestone_id, "") if case.milestone_id else ""
+    if name == "params":
+        table = getattr(case, "params", None) or {}
+        return json.dumps(table, ensure_ascii=False) if table.get("columns") else ""
     if name in ("steps", "expected") and case.template == "steps":
         steps, expected = render_steps(ctx.steps(case))
         return steps if name == "steps" else expected

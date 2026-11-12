@@ -19,6 +19,7 @@ import {
   bulkNote,
   useFieldColumns,
 } from "@/components/TestcaseBulk";
+import { FeatureImportModal, askConvert, featureExportHref } from "@/components/TestcaseBdd";
 import { GenerateFromIssue, askLinks } from "@/components/TestcaseLinks";
 import { useFields, usePeople } from "@/components/TestFields";
 import { CaseDrawer, ExportMenu, ImportModal, PriorityPill, ShareModal, StatusPill, SuiteModal, errorText } from "@/components/TestcaseParts";
@@ -32,6 +33,9 @@ import {
   type AiRun,
   type BulkOut,
   CASE_TYPES,
+  CONVERT_LABEL,
+  type ConvertDirection,
+  TEMPLATE_LABEL,
   type CaseList,
   type CaseMilestone,
   type ImportResult,
@@ -125,7 +129,7 @@ export function CasesTab({
 
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [open, setOpen] = useState<number | "new" | null>(null);
-  const [modal, setModal] = useState<null | "suite" | "rename" | "share" | "import" | "generate" | "audit" | "delete" | "replace" | "bulkops">(null);
+  const [modal, setModal] = useState<null | "suite" | "rename" | "share" | "import" | "generate" | "audit" | "delete" | "replace" | "bulkops" | "feature">(null);
   const [bulkEdit, setBulkEdit] = useState<BulkEditKind | null>(null);
   const [note, setNote] = useState<UndoNote | null>(null);
   const [run, setRun] = useState<number | null>(null);
@@ -213,6 +217,26 @@ export function CasesTab({
       setMessage(`Lỗi: ${errorText(e)}`);
     }
   };
+  // §15.12: the AI rewrites the ticked cases as BDD or as steps (proposals reviewed in the run drawer).
+  const convert = async (direction: ConvertDirection) => {
+    const chosen = (cases.data?.items ?? []).filter((c) => picked.has(c.id));
+    const suiteIds = [...new Set(chosen.map((c) => c.suite_id))];
+    if (suiteIds.length !== 1) {
+      setNote(null);
+      setMessage("Lỗi: chọn các testcase cùng một bộ để chuyển dạng bằng AI.");
+      return;
+    }
+    setBusy(true);
+    try {
+      asked(await askConvert(project.id, suiteIds[0], chosen.map((c) => c.id), direction));
+      setPicked(new Set());
+    } catch (e) {
+      setNote(null);
+      setMessage(`Lỗi: ${errorText(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
   const [fromIssue, setFromIssue] = useState<{ key: string; title: string | null } | null>(null);
 
   const list = cases.data;
@@ -285,6 +309,18 @@ export function CasesTab({
         ...(suite.can_edit && suite.total ? [{ icon: "link" as const, label: "Gợi ý Jira / vùng code bằng AI", run: () => void suggestLinks(suite.id) }] : []),
         ...(suite.can_edit && suite.total > 1 ? [{ icon: "sparkle" as const, label: "Tìm trùng lặp bằng AI", run: () => void findDuplicates(suite.id) }] : []),
         ...(suite.can_edit && !suite.archived && suite.total ? [{ icon: "search" as const, label: "Tìm & thay", run: () => setModal("replace") }] : []),
+        ...(suite.can_edit && !suite.archived ? [{ icon: "upload" as const, label: "Nhập .feature", run: () => setModal("feature") }] : []),
+        ...(suite.total
+          ? [
+              {
+                icon: "download" as const,
+                label: sectionId ? "Xuất .feature (thư mục đang xem)" : "Xuất .feature",
+                run: () => {
+                  window.location.href = featureExportHref(suite.id, sectionId);
+                },
+              },
+            ]
+          : []),
         ...(suite.can_edit ? [{ icon: "folder" as const, label: suite.archived ? "Đưa trở lại" : "Lưu trữ", run: () => void archive(suite, !suite.archived) }] : []),
         ...(suite.can_delete ? [{ icon: "remove" as const, label: "Xoá bộ", danger: true, run: () => setModal("delete") }] : []),
       ]
@@ -330,6 +366,8 @@ export function CasesTab({
             </span>
           )}
           {c.milestone_id ? <span>{milestoneName(c.milestone_id)}</span> : null}
+          {(c.template === "bdd" || c.template === "exploratory") && <span className="tag">{c.template === "bdd" ? "BDD" : TEMPLATE_LABEL.exploratory}</span>}
+          {(c.params?.columns?.length ?? 0) > 0 && <span className="tag">{c.params?.rows?.length ?? 0} dòng tham số</span>}
           {c.tags.map((t) => (
             <span key={t} className="tag">
               {t}
@@ -541,6 +579,13 @@ export function CasesTab({
               <option value="manual">{KIND_LABEL.manual}</option>
               <option value="automated">{KIND_LABEL.automated}</option>
             </BulkSelect>
+            <BulkSelect label="AI chuyển dạng" busy={busy} onPick={(v) => void convert(v as ConvertDirection)}>
+              {(Object.keys(CONVERT_LABEL) as ConvertDirection[]).map((d) => (
+                <option key={d} value={d}>
+                  {CONVERT_LABEL[d]}
+                </option>
+              ))}
+            </BulkSelect>
             <BulkSelect label="Sửa thêm" busy={busy} onPick={(v) => setBulkEdit(v as BulkEditKind)}>
               {(Object.keys(BULK_EDIT_LABEL) as BulkEditKind[]).map((k) => (
                 <option key={k} value={k}>
@@ -702,7 +747,10 @@ export function CasesTab({
           onApplied={(got) => bulkDone(got, `Đã thay trong ${got.changed} testcase`)}
         />
       )}
-      {modal === "bulkops" && <BulkOpsModal projectId={project.id} onClose={() => setModal(null)} onUndone={() => void refresh()} />}
+      {modal === "feature" && suite && (
+        <FeatureImportModal suite={suite} sections={sectionList} initialSection={sectionId} onClose={() => setModal(null)} onDone={() => void refresh()} />
+      )}
+      {modal === "bulkops" &&<BulkOpsModal projectId={project.id} onClose={() => setModal(null)} onUndone={() => void refresh()} />}
       {testRun && (
         <CreateRunModal
           projectId={project.id}

@@ -58,6 +58,9 @@ from app.api.routers import (
     telegram,
     test_ai,
     test_approval,
+    test_audit,
+    test_baselines,
+    test_bdd,
     test_bugs,
     test_bulk,
     test_ci,
@@ -160,6 +163,10 @@ for api_router in (
     test_fields.router,
     test_bulk.router,
     test_approval.router,
+    # §15.12-§15.14, before testcases: /testcases/baselines, /audit, /import/feature...
+    test_baselines.router,
+    test_audit.router,
+    test_bdd.router,
     test_runs.router,
     testcases.router,
 ):

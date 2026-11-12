@@ -4,7 +4,11 @@ from redis import Redis
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.audit_trail import install as install_audit_trail
 from app.config import get_settings
+
+# docs/specs/30 §15.14 (G12): the testcase audit trail listens on every Session.
+install_audit_trail()
 
 
 @lru_cache

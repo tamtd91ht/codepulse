@@ -137,6 +137,54 @@ export interface RunOut {
   /** §15 G6: only assignees (and managers) record; whether the viewer records any test. */
   assigned_only?: boolean;
   can_record_all?: boolean;
+  /** §15.13 G9: the run's tests come from this baseline (frozen content). */
+  baseline_id?: number | null;
+  baseline_name?: string | null;
+}
+
+/* ---- Exploratory session (§15.12 G8) ---- */
+
+export type SessionNoteKind = "note" | "bug" | "question" | "idea";
+export const SESSION_NOTE_KINDS: SessionNoteKind[] = ["note", "bug", "question", "idea"];
+export const SESSION_NOTE_LABEL: Record<SessionNoteKind, string> = { note: "Ghi chú", bug: "Lỗi", question: "Câu hỏi", idea: "Ý tưởng" };
+
+export interface SessionNote {
+  at: string | null;
+  offset_s: number | null;
+  kind: SessionNoteKind | (string & {});
+  text: string;
+  user_id: number | null;
+  user_name?: string | null;
+}
+
+/**
+ * `elapsed_s`: time banked by the earlier (paused) parts; while `running`, the current part began
+ * at `started_at` and counts on top.
+ */
+export interface Session {
+  started_at: string | null;
+  elapsed_s: number;
+  running: boolean;
+  notes: SessionNote[];
+}
+
+/** Seconds the session has run at `now` (ms). */
+export function sessionElapsed(s: Session | null | undefined, now: number): number {
+  if (!s) return 0;
+  const base = Math.max(0, s.elapsed_s || 0);
+  if (!s.running || !s.started_at) return base;
+  const start = Date.parse(s.started_at);
+  return Number.isFinite(start) ? base + Math.max(0, Math.floor((now - start) / 1000)) : base;
+}
+
+/** "01:05:09" / "05:09". */
+export function clockText(s: number): string {
+  const v = Math.max(0, Math.floor(s));
+  const h = Math.floor(v / 3600);
+  const m = Math.floor((v % 3600) / 60);
+  const sec = v % 60;
+  const two = (x: number) => String(x).padStart(2, "0");
+  return h ? `${h}:${two(m)}:${two(sec)}` : `${two(m)}:${two(sec)}`;
 }
 
 export interface TestOut {
@@ -162,6 +210,11 @@ export interface TestOut {
   failed_step?: number | null;
   /** The case's suite when the server sends it: narrows the result fields that apply (§15.8). */
   suite_id?: number | null;
+  /** §15.15 G13: the parameter row (1-based) this test runs, and its values. */
+  param_row?: number | null;
+  params?: Record<string, unknown> | unknown[] | null;
+  /** §15.12 G8: the exploratory session. */
+  session?: Session | null;
 }
 
 export interface TestList {
@@ -181,7 +234,7 @@ export interface TestContent {
   case_key: string | null;
   title: string;
   section: string | null;
-  template: "text" | "steps" | string;
+  template: "text" | "steps" | "bdd" | "exploratory" | (string & {});
   preconditions: string | null;
   steps: string | null;
   expected: string | null;
@@ -194,6 +247,11 @@ export interface TestContent {
   estimate_s: number | null;
   refs: string[] | string | null;
   automation: string | null;
+  /** §15.12 G8: Gherkin of a "bdd" case, mission of an "exploratory" one (values filled in). */
+  bdd?: string | null;
+  charter?: string | null;
+  /** §15.15: the case's table, when the server copies it into the content. */
+  params?: { columns: string[]; rows: string[][] } | null;
 }
 
 export interface StepResult {

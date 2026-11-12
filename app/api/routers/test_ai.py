@@ -51,8 +51,11 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 LIST_DAYS = 14
 
 
+AiKind = Literal["generate", "audit", "impact", "links", "duplicates", "convert"]
+
+
 class RunIn(BaseModel):
-    kind: Literal["generate", "audit", "impact", "links", "duplicates"]
+    kind: AiKind
     business_project_id: int
     suite_id: int | None = None
     section_id: int | None = None  # links: only the cases of this section (and below)
@@ -65,6 +68,9 @@ class RunIn(BaseModel):
     files: list[FileIn] = Field(default_factory=list, max_length=ai.MAX_SOURCES)
     instruction: str | None = Field(default=None, max_length=ai.INSTRUCTION_MAX)
     count: int = Field(default=ai.DEFAULT_COUNT, ge=1, le=ai.MAX_COUNT)
+    # convert (§15.12 G8): the cases of the suite to rewrite, and which way.
+    case_ids: list[int] = Field(default_factory=list, max_length=ai.CONVERT_MAX_CASES)
+    direction: Literal["to_bdd", "to_steps"] | None = None
 
 
 class RunOut(BaseModel):
@@ -211,7 +217,7 @@ def list_runs(
     principal: CurrentPrincipal,
     session: SessionDep,
     business_project_id: int,
-    kind: Literal["generate", "audit", "impact", "links", "duplicates"] | None = None,
+    kind: AiKind | None = None,
     suite_id: int | None = None,
 ) -> RunList:
     bp = tc.project_for(session, principal, business_project_id, edit=True)
@@ -253,13 +259,27 @@ def create_run(
     bp = tc.project_for(session, principal, body.business_project_id, edit=True)
     data: dict[str, Any] = {"instruction": (body.instruction or "").strip() or None}
     suite_id = mr_id = None
-    if body.kind in ("generate", "audit", "links", "duplicates"):
+    if body.kind in ("generate", "audit", "links", "duplicates", "convert"):
         if body.suite_id is None:
             raise HTTPException(422, "chọn bộ testcase")
         suite = tc.suite_for(session, principal, body.suite_id, edit=True)
         if bp.id not in tc.projects_of(session, suite):
             raise HTTPException(422, "bộ testcase không thuộc dự án này")
         suite_id = suite.id
+    if body.kind == "convert":
+        if body.direction is None:
+            raise HTTPException(422, "chọn chiều chuyển đổi (to_bdd hoặc to_steps)")
+        wanted = list(dict.fromkeys(body.case_ids))
+        if not wanted:
+            raise HTTPException(422, "chọn testcase cần chuyển đổi")
+        in_suite = set(
+            session.scalars(
+                select(TestCase.id).where(TestCase.id.in_(wanted), TestCase.suite_id == suite_id)
+            )
+        )
+        if in_suite != set(wanted):
+            raise HTTPException(422, "có testcase không thuộc bộ testcase này")
+        data |= {"case_ids": wanted, "direction": body.direction}
     if body.kind == "links" and body.section_id is not None:
         section = session.get(TestSection, body.section_id)
         if section is None or section.suite_id != suite_id:
@@ -400,6 +420,8 @@ def apply_run(
         raise HTTPException(422, "gợi ý liên kết áp dụng qua /apply-links")
     if run.kind == "duplicates":
         raise HTTPException(422, "testcase trùng áp dụng qua /apply-duplicates")
+    if run.kind == "convert":
+        raise HTTPException(422, "chuyển đổi áp dụng qua /apply-convert")
     proposals = (
         run.result.get("missing") if run.kind == "impact" else run.result.get("cases")
     ) or []
@@ -629,6 +651,94 @@ def apply_duplicates(
     )
     session.commit()
     return DuplicatesOut(changed=got.changed, batch_id=got.batch_id)
+
+
+class ConvertIn(BaseModel):
+    case_ids: list[int] = Field(min_length=1, max_length=ai.CONVERT_MAX_CASES)
+    business_project_id: int | None = None  # sent by the screen; the run decides the dự án
+
+
+class ConvertOut(BaseModel):
+    changed: int
+    batch_id: int | None
+
+
+CONVERT_SUMMARY = "AI chuyển đổi"
+
+
+@router.post("/testcases/ai/{run_id}/apply-convert", response_model=ConvertOut)
+def apply_convert(
+    run_id: int, body: ConvertIn, principal: CurrentPrincipal, session: SessionDep
+) -> ConvertOut:
+    """§15.12 G8: the chosen cases take their proposed form (template bdd with its scenario, or
+    steps with their steps), each checked like an edit and kept as revision "ai"; one bulk op
+    (kind "edit") undoes them all. An approved case whose content changes goes back to review
+    under the dự án's approval rule."""
+    run = _run(session, principal, run_id, lock=True)
+    if run.kind != "convert" or run.status not in ("ready", "applied") or not run.result:
+        raise HTTPException(409, "lượt AI chưa có kết quả chuyển đổi")
+    proposals = {
+        p.get("case_id"): p for p in run.result.get("proposals") or [] if isinstance(p, dict)
+    }
+    wanted = list(dict.fromkeys(body.case_ids))
+    if set(wanted) - set(proposals):
+        raise HTTPException(422, "có testcase không nằm trong đề xuất của lượt AI này")
+    cases = list(
+        session.scalars(
+            select(TestCase).where(TestCase.id.in_(wanted)).order_by(TestCase.id).with_for_update()
+        )
+    )
+    suites: dict[int, TestSuite] = {}
+    values: dict[int, dict[str, Any]] = {}
+    for case in cases:
+        if case.suite_id != run.suite_id:
+            raise HTTPException(409, f"{content.key('case', case.id)} đã chuyển sang bộ khác")
+        if case.suite_id not in suites:
+            suites[case.suite_id] = tc.suite_for(session, principal, case.suite_id, edit=True)
+        proposal = proposals[case.id]
+        raw = {
+            k: proposal[k]
+            for k in ("template", "bdd", "steps_list", "preconditions")
+            if k in proposal
+        }
+        try:
+            values[case.id] = tc.clean(raw, partial=True, current=case)
+            tc.check_refs(session, suites[case.suite_id], values[case.id], current=case)
+        except tc.FieldError as exc:
+            raise HTTPException(422, f"{content.key('case', case.id)}: {exc}") from None
+    before = bulk_ops.change_cases(
+        session,
+        principal,
+        cases,
+        suites,
+        lambda case: values.get(case.id),
+        via="ai",
+        content_changed=True,
+    )
+    first = suites.get(run.suite_id or 0)
+    op = bulk_ops.new_op(
+        session,
+        bp_id=first.business_project_id if first else run.business_project_id,
+        user_id=principal.user_id,
+        kind="edit",
+        summary=f"{CONVERT_SUMMARY}: {len(before)} testcase",
+        before=before,
+    )
+    done = set(run.result.get("applied") or []) | set(wanted)
+    run.result = {**run.result, "applied": sorted(done)}
+    run.applied_count = len(done)
+    run.status = "applied"
+    audit(
+        session,
+        principal.user_id,
+        "testcase.ai.convert",
+        f"test_ai:{run.id}",
+        business_project_id=run.business_project_id,
+        changed=len(before),
+        batch=op.id if op else None,
+    )
+    session.commit()
+    return ConvertOut(changed=len(before), batch_id=op.id if op else None)
 
 
 @router.delete("/testcases/ai/{run_id}", status_code=204)

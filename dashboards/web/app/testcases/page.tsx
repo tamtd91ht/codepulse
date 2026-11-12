@@ -11,6 +11,8 @@ import { MilestonesTab } from "@/components/TestMilestones";
 import { PlanView } from "@/components/TestPlans";
 import { RunView, RunsTab } from "@/components/TestRuns";
 import { SetupTab } from "@/components/TestSetup";
+import { AuditView } from "@/components/TestAudit";
+import { BaselinesTab } from "@/components/TestBaselines";
 import { EmptyState, Loading, PageHeader } from "@/components/ui";
 import { can, useApi } from "@/lib/api";
 import type { TcProject } from "@/lib/testcases";
@@ -28,8 +30,8 @@ import type { Me } from "@/lib/types";
  * The URL keeps the dự án, the suite, the tab and the open run / plan (?project=&suite=&tab=&run=&plan=).
  */
 
-type Tab = "cases" | "runs" | "milestones" | "regression" | "trace" | "reports" | "setup";
-const TABS: Tab[] = ["cases", "runs", "milestones", "regression", "trace", "reports", "setup"];
+type Tab = "cases" | "runs" | "milestones" | "baselines" | "regression" | "trace" | "reports" | "audit" | "setup";
+const TABS: Tab[] = ["cases", "runs", "milestones", "baselines", "regression", "trace", "reports", "audit", "setup"];
 type Where = { project: number | null; suite: number | null; tab: Tab; run: number | null; plan: number | null };
 const HOME: Where = { project: null, suite: null, tab: "cases", run: null, plan: null };
 const LAST_PROJECT = "cp:testcases:project";
@@ -134,12 +136,17 @@ export default function TestcasesPage() {
             ["cases", "Testcase", "clipboardCheck"],
             ["runs", "Test run", "activity"],
             ["milestones", "Milestone", "flag"],
+            ["baselines", "Baseline", "pin"],
             ["regression", "Cần test lại", "history"],
             ["trace", "Ma trận truy vết", "link"],
             ["reports", "Báo cáo", "pulse"],
+            ["audit", "Nhật ký thay đổi", "file"],
             ["setup", "Thiết lập", "settings"],
           ] as const
-        ).map(([key, label, icon]) => (
+        )
+          // §15.14: the audit log is for tests.manage holders of the dự án.
+          .filter(([key]) => key !== "audit" || !!project?.can_manage)
+          .map(([key, label, icon]) => (
           <button key={key} type="button" className={where.tab === key ? "active" : undefined} aria-current={where.tab === key ? "page" : undefined} onClick={() => go({ tab: key, run: null, plan: null })}>
             <Icon name={icon} size={16} />
             {label}
@@ -160,6 +167,14 @@ export default function TestcasesPage() {
         )
       ) : where.tab === "milestones" ? (
         <MilestonesTab projectId={project.id} canEdit={project.can_manage} onOpenRun={(id) => go({ tab: "runs", run: id, plan: null })} />
+      ) : where.tab === "baselines" ? (
+        <BaselinesTab key={project.id} projectId={project.id} canManage={project.can_manage} onOpenRun={(id) => go({ tab: "runs", run: id, plan: null })} />
+      ) : where.tab === "audit" ? (
+        project.can_manage ? (
+          <AuditView key={project.id} projectId={project.id} />
+        ) : (
+          <EmptyState icon="alert" title="Nhật ký thay đổi cần quyền Quản lý test của dự án" />
+        )
       ) : where.tab === "reports" ? (
         <TestcaseReports key={project.id} projectId={project.id} />
       ) : where.tab === "setup" ? (

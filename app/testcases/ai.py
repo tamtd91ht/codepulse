@@ -37,7 +37,7 @@ from app.models import (
 )
 from app.models.testcases import CASE_TYPES, PRIORITIES
 from app.review.providers.base import LLMProvider, ReviewPrompt
-from app.testcases import content
+from app.testcases import content, gherkin
 from app.testcases import impact as imp
 from app.testcases import links as tl
 from app.testcases import service as tc
@@ -58,6 +58,8 @@ AUDIT_MAX_CASES = 400
 CASES_CHARS = 120_000
 IMPACT_CATALOG = 600
 LINKS_MAX_CASES = 200  # cases of one links run
+CONVERT_MAX_CASES = 50  # cases of one convert run (§15.12 G8)
+DIRECTIONS = ("to_bdd", "to_steps")
 CATALOG_CHARS = 80_000
 INSTRUCTION_MAX = 1_000
 ACTIVE = ("queued", "fetching", "writing")
@@ -166,6 +168,23 @@ Tối đa 200 mục.
 """
 )
 
+CONVERT = (
+    "Bạn là kỹ sư kiểm thử (QA) chuyển testcase giữa hai dạng: bảng bước (mỗi bước một kết quả "
+    "mong đợi) và kịch bản BDD (Gherkin tiếng Anh).\n\n"
+    + RULES
+    + """6. Giữ nguyên ý nghĩa: không thêm, bớt bước hay điều kiện kiểm tra; giữ dữ liệu cụ thể.
+7. Chiều `to_bdd`: với mỗi testcase trong thẻ <case>, `bdd` là MỘT kịch bản Gherkin: từ khoá \
+tiếng Anh (Scenario, Given, When, Then, And, But), nội dung bước giữ tiếng Việt; không có dòng \
+Feature, không có tag; tiền điều kiện thành các bước Given, thao tác thành When, kết quả mong \
+đợi thành Then. Testcase có biến {{tên}} thì dùng Scenario Outline với <tên> và bảng Examples \
+có cột tên đó. `preconditions` để trống.
+8. Chiều `to_steps`: `steps_list` là các bước theo thứ tự: Given / When thành `content`, các \
+dòng Then ngay sau thành `expected` của bước đó; `preconditions` là phần Background / Given \
+chung nếu hợp. Giữ <tên> của Scenario Outline thành {{tên}}.
+9. `proposals`: mỗi testcase một mục, `code` đúng mã trong thẻ <case> (dạng C123). `summary`: 1 câu.
+"""
+)
+
 _STEP: dict[str, Any] = {
     "type": "object",
     "properties": {"content": {"type": "string"}, "expected": {"type": "string"}},
@@ -267,6 +286,28 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["summary", "cases"],
         "additionalProperties": False,
     },
+    "convert": {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "proposals": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "code": {"type": "string"},
+                        "bdd": {"type": "string"},
+                        "steps_list": {"type": "array", "items": _STEP},
+                        "preconditions": {"type": "string"},
+                    },
+                    "required": ["code"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["summary", "proposals"],
+        "additionalProperties": False,
+    },
     "links": {
         "type": "object",
         "properties": {
@@ -311,7 +352,11 @@ def _case_block(
     lines = [f"Tiêu đề: {case.title}"]
     if full:
         lines.append(f"Tiền điều kiện: {case.preconditions or '(trống)'}")
-        if case.template == "steps":
+        if case.template == "bdd":  # §15.12 G8
+            lines.append(f"Kịch bản BDD:\n{case.bdd or '(trống)'}")
+        elif case.template == "exploratory":
+            lines.append(f"Charter: {case.charter or '(trống)'}")
+        elif case.template == "steps":
             steps = content.expand_steps(case.steps_list, shared)
             lines.append("Các bước:" if steps else "Các bước: (trống)")
             lines += [
@@ -445,6 +490,69 @@ def duplicates_prompt(
     return ReviewPrompt(
         system=DUPLICATES, user="\n\n".join(parts), json_schema=SCHEMAS["duplicates"]
     )
+
+
+def convert_prompt(
+    *,
+    project: str,
+    suite: str,
+    cases: list[TestCase],
+    direction: str,
+    instruction: str | None,
+    paths: dict[int, str] | None = None,
+    shared: dict[int, TestSharedStep] | None = None,
+) -> ReviewPrompt:
+    """§15.12 G8: each case rewritten as a BDD scenario (`to_bdd`) or as steps (`to_steps`)."""
+    target = "kịch bản BDD (Gherkin)" if direction == "to_bdd" else "bảng bước"
+    parts = [
+        f"Nhiệm vụ: chuyển các testcase sau của bộ “{_attr(suite)}” (dự án {project}) sang "
+        f"{target}. Chiều: {direction}."
+    ]
+    parts += _suite_blocks(cases, instruction, paths, shared)
+    return ReviewPrompt(system=CONVERT, user="\n\n".join(parts), json_schema=SCHEMAS["convert"])
+
+
+def read_convert(items: Any, ids: set[int], direction: str) -> list[dict[str, Any]]:
+    """The proposals of a convert run, one per case it was asked for: {case_id, template, bdd}
+    (a scenario that parses) or {case_id, template, steps_list} (cleaned steps), with
+    `preconditions` when given. A broken one is dropped."""
+    out: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    if not isinstance(items, list):
+        return out
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        case_id = content.case_id_of(str(item.get("code") or ""))
+        if case_id is None or case_id not in ids or case_id in seen:
+            continue
+        proposal: dict[str, Any] = {"case_id": case_id}
+        try:
+            if direction == "to_bdd":
+                bdd = tc.bdd_clean(str(item.get("bdd") or ""))
+                if not bdd:
+                    continue
+                gherkin.check_case(bdd)
+                proposal |= {"template": "bdd", "bdd": bdd}
+            else:
+                raw = item.get("steps_list")
+                steps = tc.steps_clean(
+                    [s for s in raw if isinstance(s, dict)][: content.STEP_MAX]
+                    if isinstance(raw, list)
+                    else []
+                )
+                steps = [s for s in steps if "shared" not in s]
+                if not steps:
+                    continue
+                proposal |= {"template": "steps", "steps_list": steps}
+        except (tc.FieldError, gherkin.GherkinError):
+            continue
+        pre = " ".join(str(item.get("preconditions") or "").split())
+        if pre:
+            proposal["preconditions"] = pre[: tc.TEXT_MAX]
+        seen.add(case_id)
+        out.append(proposal)
+    return out
 
 
 def read_groups(items: Any, ids: set[int]) -> list[dict[str, Any]]:
@@ -710,10 +818,16 @@ def read_output(
     keys: set[str],
     links: dict[int, TestCase] | None = None,
     repos: list[str] | None = None,
+    direction: str = "to_bdd",
 ) -> dict[str, Any]:
     if not isinstance(output, dict):
         raise ValueError("kết quả không phải JSON object")
     summary = " ".join(str(output.get("summary") or "").split())[:1000]
+    if kind == "convert":
+        proposals = read_convert(output.get("proposals"), ids, direction)
+        if not proposals:
+            raise ValueError("AI không chuyển được testcase nào")
+        return {"summary": summary, "direction": direction, "proposals": proposals}
     if kind == "links":
         return {
             "summary": summary,
@@ -966,6 +1080,37 @@ def run(
         )
         facts = [{"name": suite.name, "via": "suite", "chars": len(prompt.user), "error": None}]
         failed = []
+    elif kind == "convert":
+        suite = session.get(TestSuite, suite_id) if suite_id else None
+        if suite is None:
+            return _fail(session, run_id, token, "Bộ testcase không còn.")
+        wanted = [int(i) for i in data.get("case_ids") or []][:CONVERT_MAX_CASES]
+        direction = str(data.get("direction") or "to_bdd")
+        cases = list(
+            session.scalars(
+                select(TestCase)
+                .where(TestCase.suite_id == suite.id, TestCase.id.in_(wanted or [0]))
+                .order_by(TestCase.position, TestCase.id)
+            )
+        )
+        if not cases:
+            return _fail(session, run_id, token, "Không còn testcase nào để chuyển đổi.")
+        suite_paths = content.section_paths(session, [suite.id])
+        suite_shared = content.shared_map(
+            session, [i for c in cases for i in content.shared_ids(c.steps_list)]
+        )
+        ids = {c.id for c, _ in suite_fit(cases, suite_paths, suite_shared)}
+        prompt = convert_prompt(
+            project=project,
+            suite=suite.name,
+            cases=cases,
+            direction=direction,
+            instruction=data.get("instruction"),
+            paths=suite_paths,
+            shared=suite_shared,
+        )
+        facts = [{"name": suite.name, "via": "suite", "chars": len(prompt.user), "error": None}]
+        failed = []
     elif kind == "audit":
         suite = session.get(TestSuite, suite_id) if suite_id else None
         if suite is None:
@@ -1097,7 +1242,13 @@ def run(
         session.commit()
     try:
         result = read_output(
-            kind, answer.output, ids=ids, keys=keys, links=link_cases, repos=repo_paths
+            kind,
+            answer.output,
+            ids=ids,
+            keys=keys,
+            links=link_cases,
+            repos=repo_paths,
+            direction=str(data.get("direction") or "to_bdd"),
         )
     except (ValueError, TypeError) as exc:
         return _fail(

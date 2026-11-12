@@ -39,7 +39,7 @@ from app.models import (
     TestSuiteLink,
 )
 from app.models.testcases import CASE_STATUSES, CASE_TYPES, PRIORITIES
-from app.testcases import approval, content, sheets
+from app.testcases import approval, content, gherkin, sheets
 from app.testcases import ci as tc_ci
 from app.testcases import events as tc_events
 from app.testcases import fields as tf
@@ -53,7 +53,7 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 Priority = Literal["critical", "high", "medium", "low"]
 Kind = Literal["manual", "automated"]
 Status = Literal["draft", "review", "approved", "obsolete"]
-Template = Literal["text", "steps"]
+Template = Literal["text", "steps", "bdd", "exploratory"]
 CaseType = Literal[
     "acceptance",
     "accessibility",
@@ -160,6 +160,11 @@ class CaseFields(BaseModel):
     estimate: str | None = Field(default=None, max_length=tc.ESTIMATE_MAX)
     # §15.8 G5: {key: value} of the dự án's case fields; on PATCH the keys given (null clears).
     custom: dict[str, Any] | None = Field(default=None, max_length=tf.FIELDS_MAX)
+    # §15.12 G8: the Gherkin scenario (template bdd), the charter (template exploratory).
+    bdd: str | None = Field(default=None, max_length=tc.BDD_MAX * 2)
+    charter: str | None = Field(default=None, max_length=tc.CHARTER_MAX)
+    # §15.15 G13: {columns: [name], rows: [[value]]}; a Scenario Outline's Examples replace it.
+    params: dict[str, Any] | None = None
 
 
 class CaseIn(CaseFields):
@@ -205,6 +210,9 @@ class CaseOut(BaseModel):
     milestone_id: int | None
     updated_at: str | None
     custom: dict[str, Any] = Field(default_factory=dict)  # §15.8 G5
+    bdd: str | None = None  # §15.12 G8
+    charter: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)  # §15.15 G13
 
 
 class RevisionOut(BaseModel):
@@ -395,7 +403,12 @@ class RegressionOut(BaseModel):
 
 
 def _case_out(case: TestCase, paths: dict[int, str], shared: dict[int, TestSharedStep]) -> CaseOut:
-    view = content.expand_steps(case.steps_list, shared) if case.template == "steps" else []
+    if case.template == "steps":
+        view = content.expand_steps(case.steps_list, shared)
+    elif case.template == "bdd":  # §15.12: the steps a run shows
+        view = [dict(s) for s in gherkin.scenario_steps(case.bdd)]
+    else:
+        view = []
     return CaseOut(
         id=case.id,
         key=content.key("case", case.id) or "",
@@ -430,6 +443,9 @@ def _case_out(case: TestCase, paths: dict[int, str], shared: dict[int, TestShare
         milestone_id=case.milestone_id,
         updated_at=_iso(case.updated_at),
         custom=dict(case.custom or {}),
+        bdd=case.bdd,
+        charter=case.charter,
+        params=dict(case.params or {}),
     )
 
 
@@ -496,9 +512,11 @@ def _names(session: Session, ids: set[int]) -> dict[int, str]:
     )
 
 
-def _clean(values: dict[str, Any], *, partial: bool) -> dict[str, Any]:
+def _clean(
+    values: dict[str, Any], *, partial: bool, current: TestCase | None = None
+) -> dict[str, Any]:
     try:
-        return tc.clean(values, partial=partial)
+        return tc.clean(values, partial=partial, current=current)
     except tc.FieldError as exc:
         raise HTTPException(422, str(exc)) from None
 
@@ -929,7 +947,9 @@ def update_case(
         raise HTTPException(
             409, "testcase vừa được người khác sửa; tải lại để xem bản mới rồi sửa tiếp"
         )
-    values = _clean(body.model_dump(exclude={"revision"}, exclude_unset=True), partial=True)
+    values = _clean(
+        body.model_dump(exclude={"revision"}, exclude_unset=True), partial=True, current=case
+    )
     _check(session, suite, values, current=case)
     _custom(session, suite, values, current=case)
     _guard(session, principal, suite, values, current=case)

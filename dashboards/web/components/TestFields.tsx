@@ -20,6 +20,7 @@ import {
   type Person,
   type Suite,
   type TestField,
+  TEMPLATE_LABEL,
   fieldText,
   isEmptyValue,
 } from "@/lib/testcases";
@@ -242,7 +243,7 @@ function scopeText(f: TestField, suites: Suite[] | undefined): string {
     const names = f.suite_ids.map((id) => suites?.find((s) => s.id === id)?.name ?? `#${id}`);
     parts.push(names.length > 2 ? `${names.slice(0, 2).join(", ")} +${names.length - 2}` : names.join(", "));
   } else parts.push("Mọi bộ");
-  if (f.templates.length === 1) parts.push(f.templates[0] === "steps" ? "Từng bước" : "Văn bản");
+  if (f.templates.length) parts.push(f.templates.map((t) => TEMPLATE_LABEL[t] ?? t).join(", "));
   return parts.join(" · ");
 }
 
@@ -548,12 +549,14 @@ function FieldModal({
           )}
         </fieldset>
         <fieldset className="tc-fieldset">
-          <legend className="small muted">Áp dụng cho template (không chọn = cả hai)</legend>
+          <legend className="small muted">Áp dụng cho template (không chọn = mọi template)</legend>
           <div className="tc-inline">
             {(
               [
                 ["text", "Văn bản"],
                 ["steps", "Từng bước"],
+                ["bdd", "BDD (Gherkin)"],
+                ["exploratory", "Khám phá"],
               ] as const
             ).map(([t, label]) => (
               <label key={t} className="inline-check">

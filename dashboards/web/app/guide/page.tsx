@@ -17,6 +17,7 @@ const SECTIONS = [
   { id: "insights", label: "Luồng làm việc" },
   { id: "dpi", label: "DPI hàng tháng" },
   { id: "testcase", label: "Testcase: vai trò, duyệt, hàng loạt" },
+  { id: "testcase-more", label: "Testcase: BDD, khám phá, baseline, nhật ký, tham số" },
 ];
 
 /** §15.9 G7: the five sample permission sets of Testcase and what each holds. */
@@ -817,6 +818,74 @@ export default function GuidePage() {
           <li>
             Sau mỗi lần sửa hàng loạt có nút <strong>Hoàn tác</strong> (trong 24 giờ, xem lại ở “Lịch sử thao tác hàng loạt”). Testcase đã bị
             sửa sau đó được giữ nguyên và báo lại; xoá hàng loạt không hoàn tác được.
+          </li>
+        </ul>
+      </section>
+
+      <section id="testcase-more" className="card">
+        <h2>12. Testcase: BDD, phiên khám phá, baseline, nhật ký thay đổi, tham số</h2>
+        <h3>BDD (Gherkin) và file .feature</h3>
+        <ul>
+          <li>
+            Chọn template <strong>BDD (Gherkin)</strong> khi soạn testcase và viết kịch bản bằng từ khoá tiếng Anh: <code>Scenario</code>,{" "}
+            <code>Scenario Outline</code> + <code>Examples</code>, <code>Given / When / Then / And / But</code>, bảng <code>| … |</code>, docstring{" "}
+            <code>&quot;&quot;&quot;</code>, tag <code>@…</code>. Cú pháp được kiểm tra ngay khi gõ; lỗi ghi rõ số dòng, bấm vào để nhảy tới dòng đó.
+          </li>
+          <li>Với Scenario Outline, bảng Examples chính là bảng tham số của testcase: mỗi dòng Examples là một test trong run.</li>
+          <li>
+            Menu ⋯ của bộ: <strong>Nhập .feature</strong> (chọn nhiều file, mỗi Feature thành một thư mục, mỗi Scenario một testcase; tag{" "}
+            <code>@C12</code> cập nhật đúng testcase C12) và <strong>Xuất .feature</strong> (một file mỗi thư mục, nhiều thư mục thì tải file zip).
+          </li>
+          <li>
+            Chọn nhiều testcase rồi dùng “AI chuyển dạng” để đổi sang BDD hoặc về dạng từng bước: xem trước / sau từng testcase, tick cái muốn đổi rồi
+            Áp dụng; có nút Hoàn tác như sửa hàng loạt.
+          </li>
+        </ul>
+        <h3>Phiên khám phá (Exploratory)</h3>
+        <ul>
+          <li>Template <strong>Khám phá</strong> gồm sứ mệnh (charter) và timebox (ô ước tính).</li>
+          <li>
+            Khi chạy test trong run: bấm <strong>Bắt đầu phiên</strong> để bấm giờ (tạm dừng / tiếp tục được), ghi nhanh từng phát hiện dạng Ghi chú,
+            Lỗi, Câu hỏi hoặc Ý tưởng; mỗi ghi chú gắn mốc thời gian trong phiên.
+          </li>
+          <li>Ghi kết quả thì các ghi chú phiên được đính vào kết quả; để trống “Thời gian chạy” thì lấy thời gian của phiên.</li>
+        </ul>
+        <h3>Baseline</h3>
+        <ul>
+          <li>
+            Tab <strong>Baseline</strong>: người có quyền Quản lý chụp lại nội dung một bộ (hoặc vài thư mục) cho một bản phát hành, có thể gắn
+            milestone. Baseline không sửa được, chỉ tạo và xoá; testcase Lỗi thời không vào baseline.
+          </li>
+          <li>
+            <strong>So sánh</strong> hai baseline cùng bộ, hoặc baseline với testcase hiện tại: thấy testcase thêm, bỏ, và trường nào đổi (trước / sau).
+          </li>
+          <li>
+            Tạo test run chọn <strong>Từ baseline</strong>: test lấy nội dung đúng như lúc chụp, không đổi theo testcase hiện tại. Run hiện nhãn
+            “Baseline: tên”.
+          </li>
+        </ul>
+        <h3>Nhật ký thay đổi</h3>
+        <ul>
+          <li>
+            Tab <strong>Nhật ký thay đổi</strong> (cần quyền Quản lý test): mọi lần tạo / sửa / xoá bộ, thư mục, testcase, run, plan, milestone,
+            cấu hình, trường, trạng thái, baseline… kèm người làm và giá trị trước / sau của từng cột đổi.
+          </li>
+          <li>Lọc theo người, loại đối tượng, hành động, khoảng ngày hoặc tìm chữ; “Tải thêm” để xem cũ hơn; tải Excel / CSV để lưu trữ.</li>
+          <li>Nhật ký giữ ít nhất 1 năm. Kết quả test không ghi vào đây (đã có lịch sử kết quả của từng test).</li>
+        </ul>
+        <h3>Tham số</h3>
+        <ul>
+          <li>
+            Mục <strong>Tham số</strong> trong form testcase: bảng tối đa 20 cột, 200 dòng; tên cột gồm chữ không dấu, số, <code>_</code>. Dán một
+            vùng copy từ Excel / Google Sheet vào ô bất kỳ để điền nhanh.
+          </li>
+          <li>
+            Viết <code>{"{{tên_cột}}"}</code> trong tiêu đề, tiền điều kiện, bước, kết quả mong đợi, dữ liệu test hoặc kịch bản BDD. Biến không có cột
+            được báo đỏ và chặn lưu.
+          </li>
+          <li>
+            Đưa vào test run thì mỗi dòng là một test, tiêu đề thêm <code>[cột=giá trị]</code> và chip “dòng n”; nội dung hiện đã thay giá trị. CI:
+            <code>C12[3]</code> ghi kết quả cho dòng 3, <code>C12</code> cho mọi dòng.
           </li>
         </ul>
       </section>

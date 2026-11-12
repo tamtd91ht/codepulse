@@ -7,6 +7,7 @@ import { BugPills } from "@/components/JiraBug";
 import { Modal, ReorderControls, useDragList } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
 import { ApprovalBar, ReviewHistory } from "@/components/TestcaseApproval";
+import { BddEditor, GherkinView, ParamsEditor, ParamsView, emptyParams, examplesTable } from "@/components/TestcaseBdd";
 import { CodePathsField } from "@/components/TestcaseLinks";
 import { SectionOptions } from "@/components/TestcaseSections";
 import { CustomFieldsEditor, CustomFieldsView, defaultValues, useFields, usePeople } from "@/components/TestFields";
@@ -24,6 +25,10 @@ import {
   type CustomValues,
   type ImportResult,
   KIND_LABEL,
+  type ParamTable,
+  TEMPLATE_LABEL,
+  paramProblems,
+  paramVars,
   PRIORITIES,
   PRIORITY_LABEL,
   PRIORITY_TONE,
@@ -165,6 +170,9 @@ type Draft = {
   code_paths: string;
   status: TestCase["status"];
   custom: CustomValues;
+  bdd: string;
+  charter: string;
+  params: ParamTable;
 };
 
 const toRows = (items: StepItem[] | undefined): StepRow[] =>
@@ -193,7 +201,31 @@ function toDraft(c?: Partial<TestCase>, sectionId?: number | null): Draft {
     code_paths: (c?.code_paths ?? []).join("\n"),
     status: c?.status ?? "draft",
     custom: { ...(c?.custom ?? {}) },
+    bdd: c?.bdd ?? "",
+    charter: c?.charter ?? "",
+    params: c?.params?.columns?.length ? { columns: [...c.params.columns], rows: (c.params.rows ?? []).map((r) => [...r]) } : emptyParams(),
   };
+}
+
+/** The table that will be saved: a BDD outline's Examples, else the grid (null when empty). */
+function effectiveParams(d: Draft): ParamTable | null {
+  if (d.template === "bdd") {
+    const ex = examplesTable(d.bdd);
+    if (ex) return ex;
+  }
+  return d.params.columns.length ? d.params : null;
+}
+
+/** {{names}} the case uses that have no column (§15.15: the server refuses them). */
+function missingVars(d: Draft): string[] {
+  const texts = [d.title, d.preconditions, d.test_data];
+  if (d.template === "text") texts.push(d.steps, d.expected);
+  if (d.template === "steps") for (const r of d.steps_list) if (!("shared" in r)) texts.push(r.content, r.expected);
+  if (d.template === "bdd") texts.push(d.bdd);
+  const cols = new Set(effectiveParams(d)?.columns ?? []);
+  const out: string[] = [];
+  for (const t of texts) for (const v of paramVars(t)) if (!cols.has(v) && !out.includes(v)) out.push(v);
+  return out;
 }
 
 /** Custom values to send: an emptied value goes as null (clears it). */
@@ -225,6 +257,9 @@ function fromDraft(d: Draft): CaseValues {
     jira_keys: splitList(d.jira_keys),
     code_paths: splitList(d.code_paths),
     status: d.status,
+    bdd: d.template === "bdd" ? d.bdd : d.bdd || null,
+    charter: d.template === "exploratory" ? d.charter : d.charter || null,
+    params: effectiveParams(d),
   };
 }
 
@@ -344,6 +379,39 @@ function StepsEditor({ rows, onChange, shared }: { rows: StepRow[]; onChange: (r
   );
 }
 
+/** "Tham số" of the form: the grid, or a BDD outline's Examples (read only, edited in the scenario). */
+function ParamsSection({ draft, set }: { draft: Draft; set: (d: Draft) => void }) {
+  const examples = draft.template === "bdd" ? examplesTable(draft.bdd) : null;
+  const missing = missingVars(draft);
+  const has = !!examples || draft.params.columns.length > 0 || missing.length > 0;
+  const [open, setOpen] = useState(has);
+  const shown = open || has;
+  return (
+    <fieldset className="tc-fieldset prm-section">
+      <legend className="small muted">
+        <button type="button" className="link sm" aria-expanded={shown} onClick={() => setOpen(!shown)} disabled={has}>
+          <Icon name={shown ? "chevronDown" : "chevronRight"} size={12} /> Tham số
+          {examples ? ` (${examples.rows.length} dòng từ Examples)` : draft.params.columns.length ? ` (${draft.params.rows.length} dòng)` : ""}
+        </button>
+      </legend>
+      {shown &&
+        (examples ? (
+          <>
+            <ParamsView table={examples} caption="Lấy từ Examples của Scenario Outline — sửa trong kịch bản" />
+            {missing.length > 0 && (
+              <p className="small bad" role="alert">
+                <Icon name="alertCircle" size={12} /> Biến chưa có cột trong Examples: {missing.map((m) => `{{${m}}}`).join(", ")}
+              </p>
+            )}
+          </>
+        ) : (
+          <ParamsEditor value={draft.params} onChange={(params) => set({ ...draft, params })} missing={missing} />
+        ))}
+      {!shown && <p className="small muted">Chạy một testcase với nhiều bộ dữ liệu: mỗi dòng tham số thành một test, dùng {"{{tên_cột}}"} trong nội dung.</p>}
+    </fieldset>
+  );
+}
+
 function CaseForm({
   draft,
   set,
@@ -370,7 +438,7 @@ function CaseForm({
   /** §15.9: approval on and no tests.approve: "Đã duyệt" cannot be set here. */
   approvalLocked: boolean;
 }) {
-  const field = (k: Exclude<keyof Draft, "steps_list" | "custom">) => ({
+  const field = (k: Exclude<keyof Draft, "steps_list" | "custom" | "params">) => ({
     value: draft[k],
     onChange: (e: { target: { value: string } }) => set({ ...draft, [k]: e.target.value }),
   });
@@ -416,10 +484,7 @@ function CaseForm({
             label="Template"
             value={draft.template}
             onChange={switchTemplate}
-            options={[
-              { value: "text", label: "Văn bản" },
-              { value: "steps", label: "Từng bước" },
-            ]}
+            options={(["text", "steps", "bdd", "exploratory"] as const).map((t) => ({ value: t, label: TEMPLATE_LABEL[t] }))}
           />
         </div>
       </div>
@@ -427,7 +492,17 @@ function CaseForm({
         <span className="small muted">Tiền điều kiện</span>
         <textarea {...field("preconditions")} rows={2} />
       </label>
-      {draft.template === "text" ? (
+      {draft.template === "bdd" ? (
+        <fieldset className="tc-fieldset">
+          <legend className="small muted">Kịch bản BDD</legend>
+          <BddEditor value={draft.bdd} onChange={(bdd) => set({ ...draft, bdd })} />
+        </fieldset>
+      ) : draft.template === "exploratory" ? (
+        <label className="adm-field">
+          <span className="small muted">Sứ mệnh (charter) — khám phá gì, bằng cách nào, để tìm loại rủi ro nào</span>
+          <textarea {...field("charter")} rows={4} placeholder="Khám phá luồng hoàn tiền một phần với nhiều phương thức thanh toán để tìm lỗi làm tròn và trạng thái treo" />
+        </label>
+      ) : draft.template === "text" ? (
         <>
           <label className="adm-field">
             <span className="small muted">Các bước (mỗi bước một dòng)</span>
@@ -456,6 +531,7 @@ function CaseForm({
         <span className="small muted">Dữ liệu test</span>
         <textarea {...field("test_data")} rows={2} />
       </label>
+      {draft.template !== "exploratory" && <ParamsSection draft={draft} set={set} />}
       <div className="tc-form-row three">
         <label className="adm-field">
           <span className="small muted">Type</span>
@@ -478,8 +554,8 @@ function CaseForm({
           </select>
         </label>
         <label className="adm-field">
-          <span className="small muted">Ước tính</span>
-          <input {...field("estimate")} maxLength={40} placeholder="30s, 5m, 1h 30m" />
+          <span className="small muted">{draft.template === "exploratory" ? "Timebox (ước tính)" : "Ước tính"}</span>
+          <input {...field("estimate")} maxLength={40} placeholder={draft.template === "exploratory" ? "45m, 1h 30m" : "30s, 5m, 1h 30m"} />
         </label>
       </div>
       <div className="tc-form-row three">
@@ -703,6 +779,13 @@ export function CaseDrawer({
       setError("Testcase cần tiêu đề.");
       return;
     }
+    // §15.15: a bad table or a {{name}} without a column is refused by the server; say it here first.
+    const params = effectiveParams(draft);
+    const paramIssues = [...(params && draft.template !== "bdd" ? paramProblems(params) : []), ...missingVars(draft).map((m) => `biến {{${m}}} chưa có cột tham số`)];
+    if (paramIssues.length) {
+      setError(`Chưa lưu: ${paramIssues.join("; ")}.`);
+      return;
+    }
     const problems = customProblems(applicable, draft.custom);
     if (problems.length) {
       setInvalid(new Set(applicable.filter((f) => problems.some((p) => p.includes(`“${f.name}”`))).map((f) => f.key)));
@@ -839,6 +922,7 @@ export function CaseDrawer({
             <PriorityPill value={c.priority} />
             <StatusPill value={c.status} />
             {c.type && <Pill>{TYPE_LABEL[c.type]}</Pill>}
+            {(c.template === "bdd" || c.template === "exploratory") && <Pill tone="info">{TEMPLATE_LABEL[c.template]}</Pill>}
             <Pill>{KIND_LABEL[c.kind]}</Pill>
             {c.estimate && <Pill icon="history">{c.estimate}</Pill>}
             {c.source === "ai" && <Pill tone="primary" icon="sparkle">AI</Pill>}
@@ -871,7 +955,23 @@ export function CaseDrawer({
             <dd>
               <Lines text={c.preconditions} />
             </dd>
-            {steps ? (
+            {c.template === "bdd" ? (
+              <>
+                <dt>Kịch bản BDD</dt>
+                <dd>
+                  <GherkinView text={c.bdd} />
+                </dd>
+              </>
+            ) : c.template === "exploratory" ? (
+              <>
+                <dt>Sứ mệnh</dt>
+                <dd>
+                  <Lines text={c.charter} />
+                </dd>
+                <dt>Timebox</dt>
+                <dd>{c.estimate || <span className="muted">Chưa đặt</span>}</dd>
+              </>
+            ) : steps ? (
               <>
                 <dt>Các bước</dt>
                 <dd>
@@ -894,6 +994,17 @@ export function CaseDrawer({
             <dd>
               <Lines text={c.test_data} />
             </dd>
+            {(c.params?.columns?.length ?? 0) > 0 && c.params && (
+              <>
+                <dt>Tham số</dt>
+                <dd>
+                  <ParamsView
+                    table={c.params}
+                    caption={`${c.params.rows?.length ?? 0} dòng: mỗi dòng là một test khi đưa vào test run${c.template === "bdd" && examplesTable(c.bdd) ? " (lấy từ Examples)" : ""}`}
+                  />
+                </dd>
+              </>
+            )}
             {c.tags.length > 0 && (
               <>
                 <dt>Nhãn</dt>

@@ -73,6 +73,8 @@ from app.models.telegram import TelegramBot, TelegramRequest
 from app.models.testcases import (
     TestAiRun,
     TestAttachment,
+    TestBaseline,
+    TestBaselineCase,
     TestBulkOp,
     TestCase,
     TestCaseReview,
@@ -174,6 +176,8 @@ __all__ = [
     "TelegramRequest",
     "TestAiRun",
     "TestAttachment",
+    "TestBaseline",
+    "TestBaselineCase",
     "TestBulkOp",
     "TestCase",
     "TestCaseReview",

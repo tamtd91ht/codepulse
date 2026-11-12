@@ -460,7 +460,7 @@ export function textDiff(a: string, b: string): { before: Seg[]; after: Seg[] } 
   return { before: segs(x, midX, keepX, endX), after: segs(y, midY, keepY, endY) };
 }
 
-function DiffText({ segs, mark }: { segs: Seg[]; mark: "del" | "ins" }) {
+export function DiffText({ segs, mark }: { segs: Seg[]; mark: "del" | "ins" }) {
   return (
     <div className="tc-lines tc-diff">
       {segs.map((s, i) => (s.changed ? mark === "del" ? <del key={i}>{s.text}</del> : <ins key={i}>{s.text}</ins> : <span key={i}>{s.text}</span>))}

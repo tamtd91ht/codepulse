@@ -30,6 +30,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, deferred, mapped_column
@@ -41,7 +42,7 @@ CASE_KINDS = ("manual", "automated")
 CASE_STATUSES = ("draft", "review", "approved", "obsolete")  # §15 G7 adds "review"
 CASE_SOURCES = ("manual", "import", "ai")
 REVISION_VIA = ("editor", "import", "ai", "restore", "bulk")
-TEMPLATES = ("text", "steps")
+TEMPLATES = ("text", "steps", "bdd", "exploratory")  # §15.12 G8 adds bdd, exploratory
 # TestRail's case types (docs/specs/30 §13.3).
 CASE_TYPES = (
     "acceptance",
@@ -61,10 +62,10 @@ CASE_TYPES = (
 # columns are checked by the application, not by a CHECK constraint.
 TEST_STATUSES = ("untested", "passed", "failed", "blocked", "retest", "skipped")
 RESULT_STATUSES = ("passed", "failed", "blocked", "retest", "skipped")
-RUN_SOURCES = ("manual", "regression", "plan", "ci")
+RUN_SOURCES = ("manual", "regression", "plan", "ci", "baseline")
 RESULT_SOURCES = ("manual", "ci")
 CI_IMPORT_STATUSES = ("queued", "running", "done", "failed")
-AI_KINDS = ("generate", "audit", "impact", "links", "duplicates")
+AI_KINDS = ("generate", "audit", "impact", "links", "duplicates", "convert")
 AI_STATUSES = ("queued", "fetching", "writing", "ready", "failed", "applied", "discarded")
 
 
@@ -171,6 +172,11 @@ class TestCase(TimestampMixin, Base):
     flaky: Mapped[bool] = mapped_column(server_default="false", default=False)
     # §15 G5: values of the dự án's custom fields (TestField, entity "case"), {key: value}.
     custom: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
+    # §15.12 G8: the Gherkin scenario (template "bdd"); the charter (template "exploratory").
+    bdd: Mapped[str | None]
+    charter: Mapped[str | None]
+    # §15.15 G13: {"columns": [name], "rows": [[value]]}; each row is one test in a run.
+    params: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
     status: Mapped[str] = mapped_column(server_default="draft", default="draft")
     source: Mapped[str] = mapped_column(server_default="manual", default="manual")
     revision: Mapped[int] = mapped_column(server_default="1", default=1)
@@ -361,6 +367,10 @@ class TestRun(TimestampMixin, Base):
     source: Mapped[str] = mapped_column(server_default="manual", default="manual")
     # How the cases were chosen (suite, sections, filters; the MRs of a regression list).
     source_meta: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
+    # §15.13 G9: a run made from a baseline keeps the baseline's content, never the live case's.
+    baseline_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_baselines.id", ondelete="SET NULL"), index=True
+    )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
 
@@ -372,7 +382,14 @@ class TestRunTest(Base):
     __tablename__ = "test_run_tests"
     __test__ = False
     __table_args__ = (
-        UniqueConstraint("run_id", "case_id", name="uq_test_run_tests_run_case"),
+        # §15.15 G13: one test per (case, parameter row); a case without parameters has row NULL.
+        Index(
+            "uq_test_run_tests_run_case_row",
+            "run_id",
+            "case_id",
+            text("coalesce(param_row, 0)"),
+            unique=True,
+        ),
         Index("ix_test_run_tests_run_id_status", "run_id", "status"),
     )
 
@@ -386,6 +403,11 @@ class TestRunTest(Base):
     priority: Mapped[str]
     type: Mapped[str]
     snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
+    # §15.15 G13: the parameter row (from 1) and its values {column: value}.
+    param_row: Mapped[int | None]
+    params: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
+    # §15.12 G8: the exploratory session {started_at, elapsed_s, running, notes: [...]}.
+    session: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
     status: Mapped[str] = mapped_column(server_default="untested", default="untested")
     assigned_to: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     position: Mapped[int] = mapped_column(server_default="0", default=0)
@@ -641,3 +663,49 @@ class TestBulkOp(Base):
     created_ids: Mapped[list[int]] = mapped_column(JSONB, server_default="[]", default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TestBaseline(Base):
+    """A suite frozen at a release (docs/specs/30 §15.13, G9): never edited, made or deleted."""
+
+    __tablename__ = "test_baselines"
+    __test__ = False
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
+    suite_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_suites.id", ondelete="SET NULL"), index=True
+    )
+    suite_name: Mapped[str]
+    name: Mapped[str]
+    description: Mapped[str | None]
+    milestone_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_milestones.id", ondelete="SET NULL")
+    )
+    case_count: Mapped[int] = mapped_column(server_default="0", default=0)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TestBaselineCase(Base):
+    """One case as it was in a baseline: its full content (shared steps expanded)."""
+
+    __tablename__ = "test_baseline_cases"
+    __test__ = False
+    __table_args__ = (Index("ix_test_baseline_cases_baseline_position", "baseline_id", "position"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    baseline_id: Mapped[int] = mapped_column(ForeignKey("test_baselines.id", ondelete="CASCADE"))
+    case_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_cases.id", ondelete="SET NULL"), index=True
+    )
+    key: Mapped[str]  # C<id> at the time
+    title: Mapped[str]
+    section: Mapped[str | None]  # the section path at the time
+    section_id: Mapped[int | None]  # plain id (a section deleted since stays readable)
+    priority: Mapped[str]
+    type: Mapped[str]
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    position: Mapped[int] = mapped_column(server_default="0", default=0)

@@ -15,7 +15,8 @@ async function request<T>(path: string, init?: RequestInit, redirectOn401 = true
   const response = await fetch(`/api/v1${path}`, {
     ...init,
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    // A FormData body sets its own multipart Content-Type (with the boundary).
+    headers: init?.body instanceof FormData ? { ...init?.headers } : { "Content-Type": "application/json", ...init?.headers },
   });
   if (response.status === 401 && redirectOn401 && typeof window !== "undefined") {
     window.location.href = "/login";
@@ -60,6 +61,8 @@ export const api = {
   /** POST a file's raw bytes as the body (rule files, project documents). */
   postRaw: <T>(path: string, body: Blob) =>
     request<T>(path, { method: "POST", body, headers: { "Content-Type": "application/octet-stream" } }),
+  /** POST a multipart form (a file with its fields). */
+  postForm: <T>(path: string, body: FormData) => request<T>(path, { method: "POST", body }),
 };
 
 /**

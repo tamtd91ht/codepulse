@@ -453,3 +453,36 @@ def test_a_custom_field_header_is_never_a_formula() -> None:
     csv_data = sheets.write_csv([("A", [case])], None, ctx).decode("utf-8-sig")
     header = csv_data.splitlines()[0]
     assert "'=HYPERLINK" in header and ',"=HYPERLINK' not in header
+
+
+def test_bdd_charter_and_params_round_trip() -> None:
+    """§15.16: the template, the BDD text, the charter and the parameter table (JSON) go out and
+    come back."""
+    outline = (
+        "Scenario Outline: OTP\n  When nhập <phone>\n  Then vào\n  Examples:\n"
+        "    | phone |\n    | 0901  |"
+    )
+    bdd = _case(template="bdd", bdd=outline, params={"columns": ["phone"], "rows": [["0901"]]})
+    explore = _case(id=2, title="Khám phá", template="exploratory", charter="Tìm lỗi giỏ hàng")
+    text = _case(id=3, title="SĐT {{phone}}", params={"columns": ["phone"], "rows": [["1"], ["2"]]})
+    for data, read in (
+        (sheets.write_xlsx([("Auth", [bdd, explore, text])], None, CTX), sheets.read_xlsx),
+        (sheets.write_csv([("Auth", [bdd, explore, text])], None, CTX), sheets.read_csv),
+    ):
+        [back] = read(data)
+        sheets.guess(back)
+        assert {"bdd", "charter", "params"} <= set(back.mapping)
+        one, two, three = sheets.to_cases(back.rows, back.header_row, back.mapping).cases
+        assert one["template"] == "bdd" and one["bdd"] == outline
+        assert one["params"] == {"columns": ["phone"], "rows": [["0901"]]}
+        assert two["template"] == "exploratory" and two["charter"] == "Tìm lỗi giỏ hàng"
+        assert two["params"] == {} and two["bdd"] is None
+        assert three["params"] == {"columns": ["phone"], "rows": [["1"], ["2"]]}
+    # A cell that is not a table, or a variable without its column: the row is skipped.
+    rows = [
+        ["Tiêu đề", "Tham số (JSON)"],
+        ["A", "không phải JSON"],
+        ["B {{x}}", '{"columns": ["y"], "rows": [["1"]]}'],
+    ]
+    got = sheets.to_cases(rows, 0, {"title": 0, "params": 1})
+    assert got.cases == [] and got.skipped == 2

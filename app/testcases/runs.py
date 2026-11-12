@@ -3,7 +3,10 @@
 A run is a list of tests (one per case) chosen by a Selection: a whole suite, folders with their
 children, filters, ticked cases, or the cases merged MRs call for (§8.3). While the run is open
 a test shows its case as it is now; closing the run keeps a snapshot (`content.case_content`),
-which is also what a test shows once its case is deleted. A test's status is its latest result
+which is also what a test shows once its case is deleted. A case with a parameter table gives
+one test per row (§15.15), showing the content with that row's values. A run made from a
+baseline (§15.13) takes the baseline's cases and shows their content as the baseline kept it,
+even while open (`is_frozen`). A test's status is its latest result
 that has a status; a result without one is a comment or a reassignment. A plan groups runs: each
 entry gives one run per combination of the configurations picked (one per group, a cartesian
 product).
@@ -26,6 +29,8 @@ from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.models import (
+    TestBaseline,
+    TestBaselineCase,
     TestCase,
     TestConfig,
     TestConfigGroup,
@@ -40,6 +45,7 @@ from app.models.testcases import CASE_TYPES, PRIORITIES, TEST_STATUSES
 from app.testcases import content
 from app.testcases import fields as tf
 from app.testcases import impact as imp
+from app.testcases import params as tp
 from app.testcases.service import FieldError, suite_in
 
 RUN_TESTS_MAX = 5_000
@@ -118,6 +124,15 @@ class Chosen:
     cases: list[TestCase]
     meta: dict[str, Any]
     source: str
+    # §15.13 G9: the baseline's cases picked (then `cases` is empty).
+    frozen: list[TestBaselineCase] | None = None
+
+    @property
+    def size(self) -> int:
+        """Tests the choice makes: one per parameter row of a case (§15.15), else one."""
+        if self.frozen is not None:
+            return sum(max(1, len(tp.rows((b.snapshot or {}).get("params")))) for b in self.frozen)
+        return sum(max(1, len(tp.rows(c.params))) for c in self.cases)
 
 
 def default_name(sel: Selection, today: date) -> str:
@@ -162,11 +177,7 @@ def resolve(session: Session, bp_id: int, sel: Selection, now: datetime) -> Chos
     picks = bool(sel.section_ids or sel.case_ids or sel.regression_days)
     if not (picks or sel.all or sel.suite_id):
         raise HTTPException(422, EMPTY_SELECTION)
-    bad = [p for p in sel.priority if p not in PRIORITIES] + [
-        t for t in sel.type if t not in CASE_TYPES
-    ]
-    if bad:
-        raise HTTPException(422, f"giá trị lọc không hợp lệ: {', '.join(bad[:5])}")
+    _check_filters(sel)
     query = (
         select(TestCase)
         .join(TestSuite, TestSuite.id == TestCase.suite_id)
@@ -191,12 +202,7 @@ def resolve(session: Session, bp_id: int, sel: Selection, now: datetime) -> Chos
             conds.append(TestCase.id.in_(sorted(set(sel.case_ids))))
         if sel.regression_days:
             source = "regression"
-            until = now
-            since = until - timedelta(days=sel.regression_days)
-            mrs = imp.merged_mrs(session, bp_id, since, until, sel.regression_branch or None)
-            reasons = imp.regression(imp.for_mrs(session, mrs, [bp_id]))
-            meta["mrs"] = [{"id": m.id, "iid": m.iid, "title": m.title} for m in mrs[:200]]
-            conds.append(TestCase.id.in_(sorted(reasons) or [0]))
+            conds.append(TestCase.id.in_(_regression_ids(session, bp_id, sel, now, meta)))
         query = query.where(or_(*conds))
     if sel.priority:
         query = query.where(TestCase.priority.in_(sel.priority))
@@ -210,6 +216,106 @@ def resolve(session: Session, bp_id: int, sel: Selection, now: datetime) -> Chos
     if len(cases) > RUN_TESTS_MAX:
         raise HTTPException(422, f"một test run có tối đa {RUN_TESTS_MAX} test")
     return Chosen(_order(session, cases), meta, source)
+
+
+def _check_filters(sel: Selection) -> None:
+    bad = [p for p in sel.priority if p not in PRIORITIES] + [
+        t for t in sel.type if t not in CASE_TYPES
+    ]
+    if bad:
+        raise HTTPException(422, f"giá trị lọc không hợp lệ: {', '.join(bad[:5])}")
+
+
+def _regression_ids(
+    session: Session, bp_id: int, sel: Selection, now: datetime, meta: dict[str, Any]
+) -> list[int]:
+    """The cases the merged MRs of the period call for (§8.3); their MRs go into `meta`."""
+    since = now - timedelta(days=sel.regression_days or 0)
+    mrs = imp.merged_mrs(session, bp_id, since, now, sel.regression_branch or None)
+    reasons = imp.regression(imp.for_mrs(session, mrs, [bp_id]))
+    meta["mrs"] = [{"id": m.id, "iid": m.iid, "title": m.title} for m in mrs[:200]]
+    return sorted(reasons) or [0]
+
+
+def baseline_for_project(session: Session, bp_id: int, baseline_id: int) -> TestBaseline:
+    """The baseline, when it belongs to the dự án or its suite is one the dự án sees."""
+    baseline = session.get(TestBaseline, baseline_id)
+    if baseline is not None and baseline.business_project_id != bp_id:
+        shared = baseline.suite_id is not None and session.scalar(
+            select(TestSuite.id).where(TestSuite.id == baseline.suite_id, suite_in([bp_id]))
+        )
+        if not shared:
+            baseline = None
+    if baseline is None:
+        raise HTTPException(404, "baseline không tồn tại")
+    return baseline
+
+
+def resolve_baseline(
+    session: Session, bp_id: int, baseline: TestBaseline, sel: Selection, now: datetime
+) -> Chosen:
+    """§15.13: the baseline's cases a selection picks, as `resolve` picks a suite's (folders
+    with their children, ticked cases, the regression list, then the filters); nothing picked:
+    the whole baseline. Obsolete cases never entered the baseline."""
+    _check_filters(sel)
+    if sel.suite_id is not None and sel.suite_id != baseline.suite_id:
+        raise HTTPException(422, "bộ testcase không khớp với baseline")
+    query = select(TestBaselineCase).where(TestBaselineCase.baseline_id == baseline.id)
+    meta = sel.meta()
+    meta["baseline_id"] = baseline.id
+    meta["baseline_name"] = baseline.name
+    meta["suite_id"] = baseline.suite_id
+    if sel.section_ids or sel.case_ids or sel.regression_days:
+        conds: list[ColumnElement[bool]] = []
+        if sel.section_ids:
+            ids = _baseline_sections(session, baseline, sel.section_ids)
+            conds.append(TestBaselineCase.section_id.in_(ids))
+        if sel.case_ids:
+            conds.append(TestBaselineCase.case_id.in_(sorted(set(sel.case_ids))))
+        if sel.regression_days:
+            conds.append(
+                TestBaselineCase.case_id.in_(_regression_ids(session, bp_id, sel, now, meta))
+            )
+        query = query.where(or_(*conds))
+    if sel.priority:
+        query = query.where(TestBaselineCase.priority.in_(sel.priority))
+    if sel.type:
+        query = query.where(TestBaselineCase.type.in_(sel.type))
+    if sel.tags:
+        tags = TestBaselineCase.snapshot["tags"]
+        query = query.where(or_(*(tags.contains([t]) for t in sel.tags)))
+    items = list(
+        session.scalars(
+            query.order_by(TestBaselineCase.position, TestBaselineCase.id).limit(RUN_TESTS_MAX + 1)
+        )
+    )
+    if not items:
+        raise HTTPException(422, "không có testcase nào của baseline khớp lựa chọn")
+    if len(items) > RUN_TESTS_MAX:
+        raise HTTPException(422, f"một test run có tối đa {RUN_TESTS_MAX} test")
+    return Chosen([], meta, "baseline", frozen=items)
+
+
+def _baseline_sections(session: Session, baseline: TestBaseline, ids: list[int]) -> list[int]:
+    """The folders asked for and the ones below them now; a folder deleted since the baseline
+    still picks the baseline's cases that were in it."""
+    rows = content.section_rows(session, [baseline.suite_id] if baseline.suite_id else [])
+    known = {s.id for s in rows} | set(
+        session.scalars(
+            select(TestBaselineCase.section_id)
+            .where(
+                TestBaselineCase.baseline_id == baseline.id,
+                TestBaselineCase.section_id.is_not(None),
+            )
+            .distinct()
+        )
+    )
+    if not set(ids) <= known:
+        raise HTTPException(422, "thư mục không tồn tại")
+    out: set[int] = set()
+    for root in ids:
+        out |= content.descendants(rows, root)
+    return sorted(out)
 
 
 def _sections(session: Session, bp_id: int, ids: list[int]) -> list[int]:
@@ -253,45 +359,151 @@ def live_contents(session: Session, cases: Iterable[TestCase]) -> dict[int, dict
     return {c.id: content.case_content(c, paths, shared) for c in items}
 
 
+def is_frozen(run: TestRun) -> bool:
+    """§15.13: a run made from a baseline shows the baseline's content, never the live case,
+    even while open (and after the baseline is deleted)."""
+    return run.source == "baseline" or run.baseline_id is not None
+
+
+def row_view(
+    base: dict[str, Any], values: dict[str, Any] | None, table: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """§15.15: what the test of one parameter row shows: the content with the row's values,
+    the title followed by "[col=value, ...]" (in the order of the columns of `table`, the case's
+    parameter table: a stored `params` comes back from JSONB in its own key order). No values:
+    the content as is."""
+    if not values:
+        return base
+    columns = [c for c in (table or {}).get("columns") or [] if c in values]
+    order = columns + [k for k in values if k not in columns]
+    shown = {str(k): str(values[k]) for k in order}
+    out = tp.render(base, shown)
+    out["title"] = f"{out.get('title') or ''} {tp.label(shown)}".strip()
+    return out
+
+
+@dataclass
+class _Source:
+    """A case to add: live (`case`) or as a baseline keeps it (`frozen`)."""
+
+    case_id: int | None
+    key: str
+    table: dict[str, Any]
+    case: TestCase | None = None
+    frozen: dict[str, Any] | None = None
+
+
+def _existing(session: Session, run_id: int) -> set[tuple[str, int]]:
+    """(case key, parameter row or 0) of the run's tests (a deleted case keeps its key in the
+    snapshot)."""
+    out: set[tuple[str, int]] = set()
+    for case_id, row, snap_key in session.execute(
+        select(
+            TestRunTest.case_id,
+            TestRunTest.param_row,
+            TestRunTest.snapshot["case_key"].astext,
+        ).where(TestRunTest.run_id == run_id)
+    ):
+        k = content.key("case", case_id) or snap_key
+        if k:
+            out.add((k, int(row or 0)))
+    return out
+
+
 def add_tests(
     session: Session,
     run: TestRun,
     cases: list[TestCase],
     shown: dict[int, dict[str, Any]] | None = None,
+    *,
+    frozen: list[TestBaselineCase] | None = None,
 ) -> int:
-    """Add the cases not in the run yet (assigned to the run's assignee); returns how many.
-    `shown` (from `live_contents`) spares computing the same content again for every run of a
-    plan entry."""
-    existing = set(session.scalars(select(TestRunTest.case_id).where(TestRunTest.run_id == run.id)))
-    new = [c for c in cases if c.id not in existing]
-    if not new:
+    """Add the cases not in the run yet (assigned to the run's assignee); returns how many tests
+    were added. A case with a parameter table gives one test per row (§15.15, `param_row` from
+    1, `params` its values), each row added once. `frozen` (§15.13): a baseline's cases instead
+    of `cases`, showing the baseline's content. `shown` (from `live_contents`) spares computing
+    the same content again for every run of a plan entry."""
+    sources: list[_Source]
+    if frozen is not None:
+        sources = [
+            _Source(
+                b.case_id,
+                b.key,
+                dict((b.snapshot or {}).get("params") or {}),
+                frozen=dict(b.snapshot or {}),
+            )
+            for b in frozen
+        ]
+    else:
+        sources = [
+            _Source(c.id, content.key("case", c.id) or "", dict(c.params or {}), case=c)
+            for c in cases
+        ]
+    existing = _existing(session, run.id)
+    room = RUN_TESTS_MAX - run_size(session, run.id)
+    planned: list[tuple[_Source, int | None, dict[str, str]]] = []
+    for src in sources:
+        table = src.table if src.table.get("columns") else {}
+        count = len(table.get("rows") or [])
+        if not count:
+            numbers: list[int | None] = [None] if (src.key, 0) not in existing else []
+        elif (src.key, 0) in existing:
+            # The run already has this case as one test without a row (added before the case
+            # got its parameter table): it stays that one test, no row is added beside it
+            # (the case would show twice). Removing that test and adding the case again gives
+            # one test per row.
+            numbers = []
+        else:
+            numbers = [n for n in range(1, count + 1) if (src.key, n) not in existing]
+        # Counted before any row is built: a run never holds more than RUN_TESTS_MAX tests.
+        room -= len(numbers)
+        if room < 0:
+            raise HTTPException(422, f"một test run có tối đa {RUN_TESTS_MAX} test")
+        if not numbers:
+            continue
+        rows = tp.rows(table) if count else []
+        for row in numbers:
+            existing.add((src.key, int(row or 0)))
+            planned.append((src, row, rows[row - 1] if row else {}))
+    if not planned:
         return 0
-    if run_size(session, run.id) + len(new) > RUN_TESTS_MAX:
-        raise HTTPException(422, f"một test run có tối đa {RUN_TESTS_MAX} test")
-    if shown is None or any(c.id not in shown for c in new):
-        shown = live_contents(session, new)
+    live = {src.case.id: src.case for src, _r, _v in planned if src.case is not None}
+    if live and (shown is None or any(i not in shown for i in live)):
+        shown = live_contents(session, live.values())
     top = int(
         session.scalar(select(func.max(TestRunTest.position)).where(TestRunTest.run_id == run.id))
         or 0
     )
-    for i, case in enumerate(new, start=1):
-        snap = dict(shown[case.id])
+    for i, (src, row, values) in enumerate(planned, start=1):
+        if src.frozen is not None:
+            base = src.frozen
+        elif src.case is not None and shown is not None:
+            base = shown[src.case.id]
+        else:  # a live source always has its case, and `shown` was filled above
+            continue
+        snap = dict(row_view(base, values))
+        snap.setdefault("case_key", src.key)
+        # §15.15: the test keeps the table's columns, not the table (a baseline's content has
+        # the whole table; the test's own values are in `params`).
+        snap["params"] = content.param_columns(snap.get("params"))
         session.add(
             TestRunTest(
                 run_id=run.id,
-                case_id=case.id,
-                title=case.title,
-                section=snap["section"],
-                priority=case.priority,
-                type=case.type,
+                case_id=src.case_id,
+                title=str(snap.get("title") or src.key),
+                section=snap.get("section"),
+                priority=str(snap.get("priority") or "medium"),
+                type=str(snap.get("type") or "functional"),
                 snapshot=snap,
+                param_row=row,
+                params=dict(values),
                 status="untested",
                 assigned_to=run.assigned_to,
                 position=top + i,
             )
         )
     session.flush()
-    return len(new)
+    return len(planned)
 
 
 def tests_with_results(session: Session, run: TestRun, test_ids: list[int]) -> int:
@@ -321,8 +533,8 @@ def remove_tests(session: Session, run: TestRun, test_ids: list[int]) -> list[in
 
 
 def _views(session: Session, tests: list[TestRunTest], live: bool) -> dict[int, dict[str, Any]]:
-    """test id -> what it shows: the case as it is now (open run, case still there), else the
-    snapshot."""
+    """test id -> what it shows: the case as it is now (open run, case still there; with the
+    test's parameter values, §15.15), else the snapshot."""
     out: dict[int, dict[str, Any]] = {}
     cases: dict[int, TestCase] = {}
     if live:
@@ -332,7 +544,7 @@ def _views(session: Session, tests: list[TestRunTest], live: bool) -> dict[int, 
     shown = live_contents(session, cases.values())
     for t in tests:
         if t.case_id is not None and t.case_id in shown:
-            out[t.id] = shown[t.case_id]
+            out[t.id] = row_view(shown[t.case_id], t.params, cases[t.case_id].params)
         else:
             snap = dict(t.snapshot or {})
             snap.setdefault("case_key", content.key("case", t.case_id))
@@ -348,13 +560,13 @@ def _views(session: Session, tests: list[TestRunTest], live: bool) -> dict[int, 
 
 
 def views(session: Session, run: TestRun, tests: list[TestRunTest]) -> dict[int, dict[str, Any]]:
-    return _views(session, tests, live=run.completed_at is None)
+    return _views(session, tests, live=run.completed_at is None and not is_frozen(run))
 
 
 def close_run(session: Session, run: TestRun, now: datetime) -> None:
     """Keep every test's content as it is now; the run takes no more changes or results."""
     tests = list(session.scalars(select(TestRunTest).where(TestRunTest.run_id == run.id)))
-    shown = _views(session, tests, live=True)
+    shown = _views(session, tests, live=not is_frozen(run))
     for t in tests:
         snap = shown[t.id]
         t.snapshot = snap
@@ -368,8 +580,9 @@ def close_run(session: Session, run: TestRun, now: datetime) -> None:
 def refresh_open_snapshots(session: Session, case_ids: list[int]) -> None:
     """Before these cases are deleted: every test of an open run pointing at one of them keeps
     the case as it is now (snapshot, title, folder, priority, type), which is what it shows once
-    the case is gone. Closed runs keep the snapshot taken when they closed. A constant number of
-    queries whatever the number of cases or tests."""
+    the case is gone. Closed runs keep the snapshot taken when they closed, runs made from a
+    baseline the baseline's content. A constant number of queries whatever the number of cases
+    or tests."""
     wanted = sorted(set(case_ids))
     if not wanted:
         return
@@ -381,14 +594,23 @@ def refresh_open_snapshots(session: Session, case_ids: list[int]) -> None:
             TestRunTest.title,
             TestRunTest.priority,
             TestRunTest.type,
+            TestRunTest.params,
         )
         .join(TestRun, TestRun.id == TestRunTest.run_id)
-        .where(TestRunTest.case_id.in_(wanted), TestRun.completed_at.is_(None))
+        .where(
+            TestRunTest.case_id.in_(wanted),
+            TestRun.completed_at.is_(None),
+            TestRun.source != "baseline",
+            TestRun.baseline_id.is_(None),
+        )
     ).all()
     if not rows:
         return
-    cases = session.scalars(select(TestCase).where(TestCase.id.in_({r.case_id for r in rows})))
-    shown = live_contents(session, cases)
+    cases = {
+        c.id: c
+        for c in session.scalars(select(TestCase).where(TestCase.id.in_({r.case_id for r in rows})))
+    }
+    shown = live_contents(session, cases.values())
     values = [
         {
             "id": r.id,
@@ -399,7 +621,8 @@ def refresh_open_snapshots(session: Session, case_ids: list[int]) -> None:
             "type": str(snap.get("type") or r.type),
         }
         for r in rows
-        if (snap := shown.get(r.case_id)) is not None
+        if (base := shown.get(r.case_id)) is not None
+        for snap in [row_view(base, r.params, cases[r.case_id].params)]
     ]
     if not values:
         return
@@ -525,7 +748,43 @@ def add_result(
         created_at=now,
     )
     session.add(result)
+    _session_into_result(test, result, now)
     return result
+
+
+def _session_into_result(test: TestRunTest, result: TestResult, now: datetime) -> None:
+    """§15.12 G8, exploratory: a result with a status takes the session's notes (those not taken
+    by an earlier result) under its comment, and the session's time as `elapsed_s` when none was
+    given. The session is paused, and remembers how many notes were taken."""
+    state = dict(test.session or {})
+    if result.status is None or not state.get("started_at"):
+        return
+    from app.testcases import exploratory  # imports content, which this module imports
+
+    taken = int(state.get("taken") or 0)
+    notes = list(state.get("notes") or [])
+    summary, seconds = exploratory.session_summary({**state, "notes": notes[taken:]}, now)
+    if summary and (notes[taken:] or result.elapsed_s is None):
+        result.comment = _with_summary(result.comment, summary)
+    if result.elapsed_s is None and seconds is not None:
+        result.elapsed_s = seconds
+    if state.get("running"):
+        state["elapsed_s"] = exploratory.elapsed(state, now)
+        state["running"] = False
+    state["taken"] = len(notes)
+    test.session = state
+
+
+def _with_summary(comment: str | None, summary: str) -> str | None:
+    """The tester's comment followed by the session summary, within TEXT_MAX like any comment:
+    the comment is kept whole, the summary is cut (ending "...") to what is left."""
+    head = f"{comment}\n\n" if comment else ""
+    room = TEXT_MAX - len(head)
+    if room <= 3:
+        return text(comment)
+    if len(summary) > room:
+        summary = summary[: room - 3].rstrip() + "..."
+    return text(head + summary)
 
 
 def result_custom(
@@ -605,7 +864,8 @@ def run_times(
     """Per run (§15 G6): the time its results took (sum of `elapsed_s`), and what is left: the
     estimates of the tests not done yet (`not_done`: per dự án, the statuses that still need a
     run), plus, for such a test without an estimate, the average elapsed of the run's results.
-    An open run reads the estimate from the case as it is now, a closed one from its snapshot.
+    An open run reads the estimate from the case as it is now, a closed one (or one made from a
+    baseline) from its snapshot.
     Two grouped queries whatever the number of runs."""
     out = {r.id: RunTime() for r in runs}
     if not runs:
@@ -623,7 +883,10 @@ def run_times(
     snap_est = TestRunTest.snapshot["estimate_s"].as_integer()
     estimate = sql_case(
         (
-            TestRun.completed_at.is_(None) & TestCase.id.is_not(None),
+            TestRun.completed_at.is_(None)
+            & (TestRun.source != "baseline")
+            & TestRun.baseline_id.is_(None)
+            & TestCase.id.is_not(None),
             TestCase.estimate_s,
         ),
         else_=snap_est,

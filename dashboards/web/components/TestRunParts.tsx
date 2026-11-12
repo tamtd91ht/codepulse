@@ -423,6 +423,11 @@ export function RunRow({ run, onOpen }: { run: RunOut; onOpen: (id: number) => v
             {run.name}
           </button>
           {run.completed_at && <span className="pill">Đã đóng</span>}
+          {run.baseline_id ? (
+            <span className="pill info" title="Nội dung test lấy từ baseline">
+              Baseline: {run.baseline_name ?? `#${run.baseline_id}`}
+            </span>
+          ) : null}
         </div>
         <div className="small muted tr-item-meta">
           {run.config && <span>{run.config}</span>}
@@ -497,11 +502,14 @@ export function SelectionPicker({
   pick,
   onChange,
   initial,
+  fixedSuite,
 }: {
   projectId: number;
   pick: Pick;
   onChange: (p: Pick) => void;
   initial?: Selection | null;
+  /** §15.13: a baseline's suite: no suite choice, counts are the baseline's own. */
+  fixedSuite?: number | null;
 }) {
   const suites = useApi<Suite[]>(`/testcases/suites?business_project_id=${projectId}`);
   const sections = useApi<SectionNode[]>(pick.mode === "sections" && pick.suite ? `/testcases/sections?suite_id=${pick.suite}` : null);
@@ -511,7 +519,7 @@ export function SelectionPicker({
 
   const modes: [PickMode, string][] = [
     ...(hasPreset ? ([["preset", initial?.regression ? "Danh sách Cần test lại" : "Testcase đã chọn"]] as [PickMode, string][]) : []),
-    ["all", "Cả bộ"],
+    ["all", fixedSuite ? "Cả baseline" : "Cả bộ"],
     ["sections", "Theo thư mục"],
     ["filter", "Theo bộ lọc"],
   ];
@@ -533,13 +541,15 @@ export function SelectionPicker({
     summary = initial.regression
       ? `Testcase cần test lại theo MR merge trong ${initial.regression.days} ngày${initial.regression.target_branch ? ` vào ${initial.regression.target_branch}` : ""}`
       : `${initial.case_ids?.length ?? 0} testcase đã chọn`;
+  } else if (pick.mode === "all" && fixedSuite) {
+    summary = "Mọi testcase trong baseline";
   } else if (pick.mode === "all") {
     const pool = pick.suite ? live.filter((s) => s.id === pick.suite) : live;
     const n = pool.reduce((a, s) => a + s.total - s.obsolete, 0);
     summary = suites.data ? `Khoảng ${n} testcase (không tính testcase lỗi thời)` : "";
   } else if (pick.mode === "sections") {
     const n = (sections.data ?? []).filter((s) => chosen.has(s.id) && !ancestorChosen(s)).reduce((a, s) => a + s.total, 0);
-    summary = pick.sections.length ? `${n} testcase trong ${pick.sections.length} thư mục (gồm thư mục con)` : "Tick ít nhất một thư mục";
+    summary = fixedSuite ? (pick.sections.length ? `Testcase của baseline trong ${pick.sections.length} thư mục (gồm thư mục con)` : "Tick ít nhất một thư mục") : pick.sections.length ? `${n} testcase trong ${pick.sections.length} thư mục (gồm thư mục con)` : "Tick ít nhất một thư mục";
   } else {
     summary = "Chọn ít nhất một ưu tiên, type hoặc nhãn; số testcase tính khi tạo";
   }
@@ -554,7 +564,7 @@ export function SelectionPicker({
           </button>
         ))}
       </div>
-      {pick.mode !== "preset" && (
+      {pick.mode !== "preset" && !fixedSuite && (
         <label className="adm-field">
           <span className="small muted">Bộ testcase</span>
           <select

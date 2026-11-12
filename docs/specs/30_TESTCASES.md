@@ -783,3 +783,96 @@ Hàng loạt (`app/api/routers/test_bulk.py`, `app/testcases/bulk.py`):
 - AI trùng: `POST /testcases/ai` `{kind: "duplicates", suite_id}`; kết quả `groups: [{keep,
   duplicates: [case_id], reason}]`; `POST /testcases/ai/{id}/apply-duplicates` `{groups: [{keep,
   duplicates}]}` → `{changed, batch_id}`.
+
+### 15.12 G8 – BDD và Exploratory **[Quyết định]**
+
+- Template thêm `bdd` và `exploratory` (cạnh `text`, `steps`).
+- **BDD:** case lưu kịch bản ở `bdd` (Gherkin tiếng Anh: `Background`, `Scenario`, `Scenario Outline`
+  + `Examples`, `Given / When / Then / And / But`, bảng dữ liệu `| ... |`, docstring `"""`, tag `@...`).
+  Bộ phân tích tự viết (`app/testcases/gherkin.py`, không thêm thư viện), lỗi cú pháp → 422 nêu dòng.
+  Khi chạy, mỗi dòng bước là một bước có kết quả riêng (như template Steps). `Scenario Outline`:
+  bảng `Examples` thành bảng tham số của case (G13), `<biến>` được thay theo từng dòng.
+- **Nhập .feature:** `POST /testcases/import/feature` (multipart `file` (≤ 2 MB, ≤ 50 000 dòng, ≤ 1 000
+  scenario; nhiều file thì gửi nhiều lần), `suite_id`, `section_id?`): `Feature` thành thư mục (tạo nếu chưa có, theo tên), mỗi
+  `Scenario` / `Scenario Outline` một case BDD (tiêu đề = tên scenario, tag `@C12` → cập nhật case C12
+  nếu thuộc bộ, tag khác → nhãn, `Background` chép vào đầu kịch bản). Trả `{created, updated,
+  sections, errors}`.
+- **Xuất .feature:** `GET /testcases/export/feature?suite_id=&section_id?` → một file `.feature` mỗi
+  thư mục có case BDD (zip nếu nhiều hơn một), mỗi scenario mang tag `@C<id>`; nhập lại file vừa xuất
+  cho cùng kết quả (tương đương ngữ nghĩa).
+- **AI chuyển đổi:** loại AI `convert` (`suite_id`, `case_ids`, `direction`: `to_bdd` | `to_steps`),
+  đề xuất từng case, áp dụng ghi revision `ai` (có undo như G10).
+- **Exploratory:** case có `charter` (sứ mệnh) và ước tính (timebox). Trong run: `POST
+  /testcases/tests/{id}/session` `{action: start | pause | resume}` và `POST
+  /testcases/tests/{id}/session/notes` `{kind: note | bug | question | idea, text}` (cần quyền ghi kết
+  quả của test); phiên lưu ở `test_run_tests.session` `{started_at, elapsed_s, running, notes:[{at,
+  offset_s, kind, text, user_id}]}`; ghi kết quả thì ghi chú phiên chép vào kết quả và thời gian chạy
+  = thời gian phiên nếu không nhập.
+
+### 15.13 G9 – Baseline **[Quyết định]**
+
+- Bảng `test_baselines` (bộ, tên, mô tả, milestone?, người tạo, số case) và `test_baseline_cases`
+  (case_id (null nếu case đã xoá), mã, đường dẫn thư mục, `snapshot` đầy đủ: nội dung đã mở bước dùng
+  chung, tham số, trường tuỳ biến, vị trí). Baseline không sửa được, chỉ tạo / xoá.
+- `POST /testcases/baselines` `{suite_id, name, description?, milestone_id?, section_ids?}`
+  (`tests.manage`; case `obsolete` không vào); `GET /testcases/baselines?business_project_id=&suite_id=`;
+  `GET /testcases/baselines/{id}` (kèm case); `DELETE /testcases/baselines/{id}` (`tests.manage`; run
+  đã tạo từ baseline giữ nguyên nội dung).
+- So sánh: `GET /testcases/baselines/compare?a=<id>&b=<id | current>&offset=&limit=` → `{added, removed,
+  changed: [{key, title, fields: [{field, before, after}]}], same, total_added, total_removed,
+  total_changed, offset, limit}`; mỗi loại phân trang (mặc định 200, tối đa 500), giá trị dài quá
+  2 000 ký tự bị cắt.
+- Run từ baseline: `POST /testcases/runs` thêm `baseline_id` (chọn case trong baseline như chọn trong
+  bộ: tất cả, thư mục, bộ lọc, danh sách); test lấy nội dung từ baseline và **không** cập nhật theo
+  case hiện tại kể cả khi run đang mở (`test_runs.baseline_id`).
+
+### 15.14 G12 – Audit log **[Quyết định]**
+
+- Ghi tự động bằng listener `before_flush` của SQLAlchemy (`app/audit_trail.py`): mỗi lần tạo / sửa /
+  xoá suite, thư mục, case, bước dùng chung, run, plan, milestone, cấu hình, trường tuỳ biến, trạng
+  thái, cài đặt dự án, baseline, bộ quyền và mục quyền, gán bộ quyền, token API → một dòng audit
+  `{entity, id, op, before, after}` chỉ gồm các cột đổi (bỏ `search`, `updated_at`, giá trị dài cắt
+  2 000 ký tự), kèm `business_project_id` (cột mới, có chỉ mục) và người làm (biến ngữ cảnh lấy từ
+  phiên đăng nhập / token; job nền là null). Kết quả test không ghi (đã có lịch sử kết quả).
+- Xem: `GET /testcases/audit?business_project_id=&actor_id=&entity=&action=&target=&q=&from=&to=
+  &before_id=&limit=` (`tests.manage` của dự án; admin xem mọi dự án và các dòng không thuộc dự án như
+  bộ quyền, token). Xuất: `GET /testcases/audit/export?...&format=xlsx|csv` (≤ 50 000 dòng).
+- Giữ ≥ 1 năm: audit log không bị dọn theo `RETENTION_DAYS` (có test).
+
+### 15.15 G13 – Tham số hoá **[Quyết định]**
+
+- Case có `params` `{columns: [tên], rows: [[giá trị]]}` (≤ 20 cột, ≤ 200 dòng, giá trị ≤ 500 ký tự;
+  tên cột chữ / số / `_`). Tiêu đề, tiền điều kiện, bước, kết quả mong đợi, dữ liệu test, kịch bản BDD
+  dùng `{{tên}}` (BDD dùng thêm `<tên>`); biến không có cột → 422 khi lưu.
+- Khi đưa vào run, mỗi dòng tham số là một test (`test_run_tests.param_row` = số dòng từ 1, `params` =
+  giá trị); tiêu đề test thêm `[cột=giá trị, ...]`; nội dung hiển thị đã thay giá trị. Ràng buộc duy
+  nhất của test đổi thành (run, case, dòng tham số). Case không có tham số: như cũ (`param_row` null).
+- CI: `C12[3]` (hoặc `C12_3` trong tên test) → dòng 3; `C12` không chỉ dòng → mọi dòng của case nhận
+  kết quả đó.
+- Báo cáo đếm theo test (mỗi dòng một test); độ phủ theo case.
+- Test chỉ giữ tên cột (thứ tự) và giá trị dòng của nó, không chép cả bảng; baseline giữ cả bảng (một
+  bản mỗi case). Run đã có test của case khi case chưa có tham số: thêm lại không sinh các dòng.
+  Giới hạn số test của run tính cả số dòng, kiểm tra trước khi dựng.
+
+### 15.16 API giai đoạn 4 (G8, G9, G12, G13)
+
+- Case (tạo / sửa / `CaseOut` / `CaseDetail` / revision / nhập Sheet / xuất): thêm `bdd`, `charter`,
+  `params` `{columns, rows}`; `template` nhận `bdd`, `exploratory`. Nội dung test (`TestDetail.content`)
+  là nội dung đã thay giá trị tham số; `TestOut` / `TestDetail` thêm `param_row`, `params`, `session`;
+  `RunOut` thêm `baseline_id`, `baseline_name`.
+- Tiện ích: `POST /testcases/bdd/check` `{text}` → `{ok, errors: [{line, message}], scenarios,
+  outline_columns}` (soạn thảo kiểm tra trực tiếp).
+- BDD: `POST /testcases/import/feature` (multipart `file`, `suite_id`, `section_id?`) →
+  `{created, updated, sections, errors}`; `GET /testcases/export/feature?suite_id=&section_id=` →
+  `.feature` hoặc `.zip`. AI: `POST /testcases/ai` `{kind: "convert", suite_id, case_ids, direction}`,
+  kết quả `proposals: [{case_id, template, bdd?, steps_list?, preconditions?}]`, áp dụng `POST
+  /testcases/ai/{id}/apply-convert` `{case_ids}` → `{changed, batch_id}`.
+- Exploratory: `POST /testcases/tests/{id}/session` `{action}` và `POST
+  /testcases/tests/{id}/session/notes` `{kind, text}` → `session`.
+- Baseline: như §15.13; `BaselineOut` `{id, business_project_id, suite_id, suite_name, name,
+  description, milestone_id, milestone_name, case_count, created_by, created_by_name, created_at}`;
+  chi tiết thêm `cases: [{id, case_id, key, title, section, priority, type}]`; tạo run: `POST
+  /testcases/runs` thêm `baseline_id` (kèm `section_ids` / `case_ids` / bộ lọc như run từ bộ).
+- Audit: như §15.14; dòng `{id, at, actor_id, actor_name, action, entity, entity_id, target,
+  business_project_id, changes: [{field, before, after}], details, request_id}`, phân trang bằng
+  `before_id`; `GET /testcases/audit/facets?business_project_id=` → `{actions, entities, actors}`.

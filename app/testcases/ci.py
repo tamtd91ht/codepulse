@@ -7,6 +7,9 @@ properties (@C12, [C12], C12:) of a case in a suite of the dự án; else the ca
 whose `automation_id` is "classname.name" (or the bare name); else, with `auto_create`, a new
 case (kind automated, draft, source "import") in the folder "Automation/Unmapped"; else it is
 listed as unmapped. A skipped test writes no result (TestRail: no status) and is counted apart.
+A parameterised case (§15.15) has one test per row in the run: `C12[3]` (or `C12_3` in the name)
+gives row 3 its result, a plain `C12` gives it to every row; a row the case does not have is
+listed as unmapped.
 
 An automation_id matching only an obsolete case is not mapped (listed as "case lỗi thời") and
 not created again (automation_id is unique in a suite, whatever the status). Auto-created cases
@@ -59,6 +62,7 @@ from app.models import (
 )
 from app.testcases import content, events
 from app.testcases import fields as tf
+from app.testcases import params as tp
 from app.testcases import runs as rs
 from app.testcases import service as tc
 
@@ -84,6 +88,8 @@ FORMATS = ("junit", "testng", "xunit", "playwright", "cucumber")
 
 # A case key in a test's name or tags: C12, @C12, [C12], C12: (not inside a longer word).
 CASE_KEY = re.compile(r"(?<![A-Za-z0-9])C(\d{1,9})(?![0-9A-Za-z])")
+# §15.15 G13: a parameter row of the case: C12[3], or C12_3 in a test's name.
+CASE_ROW = re.compile(r"(?<![A-Za-z0-9])C(\d{1,9})(?:\[(\d{1,3})\]|_(\d{1,3})(?![0-9A-Za-z]))")
 # The prolog of an XML file: declaration, comments, processing instructions.
 _PROLOG = re.compile(rb"\A(?:\xef\xbb\xbf)?\s*(?:(?:<\?.*?\?>|<!--.*?-->)\s*)*", re.S)
 _ATTACHMENT = re.compile(r"\[\[ATTACHMENT\|([^\]\n]{1,500})\]\]")
@@ -106,6 +112,8 @@ class CiTest:
     stack: str | None = None
     attachments: list[dict[str, str]] = field(default_factory=list)
     keys: list[int] = field(default_factory=list)  # C<id> found in the name, tags, properties
+    # §15.15: case id -> the parameter rows named (C12[3], C12_3); a key without one: every row.
+    rows: dict[int, list[int]] = field(default_factory=dict)
     attempts: list[str] = field(default_factory=list)  # statuses of the retries, oldest first
     project: str | None = None  # Playwright project (browser): part of the test's identity
 
@@ -131,6 +139,18 @@ def case_keys(*texts: str | None) -> list[int]:
             n = int(m.group(1))
             if n not in out:
                 out.append(n)
+    return out
+
+
+def case_rows(*texts: str | None) -> dict[int, list[int]]:
+    """case id -> the parameter rows named with it (C12[3] or C12_3 -> {12: [3]})."""
+    out: dict[int, list[int]] = {}
+    for t in texts:
+        for m in CASE_ROW.finditer(t or ""):
+            row = int(m.group(2) or m.group(3))
+            found = out.setdefault(int(m.group(1)), [])
+            if row not in found:
+                found.append(row)
     return out
 
 
@@ -238,6 +258,7 @@ def parse_junit(root: ET.Element) -> list[CiTest]:
             duration_s=_seconds(case.get("time")),
             attachments=attachments[:ATTACHMENTS_MAX],
             keys=case_keys(name, *props),
+            rows=case_rows(name, *props),
         )
         if failure is not None:
             test.status = "failed"
@@ -275,6 +296,7 @@ def parse_testng(root: ET.Element) -> list[CiTest]:
                 classname=classname,
                 duration_s=_seconds(method.get("duration-ms"), 0.001),
                 keys=case_keys(name, desc),
+                rows=case_rows(name, desc),
                 status={"PASS": "passed", "FAIL": "failed"}.get(status),
             )
             exc = _child(method, "exception")
@@ -309,6 +331,7 @@ def parse_xunit(root: ET.Element) -> list[CiTest]:
             classname=klass,
             duration_s=_seconds(node.get("time")),
             keys=case_keys(full, *traits),
+            rows=case_rows(full, *traits),
             status={"pass": "passed", "fail": "failed"}.get(result),
         )
         failure = _child(node, "failure")
@@ -376,6 +399,7 @@ def parse_playwright(data: dict[str, Any]) -> list[CiTest]:
                         stack=_cut(error.get("stack"), STACK_MAX),
                         attachments=atts[:ATTACHMENTS_MAX],
                         keys=case_keys(name, *tags, *notes, *here),
+                        rows=case_rows(name, *tags, *notes, *here),
                         attempts=[
                             "passed" if r.get("status") == "passed" else "failed"
                             for r in results
@@ -447,6 +471,7 @@ def parse_cucumber(data: list[Any]) -> list[CiTest]:
                     ),
                     stack=_cut(rest, STACK_MAX),
                     keys=case_keys(name, *tags, *ftags),
+                    rows=case_rows(name, *tags, *ftags),
                 )
             )
     return out
@@ -544,9 +569,13 @@ class Merged:
             self.identities.setdefault(t.identity, []).extend(tried)
 
 
+# (case id, parameter row): the row is None for a case without parameters (§15.15).
+Target = tuple[int, int | None]
+
+
 @dataclass
 class Mapping:
-    by_case: dict[int, Merged]
+    by_case: dict[Target, Merged]
     unmapped: list[str]
     created: int
     mapped: int  # tests of the report mapped to a case
@@ -670,7 +699,7 @@ def map_tests(
     if missing and auto_create and suite is not None:
         made, created = _create_cases(session, bp_id, suite, missing, user_id)
         by_aid.update(made)
-    by_case: dict[int, Merged] = {}
+    by_case: dict[Target, Merged] = {}
     unmapped: dict[str, None] = {}
     mapped = skipped = 0
     for t in tests:
@@ -689,9 +718,40 @@ def map_tests(
         if not cases:
             unmapped.setdefault(t.automation_id)
             continue
-        mapped += 1
+        targets: list[Target] = []
         for c in cases:
-            by_case.setdefault(c.id, Merged()).add(t)
+            n = len(tp.rows(c.params))
+            named = t.rows.get(c.id)
+            if named and not n:
+                # A row named on a case without a parameter table (test_C12_1 while C12 has
+                # none, or no longer has one): the row is ignored, the case gets the result.
+                targets.append((c.id, None))
+            elif named:
+                for row in named:
+                    if 1 <= row <= n:
+                        targets.append((c.id, row))
+                    else:
+                        unmapped.setdefault(
+                            f"{t.automation_id} ({content.key('case', c.id)}[{row}]: "
+                            "không có dòng tham số này)"
+                        )
+            elif n:
+                # §15.15: a case key without a row: every row of the case gets the result.
+                targets.extend((c.id, row) for row in range(1, n + 1))
+            else:
+                targets.append((c.id, None))
+        if not targets:
+            continue
+        mapped += 1
+        for target in targets:
+            by_case.setdefault(target, Merged()).add(t)
+        # Running cap: a report of few tests whose cases have many rows stops here, before
+        # the run (at most MAX_TESTS tests) is built.
+        if len(by_case) > MAX_TESTS:
+            raise ReportError(
+                f"báo cáo ứng với hơn {MAX_TESTS} test (tính cả các dòng tham số), "
+                f"tối đa {MAX_TESTS}"
+            )
     return Mapping(by_case, list(unmapped), created, mapped, skipped)
 
 
@@ -812,7 +872,8 @@ def process(session: Session, import_id: int, now: datetime | None = None) -> Te
         imp.run_id = run.id
         session.execute(select(func.pg_advisory_xact_lock(RUN_LOCK, run.id)))
     run_id = run.id
-    cases = list(_live_cases(session, imp.business_project_id, mapping.by_case).values())
+    case_ids = sorted({cid for cid, _row in mapping.by_case})
+    cases = list(_live_cases(session, imp.business_project_id, case_ids).values())
     try:
         # Under the run's locks: no other import or edit of the run adds the same cases now.
         rs.add_tests(session, run, cases)
@@ -820,7 +881,7 @@ def process(session: Session, import_id: int, now: datetime | None = None) -> Te
         raise ReportError(str(exc.detail)) from None
     _save_progress(session, imp, 0)
     failed = write_results(session, imp, run_id, mapping.by_case, now)
-    update_flaky(session, sorted(mapping.by_case))
+    update_flaky(session, case_ids)
     close = bool(params.get("close_run"))
     last = lock_run(session, imp, run_id, exclusive=True) if close else session.get(TestRun, run_id)
     if last is None:
@@ -842,7 +903,7 @@ def write_results(
     session: Session,
     imp: TestCiImport,
     run_id: int,
-    by_case: dict[int, Merged],
+    by_case: dict[Target, Merged],
     now: datetime,
 ) -> list[int]:
     """One CI result per test and commit: an existing one (same run, same commit) is updated,
@@ -856,17 +917,24 @@ def write_results(
     sha = TestResult.ci["commit_sha"].astext
     items = [(cid, m) for cid, m in by_case.items() if m.status is not None]
     failed: list[int] = []
-    result_custom = _result_defaults(session, imp.business_project_id, [cid for cid, _m in items])
+    result_custom = _result_defaults(
+        session, imp.business_project_id, [cid for (cid, _row), _m in items]
+    )
     for start in range(0, max(len(items), 1), CHUNK):
         chunk = items[start : start + CHUNK]
         lock_run(session, imp, run_id)
         # Plain values: the progress commits would otherwise reload every ORM object one by one.
-        tests_by_case: dict[int, tuple[int, int | None]] = {
-            int(case_id or 0): (int(test_id), assigned)
-            for test_id, case_id, assigned in session.execute(
-                select(TestRunTest.id, TestRunTest.case_id, TestRunTest.assigned_to).where(
+        tests_by_case: dict[Target, tuple[int, int | None]] = {
+            (int(case_id or 0), row): (int(test_id), assigned)
+            for test_id, case_id, row, assigned in session.execute(
+                select(
+                    TestRunTest.id,
+                    TestRunTest.case_id,
+                    TestRunTest.param_row,
+                    TestRunTest.assigned_to,
+                ).where(
                     TestRunTest.run_id == run_id,
-                    TestRunTest.case_id.in_(sorted(cid for cid, _m in chunk) or [0]),
+                    TestRunTest.case_id.in_(sorted({cid for (cid, _r), _m in chunk}) or [0]),
                 )
             )
         }
@@ -885,8 +953,8 @@ def write_results(
         new_rows: list[dict[str, Any]] = []
         changed: list[dict[str, Any]] = []
         statuses: list[dict[str, Any]] = []
-        for case_id, m in chunk:
-            found = tests_by_case.get(case_id)
+        for (case_id, row), m in chunk:
+            found = tests_by_case.get((case_id, row))
             if found is None:
                 continue  # removed from the run meanwhile
             test_id, assigned = found

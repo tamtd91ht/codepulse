@@ -553,6 +553,9 @@ COPIED = (
     "jira_keys",
     "code_paths",
     "estimate_s",
+    "bdd",  # §15.12 G8
+    "charter",
+    "params",  # §15.15 G13
 )
 
 
