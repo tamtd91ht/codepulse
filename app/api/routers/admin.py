@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from rq import Retry
@@ -39,6 +39,7 @@ from app.api.schemas import (
     GroupImportOut,
     MemberIn,
     MemberOut,
+    ProjectAddOut,
     ProjectGrantOut,
     ProjectGrantsIn,
     ProjectIn,
@@ -54,6 +55,7 @@ from app.api.schemas import (
 )
 from app.api.security import CurrentPrincipal, Principal, require
 from app.collector.gitlab.client import GitLabClient, GitLabError
+from app.collector.gitlab.repo_ref import RepoRefError, parse_repo_ref, resolve_repo_ref
 from app.collector.removal import REMOVAL_JOB_TIMEOUT, confirmation_phrase, remove_projects
 from app.collector.sync import (
     SYNC_JOB_TIMEOUT,
@@ -510,22 +512,28 @@ def set_grants(
     return list_grants(bp.id, principal, session)
 
 
+def _guard_repo_move(principal: Principal, target: int | None, sources: set[int | None]) -> None:
+    """A repo's dự án decides who sees its work: a delegated admin.projects must not move
+    repos into, or out of, a dự án they hold a grant on (docs/specs/21 §3)."""
+    if principal.is_admin:
+        return
+    mine = set(principal.project_roles)
+    if target in mine or any(bp in mine for bp in sources):
+        raise HTTPException(403, "không chuyển repo vào hay ra dự án mình có quyền")
+
+
 @router.put("/projects/business-project", status_code=204)
 def assign_repos(body: RepoAssignment, principal: ProjectsAdmin, session: SessionDep) -> None:
     """Put repos into a dự án (or take them out with business_project_id=null)."""
     if body.business_project_id is not None:
         _get(session, BusinessProject, body.business_project_id, "dự án")
     if not principal.is_admin:
-        # A repo's dự án decides who sees its work: a delegated admin.projects must not move
-        # repos into, or out of, a dự án they hold a grant on (docs/specs/21 §3).
-        mine = set(principal.project_roles)
         sources = set(
             session.scalars(
                 select(Project.business_project_id).where(Project.id.in_(body.project_ids))
             )
         )
-        if body.business_project_id in mine or any(bp in mine for bp in sources):
-            raise HTTPException(403, "không chuyển repo vào hay ra dự án mình có quyền")
+        _guard_repo_move(principal, body.business_project_id, sources)
     session.execute(
         update(Project)
         .where(Project.id.in_(body.project_ids))
@@ -637,31 +645,123 @@ def list_projects(principal: ProjectsAdmin, session: SessionDep) -> list[Project
     return list(session.scalars(select(Project).order_by(Project.id)))
 
 
-@router.post("/projects", response_model=ProjectOut, status_code=201)
+@router.post("/projects", response_model=ProjectAddOut, status_code=201)
 def create_project(
     body: ProjectIn,
     principal: ProjectsAdmin,
     session: SessionDep,
+    response: Response,
     box: Annotated[SecretBox, Depends(get_secret_box)],
-) -> Project:
-    connection = _get(session, Connection, body.connection_id, "connection")
-    with client_factory(box)(connection) as client:
-        info = client.project(body.external_id)
-    project = Project(
-        connection_id=connection.id,
-        external_id=body.external_id,
-        path_with_namespace=info["path_with_namespace"],
-        default_branch=info.get("default_branch"),
+    queue: Annotated[Enqueuer, Depends(get_queue)],
+) -> ProjectAddOut:
+    """Register one repo from a GitLab link, path or project ID, optionally into a dự án.
+
+    A repo that is already registered is not an error: it is moved into the dự án (and tracked
+    again if it was untracked), answered with 200 and `existed`. A new or re-tracked repo gets
+    its first sync queued; the webhook stays a separate call (POST /projects/{id}/webhook).
+    """
+    if body.business_project_id is not None:
+        _get(session, BusinessProject, body.business_project_id, "dự án")
+    chosen = (
+        _get(session, Connection, body.connection_id, "connection")
+        if body.connection_id is not None
+        else None
     )
-    session.add(project)
+    ref: int | str
     try:
-        session.flush()
-    except IntegrityError:
-        session.rollback()
-        raise HTTPException(409, "project already registered") from None
-    audit(session, principal.user_id, "project.create", f"project:{project.id}")
+        if body.external_id is not None:
+            if chosen is None:
+                raise RepoRefError("chọn kết nối GitLab cho project ID")
+            connection, ref = chosen, body.external_id
+        else:
+            connections = list(session.scalars(select(Connection).order_by(Connection.id)))
+            connection, ref = resolve_repo_ref(parse_repo_ref(body.repo or ""), connections, chosen)
+    except RepoRefError as exc:
+        raise HTTPException(422, str(exc)) from None
+    connection_id = connection.id
+    try:
+        with client_factory(box)(connection) as client:
+            info = client.project(ref) if isinstance(ref, int) else client.project_by_path(ref)
+    except GitLabError as exc:
+        if exc.status_code in (403, 404):
+            raise HTTPException(
+                404, f"không thấy repo {ref} trên GitLab, hoặc token bot không xem được"
+            ) from None
+        raise
+
+    project = session.scalars(
+        select(Project).where(
+            Project.connection_id == connection_id, Project.external_id == int(info["id"])
+        )
+    ).one_or_none()
+    existed = project is not None
+    if project is None:
+        _guard_repo_move(principal, body.business_project_id, {None})
+        project = Project(
+            connection_id=connection_id,
+            external_id=int(info["id"]),
+            path_with_namespace=info["path_with_namespace"],
+            default_branch=info.get("default_branch"),
+            business_project_id=body.business_project_id,
+        )
+        session.add(project)
+        try:
+            session.flush()
+        except IntegrityError:
+            session.rollback()
+            raise HTTPException(409, "repo vừa được thêm ở nơi khác; thử lại") from None
+        audit(
+            session,
+            principal.user_id,
+            "project.create",
+            f"project:{project.id}",
+            business_project_id=body.business_project_id,
+        )
+        resync = True
+    else:
+        changes: dict[str, Any] = {}
+        if (
+            body.business_project_id is not None
+            and project.business_project_id != body.business_project_id
+        ):
+            _guard_repo_move(principal, body.business_project_id, {project.business_project_id})
+            changes["business_project_id"] = [
+                project.business_project_id,
+                body.business_project_id,
+            ]
+            project.business_project_id = body.business_project_id
+        # Renamed or moved on GitLab since it was registered.
+        for field in ("path_with_namespace", "default_branch"):
+            fresh = info.get(field) or getattr(project, field)
+            if fresh != getattr(project, field):
+                changes[field] = [getattr(project, field), fresh]
+                setattr(project, field, fresh)
+        resync = not project.tracked
+        if resync:
+            project.tracked, project.untracked_at = True, None
+            changes["tracked"] = True
+        if changes:
+            audit(
+                session,
+                principal.user_id,
+                "project.add_existing",
+                f"project:{project.id}",
+                **changes,
+            )
+        response.status_code = 200
     session.commit()
-    return project
+    if resync:
+        try:
+            queue.enqueue(
+                "app.collector.sync.sync_project_job",
+                project.id,
+                job_id=f"sync-project-{project.id}",
+                job_timeout=SYNC_JOB_TIMEOUT,
+            )
+        except Exception:
+            # The periodic sync picks it up.
+            log.exception("could not queue the first sync", extra={"project_id": project.id})
+    return ProjectAddOut.model_validate(project).model_copy(update={"existed": existed})
 
 
 @router.post("/projects/import-group", response_model=GroupImportOut, status_code=201)

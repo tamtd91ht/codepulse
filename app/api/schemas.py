@@ -193,8 +193,22 @@ class RepoRemovalOut(BaseModel):
 
 
 class ProjectIn(BaseModel):
-    connection_id: int
-    external_id: int = Field(gt=0)
+    # Optional when the link names the GitLab host, or when there is a single connection.
+    connection_id: int | None = None
+    external_id: int | None = Field(default=None, gt=0)
+    # A GitLab link, clone URL, group/repo path or project ID (docs/specs/09, "thêm repo").
+    repo: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = None
+    business_project_id: int | None = None  # put the repo straight into this dự án
+
+    @model_validator(mode="after")
+    def _one_ref(self) -> "ProjectIn":
+        if (self.external_id is None) == (not self.repo):
+            raise ValueError("give either repo (link, path or ID) or external_id")
+        return self
+
+
+class ProjectAddOut(ProjectOut):
+    existed: bool = False  # already registered: only moved into the dự án / tracked again
 
 
 class GroupImportIn(BaseModel):

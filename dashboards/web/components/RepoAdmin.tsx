@@ -2,6 +2,7 @@
 
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
+import { AddRepoFields, addRepos, repoFieldsOf } from "@/components/AddRepoFields";
 import { ConfirmRemove } from "@/components/ConfirmRemove";
 import { Icon, IconButton } from "@/components/icons";
 import { ProjectDrawer, ProjectTiles, type TileKey } from "@/components/ProjectTiles";
@@ -98,7 +99,7 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
       setMessage(done ?? String(result));
       return true;
     } catch (e) {
-      setMessage(`Lỗi: ${e instanceof ApiError ? e.message : String(e)}`);
+      setMessage(`Lỗi: ${e instanceof Error ? e.message : String(e)}`);
       return false;
     } finally {
       setPending((n) => n - 1);
@@ -124,6 +125,18 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
 
   async function refresh() {
     await Promise.all([repos.mutate(), projects.mutate()]);
+  }
+
+  /** Adds pasted repos; throws (keeping the form open) when any of them failed. */
+  async function addReposOrThrow(f: FormData, businessProjectId: number | null): Promise<string> {
+    const fields = repoFieldsOf(f);
+    const result = await addRepos(fields.text, { ...fields, businessProjectId }).finally(() => void refresh());
+    if (result.failed) throw new Error(result.text);
+    return result.text;
+  }
+  /** The project drawer's "add repo" form: true when every repo went in. */
+  async function addReposToProject(f: FormData, b: BusinessProject): Promise<boolean> {
+    return run(() => addReposOrThrow(f, b.id));
   }
 
   async function registerWebhook(p: Project): Promise<string> {
@@ -552,6 +565,8 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
           onRename={renameProject}
           onDelete={deleteProject}
           onSaveRules={saveProjectRules}
+          connections={connections}
+          onAddRepos={addReposToProject}
           onClose={closeDrawer}
           startEditing={editTile}
           busy={busy || pending > 0}
@@ -568,7 +583,7 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
               onChange={setAdding}
               options={[
                 { value: "project", label: "Dự án" },
-                { value: "repo", label: "Một repo" },
+                { value: "repo", label: "Repo" },
                 { value: "group", label: "Cả group" },
               ]}
             />
@@ -581,10 +596,24 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
                   submit(
                     e,
                     async (f) => {
-                      await api.post("/business-projects", { name: f.get("name"), description: f.get("description") || null });
+                      const created = await api.post<BusinessProject>("/business-projects", {
+                        name: f.get("name"),
+                        description: f.get("description") || null,
+                      });
                       await projects.mutate();
+                      let text = `Đã tạo dự án ${created.name}.`;
+                      if (repoFieldsOf(f).text.trim()) {
+                        // The dự án exists now: a repo that fails is reported, and can be added from its drawer.
+                        const result = await addRepos(repoFieldsOf(f).text, {
+                          ...repoFieldsOf(f),
+                          businessProjectId: created.id,
+                        }).finally(() => void refresh());
+                        text += ` ${result.text}`;
+                      }
+                      setOpenTile(created.id);
+                      return text;
                     },
-                    "Đã tạo dự án.",
+                    undefined,
                     closeAdd,
                   )
                 }
@@ -597,6 +626,7 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
                   <span className="small muted">Mô tả (tuỳ chọn)</span>
                   <input name="description" />
                 </label>
+                <AddRepoFields connections={connections} optional />
                 <p className="muted small">Xoá dự án chỉ bỏ cách nhóm; repo và lịch sử review vẫn giữ.</p>
                 <div className="adm-form-foot">
                   <button type="button" className="ghost" onClick={closeAdd}>
@@ -614,63 +644,27 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
                 onSubmit={(e) =>
                   submit(
                     e,
-                    async (f) => {
-                      const project = await api.post<Project>("/projects", {
-                        connection_id: Number(f.get("connection_id")),
-                        external_id: Number(f.get("external_id")),
-                      });
+                    (f) => {
                       const bp = String(f.get("business_project_id") ?? UNASSIGNED);
-                      if (bp !== UNASSIGNED)
-                        await api.put("/projects/business-project", { project_ids: [project.id], business_project_id: Number(bp) });
-                      await api.post(`/projects/${project.id}/sync`);
-                      await refresh();
-                      let hook = "";
-                      if (f.get("webhook")) {
-                        try {
-                          hook = ` ${await registerWebhook(project)}`;
-                        } catch (err) {
-                          hook = ` Webhook lỗi: ${err instanceof ApiError ? err.message : String(err)}; bấm nút Webhook để thử lại.`;
-                        }
-                      }
-                      return `Đã thêm ${project.path_with_namespace} và đưa vào hàng đợi sync.${hook}`;
+                      return addReposOrThrow(f, bp === UNASSIGNED ? null : Number(bp));
                     },
                     undefined,
                     closeAdd,
                   )
                 }
               >
-                <label className="adm-field">
-                  <span className="small muted">Kết nối GitLab</span>
-                  <select name="connection_id" required defaultValue="">
-                    <option value="" disabled>
-                      Kết nối…
-                    </option>
-                    {connections.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="adm-field">
-                  <span className="small muted">GitLab project ID</span>
-                  <input name="external_id" type="number" min={1} required />
-                </label>
+                <AddRepoFields connections={connections} autoFocus />
                 <label className="adm-field">
                   <span className="small muted">Dự án</span>
                   <select name="business_project_id" defaultValue={UNASSIGNED}>
                     {projectOptions}
                   </select>
                 </label>
-                <label className="inline-check">
-                  <input name="webhook" type="checkbox" defaultChecked /> Đăng ký webhook GitLab
-                </label>
-                <p className="muted small">Project ID nằm dưới tên repo trên GitLab, hoặc Settings → General.</p>
                 <div className="adm-form-foot">
                   <button type="button" className="ghost" onClick={closeAdd}>
                     Đóng
                   </button>
-                  <button className="primary" type="submit" disabled={pending > 0}>
+                  <button className="primary" type="submit" disabled={pending > 0 || connections.length === 0}>
                     Thêm repo
                   </button>
                 </div>

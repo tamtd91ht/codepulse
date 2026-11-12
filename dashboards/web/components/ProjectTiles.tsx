@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 
+import { AddRepoFields } from "@/components/AddRepoFields";
 import { type SubTab, SubPanel, SubTabs } from "@/components/AdminTabs";
 import { ClaudeRepoEditor } from "@/components/ClaudeRepoEditor";
 import { Icon, IconButton } from "@/components/icons";
@@ -13,7 +14,7 @@ import { RuleFilesPanel } from "@/components/RuleFiles";
 import { Drawer, EmptyState, Pill, Segmented } from "@/components/ui";
 import { useApi } from "@/lib/api";
 import { date } from "@/lib/format";
-import type { BusinessProject, NotificationWebhook, Project, TelegramBot } from "@/lib/types";
+import type { BusinessProject, Connection, NotificationWebhook, Project, TelegramBot } from "@/lib/types";
 
 /** The tile key: a dự án id, or "none" for repos without one. */
 export type TileKey = number | typeof UNASSIGNED;
@@ -146,6 +147,8 @@ export function ProjectDrawer({
   onRename,
   onDelete,
   onSaveRules,
+  connections = [],
+  onAddRepos,
   onClose,
   busy,
   notice,
@@ -159,6 +162,10 @@ export function ProjectDrawer({
   onRename: (b: BusinessProject, name: string, description: string | null) => Promise<boolean>;
   onDelete: (b: BusinessProject) => Promise<boolean>;
   onSaveRules: (b: BusinessProject, rules: string) => Promise<boolean>;
+  /** GitLab connections, for adding repos by link or ID from the drawer. */
+  connections?: Connection[];
+  /** Adds the repos pasted into the drawer's form to this dự án; true when all went in. */
+  onAddRepos?: (fields: FormData, b: BusinessProject) => Promise<boolean>;
   onClose: () => void;
   busy: boolean;
   /** The page's action banner, rendered inside the drawer so it is not hidden behind it. */
@@ -174,6 +181,8 @@ export function ProjectDrawer({
   const [status, setStatus] = useState<Status>("tracked");
   const [editing, setEditing] = useState(startEditing);
   const [picked, setPicked] = useState<Set<number>>(new Set());
+  // A dự án without repos opens with the form showing: adding them is the next step.
+  const [addingRepo, setAddingRepo] = useState(false);
   const [tab, setTabState] = useState<ProjectTab>("repos");
   useEffect(() => setTabState(loadProjectTab()), []);
   const setTab = (next: ProjectTab) => {
@@ -339,6 +348,16 @@ export function ProjectDrawer({
               ]}
             />
             <span className="spacer" />
+            {project && onAddRepos && (
+              <button
+                type="button"
+                className="sm"
+                aria-expanded={addingRepo || items.length === 0}
+                onClick={() => setAddingRepo(!(addingRepo || items.length === 0))}
+              >
+                <Icon name="plus" size={14} /> Thêm repo từ GitLab
+              </button>
+            )}
             {project && addable.length > 0 && (
               <select
                 value=""
@@ -357,6 +376,34 @@ export function ProjectDrawer({
               </select>
             )}
           </div>
+          {project && onAddRepos && (addingRepo || items.length === 0) && (
+            <form
+              className="adm-form card"
+              style={{ marginBottom: 12 }}
+              aria-label={`Thêm repo GitLab vào ${project.name}`}
+              onSubmit={(e) => {
+                e.preventDefault();
+                const form = e.currentTarget;
+                void onAddRepos(new FormData(form), project).then((ok) => {
+                  if (!ok) return;
+                  form.reset();
+                  setAddingRepo(false);
+                });
+              }}
+            >
+              <AddRepoFields connections={connections} autoFocus={items.length > 0} />
+              <div className="adm-form-foot">
+                {items.length > 0 && (
+                  <button type="button" className="ghost" onClick={() => setAddingRepo(false)}>
+                    Huỷ
+                  </button>
+                )}
+                <button className="primary" type="submit" disabled={busy || connections.length === 0}>
+                  Thêm vào {project.name}
+                </button>
+              </div>
+            </form>
+          )}
           {chosen.length > 0 && (
             <div className="bulk-bar" role="region" aria-label="Thao tác với repo đã chọn">
               <strong>Đã chọn {chosen.length} repo</strong>
@@ -385,7 +432,11 @@ export function ProjectDrawer({
           )}
           {shown.length === 0 ? (
             <p className="muted" style={{ padding: "8px 0" }}>
-              {items.length === 0 ? "Dự án chưa có repo: thêm repo có sẵn ở trên, hoặc thêm repo / cả group GitLab ở cuối trang." : "Không có repo ở trạng thái này."}
+              {items.length === 0
+                ? project && onAddRepos
+                  ? "Dự án chưa có repo: dán link GitLab hoặc project ID ở trên, hoặc chọn một repo có sẵn."
+                  : "Dự án chưa có repo: thêm repo có sẵn ở trên, hoặc thêm repo / cả group GitLab ở cuối trang."
+                : "Không có repo ở trạng thái này."}
             </p>
           ) : (
             <RepoTable

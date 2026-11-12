@@ -163,3 +163,10 @@ Bộ lọc chung: `from`, `to` (ngày, theo `REPORT_TZ`; mặc định 30 ngày 
 | GET | `/mcp-report/requests?…&page` | `{items, total, page, page_size: 50}`: yêu cầu đóng qua MCP trong kỳ, mới nhất trước (`attempt` = lần gửi thứ mấy cho finding đó) | `report.mcp` |
 | GET | `/mcp-report/calls?…&tool&ok&page` | `{items, total, page, page_size: 50}`: nhật ký gọi tool (`mcp_calls`) | admin |
 | GET | `/mcp-report/export.xlsx?…` | Excel: sheet "Theo thành viên" và "Yêu cầu đóng qua MCP". Audit `mcp_report.export` | `report.mcp` |
+
+## Bổ sung (thêm repo vào dự án bằng link GitLab hoặc ID, người dùng 2026-11-12)
+
+- `POST /projects` nhận `repo` = link GitLab (link repo, link MR/nhánh/commit, clone URL https hoặc ssh), đường dẫn `group/repo` hoặc project ID; `connection_id` tuỳ chọn: link tự chọn kết nối theo host (kể cả GitLab chạy dưới đường dẫn con), ID/đường dẫn dùng kết nối duy nhất, có nhiều kết nối thì phải chọn (422 kèm lý do). Vẫn nhận `external_id` + `connection_id` như cũ.
+- `business_project_id` gán repo vào dự án ngay khi thêm; cùng luật §3 của spec 21 (admin.projects được uỷ quyền không đưa repo vào dự án mình có quyền).
+- Repo đã có: không lỗi, chuyển vào dự án và theo dõi lại nếu đã bỏ, trả 200 `existed: true` (audit `project.add_existing`); repo mới trả 201 (audit `project.create`). Sync đầu tiên được xếp hàng ở server; webhook vẫn gọi riêng `POST /projects/{id}/webhook`.
+- Giao diện: form tạo dự án có ô repo (tuỳ chọn, mỗi dòng một repo), tạo xong mở luôn drawer của dự án; drawer dự án có nút "Thêm repo từ GitLab" (dự án chưa có repo thì form hiện sẵn); tab Thêm › Repo nhận nhiều link/ID.
