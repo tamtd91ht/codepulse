@@ -274,6 +274,8 @@ def create_run(
             "count": body.count,
         }
     if body.kind == "impact":
+        if not tc.may_manage(principal, bp.id):
+            raise HTTPException(403, "bạn không có quyền quản lý test run của dự án này")
         mr = session.get(MergeRequest, body.merge_request_id) if body.merge_request_id else None
         repo = session.get(Project, mr.project_id) if mr and mr.project_id else None
         if mr is None or repo is None or repo.business_project_id != bp.id:

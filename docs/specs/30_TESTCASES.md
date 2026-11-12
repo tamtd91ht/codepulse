@@ -21,12 +21,21 @@
 - Ngoài phạm vi (IDEAS): tự dò file test tự động trong repo để nối với testcase; số liệu testcase
   trong DPI; quyền riêng `tests.*`.
 
-## 2. Quyền **[Quyết định]**
+## 2. Quyền
 
-Dùng lại quyền tài liệu dự án (spec 29 §5): `docs.view` xem testcase của dự án mình thấy,
-`docs.edit` (scope `project` / `all`) thêm, sửa, nhập, xoá, chạy AI. Lý do: testcase là tri thức
-dự án như tài liệu, cùng nhóm người đọc/viết; thêm khoá quyền mới phải cập nhật mọi bộ quyền đã lưu.
-Khi QA cần quyền tách riêng thì thêm `tests.view` / `tests.edit` (IDEAS).
+**[Đã chốt]** (user 2026-11-12: "bổ sung module testcase vào bộ quyền") Nhóm **Testcase** trong
+bộ quyền, theo vai trò của TestRail (trước đó dùng chung quyền tài liệu dự án):
+
+| Quyền | Phạm vi | Cho làm |
+|---|---|---|
+| `tests.view` | cờ | xem testcase, test run, test plan, milestone của dự án mình thấy |
+| `tests.edit` | project / all | thiết kế testcase: thêm, sửa, nhập, xoá, thư mục, bước dùng chung, AI sinh / rà soát |
+| `tests.run` | project / all | ghi kết quả cho mọi test của dự án (người được giao test / run luôn ghi được test của mình) |
+| `tests.manage` | project / all | tạo, sửa, đóng, xoá run / plan, milestone, cấu hình; phân tích MR bằng AI |
+
+Mặc định: Thành viên `tests.view`; Quản lý dự án đủ 4 quyền ở `project`; Quản lý tổng ở `all`.
+Migration `c4e6a8b0d2f5`: mọi bộ quyền đang có `docs.view` được `tests.view`, có `docs.edit` ở
+phạm vi nào được `tests.edit` / `tests.run` / `tests.manage` ở phạm vi đó (không ai mất quyền).
 
 **[Quyết định]** Danh sách MR ở "Cần test lại" và "Testcase liên quan" (tiêu đề, nhánh, số file,
 testcase ghép) hiện cho mọi người xem được dự án: tester cần biết MR nào chạm vào đâu, dù MR là của
@@ -455,3 +464,43 @@ mở rộng bước dùng chung, estimate, quyền ghi kết quả).
 - `GET /testcases/plans/{id}` → `PlanDetail = PlanOut + {runs: [RunOut]}`; `PATCH
   /testcases/plans/{id} {name?, description?, milestone_id?, add_entries?}`; `POST
   /testcases/plans/{id}/close` (đóng mọi run); `DELETE`.
+
+## 15. Nâng cấp ngang và vượt TestRail (user 2026-11-12)
+
+> Nguồn: tài liệu "CODEPULSE_TESTCASE_UPGRADE_SPEC.md" (Google Docs, user gửi 2026-11-12: "nâng
+> cấp testcase theo nội dung này đi"). Mã hạng mục G1–G13, X1–X9 giữ như tài liệu; làm theo lộ trình
+> 5 giai đoạn của tài liệu, mỗi hạng mục một commit. Mục này ghi **hiện trạng đã có** (tài liệu viết
+> từ phía giao diện, nhiều chỗ "[cần xác minh]") và **quyết định** khi tài liệu để ngỏ.
+
+### 15.1 Hiện trạng các mục "[cần xác minh]"
+
+| Mục | Đã có trước nâng cấp | Còn thiếu |
+|---|---|---|
+| G6 | Passed / Failed / Blocked / Retest / Untested, kết quả từng bước, giao người (test, run), elapsed, ghi hàng loạt, "Lưu & sang test sau" | Skipped, trạng thái tuỳ biến, đính kèm / dán ảnh, phím tắt, lọc "Của tôi", ước tính thời gian còn lại, cờ "chỉ người được giao" |
+| G7 | Quyền `tests.view/edit/run/manage` trong bộ quyền (§2), kiểm tra ở backend | Vai trò dựng sẵn Tester / Developer / Guest, quyền duyệt case, cờ "bắt buộc duyệt" |
+| G10 | Bulk: trạng thái, ưu tiên, type, milestone, chuyển bộ / thư mục, xoá; revision cho mỗi thay đổi | Sửa tags / jira / code_paths hàng loạt, sao chép, tìm-thay, gộp trùng bằng AI, Undo |
+| G12 | `audit_logs` ghi hầu hết thao tác testcase | Giá trị trước/sau, màn xem / lọc / export |
+| G3 | Ô "Bug (mã Jira)" trong kết quả (defects) | Tạo bug lên Jira, trạng thái bug, gợi ý retest |
+
+### 15.2 Quyết định **[Quyết định]**
+
+- **G11 token:** dùng lại token cá nhân `cpat_…` (spec 26), thêm scope `testcases:read`,
+  `testcases:write`, `results:write`. Token có thể gắn một dự án (`business_project_id`): chỉ dùng
+  được trong dự án đó. Bearer token chỉ mở `/api/v1/testcases/*`; quyền vẫn là của chủ token, và
+  không vượt scope. OpenAPI ở `/api/v1/docs/openapi.json`, Swagger ở `/api/v1/docs`.
+- **G11 webhook:** dùng lại webhook theo dự án (Admin › Webhook), thêm sự kiện `run.closed`,
+  `result.failed`, `case.status_changed`, `plan.closed`. Payload ký HMAC-SHA256. Gửi lỗi tự thử
+  lại 3 lần, rồi đánh dấu failed; xem và gửi lại được.
+- **G1 CLI:** không phát hành được gói npm/pip từ repo này. CLI là một file Python không phụ thuộc
+  (`tools/codepulse_cli.py`), kèm ví dụ GitLab CI dùng `python3` hoặc `curl`. Gói npm/pip ghi IDEAS.
+- **G3 Jira ghi:** spec 27 chốt Jira chỉ đọc; tài liệu nâng cấp yêu cầu tạo bug. Cho phép ghi **chỉ
+  để tạo issue / link**, bật bằng cấu hình riêng (`JIRA_WRITE_ENABLED` + token có quyền tạo issue),
+  tắt mặc định; các phần khác của tích hợp Jira vẫn chỉ đọc.
+- **G2 code_paths:** dạng mới `{repo}:{glob}`; dạng cũ không có `repo:` vẫn hiểu là mọi repo của dự
+  án (không phá dữ liệu cũ). Thư mục và bộ có `code_paths` riêng, case con kế thừa.
+- **X4 bot comment MR:** dùng cơ chế comment MR đã có của review (`post_mr_comment`).
+- **Lịch gửi báo cáo (G4):** gửi qua Telegram / webhook đã có. Email / Slack ghi IDEAS nếu chưa có kênh.
+
+### 15.3 Tiến độ
+
+Ghi ở `PROGRESS.md` theo từng hạng mục.

@@ -22,7 +22,6 @@ from app.api.security import CurrentPrincipal, Principal
 from app.assistant import importers
 from app.assistant.knowledge import fold
 from app.config import Settings, get_settings
-from app.docs import service as docs
 from app.jira.scopes import jira_issue_in
 from app.models import (
     BusinessProject,
@@ -83,7 +82,9 @@ class ProjectRow(BaseModel):
     name: str
     suites: int
     cases: int
-    can_edit: bool
+    can_edit: bool  # tests.edit: design the cases
+    can_run: bool  # tests.run: record results of any test
+    can_manage: bool  # tests.manage: runs, plans, milestones, configurations
 
 
 class SuiteIn(BaseModel):
@@ -500,7 +501,7 @@ def _project_suites(session: Session, bp_id: int, *, archived: bool = False) -> 
 
 @router.get("/testcases/projects", response_model=list[ProjectRow])
 def projects(principal: CurrentPrincipal, session: SessionDep) -> list[ProjectRow]:
-    seen = docs.viewable_projects(session, principal)
+    seen = tc.viewable_projects(session, principal)
     wanted = [bp.id for bp in seen] or [0]
     suites_of: dict[int, set[int]] = {}
     homes = session.execute(
@@ -530,6 +531,8 @@ def projects(principal: CurrentPrincipal, session: SessionDep) -> list[ProjectRo
             suites=len(suites_of.get(bp.id, ())),
             cases=sum(int(per_suite.get(s, 0)) for s in suites_of.get(bp.id, ())),
             can_edit=tc.may_edit(principal, bp.id),
+            can_run=tc.may_run(principal, bp.id),
+            can_manage=tc.may_manage(principal, bp.id),
         )
         for bp in seen
     ]
@@ -1542,7 +1545,8 @@ def mr_impact(mr_id: int, principal: CurrentPrincipal, session: SessionDep) -> M
         review_id=_review_ids(session, principal, [mr.id], bp_id).get(mr.id),
         cases=_impact_cases(session, item, cases, suites),
         ai=_ai_brief(latest),
-        can_edit=tc.may_edit(principal, bp_id),
+        # Analysing the MR with the AI is a test lead's (tests.manage).
+        can_edit=tc.may_manage(principal, bp_id),
         ai_allowed=repo.allow_external_llm is not False,
     )
 

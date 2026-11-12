@@ -1,7 +1,7 @@
 """Test runs the TestRail way (docs/specs/30 §13, API §14.2-14.4): milestones, configurations,
 shared steps, runs with their tests and results, plans, a case's result history.
 
-Who: `docs.view` on the dự án reads; `docs.edit` creates, edits, closes and deletes runs, plans,
+Who: `tests.view` on the dự án reads; `tests.manage` creates, edits, closes and deletes runs, plans,
 milestones, configurations and shared steps; a result is recorded by whoever may edit, or by
 the person the test or its run is assigned to (`content.may_record`). A closed run (or plan)
 takes no more changes or results (409).
@@ -432,8 +432,14 @@ def _milestone(session: Session, bp_id: int, milestone_id: int | None) -> int | 
 
 
 def _edit(principal: Principal, bp_id: int) -> None:
+    if not tc.may_manage(principal, bp_id):
+        raise HTTPException(403, "bạn không có quyền quản lý test run của dự án này")
+
+
+def _design(principal: Principal, bp_id: int) -> None:
+    """Shared steps are part of the cases' design (`tests.edit`)."""
     if not tc.may_edit(principal, bp_id):
-        raise HTTPException(403, "bạn không có quyền sửa test run của dự án này")
+        raise HTTPException(403, "bạn không có quyền sửa testcase của dự án này")
 
 
 def _view(principal: Principal, bp_id: int, missing: str) -> None:
@@ -511,7 +517,7 @@ def _run_outs(session: Session, principal: Principal, runs: list[TestRun]) -> li
             created_at=_iso(r.created_at),
             created_by=people.get(r.created_by) if r.created_by else None,
             counts=_counts(counts.get(r.id)),
-            can_edit=tc.may_edit(principal, r.business_project_id),
+            can_edit=tc.may_manage(principal, r.business_project_id),
         )
         for r in runs
     ]
@@ -592,7 +598,7 @@ def _detail(session: Session, principal: Principal, test: TestRunTest, run: Test
             completed=run.completed_at is not None,
         ),
         can_record=_can_record(principal, run, test),
-        can_edit=run.completed_at is None and tc.may_edit(principal, run.business_project_id),
+        can_edit=run.completed_at is None and tc.may_manage(principal, run.business_project_id),
     )
 
 
@@ -665,7 +671,7 @@ def _milestone_outs(
             completed_at=_iso(m.completed_at),
             runs=runs.get(m.id, 0),
             counts=_counts(counts.get(m.id)),
-            can_edit=tc.may_edit(principal, m.business_project_id),
+            can_edit=tc.may_manage(principal, m.business_project_id),
         )
         for m in items
     ]
@@ -705,7 +711,7 @@ def list_milestones(
 def create_milestone(
     body: MilestoneIn, principal: CurrentPrincipal, session: SessionDep
 ) -> MilestoneOut:
-    bp = tc.project_for(session, principal, body.business_project_id, edit=True)
+    bp = tc.project_for(session, principal, body.business_project_id, manage=True)
     m = TestMilestone(
         business_project_id=bp.id,
         name=_name(body.name),
@@ -803,7 +809,7 @@ def list_configs(
 def create_config_group(
     body: ConfigGroupIn, principal: CurrentPrincipal, session: SessionDep
 ) -> ConfigGroupOut:
-    bp = tc.project_for(session, principal, body.business_project_id, edit=True)
+    bp = tc.project_for(session, principal, body.business_project_id, manage=True)
     top = session.scalar(
         select(func.max(TestConfigGroup.position)).where(
             TestConfigGroup.business_project_id == bp.id
@@ -944,7 +950,7 @@ def _shared_for(
     if s is None or not tc.may_view(principal, s.business_project_id):
         raise HTTPException(404, "bước dùng chung không tồn tại")
     if edit:
-        _edit(principal, s.business_project_id)
+        _design(principal, s.business_project_id)
     return s
 
 
@@ -1082,7 +1088,7 @@ def list_runs(
 def create_run(
     body: RunIn, principal: CurrentPrincipal, session: SessionDep, settings: SettingsDep
 ) -> RunOut:
-    bp = tc.project_for(session, principal, body.business_project_id, edit=True)
+    bp = tc.project_for(session, principal, body.business_project_id, manage=True)
     run = _new_run(
         session,
         principal,
@@ -1431,7 +1437,7 @@ def case_results(
         .where(TestRunTest.case_id == case.id)
     )
     seen = principal.visible_projects()
-    if not principal.can("docs.view"):
+    if not principal.can("tests.view"):
         return []
     if seen is not None:
         query = query.where(TestRun.business_project_id.in_(seen or {0}))
@@ -1495,7 +1501,7 @@ def _plan_outs(session: Session, principal: Principal, plans: list[TestPlan]) ->
             created_at=_iso(p.created_at),
             counts=_counts(counts.get(p.id)),
             runs=runs.get(p.id, 0),
-            can_edit=tc.may_edit(principal, p.business_project_id),
+            can_edit=tc.may_manage(principal, p.business_project_id),
         )
         for p in plans
     ]
@@ -1584,7 +1590,7 @@ def list_plans(
 def create_plan(
     body: PlanIn, principal: CurrentPrincipal, session: SessionDep, settings: SettingsDep
 ) -> PlanDetail:
-    bp = tc.project_for(session, principal, body.business_project_id, edit=True)
+    bp = tc.project_for(session, principal, body.business_project_id, manage=True)
     plan = TestPlan(
         business_project_id=bp.id,
         name=_name(body.name),

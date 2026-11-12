@@ -62,7 +62,7 @@ function remembered(): number | null {
 
 export default function TestcasesPage() {
   const { data: me } = useApi<Me>("/auth/me");
-  const allowed = me ? can(me, "docs.view") : false;
+  const allowed = me ? can(me, "tests.view") : false;
   const projects = useApi<TcProject[]>(allowed ? "/testcases/projects" : null);
   const [where, setWhere] = useState<Where>(HOME);
   const [ready, setReady] = useState(false);
@@ -101,7 +101,7 @@ export default function TestcasesPage() {
       <>
         <PageHeader title="Testcase" foldable={false} />
         <EmptyState icon="alert" title="Bạn chưa có quyền xem testcase">
-          Testcase dùng quyền “Tài liệu dự án”: nhờ admin cấp quyền xem.
+          Nhờ admin cấp quyền “Testcase › Xem testcase” trong bộ quyền.
         </EmptyState>
       </>
     );
@@ -152,14 +152,14 @@ export default function TestcasesPage() {
         ) : where.plan ? (
           <PlanView key={where.plan} planId={where.plan} projectId={project.id} onBack={() => go({ plan: null })} onOpenRun={(id) => go({ run: id })} />
         ) : (
-          <RunsTab projectId={project.id} canEdit={project.can_edit} onOpenRun={(id) => go({ run: id, plan: null })} onOpenPlan={(id) => go({ plan: id, run: null })} />
+          <RunsTab projectId={project.id} canEdit={project.can_manage} onOpenRun={(id) => go({ run: id, plan: null })} onOpenPlan={(id) => go({ plan: id, run: null })} />
         )
       ) : where.tab === "milestones" ? (
-        <MilestonesTab projectId={project.id} canEdit={project.can_edit} onOpenRun={(id) => go({ tab: "runs", run: id, plan: null })} />
+        <MilestonesTab projectId={project.id} canEdit={project.can_manage} onOpenRun={(id) => go({ tab: "runs", run: id, plan: null })} />
       ) : where.tab === "setup" ? (
-        <SetupTab projectId={project.id} canEdit={project.can_edit} />
+        <SetupTab projectId={project.id} canEdit={project.can_edit} canManage={project.can_manage} />
       ) : where.tab === "regression" ? (
-        <RegressionView projectId={project.id} canEdit={project.can_edit} onRunCreated={(id) => go({ tab: "runs", run: id, plan: null })} />
+        <RegressionView projectId={project.id} canEdit={project.can_manage} onRunCreated={(id) => go({ tab: "runs", run: id, plan: null })} />
       ) : (
         <CasesTab project={project} projects={projects.data} suiteId={where.suite} onSuite={(id) => go({ suite: id })} onChanged={() => void projects.mutate()} />
       )}

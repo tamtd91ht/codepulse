@@ -136,6 +136,27 @@ CATALOG: tuple[Permission, ...] = (
         "Thêm, sửa, tải phiên bản mới, lưu trữ tài liệu dự án",
         "project all",
     ),
+    # docs/specs/30 §2 (user 2026-11-12: "bổ sung module testcase vào bộ quyền"), roles as in
+    # TestRail: who designs cases, who runs tests, who leads the testing.
+    _p("tests.view", "Testcase", "Xem testcase, test run, test plan, milestone"),
+    _p(
+        "tests.edit",
+        "Testcase",
+        "Thiết kế testcase: thêm, sửa, nhập, xoá, thư mục, bước dùng chung, AI sinh / rà soát",
+        "project all",
+    ),
+    _p(
+        "tests.run",
+        "Testcase",
+        "Ghi kết quả test (Passed / Failed / Blocked / Retest) cho mọi test của dự án",
+        "project all",
+    ),
+    _p(
+        "tests.manage",
+        "Testcase",
+        "Tạo, sửa, đóng, xoá test run / test plan, milestone, cấu hình; phân tích MR bằng AI",
+        "project all",
+    ),
     _p("knowledge.view", "Tiền đề review", "Xem Tiền đề review của repo"),
     _p(
         "knowledge.edit",
@@ -209,6 +230,7 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "knowledge.view": FLAG,
             "telegram.self": FLAG,
             "docs.view": FLAG,
+            "tests.view": FLAG,
         },
     ),
     BuiltinSet(
@@ -270,6 +292,10 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "dpi.defects": "project",
             "docs.view": FLAG,
             "docs.edit": "project",
+            "tests.view": FLAG,
+            "tests.edit": "project",
+            "tests.run": "project",
+            "tests.manage": "project",
         },
     ),
     BuiltinSet(
@@ -295,6 +321,10 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "dpi.defects": "all",
             "docs.view": FLAG,
             "docs.edit": "all",
+            "tests.view": FLAG,
+            "tests.edit": "all",
+            "tests.run": "all",
+            "tests.manage": "all",
         },
     ),
 )

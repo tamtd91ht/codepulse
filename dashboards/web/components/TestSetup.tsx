@@ -396,11 +396,11 @@ function Configurations({ projectId, canEdit }: { projectId: number; canEdit: bo
   );
 }
 
-export function SetupTab({ projectId, canEdit }: { projectId: number; canEdit: boolean }) {
+export function SetupTab({ projectId, canEdit, canManage }: { projectId: number; canEdit: boolean; canManage: boolean }) {
   return (
     <div className="tr-tab">
       <SharedSteps projectId={projectId} canEdit={canEdit} />
-      <Configurations projectId={projectId} canEdit={canEdit} />
+      <Configurations projectId={projectId} canEdit={canManage} />
     </div>
   );
 }

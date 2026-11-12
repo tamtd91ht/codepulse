@@ -1,8 +1,9 @@
 """Testcase (docs/specs/30): who may read and edit, suites shared by several dự án, the fields of a
 case (cleaned the same way whether typed, imported or written by the AI), its history and search.
 
-Permissions are the project documents' (docs/specs/30 §2): `docs.view` reads the cases of a dự án
-one sees, `docs.edit` changes them (scope `project`: the dự án one manages; `all`: every one).
+Permissions (docs/specs/30 §2): `tests.view` reads the cases of a dự án one sees, `tests.edit`
+designs them, `tests.run` records results, `tests.manage` runs the runs (scopes `project`: the
+dự án one manages; `all`: every one).
 """
 
 import re
@@ -17,8 +18,8 @@ from sqlalchemy.orm import Session
 
 from app.api.security import Principal
 from app.assistant.knowledge import fold
-from app.docs import service as docs
 from app.models import (
+    BusinessProject,
     TestCase,
     TestCaseRevision,
     TestMilestone,
@@ -80,9 +81,61 @@ PRIORITY_RANK = {p: i for i, p in enumerate(PRIORITIES)}
 
 # -- permissions -----------------------------------------------------------------------------------
 
-may_view = docs.may_view
-may_edit = docs.may_edit
-project_for = docs.project_for
+
+def may_view(principal: Principal, bp_id: int | None) -> bool:
+    return principal.can("tests.view") and principal.can_view_project(bp_id)
+
+
+def _scoped(principal: Principal, key: str, bp_id: int | None) -> bool:
+    """A `project | all` permission over dự án `bp_id`: `project` covers the dự án one manages,
+    `all` every dự án one sees."""
+    scope = principal.scope(key)
+    if scope is None or not principal.can_view_project(bp_id):
+        return False
+    return scope == "all" or principal.can_manage_project(bp_id)
+
+
+def may_edit(principal: Principal, bp_id: int | None) -> bool:
+    """Design the cases: add, change, import, delete; sections, shared steps, AI."""
+    return may_view(principal, bp_id) and _scoped(principal, "tests.edit", bp_id)
+
+
+def may_run(principal: Principal, bp_id: int | None) -> bool:
+    """Record results of any test of the dự án (an assignee records theirs anyway)."""
+    return may_view(principal, bp_id) and _scoped(principal, "tests.run", bp_id)
+
+
+def may_manage(principal: Principal, bp_id: int | None) -> bool:
+    """Runs, plans, milestones, configurations; AI analysis of merge requests."""
+    return may_view(principal, bp_id) and _scoped(principal, "tests.manage", bp_id)
+
+
+def viewable_projects(session: Session, principal: Principal) -> list[BusinessProject]:
+    if not principal.can("tests.view"):
+        return []
+    query = select(BusinessProject).order_by(BusinessProject.name)
+    seen = principal.visible_projects()
+    if seen is not None:
+        query = query.where(BusinessProject.id.in_(seen))
+    return list(session.scalars(query))
+
+
+def project_for(
+    session: Session,
+    principal: Principal,
+    bp_id: int,
+    edit: bool = False,
+    *,
+    manage: bool = False,
+) -> BusinessProject:
+    bp = session.get(BusinessProject, bp_id)
+    if bp is None or not may_view(principal, bp.id):
+        raise HTTPException(404, "dự án not found")
+    if edit and not may_edit(principal, bp.id):
+        raise HTTPException(403, "bạn không có quyền sửa testcase của dự án này")
+    if manage and not may_manage(principal, bp.id):
+        raise HTTPException(403, "bạn không có quyền quản lý test run của dự án này")
+    return bp
 
 
 def linked_ids(session: Session, suite_id: int) -> list[int]:

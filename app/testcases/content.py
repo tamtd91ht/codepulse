@@ -13,7 +13,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.security import Principal
-from app.docs import service as docs
 from app.models import TestCase, TestSection, TestSharedStep
 from app.models.testcases import CASE_TYPES
 
@@ -350,8 +349,10 @@ def case_content(
 
 
 def may_record(principal: Principal, bp_id: int, assignees: Iterable[int | None]) -> bool:
-    """Recording a result: whoever may edit the dự án's test cases, or the person the test (or its
-    run) is assigned to (§13.6)."""
-    if docs.may_edit(principal, bp_id):
+    """Recording a result: whoever holds `tests.run` over the dự án, or the person the test (or
+    its run) is assigned to (§2, §13.6)."""
+    from app.testcases import service as tc
+
+    if tc.may_run(principal, bp_id):
         return True
-    return docs.may_view(principal, bp_id) and principal.user_id in {a for a in assignees if a}
+    return tc.may_view(principal, bp_id) and principal.user_id in {a for a in assignees if a}

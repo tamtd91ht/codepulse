@@ -17,7 +17,12 @@ export interface TcProject {
   name: string;
   suites: number;
   cases: number;
+  /** tests.edit: design the cases. */
   can_edit: boolean;
+  /** tests.run: record results of any test. */
+  can_run: boolean;
+  /** tests.manage: runs, plans, milestones, configurations. */
+  can_manage: boolean;
 }
 
 export interface Suite {

@@ -210,7 +210,7 @@ export function CasesTab({
 
   const menu = suite
     ? [
-        ...(suite.total ? [{ icon: "clipboardCheck" as const, label: "Tạo test run cho bộ", run: () => setTestRun({ suite_id: suite.id }) }] : []),
+        ...(suite.total && project.can_manage ? [{ icon: "clipboardCheck" as const, label: "Tạo test run cho bộ", run: () => setTestRun({ suite_id: suite.id }) }] : []),
         ...(suite.can_edit ? [{ icon: "edit" as const, label: "Đổi tên", run: () => setModal("rename") }] : []),
         ...(suite.can_edit ? [{ icon: "link" as const, label: "Dự án dùng chung", run: () => setModal("share") }] : []),
         ...(suite.can_edit && suite.source_url ? [{ icon: "sync" as const, label: "Nhập lại từ Google Sheet", run: () => setModal("import") }] : []),
@@ -357,7 +357,7 @@ export function CasesTab({
             canEdit={suite.can_edit && !suite.archived}
             onChanged={() => refresh()}
             onMoveCases={moveCases}
-            onCreateRun={(id) => setTestRun({ suite_id: suite.id, section_ids: [id] })}
+            onCreateRun={project.can_manage ? (id) => setTestRun({ suite_id: suite.id, section_ids: [id] }) : undefined}
             onMessage={setMessage}
           />
         )}
@@ -439,9 +439,11 @@ export function CasesTab({
         {picked.size > 0 && (
           <div className="tc-bulk" role="region" aria-label="Thao tác hàng loạt">
             <strong>{picked.size} đã chọn</strong>
-            <button className="sm" disabled={busy} onClick={() => setTestRun({ suite_id: suite?.id, case_ids: [...picked] })}>
-              <Icon name="clipboardCheck" size={14} /> Tạo test run
-            </button>
+            {project.can_manage && (
+              <button className="sm" disabled={busy} onClick={() => setTestRun({ suite_id: suite?.id, case_ids: [...picked] })}>
+                <Icon name="clipboardCheck" size={14} /> Tạo test run
+              </button>
+            )}
             <button className="ghost sm" disabled={busy} onClick={() => void bulk({ action: "status", status: "approved" })}>
               <Icon name="check" size={14} /> Duyệt
             </button>
