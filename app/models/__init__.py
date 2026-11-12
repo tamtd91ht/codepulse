@@ -53,6 +53,7 @@ from app.models.project_docs import (
     ProjectDocument,
     ProjectDocumentChunk,
     ProjectDocumentDraft,
+    ProjectDocumentDraftImage,
     ProjectDocumentVersion,
 )
 from app.models.review import FindingClosure, FindingDispute, LlmHealth, Review, ReviewFinding
@@ -118,6 +119,7 @@ __all__ = [
     "ProjectDocument",
     "ProjectDocumentChunk",
     "ProjectDocumentDraft",
+    "ProjectDocumentDraftImage",
     "ProjectDocumentVersion",
     "ProjectGrant",
     "RawGitlab",

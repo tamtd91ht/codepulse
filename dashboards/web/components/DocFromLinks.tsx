@@ -17,12 +17,16 @@ import {
   type DocDetail,
   type DocDraft,
   type DocItem,
+  type DraftImage,
   type DraftList,
   type DraftSource,
   type DraftMode,
   type ExtractedFile,
+  IMAGE_KINDS,
+  IMAGE_MAX_MB,
   MODE_LABEL,
   PASTE_KIND,
+  imageUrl,
   placeholders,
   sourceCount,
 } from "@/lib/docs";
@@ -99,7 +103,9 @@ export function LinkForm({
   const maxMb = limits?.max_file_mb ?? 20;
   const urls = lines(text);
   const bad = urls.filter((u) => !/^https?:\/\/[^\s/]+/i.test(u));
-  const total = urls.length + files.length;
+  // Screenshots: uploaded as soon as they are pasted or dropped; `preview` is the local copy.
+  const [images, setImages] = useState<(DraftImage & { preview: string })[]>([]);
+  const total = urls.length + files.length + images.length;
   const active = docs.filter((d) => !d.archived);
   const left = limits ? Math.max(0, limits.per_day - limits.used_today) : null;
   const uploading = reading.some((r) => r.state === "waiting" || r.state === "uploading");
@@ -130,10 +136,44 @@ export function LinkForm({
   };
 
   // Each file is read on the server now (its text shown here); the draft keeps that text only.
-  const addFiles = async (picked: File[]) => {
+  const isImage = (f: File) => f.type.startsWith("image/") || IMAGE_KINDS.some((k) => f.name.toLowerCase().endsWith(k));
+  const addImages = async (picked: File[]) => {
     const room = Math.max(0, max - total);
+    if (picked.length > room) setError(`Tối đa ${max} nguồn mỗi lần: bỏ bớt ${picked.length - room} ảnh.`);
+    await uploadAll(picked.slice(0, room), [""], IMAGE_MAX_MB, setReading, async (f) => {
+      // A pasted screenshot has no useful name ("image.png"): the server names it.
+      const name = /^image\.\w+$/i.test(f.name) ? "" : f.name;
+      const got = await api.postRaw<DraftImage>(`/docs/drafts/images?business_project_id=${projectId}&filename=${encodeURIComponent(name)}`, f);
+      setImages((old) => [...old, { ...got, preview: URL.createObjectURL(f) }]);
+      return got.name;
+    });
+    window.setTimeout(() => setReading((items) => items.filter((i) => i.state === "error")), 2500);
+  };
+  const dropImage = async (id: number) => {
+    const gone = images.find((x) => x.id === id);
+    if (gone) URL.revokeObjectURL(gone.preview);
+    setImages((old) => old.filter((x) => x.id !== id));
+    try {
+      await api.delete(`/docs/drafts/images/${id}`);
+    } catch {
+      /* already gone: it is cleaned up after a day anyway */
+    }
+  };
+  const onPaste = (e: React.ClipboardEvent) => {
+    const shots = Array.from(e.clipboardData.files).filter(isImage);
+    if (!shots.length) return; // text pastes go where they were typed
+    e.preventDefault();
+    void addImages(shots);
+  };
+
+  const addFiles = async (all: File[]) => {
+    const shots = all.filter(isImage);
+    if (shots.length) await addImages(shots);
+    const picked = all.filter((f) => !isImage(f));
+    if (!picked.length) return;
+    const room = Math.max(0, max - total - shots.length);
     const fresh = picked.filter((f) => !files.some((x) => x.name === f.name));
-    if (fresh.length > room) setError(`Tối đa ${max} nguồn (link và file) mỗi lần: bỏ bớt ${fresh.length - room} file.`);
+    if (fresh.length > room) setError(`Tối đa ${max} nguồn mỗi lần: bỏ bớt ${fresh.length - room} file.`);
     await uploadAll(fresh.slice(0, room), kinds, maxMb, setReading, async (f) => {
       const got = await api.postRaw<ExtractedFile>(`/docs/drafts/extract?business_project_id=${projectId}&filename=${encodeURIComponent(f.name)}`, f);
       setFiles((old) => [...old.filter((x) => x.name !== got.name), got]);
@@ -153,6 +193,7 @@ export function LinkForm({
         category: mode === "new" ? category : null,
         urls,
         files: files.map(({ name, kind, size, text, truncated }) => ({ name, kind, size, text, truncated })),
+        image_ids: images.map((i) => i.id),
         instruction: instruction.trim() || null,
       });
       onQueued(draft);
@@ -164,10 +205,10 @@ export function LinkForm({
   };
 
   return (
-    <div className="adm-form docs-link-form">
+    <div className="adm-form docs-link-form" onPaste={onPaste}>
       <label className="adm-field">
         <span className="small muted">
-          Link nguồn (mỗi dòng một link) · link, file và văn bản dán: tối đa {max} nguồn
+          Link nguồn (mỗi dòng một link) · link, file, ảnh và văn bản dán: tối đa {max} nguồn
         </span>
         <textarea
           rows={3}
@@ -187,15 +228,15 @@ export function LinkForm({
       </label>
 
       <div className="adm-field">
-        <span className="small muted">File hoặc văn bản nguồn (không bắt buộc)</span>
+        <span className="small muted">File, ảnh chụp màn hình hoặc văn bản nguồn (không bắt buộc)</span>
         <UploadDrop
-          kinds={kinds}
+          kinds={[...kinds, ...IMAGE_KINDS]}
           maxMb={maxMb}
           compact
           disabled={busy || total >= max}
           onFiles={(f) => void addFiles(f)}
-          title={total >= max ? `Đã đủ ${max} nguồn` : "Kéo thả file vào đây hoặc bấm để chọn"}
-          hint={`Word, PDF, Markdown, Text, Excel · tối đa ${maxMb} MB mỗi file · chỉ phần chữ được gửi cho AI, file không được lưu`}
+          title={total >= max ? `Đã đủ ${max} nguồn` : "Kéo thả file / ảnh vào đây, bấm để chọn, hoặc dán ảnh chụp màn hình (Ctrl+V)"}
+          hint={`Word, PDF, Markdown, Text, Excel (≤ ${maxMb} MB, chỉ gửi phần chữ) · ảnh PNG, JPG, WebP, GIF (≤ ${IMAGE_MAX_MB} MB, AI xem ảnh) · không lưu lâu dài`}
         />
         <UploadList items={reading} onClear={() => setReading([])} />
         {pasting ? (
@@ -238,6 +279,21 @@ export function LinkForm({
             <Icon name="edit" size={14} /> Dán văn bản làm nguồn
           </button>
         )}
+        {images.length > 0 && (
+          <ul className="docs-src-shots" aria-label="Ảnh chụp màn hình nguồn">
+            {images.map((i) => (
+              <li key={i.id}>
+                {/* eslint-disable-next-line @next/next/no-img-element -- a local preview (blob URL) */}
+                <img src={i.preview} alt={i.name} />
+                <span className="small docs-src-shot-name" title={i.name}>
+                  {i.name}
+                </span>
+                <span className="small muted">{fileSize(i.size)}</span>
+                <IconButton icon="close" label={`Bỏ ${i.name}`} size={14} onClick={() => void dropImage(i.id)} disabled={busy} />
+              </li>
+            ))}
+          </ul>
+        )}
         {files.length > 0 && (
           <ul className="docs-src-files" aria-label="File và văn bản nguồn">
             {files.map((f) => (
@@ -257,6 +313,7 @@ export function LinkForm({
           {total} / {max} nguồn{urls.length ? ` · ${urls.length} link` : ""}
           {files.some((f) => f.kind !== PASTE_KIND) ? ` · ${files.filter((f) => f.kind !== PASTE_KIND).length} file` : ""}
           {files.some((f) => f.kind === PASTE_KIND) ? ` · ${files.filter((f) => f.kind === PASTE_KIND).length} văn bản dán` : ""}
+          {images.length ? ` · ${images.length} ảnh` : ""}
         </span>
       </div>
 
@@ -309,7 +366,7 @@ export function LinkForm({
       </label>
 
       <p className="muted small" style={{ margin: 0 }}>
-        Nội dung các link, file và văn bản dán được gửi tới AI (Claude) để viết. Kết quả là <strong>bản nháp</strong>: bạn xem, so sánh và sửa trước khi lưu thành phiên bản;
+        Nội dung các link, file, ảnh và văn bản dán được gửi tới AI (Claude) để viết. Kết quả là <strong>bản nháp</strong>: bạn xem, so sánh và sửa trước khi lưu thành phiên bản;
         tài liệu không thay đổi cho tới khi bạn bấm lưu.
         {left !== null && ` Còn ${left}/${limits?.per_day} lần trong 24 giờ.`}
         {limits && !limits.url_hosts && " Wiki nội bộ (địa chỉ IP nội bộ) chỉ đọc được khi admin thêm tên máy vào ASSISTANT_URL_HOSTS."}
@@ -369,13 +426,15 @@ function Progress({ draft }: { draft: DocDraft }) {
   );
 }
 
-const VIA_LABEL: Record<string, string> = { web: "Web", gitlab: "GitLab", file: "File tải lên", paste: "Văn bản dán" };
+const VIA_LABEL: Record<string, string> = { web: "Web", gitlab: "GitLab", file: "File tải lên", paste: "Văn bản dán", image: "Ảnh chụp" };
 
 function SourceList({ draft }: { draft: DocDraft }) {
   const items: DraftSource[] = draft.sources ?? [
     ...draft.files.map((f) => ({ url: null, name: f.name, title: f.name, via: "file" as const, chars: f.chars, error: null })),
     ...draft.urls.map((url) => ({ url, title: null, via: "web" as const, chars: 0, error: null })),
+    ...draft.images.map((i) => ({ url: null, name: i.name, title: i.name, via: "image" as const, chars: 0, size: i.size, error: null })),
   ];
+  const shotOf = (name?: string | null) => draft.images.find((i) => i.name === name);
   return (
     <ul className="docs-draft-sources">
       {items.map((s, i) => (
@@ -386,6 +445,12 @@ function SourceList({ draft }: { draft: DocDraft }) {
               <a href={s.url} target="_blank" rel="noopener noreferrer" className="docs-src-link">
                 {s.title || s.url}
               </a>
+            ) : s.via === "image" && shotOf(s.name) ? (
+              <a href={imageUrl(shotOf(s.name)!.id)} target="_blank" rel="noopener noreferrer" className="docs-src-link docs-src-shot">
+                {/* eslint-disable-next-line @next/next/no-img-element -- served by the API with its own type */}
+                <img src={imageUrl(shotOf(s.name)!.id)} alt={s.name ?? "ảnh"} loading="lazy" />
+                {s.name}
+              </a>
             ) : (
               <span className="docs-src-link">
                 <Icon name={s.via === "paste" ? "edit" : "file"} size={12} /> {s.name ?? s.title}
@@ -393,7 +458,7 @@ function SourceList({ draft }: { draft: DocDraft }) {
             )}
             <span className="small muted">
               {VIA_LABEL[s.via] ?? s.via}
-              {s.error ? ` · ${s.error}` : s.chars ? ` · ${s.chars.toLocaleString("vi-VN")} ký tự` : ""}
+              {s.error ? ` · ${s.error}` : s.chars ? ` · ${s.chars.toLocaleString("vi-VN")} ký tự` : s.size ? ` · ${fileSize(s.size)}` : ""}
               {s.truncated ? " (đã cắt bớt)" : ""}
             </span>
           </span>
@@ -683,7 +748,7 @@ export function DraftsCard({ drafts, onOpen, onNew }: { drafts?: DraftList; onOp
         <Loading rows={2} />
       ) : !open.length && !done.length ? (
         <p className="muted small" style={{ marginBottom: 0 }}>
-          Dán link (wiki, bài viết, README hay file trên GitLab), tải file lên (Word, PDF, Markdown…) hoặc dán văn bản: AI đọc và viết thành tài liệu theo chuẩn của
+          Dán link (wiki, bài viết, README hay file trên GitLab), tải file lên (Word, PDF, Markdown…), dán ảnh chụp màn hình hoặc văn bản: AI đọc và viết thành tài liệu theo chuẩn của
           dự án, hoặc bổ sung vào tài liệu đang có. Bạn duyệt trước khi lưu.
         </p>
       ) : (

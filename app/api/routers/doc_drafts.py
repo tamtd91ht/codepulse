@@ -11,9 +11,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from rq import Queue
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, undefer
 from starlette.concurrency import run_in_threadpool
 
@@ -37,7 +38,13 @@ from app.assistant import importers
 from app.config import Settings, get_settings
 from app.docs import service as docs
 from app.docs import synthesis
-from app.models import AuditLog, ProjectDocument, ProjectDocumentDraft, User
+from app.models import (
+    AuditLog,
+    ProjectDocument,
+    ProjectDocumentDraft,
+    ProjectDocumentDraftImage,
+    User,
+)
 from app.workers.knowledge_jobs import month_spend_usd
 from app.workers.queues import review_queue
 
@@ -78,6 +85,8 @@ class DraftIn(BaseModel):
     category: Category | None = None  # "new" only (merge / upgrade keep the document's)
     urls: list[str] = Field(default_factory=list, max_length=synthesis.MAX_LINKS * 2)
     files: list[FileIn] = Field(default_factory=list, max_length=synthesis.MAX_LINKS)
+    # Screenshots uploaded with POST /docs/drafts/images, in the order given.
+    image_ids: list[int] = Field(default_factory=list, max_length=synthesis.MAX_LINKS)
     instruction: str | None = Field(default=None, max_length=synthesis.INSTRUCTION_MAX)
 
 
@@ -88,6 +97,13 @@ class ApplyIn(BaseModel):
     summary: str | None = Field(default=None, max_length=300)
     category: Category | None = None  # "new" only
     note: str | None = Field(default=None, max_length=docs.NOTE_MAX)
+
+
+class ImageOut(BaseModel):
+    id: int
+    name: str
+    mime: str
+    size: int
 
 
 class DraftOut(BaseModel):
@@ -108,6 +124,7 @@ class DraftOut(BaseModel):
     result: dict[str, Any] | None
     sources: list[dict[str, Any]] | None
     files: list[dict[str, Any]]  # name, kind, size, chars (not the text)
+    images: list[ImageOut] = []
     model: str | None
     cost_usd: float | None
     applied_version: int | None
@@ -161,6 +178,14 @@ def _out(
                 "chars": len(str(f.get("text") or "")),
             }
             for f in (draft.files or [])
+        ],
+        images=[
+            ImageOut(id=i.id, name=i.name, mime=i.mime, size=i.size)
+            for i in session.scalars(
+                select(ProjectDocumentDraftImage)
+                .where(ProjectDocumentDraftImage.draft_id == draft.id)
+                .order_by(ProjectDocumentDraftImage.position, ProjectDocumentDraftImage.id)
+            )
         ],
         model=draft.model,
         cost_usd=draft.cost_usd,
@@ -324,7 +349,7 @@ def create_draft(
 ) -> DraftOut:
     bp = docs.project_for(session, principal, body.business_project_id, edit=True)
     try:
-        urls = synthesis.clean_urls(body.urls, files=len(body.files))
+        urls = synthesis.clean_urls(body.urls, files=len(body.files) + len(body.image_ids))
     except synthesis.LinkError as exc:
         raise HTTPException(422, str(exc)) from None
     kinds = (*importers.DOCUMENT_KINDS, synthesis.PASTE_KIND)
@@ -363,6 +388,7 @@ def create_draft(
     )
     session.add(draft)
     session.flush()
+    _attach(session, principal, draft, body.image_ids)
     audit(
         session,
         principal.user_id,
@@ -453,12 +479,15 @@ def apply_draft(
         "model": draft.model,
     }
     pasted = sum(1 for f in files if f["via"] == "paste")
+    shots = sum(1 for f in files if f["via"] == "image")
+    uploaded = len(files) - pasted - shots
     what = " và ".join(
         x
         for x in (
             f"{len(links)} link" if links else "",
-            f"{len(files) - pasted} file" if len(files) > pasted else "",
+            f"{uploaded} file" if uploaded else "",
             f"{pasted} văn bản dán" if pasted else "",
+            f"{shots} ảnh" if shots else "",
         )
         if x
     )
@@ -500,6 +529,10 @@ def apply_draft(
     )
     draft.status = "applied"
     draft.applied_version = version.number
+    # The screenshots served their purpose: the version keeps their names only.
+    session.execute(
+        delete(ProjectDocumentDraftImage).where(ProjectDocumentDraftImage.draft_id == draft.id)
+    )
     audit(
         session,
         principal.user_id,
@@ -522,6 +555,146 @@ def discard_draft(draft_id: int, principal: CurrentPrincipal, session: SessionDe
     draft.status = "discarded"
     draft.body = None
     draft.files = None  # the uploaded text goes with the draft
+    session.execute(
+        delete(ProjectDocumentDraftImage).where(ProjectDocumentDraftImage.draft_id == draft.id)
+    )
     draft.finished_at = draft.finished_at or datetime.now(UTC)
     audit(session, principal.user_id, "doc.synthesize.discard", f"doc_draft:{draft.id}")
+    session.commit()
+
+
+# -- screenshots (docs/specs/29 §12.10) -----------------------------------------------------------
+
+
+def _attach(
+    session: Session, principal: Principal, draft: ProjectDocumentDraft, ids: list[int]
+) -> None:
+    """Hang the screenshots one uploaded for this dự án on the new draft, in the order given."""
+    if not ids:
+        return
+    if len(set(ids)) != len(ids):
+        raise HTTPException(422, "một ảnh được gửi hai lần")
+    rows = {
+        i.id: i
+        for i in session.scalars(
+            select(ProjectDocumentDraftImage)
+            .where(ProjectDocumentDraftImage.id.in_(ids))
+            .with_for_update()
+        )
+    }
+    for position, image_id in enumerate(ids):
+        row = rows.get(image_id)
+        if (
+            row is None
+            or row.draft_id is not None
+            or row.uploaded_by != principal.user_id
+            or row.business_project_id != draft.business_project_id
+        ):
+            raise HTTPException(422, "ảnh không còn: dán lại ảnh")
+        row.draft_id = draft.id
+        row.position = position
+
+
+def _image(session: Session, principal: Principal, image_id: int) -> ProjectDocumentDraftImage:
+    row = session.get(ProjectDocumentDraftImage, image_id)
+    if row is None or not docs.may_view(principal, row.business_project_id):
+        raise HTTPException(404, "image not found")
+    if not docs.may_edit(principal, row.business_project_id):
+        raise HTTPException(403, "bạn không có quyền sửa tài liệu của dự án này")
+    if row.draft_id is None and row.uploaded_by != principal.user_id:
+        raise HTTPException(404, "image not found")  # another person's, not sent yet
+    return row
+
+
+@router.post("/docs/drafts/images", response_model=ImageOut, status_code=201)
+async def upload_image(
+    request: Request,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    business_project_id: int,
+    filename: Annotated[str, Query(max_length=255)] = "",
+) -> ImageOut:
+    """A screenshot (raw bytes as the body: PNG, JPEG, WebP, GIF ≤ 5 MB), kept until it is sent
+    with a draft (a day at most) and then until that draft is applied or dropped."""
+    await run_in_threadpool(docs.project_for, session, principal, business_project_id, True)
+    limit = synthesis.IMAGE_MAX_BYTES
+    await run_in_threadpool(session.commit)
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > limit:
+        raise HTTPException(413, f"ảnh lớn hơn {limit // (1024 * 1024)} MB")
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > limit:
+            raise HTTPException(413, f"ảnh lớn hơn {limit // (1024 * 1024)} MB")
+    mime = synthesis.image_mime(bytes(data))
+    if mime is None:
+        raise HTTPException(422, "chỉ nhận ảnh PNG, JPEG, WebP, GIF")
+
+    def store() -> ImageOut:
+        docs.project_for(session, principal, business_project_id, edit=True)
+        now = datetime.now(UTC)
+        session.get(User, principal.user_id, with_for_update=True)
+        # One's own images never sent with a draft go after a day.
+        session.execute(
+            delete(ProjectDocumentDraftImage).where(
+                ProjectDocumentDraftImage.uploaded_by == principal.user_id,
+                ProjectDocumentDraftImage.draft_id.is_(None),
+                ProjectDocumentDraftImage.created_at < now - synthesis.STAGED_KEEP,
+            )
+        )
+        staged = session.scalar(
+            select(func.count())
+            .select_from(ProjectDocumentDraftImage)
+            .where(
+                ProjectDocumentDraftImage.uploaded_by == principal.user_id,
+                ProjectDocumentDraftImage.draft_id.is_(None),
+            )
+        )
+        if int(staged or 0) >= synthesis.STAGED_PER_USER:
+            raise HTTPException(429, "quá nhiều ảnh chưa gửi: gửi yêu cầu hoặc bỏ bớt ảnh")
+        raw = filename.replace("\\", "/").rsplit("/", 1)[-1]
+        name = " ".join("".join(ch for ch in raw if ch.isprintable()).split())[:120]
+        number = int(staged or 0) + 1
+        row = ProjectDocumentDraftImage(
+            business_project_id=business_project_id,
+            uploaded_by=principal.user_id,
+            name=name or f"Ảnh chụp {now:%H%M%S}-{number}",
+            mime=mime,
+            size=len(data),
+            data=bytes(data),
+            created_at=now,
+        )
+        session.add(row)
+        session.commit()
+        return ImageOut(id=row.id, name=row.name, mime=row.mime, size=row.size)
+
+    return await run_in_threadpool(store)
+
+
+@router.get("/docs/drafts/images/{image_id}")
+def get_image(image_id: int, principal: CurrentPrincipal, session: SessionDep) -> Response:
+    """The screenshot itself (its type checked when uploaded), for the form and the review."""
+    row = _image(session, principal, image_id)
+    data = session.scalar(
+        select(ProjectDocumentDraftImage.data).where(ProjectDocumentDraftImage.id == row.id)
+    )
+    return Response(
+        content=data or b"",
+        media_type=row.mime,
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "private, max-age=600",
+        },
+    )
+
+
+@router.delete("/docs/drafts/images/{image_id}", status_code=204)
+def delete_image(image_id: int, principal: CurrentPrincipal, session: SessionDep) -> None:
+    """Take back a screenshot not yet sent with a draft."""
+    row = _image(session, principal, image_id)
+    if row.draft_id is not None:
+        raise HTTPException(409, "ảnh đã gửi cùng bản nháp")
+    session.delete(row)
     session.commit()

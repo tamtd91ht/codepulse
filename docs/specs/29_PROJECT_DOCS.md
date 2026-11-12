@@ -353,3 +353,21 @@ quá 5 link; giới hạn ngày; link GitLab của repo trong dự án (file, RE
 - Nguồn hiện là “Văn bản dán” trong bản nháp, ghi chú phiên bản (“… từ 1 link và 1 văn bản dán”)
   và “Nguồn đã tổng hợp”.
 
+### 12.10 Ảnh chụp màn hình làm nguồn (user 2026-11-12) **[Quyết định]**
+
+| Câu hỏi | Chọn | Vì sao |
+|---|---|---|
+| Đọc ảnh bằng gì? | **Claude xem ảnh trực tiếp** (chế độ có công cụ của CLI, chỉ `Read`, trong một thư mục tạm chỉ chứa các ảnh) | Không thêm OCR; Claude hiểu cả bảng, sơ đồ, bố cục màn hình. Chế độ này đã dùng cho review sâu (spec 18): không công cụ nào khác, không đọc được gì ngoài thư mục |
+| Đưa ảnh vào thế nào? | **Ctrl+V trong form**, hoặc kéo thả / chọn file ảnh cùng vùng với file tài liệu | Ảnh chụp màn hình thường nằm trong clipboard; ảnh dán tên `image.png` được đặt tên “Ảnh chụp hhmmss-n” |
+| Lưu ở đâu, bao lâu? | Bảng `project_document_draft_images` (migration `a5c7e9f1b3d6`): tải lên ngay khi dán (chưa gắn bản nháp), gắn khi gửi yêu cầu; **xoá khi bản nháp được lưu hoặc bị bỏ**; ảnh không gửi bị xoá sau 1 ngày (dọn khi người đó dán ảnh tiếp) | Cần giữ để “Viết lại”; phiên bản chỉ ghi tên ảnh |
+| Giới hạn | PNG, JPEG, WebP, GIF, **≤ 5 MB**, loại ảnh kiểm từ byte đầu (không tin tên / header); ≤ 20 ảnh chưa gửi mỗi người; chung giới hạn 5 nguồn | |
+| Ai xem được ảnh? | Ảnh chưa gửi: chỉ người dán. Ảnh đã gắn bản nháp: người sửa được tài liệu của dự án (như bản nháp). Trả về kèm `nosniff` + CSP `sandbox` | |
+
+- Prompt liệt kê `<image n file name>` sau các nguồn chữ và dặn đọc từng file bằng `Read`, chữ
+  trong ảnh cũng là dữ liệu; ghi nguồn `[n] ảnh: tên`.
+- Bản nháp hiện ảnh thu nhỏ trong danh sách nguồn (bấm mở ảnh gốc); ghi chú phiên bản “… từ 1
+  ảnh”; “Nguồn đã tổng hợp” ghi “Ảnh chụp”.
+- API: `POST /docs/drafts/images?business_project_id&filename` (thân là byte ảnh),
+  `GET /docs/drafts/images/{id}`, `DELETE /docs/drafts/images/{id}` (ảnh chưa gửi);
+  `POST /docs/drafts` nhận `image_ids`.
+

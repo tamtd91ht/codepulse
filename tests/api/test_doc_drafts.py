@@ -206,7 +206,7 @@ def test_failed_links_budget_and_bad_output(
     provider = _writer({"title": "x", "summary": "", "body": "# x", "changes": []})
     assert _run(db_session, draft["id"], provider, pages={}) == "failed"
     got = client.get(f"/api/v1/docs/drafts/{draft['id']}", headers=admin).json()
-    assert "Không đọc được link nào" in got["error"] and "404" in got["error"]
+    assert "Không đọc được nguồn nào" in got["error"] and "404" in got["error"]
     assert provider.prompts == []  # nothing was sent
 
     client.post(f"/api/v1/docs/drafts/{draft['id']}/retry", headers=admin)
@@ -334,7 +334,7 @@ def test_gitlab_links_of_the_projects_repos(
     got = client.get(f"/api/v1/docs/drafts/{draft['id']}", headers=admin).json()
     assert got["sources"][0]["via"] == "gitlab" and got["sources"][0]["error"] is None
     assert "không thuộc dự án" in got["sources"][1]["error"]
-    assert any("1 link không đọc được" in w for w in got["result"]["warnings"])
+    assert any("1 nguồn không đọc được" in w for w in got["result"]["warnings"])
 
 
 def test_page_text_stays_data_and_spend_counts(db_session: Session, world: World) -> None:
@@ -511,3 +511,120 @@ def test_pasted_text_as_a_source(
     doc = client.post(f"/api/v1/docs/drafts/{draft['id']}/apply", json={}, headers=admin).json()
     assert doc["current"]["note"] == "Tạo tài liệu mới từ 1 link và 1 văn bản dán"
     assert {s["via"] for s in doc["sources"]} == {"web", "paste"}
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+
+
+class SeeingProvider(FakeLLMProvider):
+    """Records which files the model could open in its working directory."""
+
+    def __init__(self, answer: dict[str, Any]) -> None:
+        super().__init__(responder=lambda prompt: answer, cost_usd=0.08)
+        self.seen: list[str] = []
+
+    def review_in_repo(self, prompt: ReviewPrompt, workdir: str, **kw: Any) -> Any:
+        import os
+
+        self.seen = sorted(os.listdir(workdir))
+        self.workdir = workdir
+        return super().review_in_repo(prompt, workdir, **kw)
+
+
+def _upload_image(
+    client: TestClient, headers: dict[str, str], bp: int, data: bytes, name: str = ""
+) -> Any:
+    return client.post(
+        "/api/v1/docs/drafts/images",
+        params={"business_project_id": bp, "filename": name},
+        content=data,
+        headers={**headers, "Content-Type": "application/octet-stream"},
+    )
+
+
+def test_screenshots_as_sources(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    import os
+
+    from app.models import ProjectDocumentDraftImage
+
+    bp = world.project.business_project_id
+    assert bp is not None
+    admin = as_user(world.admin)
+    assert _upload_image(client, admin, bp, b"<svg onload=alert(1)>", "x.png").status_code == 422
+    shot = _upload_image(client, admin, bp, PNG, "man-hinh-hoan-tien.png")
+    assert shot.status_code == 201, shot.text
+    image = shot.json()
+    assert image["mime"] == "image/png" and image["name"] == "man-hinh-hoan-tien.png"
+    unnamed = _upload_image(client, admin, bp, PNG).json()
+    assert unnamed["name"].startswith("Ảnh chụp")
+    got = client.get(f"/api/v1/docs/drafts/images/{image['id']}", headers=admin)
+    assert got.status_code == 200 and got.content == PNG
+    assert (
+        got.headers["content-type"] == "image/png"
+        and got.headers["x-content-type-options"] == "nosniff"
+    )
+    # Another editor does not see one's images before they are sent.
+    grant(db_session, world.manager, bp, "manage")
+    db_session.commit()
+    assert (
+        client.get(
+            f"/api/v1/docs/drafts/images/{image['id']}", headers=as_user(world.manager)
+        ).status_code
+        == 404
+    )
+    assert (
+        client.delete(f"/api/v1/docs/drafts/images/{unnamed['id']}", headers=admin).status_code
+        == 204
+    )
+
+    # Too many sources together.
+    many = _ask(
+        client, admin, bp, urls=[f"https://x.org/{i}" for i in range(5)], image_ids=[image["id"]]
+    )
+    assert many.status_code == 422
+    asked = _ask(client, admin, bp, urls=[], image_ids=[image["id"]], category="api")
+    assert asked.status_code == 201, asked.text
+    draft = asked.json()
+    assert draft["images"] == [
+        {"id": image["id"], "name": "man-hinh-hoan-tien.png", "mime": "image/png", "size": len(PNG)}
+    ]
+    # An image goes with one draft only.
+    assert _ask(client, admin, bp, urls=[], image_ids=[image["id"]]).status_code == 422
+
+    provider = SeeingProvider(
+        {
+            "title": "API hoàn tiền",
+            "summary": "",
+            "body": "# API hoàn tiền\n\nNút Hoàn tiền [1].",
+            "changes": [],
+        }
+    )
+    assert _run(db_session, draft["id"], provider) == "ready"
+    assert provider.seen == ["img-1.png"]  # only the screenshot, nothing else
+    assert not os.path.exists(provider.workdir)  # the directory is gone afterwards
+    call = provider.repo_calls[0]
+    assert call["tools"] == ["Read"] and 'file="img-1.png"' in call["prompt"].user
+    assert provider.prompts == []  # the plain call was not used
+    sources = client.get(f"/api/v1/docs/drafts/{draft['id']}", headers=admin).json()["sources"]
+    assert sources == [
+        {
+            "url": None,
+            "name": "man-hinh-hoan-tien.png",
+            "title": "man-hinh-hoan-tien.png",
+            "via": "image",
+            "chars": 0,
+            "size": len(PNG),
+            "error": None,
+        }
+    ]
+
+    doc = client.post(f"/api/v1/docs/drafts/{draft['id']}/apply", json={}, headers=admin).json()
+    assert doc["current"]["note"] == "Tạo tài liệu mới từ 1 ảnh"
+    assert doc["sources"][0]["via"] == "image"
+    db_session.expire_all()
+    left = db_session.scalars(
+        select(ProjectDocumentDraftImage).where(ProjectDocumentDraftImage.draft_id == draft["id"])
+    ).all()
+    assert left == []  # screenshots are not kept once applied

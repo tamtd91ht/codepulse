@@ -168,3 +168,29 @@ class ProjectDocumentDraft(Base):
     requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ProjectDocumentDraftImage(Base):
+    """A screenshot given as a source of Tổng hợp bằng AI (docs/specs/29 §12.10). Uploaded when
+    pasted (draft_id still empty), attached when the draft is asked for, shown to the model
+    through its Read tool; removed when the draft is applied or dropped (the version keeps only
+    its name). One person's images never attached are removed after a day."""
+
+    __tablename__ = "project_document_draft_images"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
+    draft_id: Mapped[int | None] = mapped_column(
+        ForeignKey("project_document_drafts.id", ondelete="CASCADE"), index=True
+    )
+    uploaded_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    name: Mapped[str]
+    mime: Mapped[str]  # image/png, image/jpeg, image/webp, image/gif (checked from the bytes)
+    size: Mapped[int]
+    position: Mapped[int] = mapped_column(server_default="0", default=0)
+    data: Mapped[bytes] = deferred(mapped_column(LargeBinary, nullable=False))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -93,7 +93,8 @@ export interface DraftSource {
   url: string | null;
   name?: string | null;
   title: string | null;
-  via: "web" | "gitlab" | "file" | "paste";
+  via: "web" | "gitlab" | "file" | "paste" | "image";
+  size?: number;
   chars: number;
   truncated?: boolean | null;
   error: string | null;
@@ -128,6 +129,7 @@ export interface DocDraft {
   result: { changes: string[]; gaps: string[]; conflicts: string[]; warnings: string[]; placeholders: number } | null;
   sources: DraftSource[] | null;
   files: { name: string; kind: string; size: number; chars: number }[];
+  images: DraftImage[];
   model: string | null;
   cost_usd: number | null;
   applied_version: number | null;
@@ -136,6 +138,18 @@ export interface DocDraft {
   finished_at: string | null;
   body: string | null;
 }
+
+/** A screenshot uploaded as a source (POST /docs/drafts/images). */
+export interface DraftImage {
+  id: number;
+  name: string;
+  mime: string;
+  size: number;
+}
+
+export const IMAGE_KINDS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
+export const IMAGE_MAX_MB = 5;
+export const imageUrl = (id: number) => `/api/v1/docs/drafts/images/${id}`;
 
 export interface DraftList {
   drafts: DocDraft[];
@@ -149,10 +163,16 @@ export interface DraftList {
 }
 
 /** "2 link, 1 file" of a draft. */
-export function sourceCount(d: { urls: string[]; files?: { kind?: string }[] }): string {
+export function sourceCount(d: { urls: string[]; files?: { kind?: string }[]; images?: unknown[] }): string {
   const pasted = (d.files ?? []).filter((f) => f.kind === PASTE_KIND).length;
   const files = (d.files?.length ?? 0) - pasted;
-  const parts = [d.urls.length ? `${d.urls.length} link` : "", files ? `${files} file` : "", pasted ? `${pasted} văn bản dán` : ""].filter(Boolean);
+  const shots = d.images?.length ?? 0;
+  const parts = [
+    d.urls.length ? `${d.urls.length} link` : "",
+    files ? `${files} file` : "",
+    pasted ? `${pasted} văn bản dán` : "",
+    shots ? `${shots} ảnh` : "",
+  ].filter(Boolean);
   return parts.join(", ") || "0 nguồn";
 }
 
