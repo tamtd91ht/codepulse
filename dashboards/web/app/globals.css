@@ -12619,3 +12619,6 @@ button.tr-chip[aria-pressed="true"]:hover:not(:disabled) {
 .modal:has(.perm-split) {
   max-height: 90vh;
 }
+.tr-save-hint {
+  margin-right: auto;
+}

@@ -979,6 +979,11 @@ function RecordForm({
       if (nextSteps.includes("failed")) setStatus("failed");
       else if (nextSteps.includes("blocked")) setStatus("blocked");
     }
+    // Step n recorded: go straight on to step n+1 (user 2026-11-12).
+    if (s) {
+      const following = document.querySelector<HTMLSelectElement>(`select[data-step="${i + 1}"]`);
+      following?.focus();
+    }
   };
 
   const save = async (goNext: boolean) => {
@@ -1036,7 +1041,7 @@ function RecordForm({
                     </td>
                     {!readOnly && (
                       <td className="tr-step-rec">
-                        <select aria-label={`Trạng thái bước ${i + 1}`} className={stepStatus[i] ? `tr-sel st-${stepStatus[i]}` : undefined} value={stepStatus[i]} onChange={(e) => setStep(i, e.target.value as TestStatus | "")}>
+                        <select data-step={i} aria-label={`Trạng thái bước ${i + 1}`} className={stepStatus[i] ? `tr-sel st-${stepStatus[i]}` : undefined} value={stepStatus[i]} onChange={(e) => setStep(i, e.target.value as TestStatus | "")}>
                           <option value="">—</option>
                           {RESULT_STATUSES.map((st) => (
                             <option key={st} value={st}>
@@ -1061,7 +1066,17 @@ function RecordForm({
         </div>
       )}
       {!readOnly && (
-        <section className="tr-record" aria-label="Ghi kết quả">
+        <section
+          className="tr-record"
+          aria-label="Ghi kết quả"
+          onKeyDown={(e) => {
+            // Ctrl/⌘ + Enter: save and go on to the next test.
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && ready && !busy) {
+              e.preventDefault();
+              void save(hasNext);
+            }
+          }}
+        >
           <h4>Ghi kết quả</h4>
           {error && (
             <Alert tone="error" onClose={() => setError(null)}>
@@ -1092,13 +1107,15 @@ function RecordForm({
             </label>
           </div>
           <div className="adm-form-foot">
+            <span className="small muted tr-save-hint">{hasNext ? "Lưu xong tự mở test kế tiếp · Ctrl+Enter" : "Test cuối của danh sách · Ctrl+Enter"}</span>
             {hasNext && (
-              <button type="button" onClick={() => void save(true)} disabled={busy || !ready}>
-                Lưu &amp; sang test sau
+              <button type="button" className="ghost" onClick={() => void save(false)} disabled={busy || !ready}>
+                Chỉ lưu
               </button>
             )}
-            <button type="button" className="primary" onClick={() => void save(false)} disabled={busy || !ready}>
-              {busy ? "Đang lưu…" : "Lưu kết quả"}
+            {/* Saving moves on to the next test (user 2026-11-12): no closing and reopening. */}
+            <button type="button" className="primary" onClick={() => void save(hasNext)} disabled={busy || !ready}>
+              {busy ? "Đang lưu…" : hasNext ? "Lưu & sang test sau" : "Lưu kết quả"}
             </button>
           </div>
         </section>
