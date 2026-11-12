@@ -115,6 +115,16 @@ class VersionOut(BaseModel):
     meta: dict[str, Any] | None = None
 
 
+class DocSource(BaseModel):
+    """A link a version was written from (Tổng hợp từ link, docs/specs/29 §12)."""
+
+    url: str
+    title: str | None
+    via: str
+    version: int
+    at: str | None
+
+
 class DocDetail(DocItem):
     business_project: str
     body: str
@@ -122,6 +132,8 @@ class DocDetail(DocItem):
     can_edit: bool
     created_at: str | None
     created_by: Person | None
+    # Every link the document was written from, across its versions (newest first).
+    sources: list[DocSource] = []
 
 
 class SearchHit(BaseModel):
@@ -292,7 +304,36 @@ def _detail(session: Session, principal: Principal, doc: ProjectDocument) -> Doc
         can_edit=docs.may_edit(principal, doc.business_project_id),
         created_at=_iso(doc.created_at),
         created_by=people.get(doc.created_by) if doc.created_by else None,
+        sources=_sources(session, doc.id),
     )
+
+
+def _sources(session: Session, doc_id: int) -> list[DocSource]:
+    out: dict[str, DocSource] = {}
+    rows = session.execute(
+        select(
+            ProjectDocumentVersion.number,
+            ProjectDocumentVersion.meta,
+            ProjectDocumentVersion.created_at,
+        )
+        .where(
+            ProjectDocumentVersion.document_id == doc_id,
+            ProjectDocumentVersion.source == "link",
+        )
+        .order_by(ProjectDocumentVersion.number.desc())
+    )
+    for number, meta, at in rows:
+        for link in (meta or {}).get("links") or []:
+            url = str(link.get("url") or "")
+            if url.startswith(("http://", "https://")) and url not in out:
+                out[url] = DocSource(
+                    url=url,
+                    title=link.get("title") or None,
+                    via=str(link.get("via") or "web"),
+                    version=number,
+                    at=_iso(at),
+                )
+    return list(out.values())
 
 
 async def _read_body(request: Request, session: Session) -> bytes:

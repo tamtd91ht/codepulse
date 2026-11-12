@@ -50,7 +50,7 @@ export interface DocProject {
 
 export interface DocVersion {
   number: number;
-  source: "upload" | "editor" | "template" | "restore";
+  source: "upload" | "editor" | "template" | "restore" | "link";
   note: string | null;
   chars: number;
   file_name: string | null;
@@ -59,8 +59,16 @@ export interface DocVersion {
   has_original: boolean;
   created_at: string | null;
   created_by: Person | null;
-  meta: { pages?: number; sheets?: number; plain?: boolean; template?: string } | null;
+  meta: { pages?: number; sheets?: number; plain?: boolean; template?: string; links?: { url: string; title: string | null; via: string }[]; mode?: DraftMode } | null;
   body?: string;
+}
+
+export interface DocSource {
+  url: string;
+  title: string | null;
+  via: "web" | "gitlab" | string;
+  version: number;
+  at: string | null;
 }
 
 export interface DocDetail extends DocItem {
@@ -70,7 +78,63 @@ export interface DocDetail extends DocItem {
   can_edit: boolean;
   created_at: string | null;
   created_by: Person | null;
+  /** Every link the document was written from (Tổng hợp từ link), newest first. */
+  sources: DocSource[];
 }
+
+/* Tổng hợp từ link (docs/specs/29 §12). */
+export type DraftMode = "new" | "merge" | "upgrade";
+export type DraftStatus = "queued" | "fetching" | "writing" | "ready" | "failed" | "applied" | "discarded";
+
+export interface DraftSource {
+  url: string;
+  title: string | null;
+  via: "web" | "gitlab";
+  chars: number;
+  error: string | null;
+}
+
+export interface DocDraft {
+  id: number;
+  business_project_id: number;
+  document_id: number | null;
+  document_title: string | null;
+  mode: DraftMode;
+  category: DocCategory;
+  urls: string[];
+  instruction: string | null;
+  status: DraftStatus;
+  stale: boolean;
+  error: string | null;
+  base_version: number | null;
+  title: string | null;
+  summary: string | null;
+  result: { changes: string[]; gaps: string[]; conflicts: string[]; warnings: string[]; placeholders: number } | null;
+  sources: DraftSource[] | null;
+  model: string | null;
+  cost_usd: number | null;
+  applied_version: number | null;
+  created_at: string | null;
+  created_by: Person | null;
+  finished_at: string | null;
+  body: string | null;
+}
+
+export interface DraftList {
+  drafts: DocDraft[];
+  max_links: number;
+  per_day: number;
+  used_today: number;
+  url_hosts: boolean;
+}
+
+export const MODE_LABEL: Record<DraftMode, string> = {
+  new: "Tạo tài liệu mới",
+  merge: "Bổ sung vào tài liệu",
+  upgrade: "Nâng cấp theo chuẩn",
+};
+
+export const DRAFT_ACTIVE: DraftStatus[] = ["queued", "fetching", "writing"];
 
 export interface DocHit {
   document_id: number;
@@ -116,6 +180,7 @@ export const SOURCE_LABEL: Record<DocVersion["source"], string> = {
   editor: "Sửa trên web",
   template: "Tạo từ mẫu",
   restore: "Khôi phục",
+  link: "Tổng hợp từ link (AI)",
 };
 
 export const KIND_LABEL: Record<string, string> = {

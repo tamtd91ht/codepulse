@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Modal } from "@/components/CriteriaParts";
 import { DocEditor, type EditorStart } from "@/components/DocEditor";
+import { DraftReview, DraftsCard, LinkForm, useDrafts } from "@/components/DocFromLinks";
 import { DocHistory } from "@/components/DocHistory";
 import { DocMarkdown, docOutline, fold, type OutlineItem } from "@/components/DocMarkdown";
 import { Icon, IconButton } from "@/components/icons";
@@ -22,6 +23,8 @@ import {
   type DocProject,
   type DocTemplate,
   type DocVersion,
+  type DraftList,
+  type DraftMode,
   KIND_LABEL,
   readMinutes,
 } from "@/lib/docs";
@@ -80,8 +83,10 @@ export default function DocsPage() {
   const [q, setQ] = useState("");
   const [term, setTerm] = useState("");
   const [archived, setArchived] = useState(false);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<false | "upload" | "template" | "link">(false);
   const [editor, setEditor] = useState<EditorStart | null>(null);
+  // Tổng hợp từ link (docs/specs/29 §12): the draft being reviewed.
+  const [review, setReview] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
 
@@ -122,6 +127,9 @@ export default function DocsPage() {
   const list = useApi<DocList>(projectId ? `/docs?business_project_id=${projectId}${archived ? "&archived=true" : ""}` : null, { keepPreviousData: true });
   const detail = useApi<DocDetail>(where.doc ? `/docs/${where.doc}` : null);
   const old = useApi<DocVersion>(where.doc && where.v && detail.data && where.v !== detail.data.version ? `/docs/${where.doc}/versions/${where.v}` : null);
+  const project = projects.data?.find((p) => p.id === projectId) ?? null;
+  const canEdit = Boolean(list.data?.can_edit ?? project?.can_edit);
+  const drafts = useDrafts(projectId, canEdit);
 
   const refresh = async (doc?: DocDetail) => {
     await Promise.all([list.mutate(), projects.mutate(), doc ? detail.mutate(doc, false) : detail.mutate()]);
@@ -137,9 +145,6 @@ export default function DocsPage() {
       </>
     );
 
-  const project = projects.data?.find((p) => p.id === projectId) ?? null;
-  const canEdit = Boolean(list.data?.can_edit ?? project?.can_edit);
-
   return (
     <>
       <PageHeader
@@ -148,9 +153,14 @@ export default function DocsPage() {
         foldable={false}
         actions={
           canEdit && projectId ? (
-            <button type="button" className="primary" onClick={() => setAdding(true)}>
-              <Icon name="plus" size={14} /> Thêm tài liệu
-            </button>
+            <>
+              <button type="button" onClick={() => setAdding("link")}>
+                <Icon name="link" size={14} /> Tổng hợp từ link
+              </button>
+              <button type="button" className="primary" onClick={() => setAdding("upload")}>
+                <Icon name="plus" size={14} /> Thêm tài liệu
+              </button>
+            </>
           ) : undefined
         }
       />
@@ -218,7 +228,10 @@ export default function DocsPage() {
                 canEdit={canEdit}
                 onOpen={(id) => go({ doc: id, v: null })}
                 onTemplate={(t) => projectId && setEditor({ kind: "new", projectId, title: t.title, category: t.category, body: t.body, template: t.key, summary: t.summary })}
-                onAdd={() => setAdding(true)}
+                onAdd={() => setAdding("upload")}
+                drafts={canEdit ? drafts.data : undefined}
+                onDraft={setReview}
+                onLinks={() => setAdding("link")}
               />
             ) : detail.error ? (
               <Alert tone="error">
@@ -247,6 +260,11 @@ export default function DocsPage() {
                   setMessage(`Đã xoá vĩnh viễn “${title}”.`);
                 }}
                 onVersion={(v) => go({ v })}
+                drafts={canEdit ? drafts.data : undefined}
+                onDraft={(id) => {
+                  void drafts.mutate();
+                  setReview(id);
+                }}
               />
             )}
           </main>
@@ -258,6 +276,14 @@ export default function DocsPage() {
           projectId={projectId}
           projectName={project?.name ?? ""}
           meta={meta.data}
+          start={adding}
+          docs={list.data?.docs ?? []}
+          drafts={drafts.data}
+          onQueued={(id) => {
+            setAdding(false);
+            void drafts.mutate();
+            setReview(id);
+          }}
           existing={list.data?.categories ?? []}
           onClose={() => setAdding(false)}
           onUploaded={async (n, last) => {
@@ -275,6 +301,19 @@ export default function DocsPage() {
           onBlank={() => {
             setAdding(false);
             setEditor({ kind: "new", projectId, title: "", category: "other", body: "# Tiêu đề\n\n" });
+          }}
+        />
+      )}
+      {review && (
+        <DraftReview
+          draftId={review}
+          onClose={() => setReview(null)}
+          onChanged={() => void drafts.mutate()}
+          onApplied={async (doc, draft) => {
+            setReview(null);
+            go({ project: doc.business_project_id, doc: doc.id, v: null });
+            await Promise.all([refresh(doc), drafts.mutate()]);
+            setMessage(draft.mode === "new" ? `Đã tạo “${doc.title}” từ ${draft.urls.length} link.` : `Đã lưu phiên bản ${doc.version} (bổ sung từ link).`);
           }}
         />
       )}
@@ -513,6 +552,9 @@ function ProjectHome({
   onOpen,
   onTemplate,
   onAdd,
+  drafts,
+  onDraft,
+  onLinks,
 }: {
   list?: DocList;
   loading: boolean;
@@ -521,6 +563,9 @@ function ProjectHome({
   onOpen: (id: number) => void;
   onTemplate: (t: DocTemplate) => void;
   onAdd: () => void;
+  drafts?: DraftList;
+  onDraft: (id: number) => void;
+  onLinks: () => void;
 }) {
   if (loading || !list) return <DocSkeleton />;
   const docs = list.docs;
@@ -555,6 +600,8 @@ function ProjectHome({
           </div>
         </div>
       </div>
+
+      {canEdit && <DraftsCard drafts={drafts} onOpen={onDraft} onNew={onLinks} />}
 
       {docs.length === 0 ? (
         <div className="card docs-doc">
@@ -678,6 +725,8 @@ function DocView({
   onChanged,
   onDeleted,
   onVersion,
+  drafts,
+  onDraft,
 }: {
   doc: DocDetail;
   old: DocVersion | null;
@@ -688,6 +737,8 @@ function DocView({
   onChanged: (doc?: DocDetail, message?: string) => Promise<void>;
   onDeleted: (title: string) => Promise<void>;
   onVersion: (v: number | null) => void;
+  drafts?: DraftList;
+  onDraft: (id: number) => void;
 }) {
   const shown = old ?? doc.current;
   const body = old?.body ?? doc.body;
@@ -699,6 +750,8 @@ function DocView({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [replacing, setReplacing] = useState<UploadItem[]>([]);
   const [find, setFind] = useState(false);
+  const [fromLinks, setFromLinks] = useState<DraftMode | null>(null);
+  const waiting = (drafts?.drafts ?? []).filter((d) => d.document_id === doc.id && d.mode !== "new" && ["queued", "fetching", "writing", "ready"].includes(d.status));
   // The document's own first "# Title" repeats the page title: not shown twice.
   const outline = useMemo(() => docOutline(body).filter((o, i) => !(i === 0 && o.level === 1 && fold(o.text) === fold(doc.title))), [body, doc.title]);
   const isPdf = shown.file_kind === ".pdf" && shown.has_original;
@@ -773,6 +826,9 @@ function DocView({
                 <IconButton icon="pin" label={doc.pinned ? "Bỏ ghim" : "Ghim lên đầu"} aria-pressed={doc.pinned} disabled={busy} onClick={() => void act(() => api.patch(`/docs/${doc.id}`, { pinned: !doc.pinned }))} />
                 <IconButton icon="settings" label="Đổi tên, nhóm" onClick={() => setRenaming(true)} />
                 <UploadButton disabled={busy} onFiles={(f) => void newVersion(f)} />
+                <button type="button" className="sm" onClick={() => setFromLinks("merge")} disabled={busy || Boolean(old)} title="AI đọc link và bổ sung / nâng cấp tài liệu này; bạn duyệt trước khi lưu">
+                  <Icon name="link" size={14} /> Bổ sung từ link
+                </button>
                 <button type="button" className="sm" onClick={onEdit} disabled={busy || Boolean(old)}>
                   <Icon name="edit" size={14} /> Sửa
                 </button>
@@ -819,6 +875,16 @@ function DocView({
             )}
           </Alert>
         )}
+        {!old &&
+          waiting.map((d) => (
+            <Alert key={d.id} tone="info">
+              {d.status === "ready" ? "Có bản nháp" : "Đang viết bản nháp"} {d.mode === "merge" ? "bổ sung" : "nâng cấp"} tài liệu này từ {d.urls.length} link
+              {d.created_by ? ` (${d.created_by.name})` : ""}.{" "}
+              <button type="button" className="link sm" onClick={() => onDraft(d.id)}>
+                {d.status === "ready" ? "Xem và duyệt" : "Xem tiến độ"}
+              </button>
+            </Alert>
+          ))}
         {doc.stale && !old && (
           <Alert tone="info">
             Tài liệu chưa được cập nhật hơn 6 tháng: có thể không còn đúng với hệ thống hiện tại.{doc.can_edit ? " Xem lại và lưu phiên bản mới nếu cần." : ""}
@@ -864,6 +930,24 @@ function DocView({
         ) : (
           <DocMarkdown text={body} term={term} dropTitle={doc.title} />
         )}
+        {!old && doc.sources.length > 0 && (
+          <section className="docs-sources" aria-labelledby="doc-sources">
+            <h2 id="doc-sources">Nguồn đã tổng hợp</h2>
+            <ol>
+              {doc.sources.map((s) => (
+                <li key={s.url}>
+                  <a href={s.url} target="_blank" rel="noopener noreferrer">
+                    {s.title || s.url}
+                  </a>{" "}
+                  <span className="muted">
+                    · {s.via === "gitlab" ? "GitLab" : "Web"} · phiên bản {s.version}
+                    {s.at ? ` · ${relative(s.at)}` : ""}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
         {doc.can_edit && !doc.archived && !old && (
           <div className="docs-foot small muted">
             <span>
@@ -891,6 +975,21 @@ function DocView({
             void act(() => api.post<DocDetail>(`/docs/${doc.id}/versions/${n}/restore`), `Đã khôi phục phiên bản ${n} thành phiên bản mới.`);
           }}
         />
+      )}
+      {fromLinks && (
+        <Modal title={`Bổ sung “${doc.title}” từ link`} onClose={() => setFromLinks(null)} width={760}>
+          <LinkForm
+            projectId={doc.business_project_id}
+            docs={[doc]}
+            limits={drafts}
+            preset={{ mode: fromLinks, documentId: doc.id }}
+            onCancel={() => setFromLinks(null)}
+            onQueued={(d) => {
+              setFromLinks(null);
+              onDraft(d.id);
+            }}
+          />
+        </Modal>
       )}
       {renaming && (
         <RenameDoc
@@ -1030,6 +1129,10 @@ function AddDocs({
   projectId,
   projectName,
   meta,
+  start,
+  docs,
+  drafts,
+  onQueued,
   existing,
   onClose,
   onUploaded,
@@ -1039,13 +1142,17 @@ function AddDocs({
   projectId: number;
   projectName: string;
   meta: DocMeta;
+  start: "upload" | "template" | "link";
+  docs: DocItem[];
+  drafts?: DraftList;
+  onQueued: (draftId: number) => void;
   existing: { key: DocCategory; count: number }[];
   onClose: () => void;
   onUploaded: (count: number, lastId: number | null) => Promise<void>;
   onTemplate: (t: DocTemplate) => void;
   onBlank: () => void;
 }) {
-  const [tab, setTab] = useState<"upload" | "template">("upload");
+  const [tab, setTab] = useState<"upload" | "template" | "link">(start);
   const [category, setCategory] = useState<DocCategory>("other");
   const [items, setItems] = useState<UploadItem[]>([]);
   const [busy, setBusy] = useState(false);
@@ -1073,16 +1180,21 @@ function AddDocs({
         </button>
       }
     >
-      <Segmented<"upload" | "template">
+      <Segmented<"upload" | "template" | "link">
         value={tab}
         onChange={setTab}
         label="Cách thêm"
         options={[
           { value: "upload", label: "Tải file lên" },
+          { value: "link", label: "Tổng hợp từ link (AI)" },
           { value: "template", label: "Soạn mới (mẫu / trang trống)" },
         ]}
       />
-      {tab === "upload" ? (
+      {tab === "link" ? (
+        <div style={{ marginTop: 12 }}>
+          <LinkForm projectId={projectId} docs={docs} limits={drafts} onQueued={(d) => onQueued(d.id)} />
+        </div>
+      ) : tab === "upload" ? (
         <div className="adm-form" style={{ marginTop: 12 }}>
           <label className="adm-field">
             <span className="small muted">Xếp vào nhóm (đổi được sau)</span>

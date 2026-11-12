@@ -233,7 +233,7 @@ Giới hạn: file ≤ 20 MB (đọc theo luồng, dừng ngay khi vượt), n�
 - Ảnh trong Word/PDF (trích ảnh, lưu và hiển thị), sơ đồ Mermaid, tô màu cú pháp code.
 - Stetho trả lời từ tài liệu dự án (cần lọc theo quyền xem dự án của người hỏi).
 - Bình luận / góp ý trên tài liệu, nhắc người phụ trách cập nhật tài liệu cũ, chủ sở hữu tài liệu.
-- Đồng bộ từ Confluence / Google Drive / thư mục `docs/` của repo.
+- Đồng bộ từ Confluence / Google Drive / thư mục `docs/` của repo (link đơn lẻ: §12).
 - OCR cho PDF scan.
 
 ## 11. Kiểm thử
@@ -244,3 +244,85 @@ Giới hạn: file ≤ 20 MB (đọc theo luồng, dừng ngay khi vượt), n�
   phiên bản, khôi phục, đổi tên thì tìm theo tên mới, lưu trữ thì không tìm thấy, xoá cần lưu trữ
   trước; audit; mẫu; từ chối file sai loại, PDF hỏng, file rỗng.
 - `tests/permissions/test_catalog.py`: bộ quyền mặc định khớp bản sao trong migration.
+
+## 12. Tổng hợp từ link (AI) — user 2026-11-12 **[Quyết định]**
+
+Yêu cầu: nhập một link, LLM đọc và tổng hợp thành tài liệu cụ thể; có thể bổ sung vào tài liệu
+đang có hoặc nâng cấp nó. Tài liệu có chuẩn riêng, được bổ sung dần từ nhiều nguồn.
+
+### 12.1 Quyết định
+
+| Câu hỏi | Chọn | Vì sao |
+|---|---|---|
+| Kết quả AI ghi thẳng vào tài liệu? | **Không: bản nháp, người duyệt rồi mới lưu** | AI có thể bịa hoặc làm rơi nội dung; tài liệu là nguồn tin cậy của dự án. Bản nháp xem trước, so sánh với bản hiện tại, sửa Markdown, rồi “Lưu thành phiên bản” (nguồn `link`) |
+| "Chuẩn riêng" là gì? | **Mẫu của loại tài liệu** (§7) | Đã có 8 mẫu theo nhóm; AI viết đúng bố cục và tên mục của mẫu. Nhóm "Khác" dùng một khung chung |
+| Các chế độ | **Tạo mới / Bổ sung / Nâng cấp theo chuẩn** | *Bổ sung*: giữ nguyên bố cục và câu chữ, chỉ thêm, không xoá; mâu thuẫn thì giữ câu cũ và thêm khung `> [!WARNING]`. *Nâng cấp*: sắp lại theo mẫu chuẩn, giữ mọi sự thật cũ, gộp nguồn mới |
+| Nhiều nguồn | **≤ 5 link mỗi lần; mỗi phiên bản ghi lại link của nó** | Tài liệu hiện mục “Nguồn đã tổng hợp” gộp link của mọi phiên bản; trong bài AI ghi `[n]` sau câu lấy từ nguồn n và mục “Nguồn tham khảo” cuối bài |
+| Link GitLab nội bộ | **Đọc qua kết nối GitLab nếu repo thuộc chính dự án đó** | README/file/wiki thường nằm ở repo riêng tư. Chỉ repo đang theo dõi, gắn với dự án của tài liệu (token kết nối thấy nhiều hơn người dùng); repo tắt “cho gửi ra LLM ngoài” bị từ chối |
+| Link khác | **Như Stetho** (`importers.from_url`) | Đã chặn SSRF, giới hạn 2 MB/30 giây; máy nội bộ chỉ khi có trong `ASSISTANT_URL_HOSTS`. Trang cần đăng nhập không đọc được → hướng dẫn tải file lên |
+| Chạy ở đâu | **Job nền** trên hàng `reviews_asked` | Gọi LLM mất 1–5 phút; giao diện hiện tiến độ (Xếp hàng → Đọc link → AI đang viết → Sẵn sàng duyệt), đóng cửa sổ vẫn chạy |
+| Chi phí | Kiểm ngân sách LLM tháng trước khi xếp hàng và trước khi gọi; ghi `doc.synthesize.cost` vào audit, cộng vào `month_spend` (`doc_drafts_usd`) | Một ngân sách chung (19 §6) |
+| Giới hạn | **20 lần/người/24 giờ** (tính cả “Viết lại”), **3 bản nháp đang viết** một lúc | Tránh đốt ngân sách; khoá dòng `users` khi đếm để hai tab không vượt |
+| Ghi đè | Bản nháp nhớ `base_version`; lưu khi tài liệu đã có phiên bản mới hơn → **409**, nút “Viết lại” viết trên bản mới nhất | Không lặng lẽ xoá thay đổi của người khác |
+| An toàn prompt | Nội dung trang là dữ liệu: bọc trong `<source>`, ký tự `<`/`>`/`"` của trang được thay bằng ký tự trông giống để không đóng được thẻ; system prompt dặn bỏ qua mọi chỉ dẫn trong nguồn | Đầu ra là Markdown, hiển thị bằng trình dựng không HTML (§6.2) |
+
+### 12.2 Dữ liệu (migration `e3a5b7c9d1f4`)
+
+`project_document_drafts`: dự án, `document_id` (tài liệu bổ sung/nâng cấp; với "new" là tài liệu
+tạo ra khi lưu), `mode`, `category`, `urls`, `instruction`, `status`
+(`queued → fetching → writing → ready | failed`, rồi `applied | discarded`), `error`,
+`base_version`, `title`, `summary`, `body`, `result` (`changes`, `gaps`, `conflicts`, `warnings`,
+`placeholders`), `sources` (mỗi link: `url`, `title`, `via` web/gitlab, `chars`, `error`), `model`,
+`cost_usd`, `applied_version`, `requested_at` (mã lượt chạy: lượt cũ bị coi là chết sau 20 phút
+không ghi đè được lượt mới). Phiên bản có thêm nguồn `link`, `meta.links` (URL bỏ query string).
+
+### 12.3 Kiểm tra đầu ra
+
+- Thân rỗng, quá 400.000 ký tự, không phải JSON → lỗi, cho “Thử lại”.
+- Bọc trong ```` ```markdown ```` thì gỡ ra.
+- Bổ sung/nâng cấp mà ngắn hơn bản hiện tại > 15% → cảnh báo “có thể mất nội dung”.
+- Đếm chỗ `<cần bổ sung: …>` (nguồn không có thông tin mà chuẩn yêu cầu) → nhãn trên bản nháp.
+- Link không đọc được: ghi lý do từng link; còn ít nhất một link đọc được thì vẫn viết và cảnh
+  báo; không link nào đọc được thì dừng, không gọi LLM.
+- Tài liệu hiện tại > 120.000 ký tự không bổ sung/nâng cấp được (tách nhỏ trước).
+
+### 12.4 UI
+
+- Trang chủ dự án: thẻ **Tổng hợp từ link** (người sửa được) liệt kê bản nháp và trạng thái
+  (Đang chờ / Đọc link / AI đang viết / Chờ duyệt / Lỗi / Đã lưu), tự cập nhật khi có bản đang viết.
+- Đầu trang: nút **Tổng hợp từ link** cạnh “Thêm tài liệu”; hộp “Thêm tài liệu” có tab thứ ba
+  **Tổng hợp từ link (AI)**.
+- Trong tài liệu: nút **Bổ sung từ link** (chọn Bổ sung hoặc Nâng cấp); khung báo khi tài liệu có
+  bản nháp đang viết / chờ duyệt; cuối bài mục **Nguồn đã tổng hợp**.
+- Form: ô link (mỗi dòng một link, kiểm ngay http/https và số lượng), 3 thẻ chế độ có giải thích,
+  nhóm tài liệu (chọn mẫu chuẩn) hoặc tài liệu cần bổ sung, yêu cầu thêm, số lần còn lại hôm nay.
+- Duyệt (hộp thoại rộng, nút hành động luôn ở đáy): cảnh báo; tiêu đề, nhóm, mô tả; tab **Xem
+  trước / So sánh với bản hiện tại / Sửa Markdown**; cột phải: AI đã làm, mâu thuẫn cần quyết,
+  nguồn chưa có, danh sách nguồn (link lỗi gạch ngang kèm lý do), chi phí. Nút: Bỏ bản nháp, Viết
+  lại, Tạo tài liệu / Lưu thành phiên bản N.
+
+### 12.5 API (`app/api/routers/doc_drafts.py`, đăng ký trước `project_docs`)
+
+| Phương thức | Đường dẫn | Ghi chú |
+|---|---|---|
+| GET | `/docs/drafts?business_project_id` | bản nháp của dự án (người sửa được), số lần đã dùng |
+| POST | `/docs/drafts` | `mode`, `urls`, `document_id` / `category`, `instruction` → 201, xếp hàng |
+| GET | `/docs/drafts/{id}` | chi tiết + nội dung |
+| POST | `/docs/drafts/{id}/retry` | viết lại từ cùng link (tính vào giới hạn) |
+| POST | `/docs/drafts/{id}/apply` | `body`/`title`/`summary`/`category`/`note` tuỳ chọn → phiên bản mới; 409 nếu tài liệu đã đổi |
+| DELETE | `/docs/drafts/{id}` | bỏ (giữ dòng, xoá nội dung) |
+
+### 12.6 Kiểm thử
+
+`tests/api/test_doc_drafts.py`: tạo mới từ link → chạy job (LLM giả) → duyệt → lưu, nguồn hiện
+trên tài liệu; bổ sung + cảnh báo ngắn hơn + 409 khi có phiên bản mới + viết lại rồi lưu; link
+hỏng / hết ngân sách / đầu ra rỗng; bỏ bản nháp; người chỉ xem bị 403; link sai, có mật khẩu,
+quá 5 link; giới hạn ngày; link GitLab của repo trong dự án (file, README, wiki), repo ngoài dự
+án, repo không theo dõi, repo cấm gửi LLM; nội dung trang không đóng được thẻ nguồn; chi phí vào
+`month_spend`.
+
+### 12.7 Ngoài phạm vi (IDEAS.md)
+
+- Tự động theo dõi link nguồn và đề xuất cập nhật khi trang thay đổi.
+- Đọc Confluence / Google Docs bằng tài khoản kết nối (OAuth).
+- Tổng hợp từ file tải lên (hiện chỉ link) và từ cả thư mục `docs/` của repo.

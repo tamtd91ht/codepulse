@@ -52,6 +52,7 @@ from app.models.permissions import PermissionSet, PermissionSetItem, UserPermiss
 from app.models.project_docs import (
     ProjectDocument,
     ProjectDocumentChunk,
+    ProjectDocumentDraft,
     ProjectDocumentVersion,
 )
 from app.models.review import FindingClosure, FindingDispute, LlmHealth, Review, ReviewFinding
@@ -116,6 +117,7 @@ __all__ = [
     "ProjectCriteriaSet",
     "ProjectDocument",
     "ProjectDocumentChunk",
+    "ProjectDocumentDraft",
     "ProjectDocumentVersion",
     "ProjectGrant",
     "RawGitlab",

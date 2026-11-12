@@ -16,6 +16,7 @@ from sqlalchemy import (
     BigInteger,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     LargeBinary,
@@ -39,7 +40,10 @@ DOC_CATEGORIES = (
     "decision",
     "other",
 )
-VERSION_SOURCES = ("upload", "editor", "template", "restore")
+# "link": written by the LLM from links (docs/specs/29 §12), approved by a person.
+VERSION_SOURCES = ("upload", "editor", "template", "restore", "link")
+DRAFT_MODES = ("new", "merge", "upgrade")
+DRAFT_STATUSES = ("queued", "fetching", "writing", "ready", "failed", "applied", "discarded")
 
 
 class ProjectDocument(TimestampMixin, Base):
@@ -110,3 +114,54 @@ class ProjectDocumentChunk(Base):
     heading: Mapped[str | None]  # "Mục > Mục con" the section sits under
     body: Mapped[str]
     search: Mapped[Any | None] = mapped_column(TSVECTOR().with_variant(String(), "sqlite"))
+
+
+class ProjectDocumentDraft(Base):
+    """Tổng hợp từ link (docs/specs/29 §12): the LLM reads up to MAX_LINKS pages or GitLab files
+    and writes a document to the dự án's standard: a new one, the current one with the new facts
+    added (merge), or the current one rewritten to the standard with every fact kept (upgrade).
+    The result is a draft: nothing reaches the document until a person applies it (as a new
+    version, source "link", the links in its meta)."""
+
+    __tablename__ = "project_document_drafts"
+    __table_args__ = (
+        CheckConstraint(f"mode IN {DRAFT_MODES}", name="mode"),
+        CheckConstraint(f"status IN {DRAFT_STATUSES}", name="status"),
+        CheckConstraint(f"category IN {DOC_CATEGORIES}", name="category"),
+        Index("ix_project_document_drafts_created_by_status", "created_by", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
+    # The document merged into / upgraded; for "new", the one created when applied.
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("project_documents.id", ondelete="CASCADE"), index=True
+    )
+    mode: Mapped[str]
+    category: Mapped[str]
+    urls: Mapped[list[str]] = mapped_column(JSONB)
+    instruction: Mapped[str | None]  # what to focus on, in the requester's words
+    status: Mapped[str] = mapped_column(server_default="queued")
+    error: Mapped[str | None]
+    # The document version the LLM started from (a newer one at apply time is a conflict).
+    base_version: Mapped[int | None]
+    title: Mapped[str | None]
+    summary: Mapped[str | None]
+    body: Mapped[str | None] = deferred(mapped_column(String))
+    # {"changes": [...], "gaps": [...], "conflicts": [...]}: what the LLM says it did.
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # One per link: {"url", "title", "via": "web"|"gitlab", "chars", "error"}.
+    sources: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    model: Mapped[str | None]
+    cost_usd: Mapped[float | None] = mapped_column(Float)
+    applied_version: Mapped[int | None]
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # The job's run token: a run given up as stale and asked again cannot overwrite the new one.
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Who asked for this run (the creator, or whoever asked to write it again): its cost is theirs.
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

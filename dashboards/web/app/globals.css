@@ -10329,3 +10329,313 @@ pre.doc-plain {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
+
+/* Tổng hợp từ link (docs/specs/29 §12) */
+button.ghost.danger {
+  background: none;
+  border-color: transparent;
+  color: var(--danger);
+}
+button.ghost.danger:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: transparent;
+  filter: none;
+}
+.docs-link-form textarea {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.docs-mode-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.docs-mode-card {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+}
+.docs-mode-card input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.docs-mode-card strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.docs-mode-card:hover {
+  border-color: var(--accent);
+}
+.docs-mode-card.active {
+  border-color: var(--accent);
+  background: var(--info-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.docs-mode-card.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.docs-mode-card:focus-within {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.docs-draft-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 20px;
+  align-items: start;
+}
+.docs-draft-side {
+  position: sticky;
+  top: 0;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  min-width: 0;
+}
+.docs-draft-side h4,
+.docs-draft-notes h4 {
+  margin: 0;
+  font-size: 13px;
+}
+.docs-draft-side p {
+  margin: 0;
+}
+.docs-draft-notes ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  display: grid;
+  gap: 2px;
+}
+.docs-draft-notes.warn h4 {
+  color: var(--warning);
+}
+.docs-draft-sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.docs-draft-sources li {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+.docs-draft-sources li > span:last-child {
+  display: grid;
+}
+.docs-draft-sources li.bad .docs-src-link {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.docs-src-n {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+}
+.docs-draft-sources li.bad .docs-src-n {
+  color: var(--danger);
+}
+.docs-src-link {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.docs-draft-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.docs-draft-fields .docs-draft-summary {
+  grid-column: 1 / -1;
+}
+.docs-draft-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.docs-draft-preview {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  max-height: 52vh;
+  overflow: auto;
+}
+.docs-draft-grid .doc-diff pre {
+  max-height: 52vh;
+}
+.docs-draft-editor {
+  width: 100%;
+  min-height: 52vh;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.docs-draft-progress {
+  display: grid;
+  gap: 12px;
+}
+.docs-steps {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0;
+  padding: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.docs-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.docs-steps li.done {
+  color: var(--good);
+}
+.docs-steps li.now {
+  color: var(--text);
+  font-weight: 600;
+}
+.docs-step-dot {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  font-size: 11px;
+}
+.docs-steps li.done .docs-step-dot {
+  border-color: var(--good);
+}
+.docs-steps li.now .docs-step-dot {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--info-soft);
+  animation: docs-pulse 1.6s ease-in-out infinite;
+}
+@keyframes docs-pulse {
+  50% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .docs-steps li.now .docs-step-dot {
+    animation: none;
+  }
+}
+.docs-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.docs-card-head h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.docs-drafts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.docs-draft-row {
+  width: 100%;
+  height: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  text-align: left;
+  white-space: normal;
+  font-weight: 400;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.docs-draft-row:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--info-soft);
+}
+.docs-draft-row-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.docs-sources {
+  margin-top: 28px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.docs-sources h2 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+.docs-sources ol {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+.docs-sources a {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 900px) {
+  .docs-mode-cards,
+  .docs-draft-grid,
+  .docs-draft-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .docs-draft-side {
+    position: static;
+  }
+}
+/* The review is long: its actions stay in view at the bottom of the dialog. */
+.modal:has(.docs-draft-grid) .crit-modal-foot {
+  position: sticky;
+  bottom: -24px;
+  margin: 16px -24px -24px;
+  padding: 12px 24px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  z-index: 1;
+}
+.modal:has(.docs-draft-grid) .docs-draft-side {
+  top: 0;
+}
+.docs-draft-tabs .segmented {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.docs-draft-tabs .segmented button {
+  flex: none;
+}

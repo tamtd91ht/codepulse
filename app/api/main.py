@@ -29,6 +29,7 @@ from app.api.routers import (
     criteria,
     criteria_rescore,
     disputes,
+    doc_drafts,
     dpi,
     evaluation,
     evidence,
@@ -132,6 +133,8 @@ for api_router in (
     tokens.router,
     mcp_report.router,
     rule_files.router,
+    # Before project_docs: /docs/drafts must not be read as /docs/{doc_id}.
+    doc_drafts.router,
     project_docs.router,
 ):
     app.include_router(api_router, prefix="/api/v1")

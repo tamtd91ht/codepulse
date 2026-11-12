@@ -28,6 +28,34 @@ function hunks(lines: DiffLine[], context = 3): (DiffLine | { op: "gap"; count: 
   return out;
 }
 
+/** The changed lines between two texts, unchanged runs folded. */
+export function TextDiff({ before, after, label, against }: { before: string; after: string; label: string; against: string }) {
+  const lines = useMemo(() => lineDiff(before, after), [before, after]);
+  const { added, removed } = diffStats(lines);
+  if (!added && !removed) return <p className="muted small">Nội dung giống hệt {against}.</p>;
+  return (
+    <div className="doc-diff" aria-label={label}>
+      <div className="small doc-diff-stats">
+        <span className="good">+{added}</span> <span className="bad-text">−{removed}</span> dòng so với {against}
+      </div>
+      <pre>
+        {hunks(lines).map((l, i) =>
+          l.op === "gap" ? (
+            <div key={i} className="doc-diff-gap">
+              … {l.count} dòng không đổi
+            </div>
+          ) : (
+            <div key={i} className={`doc-diff-line ${l.op}`}>
+              <span aria-hidden="true">{l.op === "add" ? "+" : l.op === "del" ? "−" : " "}</span>
+              {l.text || " "}
+            </div>
+          ),
+        )}
+      </pre>
+    </div>
+  );
+}
+
 function Diff({ docId, number }: { docId: number; number: number }) {
   const now = useApi<DocVersion>(`/docs/${docId}/versions/${number}`);
   const before = useApi<DocVersion>(number > 1 ? `/docs/${docId}/versions/${number - 1}` : null);
