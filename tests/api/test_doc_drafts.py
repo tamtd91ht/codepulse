@@ -479,3 +479,35 @@ def test_uploaded_files_as_sources(
     db_session.expire_all()
     row = db_session.get(ProjectDocumentDraft, other["id"])
     assert row is not None and row.files is None
+
+
+def test_pasted_text_as_a_source(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    bp = world.project.business_project_id
+    assert bp is not None
+    admin = as_user(world.admin)
+    paste = {
+        "name": "Ghi chú họp 12/11",
+        "kind": "paste",
+        "size": 60,
+        "text": "Chốt: hoàn tiền một phần tối đa 3 lần mỗi đơn.",
+        "truncated": False,
+    }
+    bad_kind = _ask(client, admin, bp, urls=[], files=[{**paste, "kind": ".exe"}])
+    assert bad_kind.status_code == 422
+    twice = _ask(client, admin, bp, urls=[], files=[paste, paste])
+    assert twice.status_code == 422 and "trùng tên" in twice.json()["detail"]
+
+    draft = _ask(client, admin, bp, urls=["https://wiki.example.org/a"], files=[paste]).json()
+    provider = _writer(
+        {"title": "Hoàn tiền", "summary": "", "body": "# Hoàn tiền\n\n3 lần [1].", "changes": []}
+    )
+    assert _run(db_session, draft["id"], provider, {"https://wiki.example.org/a": PAGE}) == "ready"
+    assert 'file="Ghi chú họp 12/11"' in provider.prompts[0].user
+    got = client.get(f"/api/v1/docs/drafts/{draft['id']}", headers=admin).json()
+    assert got["sources"][0]["via"] == "paste" and got["sources"][1]["via"] == "web"
+
+    doc = client.post(f"/api/v1/docs/drafts/{draft['id']}/apply", json={}, headers=admin).json()
+    assert doc["current"]["note"] == "Tạo tài liệu mới từ 1 link và 1 văn bản dán"
+    assert {s["via"] for s in doc["sources"]} == {"web", "paste"}

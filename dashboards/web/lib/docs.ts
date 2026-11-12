@@ -93,7 +93,7 @@ export interface DraftSource {
   url: string | null;
   name?: string | null;
   title: string | null;
-  via: "web" | "gitlab" | "file";
+  via: "web" | "gitlab" | "file" | "paste";
   chars: number;
   truncated?: boolean | null;
   error: string | null;
@@ -149,10 +149,15 @@ export interface DraftList {
 }
 
 /** "2 link, 1 file" of a draft. */
-export function sourceCount(d: { urls: string[]; files?: unknown[] }): string {
-  const parts = [d.urls.length ? `${d.urls.length} link` : "", d.files?.length ? `${d.files.length} file` : ""].filter(Boolean);
+export function sourceCount(d: { urls: string[]; files?: { kind?: string }[] }): string {
+  const pasted = (d.files ?? []).filter((f) => f.kind === PASTE_KIND).length;
+  const files = (d.files?.length ?? 0) - pasted;
+  const parts = [d.urls.length ? `${d.urls.length} link` : "", files ? `${files} file` : "", pasted ? `${pasted} văn bản dán` : ""].filter(Boolean);
   return parts.join(", ") || "0 nguồn";
 }
+
+/** The kind of a source pasted as text (sent with the files, no file behind it). */
+export const PASTE_KIND = "paste";
 
 export const MODE_LABEL: Record<DraftMode, string> = {
   new: "Tạo tài liệu mới",

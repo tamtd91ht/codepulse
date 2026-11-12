@@ -10676,3 +10676,32 @@ button.ghost.danger:hover:not(:disabled) {
 .crit-modal-body > .segmented button {
   flex: none;
 }
+
+.docs-paste {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.docs-paste textarea {
+  width: 100%;
+  min-height: 120px;
+}
+.docs-paste-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.docs-paste-open {
+  justify-self: start;
+  margin-top: 8px;
+}
+.docs-paste-open {
+  align-self: flex-start;
+  width: auto;
+}

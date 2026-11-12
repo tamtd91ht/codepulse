@@ -108,6 +108,6 @@
 - [x] 10.3 Tệp quy tắc dự án: bảng `review_rule_files`, nhập .md/.txt/.doc/.docx nhiều file, đưa vào prompt như nguồn riêng; đọc .doc bằng thư viện chuẩn (17 §1b)
 - [x] 10.4 Tài liệu dự án: model + migration + quyền `docs.view`/`docs.edit`, chuyển đổi 7 loại file (thêm .pdf bằng pypdf), phiên bản, tìm toàn văn không dấu, mẫu (29 §3–§9)
 - [x] 10.5 Màn `/docs`: cổng 3 cột, tải nhiều file, trình soạn song song, lịch sử + so sánh + khôi phục, xem PDF gốc, độ đầy đủ, in (29 §5–§6)
-- [x] 10.6 Tổng hợp từ link (AI): bản nháp tạo mới / bổ sung / nâng cấp theo mẫu chuẩn, link web và GitLab của repo trong dự án, duyệt + so sánh + sửa rồi lưu phiên bản nguồn `link`, nguồn của tài liệu (29 §12); nguồn là file tải lên (29 §12.8)
+- [x] 10.6 Tổng hợp từ link (AI): bản nháp tạo mới / bổ sung / nâng cấp theo mẫu chuẩn, link web và GitLab của repo trong dự án, duyệt + so sánh + sửa rồi lưu phiên bản nguồn `link`, nguồn của tài liệu (29 §12); nguồn là file tải lên (29 §12.8) hoặc văn bản dán (29 §12.9)
 - [ ] **Demo**: push 2 commit → `/review-push` trong Claude Code → thông báo review xong trên web; nhập 3 file quy tắc vào một dự án → review sau ghi "Tệp quy tắc …" trong Căn cứ review; tải 1 Word + 1 PDF vào Tài liệu dự án, tìm không dấu, sửa và khôi phục phiên bản; dán 1 link wiki + 1 link README GitLab → bản nháp → so sánh → lưu
 

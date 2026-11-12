@@ -338,7 +338,12 @@ def _sources(session: Session, doc_id: int) -> list[DocSource]:
             name = str(f.get("name") or "")
             if name and f"file:{name}" not in out:
                 out[f"file:{name}"] = DocSource(
-                    url=None, name=name, title=name, via="file", version=number, at=_iso(at)
+                    url=None,
+                    name=name,
+                    title=name,
+                    via=str(f.get("via") or "file"),
+                    version=number,
+                    at=_iso(at),
                 )
     return list(out.values())
 

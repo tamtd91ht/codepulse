@@ -342,3 +342,14 @@ quá 5 link; giới hạn ngày; link GitLab của repo trong dự án (file, RE
 - Trong prompt, nguồn là file mang `file="tên"` thay cho `url`; mục “Nguồn tham khảo” ghi tên file.
 - Phiên bản ghi `meta.files`; mục “Nguồn đã tổng hợp” của tài liệu liệt kê cả file (không có link).
 - Tên nút đổi thành **Tổng hợp bằng AI** / **Bổ sung bằng AI** (nguồn không chỉ là link).
+
+### 12.9 Dán văn bản làm nguồn (user 2026-11-12) **[Quyết định]**
+
+- Nút **Dán văn bản làm nguồn** dưới vùng kéo thả: ô tên (mặc định “Văn bản dán n”) + ô nội dung;
+  “Thêm làm nguồn” đưa nó vào cùng danh sách nguồn với file. Dùng cho ghi chú họp, trao đổi trên
+  chat, nội dung trang cần đăng nhập mà máy chủ không đọc được.
+- Gửi kèm như một file (`files[]`, `kind = "paste"`), không cần bước đọc file; cắt ở 60.000 ký
+  tự như file; tên các nguồn không được trùng (422). Chung giới hạn 5 nguồn với link và file.
+- Nguồn hiện là “Văn bản dán” trong bản nháp, ghi chú phiên bản (“… từ 1 link và 1 văn bản dán”)
+  và “Nguồn đã tổng hợp”.
+

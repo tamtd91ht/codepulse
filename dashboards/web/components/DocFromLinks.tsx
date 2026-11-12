@@ -22,6 +22,7 @@ import {
   type DraftMode,
   type ExtractedFile,
   MODE_LABEL,
+  PASTE_KIND,
   placeholders,
   sourceCount,
 } from "@/lib/docs";
@@ -89,6 +90,10 @@ export function LinkForm({
   const [error, setError] = useState<string | null>(null);
   const [files, setFiles] = useState<ExtractedFile[]>([]);
   const [reading, setReading] = useState<UploadItem[]>([]);
+  // A text pasted as a source (meeting notes, a chat thread, a page that needs a login).
+  const [pasting, setPasting] = useState(false);
+  const [pasteName, setPasteName] = useState("");
+  const [pasteText, setPasteText] = useState("");
   const max = limits?.max_links ?? 5;
   const kinds = limits?.file_kinds ?? [".md", ".markdown", ".txt", ".doc", ".docx", ".xlsx", ".pdf"];
   const maxMb = limits?.max_file_mb ?? 20;
@@ -99,6 +104,30 @@ export function LinkForm({
   const left = limits ? Math.max(0, limits.per_day - limits.used_today) : null;
   const uploading = reading.some((r) => r.state === "waiting" || r.state === "uploading");
   const ready = total > 0 && total <= max && !bad.length && !uploading && (mode === "new" || documentId !== "") && left !== 0;
+
+  const sourceChars = limits?.source_chars ?? 60_000;
+  const pasteDefault = `Văn bản dán ${files.filter((f) => f.kind === PASTE_KIND).length + 1}`;
+  const pasteClash = files.some((f) => f.name === (pasteName.trim() || pasteDefault));
+  const addPaste = () => {
+    const text = pasteText.trim();
+    if (!text) return;
+    const name = pasteName.trim() || pasteDefault;
+    setFiles((old) => [
+      ...old,
+      {
+        name,
+        kind: PASTE_KIND,
+        size: new Blob([text]).size,
+        chars: text.length,
+        truncated: text.length > sourceChars,
+        text: text.slice(0, sourceChars),
+        pages: null,
+      },
+    ]);
+    setPasteName("");
+    setPasteText("");
+    setPasting(false);
+  };
 
   // Each file is read on the server now (its text shown here); the draft keeps that text only.
   const addFiles = async (picked: File[]) => {
@@ -138,7 +167,7 @@ export function LinkForm({
     <div className="adm-form docs-link-form">
       <label className="adm-field">
         <span className="small muted">
-          Link nguồn (mỗi dòng một link) · link và file tối đa {max} nguồn
+          Link nguồn (mỗi dòng một link) · link, file và văn bản dán: tối đa {max} nguồn
         </span>
         <textarea
           rows={3}
@@ -158,7 +187,7 @@ export function LinkForm({
       </label>
 
       <div className="adm-field">
-        <span className="small muted">File nguồn (không bắt buộc)</span>
+        <span className="small muted">File hoặc văn bản nguồn (không bắt buộc)</span>
         <UploadDrop
           kinds={kinds}
           maxMb={maxMb}
@@ -169,14 +198,54 @@ export function LinkForm({
           hint={`Word, PDF, Markdown, Text, Excel · tối đa ${maxMb} MB mỗi file · chỉ phần chữ được gửi cho AI, file không được lưu`}
         />
         <UploadList items={reading} onClear={() => setReading([])} />
+        {pasting ? (
+          <div className="docs-paste">
+            <input
+              value={pasteName}
+              onChange={(e) => setPasteName(e.target.value)}
+              maxLength={120}
+              placeholder={`Tên nguồn, ví dụ: Ghi chú họp 12/11 (mặc định “${pasteDefault}”)`}
+              aria-label="Tên của văn bản dán"
+              disabled={busy}
+            />
+            <textarea
+              rows={6}
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              placeholder="Dán nội dung vào đây: ghi chú họp, trao đổi trên chat, nội dung trang cần đăng nhập…"
+              aria-label="Nội dung văn bản dán"
+              autoFocus
+              disabled={busy}
+            />
+            <div className="docs-paste-foot">
+              <span className={`small ${pasteText.length > sourceChars ? "bad-text" : "muted"}`}>
+                {pasteText.trim().length.toLocaleString("vi-VN")} ký tự
+                {pasteText.length > sourceChars ? ` · AI chỉ đọc ${sourceChars.toLocaleString("vi-VN")} ký tự đầu` : ""}
+                {pasteClash ? " · trùng tên một nguồn khác" : ""}
+              </span>
+              <span className="toolbar">
+                <button type="button" className="ghost sm" onClick={() => setPasting(false)} disabled={busy}>
+                  Huỷ
+                </button>
+                <button type="button" className="sm" onClick={addPaste} disabled={busy || !pasteText.trim() || pasteClash || total >= max}>
+                  <Icon name="plus" size={14} /> Thêm làm nguồn
+                </button>
+              </span>
+            </div>
+          </div>
+        ) : (
+          <button type="button" className="sm docs-paste-open" onClick={() => setPasting(true)} disabled={busy || total >= max}>
+            <Icon name="edit" size={14} /> Dán văn bản làm nguồn
+          </button>
+        )}
         {files.length > 0 && (
-          <ul className="docs-src-files" aria-label="File nguồn đã đọc">
+          <ul className="docs-src-files" aria-label="File và văn bản nguồn">
             {files.map((f) => (
               <li key={f.name}>
-                <Icon name="file" size={14} />
+                <Icon name={f.kind === PASTE_KIND ? "edit" : "file"} size={14} />
                 <span className="docs-src-file-name">{f.name}</span>
                 <span className="small muted">
-                  {fileSize(f.size)} · {f.chars.toLocaleString("vi-VN")} ký tự{f.pages ? ` · ${f.pages} trang` : ""}
+                  {f.kind === PASTE_KIND ? "Văn bản dán" : fileSize(f.size)} · {f.chars.toLocaleString("vi-VN")} ký tự{f.pages ? ` · ${f.pages} trang` : ""}
                   {f.truncated ? ` · AI đọc ${f.text.length.toLocaleString("vi-VN")} ký tự đầu` : ""}
                 </span>
                 <IconButton icon="close" label={`Bỏ ${f.name}`} size={14} onClick={() => setFiles((old) => old.filter((x) => x.name !== f.name))} disabled={busy} />
@@ -186,7 +255,8 @@ export function LinkForm({
         )}
         <span className="small muted">
           {total} / {max} nguồn{urls.length ? ` · ${urls.length} link` : ""}
-          {files.length ? ` · ${files.length} file` : ""}
+          {files.some((f) => f.kind !== PASTE_KIND) ? ` · ${files.filter((f) => f.kind !== PASTE_KIND).length} file` : ""}
+          {files.some((f) => f.kind === PASTE_KIND) ? ` · ${files.filter((f) => f.kind === PASTE_KIND).length} văn bản dán` : ""}
         </span>
       </div>
 
@@ -239,7 +309,7 @@ export function LinkForm({
       </label>
 
       <p className="muted small" style={{ margin: 0 }}>
-        Nội dung các link và file được gửi tới AI (Claude) để viết. Kết quả là <strong>bản nháp</strong>: bạn xem, so sánh và sửa trước khi lưu thành phiên bản;
+        Nội dung các link, file và văn bản dán được gửi tới AI (Claude) để viết. Kết quả là <strong>bản nháp</strong>: bạn xem, so sánh và sửa trước khi lưu thành phiên bản;
         tài liệu không thay đổi cho tới khi bạn bấm lưu.
         {left !== null && ` Còn ${left}/${limits?.per_day} lần trong 24 giờ.`}
         {limits && !limits.url_hosts && " Wiki nội bộ (địa chỉ IP nội bộ) chỉ đọc được khi admin thêm tên máy vào ASSISTANT_URL_HOSTS."}
@@ -299,7 +369,7 @@ function Progress({ draft }: { draft: DocDraft }) {
   );
 }
 
-const VIA_LABEL: Record<string, string> = { web: "Web", gitlab: "GitLab", file: "File tải lên" };
+const VIA_LABEL: Record<string, string> = { web: "Web", gitlab: "GitLab", file: "File tải lên", paste: "Văn bản dán" };
 
 function SourceList({ draft }: { draft: DocDraft }) {
   const items: DraftSource[] = draft.sources ?? [
@@ -318,7 +388,7 @@ function SourceList({ draft }: { draft: DocDraft }) {
               </a>
             ) : (
               <span className="docs-src-link">
-                <Icon name="file" size={12} /> {s.name ?? s.title}
+                <Icon name={s.via === "paste" ? "edit" : "file"} size={12} /> {s.name ?? s.title}
               </span>
             )}
             <span className="small muted">
@@ -613,7 +683,7 @@ export function DraftsCard({ drafts, onOpen, onNew }: { drafts?: DraftList; onOp
         <Loading rows={2} />
       ) : !open.length && !done.length ? (
         <p className="muted small" style={{ marginBottom: 0 }}>
-          Dán link (wiki, bài viết, README hay file trên GitLab) hoặc tải file lên (Word, PDF, Markdown…): AI đọc và viết thành tài liệu theo chuẩn của
+          Dán link (wiki, bài viết, README hay file trên GitLab), tải file lên (Word, PDF, Markdown…) hoặc dán văn bản: AI đọc và viết thành tài liệu theo chuẩn của
           dự án, hoặc bổ sung vào tài liệu đang có. Bạn duyệt trước khi lưu.
         </p>
       ) : (

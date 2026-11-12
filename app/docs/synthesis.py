@@ -51,7 +51,8 @@ from app.review.providers.base import LLMProvider, ReviewPrompt
 log = logging.getLogger(__name__)
 
 COST_ACTION = "doc.synthesize.cost"
-MAX_LINKS = 5
+MAX_LINKS = 5  # sources of one draft: links, uploaded files and pasted texts together
+PASTE_KIND = "paste"  # a source pasted as text (no file)
 SOURCE_CHARS = 60_000  # of one link, sent to the model
 SOURCES_CHARS = 150_000  # of all the links together
 CURRENT_CHARS = 120_000  # a longer document cannot be merged / upgraded (split it first)
@@ -109,7 +110,7 @@ class Fetched:
     url: str  # "" for an uploaded file
     title: str = ""
     text: str = ""
-    via: str = "web"  # "web" | "gitlab" | "file"
+    via: str = "web"  # "web" | "gitlab" | "file" | "paste"
     error: str | None = None
     name: str | None = None  # an uploaded file's name
     truncated: bool = False
@@ -294,12 +295,14 @@ def fetch_all(
     for f in files or []:
         name = str(f.get("name") or "file")
         text = str(f.get("text") or "").strip()[: min(SOURCE_CHARS, max(budget, 0))]
-        item = Fetched(url="", name=name, title=name, via="file", text=text)
+        # kind "paste": text pasted on the screen; else an uploaded file's text.
+        via = "paste" if f.get("kind") == PASTE_KIND else "file"
+        item = Fetched(url="", name=name, title=name, via=via, text=text)
         item.truncated = bool(f.get("truncated")) or len(text) < len(
             str(f.get("text") or "").strip()
         )
         if not text:
-            item.error = "file không có nội dung chữ" if budget > 0 else "đã đủ dung lượng nguồn"
+            item.error = "không có nội dung chữ" if budget > 0 else "đã đủ dung lượng nguồn"
         budget -= len(text)
         out.append(item)
     for url in urls:

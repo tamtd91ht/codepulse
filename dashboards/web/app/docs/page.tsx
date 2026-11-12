@@ -945,7 +945,7 @@ function DocView({
                     <span>{s.name ?? s.title}</span>
                   )}{" "}
                   <span className="muted">
-                    · {s.via === "gitlab" ? "GitLab" : s.via === "file" ? "File tải lên" : "Web"} · phiên bản {s.version}
+                    · {s.via === "gitlab" ? "GitLab" : s.via === "file" ? "File tải lên" : s.via === "paste" ? "Văn bản dán" : "Web"} · phiên bản {s.version}
                     {s.at ? ` · ${relative(s.at)}` : ""}
                   </span>
                 </li>
@@ -1191,7 +1191,7 @@ function AddDocs({
         label="Cách thêm"
         options={[
           { value: "upload", label: "Tải file lên" },
-          { value: "link", label: "Tổng hợp bằng AI (link, file)" },
+          { value: "link", label: "Tổng hợp bằng AI" },
           { value: "template", label: "Soạn mới (mẫu / trang trống)" },
         ]}
       />

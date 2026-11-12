@@ -51,7 +51,8 @@ LIST_DAYS = 14
 
 
 class FileIn(BaseModel):
-    """An uploaded file's text, as POST /docs/drafts/extract returned it."""
+    """An uploaded file's text, as POST /docs/drafts/extract returned it; or a text pasted on
+    the screen (kind "paste", named by the person or "Văn bản dán n")."""
 
     name: str = Field(min_length=1, max_length=200)
     kind: str = Field(max_length=10)
@@ -326,6 +327,11 @@ def create_draft(
         urls = synthesis.clean_urls(body.urls, files=len(body.files))
     except synthesis.LinkError as exc:
         raise HTTPException(422, str(exc)) from None
+    kinds = (*importers.DOCUMENT_KINDS, synthesis.PASTE_KIND)
+    if any(f.kind not in kinds for f in body.files):
+        raise HTTPException(422, "loại nguồn không hợp lệ")
+    if len({f.name for f in body.files}) != len(body.files):
+        raise HTTPException(422, "hai nguồn trùng tên: đặt tên khác cho văn bản dán")
     doc = None
     if body.mode == "new":
         category: str = body.category or "other"
@@ -438,7 +444,7 @@ def apply_draft(
         for s in used
         if s.get("url")
     ]
-    files = [{"name": s.get("name"), "via": "file"} for s in used if s.get("name")]
+    files = [{"name": s.get("name"), "via": s.get("via") or "file"} for s in used if s.get("name")]
     meta = {
         "links": links,
         "files": files,
@@ -446,9 +452,14 @@ def apply_draft(
         "mode": draft.mode,
         "model": draft.model,
     }
+    pasted = sum(1 for f in files if f["via"] == "paste")
     what = " và ".join(
         x
-        for x in (f"{len(links)} link" if links else "", f"{len(files)} file" if files else "")
+        for x in (
+            f"{len(links)} link" if links else "",
+            f"{len(files) - pasted} file" if len(files) > pasted else "",
+            f"{pasted} văn bản dán" if pasted else "",
+        )
         if x
     )
     note = body.note or f"{synthesis.MODE_LABEL[draft.mode]} từ {what or 'nguồn'}"
