@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { DocMarkdown, imageSize } from "@/components/DocMarkdown";
+import { DocMarkdown, ImageResize, imageSize } from "@/components/DocMarkdown";
 import { Icon } from "@/components/icons";
 import { Alert, Drawer, Segmented } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
@@ -223,6 +223,24 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
       el.focus();
       el.setSelectionRange(onImage.start + line.length, onImage.start + line.length);
     });
+  }
+
+  /** The corner handle of an image in the preview was dragged: write its new size. */
+  function resizeSrc(src: string, size: string) {
+    const el = area.current;
+    const text = el ? el.value : body;
+    const at = text.indexOf(`](${src})`);
+    if (at < 0) return;
+    const start = text.lastIndexOf("\n", at) + 1;
+    const nl = text.indexOf("\n", at);
+    const end = nl < 0 ? text.length : nl;
+    const m = IMAGE_LINE.exec(text.slice(start, end));
+    if (!m) return;
+    const name = imageSize(m[1]).alt;
+    const line = `![${name}|${size}](${m[2]})`;
+    setBody(text.slice(0, start) + line + text.slice(end));
+    setOnImage({ start, end: start + line.length, name, size, src: m[2] });
+    setCustomSize("");
   }
 
   /** A click on an image in the preview puts the caret on its line (and shows its size bar). */
@@ -463,7 +481,13 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
           )}
           {mode !== "write" && (
             <div className="doc-editor-preview" aria-label="Xem trước" onClick={(e) => pickFromPreview(e.target)}>
-              {body.trim() ? <DocMarkdown text={body} /> : <p className="muted">Xem trước hiện ở đây.</p>}
+              {body.trim() ? (
+                <ImageResize.Provider value={resizeSrc}>
+                  <DocMarkdown text={body} />
+                </ImageResize.Provider>
+              ) : (
+                <p className="muted">Xem trước hiện ở đây.</p>
+              )}
             </div>
           )}
         </div>

@@ -10809,3 +10809,59 @@ button.ghost.danger:hover:not(:disabled) {
   width: 84px;
   height: 30px;
 }
+
+/* Kéo góc ảnh để đổi cỡ (docs/specs/29 §13.2), chỉ trong khung xem trước của trình soạn */
+.doc-img-resize {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+  vertical-align: top;
+}
+.doc-img-resize img {
+  max-width: 100%;
+}
+.doc-img-handle {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--surface);
+  border: 2px solid var(--accent);
+  cursor: nwse-resize;
+  touch-action: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.doc-img-resize:hover .doc-img-handle,
+.doc-img-resize.dragging .doc-img-handle,
+.doc-img-handle:focus-visible {
+  opacity: 1;
+}
+.doc-img-handle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.doc-img-resize:hover img,
+.doc-img-resize.dragging img {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.doc-img-size {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+@media (prefers-reduced-motion: reduce) {
+  .doc-img-handle {
+    transition: none;
+  }
+}

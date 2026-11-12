@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, type ReactNode, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode, createContext, useContext, useRef, useState } from "react";
 
 /**
  * The document renderer (docs/specs/29 §5): Markdown as project documents use it, built as React
@@ -285,6 +285,101 @@ export function imageSize(alt: string): { alt: string; size: string | null; styl
   return n >= 16 && n <= 2000 ? { alt: name, size: `${n}`, style: { width: `${n}px` } } : { alt: name, size: null };
 }
 
+/**
+ * The editor's preview gives images a corner handle (docs/specs/29 §13.2): dragging it resizes
+ * the image live; on release the width, as a share of the page rounded to 5%, is written back
+ * into the image's line through `onResize`. Outside the editor there is no handle.
+ */
+export const ImageResize = createContext<((mdSrc: string, size: string) => void) | null>(null);
+
+const STEP = 5; // %
+
+function ResizableImage({ src, alt, style, mdSrc }: { src: string; alt: string; style?: CSSProperties; mdSrc: string }) {
+  const onResize = useContext(ImageResize);
+  const img = useRef<HTMLImageElement>(null);
+  const [live, setLive] = useState<number | null>(null); // % while dragging
+  const drag = useRef<{ x: number; width: number; box: number; centered: boolean } | null>(null);
+  if (!onResize) return <img src={src} alt={alt} style={style} data-md-src={mdSrc} loading="lazy" referrerPolicy="no-referrer" />;
+
+  const box = () => img.current?.closest("figure")?.clientWidth || img.current?.parentElement?.clientWidth || 1;
+  const percent = (width: number, of: number) => Math.min(100, Math.max(STEP, Math.round((width / of) * 100 / STEP) * STEP));
+  const current = () => (img.current ? percent(img.current.getBoundingClientRect().width, box()) : 50);
+
+  const down = (e: PointerEvent<HTMLSpanElement>) => {
+    if (!img.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* a pointer the browser does not track: moves still reach the handle while over it */
+    }
+    const figure = img.current.closest("figure");
+    drag.current = {
+      x: e.clientX,
+      width: img.current.getBoundingClientRect().width,
+      box: box(),
+      // A centred image grows on both sides: the handle moves half as far as the width grows.
+      centered: figure ? getComputedStyle(figure).textAlign === "center" : false,
+    };
+    setLive(current());
+  };
+  const move = (e: PointerEvent<HTMLSpanElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    const dx = (e.clientX - d.x) * (d.centered ? 2 : 1);
+    const width = Math.min(d.box, Math.max(40, d.width + dx));
+    setLive(Math.min(100, Math.max(STEP, Math.round((width / d.box) * 100))));
+  };
+  const up = (e: PointerEvent<HTMLSpanElement>) => {
+    const d = drag.current;
+    drag.current = null;
+    if (!d) return;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* not captured */
+    }
+    const dx = (e.clientX - d.x) * (d.centered ? 2 : 1);
+    const width = Math.min(d.box, Math.max(40, d.width + dx));
+    setLive(null);
+    if (Math.abs(dx) > 2) onResize(mdSrc, `${percent(width, d.box)}%`);
+  };
+  const key = (e: KeyboardEvent<HTMLSpanElement>) => {
+    const by = e.key === "ArrowRight" || e.key === "ArrowUp" ? STEP : e.key === "ArrowLeft" || e.key === "ArrowDown" ? -STEP : 0;
+    if (!by) return;
+    e.preventDefault();
+    onResize(mdSrc, `${Math.min(100, Math.max(STEP, current() + by))}%`);
+  };
+
+  return (
+    <span className={`doc-img-resize${live !== null ? " dragging" : ""}`} style={live !== null ? { width: `${live}%` } : style ? { width: style.width } : undefined}>
+      <img ref={img} src={src} alt={alt} style={live !== null || style ? { width: "100%" } : undefined} data-md-src={mdSrc} loading="lazy" referrerPolicy="no-referrer" />
+      {live !== null && <span className="doc-img-size">{live}%</span>}
+      <span
+        className="doc-img-handle"
+        role="slider"
+        tabIndex={0}
+        aria-label={`Kéo để đổi cỡ ảnh ${alt}`.trim()}
+        aria-valuemin={STEP}
+        aria-valuemax={100}
+        aria-valuenow={live ?? undefined}
+        aria-valuetext={live !== null ? `${live}%` : "kéo hoặc dùng phím mũi tên"}
+        title="Kéo để đổi cỡ (mũi tên trái/phải: ±5%)"
+        onPointerDown={down}
+        onPointerMove={move}
+        onPointerUp={up}
+        onPointerCancel={() => {
+          drag.current = null;
+          setLive(null);
+        }}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={key}
+      />
+    </span>
+  );
+}
+
 function ImageLink({ src, alt }: { src: string; alt: string }) {
   const href = safeHref(src);
   return href && /^https?:/i.test(href) ? (
@@ -510,7 +605,7 @@ function Blocks({ blocks, term, offset }: { blocks: Block[]; term?: string; offs
             const sized = imageSize(b.alt);
             return src ? (
               <figure key={i} className={`doc-figure${sized.size ? " sized" : ""}`}>
-                <img src={src} alt={sized.alt} style={sized.style} data-md-src={b.src} loading="lazy" referrerPolicy="no-referrer" />
+                <ResizableImage src={src} alt={sized.alt} style={sized.style} mdSrc={b.src} />
                 {sized.alt && <figcaption>{sized.alt}</figcaption>}
               </figure>
             ) : (

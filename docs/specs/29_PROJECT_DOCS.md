@@ -397,6 +397,16 @@ Yêu cầu: dán ảnh trực tiếp vào trình soạn tài liệu.
   hoặc nhập số px; bấm là viết lại đúng dòng ảnh đó.
 - AI bổ sung / nâng cấp giữ nguyên cả dòng ảnh (tên, cỡ, `asset:`).
 
-Ngoài phạm vi (IDEAS.md): dọn ảnh không còn tài liệu nào dùng; kéo góc để đổi cỡ; ảnh nhúng sẵn
-trong file Word/PDF tải lên.
+### 13.2 Kéo góc ảnh để đổi cỡ (user 2026-11-12) **[Quyết định]**
+
+- Trong khung xem trước của trình soạn (chỉ ở đó; trang đọc tài liệu không có), di chuột lên ảnh
+  hiện viền và một **tay nắm ở góc dưới phải**. Kéo: ảnh co giãn trực tiếp, nhãn hiện % bề rộng.
+  Thả: cỡ làm tròn bước 5% (5–100%) và ghi vào dòng ảnh (`![tên|45%](asset:…)`), thanh Cỡ ảnh
+  (§13.1) hiện cho dòng đó.
+- Vì sao ghi theo %: tài liệu đọc trên nhiều cỡ màn hình; px chỉ khi gõ số ở thanh Cỡ ảnh.
+- Ảnh căn giữa nở về hai phía: bề rộng tăng gấp đôi quãng kéo để tay nắm đi theo con trỏ.
+- Bàn phím: tay nắm nhận focus (Tab), phím mũi tên trái/phải (lên/xuống) đổi ±5%.
+
+Ngoài phạm vi (IDEAS.md): dọn ảnh không còn tài liệu nào dùng; ảnh nhúng sẵn trong file Word/PDF
+tải lên.
 
