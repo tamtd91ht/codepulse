@@ -41,6 +41,13 @@ def jira_tick_job() -> str:
     return tick_job()
 
 
+def testcase_reports_job() -> int:
+    """docs/specs/30 §15 G4: send the testcase report schedules that are due."""
+    from app.testcases.reports import schedules_job
+
+    return schedules_job()
+
+
 def enqueue_jira_keys_backfill_job() -> None:
     """docs/specs/27 §8: after the upgrade, the Jira keys of MRs converted before it, once (the
     job itself returns at once when it already ran)."""
@@ -181,6 +188,16 @@ def build_scheduler(
         "interval",
         minutes=1,
         id="jira-tick",
+        max_instances=1,
+        coalesce=True,
+    )
+    # docs/specs/30 §15 G4: testcase report schedules due at their hour (REPORT_TZ); each one
+    # sends once a day / week (last_sent_at), so a 5-minute tick is enough and cheap.
+    scheduler.add_job(
+        testcase_reports_job,
+        "interval",
+        minutes=5,
+        id="testcase-reports",
         max_instances=1,
         coalesce=True,
     )

@@ -95,6 +95,8 @@ class JiraConnection:
     username_source: Source | None = None
     env_auth_type: bool = False  # JIRA_AUTH_TYPE=basic
     env_username: bool = False
+    # docs/specs/30 §15 G3: creating bugs from test results (web value, else JIRA_WRITE_ENABLED).
+    write_enabled: bool = False
 
     @property
     def reachable(self) -> bool:
@@ -132,6 +134,7 @@ class JiraConnection:
             "backfill_days": self.backfill_days,
             "timeout_s": self.timeout_s,
             "enabled": self.enabled,
+            "write_enabled": self.write_enabled,
             "configured": self.configured,
             "sources": dict(self.sources),
             "env": {
@@ -305,6 +308,10 @@ def parse_connection(raw: dict[str, Any]) -> dict[str, Any]:
         if raw["enabled"] is not None and not isinstance(raw["enabled"], bool):
             raise ValueError("enabled: cần true hoặc false")
         out["enabled"] = raw["enabled"]
+    if "write_enabled" in raw:
+        if raw["write_enabled"] is not None and not isinstance(raw["write_enabled"], bool):
+            raise ValueError("write_enabled: cần true hoặc false")
+        out["write_enabled"] = raw["write_enabled"]
     return out
 
 
@@ -460,7 +467,7 @@ def connection(
     env_user = _env_username(settings)
     username = str(stored.get("username") or env_user)
     sources: dict[str, Source] = {
-        k: ("web" if k in stored else "env") for k in (*NUMBERS, "enabled")
+        k: ("web" if k in stored else "env") for k in (*NUMBERS, "enabled", "write_enabled")
     }
     return JiraConnection(
         base_url=base_url,
@@ -487,6 +494,7 @@ def connection(
         username_source=("web" if "username" in stored else "env") if username else None,
         env_auth_type=settings.jira_auth_type == "basic",
         env_username=bool(env_user),
+        write_enabled=bool(stored.get("write_enabled", settings.jira_write_enabled)),
     )
 
 

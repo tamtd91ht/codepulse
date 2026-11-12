@@ -384,12 +384,14 @@ def test_overview_connection_from_env(client: TestClient, world: World, as_user:
         "backfill_days": 180,
         "timeout_s": 20.0,
         "enabled": True,
+        "write_enabled": False,
         "configured": True,
         "sources": {
             "interval_min": "env",
             "backfill_days": "env",
             "timeout_s": "env",
             "enabled": "env",
+            "write_enabled": "env",
         },
         "env": {
             "base_url": True,

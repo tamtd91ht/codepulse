@@ -228,8 +228,11 @@ def test_result_paths_take_results_write() -> None:
         "/api/v1/testcases/tests/5/results",
         "/api/v1/testcases/runs/5/results",
         "/api/v1/testcases/runs/import-results",
+        "/api/v1/testcases/attachments",
     ):
         assert need("POST", path) == ("results:write", "testcases:write")
+    # Reading an attachment back is still a read call.
+    assert "results:write" not in need("GET", "/api/v1/testcases/attachments/4")
     assert need("POST", "/api/v1/testcases/runs") == ("testcases:write",)
     # POST only: another verb on a result path is a testcases:write call.
     assert need("PATCH", "/api/v1/testcases/runs/5/results") == ("testcases:write",)
@@ -307,6 +310,41 @@ def test_results_write_token_records_a_result(
     assert got.status_code == 201, got.text
     close = client.post(f"{API}/testcases/runs/{run.json()['id']}/close", headers=ci)
     assert close.status_code == 403
+
+
+def test_results_write_token_uploads_an_attachment(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    """A CI token (results:write only) uploads a file and attaches it to the result it records."""
+    bp = _bp(world)
+    suite = _suite(db_session, bp)
+    h = as_user(world.admin)
+    run = client.post(
+        f"{API}/testcases/runs",
+        headers=h,
+        json={"business_project_id": bp, "selection": {"suite_id": suite.id}},
+    ).json()
+    test_id = client.get(f"{API}/testcases/runs/{run['id']}/tests", headers=h).json()["items"][0][
+        "id"
+    ]
+    ci = _bearer(_token(client, h, ["results:write"], bp))
+    up = client.post(
+        f"{API}/testcases/attachments",
+        params={"business_project_id": bp, "filename": "ci.log"},
+        content=b"step 1 ok\nstep 2 failed\n",
+        headers={**ci, "Content-Type": "application/octet-stream"},
+    )
+    assert up.status_code == 201, up.text
+    got = client.post(
+        f"{API}/testcases/tests/{test_id}/results",
+        headers=ci,
+        json={"status": "failed", "attachment_ids": [up.json()["id"]]},
+    )
+    assert got.status_code == 201, got.text
+    assert got.json()["results"][0]["attachments"][0]["id"] == up.json()["id"]
+    # Serving the file is a read: not for a results:write-only token.
+    served = client.get(f"{API}/testcases/attachments/{up.json()['id']}", headers=ci)
+    assert served.status_code == 403
 
 
 def test_openapi_docs_need_sign_in_and_document_the_bearer(

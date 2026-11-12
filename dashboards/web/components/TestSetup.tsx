@@ -4,7 +4,8 @@ import { useState } from "react";
 
 import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
-import { ConfirmModal } from "@/components/TestRunParts";
+import { ProjectSettingsCard } from "@/components/JiraBug";
+import { ConfirmModal, ResultStatusesCard } from "@/components/TestRunParts";
 import { Alert, Card, EmptyState, Loading } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 import { dateTimeMin } from "@/lib/format";
@@ -401,6 +402,8 @@ export function SetupTab({ projectId, canEdit, canManage }: { projectId: number;
     <div className="tr-tab">
       <SharedSteps projectId={projectId} canEdit={canEdit} />
       <Configurations projectId={projectId} canEdit={canManage} />
+      <ResultStatusesCard projectId={projectId} />
+      <ProjectSettingsCard projectId={projectId} />
     </div>
   );
 }

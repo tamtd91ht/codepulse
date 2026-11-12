@@ -5,27 +5,99 @@ import type { Person } from "./testcases";
 
 export type { Person };
 
-export type TestStatus = "untested" | "passed" | "failed" | "blocked" | "retest";
+export type BuiltinStatus = "untested" | "passed" | "failed" | "blocked" | "retest" | "skipped";
+/** §15 G6: a built-in status or the key of a custom status of the dự án. */
+export type TestStatus = BuiltinStatus | (string & {});
 export type ResultStatus = Exclude<TestStatus, "untested">;
 
-export const TEST_STATUSES: TestStatus[] = ["passed", "failed", "blocked", "retest", "untested"];
-export const RESULT_STATUSES: ResultStatus[] = ["passed", "failed", "blocked", "retest"];
-export const TEST_STATUS_LABEL: Record<TestStatus, string> = {
+export const TEST_STATUSES: BuiltinStatus[] = ["passed", "failed", "blocked", "retest", "skipped", "untested"];
+export const RESULT_STATUSES: BuiltinStatus[] = ["passed", "failed", "blocked", "retest", "skipped"];
+export const TEST_STATUS_LABEL: Record<string, string> = {
   untested: "Chưa test",
   passed: "Passed",
   failed: "Failed",
   blocked: "Blocked",
   retest: "Retest",
+  skipped: "Skipped",
 };
 
+/** Tests by status: the built-in keys, plus one per custom status in use (§15 G6). */
 export interface Counts {
   untested: number;
   passed: number;
   failed: number;
   blocked: number;
   retest: number;
+  skipped?: number;
   total: number;
+  [status: string]: number | undefined;
 }
+
+/* ---- Result statuses of a dự án (§15 G6): GET /testcases/statuses ---- */
+
+export type StatusColor = "good" | "bad" | "warn" | "info" | "muted" | "primary";
+export const STATUS_COLORS: { value: StatusColor; label: string }[] = [
+  { value: "good", label: "Xanh lá" },
+  { value: "bad", label: "Đỏ" },
+  { value: "warn", label: "Cam" },
+  { value: "info", label: "Xanh dương" },
+  { value: "primary", label: "Đậm" },
+  { value: "muted", label: "Xám" },
+];
+
+export interface StatusDef {
+  id: number | null;
+  key: string;
+  name: string;
+  color: StatusColor | string;
+  done: boolean;
+  builtin: boolean;
+  position: number;
+  archived: boolean;
+}
+
+export interface StatusList {
+  items: StatusDef[];
+  can_edit: boolean;
+}
+
+/** The built-in statuses, while the dự án's list loads (or where no dự án is known). */
+export const BUILTIN_STATUSES: StatusDef[] = [
+  { id: null, key: "passed", name: "Passed", color: "good", done: true, builtin: true, position: 1, archived: false },
+  { id: null, key: "failed", name: "Failed", color: "bad", done: true, builtin: true, position: 2, archived: false },
+  { id: null, key: "blocked", name: "Blocked", color: "primary", done: true, builtin: true, position: 3, archived: false },
+  { id: null, key: "retest", name: "Retest", color: "warn", done: false, builtin: true, position: 4, archived: false },
+  { id: null, key: "skipped", name: "Skipped", color: "muted", done: true, builtin: true, position: 5, archived: false },
+  { id: null, key: "untested", name: "Chưa test", color: "muted", done: false, builtin: true, position: 1_000_000, archived: false },
+];
+
+/** The CSS class of a status: built-in ones have their own colours, custom ones their token. */
+export function statusClass(key: string, defs?: StatusDef[] | null): string {
+  if (key in TEST_STATUS_LABEL) return `st-${key}`;
+  const def = defs?.find((d) => d.key === key);
+  return `st-c-${def?.color ?? "muted"}`;
+}
+
+export function statusName(key: string, defs?: StatusDef[] | null): string {
+  if (key === "untested") return TEST_STATUS_LABEL.untested;
+  return defs?.find((d) => d.key === key)?.name ?? TEST_STATUS_LABEL[key] ?? key;
+}
+
+/** Shortcut keys of the built-in result statuses in the test drawer. */
+export const STATUS_KEYS: Record<string, string> = { passed: "P", failed: "F", blocked: "B", retest: "R", skipped: "S" };
+
+/** A file attached to a result: uploaded (`id`, §15 G6) or named by a CI report (`path`, G1). */
+export interface Attachment {
+  id?: number;
+  name?: string;
+  mime?: string;
+  size?: number;
+  path?: string;
+  content_type?: string;
+  url?: string;
+}
+
+export const attachmentUrl = (id: number) => `/api/v1/testcases/attachments/${id}`;
 
 export interface Selection {
   suite_id?: number;
@@ -59,6 +131,12 @@ export interface RunOut {
   created_by: Person | null;
   counts: Counts;
   can_edit: boolean;
+  /** §15 G6: time spent (sum of the results' elapsed) and left (estimates of tests not done). */
+  elapsed_total_s?: number;
+  remaining_estimate_s?: number;
+  /** §15 G6: only assignees (and managers) record; whether the viewer records any test. */
+  assigned_only?: boolean;
+  can_record_all?: boolean;
 }
 
 export interface TestOut {
@@ -79,6 +157,9 @@ export interface TestOut {
   latest_comment: string | null;
   /** §15 G1: the case's CI results disagree. */
   flaky?: boolean;
+  /** §15 G6: of the latest result with a status. */
+  elapsed_s?: number | null;
+  failed_step?: number | null;
 }
 
 export interface TestList {
@@ -134,14 +215,16 @@ export interface ResultOut {
   source?: "manual" | "ci";
   log?: string | null;
   stack?: string | null;
-  attachments?: { name?: string; path?: string; content_type?: string }[];
+  attachments?: Attachment[];
+  /** §15 G6: the first failed (else blocked) step, 1-based. */
+  failed_step?: number | null;
   ci?: { commit_sha?: string; branch?: string; mr_iid?: number; test_name?: string; file?: string; import_id?: number; attempts?: string[] };
 }
 
 export interface TestDetail extends TestOut {
   content: TestContent;
   results: ResultOut[];
-  run: { id: number; key: string; name: string; completed: boolean };
+  run: { id: number; key: string; name: string; completed: boolean; business_project_id?: number | null };
   can_record: boolean;
   can_edit: boolean;
 }
@@ -218,7 +301,7 @@ export interface SectionNode {
 export const errorText = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
 
 export function emptyCounts(): Counts {
-  return { untested: 0, passed: 0, failed: 0, blocked: 0, retest: 0, total: 0 };
+  return { untested: 0, passed: 0, failed: 0, blocked: 0, retest: 0, skipped: 0, total: 0 };
 }
 
 /** "73%": share of the tests whose latest result is Passed. */
@@ -256,3 +339,58 @@ export function today(): string {
 export const dayText = (d: string | null | undefined) => (d ? d.split("-").reverse().join("/") : "");
 
 export const SOURCE_LABEL: Record<string, string> = { manual: "Thủ công", regression: "Cần test lại", plan: "Từ plan", ci: "Từ CI" };
+
+/* ---- Jira bugs from results and the dự án's test settings (docs/specs/30a G3, §15) ---- */
+
+export type BugStateName = "opened" | "closed" | "unknown";
+
+export interface BugState {
+  key: string;
+  state: BugStateName;
+  /** Jira's status name (live reads only). */
+  status: string | null;
+  title: string | null;
+  web_url: string | null;
+  source: "sync" | "jira" | null;
+}
+
+export interface BugIn {
+  summary?: string;
+  description?: string;
+  issue_type?: string;
+  components?: string[];
+  labels?: string[];
+  assignee?: string;
+  result_id?: number;
+}
+
+export interface BugOut {
+  key: string;
+  web_url: string | null;
+  verified: boolean;
+  test: TestDetail;
+}
+
+export interface TestProjectSettings {
+  business_project_id: number;
+  assigned_only: boolean;
+  require_approval: boolean;
+  jira_project_key: string | null;
+  jira_issue_type: string;
+  jira_components: string[];
+  jira_labels: string[];
+  jira_configured: boolean;
+  jira_write_enabled: boolean;
+  jira_base_url: string | null;
+  can_edit: boolean;
+}
+
+/** The value of the run view's status filter that keeps only tests to run again. */
+export const NEEDS_RETEST = "needs_retest";
+
+export const BUG_STATE_LABEL: Record<BugStateName, string> = { opened: "Đang mở", closed: "Đã đóng", unknown: "Chưa rõ" };
+
+/** "A, B" or a list -> trimmed names, once each. */
+export function splitNames(text: string): string[] {
+  return [...new Set(text.split(",").map((s) => s.trim()).filter(Boolean))];
+}

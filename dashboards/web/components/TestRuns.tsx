@@ -1,8 +1,9 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { type MutableRefObject, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 import { CiBadge, CiImportModal, CiResult, FlakyPill } from "@/components/CiImport";
+import { BugCount, BugPills, JiraBugPanel, RetestPill } from "@/components/JiraBug";
 import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
 import { MoreMenu } from "@/components/MoreMenu";
@@ -20,6 +21,7 @@ import {
   selectionOf,
   splitKeys,
   useSetupLists,
+  useStatuses,
 } from "@/components/TestRunParts";
 import { Alert, Card, Drawer, EmptyState, Loading, Segmented } from "@/components/ui";
 import { api, qs, useApi } from "@/lib/api";
@@ -28,15 +30,19 @@ import { type CaseType, PRIORITY_LABEL, type Priority, TYPE_LABEL } from "@/lib/
 import {
   RESULT_STATUSES,
   SOURCE_LABEL,
-  TEST_STATUSES,
+  STATUS_KEYS,
   TEST_STATUS_LABEL,
+  attachmentUrl,
   durationText,
   errorText,
   refsText,
+  statusClass,
+  type Attachment,
   type PlanOut,
   type ResultStatus,
   type RunOut,
   type Selection,
+  type StatusDef,
   type StepView,
   type TestDetail,
   type TestList,
@@ -408,6 +414,7 @@ export function RunView({ runId, projectId, onBack, onOpenPlan }: { runId: numbe
   const { data: me } = useApi<Me>("/auth/me");
   const run = useApi<RunOut>(`/testcases/runs/${runId}`);
   const { people } = useSetupLists(projectId);
+  const { defs: statuses } = useStatuses(projectId);
   const [status, setStatus] = useState<TestStatus | "">("");
   const [assignee, setAssignee] = useState<number | null>(null);
   const [search, setSearch] = useState("");
@@ -455,8 +462,11 @@ export function RunView({ runId, projectId, onBack, onOpenPlan }: { runId: numbe
     );
   if (!r) return <Loading error={run.error} rows={6} />;
 
-  const canRecord = (t: TestOut) => !completed && (r.can_edit || (!!me && (t.assigned_to?.id === me.id || r.assigned_to?.id === me.id)));
-  const anyRecord = !completed && (r.can_edit || (tests.data?.items ?? []).some(canRecord));
+  // §15 G6: the server says who records any test ("chỉ người được giao" narrows it to managers).
+  const recordAll = r.can_record_all ?? r.can_edit;
+  const canRecord = (t: TestOut) => !completed && (recordAll || (!!me && (t.assigned_to?.id === me.id || r.assigned_to?.id === me.id)));
+  const anyRecord = !completed && (recordAll || (tests.data?.items ?? []).some(canRecord));
+  const mine = !!me && assignee === me.id;
   const editable = r.can_edit && !completed;
 
   const act = async (fn: () => Promise<unknown>, after?: () => void) => {
@@ -550,7 +560,14 @@ export function RunView({ runId, projectId, onBack, onOpenPlan }: { runId: numbe
       </div>
       {r.description && <p className="small tr-desc">{r.description}</p>}
       <div className="card tr-summary">
-        <StatusBar counts={r.counts} />
+        <StatusBar counts={r.counts} statuses={statuses} />
+        {(!!r.elapsed_total_s || !!r.remaining_estimate_s || r.assigned_only) && (
+          <p className="small muted tr-item-meta">
+            {!!r.elapsed_total_s && <span>Đã chạy {durationText(r.elapsed_total_s)}</span>}
+            {!completed && !!r.remaining_estimate_s && <span>Còn lại ước tính {durationText(r.remaining_estimate_s)}</span>}
+            {r.assigned_only && <span>Chỉ người được giao ghi kết quả</span>}
+          </p>
+        )}
       </div>
       {error && (
         <Alert tone="error" onClose={() => setError(null)}>
@@ -562,17 +579,25 @@ export function RunView({ runId, projectId, onBack, onOpenPlan }: { runId: numbe
           <span className="small muted">Trạng thái</span>
           <select value={status} onChange={(e) => setStatus(e.target.value as TestStatus | "")}>
             <option value="">Tất cả</option>
-            {TEST_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {TEST_STATUS_LABEL[s]} ({r.counts[s] ?? 0})
-              </option>
-            ))}
+            {[...statuses.filter((s) => s.key !== "untested"), ...statuses.filter((s) => s.key === "untested")]
+              .filter((s) => !s.archived || (r.counts[s.key] ?? 0) > 0)
+              .map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.name} ({r.counts[s.key] ?? 0})
+                </option>
+              ))}
+            {!r.completed_at && <option value="needs_retest">Cần retest (bug đã đóng)</option>}
           </select>
         </label>
         <label className="filter">
           <span className="small muted">Người được giao</span>
           <PersonSelect value={assignee} onChange={setAssignee} people={people.data} empty="Mọi người" />
         </label>
+        {me && (
+          <button type="button" className="tr-chip" aria-pressed={mine} onClick={() => setAssignee(mine ? null : me.id)}>
+            Của tôi
+          </button>
+        )}
         <label className="filter tr-search">
           <span className="small muted">Tìm</span>
           <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tên, mã T / C…" />
@@ -582,7 +607,12 @@ export function RunView({ runId, projectId, onBack, onOpenPlan }: { runId: numbe
         <div className="bulk-bar" role="region" aria-label="Thao tác hàng loạt">
           <strong className="small">Đã chọn {selected.size}</strong>
           <span className="small muted">Đặt trạng thái:</span>
-          <StatusButtons value={null} onChange={(s) => bulk({ status: s })} disabled={busy} size="sm" />
+          <StatusButtons value={null} onChange={(s) => bulk({ status: s })} disabled={busy} size="sm" statuses={statuses} />
+          {me && (
+            <button type="button" className="sm ghost" onClick={() => bulk({ assigned_to: me.id })} disabled={busy}>
+              Giao cho tôi
+            </button>
+          )}
           {r.can_edit && (
             <label className="tr-inline small">
               <span className="muted">Giao cho</span>
@@ -650,6 +680,7 @@ export function RunView({ runId, projectId, onBack, onOpenPlan }: { runId: numbe
               <tbody>
                 {groups.map((g) => (
                   <GroupRows
+                    bp={projectId}
                     key={g.section}
                     section={g.section}
                     items={g.items}
@@ -666,6 +697,7 @@ export function RunView({ runId, projectId, onBack, onOpenPlan }: { runId: numbe
                     onOpen={setOpen}
                     onQuick={quick}
                     busy={busy}
+                    statuses={statuses}
                   />
                 ))}
               </tbody>
@@ -683,6 +715,7 @@ export function RunView({ runId, projectId, onBack, onOpenPlan }: { runId: numbe
           testId={open}
           order={order}
           people={people.data}
+          statuses={statuses}
           onNavigate={setOpen}
           onClose={() => setOpen(null)}
           onChanged={refresh}
@@ -783,6 +816,8 @@ function GroupRows({
   onOpen,
   onQuick,
   busy,
+  statuses,
+  bp,
 }: {
   section: string;
   items: TestOut[];
@@ -794,6 +829,8 @@ function GroupRows({
   onOpen: (id: number) => void;
   onQuick: (t: TestOut, s: ResultStatus) => void;
   busy: boolean;
+  statuses: StatusDef[];
+  bp: number;
 }) {
   return (
     <>
@@ -817,18 +854,23 @@ function GroupRows({
                 {t.title}
               </button>
               {t.flaky && <> <FlakyPill /></>}
+              <RetestPill test={t} spaced />
               <div className="small muted">
                 {t.case_key ?? "Testcase đã xoá"}
-                {t.defects.length ? ` · Bug: ${t.defects.join(", ")}` : ""}
+                <BugCount keys={t.defects} bp={bp} />
               </div>
             </td>
             <td className="small">{priorityText(t.priority)}</td>
             <td className="small tr-nowrap">{t.type ? (TYPE_LABEL[t.type as CaseType] ?? t.type) : "—"}</td>
             <td className="small">{t.assigned_to?.name ?? <span className="muted">—</span>}</td>
             <td>
-              <StatusPill status={t.status} />
+              <StatusPill status={t.status} statuses={statuses} title={t.failed_step ? `Lỗi ở bước ${t.failed_step}` : undefined} />
+              {t.failed_step ? <div className="small muted">Bước {t.failed_step}</div> : null}
             </td>
-            <td className="small tc-nowrap">{t.tested_at ? dateTimeMin(t.tested_at) : <span className="muted">—</span>}</td>
+            <td className="small tc-nowrap">
+              {t.tested_at ? dateTimeMin(t.tested_at) : <span className="muted">—</span>}
+              <TimeVsEstimate elapsed={t.elapsed_s} estimate={t.estimate_s} />
+            </td>
             {anyRecord && (
               <td>
                 {rec && (
@@ -858,6 +900,19 @@ function GroupRows({
   );
 }
 
+/** "2m / ước tính 3m", in red once the run took longer than estimated (§15 G6). */
+function TimeVsEstimate({ elapsed, estimate, block = true }: { elapsed?: number | null; estimate?: number | null; block?: boolean }) {
+  if (!elapsed && !estimate) return null;
+  const over = !!elapsed && !!estimate && elapsed > estimate;
+  const text = elapsed ? `${durationText(elapsed)}${estimate ? ` / ước tính ${durationText(estimate)}` : ""}` : `Ước tính ${durationText(estimate)}`;
+  const Tag = block ? "div" : "span";
+  return (
+    <Tag className={over ? "small tr-over" : "small muted"} title={over ? "Lâu hơn ước tính" : undefined}>
+      {text}
+    </Tag>
+  );
+}
+
 /* ---------------- Executing one test ---------------- */
 
 function stepsOf(d: TestDetail): StepView[] {
@@ -878,6 +933,7 @@ export function TestDrawer({
   testId,
   order,
   people,
+  statuses,
   onNavigate,
   onClose,
   onChanged,
@@ -885,31 +941,61 @@ export function TestDrawer({
   testId: number;
   order: number[];
   people: { id: number; name: string }[] | undefined;
+  statuses?: StatusDef[];
   onNavigate: (id: number) => void;
   onClose: () => void;
   onChanged: () => void;
 }) {
   const detail = useApi<TestDetail>(`/testcases/tests/${testId}`);
+  const { data: me } = useApi<Me>("/auth/me");
   const at = order.indexOf(testId);
   const prev = at > 0 ? order[at - 1] : null;
   const next = at >= 0 && at < order.length - 1 ? order[at + 1] : null;
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.altKey || e.ctrlKey || e.metaKey) return;
-      const el = e.target as HTMLElement | null;
-      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
-      if (e.key === "ArrowRight" && next !== null) onNavigate(next);
-      if (e.key === "ArrowLeft" && prev !== null) onNavigate(prev);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [next, prev, onNavigate]);
+  // The record form hands its status setter here, for the P / F / B / R / S keys.
+  const pick = useRef<((s: ResultStatus) => void) | null>(null);
+  const [help, setHelp] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [assignError, setAssignError] = useState<string | null>(null);
 
   const d = detail.data?.id === testId ? detail.data : undefined;
   const steps = d ? stepsOf(d) : [];
   const stepMode = d?.content.template === "steps" && steps.length > 0;
   const readOnly = !d || d.run.completed || !d.can_record;
+
+  useEffect(() => {
+    // Shortcuts (§15 G6) work while the focus is not in a text field.
+    const byKey = Object.fromEntries(Object.entries(STATUS_KEYS).map(([s, k]) => [k.toLowerCase(), s]));
+    const onKey = (e: KeyboardEvent) => {
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      const key = e.key.toLowerCase();
+      if ((key === "arrowright" || key === "j") && next !== null) onNavigate(next);
+      else if ((key === "arrowleft" || key === "k") && prev !== null) onNavigate(prev);
+      else if (e.key === "?") setHelp((h) => !h);
+      else if (byKey[key] && !readOnly && pick.current) pick.current(byKey[key]);
+      else return;
+      e.preventDefault();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [next, prev, onNavigate, readOnly]);
+
+  const assignMe = async () => {
+    if (!d || !me) return;
+    setAssigning(true);
+    setAssignError(null);
+    try {
+      await api.post(`/testcases/tests/${d.id}/results`, { assigned_to: me.id });
+      void detail.mutate();
+      onChanged();
+    } catch (e) {
+      setAssignError(errorText(e));
+    } finally {
+      setAssigning(false);
+    }
+  };
+  const latest = d?.results.find((x) => x.status);
 
   return (
     <Drawer
@@ -919,24 +1005,56 @@ export function TestDrawer({
       actions={
         <>
           <span className="small muted tr-pos">{at >= 0 ? `${at + 1}/${order.length}` : ""}</span>
-          <IconButton icon="chevronLeft" label="Test trước (←)" onClick={() => prev !== null && onNavigate(prev)} disabled={prev === null} />
-          <IconButton icon="chevronRight" label="Test sau (→)" onClick={() => next !== null && onNavigate(next)} disabled={next === null} />
+          <IconButton icon="chevronLeft" label="Test trước (← hoặc K)" aria-keyshortcuts="ArrowLeft K" onClick={() => prev !== null && onNavigate(prev)} disabled={prev === null} />
+          <IconButton icon="chevronRight" label="Test sau (→ hoặc J)" aria-keyshortcuts="ArrowRight J" onClick={() => next !== null && onNavigate(next)} disabled={next === null} />
+          <button type="button" className="ghost sm" aria-keyshortcuts="Shift+?" aria-expanded={help} onClick={() => setHelp(!help)} title="Phím tắt (?)">
+            ?
+          </button>
         </>
       }
     >
+      {help && (
+        <div className="card tr-summary" role="region" aria-label="Phím tắt">
+          <dl className="tr-keys small">
+            <dt>P / F / B / R / S</dt>
+            <dd>Chọn Passed / Failed / Blocked / Retest / Skipped</dd>
+            <dt>Ctrl + Enter</dt>
+            <dd>Lưu và sang test sau (khi đang ở ô nhập)</dd>
+            <dt>J / → · K / ←</dt>
+            <dd>Test sau · test trước</dd>
+            <dt>?</dt>
+            <dd>Hiện / ẩn danh sách phím tắt</dd>
+          </dl>
+          <p className="small muted">Phím tắt chỉ chạy khi con trỏ không ở trong ô nhập.</p>
+        </div>
+      )}
       {!d ? (
         <Loading error={detail.error} rows={8} />
       ) : (
         <div className="tr-exec">
           <div className="tc-view-pills">
-            <StatusPill status={d.status} />
+            <StatusPill status={d.status} statuses={statuses} title={latest?.failed_step ? `Lỗi ở bước ${latest.failed_step}` : undefined} />
             {d.content.case_key && <span className="pill">{d.content.case_key}</span>}
             {d.content.priority && <span className="pill">{priorityText(d.content.priority)}</span>}
             {d.content.type && <span className="pill">{TYPE_LABEL[d.content.type as CaseType] ?? d.content.type}</span>}
-            {d.content.estimate_s ? <span className="pill">Ước tính {durationText(d.content.estimate_s)}</span> : null}
+            {d.content.estimate_s || latest?.elapsed_s ? (
+              <span className="pill">
+                <TimeVsEstimate elapsed={latest?.elapsed_s} estimate={d.content.estimate_s} block={false} />
+              </span>
+            ) : null}
             {refsText(d.content.refs) && <span className="pill">{refsText(d.content.refs)}</span>}
             <span className="pill">{d.assigned_to ? `Giao: ${d.assigned_to.name}` : "Chưa giao"}</span>
+            {me && !readOnly && d.assigned_to?.id !== me.id && (
+              <button type="button" className="sm ghost" onClick={() => void assignMe()} disabled={assigning}>
+                Giao cho tôi
+              </button>
+            )}
           </div>
+          {assignError && (
+            <Alert tone="error" onClose={() => setAssignError(null)}>
+              {assignError}
+            </Alert>
+          )}
           {d.content.section && <p className="small muted">{d.content.section}</p>}
           {d.run.completed && <Alert tone="info">Run {d.run.key} đã đóng: chỉ xem, nội dung là bản chốt lúc đóng.</Alert>}
           {!d.run.completed && !d.can_record && <Alert tone="info">Bạn chỉ xem được test này (ghi kết quả cần quyền sửa hoặc được giao test).</Alert>}
@@ -949,12 +1067,13 @@ export function TestDrawer({
           )}
           <TextBlock label="Dữ liệu test" text={d.content.test_data} />
           <TextBlock label="Ghi chú" text={d.content.notes} />
-          <RecordForm key={d.id} detail={d} steps={stepMode ? steps : []} readOnly={readOnly} people={people} onSaved={(goNext) => {
+          <RecordForm key={d.id} detail={d} steps={stepMode ? steps : []} readOnly={readOnly} people={people} statuses={statuses} pick={pick} onSaved={(goNext) => {
             void detail.mutate();
             onChanged();
             if (goNext && next !== null) onNavigate(next);
           }} hasNext={next !== null} />
-          <History detail={d} />
+          <JiraBugPanel detail={d} onChanged={() => (void detail.mutate(), onChanged())} />
+          <History detail={d} statuses={statuses} />
         </div>
       )}
     </Drawer>
@@ -966,6 +1085,8 @@ function RecordForm({
   steps,
   readOnly,
   people,
+  statuses,
+  pick,
   onSaved,
   hasNext,
 }: {
@@ -973,10 +1094,50 @@ function RecordForm({
   steps: StepView[];
   readOnly: boolean;
   people: { id: number; name: string }[] | undefined;
+  statuses?: StatusDef[];
+  pick?: MutableRefObject<((s: ResultStatus) => void) | null>;
   onSaved: (goNext: boolean) => void;
   hasNext: boolean;
 }) {
   const [status, setStatus] = useState<ResultStatus | null>(null);
+  const [files, setFiles] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(0);
+  const [over, setOver] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    // The drawer's P / F / B / R / S keys set the status (toggling like the buttons).
+    if (!pick) return;
+    pick.current = (s) => setStatus((cur) => (cur === s ? null : s));
+    return () => {
+      pick.current = null;
+    };
+  }, [pick]);
+
+  // §15 G6: pictures dropped, picked or pasted, and PDF / log / zip files, uploaded at once.
+  const addFiles = async (list: File[]) => {
+    const wanted = list.filter((f) => f.size > 0);
+    if (!wanted.length) return;
+    setError(null);
+    setUploading((n) => n + wanted.length);
+    await Promise.all(
+      wanted.map(async (file) => {
+        try {
+          if (file.size > 10 * 1024 * 1024) throw new Error(`${file.name || "tệp"} lớn hơn 10 MB`);
+          const name = file.name && !/^image\.\w+$/i.test(file.name) ? file.name : `anh-dan-${Date.now()}.${file.type.split("/")[1] || "png"}`;
+          const got = await api.postRaw<Attachment>(
+            `/testcases/attachments?business_project_id=${detail.run.business_project_id ?? ""}&filename=${encodeURIComponent(name)}`,
+            file,
+          );
+          setFiles((cur) => (cur.some((x) => x.id === got.id) ? cur : [...cur, got]));
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e));
+        } finally {
+          setUploading((n) => n - 1);
+        }
+      }),
+    );
+  };
   const [comment, setComment] = useState("");
   const [version, setVersion] = useState(() => detail.results.find((x) => x.version)?.version ?? "");
   const [elapsed, setElapsed] = useState("");
@@ -988,7 +1149,7 @@ function RecordForm({
   const [error, setError] = useState<string | null>(null);
   const assignChanged = assign !== (detail.assigned_to?.id ?? null);
   const stepsTouched = stepStatus.some(Boolean) || actual.some((a) => a.trim());
-  const ready = !!status || !!comment.trim() || assignChanged || stepsTouched;
+  const ready = (!!status || !!comment.trim() || assignChanged || stepsTouched || files.length > 0) && !uploading;
 
   // A failed step usually fails the test: suggest it when nothing is chosen yet.
   const setStep = (i: number, s: TestStatus | "") => {
@@ -1017,8 +1178,10 @@ function RecordForm({
         ...(defects.trim() ? { defects: splitKeys(defects) } : {}),
         ...(assignChanged ? { assigned_to: assign } : {}),
         ...(steps.length && stepsTouched ? { step_results: steps.map((_, i) => ({ status: stepStatus[i] || "untested", actual: actual[i].trim() || null })) } : {}),
+        ...(files.length ? { attachment_ids: files.map((f) => f.id) } : {}),
       });
       setStatus(null);
+      setFiles([]);
       setComment("");
       setElapsed("");
       setDefects("");
@@ -1068,6 +1231,7 @@ function RecordForm({
                             </option>
                           ))}
                         </select>
+                        {stepStatus[i] === "failed" && stepStatus.indexOf("failed") === i && <span className="small tr-over">Bước lỗi đầu tiên: kết quả sẽ là Failed</span>}
                         <textarea
                           rows={1}
                           aria-label={`Kết quả thực tế bước ${i + 1}`}
@@ -1102,11 +1266,59 @@ function RecordForm({
               {error}
             </Alert>
           )}
-          <StatusButtons value={status} onChange={(s) => setStatus(status === s ? null : s)} disabled={busy} />
+          <StatusButtons value={status} onChange={(s) => setStatus(status === s ? null : s)} disabled={busy} statuses={statuses} shortcuts />
           <label className="adm-field">
             <span className="small muted">Bình luận</span>
-            <textarea rows={3} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Mô tả lỗi, bước tái hiện, ghi chú…" />
+            <textarea
+              rows={3}
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              onPaste={(e) => {
+                // A screenshot pasted into the comment becomes an attachment.
+                const shots = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
+                if (shots.length) {
+                  e.preventDefault();
+                  void addFiles(shots);
+                }
+              }}
+              placeholder="Mô tả lỗi, bước tái hiện, ghi chú… (dán ảnh chụp màn hình vào đây)"
+            />
           </label>
+          <div className="tr-attach">
+            <div
+              className={`tr-drop${over ? " over" : ""}`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setOver(true);
+              }}
+              onDragLeave={() => setOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setOver(false);
+                void addFiles(Array.from(e.dataTransfer.files));
+              }}
+            >
+              <Icon name="upload" size={14} />
+              <span className="small">Kéo thả, dán ảnh hoặc</span>
+              <button type="button" className="sm ghost" onClick={() => picker.current?.click()} disabled={busy}>
+                Chọn tệp
+              </button>
+              <span className="small muted">Ảnh, PDF, .txt, .log, .zip; tối đa 10 MB</span>
+              {uploading > 0 && <span className="small">Đang tải {uploading} tệp…</span>}
+              <input
+                ref={picker}
+                type="file"
+                hidden
+                multiple
+                accept="image/png,image/jpeg,image/webp,image/gif,.pdf,.txt,.log,.zip"
+                onChange={(e) => {
+                  void addFiles(Array.from(e.target.files ?? []));
+                  e.target.value = "";
+                }}
+              />
+            </div>
+            {files.length > 0 && <Attachments items={files} onRemove={(id) => setFiles(files.filter((f) => f.id !== id))} />}
+          </div>
           <div className="tr-form-row four">
             <label className="adm-field">
               <span className="small muted">Phiên bản / build</span>
@@ -1143,7 +1355,35 @@ function RecordForm({
   );
 }
 
-function History({ detail }: { detail: TestDetail }) {
+/** Uploaded files of a result: pictures as thumbnails (click opens), others as links. */
+function Attachments({ items, onRemove }: { items: Attachment[]; onRemove?: (id: number) => void }) {
+  const mine = items.filter((a): a is Attachment & { id: number } => typeof a.id === "number");
+  if (!mine.length) return null;
+  return (
+    <ul className="tr-thumbs" aria-label="Tệp đính kèm">
+      {mine.map((a) => {
+        const url = attachmentUrl(a.id);
+        const image = (a.mime ?? "").startsWith("image/");
+        return (
+          <li key={a.id}>
+            <a href={url} target="_blank" rel="noopener noreferrer" title={a.name}>
+              {image ? (
+                <img src={url} alt={a.name ?? "Ảnh đính kèm"} loading="lazy" />
+              ) : (
+                <span className="small">
+                  <Icon name="download" size={13} /> {a.name}
+                </span>
+              )}
+            </a>
+            {onRemove && <IconButton icon="close" size={13} label={`Bỏ ${a.name ?? "tệp"}`} onClick={() => onRemove(a.id)} />}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function History({ detail, statuses }: { detail: TestDetail; statuses?: StatusDef[] }) {
   const results = [...detail.results].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
   return (
     <div className="tr-block">
@@ -1154,10 +1394,11 @@ function History({ detail }: { detail: TestDetail }) {
         <ol className="tr-history">
           {results.map((x) => (
             <li key={x.id}>
-              <span className={`tr-dot st-${x.status ?? "untested"}`} aria-hidden="true" />
+              <span className={`tr-dot ${statusClass(x.status ?? "untested", statuses)}`} aria-hidden="true" />
               <div>
                 <div className="small">
-                  {x.status ? <StatusPill status={x.status} /> : <span className="pill">Cập nhật</span>} {x.source === "ci" && <CiBadge />}{" "}
+                  {x.status ? <StatusPill status={x.status} statuses={statuses} /> : <span className="pill">Cập nhật</span>}{" "}
+                  {x.failed_step ? <strong className="tr-over">Lỗi ở bước {x.failed_step}</strong> : null} {x.source === "ci" && <CiBadge />}{" "}
                   <strong>{x.created_by?.name ?? "—"}</strong>{" "}
                   <span className="muted">{dateTimeMin(x.created_at)}</span>
                   {x.version && <span className="muted"> · bản {x.version}</span>}
@@ -1165,8 +1406,9 @@ function History({ detail }: { detail: TestDetail }) {
                   {x.assigned_to && <span className="muted"> · giao {x.assigned_to.name}</span>}
                 </div>
                 {x.comment && <div className="tr-pre small">{x.comment}</div>}
+                {x.source !== "ci" && <Attachments items={x.attachments ?? []} />}
                 <CiResult result={x} />
-                {x.defects.length > 0 && <div className="small">Bug: {x.defects.join(", ")}</div>}
+                {x.defects.length > 0 && <div className="small">Bug: <BugPills keys={x.defects} bp={detail.run.business_project_id} /></div>}
                 {x.step_results && x.step_results.some((s) => s.status !== "untested" || s.actual) && (
                   <ul className="tr-step-hist small">
                     {x.step_results.map((s, i) =>

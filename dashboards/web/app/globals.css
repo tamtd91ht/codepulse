@@ -12284,6 +12284,128 @@ select.tr-sel.st-retest {
   border-color: var(--st-retest);
 }
 
+/* §15 G6: Skipped and custom statuses. A custom status carries a colour token (st-c-<token>);
+   every status class sets --st-c, which the bar, dot, pill and buttons read. */
+.st-skipped,
+.st-c-muted {
+  --st-c: var(--muted);
+  --st-c-soft: var(--surface-2);
+}
+.st-c-good {
+  --st-c: var(--good);
+  --st-c-soft: var(--good-soft);
+}
+.st-c-bad {
+  --st-c: var(--bad-text);
+  --st-c-soft: var(--bad-soft);
+}
+.st-c-warn {
+  --st-c: var(--warn);
+  --st-c-soft: var(--warn-soft);
+}
+.st-c-info {
+  --st-c: var(--info);
+  --st-c-soft: var(--info-soft);
+}
+.st-c-primary {
+  --st-c: var(--text-2);
+  --st-c-soft: var(--primary-soft);
+}
+.tr-bar > .st-skipped,
+.tr-dot.st-skipped,
+.tr-bar > [class*="st-c-"],
+.tr-dot[class*="st-c-"] {
+  background: var(--st-c);
+}
+.tr-pill.st-skipped,
+.tr-pill[class*="st-c-"] {
+  background: var(--st-c-soft);
+  color: var(--st-c);
+  border-color: var(--border);
+}
+button.tr-st-btn.st-skipped,
+button.tr-quick-btn.st-skipped,
+button.tr-st-btn[class*="st-c-"],
+button.tr-quick-btn[class*="st-c-"] {
+  color: var(--st-c);
+  border-color: var(--st-c);
+}
+button.tr-st-btn.st-skipped[aria-pressed="true"],
+button.tr-quick-btn.st-skipped[aria-pressed="true"],
+button.tr-st-btn[class*="st-c-"][aria-pressed="true"],
+button.tr-quick-btn[class*="st-c-"][aria-pressed="true"] {
+  background: var(--st-c);
+}
+select.tr-sel.st-skipped {
+  border-color: var(--muted);
+}
+.tr-kbd {
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 10px;
+  opacity: 0.7;
+}
+.tr-over {
+  color: var(--bad-text);
+  font-weight: 600;
+}
+.tr-attach {
+  display: grid;
+  gap: 8px;
+}
+.tr-drop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--muted);
+}
+.tr-drop.over {
+  border-color: var(--accent);
+  background: var(--info-soft);
+}
+.tr-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.tr-thumbs li {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tr-thumbs img {
+  display: block;
+  width: 72px;
+  height: 54px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.tr-keys {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+.tr-keys dt {
+  font-weight: 600;
+}
+.tr-keys dd {
+  margin: 0;
+}
+
 /* Run / plan page */
 .tr-view-head {
   display: flex;
@@ -12701,4 +12823,337 @@ button.tr-chip[aria-pressed="true"]:hover:not(:disabled) {
 }
 .ci-attachment {
   margin-right: 6px;
+}
+
+/* Jira bugs from test results (docs/specs/30a G3): components/JiraBug.tsx */
+.jb-pills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  vertical-align: middle;
+}
+.jb-pills a.ext-link {
+  text-decoration: none;
+}
+.jb-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* ---- Testcase reports (agent) ---- */
+/* docs/specs/30 §15 G4: components/TestcaseReports.tsx */
+.tc-reports {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.tc-reports .card + .card,
+.tc-reports .grid + .card,
+.tc-reports .card + .grid {
+  margin-top: 0;
+}
+.tc-report-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: 10px;
+}
+.tc-report-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  text-align: left;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  height: auto;
+  min-height: 0;
+  white-space: normal;
+  line-height: 1.35;
+  font-weight: 400;
+  justify-content: flex-start;
+}
+.tc-report-card > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.tc-report-card:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+.tc-report-card.active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: var(--primary-soft);
+}
+.tc-report-icon {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.tc-report-card.active .tc-report-icon {
+  background: var(--accent);
+  color: var(--surface);
+}
+.tc-report-filters {
+  flex-wrap: wrap;
+}
+.tc-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tc-report-actions .button.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.tc-report-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  transition: opacity 0.15s ease;
+}
+.tc-report-body.stale {
+  opacity: 0.6;
+}
+.tc-report-body .grid {
+  margin: 0;
+}
+.tc-report-empty {
+  margin: 4px 0;
+}
+.tc-report-print-head {
+  display: none;
+}
+.tc-chart {
+  width: 100%;
+  min-width: 0;
+}
+.tc-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 10px;
+}
+.tc-status-bar {
+  display: flex;
+  height: 10px;
+  min-width: 60px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface-2);
+  margin-bottom: 8px;
+}
+.tc-report-table .tc-status-bar {
+  margin-bottom: 0;
+}
+.tc-status-bar > span {
+  display: block;
+  height: 100%;
+}
+.tc-status-bar > span + span {
+  border-left: 1px solid var(--surface);
+}
+.tc-meter {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 120px;
+}
+.tc-meter::before {
+  content: "";
+  flex: 1;
+  height: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.tc-meter > span {
+  position: absolute;
+  left: 0;
+  height: 6px;
+  max-width: calc(100% - 52px);
+  border-radius: var(--radius-sm);
+  background: var(--chart-1);
+}
+.tc-meter > em {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  width: 44px;
+  text-align: right;
+  font-size: 12px;
+}
+.tc-report-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tc-report-table tr.tc-row-bad td {
+  background: var(--bad-soft);
+}
+.tc-verdict {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.tc-verdict.go {
+  border-color: var(--good);
+  background: var(--good-soft);
+}
+.tc-verdict.nogo {
+  border-color: var(--bad);
+  background: var(--bad-soft);
+}
+.tc-verdict ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.tc-verdict p {
+  margin: 6px 0 0;
+}
+.tc-verdict-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 20px;
+  font-weight: 700;
+}
+.tc-verdict.go .tc-verdict-badge {
+  color: var(--good);
+}
+.tc-verdict.nogo .tc-verdict-badge {
+  color: var(--bad-text);
+}
+.tc-run-picker {
+  position: relative;
+}
+.tc-run-picker > summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
+  list-style: none;
+}
+.tc-run-picker > summary::-webkit-details-marker {
+  display: none;
+}
+.tc-run-picker > summary > span:last-child {
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-field);
+  background: var(--surface);
+  min-width: 200px;
+}
+.tc-run-picker-pop {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  width: min(380px, calc(100vw - 32px));
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tc-run-picker-pop ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 280px;
+  overflow: auto;
+}
+.tc-run-picker-pop li {
+  padding: 3px 0;
+}
+.tc-schedule-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 14px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.tc-schedule-form .filter {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+@media (max-width: 640px) {
+  .tc-report-picker {
+    grid-template-columns: 1fr 1fr;
+  }
+  .tc-report-card {
+    padding: 10px;
+  }
+  .tc-report-card .small {
+    display: none;
+  }
+  .tc-report-filters .filter,
+  .tc-schedule-form .filter {
+    flex: 1 1 140px;
+  }
+  .tc-report-filters .filter select,
+  .tc-report-filters .filter input,
+  .tc-schedule-form .filter select,
+  .tc-schedule-form .filter input {
+    width: 100%;
+    max-width: none;
+  }
+  .tc-run-picker > summary > span:last-child {
+    min-width: 0;
+  }
+  .tc-verdict {
+    flex-direction: column;
+    gap: 6px;
+  }
+}
+@media print {
+  body:has(.tc-reports) .page-tabs,
+  body:has(.tc-reports) .page-head .actions,
+  .tc-report-picker,
+  .tc-report-filters {
+    display: none !important;
+  }
+  .tc-report-print-head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 8px;
+  }
+  .tc-report-body.stale {
+    opacity: 1;
+  }
+  .tc-report-table tr {
+    break-inside: avoid;
+  }
+  .tc-status-bar > span,
+  .tc-meter > span,
+  .tc-verdict {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
 }

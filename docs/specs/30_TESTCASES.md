@@ -540,7 +540,8 @@ Kết quả automation từ CI (`app/testcases/ci.py`, `app/api/routers/test_ci.
   lượt gần nhất. Tối đa 20 MB, 5 000 test / báo cáo, 5 lượt chưa xong / dự án (429).
 - **Quyền:** có `run_id` (run đang mở của dự án) → `tests.run` (hoặc `tests.manage`); không có →
   tạo run mới, cần `tests.manage`; `auto_create` cần thêm `tests.edit` và `suite_id`. Token chỉ có
-  scope `results:write` gọi được endpoint này (G11).
+  scope `results:write` gọi được endpoint này và `POST /testcases/attachments` (đính kèm từ CI,
+  tối đa 2 GB / dự án, 60 file / phút / người; file không gắn kết quả nào bị xoá sau 24 giờ) (G11).
 - **Định dạng** nhận theo nội dung (không theo tên file): JUnit XML (cả xUnit / TestNG kiểu JUnit),
   TestNG `testng-results.xml`, xUnit.net v2 XML, Playwright JSON reporter, Cucumber JSON. XML có
   `DOCTYPE` (nên có thể có ENTITY: "billion laughs", XXE) hoặc không phải UTF-8 bị từ chối (422).
@@ -590,3 +591,100 @@ test:
 Không có Python: `curl -H "Authorization: Bearer $CODEPULSE_TOKEN" -F business_project_id=8
 -F suite_id=3 -F commit_sha=$CI_COMMIT_SHA -F file=@reports/junit.xml
 $CODEPULSE_URL/api/v1/testcases/runs/import-results`.
+
+### 15.5 G3 – quyết định **[Quyết định]**
+
+- `POST /testcases/tests/{id}/bug` tạo issue Jira: tiêu đề `[C12] <tiêu đề case> – Failed`, mô tả
+  (Jira wiki) gồm bảng bước với kết quả mong đợi / thực tế, bình luận, log, môi trường (run, cấu hình,
+  phiên bản, nhánh / commit / MR của CI), đính kèm và link về CodePulse. Mã bug lưu vào `defects` của
+  kết quả được chọn, hoặc của kết quả failed mới nhất.
+- `POST /testcases/tests/{id}/bug/link` gắn bug có sẵn (kiểm tra mã; nếu gọi được Jira thì kiểm tra
+  issue có tồn tại). Run đã đóng: tạo / gắn bug trả 409, như ghi kết quả.
+- Ghi lên Jira bật bằng `JIRA_WRITE_ENABLED` (mặc định tắt) hoặc công tắc trên Admin › Jira ›
+  Kết nối (giá trị lưu trên web thắng biến môi trường). Người được giao gửi dạng `{"name": …}`
+  (Jira Server / Data Center).
+- Trạng thái bug: đọc bảng issue đã đồng bộ trước, issue chưa đồng bộ thì hỏi Jira trực tiếp và nhớ
+  5 phút trong tiến trình. "Cần retest" (test của run đang mở, kết quả mới nhất failed, mọi bug đã
+  Done) chỉ dựa trên dữ liệu đã đồng bộ / đã nhớ: liệt kê test không bao giờ gọi Jira.
+- Cài đặt dự án (`GET/PUT /testcases/project-settings`, đọc `tests.view`, sửa `tests.manage`): chỉ
+  người được giao mới ghi kết quả (G6), bắt buộc duyệt testcase (G7), nơi tạo bug Jira (project, loại
+  issue, component, nhãn).
+
+### 15.6 G6 – quyết định **[Quyết định]**
+
+Code: `app/testcases/statuses.py`, `app/api/routers/test_status.py`, `components/TestRuns.tsx`.
+
+- **Trạng thái:** có sẵn Passed, Failed, Blocked, Retest, Skipped (và Untested). "Xong" (không cộng
+  vào thời gian còn lại): Passed, Failed, Blocked, Skipped; Retest và Untested chưa xong. Trạng thái
+  tuỳ biến theo dự án (`tests.manage`, tối đa 20): mã slug tự sinh từ tên (không trùng mã có sẵn,
+  `total`), màu theo token `good|bad|warn|info|muted|primary`, cờ "xong", thứ tự (sau các trạng thái
+  có sẵn). Đã dùng thì không xoá (409), chỉ lưu trữ: kết quả cũ vẫn hiện tên, kết quả mới không chọn
+  được (422). API: `GET /testcases/statuses?business_project_id=` → `{items, can_edit}`, `POST`,
+  `PATCH|DELETE /testcases/statuses/{id}`. CI chỉ ghi trạng thái có sẵn.
+- **Counts** giữ `untested, passed, failed, blocked, retest, total`, thêm `skipped` và một khoá cho
+  mỗi trạng thái tuỳ biến đang có test.
+- **Bước → kết quả:** có bước Failed thì kết quả Failed (kể cả khi chọn Passed; chọn Blocked / Retest /
+  tuỳ biến thì giữ), `failed_step` = bước Failed đầu tiên; không có Failed mà có Blocked thì tương tự
+  với Blocked; mọi bước Passed (hoặc Skipped) và không chọn trạng thái thì Passed.
+- **Chỉ người được giao** (`assigned_only` ở cài đặt dự án): chỉ người được giao test / run, hoặc
+  người có `tests.manage`, ghi kết quả (cả hàng loạt và tải đính kèm); `RunOut` có `assigned_only`,
+  `can_record_all`.
+- **Thời gian:** `RunOut.elapsed_total_s` = tổng `elapsed_s` các kết quả của run;
+  `remaining_estimate_s` = tổng ước tính của test chưa xong + (test chưa xong không có ước tính) ×
+  elapsed trung bình của các kết quả có elapsed trong run. `TestOut.elapsed_s` / `failed_step` lấy từ
+  kết quả có trạng thái mới nhất.
+- **Đính kèm:** `POST /testcases/attachments?business_project_id=&filename=` (thân là bytes, ≤ 10 MB;
+  ảnh PNG / JPEG / WebP / GIF theo chữ ký; .pdf / .zip theo đuôi + chữ ký; .txt / .log theo đuôi,
+  UTF-8, không có byte 0), trùng nội dung thì dùng lại; `GET /testcases/attachments/{id}` (`tests.view`
+  trên dự án của tệp; `nosniff`, CSP sandbox, tệp không phải ảnh tải xuống). Kết quả nhận
+  `attachment_ids` (≤ 20) và lưu `[{id, name, mime, size}]`.
+- **Phím tắt** trong ngăn test (khi không ở ô nhập): P / F / B / R / S chọn trạng thái, J / → và K / ←
+  sang test sau / trước, `?` hiện danh sách; Ctrl+Enter lưu và sang test sau (trong form).
+
+### 15.7 G4 – quyết định **[Quyết định]**
+
+Báo cáo (`app/testcases/reports.py`, `app/api/routers/test_reports.py`, tab "Báo cáo" ở
+`components/TestcaseReports.tsx`). Tính trực tiếp mỗi lần gọi (không cache), vài truy vấn gộp.
+
+- **API:** `GET /testcases/reports/{kind}` với kind = `summary | compare | coverage | defects |
+  productivity | automation | readiness`; lọc `business_project_id` (bắt buộc), `suite_id`,
+  `milestone_id` (run của milestone hoặc của plan thuộc milestone), `plan_id`, `config_id`,
+  `branch` (`ci.branch` của kết quả), `from` / `to` (ngày theo REPORT_TZ, gồm cả hai đầu);
+  `compare` nhận `run_ids` (2–10), `readiness` cần `milestone_id`, `min_pass_rate` (mặc định 95).
+  `GET /testcases/reports/{kind}/export` → Excel; `GET /testcases/reports/options` → giá trị cho bộ lọc.
+- **Hai tập số:** *test* = TestRunTest của các run khớp và trạng thái hiện tại (có kỳ: run tạo trước
+  cuối kỳ và chưa đóng trước đầu kỳ; có nhánh: test có kết quả CI trên nhánh đó); *kết quả* =
+  TestResult có trạng thái ghi trong kỳ (bình luận không tính). Trạng thái đếm chung `{status: n}`
+  (gồm trạng thái tuỳ biến), "đã xong" = khác các trạng thái chưa xong (Untested, Retest, trạng thái tuỳ
+  biến không tính là xong), cùng quy tắc với thời gian còn lại của run.
+- **So sánh run:** run sắp theo thời gian tạo; "Hồi quy" khi passed → failed giữa hai run liên tiếp
+  có chạy case đó, "Đã sửa" khi failed → passed.
+- **Độ phủ:** issue Jira của dự án (`jira_issue_in`, không tính sub-task) có / chưa có case; theo
+  loại issue (Jira chưa đồng bộ epic: epic xem ở Ma trận truy vết theo nhãn); theo thư mục: % case có
+  kết quả trong kỳ và % case có kết quả mới nhất Passed; theo milestone.
+- **Defect:** mã bug trong `defects` của kết quả; trạng thái lấy từ Issue đã đồng bộ (mở / đóng /
+  chưa đồng bộ); "chặn release" = bug mở và test ghi nó vẫn Failed / Blocked.
+- **Năng suất** (tín hiệu để kèm cặp, lời lẽ trung tính): case tạo, case được duyệt (một thay đổi
+  chuyển case sang approved, theo revision), kết quả ghi tay, thời gian; kết quả CI là một số tổng.
+  Người có `tests.manage` trên dự án thấy mọi người; người khác thấy dòng của mình và số tổng (cũng
+  áp dụng cho bảng "Theo người ghi" của Tổng kết).
+- **Automation:** % tự động theo tuần = case automated còn hiệu lực có kết quả CI trong 30 ngày tính
+  đến cuối tuần / case còn hiệu lực đã có lúc đó; danh sách flaky; lượt CI = theo run và
+  `ci.import_id`, tổng `elapsed_s`.
+- **Sẵn sàng release:** từ test của các run thuộc milestone. No-go khi: chưa có test, % passed <
+  ngưỡng, có test ưu tiên Rất cao / Cao đang Failed hoặc chưa chạy, có bug mở. Flaky và bug chưa đồng
+  bộ là lưu ý, không chặn. Kèm pass rate theo ngày (dashboard milestone). AC: 5 000 kết quả ≤ 3 s (có
+  test).
+- **Export:** Excel (openpyxl) mỗi phần một sheet, mọi ô ghi dạng text. **PDF** = trang in của trình
+  duyệt (nút "In / Lưu PDF", CSS in ẩn menu, bộ lọc); không dựng PDF ở server. **Link chia sẻ** = URL
+  trang với bộ lọc trong query (`?tab=reports&report=…&r_period=…&r_ms=…`), người mở vẫn cần quyền.
+- **Lịch gửi:** `GET/POST /testcases/report-schedules`, `PATCH/DELETE /testcases/report-schedules/{id}`,
+  `POST …/{id}/send` (gửi ngay), `GET /testcases/report-schedules/webhooks` (webhook dùng được: của dự
+  án hoặc chung, không gắn repo); cần `tests.manage`. Loại: summary, readiness (cần milestone),
+  coverage, defects, automation; `params`: suite_id, milestone_id, plan_id, config_id, branch, days
+  (mặc định 1 ngày / 7 ngày), min_pass_rate. Scheduler (`testcase-reports`, 5 phút) gửi lịch đến giờ
+  (REPORT_TZ; hằng ngày, hoặc hằng tuần đúng thứ), kỳ báo cáo kết thúc hôm qua; `last_sent_at` cùng
+  ngày → không gửi lại; hàng bị khoá (`FOR UPDATE SKIP LOCKED`) nên hai scheduler không gửi trùng. Gửi
+  bằng đường webhook của G11 (`WebhookDelivery` sự kiện `testcase.report`, ký HMAC, thử lại 3 lần;
+  Slack / Teams nhận một dòng `text`, JSON nhận cả số liệu). Telegram bot riêng, email, Slack native:
+  IDEAS.

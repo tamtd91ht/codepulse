@@ -31,6 +31,7 @@ EVENT_LABEL = {
     "result.failed": "Kết quả test Failed",
     "case.status_changed": "Testcase đổi trạng thái",
     "plan.closed": "Đóng test plan",
+    "testcase.report": "Báo cáo testcase",
 }
 SEVERITIES = ("critical", "high", "medium", "low", "info")
 SEVERE = ("critical", "high")

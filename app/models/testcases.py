@@ -57,8 +57,10 @@ CASE_TYPES = (
     "smoke",
     "usability",
 )
-TEST_STATUSES = ("untested", "passed", "failed", "blocked", "retest")
-RESULT_STATUSES = ("passed", "failed", "blocked", "retest")
+# Built-in statuses (§15 G6 adds "skipped"); a dự án may add its own (TestStatus), so the
+# columns are checked by the application, not by a CHECK constraint.
+TEST_STATUSES = ("untested", "passed", "failed", "blocked", "retest", "skipped")
+RESULT_STATUSES = ("passed", "failed", "blocked", "retest", "skipped")
 RUN_SOURCES = ("manual", "regression", "plan", "ci")
 RESULT_SOURCES = ("manual", "ci")
 CI_IMPORT_STATUSES = ("queued", "running", "done", "failed")
@@ -369,7 +371,6 @@ class TestRunTest(Base):
     __test__ = False
     __table_args__ = (
         UniqueConstraint("run_id", "case_id", name="uq_test_run_tests_run_case"),
-        CheckConstraint(f"status IN {TEST_STATUSES}", name="status"),
         Index("ix_test_run_tests_run_id_status", "run_id", "status"),
     )
 
@@ -393,10 +394,7 @@ class TestRunTest(Base):
 class TestResult(Base):
     __tablename__ = "test_results"
     __test__ = False
-    __table_args__ = (
-        CheckConstraint(f"status IS NULL OR status IN {RESULT_STATUSES}", name="status"),
-        CheckConstraint(f"source IN {RESULT_SOURCES}", name="source"),
-    )
+    __table_args__ = (CheckConstraint(f"source IN {RESULT_SOURCES}", name="source"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     test_id: Mapped[int] = mapped_column(
@@ -422,6 +420,8 @@ class TestResult(Base):
     )
     # {commit_sha, branch, mr_iid, test_name, file, import_id}
     ci: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
+    # §15 G6: the first step that failed (1-based), for template "steps".
+    failed_step: Mapped[int | None]
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -460,3 +460,89 @@ class TestCiImport(Base):
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TestProjectSettings(TimestampMixin, Base):
+    """A dự án's testing settings (§15): who may record (G6 "chỉ người được giao"), the
+    approval rule (G7), where bugs go in Jira (G3)."""
+
+    __tablename__ = "test_project_settings"
+    __test__ = False
+
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    assigned_only: Mapped[bool] = mapped_column(server_default="false", default=False)
+    require_approval: Mapped[bool] = mapped_column(server_default="false", default=False)
+    jira_project_key: Mapped[str | None]
+    jira_issue_type: Mapped[str] = mapped_column(server_default="Bug", default="Bug")
+    jira_components: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
+    jira_labels: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class TestStatus(TimestampMixin, Base):
+    """A result status a dự án adds to the built-in ones (§15 G6)."""
+
+    __tablename__ = "test_statuses"
+    __test__ = False
+    __table_args__ = (
+        UniqueConstraint("business_project_id", "key", name="uq_test_statuses_project_key"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
+    key: Mapped[str]  # lowercase slug, never one of TEST_STATUSES
+    name: Mapped[str]
+    color: Mapped[str]  # a token name: good, bad, warn, info, muted, primary
+    done: Mapped[bool] = mapped_column(server_default="true", default=True)  # counts as tested
+    position: Mapped[int] = mapped_column(server_default="0", default=0)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TestAttachment(Base):
+    """A file or picture attached to a result (§15 G6), kept once per dự án and content."""
+
+    __tablename__ = "test_attachments"
+    __test__ = False
+    __table_args__ = (
+        UniqueConstraint("business_project_id", "sha256", name="uq_test_attachments_project_sha"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str]
+    mime: Mapped[str]
+    size: Mapped[int]
+    sha256: Mapped[str]
+    data: Mapped[bytes] = deferred(mapped_column(LargeBinary, nullable=False))
+    uploaded_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TestReportSchedule(TimestampMixin, Base):
+    """A report sent on a schedule (§15 G4) to a webhook (chat / Telegram connector)."""
+
+    __tablename__ = "test_report_schedules"
+    __test__ = False
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str]
+    kind: Mapped[str]  # run_summary | release_readiness | coverage | defects | automation | ...
+    params: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
+    cadence: Mapped[str] = mapped_column(server_default="weekly", default="weekly")  # daily|weekly
+    weekday: Mapped[int | None]  # 0 = Monday, for weekly
+    hour: Mapped[int] = mapped_column(server_default="8", default=8)  # local time (REPORT_TZ)
+    webhook_id: Mapped[int | None] = mapped_column(
+        ForeignKey("notification_webhooks.id", ondelete="SET NULL")
+    )
+    enabled: Mapped[bool] = mapped_column(server_default="true", default=True)
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

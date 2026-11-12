@@ -82,6 +82,7 @@ def test_env_only_and_nothing(db_session: Session) -> None:
         "backfill_days": "env",
         "timeout_s": "env",
         "enabled": "env",
+        "write_enabled": "env",
     }
     assert conn.verify() is True
     none = connection(db_session, settings(jira_base_url="", jira_token=SecretStr("")), BOX)
@@ -105,6 +106,7 @@ def test_web_wins_over_env(db_session: Session) -> None:
             "backfill_days": 30,
             "timeout_s": 7,
             "enabled": True,
+            "write_enabled": True,
         }
     )
     save_connection(db_session, values, None)

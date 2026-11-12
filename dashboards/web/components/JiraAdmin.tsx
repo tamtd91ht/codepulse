@@ -83,8 +83,10 @@ export interface JiraConnection {
   backfill_days: number;
   timeout_s: number;
   enabled: boolean;
+  /** docs/specs/30 §15 G3: create bugs from test results (else JIRA_WRITE_ENABLED). */
+  write_enabled?: boolean;
   configured: boolean;
-  sources: Record<"interval_min" | "backfill_days" | "timeout_s" | "enabled", "web" | "env">;
+  sources: Record<"interval_min" | "backfill_days" | "timeout_s" | "enabled", "web" | "env"> & { write_enabled?: "web" | "env" };
   env: { base_url: boolean; token: boolean; ca_bundle: boolean; auth_type: boolean; username: boolean };
 }
 
@@ -639,14 +641,14 @@ function ConnectionForm({ c, submitLabel, onSaved, onCancel }: { c: JiraConnecti
 function ConnectionPanel({ data, onDone }: { data: JiraView; onDone: (msg: string) => void }) {
   const c = data.connection;
   const [editing, setEditing] = useState(false);
-  const [busy, setBusy] = useState<"test" | "toggle" | "reset" | "clear" | null>(null);
+  const [busy, setBusy] = useState<"test" | "toggle" | "reset" | "clear" | "write" | null>(null);
   const [result, setResult] = useState<TestResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const basic = c.auth_type === "basic";
   const secretName = basic ? "mật khẩu" : "token";
   const fromWeb =
     c.base_url_source === "web" || c.auth_type_source === "web" || c.username_source === "web" || c.token_source === "web" || c.ca_source === "web" || Object.values(c.sources).includes("web");
-  const act = async (kind: "toggle" | "reset" | "clear", work: () => Promise<unknown>, msg: string) => {
+  const act = async (kind: "toggle" | "reset" | "clear" | "write", work: () => Promise<unknown>, msg: string) => {
     setBusy(kind);
     try {
       await work();
@@ -750,6 +752,29 @@ function ConnectionPanel({ data, onDone }: { data: JiraView; onDone: (msg: strin
               <input type="checkbox" role="switch" checked={c.enabled} disabled={!!busy} onChange={toggle} /> {c.enabled ? "Đang bật" : "Đang tắt"}
             </label>
             <span className="muted small"> Tắt: ngừng đồng bộ, dữ liệu đã lấy vẫn giữ.</span>
+          </dd>
+        </div>
+        <div className="jira-kv">
+          <dt>Tạo bug từ test</dt>
+          <dd>
+            <label className="jira-switch">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={!!c.write_enabled}
+                disabled={!!busy}
+                onChange={() =>
+                  void act(
+                    "write",
+                    () => api.put("/dpi/jira/connection", { write_enabled: !c.write_enabled }),
+                    c.write_enabled ? "Đã tắt tạo bug lên Jira." : "Đã bật tạo bug lên Jira.",
+                  )
+                }
+              />{" "}
+              {c.write_enabled ? "Cho phép" : "Không cho phép"}
+            </label>{" "}
+            <From source={c.sources.write_enabled ?? "env"} />
+            <span className="muted small"> Chỉ để tạo issue từ kết quả test Failed (Testcase › Run); token cần quyền tạo issue. Mọi phần khác của Jira vẫn chỉ đọc.</span>
           </dd>
         </div>
       </dl>

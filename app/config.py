@@ -217,6 +217,10 @@ class Settings(BaseSettings):
     jira_sync_interval_min: int = Field(default=15, ge=1, le=1440)
     jira_backfill_days: int = Field(default=180, ge=1, le=3650)
     jira_timeout_s: float = Field(default=20.0, gt=0, le=300)
+    # docs/specs/30 §15 G3: the only Jira writes allowed besides transitions are creating a bug
+    # from a failed test result; off by default (the token then needs "Create issues"). The
+    # value saved on Admin > Jira > Kết nối (`write_enabled`) wins.
+    jira_write_enabled: bool = False
     # DPI (docs/specs/25 §4.3): accounts matching this are bots, never counted.
     bot_account_pattern: str = r"(^|[-_.])bot([-_.@]|$)|renovate|dependabot|codepulse|gitlab-ci"
     # Review again once the LLM works again (app/review/llm_recovery.py): the switch, and how

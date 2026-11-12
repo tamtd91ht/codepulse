@@ -6,6 +6,7 @@ import { Icon } from "@/components/icons";
 import { CasesTab } from "@/components/TestcaseCases";
 import { RegressionView } from "@/components/TestcaseImpact";
 import { TraceView } from "@/components/TestcaseLinks";
+import { TestcaseReports } from "@/components/TestcaseReports";
 import { MilestonesTab } from "@/components/TestMilestones";
 import { PlanView } from "@/components/TestPlans";
 import { RunView, RunsTab } from "@/components/TestRuns";
@@ -27,8 +28,8 @@ import type { Me } from "@/lib/types";
  * The URL keeps the dự án, the suite, the tab and the open run / plan (?project=&suite=&tab=&run=&plan=).
  */
 
-type Tab = "cases" | "runs" | "milestones" | "regression" | "trace" | "setup";
-const TABS: Tab[] = ["cases", "runs", "milestones", "regression", "trace", "setup"];
+type Tab = "cases" | "runs" | "milestones" | "regression" | "trace" | "reports" | "setup";
+const TABS: Tab[] = ["cases", "runs", "milestones", "regression", "trace", "reports", "setup"];
 type Where = { project: number | null; suite: number | null; tab: Tab; run: number | null; plan: number | null };
 const HOME: Where = { project: null, suite: null, tab: "cases", run: null, plan: null };
 const LAST_PROJECT = "cp:testcases:project";
@@ -135,6 +136,7 @@ export default function TestcasesPage() {
             ["milestones", "Milestone", "flag"],
             ["regression", "Cần test lại", "history"],
             ["trace", "Ma trận truy vết", "link"],
+            ["reports", "Báo cáo", "pulse"],
             ["setup", "Thiết lập", "settings"],
           ] as const
         ).map(([key, label, icon]) => (
@@ -158,6 +160,8 @@ export default function TestcasesPage() {
         )
       ) : where.tab === "milestones" ? (
         <MilestonesTab projectId={project.id} canEdit={project.can_manage} onOpenRun={(id) => go({ tab: "runs", run: id, plan: null })} />
+      ) : where.tab === "reports" ? (
+        <TestcaseReports key={project.id} projectId={project.id} />
       ) : where.tab === "setup" ? (
         <SetupTab projectId={project.id} canEdit={project.can_edit} canManage={project.can_manage} />
       ) : where.tab === "trace" ? (

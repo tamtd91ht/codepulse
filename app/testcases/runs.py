@@ -21,6 +21,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import ColumnElement, delete, func, or_, select, update
+from sqlalchemy import case as sql_case
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
@@ -496,6 +497,8 @@ def add_result(
     steps: list[dict[str, Any]] | None = None,
     reassign: bool = False,
     assigned_to: int | None = None,
+    failed_step: int | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> TestResult:
     if reassign:
         test.assigned_to = assigned_to
@@ -511,11 +514,88 @@ def add_result(
         defects=defects or [],
         step_results=steps or [],
         assigned_to=test.assigned_to,
+        failed_step=failed_step,
+        attachments=attachments or [],
         created_by=user_id,
         created_at=now,
     )
     session.add(result)
     return result
+
+
+def latest_facts(session: Session, test_ids: list[int]) -> dict[int, tuple[int | None, int | None]]:
+    """test id -> (elapsed_s, failed_step) of its latest result with a status (§15 G6)."""
+    if not test_ids:
+        return {}
+    return {
+        test_id: (elapsed, failed)
+        for test_id, elapsed, failed in session.execute(
+            select(TestResult.test_id, TestResult.elapsed_s, TestResult.failed_step)
+            .where(TestResult.test_id.in_(test_ids), TestResult.status.is_not(None))
+            .ext(distinct_on(TestResult.test_id))
+            .order_by(TestResult.test_id, TestResult.created_at.desc(), TestResult.id.desc())
+        )
+    }
+
+
+@dataclass
+class RunTime:
+    elapsed_total_s: int = 0
+    remaining_estimate_s: int = 0
+
+
+def run_times(
+    session: Session, runs: list[TestRun], not_done: dict[int, set[str]]
+) -> dict[int, RunTime]:
+    """Per run (§15 G6): the time its results took (sum of `elapsed_s`), and what is left: the
+    estimates of the tests not done yet (`not_done`: per dự án, the statuses that still need a
+    run), plus, for such a test without an estimate, the average elapsed of the run's results.
+    An open run reads the estimate from the case as it is now, a closed one from its snapshot.
+    Two grouped queries whatever the number of runs."""
+    out = {r.id: RunTime() for r in runs}
+    if not runs:
+        return out
+    ids = sorted(out)
+    spent: dict[int, tuple[int, int]] = {}
+    for run_id, total, n in session.execute(
+        select(TestRunTest.run_id, func.sum(TestResult.elapsed_s), func.count(TestResult.elapsed_s))
+        .join(TestRunTest, TestRunTest.id == TestResult.test_id)
+        .where(TestRunTest.run_id.in_(ids), TestResult.elapsed_s.is_not(None))
+        .group_by(TestRunTest.run_id)
+    ):
+        spent[run_id] = (int(total or 0), int(n or 0))
+        out[run_id].elapsed_total_s = int(total or 0)
+    snap_est = TestRunTest.snapshot["estimate_s"].as_integer()
+    estimate = sql_case(
+        (
+            TestRun.completed_at.is_(None) & TestCase.id.is_not(None),
+            TestCase.estimate_s,
+        ),
+        else_=snap_est,
+    )
+    rows = session.execute(
+        select(
+            TestRunTest.run_id,
+            TestRunTest.status,
+            estimate.is_(None),
+            func.count(),
+            func.sum(estimate),
+        )
+        .join(TestRun, TestRun.id == TestRunTest.run_id)
+        .outerjoin(TestCase, TestCase.id == TestRunTest.case_id)
+        .where(TestRunTest.run_id.in_(ids))
+        .group_by(TestRunTest.run_id, TestRunTest.status, estimate.is_(None))
+    )
+    project = {r.id: r.business_project_id for r in runs}
+    for run_id, status, no_estimate, n, total in rows:
+        if status not in not_done.get(project[run_id], {"untested"}):
+            continue
+        if no_estimate:
+            done_s, done_n = spent.get(run_id, (0, 0))
+            out[run_id].remaining_estimate_s += (done_s // done_n) * int(n) if done_n else 0
+        else:
+            out[run_id].remaining_estimate_s += int(total or 0)
+    return out
 
 
 # -- plans -----------------------------------------------------------------------------------------

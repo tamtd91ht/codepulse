@@ -352,10 +352,12 @@ API_TOKEN_PREFIX = "cpat_"  # noqa: S105 - app/mcp/tokens.py TOKEN_PREFIX (no im
 TESTCASE_API = "/api/v1/testcases"
 TOKEN_RATE_PER_MINUTE = 600
 READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-# Recording results (POST only): a CI token holding results:write only may call these, and read
-# its CI imports (CI_IMPORT_PATHS, the CLI's --wait), and nothing else.
+# Recording results (POST only): a CI token holding results:write only may call these (uploading
+# a result's attachments included, docs/specs/30 §15 G6), and read its CI imports
+# (CI_IMPORT_PATHS, the CLI's --wait), and nothing else.
 RESULT_PATHS = re.compile(
-    r"^/api/v1/testcases/(?:tests/\d+/results|runs/\d+/results|runs/import-results)/?$"
+    r"^/api/v1/testcases/"
+    r"(?:tests/\d+/results|runs/\d+/results|runs/import-results|attachments)/?$"
 )
 CI_IMPORT_PATHS = re.compile(r"^/api/v1/testcases/ci-imports(?:/\d+)?/?$")
 

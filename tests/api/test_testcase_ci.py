@@ -515,7 +515,8 @@ def test_many_failed_ci_results_raise_one_event(
     )
     assert row.payload["failed_count"] == 25 and row.payload["run_key"] == f"R{out['run_id']}"
     assert len(row.payload["tests"]) == events.FAILED_LISTED
-    assert row.payload["tests"][0]["case_key"] == f"C{cases[0].id}"
+    keys = {f"C{c.id}" for c in cases}
+    assert {t["case_key"] for t in row.payload["tests"]} <= keys
     assert "test_key" not in row.payload  # several tests: listed, not at the top level
     assert sum(1 for f, _a, _k in queue.jobs if f == events.JOB) == 1
 

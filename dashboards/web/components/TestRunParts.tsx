@@ -1,16 +1,20 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 
 import { Modal } from "@/components/CriteriaParts";
-import { Alert, Skeleton } from "@/components/ui";
-import { useApi } from "@/lib/api";
+import { Icon, IconButton } from "@/components/icons";
+import { Alert, Card, Loading, Skeleton } from "@/components/ui";
+import { api, useApi } from "@/lib/api";
 import { CASE_TYPES, PRIORITIES, PRIORITY_LABEL, type Suite, TYPE_LABEL } from "@/lib/testcases";
 import {
-  RESULT_STATUSES,
-  TEST_STATUS_LABEL,
-  TEST_STATUSES,
+  BUILTIN_STATUSES,
+  STATUS_COLORS,
+  STATUS_KEYS,
+  errorText,
   passedPct,
+  statusClass,
+  statusName,
   type ConfigGroup,
   type Counts,
   type Milestone,
@@ -19,27 +23,55 @@ import {
   type RunOut,
   type SectionNode,
   type Selection,
+  type StatusDef,
+  type StatusList,
   type TestStatus,
 } from "@/lib/testruns";
 import { dateTimeMin } from "@/lib/format";
 
 /* Shared pieces of the test run screens (docs/specs/30 §13.6): status colours, progress bars, the case picker. */
 
-export function StatusPill({ status }: { status: TestStatus }) {
-  return <span className={`tr-pill st-${status}`}>{TEST_STATUS_LABEL[status]}</span>;
+/** The result statuses of a dự án (§15 G6), the built-in ones while they load. */
+export function useStatuses(projectId: number | null | undefined) {
+  const list = useApi<StatusList>(projectId ? `/testcases/statuses?business_project_id=${projectId}` : null);
+  return { defs: list.data?.items ?? BUILTIN_STATUSES, list };
 }
 
-/** Stacked bar passed / failed / blocked / retest / untested, with a legend unless `compact`. */
-export function StatusBar({ counts, compact }: { counts: Counts; compact?: boolean }) {
+export function StatusPill({ status, statuses, title }: { status: TestStatus; statuses?: StatusDef[] | null; title?: string }) {
+  return (
+    <span className={`tr-pill ${statusClass(status, statuses)}`} title={title}>
+      {statusName(status, statuses)}
+    </span>
+  );
+}
+
+/** The statuses a bar shows, in order: the configured ones (Untested last), then any key the
+ * counts carry that no definition names (a custom status of another dự án in a plan). */
+function barStatuses(counts: Counts, statuses?: StatusDef[] | null): StatusDef[] {
+  const defs = statuses?.length ? statuses : BUILTIN_STATUSES;
+  const known = new Set(defs.map((d) => d.key));
+  const extra = Object.keys(counts)
+    .filter((k) => k !== "total" && !known.has(k) && (counts[k] ?? 0) > 0)
+    .map((k): StatusDef => ({ id: null, key: k, name: k, color: "muted", done: true, builtin: false, position: 999_999, archived: false }));
+  const all = [...defs, ...extra].filter((d) => d.key !== "untested");
+  const untested = defs.find((d) => d.key === "untested") ?? BUILTIN_STATUSES[BUILTIN_STATUSES.length - 1];
+  // Archived or unused custom statuses only take room when tests carry them.
+  return [...all.filter((d) => d.builtin || (counts[d.key] ?? 0) > 0 || !d.archived), untested];
+}
+
+/** Stacked bar of every status of the dự án in its order and colours, with a legend unless `compact`. */
+export function StatusBar({ counts, compact, statuses }: { counts: Counts; compact?: boolean; statuses?: StatusDef[] | null }) {
   const total = counts.total || 0;
-  const label = `${passedPct(counts)}% passed; ${TEST_STATUSES.map((s) => `${TEST_STATUS_LABEL[s]} ${counts[s] ?? 0}`).join(", ")}`;
+  const shown = barStatuses(counts, statuses);
+  const label = `${passedPct(counts)}% passed; ${shown.map((s) => `${statusName(s.key, shown)} ${counts[s.key] ?? 0}`).join(", ")}`;
   return (
     <div className={`tr-progress${compact ? " compact" : ""}`}>
       <div className="tr-bar" role="img" aria-label={label} title={label}>
         {total > 0 &&
-          TEST_STATUSES.map((s) =>
-            counts[s] ? <span key={s} className={`st-${s}`} style={{ width: `${(counts[s] / total) * 100}%` }} /> : null,
-          )}
+          shown.map((s) => {
+            const n = counts[s.key] ?? 0;
+            return n ? <span key={s.key} className={statusClass(s.key, shown)} style={{ width: `${(n / total) * 100}%` }} /> : null;
+          })}
       </div>
       {compact ? (
         <span className="tr-pct small">
@@ -47,12 +79,15 @@ export function StatusBar({ counts, compact }: { counts: Counts; compact?: boole
         </span>
       ) : (
         <ul className="tr-legend small">
-          {TEST_STATUSES.map((s) => (
-            <li key={s}>
-              <span className={`tr-dot st-${s}`} aria-hidden="true" />
-              {TEST_STATUS_LABEL[s]} <strong>{counts[s] ?? 0}</strong>
-            </li>
-          ))}
+          {shown
+            .filter((s) => s.builtin || (counts[s.key] ?? 0) > 0 || !s.archived)
+            .filter((s) => s.key !== "skipped" || (counts.skipped ?? 0) > 0)
+            .map((s) => (
+              <li key={s.key}>
+                <span className={`tr-dot ${statusClass(s.key, shown)}`} aria-hidden="true" />
+                {statusName(s.key, shown)} <strong>{counts[s.key] ?? 0}</strong>
+              </li>
+            ))}
           <li className="muted">
             <strong>{passedPct(counts)}%</strong> passed / {total} test
           </li>
@@ -62,33 +97,239 @@ export function StatusBar({ counts, compact }: { counts: Counts; compact?: boole
   );
 }
 
-/** Passed / Failed / Blocked / Retest as toggle buttons. */
+/** The statuses a result may be recorded with: built-in ones, then live custom ones. */
+export function resultStatuses(statuses?: StatusDef[] | null): StatusDef[] {
+  const defs = statuses?.length ? statuses : BUILTIN_STATUSES;
+  return defs.filter((d) => d.key !== "untested" && !d.archived);
+}
+
+/** The result statuses as toggle buttons (with their shortcut keys in the test drawer). */
 export function StatusButtons({
   value,
   onChange,
   disabled,
   size,
+  statuses,
+  shortcuts,
 }: {
   value: ResultStatus | null;
   onChange: (s: ResultStatus) => void;
   disabled?: boolean;
   size?: "sm";
+  statuses?: StatusDef[] | null;
+  shortcuts?: boolean;
 }) {
   return (
     <div className="tr-st-group" role="group" aria-label="Kết quả">
-      {RESULT_STATUSES.map((s) => (
-        <button
-          key={s}
-          type="button"
-          className={`tr-st-btn st-${s}${size ? " sm" : ""}`}
-          aria-pressed={value === s}
-          disabled={disabled}
-          onClick={() => onChange(s)}
-        >
-          {TEST_STATUS_LABEL[s]}
-        </button>
-      ))}
+      {resultStatuses(statuses).map((s) => {
+        const key = shortcuts ? STATUS_KEYS[s.key] : undefined;
+        return (
+          <button
+            key={s.key}
+            type="button"
+            className={`tr-st-btn ${statusClass(s.key, statuses)}${size ? " sm" : ""}`}
+            aria-pressed={value === s.key}
+            aria-keyshortcuts={key}
+            title={key ? `${s.name} (phím ${key})` : undefined}
+            disabled={disabled}
+            onClick={() => onChange(s.key)}
+          >
+            {s.name}
+            {key && <kbd className="tr-kbd" aria-hidden="true">{key}</kbd>}
+          </button>
+        );
+      })}
     </div>
+  );
+}
+
+/* ---- Thiết lập › Trạng thái kết quả (§15 G6) ---- */
+
+function StatusModal({ projectId, item, onClose, onSaved }: { projectId: number; item: StatusDef | null; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState(item?.name ?? "");
+  const [color, setColor] = useState<string>(item?.color ?? "info");
+  const [done, setDone] = useState(item?.done ?? true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (item?.id) await api.patch(`/testcases/statuses/${item.id}`, { name: name.trim(), color, done });
+      else await api.post("/testcases/statuses", { business_project_id: projectId, name: name.trim(), color, done });
+      onSaved();
+    } catch (e) {
+      setError(errorText(e));
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      title={item ? `Sửa trạng thái “${item.name}”` : "Thêm trạng thái kết quả"}
+      onClose={onClose}
+      busy={busy}
+      width={480}
+      footer={
+        <>
+          <button type="button" onClick={onClose} disabled={busy}>
+            Huỷ
+          </button>
+          <button type="button" className="primary" onClick={() => void submit()} disabled={busy || !name.trim()}>
+            {item ? "Lưu" : "Thêm"}
+          </button>
+        </>
+      }
+    >
+      <div className="adm-form">
+        {error && <Alert tone="error">{error}</Alert>}
+        <label className="adm-field">
+          <span className="small muted">Tên</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Cần xác nhận" maxLength={60} autoFocus />
+        </label>
+        {item && <p className="small muted">Mã: {item.key} (không đổi được)</p>}
+        <div className="adm-field">
+          <span className="small muted">Màu</span>
+          <div className="tr-chips" role="radiogroup" aria-label="Màu">
+            {STATUS_COLORS.map((c) => (
+              <button key={c.value} type="button" role="radio" aria-checked={color === c.value} className={`tr-st-btn sm st-c-${c.value}`} aria-pressed={color === c.value} onClick={() => setColor(c.value)}>
+                {c.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <label className="inline-check">
+          <input type="checkbox" checked={done} onChange={(e) => setDone(e.target.checked)} />
+          <span>Tính là đã chạy xong (không cộng vào thời gian còn lại của run)</span>
+        </label>
+      </div>
+    </Modal>
+  );
+}
+
+export function ResultStatusesCard({ projectId }: { projectId: number }) {
+  const { list } = useStatuses(projectId);
+  const [editing, setEditing] = useState<StatusDef | "new" | null>(null);
+  const [removing, setRemoving] = useState<StatusDef | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const items = list.data?.items ?? [];
+  const canEdit = !!list.data?.can_edit;
+  const custom = items.filter((s) => !s.builtin);
+
+  const act = async (fn: () => Promise<unknown>): Promise<boolean> => {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+      await list.mutate();
+      return true;
+    } catch (e) {
+      setError(errorText(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const move = (s: StatusDef, by: number) => {
+    const i = custom.indexOf(s);
+    const other = custom[i + by];
+    if (!other?.id || !s.id) return;
+    // Positions shown are 100 + the stored one; swap the stored ones.
+    void act(async () => {
+      await api.patch(`/testcases/statuses/${s.id}`, { position: other.position - 100 });
+      await api.patch(`/testcases/statuses/${other.id}`, { position: s.position - 100 });
+    });
+  };
+
+  return (
+    <Card
+      title="Trạng thái kết quả"
+      id="tr-statuses"
+      subtitle="Passed, Failed, Blocked, Retest, Skipped có sẵn; thêm trạng thái riêng của dự án (đang dùng thì lưu trữ, không xoá)"
+      actions={
+        canEdit ? (
+          <button type="button" className="sm" onClick={() => setEditing("new")} disabled={custom.length >= 20}>
+            <Icon name="plus" size={14} /> Thêm trạng thái
+          </button>
+        ) : undefined
+      }
+    >
+      {error && !removing && (
+        <Alert tone="error" onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+      {!list.data ? (
+        <Loading error={list.error} rows={3} />
+      ) : (
+        <div className="table-wrap">
+          <table className="tc-table">
+            <thead>
+              <tr>
+                <th>Trạng thái</th>
+                <th>Mã</th>
+                <th>Tính là xong</th>
+                <th>Loại</th>
+                <th aria-label="Thao tác" />
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((s) => (
+                <tr key={s.key}>
+                  <td>
+                    <StatusPill status={s.key} statuses={items} />
+                  </td>
+                  <td className="small tc-code-cell">{s.key}</td>
+                  <td className="small">{s.done ? "Có" : "Không"}</td>
+                  <td className="small muted">{s.builtin ? "Có sẵn" : s.archived ? "Đã lưu trữ" : "Tuỳ biến"}</td>
+                  <td>
+                    {canEdit && !s.builtin && (
+                      <div className="tr-row-tools">
+                        <IconButton icon="chevronUp" label={`Đưa ${s.name} lên`} onClick={() => move(s, -1)} disabled={busy || custom.indexOf(s) === 0} />
+                        <IconButton icon="chevronDown" label={`Đưa ${s.name} xuống`} onClick={() => move(s, 1)} disabled={busy || custom.indexOf(s) === custom.length - 1} />
+                        <IconButton icon="edit" label={`Sửa ${s.name}`} onClick={() => setEditing(s)} />
+                        <button type="button" className="sm ghost" disabled={busy} onClick={() => void act(() => api.patch(`/testcases/statuses/${s.id}`, { archived: !s.archived }))}>
+                          {s.archived ? "Dùng lại" : "Lưu trữ"}
+                        </button>
+                        <IconButton icon="remove" label={`Xoá ${s.name}`} onClick={() => setRemoving(s)} />
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!custom.length && <p className="small muted">Chưa có trạng thái tuỳ biến nào.</p>}
+        </div>
+      )}
+      {editing && (
+        <StatusModal
+          projectId={projectId}
+          item={editing === "new" ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            void list.mutate();
+          }}
+        />
+      )}
+      {removing && (
+        <ConfirmModal
+          title={`Xoá trạng thái “${removing.name}”?`}
+          confirmLabel="Xoá"
+          danger
+          busy={busy}
+          error={error}
+          onClose={() => {
+            setRemoving(null);
+            setError(null);
+          }}
+          onConfirm={() => void act(() => api.delete(`/testcases/statuses/${removing.id}`)).then((ok) => ok && setRemoving(null))}
+        >
+          Chỉ xoá được trạng thái chưa dùng trong kết quả nào; đã dùng thì chọn “Lưu trữ”.
+        </ConfirmModal>
+      )}
+    </Card>
   );
 }
 

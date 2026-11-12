@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.orm import Session
@@ -39,16 +39,19 @@ from app.models import (
     TestSharedStep,
     User,
 )
+from app.testcases import bugs as tc_bugs
 from app.testcases import content
 from app.testcases import events as tc_events
 from app.testcases import runs as rs
 from app.testcases import service as tc
+from app.testcases import statuses as tst
 
 router = APIRouter(tags=["testcases"])
 SessionDep = Annotated[Session, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
-ResultStatus = Literal["passed", "failed", "blocked", "retest"]
-StepStatus = Literal["untested", "passed", "failed", "blocked", "retest"]
+# §15 G6: a built-in result status or a custom one of the dự án (checked by `statuses.check`).
+ResultStatus = Annotated[str, Field(min_length=1, max_length=40)]
+StepStatus = Literal["untested", "passed", "failed", "blocked", "retest", "skipped"]
 NAME_MAX = 200
 DESC_MAX = 10_000
 CLOSED_RUN = "test run đã đóng, không sửa hay ghi kết quả được nữa"
@@ -65,11 +68,16 @@ STEP_MAX = content.STEP_MAX
 
 
 class Counts(BaseModel):
+    """Tests by status: the built-in keys always, plus a key per custom status in use (G6)."""
+
+    model_config = ConfigDict(extra="allow")
+
     untested: int = 0
     passed: int = 0
     failed: int = 0
     blocked: int = 0
     retest: int = 0
+    skipped: int = 0
     total: int = 0
 
 
@@ -228,6 +236,12 @@ class RunOut(BaseModel):
     created_by: Person | None
     counts: Counts
     can_edit: bool
+    # §15 G6: time spent (sum of the results' elapsed) and left (estimates of tests not done).
+    elapsed_total_s: int = 0
+    remaining_estimate_s: int = 0
+    # §15 G6: "chỉ người được giao" is on; whether the viewer may record any test of the run.
+    assigned_only: bool = False
+    can_record_all: bool = False
 
 
 class TestOut(BaseModel):
@@ -249,6 +263,10 @@ class TestOut(BaseModel):
     defects: list[str]
     latest_comment: str | None
     flaky: bool = False  # §15 G1: the case's CI results disagree
+    needs_retest: bool = False  # §15 G3: failed, and every bug of it closed (open runs)
+    # §15 G6: of the latest result with a status.
+    elapsed_s: int | None = None
+    failed_step: int | None = None
 
 
 class TestsOut(BaseModel):
@@ -276,6 +294,7 @@ class ResultOut(BaseModel):
     stack: str | None = None
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     ci: dict[str, Any] = Field(default_factory=dict)
+    failed_step: int | None = None  # §15 G6
 
 
 class RunBrief(BaseModel):
@@ -283,6 +302,7 @@ class RunBrief(BaseModel):
     key: str
     name: str
     completed: bool
+    business_project_id: int | None = None  # §15 G6: where attachments are uploaded
 
 
 class TestDetail(TestOut):
@@ -306,6 +326,8 @@ class ResultIn(BaseModel):
     defects: list[str] = Field(default_factory=list, max_length=rs.DEFECTS_MAX)
     step_results: list[StepResultIn] = Field(default_factory=list, max_length=STEP_MAX)
     assigned_to: int | None = None
+    # §15 G6: files uploaded with POST /testcases/attachments.
+    attachment_ids: list[int] = Field(default_factory=list, max_length=tst.ATTACH_PER_RESULT)
 
 
 class BulkResultIn(BaseModel):
@@ -504,6 +526,9 @@ def _run_outs(session: Session, principal: Principal, runs: list[TestRun]) -> li
         ).all()
     )
     people = _people(session, {r.assigned_to for r in runs} | {r.created_by for r in runs})
+    bps = {r.business_project_id for r in runs}
+    times = rs.run_times(session, runs, tst.not_done(session, bps))
+    only = {bp: tst.assigned_only(session, bp) for bp in bps}
     return [
         RunOut(
             id=r.id,
@@ -526,6 +551,11 @@ def _run_outs(session: Session, principal: Principal, runs: list[TestRun]) -> li
             created_by=people.get(r.created_by) if r.created_by else None,
             counts=_counts(counts.get(r.id)),
             can_edit=tc.may_manage(principal, r.business_project_id),
+            elapsed_total_s=times[r.id].elapsed_total_s,
+            remaining_estimate_s=times[r.id].remaining_estimate_s,
+            assigned_only=only[r.business_project_id],
+            can_record_all=r.completed_at is None
+            and tst.may_record_any(principal, r.business_project_id, only[r.business_project_id]),
         )
         for r in runs
     ]
@@ -543,6 +573,8 @@ def _test_outs(
         else set()
     )
     people = _people(session, {t.assigned_to for t in tests})
+    retest = tc_bugs.retest_ids(session, run, tests, defects)
+    facts = rs.latest_facts(session, [t.id for t in tests])
     out = [
         TestOut(
             id=t.id,
@@ -561,6 +593,9 @@ def _test_outs(
             defects=defects.get(t.id, []),
             latest_comment=comments.get(t.id),
             flaky=t.case_id in flaky,
+            needs_retest=t.id in retest,
+            elapsed_s=facts.get(t.id, (None, None))[0],
+            failed_step=facts.get(t.id, (None, None))[1],
         )
         for t in tests
     ]
@@ -587,14 +622,15 @@ def _result_outs(session: Session, results: list[TestResult]) -> list[ResultOut]
             stack=r.stack,
             attachments=list(r.attachments or []),
             ci=dict(r.ci or {}),
+            failed_step=r.failed_step,
         )
         for r in results
     ]
 
 
-def _can_record(principal: Principal, run: TestRun, test: TestRunTest) -> bool:
-    return run.completed_at is None and content.may_record(
-        principal, run.business_project_id, [test.assigned_to, run.assigned_to]
+def _can_record(session: Session, principal: Principal, run: TestRun, test: TestRunTest) -> bool:
+    return run.completed_at is None and tst.may_record(
+        session, principal, run.business_project_id, [test.assigned_to, run.assigned_to]
     )
 
 
@@ -616,8 +652,9 @@ def _detail(session: Session, principal: Principal, test: TestRunTest, run: Test
             key=content.key("run", run.id) or "",
             name=run.name,
             completed=run.completed_at is not None,
+            business_project_id=run.business_project_id,
         ),
-        can_record=_can_record(principal, run, test),
+        can_record=_can_record(session, principal, run, test),
         can_edit=run.completed_at is None and tc.may_manage(principal, run.business_project_id),
     )
 
@@ -1229,6 +1266,10 @@ def list_tests(
     """`status`: one or several, comma-separated; `assigned_to=0`: nobody."""
     run = _run_for(session, principal, run_id)
     query = select(TestRunTest).where(TestRunTest.run_id == run.id)
+    # §15 G3: `needs_retest` among the statuses keeps only the tests to run again.
+    statuses = [s.strip() for s in (status or "").split(",") if s.strip()]
+    retest_only = "needs_retest" in statuses
+    status = ",".join(s for s in statuses if s != "needs_retest") or None
     if status:
         query = query.where(TestRunTest.status.in_([s.strip() for s in status.split(",")]))
     if assigned_to == 0:
@@ -1237,6 +1278,8 @@ def list_tests(
         query = query.where(TestRunTest.assigned_to == assigned_to)
     tests = list(session.scalars(query.order_by(TestRunTest.position, TestRunTest.id)))
     items, _ = _test_outs(session, run, tests)
+    if retest_only:
+        items = [t for t in items if t.needs_retest]
     if q and q.strip():
         needle = fold(q.strip())
         items = [
@@ -1266,12 +1309,14 @@ def add_result(
     test, run = _test_for(session, principal, test_id, lock=True)
     if run.completed_at is not None:
         raise HTTPException(409, CLOSED_RUN)
-    if not content.may_record(
-        principal, run.business_project_id, [test.assigned_to, run.assigned_to]
+    if not tst.may_record(
+        session, principal, run.business_project_id, [test.assigned_to, run.assigned_to]
     ):
         raise HTTPException(
             403, "chỉ người được giao test hoặc người sửa được testcase mới ghi kết quả"
         )
+    status = tst.check(session, run.business_project_id, body.status)
+    files = tst.attachment_refs(session, run.business_project_id, body.attachment_ids)
     reassign = "assigned_to" in body.model_fields_set
     elapsed = content.parse_estimate(body.elapsed) if body.elapsed else None
     if body.elapsed and body.elapsed.strip() and elapsed is None:
@@ -1281,14 +1326,17 @@ def add_result(
         shown = rs.views(session, run, [test])[test.id]
         count = len(shown.get("steps_list") or []) if shown.get("template") == "steps" else 0
         steps = rs.step_results([s.model_dump() for s in body.step_results], count)
+    # §15 G6: a failed (blocked) step fails (blocks) the result; all passed: passed.
+    status, failed_step = tst.from_steps(status, steps)
     defects = rs.jira_keys(body.defects)
     if not (
-        body.status
+        status
         or rs.text(body.comment)
         or rs.line(body.version)
         or elapsed
         or defects
         or steps
+        or files
         or reassign
     ):
         raise HTTPException(422, "kết quả trống: chọn trạng thái hoặc nhập bình luận")
@@ -1297,7 +1345,9 @@ def add_result(
         test,
         user_id=principal.user_id,
         now=_now(),
-        status=body.status,
+        status=status,
+        failed_step=failed_step,
+        attachments=files,
         comment=body.comment,
         version=body.version,
         elapsed_s=elapsed,
@@ -1311,7 +1361,7 @@ def add_result(
         ),
     )
     tc_events.results_failed(
-        session, run, [test], status=body.status, comment=body.comment, defects=defects
+        session, run, [test], status=status, comment=body.comment, defects=defects
     )
     session.commit()
     return _detail(session, principal, test, run)
@@ -1333,7 +1383,8 @@ def bulk_results(
         raise HTTPException(409, CLOSED_RUN)
     reassign = "assigned_to" in body.model_fields_set
     defects = rs.jira_keys(body.defects)
-    if not (body.status or rs.text(body.comment) or rs.line(body.version) or defects or reassign):
+    status = tst.check(session, run.business_project_id, body.status)
+    if not (status or rs.text(body.comment) or rs.line(body.version) or defects or reassign):
         raise HTTPException(422, "kết quả trống: chọn trạng thái hoặc nhập bình luận")
     assignee = (
         _person(session, settings, run.business_project_id, body.assigned_to) if reassign else None
@@ -1348,9 +1399,14 @@ def bulk_results(
     )
     if len(tests) != len(set(body.test_ids)):
         raise HTTPException(422, "có test không thuộc test run này")
+    only = tst.assigned_only(session, run.business_project_id)
     for t in tests:
-        if not content.may_record(
-            principal, run.business_project_id, [t.assigned_to, run.assigned_to]
+        if not tst.may_record(
+            session,
+            principal,
+            run.business_project_id,
+            [t.assigned_to, run.assigned_to],
+            only_assigned=only,
         ):
             raise HTTPException(403, f"bạn không được ghi kết quả cho {content.key('test', t.id)}")
     now = _now()
@@ -1360,7 +1416,7 @@ def bulk_results(
             t,
             user_id=principal.user_id,
             now=now,
-            status=body.status,
+            status=status,
             comment=body.comment,
             version=body.version,
             defects=defects,
@@ -1373,10 +1429,10 @@ def bulk_results(
         "testresult.bulk",
         f"test_run:{run.id}",
         tests=len(tests),
-        status=body.status,
+        status=status,
     )
     tc_events.results_failed(
-        session, run, tests, status=body.status, comment=body.comment, defects=defects
+        session, run, tests, status=status, comment=body.comment, defects=defects
     )
     session.commit()
     return Changed(changed=len(tests))
@@ -1408,6 +1464,7 @@ def export_run(run_id: int, principal: CurrentPrincipal, session: SessionDep) ->
     }
     testers = _people(session, {r.created_by for r in latest.values()})
     [out] = _run_outs(session, principal, [run])
+    names = tst.labels(session, run.business_project_id)
     rows = []
     for t in items:
         r = latest.get(t.id)
@@ -1420,7 +1477,7 @@ def export_run(run_id: int, principal: CurrentPrincipal, session: SessionDep) ->
                 t.title,
                 t.priority,
                 content.TYPE_LABEL.get(t.type, t.type),
-                content.TEST_STATUS_LABEL.get(t.status, t.status),
+                names.get(t.status, t.status),
                 t.assigned_to.name if t.assigned_to else "",
                 (t.tested_at or "")[:16].replace("T", " "),
                 tester.name if tester else "",
@@ -1438,8 +1495,12 @@ def export_run(run_id: int, principal: CurrentPrincipal, session: SessionDep) ->
         ("Trạng thái", "Đã đóng" if run.completed_at else "Đang mở"),
         (
             "Tiến độ",
-            f"{c.total} test: {c.passed} passed, {c.failed} failed, {c.blocked} blocked, "
-            f"{c.retest} retest, {c.untested} chưa chạy",
+            f"{c.total} test: "
+            + ", ".join(
+                f"{n} {names.get(k, k)}"
+                for k, n in c.model_dump().items()
+                if k != "total" and (n or k in ("passed", "failed", "untested"))
+            ),
         ),
     ]
     return _download(rs.write_xlsx(run.name, header, rows), f"{out.key} {run.name}")

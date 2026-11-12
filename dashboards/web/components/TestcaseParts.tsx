@@ -3,6 +3,7 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { FlakyPill } from "@/components/CiImport";
+import { BugPills } from "@/components/JiraBug";
 import { Modal, ReorderControls, useDragList } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
 import { CodePathsField } from "@/components/TestcaseLinks";
@@ -589,7 +590,8 @@ function CaseResults({ caseId, projectId }: { caseId: number; projectId: number 
                 {r.result.created_by?.name ?? "—"} · {dateTimeMin(r.result.created_at)}
                 {r.result.version ? ` · bản ${r.result.version}` : ""}
                 {r.result.elapsed ? ` · ${r.result.elapsed}` : ""}
-                {r.result.defects.length ? ` · lỗi ${r.result.defects.join(", ")}` : ""}
+                {r.result.defects.length ? " · lỗi " : ""}
+                <BugPills keys={r.result.defects} bp={projectId} />
               </div>
               {r.result.comment && <div className="tc-lines small">{r.result.comment}</div>}
             </li>

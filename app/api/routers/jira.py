@@ -224,6 +224,7 @@ class ConnectionIn(BaseModel):
     backfill_days: int | None = None
     timeout_s: int | None = None
     enabled: bool | None = None
+    write_enabled: bool | None = None  # docs/specs/30 §15 G3: create bugs from test results
 
 
 @router.put("/connection")
@@ -280,6 +281,7 @@ def put_connection(
         auth_type=after.auth_type,
         username=after.username or None,
         enabled=after.enabled,
+        write_enabled=after.write_enabled,
     )
     session.commit()
     return {"connection": after.as_json()}

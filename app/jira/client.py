@@ -73,6 +73,7 @@ class JiraClient:
         username: str = "",
     ) -> None:
         self._auth_type = auth_type
+        self.base_url = base_url.rstrip("/")
         self._http = httpx.Client(
             base_url=base_url.rstrip("/") + "/rest/api/2",
             headers={
@@ -219,6 +220,20 @@ class JiraClient:
         """`fields.status` and `fields.resolutiondate` of one issue."""
         data = self.request("GET", f"/issue/{key}", params={"fields": "status,resolutiondate"})
         return dict((data or {}).get("fields") or {})
+
+    def create_issue(self, fields: dict[str, Any]) -> dict[str, Any]:
+        """docs/specs/30 §15 G3: a bug from a failed test result ({id, key, self}). Only called
+        when JIRA_WRITE_ENABLED (or its web value) is on; the token needs "Create issues"."""
+        # Not retried: a POST that reached Jira but timed out would make the bug twice.
+        return dict(self.request("POST", "/issue", json={"fields": fields}, retries=0) or {})
+
+    def get_issue(self, key: str, fields: Sequence[str] = ("summary", "status")) -> dict[str, Any]:
+        """One issue with `fields` (the caller checks `key` against a Jira key pattern)."""
+        return dict(self.request("GET", f"/issue/{key}", params={"fields": ",".join(fields)}) or {})
+
+    def browse_url(self, key: str) -> str:
+        """The issue's page for people (not the REST resource)."""
+        return f"{self.base_url}/browse/{key}"
 
     def search(
         self, jql: str, fields: Sequence[str], start_at: int = 0, max_results: int = PAGE_SIZE
