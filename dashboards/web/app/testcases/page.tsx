@@ -312,7 +312,7 @@ function CasesTab({
             )}
           </ul>
         )}
-        <label className="inline-check small">
+        <label className="inline-check small tc-nav-archived">
           <input type="checkbox" checked={archived} onChange={(e) => {
             setArchived(e.target.checked);
             onSuite(null);

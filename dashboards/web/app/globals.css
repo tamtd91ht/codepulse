@@ -11150,14 +11150,26 @@ button.ghost.danger:hover:not(:disabled) {
   align-items: start;
   margin-top: 16px;
 }
+/* The suites column runs the full height of the page beside the cases (nothing below it) and
+   never clips: the tooltips of its buttons show above the card's edge. */
 .tc-nav {
-  position: sticky;
-  top: calc(var(--topbar-h) + 16px);
-  display: grid;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   padding: 14px;
-  max-height: calc(100vh - var(--topbar-h) - 32px);
-  overflow-y: auto;
+  overflow: visible;
+}
+.tc-nav-archived {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+/* The last button's tooltip opens to the left: it stays inside the page. */
+.tc-nav-actions .icon-btn:last-child[data-tip]:hover::after,
+.tc-nav-actions .icon-btn:last-child[data-tip]:focus-visible::after {
+  left: auto;
+  right: 0;
+  transform: none;
 }
 .tc-nav-head {
   display: flex;
@@ -11570,10 +11582,6 @@ button.ghost.danger:hover:not(:disabled) {
 @media (max-width: 960px) {
   .tc-shell {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .tc-nav {
-    position: static;
-    max-height: none;
   }
   .tc-kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
