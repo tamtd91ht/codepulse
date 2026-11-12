@@ -400,9 +400,11 @@ không chèn ảnh.
 `## Nguồn tham khảo` liệt kê `[n] tiêu đề — url` (nguồn là file: `[n] tên file`) của các \
 nguồn đã dùng (giữ lại các nguồn cũ \
 nếu tài liệu hiện tại đã có mục này, đánh số tiếp).
-6. Bỏ các khung hướng dẫn viết của chuẩn (khung > [!NOTE] giải thích cách viết, câu hỏi gợi ý) \
+6. Giữ nguyên các liên kết `[chữ](url)` của nguồn ở đúng chỗ dùng chúng (kể cả trong bảng); \
+không bịa liên kết mới, không đổi địa chỉ.
+7. Bỏ các khung hướng dẫn viết của chuẩn (khung > [!NOTE] giải thích cách viết, câu hỏi gợi ý) \
 khi đã có nội dung thật cho mục đó.
-7. `title`: tiêu đề tài liệu (không có dấu #). `summary`: một câu ≤ 200 ký tự nói tài liệu giúp \
+8. `title`: tiêu đề tài liệu (không có dấu #). `summary`: một câu ≤ 200 ký tự nói tài liệu giúp \
 gì. `changes`: tối đa 12 gạch đầu dòng ngắn nói đã thêm/sửa gì và lấy từ nguồn nào. `conflicts`: \
 chỗ nguồn mâu thuẫn với tài liệu hiện tại hoặc với nhau.
 """

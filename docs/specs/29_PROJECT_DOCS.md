@@ -469,3 +469,10 @@ tài liệu nhập sai hoặc quá cũ.
 - Một phiên bản tải lên sai (không phải cả tài liệu): mở Lịch sử phiên bản và **Khôi phục** bản
   trước (lịch sử không bị viết lại).
 
+
+## 16. Giữ link khi nhập tài liệu — user 2026-11-12 **[Quyết định]**
+
+- `.docx`: `w:hyperlink`, `fldSimple HYPERLINK`, field phức hợp → `[chữ](url)`; `.xlsx`: ô có hyperlink → `[giá trị](url)`; trang web: `<a href>` (tương đối được nối với trang) → link. Chỉ giữ http/https/mailto; bỏ lớp chuyển hướng `google.com/url?q=`.
+- Link Google Docs / Sheets được đọc qua bản xuất `.docx` / `.xlsx` của Google (giữ link, mọi tab của sheet), không qua trang (là script). Tài liệu chưa chia sẻ công khai → báo rõ cách bật chia sẻ hoặc tải file lên.
+- AI tổng hợp được dặn giữ nguyên link của nguồn.
+- Còn lại: dán vùng ô / đoạn văn từ Google Sheets/Docs vào trình soạn giữ link (đọc HTML của clipboard).
