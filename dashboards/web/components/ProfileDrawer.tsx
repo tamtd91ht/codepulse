@@ -4,7 +4,8 @@ import Link from "next/link";
 import { type ChangeEvent, type FormEvent, useEffect, useRef, useState } from "react";
 import { useSWRConfig } from "swr";
 
-import { Avatar, Drawer, Loading, Message, Pill } from "@/components/ui";
+import { Modal } from "@/components/CriteriaParts";
+import { Avatar, Loading, Message, Pill } from "@/components/ui";
 import { ProfilePermissions } from "@/components/ProfilePermissions";
 import { ApiError, api, can, useApi } from "@/lib/api";
 import type { CloseQuota, Me, Person } from "@/lib/types";
@@ -113,7 +114,9 @@ export function ProfileDrawer({ userId, onClose, onChanged }: { userId: number; 
   }
 
   return (
-    <Drawer title="Hồ sơ thành viên" onClose={onClose} width={520}>
+    // A dialog in the middle of the screen, wide enough for the permissions' menu and panel side by
+    // side (user 2026-11-12: the side drawer pushed them off the right edge).
+    <Modal title="Hồ sơ thành viên" onClose={onClose} width={1000}>
       {!person ? (
         <Loading error={error} rows={4} />
       ) : (
@@ -208,7 +211,7 @@ export function ProfileDrawer({ userId, onClose, onChanged }: { userId: number; 
           )}
         </>
       )}
-    </Drawer>
+    </Modal>
   );
 }
 

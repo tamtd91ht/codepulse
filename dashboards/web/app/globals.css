@@ -2741,8 +2741,6 @@ code.phrase {
   min-width: 0;
   overflow-y: auto;
   padding: 16px 20px 24px;
-  /* Its content may lay itself out by the drawer's width (@container side-drawer). */
-  container: side-drawer / inline-size;
 }
 .drawer-section + .drawer-section {
   margin-top: 18px;
@@ -6338,17 +6336,8 @@ button.crit-info-btn:focus-visible {
 }
 @media (max-width: 640px) {
   .perm-split { grid-template-columns: 1fr; }
-  .perm-groups { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 0 0 6px; }
-  .perm-group { white-space: nowrap; }
-  .perm-group.active { box-shadow: inset 0 -2px 0 var(--accent, var(--chart-1)); }
-  .perm-row { flex-direction: column; align-items: stretch; }
-  .perm-row select { max-width: none; }
-}
-/* The same stacked layout when the permissions sit in a narrow drawer (the member's profile is
-   520px wide on any screen): the drawer's body is a size container. */
-@container side-drawer (max-width: 560px) {
-  .perm-split { grid-template-columns: minmax(0, 1fr); min-height: 0; }
-  .perm-groups { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 0 0 6px; }
+  /* Phones: the groups wrap into rows (every one in sight, no sideways scrolling). */
+  .perm-groups { flex-direction: row; flex-wrap: wrap; gap: 4px; border-right: 0; border-bottom: 1px solid var(--border); padding: 0 0 6px; }
   .perm-group { white-space: nowrap; }
   .perm-group.active { box-shadow: inset 0 -2px 0 var(--accent, var(--chart-1)); }
   .perm-row { flex-direction: column; align-items: stretch; }
@@ -12624,4 +12613,9 @@ button.tr-chip[aria-pressed="true"]:hover:not(:disabled) {
   .tr-tests {
     min-width: 720px;
   }
+}
+/* Admin › Hồ sơ thành viên is a wide dialog: tall enough to work in, its permissions keep the
+   group menu beside the panel. */
+.modal:has(.perm-split) {
+  max-height: 90vh;
 }
