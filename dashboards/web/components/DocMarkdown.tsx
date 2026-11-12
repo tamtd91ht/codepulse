@@ -282,10 +282,18 @@ export type ImageAlign = "left" | "center" | "right";
  * Also its place (docs/specs/29 §13.3): `|left`, `|right` or `|center` (the default) after the
  * name or the size, in any order: `![Sơ đồ|50%|right](asset:12)`.
  */
-export function imageSize(alt: string): { alt: string; size: string | null; align: ImageAlign | null; style?: CSSProperties } {
+export function imageSize(alt: string): {
+  alt: string;
+  size: string | null;
+  align: ImageAlign | null;
+  /** Text flows around it (docs/specs/29 §13.4): only with left / right. */
+  wrap: boolean;
+  style?: CSSProperties;
+} {
   const parts = alt.split("|");
   let size: string | null = null;
   let align: ImageAlign | null = null;
+  let wrap = false;
   let style: CSSProperties | undefined;
   // Read the options from the end; whatever is not one belongs to the name.
   while (parts.length > 1) {
@@ -299,16 +307,22 @@ export function imageSize(alt: string): { alt: string; size: string | null; alig
       }
     } else if ((token === "left" || token === "right" || token === "center") && align === null) {
       align = token;
+    } else if (token === "wrap" && !wrap) {
+      wrap = true;
     } else break;
     parts.pop();
   }
-  return { alt: parts.join("|").trim(), size, align, style };
+  return { alt: parts.join("|").trim(), size, align, wrap: wrap && (align === "left" || align === "right"), style };
 }
 
 /** The image line as written: name, then size, then place (each only when set). */
-export function imageLine(name: string, size: string | null, align: ImageAlign | null, src: string): string {
-  return `![${name}${size ? `|${size}` : ""}${align && align !== "center" ? `|${align}` : ""}](${src})`;
+export function imageLine(name: string, size: string | null, align: ImageAlign | null, src: string, wrap = false): string {
+  const side = align && align !== "center";
+  return `![${name}${size ? `|${size}` : ""}${side ? `|${align}` : ""}${side && wrap ? "|wrap" : ""}](${src})`;
 }
+
+/** The width a wrapped image takes when none is written: room is left for the text. */
+export const WRAP_DEFAULT = "40%";
 
 /**
  * The editor's preview gives images a corner handle (docs/specs/29 §13.2): dragging it resizes
@@ -324,16 +338,20 @@ function alignFactor(figure: Element | null): number {
   return align === "center" ? 2 : align === "right" || align === "end" ? -1 : 1;
 }
 
-function ResizableImage({ src, alt, style, mdSrc }: { src: string; alt: string; style?: CSSProperties; mdSrc: string }) {
+function ResizableImage({ src, alt, style, mdSrc, wrap = false }: { src: string; alt: string; style?: CSSProperties; mdSrc: string; wrap?: boolean }) {
   const onResize = useContext(ImageResize);
   const img = useRef<HTMLImageElement>(null);
   const [live, setLive] = useState<number | null>(null); // % while dragging
-  const drag = useRef<{ x: number; width: number; box: number; factor: number } | null>(null);
+  const drag = useRef<{ x: number; width: number; box: number; factor: number; figure: HTMLElement | null; before: string } | null>(null);
   // Which way the image grows: right-aligned ones grow to the left (their handle sits on the left).
   const [side, setSide] = useState<"left" | "right">("right");
   if (!onResize) return <img src={src} alt={alt} style={style} data-md-src={mdSrc} loading="lazy" referrerPolicy="no-referrer" />;
 
-  const box = () => img.current?.closest("figure")?.clientWidth || img.current?.parentElement?.clientWidth || 1;
+  // A wrapped image is as wide as its (floating) figure: its share is of the page around it.
+  const box = () => {
+    const figure = img.current?.closest("figure");
+    return (wrap ? figure?.parentElement?.clientWidth : figure?.clientWidth) || img.current?.parentElement?.clientWidth || 1;
+  };
   const percent = (width: number, of: number) => Math.min(100, Math.max(STEP, Math.round((width / of) * 100 / STEP) * STEP));
   const current = () => (img.current ? percent(img.current.getBoundingClientRect().width, box()) : 50);
 
@@ -354,6 +372,8 @@ function ResizableImage({ src, alt, style, mdSrc }: { src: string; alt: string; 
       // A centred image grows on both sides: the handle moves half as far as the width grows;
       // a right-aligned one grows leftwards, its handle on the left.
       factor: alignFactor(figure),
+      figure,
+      before: figure?.style.width ?? "",
     };
     setLive(current());
   };
@@ -362,7 +382,9 @@ function ResizableImage({ src, alt, style, mdSrc }: { src: string; alt: string; 
     if (!d) return;
     const dx = (e.clientX - d.x) * d.factor;
     const width = Math.min(d.box, Math.max(40, d.width + dx));
-    setLive(Math.min(100, Math.max(STEP, Math.round((width / d.box) * 100))));
+    const share = Math.min(100, Math.max(STEP, Math.round((width / d.box) * 100)));
+    if (wrap && d.figure) d.figure.style.width = `${share}%`; // the text reflows as it is dragged
+    setLive(share);
   };
   const up = (e: PointerEvent<HTMLSpanElement>) => {
     const d = drag.current;
@@ -376,7 +398,10 @@ function ResizableImage({ src, alt, style, mdSrc }: { src: string; alt: string; 
     const dx = (e.clientX - d.x) * d.factor;
     const width = Math.min(d.box, Math.max(40, d.width + dx));
     setLive(null);
-    if (Math.abs(dx) > 2) onResize(mdSrc, `${percent(width, d.box)}%`);
+    const size = `${percent(width, d.box)}%`;
+    // Back to what the text says; the new size comes from it when it changes.
+    if (wrap && d.figure) d.figure.style.width = d.before;
+    if (Math.abs(dx) > 2) onResize(mdSrc, size);
   };
   const key = (e: KeyboardEvent<HTMLSpanElement>) => {
     const by = e.key === "ArrowRight" || e.key === "ArrowUp" ? STEP : e.key === "ArrowLeft" || e.key === "ArrowDown" ? -STEP : 0;
@@ -386,7 +411,10 @@ function ResizableImage({ src, alt, style, mdSrc }: { src: string; alt: string; 
   };
 
   return (
-    <span className={`doc-img-resize${live !== null ? " dragging" : ""}`} style={live !== null ? { width: `${live}%` } : style ? { width: style.width } : undefined}>
+    <span
+      className={`doc-img-resize${live !== null ? " dragging" : ""}`}
+      style={wrap ? { width: "100%" } : live !== null ? { width: `${live}%` } : style ? { width: style.width } : undefined}
+    >
       <img ref={img} src={src} alt={alt} style={live !== null || style ? { width: "100%" } : undefined} data-md-src={mdSrc} loading="lazy" referrerPolicy="no-referrer" />
       {live !== null && <span className="doc-img-size">{live}%</span>}
       <span
@@ -637,9 +665,14 @@ function Blocks({ blocks, term, offset }: { blocks: Block[]; term?: string; offs
           case "img": {
             const src = imageSrc(b.src);
             const sized = imageSize(b.alt);
+            const side = sized.align && sized.align !== "center" ? ` align-${sized.align}` : "";
             return src ? (
-              <figure key={i} className={`doc-figure${sized.size ? " sized" : ""}${sized.align && sized.align !== "center" ? ` align-${sized.align}` : ""}`}>
-                <ResizableImage src={src} alt={sized.alt} style={sized.style} mdSrc={b.src} />
+              <figure
+                key={i}
+                className={`doc-figure${sized.size ? " sized" : ""}${side}${sized.wrap ? ` wrap wrap-${sized.align}` : ""}`}
+                style={sized.wrap ? { width: sized.style?.width ?? WRAP_DEFAULT } : undefined}
+              >
+                <ResizableImage src={src} alt={sized.alt} style={sized.wrap ? { width: "100%" } : sized.style} mdSrc={b.src} wrap={sized.wrap} />
                 {sized.alt && <figcaption>{sized.alt}</figcaption>}
               </figure>
             ) : (

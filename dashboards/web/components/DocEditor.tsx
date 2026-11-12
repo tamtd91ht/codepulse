@@ -79,6 +79,7 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
     name: string;
     size: string | null;
     align: ImageAlign | null;
+    wrap: boolean;
     src: string;
   } | null>(null);
   const [customSize, setCustomSize] = useState("");
@@ -214,18 +215,19 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
     const m = IMAGE_LINE.exec(text.slice(start, end));
     if (!m) return setOnImage(null);
     const sized = imageSize(m[1]);
-    setOnImage({ start, end, name: sized.alt, size: sized.size, align: sized.align, src: m[2] });
+    setOnImage({ start, end, name: sized.alt, size: sized.size, align: sized.align, wrap: sized.wrap, src: m[2] });
     setCustomSize(sized.size && !sized.size.endsWith("%") ? sized.size : "");
   }
 
   /** Rewrite the image line under the caret with `size` ("50%", "480", none) and its place. */
-  function resize(size: string | null, align: ImageAlign | null = onImage?.align ?? null) {
+  function resize(size: string | null, align: ImageAlign | null = onImage?.align ?? null, wrap: boolean = onImage?.wrap ?? false) {
     const el = area.current;
     if (!el || !onImage) return;
-    const line = imageLine(onImage.name, size, align, onImage.src);
+    const flows = wrap && (align === "left" || align === "right");
+    const line = imageLine(onImage.name, size, align, onImage.src, flows);
     const text = el.value;
     setBody(text.slice(0, onImage.start) + line + text.slice(onImage.end));
-    setOnImage({ ...onImage, end: onImage.start + line.length, size, align });
+    setOnImage({ ...onImage, end: onImage.start + line.length, size, align, wrap: flows });
     requestAnimationFrame(() => {
       el.focus();
       el.setSelectionRange(onImage.start + line.length, onImage.start + line.length);
@@ -243,10 +245,10 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
     const end = nl < 0 ? text.length : nl;
     const m = IMAGE_LINE.exec(text.slice(start, end));
     if (!m) return;
-    const { alt: name, align } = imageSize(m[1]);
-    const line = imageLine(name, size, align, m[2]);
+    const { alt: name, align, wrap } = imageSize(m[1]);
+    const line = imageLine(name, size, align, m[2], wrap);
     setBody(text.slice(0, start) + line + text.slice(end));
-    setOnImage({ start, end: start + line.length, name, size, align, src: m[2] });
+    setOnImage({ start, end: start + line.length, name, size, align, wrap, src: m[2] });
     setCustomSize("");
   }
 
@@ -430,6 +432,30 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
                 );
               })}
             </span>
+            <button
+              type="button"
+              className={`sm${onImage.wrap ? " active" : " ghost"}`}
+              aria-pressed={onImage.wrap}
+              title={
+                onImage.wrap
+                  ? "Bỏ chữ bao quanh: ảnh thành một khối riêng"
+                  : "Chữ chảy quanh ảnh (ảnh đang ở giữa sẽ chuyển sang trái); màn hình hẹp vẫn hiện ảnh riêng"
+              }
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                if (onImage.wrap) return resize(onImage.size, onImage.align, false);
+                const side = onImage.align === "right" ? "right" : "left";
+                resize(onImage.size, side, true);
+              }}
+            >
+              <span className="doc-wrap-icon" aria-hidden="true">
+                <b />
+                <i />
+                <i />
+                <i />
+              </span>
+              Chữ bao quanh
+            </button>
             <span className="doc-editor-sep" aria-hidden="true" />
             {[
               { label: "Nhỏ", size: "25%" },

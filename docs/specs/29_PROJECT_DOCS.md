@@ -417,6 +417,21 @@ Yêu cầu: dán ảnh trực tiếp vào trình soạn tài liệu.
   hẹp sẽ vỡ dòng; ảnh căn trái/phải vẫn chiếm một khối riêng.
 - Kéo góc (§13.2): ảnh căn phải có tay nắm ở góc dưới **trái** và nở sang trái.
 
+### 13.4 Chữ chảy quanh ảnh (user 2026-11-12) **[Quyết định]**
+
+Thay quyết định “chỉ căn” của §13.3 theo yêu cầu người dùng.
+
+- Ghi `|wrap` sau kiểu căn: `![Sơ đồ|40%|right|wrap](asset:12)`; chỉ có tác dụng với `left` /
+  `right` (với giữa thì bỏ qua). Ảnh nằm về một bên, chữ (đoạn văn, danh sách) chảy quanh.
+- Không ghi cỡ thì ảnh bao quanh rộng **40%** trang, để còn chỗ cho chữ; cỡ (§13.1) và kéo góc
+  (§13.2) đổi bề rộng của cả khối ảnh, chữ chảy lại ngay khi kéo.
+- Giữ bố cục gọn: tiêu đề lớn (#, ##), bảng, khối code, đường kẻ, mốc trang PDF luôn bắt đầu dưới
+  ảnh; khung lưu ý / trích dẫn cạnh ảnh tự thu hẹp (nền không chạy dưới ảnh); cuối tài liệu luôn
+  dọn hết ảnh nổi.
+- **Màn hình ≤ 640 px**: bỏ bao quanh, ảnh thành khối riêng rộng hết (đọc trên điện thoại).
+- Trình soạn: nút **Chữ bao quanh** trên thanh ảnh (bật/tắt); ảnh đang ở giữa thì chuyển sang
+  trái khi bật.
+
 Ngoài phạm vi (IDEAS.md): dọn ảnh không còn tài liệu nào dùng; ảnh nhúng sẵn trong file Word/PDF
-tải lên; chữ chảy quanh ảnh.
+tải lên.
 

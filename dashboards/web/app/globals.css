@@ -10918,3 +10918,74 @@ button.ghost.danger:hover:not(:disabled) {
   left: -6px;
   cursor: nesw-resize;
 }
+
+/* Chữ chảy quanh ảnh (docs/specs/29 §13.4) */
+.doc-body .doc-figure.wrap {
+  margin-top: 4px;
+  margin-bottom: 12px;
+}
+.doc-body .doc-figure.wrap-left {
+  float: left;
+  margin-right: 20px;
+  text-align: left;
+}
+.doc-body .doc-figure.wrap-right {
+  float: right;
+  margin-left: 20px;
+  text-align: right;
+}
+.doc-body .doc-figure.wrap img {
+  width: 100%;
+}
+/* A new section, a table, code or a rule starts below a floating image, never squeezed beside it. */
+.doc-body h1,
+.doc-body h2,
+.doc-body hr,
+.doc-body table,
+.doc-body .doc-table,
+.doc-body pre,
+.doc-body .doc-code,
+.doc-body .doc-page {
+  clear: both;
+}
+.doc-body::after {
+  content: "";
+  display: block;
+  clear: both;
+}
+@media (max-width: 640px) {
+  .doc-body .doc-figure.wrap-left,
+  .doc-body .doc-figure.wrap-right {
+    float: none;
+    width: auto !important;
+    margin-left: 0;
+    margin-right: 0;
+    text-align: center;
+  }
+}
+.doc-wrap-icon {
+  display: inline-grid;
+  grid-template-columns: 6px 8px;
+  grid-template-rows: repeat(3, 2px);
+  gap: 2px;
+  width: 16px;
+}
+.doc-wrap-icon b {
+  grid-row: 1 / span 2;
+  background: currentColor;
+  border-radius: 1px;
+}
+.doc-wrap-icon i {
+  height: 2px;
+  background: currentColor;
+  border-radius: 1px;
+  grid-column: 2;
+}
+.doc-wrap-icon i:last-child {
+  grid-column: 1 / span 2;
+}
+/* Boxes beside a floating image narrow to the room left (their background never runs under it). */
+.doc-body .doc-callout,
+.doc-body blockquote {
+  overflow: hidden;
+}
