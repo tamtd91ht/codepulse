@@ -16,4 +16,4 @@
 - Tệp quy tắc (spec 17 §1b): tệp quy tắc riêng từng repo (hiện chỉ cấp dự án; repo có file quy tắc trong repo).
 - Tài liệu dự án (spec 29 §10): ảnh trong Word/PDF, Mermaid, tô màu code; Stetho đọc tài liệu dự án theo quyền dự án; bình luận và chủ sở hữu tài liệu, nhắc cập nhật tài liệu cũ; đồng bộ Confluence/Drive/`docs/` của repo; OCR PDF scan.
 - Tài liệu dự án: khôi phục một phiên bản tải file lên hiện chép lại file gốc (≤ 20 MB) vào phiên bản mới; nên trỏ về file của phiên bản cũ thay vì chép (review 2026-11-11).
-- Tài liệu dự án › Tổng hợp từ link (spec 29 §12.7): theo dõi link nguồn và đề xuất cập nhật khi trang đổi; đọc Confluence/Google Docs qua OAuth; tổng hợp từ file tải lên hoặc cả thư mục `docs/` của repo.
+- Tài liệu dự án › Tổng hợp từ link (spec 29 §12.7): theo dõi link nguồn và đề xuất cập nhật khi trang đổi; đọc Confluence/Google Docs qua OAuth; tổng hợp từ cả thư mục `docs/` của repo.

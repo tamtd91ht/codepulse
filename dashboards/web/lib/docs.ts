@@ -64,7 +64,9 @@ export interface DocVersion {
 }
 
 export interface DocSource {
-  url: string;
+  /** null for an uploaded file (then `name`). */
+  url: string | null;
+  name?: string | null;
   title: string | null;
   via: "web" | "gitlab" | string;
   version: number;
@@ -87,11 +89,25 @@ export type DraftMode = "new" | "merge" | "upgrade";
 export type DraftStatus = "queued" | "fetching" | "writing" | "ready" | "failed" | "applied" | "discarded";
 
 export interface DraftSource {
-  url: string;
+  /** null for an uploaded file (then `name`). */
+  url: string | null;
+  name?: string | null;
   title: string | null;
-  via: "web" | "gitlab";
+  via: "web" | "gitlab" | "file";
   chars: number;
+  truncated?: boolean | null;
   error: string | null;
+}
+
+/** An uploaded file's text, read by POST /docs/drafts/extract. */
+export interface ExtractedFile {
+  name: string;
+  kind: string;
+  size: number;
+  chars: number;
+  truncated: boolean;
+  text: string;
+  pages: number | null;
 }
 
 export interface DocDraft {
@@ -111,6 +127,7 @@ export interface DocDraft {
   summary: string | null;
   result: { changes: string[]; gaps: string[]; conflicts: string[]; warnings: string[]; placeholders: number } | null;
   sources: DraftSource[] | null;
+  files: { name: string; kind: string; size: number; chars: number }[];
   model: string | null;
   cost_usd: number | null;
   applied_version: number | null;
@@ -126,6 +143,15 @@ export interface DraftList {
   per_day: number;
   used_today: number;
   url_hosts: boolean;
+  file_kinds: string[];
+  max_file_mb: number;
+  source_chars: number;
+}
+
+/** "2 link, 1 file" of a draft. */
+export function sourceCount(d: { urls: string[]; files?: unknown[] }): string {
+  const parts = [d.urls.length ? `${d.urls.length} link` : "", d.files?.length ? `${d.files.length} file` : ""].filter(Boolean);
+  return parts.join(", ") || "0 nguồn";
 }
 
 export const MODE_LABEL: Record<DraftMode, string> = {

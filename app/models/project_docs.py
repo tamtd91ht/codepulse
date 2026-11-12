@@ -152,7 +152,10 @@ class ProjectDocumentDraft(Base):
     body: Mapped[str | None] = deferred(mapped_column(String))
     # {"changes": [...], "gaps": [...], "conflicts": [...]}: what the LLM says it did.
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
-    # One per link: {"url", "title", "via": "web"|"gitlab", "chars", "error"}.
+    # Uploaded files used as sources: [{"name", "kind", "size", "text", "truncated"}]; only
+    # their text is kept (cleared when the draft is dropped), never the file.
+    files: Mapped[list[dict[str, Any]] | None] = deferred(mapped_column(JSONB))
+    # One per source: {"url" | "name", "title", "via": "web"|"gitlab"|"file", "chars", "error"}.
     sources: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
     model: Mapped[str | None]
     cost_usd: Mapped[float | None] = mapped_column(Float)

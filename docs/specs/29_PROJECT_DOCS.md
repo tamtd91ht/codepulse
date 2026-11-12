@@ -245,10 +245,11 @@ Giới hạn: file ≤ 20 MB (đọc theo luồng, dừng ngay khi vượt), n�
   trước; audit; mẫu; từ chối file sai loại, PDF hỏng, file rỗng.
 - `tests/permissions/test_catalog.py`: bộ quyền mặc định khớp bản sao trong migration.
 
-## 12. Tổng hợp từ link (AI) — user 2026-11-12 **[Quyết định]**
+## 12. Tổng hợp bằng AI từ link và file — user 2026-11-12 **[Quyết định]**
 
 Yêu cầu: nhập một link, LLM đọc và tổng hợp thành tài liệu cụ thể; có thể bổ sung vào tài liệu
-đang có hoặc nâng cấp nó. Tài liệu có chuẩn riêng, được bổ sung dần từ nhiều nguồn.
+đang có hoặc nâng cấp nó. Tài liệu có chuẩn riêng, được bổ sung dần từ nhiều nguồn. Bổ sung cùng
+ngày: nguồn còn có thể là **file tải lên** (§12.8).
 
 ### 12.1 Quyết định
 
@@ -325,4 +326,19 @@ quá 5 link; giới hạn ngày; link GitLab của repo trong dự án (file, RE
 
 - Tự động theo dõi link nguồn và đề xuất cập nhật khi trang thay đổi.
 - Đọc Confluence / Google Docs bằng tài khoản kết nối (OAuth).
-- Tổng hợp từ file tải lên (hiện chỉ link) và từ cả thư mục `docs/` của repo.
+- Tổng hợp từ cả thư mục `docs/` của repo.
+
+### 12.8 File tải lên làm nguồn (user 2026-11-12) **[Quyết định]**
+
+- Cùng form, dưới ô link: vùng kéo thả nhiều file (.md, .txt, .doc, .docx, .xlsx, .pdf, ≤ 20 MB),
+  bộ chuyển đổi của §6.1. Link + file chung giới hạn **5 nguồn** mỗi lần.
+- Mỗi file được đọc ngay khi thả (`POST /docs/drafts/extract`, cần `docs.edit` trên dự án): trả về
+  chữ (cắt ở 60.000 ký tự, báo nếu bị cắt), số ký tự, số trang; form hiện từng file và cho bỏ.
+  Không lưu gì ở bước này.
+- Khi gửi yêu cầu, chữ của các file đi kèm (`files`), bản nháp giữ **chỉ phần chữ** trong cột
+  `project_document_drafts.files` (migration `f4b6c8d0e2a5`) để “Viết lại” được; file gốc không
+  lưu; bỏ bản nháp thì xoá luôn phần chữ đó. Vì sao không lưu file gốc: bản nháp chỉ cần chữ, và
+  muốn giữ file gốc thì đã có “Tải file lên” (§5.3).
+- Trong prompt, nguồn là file mang `file="tên"` thay cho `url`; mục “Nguồn tham khảo” ghi tên file.
+- Phiên bản ghi `meta.files`; mục “Nguồn đã tổng hợp” của tài liệu liệt kê cả file (không có link).
+- Tên nút đổi thành **Tổng hợp bằng AI** / **Bổ sung bằng AI** (nguồn không chỉ là link).

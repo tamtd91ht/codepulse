@@ -106,28 +106,37 @@ def standard_for(category: str) -> str:
 
 @dataclass
 class Fetched:
-    url: str
+    url: str  # "" for an uploaded file
     title: str = ""
     text: str = ""
-    via: str = "web"  # "web" | "gitlab"
+    via: str = "web"  # "web" | "gitlab" | "file"
     error: str | None = None
+    name: str | None = None  # an uploaded file's name
+    truncated: bool = False
 
     def facts(self) -> dict[str, Any]:
         return {
-            "url": self.url,
+            "url": self.url or None,
+            "name": self.name,
             "title": self.title or None,
             "via": self.via,
             "chars": len(self.text),
+            "truncated": self.truncated or None,
             "error": self.error,
         }
+
+    @property
+    def label(self) -> str:
+        return self.url or self.name or ""
 
 
 class LinkError(ValueError):
     """A link that cannot be read; the message is shown to the user (Vietnamese)."""
 
 
-def clean_urls(raw: list[str]) -> list[str]:
-    """The links as typed: http(s) only, no credentials in them, duplicates dropped."""
+def clean_urls(raw: list[str], *, files: int = 0) -> list[str]:
+    """The links as typed: http(s) only, no credentials in them, duplicates dropped. With
+    `files` uploaded files besides, links may be none; links and files share MAX_LINKS."""
     out: list[str] = []
     for item in raw:
         url = item.strip()
@@ -142,10 +151,10 @@ def clean_urls(raw: list[str]) -> list[str]:
             raise LinkError("link dài quá 2 000 ký tự")
         if url not in out:
             out.append(url)
-    if not out:
-        raise LinkError("nhập ít nhất một link")
-    if len(out) > MAX_LINKS:
-        raise LinkError(f"tối đa {MAX_LINKS} link mỗi lần")
+    if not out and not files:
+        raise LinkError("nhập ít nhất một link hoặc tải lên một file")
+    if len(out) + files > MAX_LINKS:
+        raise LinkError(f"tối đa {MAX_LINKS} nguồn (link và file) mỗi lần")
     return out
 
 
@@ -277,9 +286,22 @@ def fetch_all(
     *,
     web: WebFetch,
     gitlab: ClientFactory,
+    files: list[dict[str, Any]] | None = None,
 ) -> list[Fetched]:
+    """The uploaded files (their text kept with the draft) first, then the links."""
     out: list[Fetched] = []
     budget = SOURCES_CHARS
+    for f in files or []:
+        name = str(f.get("name") or "file")
+        text = str(f.get("text") or "").strip()[: min(SOURCE_CHARS, max(budget, 0))]
+        item = Fetched(url="", name=name, title=name, via="file", text=text)
+        item.truncated = bool(f.get("truncated")) or len(text) < len(
+            str(f.get("text") or "").strip()
+        )
+        if not text:
+            item.error = "file không có nội dung chữ" if budget > 0 else "đã đủ dung lượng nguồn"
+        budget -= len(text)
+        out.append(item)
     for url in urls:
         item = Fetched(url=url)
         try:
@@ -327,7 +349,8 @@ thiếu>` và liệt kê ở `gaps`.
 `> [!NOTE]` / `> [!TIP]` / `> [!IMPORTANT]` / `> [!WARNING]` / `> [!CAUTION]`. Không dùng HTML, \
 không chèn ảnh.
 5. Ghi nguồn: sau câu hoặc đoạn lấy từ nguồn n, thêm `[n]`. Cuối tài liệu có mục \
-`## Nguồn tham khảo` liệt kê `[n] tiêu đề — url` của các nguồn đã dùng (giữ lại các nguồn cũ \
+`## Nguồn tham khảo` liệt kê `[n] tiêu đề — url` (nguồn là file: `[n] tên file`) của các \
+nguồn đã dùng (giữ lại các nguồn cũ \
 nếu tài liệu hiện tại đã có mục này, đánh số tiếp).
 6. Bỏ các khung hướng dẫn viết của chuẩn (khung > [!NOTE] giải thích cách viết, câu hỏi gợi ý) \
 khi đã có nội dung thật cho mục đó.
@@ -412,8 +435,9 @@ def build_prompt(
         if s.error or not s.text:
             continue
         n += 1
+        where = f'url="{_attr(s.url)}"' if s.url else f'file="{_attr(s.name or s.title)}"'
         parts.append(
-            f'<source n="{n}" url="{_attr(s.url)}" title="{_attr(s.title)}">\n'
+            f'<source n="{n}" {where} title="{_attr(s.title)}">\n'
             f"{_fence(s.text, 'source')}\n</source>"
         )
     if instruction:
@@ -587,16 +611,17 @@ def run(
         return "superseded"
     bp_id, mode, category = draft.business_project_id, draft.mode, draft.category
     urls, instruction, doc_id = list(draft.urls), draft.instruction, draft.document_id
+    files = list(draft.files or [])
     bp = session.get(BusinessProject, bp_id)
     project = bp.name if bp else ""
     if not _move(session, draft_id, token, "fetching", started_at=datetime.now(UTC)):
         return "superseded"
 
-    fetched = fetch_all(session, bp_id, urls, web=web, gitlab=gitlab)
+    fetched = fetch_all(session, bp_id, urls, web=web, gitlab=gitlab, files=files)
     facts = [f.facts() for f in fetched]
     usable = [f for f in fetched if not f.error]
     if not usable:
-        reasons = "; ".join(f"{f.url[:80]}: {f.error}" for f in fetched)
+        reasons = "; ".join(f"{f.label[:80]}: {f.error}" for f in fetched)
         return _fail(session, draft_id, token, f"Không đọc được link nào. {reasons}", sources=facts)
 
     current = current_title = None

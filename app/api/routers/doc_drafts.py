@@ -10,11 +10,12 @@ at once, and the month's LLM budget.
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from rq import Queue
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, undefer
+from starlette.concurrency import run_in_threadpool
 
 from app.admin_settings import monthly_budget_usd
 from app.api.audit import audit
@@ -23,10 +24,13 @@ from app.api.routers.project_docs import (
     Category,
     DocDetail,
     Person,
+    _convert,
     _detail,
+    _file_name,
     _iso,
     _next_position,
     _people,
+    _read_body,
 )
 from app.api.security import CurrentPrincipal, Principal
 from app.assistant import importers
@@ -46,12 +50,33 @@ REQUEST_ACTION = "doc.synthesize"
 LIST_DAYS = 14
 
 
+class FileIn(BaseModel):
+    """An uploaded file's text, as POST /docs/drafts/extract returned it."""
+
+    name: str = Field(min_length=1, max_length=200)
+    kind: str = Field(max_length=10)
+    size: int = Field(ge=0)
+    text: str = Field(min_length=1, max_length=synthesis.SOURCE_CHARS)
+    truncated: bool = False
+
+
+class FileOut(BaseModel):
+    name: str
+    kind: str
+    size: int
+    chars: int  # of the whole file
+    truncated: bool  # longer than what one source may send (SOURCE_CHARS)
+    text: str
+    pages: int | None = None
+
+
 class DraftIn(BaseModel):
     business_project_id: int
     mode: Literal["new", "merge", "upgrade"]
     document_id: int | None = None
     category: Category | None = None  # "new" only (merge / upgrade keep the document's)
-    urls: list[str] = Field(min_length=1, max_length=synthesis.MAX_LINKS * 2)
+    urls: list[str] = Field(default_factory=list, max_length=synthesis.MAX_LINKS * 2)
+    files: list[FileIn] = Field(default_factory=list, max_length=synthesis.MAX_LINKS)
     instruction: str | None = Field(default=None, max_length=synthesis.INSTRUCTION_MAX)
 
 
@@ -81,6 +106,7 @@ class DraftOut(BaseModel):
     summary: str | None
     result: dict[str, Any] | None
     sources: list[dict[str, Any]] | None
+    files: list[dict[str, Any]]  # name, kind, size, chars (not the text)
     model: str | None
     cost_usd: float | None
     applied_version: int | None
@@ -96,6 +122,9 @@ class DraftList(BaseModel):
     per_day: int
     used_today: int
     url_hosts: bool  # internal hosts are listed (ASSISTANT_URL_HOSTS)
+    file_kinds: list[str]
+    max_file_mb: int
+    source_chars: int
 
 
 def _out(
@@ -123,6 +152,15 @@ def _out(
         summary=draft.summary,
         result=draft.result,
         sources=draft.sources,
+        files=[
+            {
+                "name": f.get("name"),
+                "kind": f.get("kind"),
+                "size": f.get("size"),
+                "chars": len(str(f.get("text") or "")),
+            }
+            for f in (draft.files or [])
+        ],
         model=draft.model,
         cost_usd=draft.cost_usd,
         applied_version=draft.applied_version,
@@ -237,7 +275,42 @@ def list_drafts(
         per_day=synthesis.DRAFTS_PER_DAY,
         used_today=_used_today(session, principal.user_id, now),
         url_hosts=bool(importers.hosts_of(settings.assistant_url_hosts)),
+        file_kinds=list(importers.DOCUMENT_KINDS),
+        max_file_mb=docs.MAX_FILE_MB,
+        source_chars=synthesis.SOURCE_CHARS,
     )
+
+
+@router.post("/docs/drafts/extract", response_model=FileOut)
+async def extract_file(
+    request: Request,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    business_project_id: int,
+    filename: Annotated[str, Query(min_length=1, max_length=255)],
+) -> FileOut:
+    """The text of one uploaded file (raw bytes as the body), to be sent with POST /docs/drafts
+    as a source. Nothing is stored: the file is read and dropped."""
+    name, kind = _file_name(filename)
+    await run_in_threadpool(docs.project_for, session, principal, business_project_id, True)
+    data = await _read_body(request, session)
+
+    def convert() -> FileOut:
+        text, meta = _convert(name, kind, data)
+        text = text.replace("\r\n", "\n").strip()
+        if not text:
+            raise HTTPException(422, f"{name} không có nội dung chữ")
+        return FileOut(
+            name=name,
+            kind=kind,
+            size=len(data),
+            chars=len(text),
+            truncated=len(text) > synthesis.SOURCE_CHARS,
+            text=text[: synthesis.SOURCE_CHARS],
+            pages=meta.get("pages"),
+        )
+
+    return await run_in_threadpool(convert)
 
 
 @router.post("/docs/drafts", response_model=DraftOut, status_code=201)
@@ -250,7 +323,7 @@ def create_draft(
 ) -> DraftOut:
     bp = docs.project_for(session, principal, body.business_project_id, edit=True)
     try:
-        urls = synthesis.clean_urls(body.urls)
+        urls = synthesis.clean_urls(body.urls, files=len(body.files))
     except synthesis.LinkError as exc:
         raise HTTPException(422, str(exc)) from None
     doc = None
@@ -273,6 +346,7 @@ def create_draft(
         mode=body.mode,
         category=category,
         urls=urls,
+        files=[f.model_dump() for f in body.files] or None,
         instruction=(body.instruction or "").strip() or None,
         status="queued",
         base_version=doc.version_count if doc else None,
@@ -292,6 +366,7 @@ def create_draft(
         mode=body.mode,
         document=draft.document_id,
         links=len(urls),
+        files=[f.name for f in body.files],
     )
     session.commit()
     _enqueue(session, queue, draft)
@@ -357,18 +432,26 @@ def apply_draft(
     if draft.status != "ready" or not draft.body:
         raise HTTPException(409, "bản nháp chưa sẵn sàng hoặc đã dùng")
     text = body.body if body.body is not None else draft.body
+    used = [s for s in (draft.sources or []) if not s.get("error")]
     links = [
         {"url": importers.safe_source(s["url"]), "title": s.get("title"), "via": s.get("via")}
-        for s in (draft.sources or [])
-        if not s.get("error") and s.get("url")
+        for s in used
+        if s.get("url")
     ]
+    files = [{"name": s.get("name"), "via": "file"} for s in used if s.get("name")]
     meta = {
         "links": links,
+        "files": files,
         "draft": draft.id,
         "mode": draft.mode,
         "model": draft.model,
     }
-    note = body.note or f"{synthesis.MODE_LABEL[draft.mode]} từ {len(links)} link"
+    what = " và ".join(
+        x
+        for x in (f"{len(links)} link" if links else "", f"{len(files)} file" if files else "")
+        if x
+    )
+    note = body.note or f"{synthesis.MODE_LABEL[draft.mode]} từ {what or 'nguồn'}"
     if draft.mode == "new":
         bp = docs.project_for(session, principal, draft.business_project_id, edit=True)
         doc = ProjectDocument(
@@ -427,6 +510,7 @@ def discard_draft(draft_id: int, principal: CurrentPrincipal, session: SessionDe
         raise HTTPException(409, "bản nháp đã được dùng")
     draft.status = "discarded"
     draft.body = None
+    draft.files = None  # the uploaded text goes with the draft
     draft.finished_at = draft.finished_at or datetime.now(UTC)
     audit(session, principal.user_id, "doc.synthesize.discard", f"doc_draft:{draft.id}")
     session.commit()

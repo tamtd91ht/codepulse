@@ -5,8 +5,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/CriteriaParts";
 import { TextDiff } from "@/components/DocHistory";
 import { DocMarkdown } from "@/components/DocMarkdown";
-import { Icon } from "@/components/icons";
+import { Icon, IconButton } from "@/components/icons";
 import { Alert, Loading, Pill, Segmented } from "@/components/ui";
+import { UploadDrop, type UploadItem, UploadList, fileSize, uploadAll } from "@/components/UploadDrop";
 import { ApiError, api, useApi } from "@/lib/api";
 import {
   CATEGORY_LABEL,
@@ -17,15 +18,19 @@ import {
   type DocDraft,
   type DocItem,
   type DraftList,
+  type DraftSource,
   type DraftMode,
+  type ExtractedFile,
   MODE_LABEL,
   placeholders,
+  sourceCount,
 } from "@/lib/docs";
 import { relative } from "@/lib/format";
 
 /*
- * Tổng hợp từ link (docs/specs/29 §12, user 2026-11-12). Someone who may edit a dự án's documents
- * gives a few links (web pages, or files / README / wiki of the dự án's GitLab repos); the AI
+ * Tổng hợp bằng AI (docs/specs/29 §12, user 2026-11-12). Someone who may edit a dự án's documents
+ * gives a few sources: links (web pages, or files / README / wiki of the dự án's GitLab repos)
+ * and uploaded files (Word, PDF, Markdown, Text, Excel: only their text is kept); the AI
  * reads them and writes a document to the dự án's standard: a new one, the current one with the
  * new facts added, or the current one upgraded to the standard. The result is a draft: it is
  * read, compared with the current version, edited if needed, and only then saved as a version.
@@ -34,14 +39,14 @@ import { relative } from "@/lib/format";
 const errorText = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
 
 const MODE_HINT: Record<DraftMode, string> = {
-  new: "AI viết một tài liệu mới theo mẫu chuẩn của nhóm bạn chọn, chỉ từ nội dung các link.",
-  merge: "Giữ nguyên tài liệu đang có; thêm thông tin mới vào đúng mục, không xoá gì. Chỗ link nói khác tài liệu được đánh dấu để bạn quyết.",
-  upgrade: "Sắp xếp lại tài liệu theo đúng mẫu chuẩn, viết lại cho rõ, giữ mọi thông tin cũ và gộp thêm thông tin từ link.",
+  new: "AI viết một tài liệu mới theo mẫu chuẩn của nhóm bạn chọn, chỉ từ nội dung các nguồn.",
+  merge: "Giữ nguyên tài liệu đang có; thêm thông tin mới vào đúng mục, không xoá gì. Chỗ nguồn nói khác tài liệu được đánh dấu để bạn quyết.",
+  upgrade: "Sắp xếp lại tài liệu theo đúng mẫu chuẩn, viết lại cho rõ, giữ mọi thông tin cũ và gộp thêm thông tin từ nguồn.",
 };
 
 const STEPS: { key: "queued" | "fetching" | "writing"; label: string }[] = [
   { key: "queued", label: "Xếp hàng" },
-  { key: "fetching", label: "Đọc link" },
+  { key: "fetching", label: "Đọc nguồn" },
   { key: "writing", label: "AI đang viết" },
 ];
 
@@ -59,7 +64,7 @@ function lines(text: string): string[] {
     .filter(Boolean);
 }
 
-/** What to read and what to write: the links, new / merge / upgrade, focus. */
+/** What to read and what to write: links and files, new / merge / upgrade, focus. */
 export function LinkForm({
   projectId,
   docs,
@@ -82,12 +87,31 @@ export function LinkForm({
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [files, setFiles] = useState<ExtractedFile[]>([]);
+  const [reading, setReading] = useState<UploadItem[]>([]);
   const max = limits?.max_links ?? 5;
+  const kinds = limits?.file_kinds ?? [".md", ".markdown", ".txt", ".doc", ".docx", ".xlsx", ".pdf"];
+  const maxMb = limits?.max_file_mb ?? 20;
   const urls = lines(text);
   const bad = urls.filter((u) => !/^https?:\/\/[^\s/]+/i.test(u));
+  const total = urls.length + files.length;
   const active = docs.filter((d) => !d.archived);
   const left = limits ? Math.max(0, limits.per_day - limits.used_today) : null;
-  const ready = urls.length > 0 && urls.length <= max && !bad.length && (mode === "new" || documentId !== "") && left !== 0;
+  const uploading = reading.some((r) => r.state === "waiting" || r.state === "uploading");
+  const ready = total > 0 && total <= max && !bad.length && !uploading && (mode === "new" || documentId !== "") && left !== 0;
+
+  // Each file is read on the server now (its text shown here); the draft keeps that text only.
+  const addFiles = async (picked: File[]) => {
+    const room = Math.max(0, max - total);
+    const fresh = picked.filter((f) => !files.some((x) => x.name === f.name));
+    if (fresh.length > room) setError(`Tối đa ${max} nguồn (link và file) mỗi lần: bỏ bớt ${fresh.length - room} file.`);
+    await uploadAll(fresh.slice(0, room), kinds, maxMb, setReading, async (f) => {
+      const got = await api.postRaw<ExtractedFile>(`/docs/drafts/extract?business_project_id=${projectId}&filename=${encodeURIComponent(f.name)}`, f);
+      setFiles((old) => [...old.filter((x) => x.name !== got.name), got]);
+      return `${got.chars.toLocaleString("vi-VN")} ký tự${got.truncated ? ` · chỉ gửi ${got.text.length.toLocaleString("vi-VN")} ký tự đầu` : ""}`;
+    });
+    window.setTimeout(() => setReading((items) => items.filter((i) => i.state === "error")), 2500);
+  };
 
   const submit = async () => {
     setBusy(true);
@@ -99,6 +123,7 @@ export function LinkForm({
         document_id: mode === "new" ? null : documentId,
         category: mode === "new" ? category : null,
         urls,
+        files: files.map(({ name, kind, size, text, truncated }) => ({ name, kind, size, text, truncated })),
         instruction: instruction.trim() || null,
       });
       onQueued(draft);
@@ -113,24 +138,57 @@ export function LinkForm({
     <div className="adm-form docs-link-form">
       <label className="adm-field">
         <span className="small muted">
-          Link nguồn (mỗi dòng một link, tối đa {max})
+          Link nguồn (mỗi dòng một link) · link và file tối đa {max} nguồn
         </span>
         <textarea
-          rows={4}
+          rows={3}
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder={"https://wiki.congty.vn/thanh-toan/hoan-tien\nhttps://gitlab.congty.vn/nhom/repo/-/blob/main/docs/api.md"}
-          aria-invalid={bad.length > 0 || urls.length > max}
+          aria-invalid={bad.length > 0 || total > max}
           disabled={busy}
         />
-        <span className={`small ${bad.length || urls.length > max ? "bad-text" : "muted"}`}>
+        <span className={`small ${bad.length || total > max ? "bad-text" : "muted"}`}>
           {bad.length
             ? `Không phải link http/https: ${bad[0]}`
-            : urls.length > max
-              ? `Nhiều hơn ${max} link: tách thành nhiều lần`
-              : `${urls.length} link · Trang công khai, hoặc file / README / wiki của repo trong dự án này trên GitLab (đọc qua kết nối GitLab, không cần công khai).`}
+            : total > max
+              ? `Nhiều hơn ${max} nguồn: tách thành nhiều lần`
+              : "Trang công khai, hoặc file / README / wiki của repo trong dự án này trên GitLab (đọc qua kết nối GitLab, không cần công khai)."}
         </span>
       </label>
+
+      <div className="adm-field">
+        <span className="small muted">File nguồn (không bắt buộc)</span>
+        <UploadDrop
+          kinds={kinds}
+          maxMb={maxMb}
+          compact
+          disabled={busy || total >= max}
+          onFiles={(f) => void addFiles(f)}
+          title={total >= max ? `Đã đủ ${max} nguồn` : "Kéo thả file vào đây hoặc bấm để chọn"}
+          hint={`Word, PDF, Markdown, Text, Excel · tối đa ${maxMb} MB mỗi file · chỉ phần chữ được gửi cho AI, file không được lưu`}
+        />
+        <UploadList items={reading} onClear={() => setReading([])} />
+        {files.length > 0 && (
+          <ul className="docs-src-files" aria-label="File nguồn đã đọc">
+            {files.map((f) => (
+              <li key={f.name}>
+                <Icon name="file" size={14} />
+                <span className="docs-src-file-name">{f.name}</span>
+                <span className="small muted">
+                  {fileSize(f.size)} · {f.chars.toLocaleString("vi-VN")} ký tự{f.pages ? ` · ${f.pages} trang` : ""}
+                  {f.truncated ? ` · AI đọc ${f.text.length.toLocaleString("vi-VN")} ký tự đầu` : ""}
+                </span>
+                <IconButton icon="close" label={`Bỏ ${f.name}`} size={14} onClick={() => setFiles((old) => old.filter((x) => x.name !== f.name))} disabled={busy} />
+              </li>
+            ))}
+          </ul>
+        )}
+        <span className="small muted">
+          {total} / {max} nguồn{urls.length ? ` · ${urls.length} link` : ""}
+          {files.length ? ` · ${files.length} file` : ""}
+        </span>
+      </div>
 
       <div className="docs-mode-cards" role="radiogroup" aria-label="Kết quả">
         {(["new", "merge", "upgrade"] as DraftMode[]).map((m) => (
@@ -181,7 +239,7 @@ export function LinkForm({
       </label>
 
       <p className="muted small" style={{ margin: 0 }}>
-        Nội dung các link được gửi tới AI (Claude) để viết. Kết quả là <strong>bản nháp</strong>: bạn xem, so sánh và sửa trước khi lưu thành phiên bản;
+        Nội dung các link và file được gửi tới AI (Claude) để viết. Kết quả là <strong>bản nháp</strong>: bạn xem, so sánh và sửa trước khi lưu thành phiên bản;
         tài liệu không thay đổi cho tới khi bạn bấm lưu.
         {left !== null && ` Còn ${left}/${limits?.per_day} lần trong 24 giờ.`}
         {limits && !limits.url_hosts && " Wiki nội bộ (địa chỉ IP nội bộ) chỉ đọc được khi admin thêm tên máy vào ASSISTANT_URL_HOSTS."}
@@ -231,30 +289,42 @@ function Progress({ draft }: { draft: DocDraft }) {
         {draft.status === "writing"
           ? "AI đang đọc nguồn và viết theo chuẩn; tài liệu dài có thể mất vài phút."
           : draft.status === "fetching"
-            ? "Đang tải nội dung các link."
+            ? "Đang đọc các nguồn."
             : "Đang chờ tới lượt."}{" "}
         Đã {seconds < 60 ? `${seconds} giây` : `${Math.floor(seconds / 60)} phút ${seconds % 60} giây`}. Bạn có thể đóng cửa sổ này: bản nháp nằm trong mục
-        “Bản nháp từ link” của dự án.
+        “Tổng hợp bằng AI” của dự án.
       </p>
       <Loading rows={3} />
     </div>
   );
 }
 
+const VIA_LABEL: Record<string, string> = { web: "Web", gitlab: "GitLab", file: "File tải lên" };
+
 function SourceList({ draft }: { draft: DocDraft }) {
-  const items = draft.sources ?? draft.urls.map((url) => ({ url, title: null, via: "web" as const, chars: 0, error: null }));
+  const items: DraftSource[] = draft.sources ?? [
+    ...draft.files.map((f) => ({ url: null, name: f.name, title: f.name, via: "file" as const, chars: f.chars, error: null })),
+    ...draft.urls.map((url) => ({ url, title: null, via: "web" as const, chars: 0, error: null })),
+  ];
   return (
     <ul className="docs-draft-sources">
       {items.map((s, i) => (
-        <li key={s.url} className={s.error ? "bad" : undefined}>
+        <li key={s.url ?? `file:${s.name}`} className={s.error ? "bad" : undefined}>
           <span className="docs-src-n">{s.error ? <Icon name="alertCircle" size={12} /> : i + 1 - items.slice(0, i).filter((x) => x.error).length}</span>
           <span style={{ minWidth: 0 }}>
-            <a href={s.url} target="_blank" rel="noopener noreferrer" className="docs-src-link">
-              {s.title || s.url}
-            </a>
+            {s.url ? (
+              <a href={s.url} target="_blank" rel="noopener noreferrer" className="docs-src-link">
+                {s.title || s.url}
+              </a>
+            ) : (
+              <span className="docs-src-link">
+                <Icon name="file" size={12} /> {s.name ?? s.title}
+              </span>
+            )}
             <span className="small muted">
-              {s.via === "gitlab" ? "GitLab" : "Web"}
+              {VIA_LABEL[s.via] ?? s.via}
               {s.error ? ` · ${s.error}` : s.chars ? ` · ${s.chars.toLocaleString("vi-VN")} ký tự` : ""}
+              {s.truncated ? " (đã cắt bớt)" : ""}
             </span>
           </span>
         </li>
@@ -352,7 +422,7 @@ export function DraftReview({
     ? draft.mode === "new"
       ? `Bản nháp: tài liệu mới (${CATEGORY_LABEL[draft.category]})`
       : `Bản nháp: ${MODE_LABEL[draft.mode].toLowerCase()} “${draft.document_title ?? "…"}”`
-    : "Bản nháp từ link";
+    : "Bản nháp tổng hợp bằng AI";
 
   const ready = draft?.status === "ready";
   return (
@@ -408,7 +478,7 @@ export function DraftReview({
           <h4>Nguồn</h4>
           <SourceList draft={draft} />
           <p className="muted small">
-            Link cần đăng nhập (Confluence, Google Docs riêng tư…) thì máy chủ không đọc được: tải file xuất ra lên bằng “Thêm tài liệu”, hoặc dùng link
+            Link cần đăng nhập (Confluence, Google Docs riêng tư…) thì máy chủ không đọc được: xuất ra file (Word, PDF) rồi tải lên làm nguồn, hoặc dùng link
             GitLab của repo trong dự án.
           </p>
         </>
@@ -512,7 +582,7 @@ export function DraftReview({
 
 const STATUS_PILL: Record<DocDraft["status"], { label: string; tone?: "good" | "bad" | "warn" | "info" | "primary" }> = {
   queued: { label: "Đang chờ", tone: "info" },
-  fetching: { label: "Đọc link", tone: "info" },
+  fetching: { label: "Đọc nguồn", tone: "info" },
   writing: { label: "AI đang viết", tone: "info" },
   ready: { label: "Chờ duyệt", tone: "primary" },
   failed: { label: "Lỗi", tone: "bad" },
@@ -525,7 +595,7 @@ export function DraftPill({ status }: { status: DocDraft["status"] }) {
   return <Pill tone={s.tone}>{s.label}</Pill>;
 }
 
-/** Bản nháp từ link of a dự án (its editors only): open one to review it. */
+/** The AI drafts of a dự án (its editors only): open one to review it. */
 export function DraftsCard({ drafts, onOpen, onNew }: { drafts?: DraftList; onOpen: (id: number) => void; onNew: () => void }) {
   const open = (drafts?.drafts ?? []).filter((d) => d.status !== "applied");
   const done = (drafts?.drafts ?? []).filter((d) => d.status === "applied").slice(0, 3);
@@ -533,18 +603,18 @@ export function DraftsCard({ drafts, onOpen, onNew }: { drafts?: DraftList; onOp
     <div className="card docs-doc">
       <div className="docs-card-head">
         <h3 style={{ margin: 0 }}>
-          <Icon name="sparkle" size={16} /> Tổng hợp từ link
+          <Icon name="sparkle" size={16} /> Tổng hợp bằng AI
         </h3>
         <button type="button" className="sm" onClick={onNew}>
-          <Icon name="link" size={14} /> Nhập link
+          <Icon name="plus" size={14} /> Thêm nguồn
         </button>
       </div>
       {!drafts ? (
         <Loading rows={2} />
       ) : !open.length && !done.length ? (
         <p className="muted small" style={{ marginBottom: 0 }}>
-          Dán link wiki, bài viết, README hay file trên GitLab: AI đọc và viết thành tài liệu theo chuẩn của dự án, hoặc bổ sung vào tài liệu đang có. Bạn
-          duyệt trước khi lưu.
+          Dán link (wiki, bài viết, README hay file trên GitLab) hoặc tải file lên (Word, PDF, Markdown…): AI đọc và viết thành tài liệu theo chuẩn của
+          dự án, hoặc bổ sung vào tài liệu đang có. Bạn duyệt trước khi lưu.
         </p>
       ) : (
         <ul className="docs-drafts">
@@ -554,7 +624,7 @@ export function DraftsCard({ drafts, onOpen, onNew }: { drafts?: DraftList; onOp
                 <span className="docs-draft-row-main">
                   <strong>{d.mode === "new" ? (d.title ?? `Tài liệu mới · ${CATEGORY_LABEL[d.category]}`) : (d.document_title ?? "Tài liệu")}</strong>
                   <span className="small muted">
-                    {MODE_LABEL[d.mode]} · {d.urls.length} link · {d.created_by?.name ?? "—"} · {d.created_at ? relative(d.created_at) : "—"}
+                    {MODE_LABEL[d.mode]} · {sourceCount(d)} · {d.created_by?.name ?? "—"} · {d.created_at ? relative(d.created_at) : "—"}
                   </span>
                 </span>
                 <DraftPill status={d.status} />

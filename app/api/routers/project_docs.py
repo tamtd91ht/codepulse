@@ -116,9 +116,10 @@ class VersionOut(BaseModel):
 
 
 class DocSource(BaseModel):
-    """A link a version was written from (Tổng hợp từ link, docs/specs/29 §12)."""
+    """A link or an uploaded file a version was written from (docs/specs/29 §12)."""
 
-    url: str
+    url: str | None  # None for a file
+    name: str | None = None  # a file's name
     title: str | None
     via: str
     version: int
@@ -332,6 +333,12 @@ def _sources(session: Session, doc_id: int) -> list[DocSource]:
                     via=str(link.get("via") or "web"),
                     version=number,
                     at=_iso(at),
+                )
+        for f in (meta or {}).get("files") or []:
+            name = str(f.get("name") or "")
+            if name and f"file:{name}" not in out:
+                out[f"file:{name}"] = DocSource(
+                    url=None, name=name, title=name, via="file", version=number, at=_iso(at)
                 )
     return list(out.values())
 

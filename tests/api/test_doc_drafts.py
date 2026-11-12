@@ -397,3 +397,85 @@ def test_model_output_cannot_load_anything() -> None:
     assert any("Đã gỡ 5" in w for w in written.result["warnings"])
     with pytest.raises(ValueError):
         synthesis.read_output(["not", "an", "object"], mode="new", current=None)
+
+
+def test_uploaded_files_as_sources(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    bp = world.project.business_project_id
+    assert bp is not None
+    admin = as_user(world.admin)
+    md = "# Quy trình release\n\nTag `v*` trên nhánh main thì pipeline deploy production."
+    got = client.post(
+        "/api/v1/docs/drafts/extract",
+        params={"business_project_id": bp, "filename": "release.md"},
+        content=md.encode(),
+        headers={**admin, "Content-Type": "application/octet-stream"},
+    )
+    assert got.status_code == 200, got.text
+    extracted = got.json()
+    assert extracted["name"] == "release.md" and extracted["kind"] == ".md"
+    assert extracted["text"].startswith("# Quy trình release") and not extracted["truncated"]
+    bad = client.post(
+        "/api/v1/docs/drafts/extract",
+        params={"business_project_id": bp, "filename": "x.exe"},
+        content=b"MZ",
+        headers={**admin, "Content-Type": "application/octet-stream"},
+    )
+    assert bad.status_code == 422
+    # A reader may not read files through it.
+    grant(db_session, world.an, bp, "view")
+    db_session.commit()
+    denied = client.post(
+        "/api/v1/docs/drafts/extract",
+        params={"business_project_id": bp, "filename": "release.md"},
+        content=md.encode(),
+        headers={**as_user(world.an), "Content-Type": "application/octet-stream"},
+    )
+    assert denied.status_code == 403
+
+    file_in = {k: extracted[k] for k in ("name", "kind", "size", "text", "truncated")}
+    assert _ask(client, admin, bp, urls=[]).status_code == 422  # no source at all
+    too_many = _ask(
+        client, admin, bp, urls=[f"https://x.org/{i}" for i in range(3)], files=[file_in] * 3
+    )
+    assert too_many.status_code == 422
+
+    draft = _ask(client, admin, bp, urls=[], files=[file_in], category="deploy").json()
+    assert draft["files"] == [
+        {"name": "release.md", "kind": ".md", "size": len(md.encode()), "chars": len(md)}
+    ]
+    provider = _writer(
+        {"title": "Triển khai", "summary": "", "body": "# Triển khai\n\nTag v* [1].", "changes": []}
+    )
+    assert _run(db_session, draft["id"], provider) == "ready"
+    assert (
+        'file="release.md"' in provider.prompts[0].user
+        and "pipeline deploy" in provider.prompts[0].user
+    )
+    sources = client.get(f"/api/v1/docs/drafts/{draft['id']}", headers=admin).json()["sources"]
+    assert (
+        sources[0]["via"] == "file"
+        and sources[0]["name"] == "release.md"
+        and sources[0]["url"] is None
+    )
+
+    doc = client.post(f"/api/v1/docs/drafts/{draft['id']}/apply", json={}, headers=admin).json()
+    assert doc["current"]["note"] == "Tạo tài liệu mới từ 1 file"
+    assert doc["sources"] == [
+        {
+            "url": None,
+            "name": "release.md",
+            "title": "release.md",
+            "via": "file",
+            "version": 1,
+            "at": doc["sources"][0]["at"],
+        }
+    ]
+
+    # A dropped draft keeps no uploaded text.
+    other = _ask(client, admin, bp, urls=[], files=[file_in]).json()
+    client.delete(f"/api/v1/docs/drafts/{other['id']}", headers=admin)
+    db_session.expire_all()
+    row = db_session.get(ProjectDocumentDraft, other["id"])
+    assert row is not None and row.files is None

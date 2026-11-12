@@ -27,6 +27,7 @@ import {
   type DraftMode,
   KIND_LABEL,
   readMinutes,
+  sourceCount,
 } from "@/lib/docs";
 import { dateTimeMin, relative } from "@/lib/format";
 import type { Me } from "@/lib/types";
@@ -85,7 +86,7 @@ export default function DocsPage() {
   const [archived, setArchived] = useState(false);
   const [adding, setAdding] = useState<false | "upload" | "template" | "link">(false);
   const [editor, setEditor] = useState<EditorStart | null>(null);
-  // Tổng hợp từ link (docs/specs/29 §12): the draft being reviewed.
+  // Tổng hợp bằng AI (docs/specs/29 §12): the draft being reviewed.
   const [review, setReview] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
@@ -155,7 +156,7 @@ export default function DocsPage() {
           canEdit && projectId ? (
             <>
               <button type="button" onClick={() => setAdding("link")}>
-                <Icon name="link" size={14} /> Tổng hợp từ link
+                <Icon name="sparkle" size={14} /> Tổng hợp bằng AI
               </button>
               <button type="button" className="primary" onClick={() => setAdding("upload")}>
                 <Icon name="plus" size={14} /> Thêm tài liệu
@@ -313,7 +314,7 @@ export default function DocsPage() {
             setReview(null);
             go({ project: doc.business_project_id, doc: doc.id, v: null });
             await Promise.all([refresh(doc), drafts.mutate()]);
-            setMessage(draft.mode === "new" ? `Đã tạo “${doc.title}” từ ${draft.urls.length} link.` : `Đã lưu phiên bản ${doc.version} (bổ sung từ link).`);
+            setMessage(draft.mode === "new" ? `Đã tạo “${doc.title}” từ ${sourceCount(draft)}.` : `Đã lưu phiên bản ${doc.version} (tổng hợp bằng AI từ ${sourceCount(draft)}).`);
           }}
         />
       )}
@@ -826,8 +827,8 @@ function DocView({
                 <IconButton icon="pin" label={doc.pinned ? "Bỏ ghim" : "Ghim lên đầu"} aria-pressed={doc.pinned} disabled={busy} onClick={() => void act(() => api.patch(`/docs/${doc.id}`, { pinned: !doc.pinned }))} />
                 <IconButton icon="settings" label="Đổi tên, nhóm" onClick={() => setRenaming(true)} />
                 <UploadButton disabled={busy} onFiles={(f) => void newVersion(f)} />
-                <button type="button" className="sm" onClick={() => setFromLinks("merge")} disabled={busy || Boolean(old)} title="AI đọc link và bổ sung / nâng cấp tài liệu này; bạn duyệt trước khi lưu">
-                  <Icon name="link" size={14} /> Bổ sung từ link
+                <button type="button" className="sm" onClick={() => setFromLinks("merge")} disabled={busy || Boolean(old)} title="AI đọc link / file và bổ sung / nâng cấp tài liệu này; bạn duyệt trước khi lưu">
+                  <Icon name="sparkle" size={14} /> Bổ sung bằng AI
                 </button>
                 <button type="button" className="sm" onClick={onEdit} disabled={busy || Boolean(old)}>
                   <Icon name="edit" size={14} /> Sửa
@@ -878,7 +879,7 @@ function DocView({
         {!old &&
           waiting.map((d) => (
             <Alert key={d.id} tone="info">
-              {d.status === "ready" ? "Có bản nháp" : "Đang viết bản nháp"} {d.mode === "merge" ? "bổ sung" : "nâng cấp"} tài liệu này từ {d.urls.length} link
+              {d.status === "ready" ? "Có bản nháp" : "Đang viết bản nháp"} {d.mode === "merge" ? "bổ sung" : "nâng cấp"} tài liệu này từ {sourceCount(d)}
               {d.created_by ? ` (${d.created_by.name})` : ""}.{" "}
               <button type="button" className="link sm" onClick={() => onDraft(d.id)}>
                 {d.status === "ready" ? "Xem và duyệt" : "Xem tiến độ"}
@@ -935,12 +936,16 @@ function DocView({
             <h2 id="doc-sources">Nguồn đã tổng hợp</h2>
             <ol>
               {doc.sources.map((s) => (
-                <li key={s.url}>
-                  <a href={s.url} target="_blank" rel="noopener noreferrer">
-                    {s.title || s.url}
-                  </a>{" "}
+                <li key={s.url ?? `file:${s.name}`}>
+                  {s.url ? (
+                    <a href={s.url} target="_blank" rel="noopener noreferrer">
+                      {s.title || s.url}
+                    </a>
+                  ) : (
+                    <span>{s.name ?? s.title}</span>
+                  )}{" "}
                   <span className="muted">
-                    · {s.via === "gitlab" ? "GitLab" : "Web"} · phiên bản {s.version}
+                    · {s.via === "gitlab" ? "GitLab" : s.via === "file" ? "File tải lên" : "Web"} · phiên bản {s.version}
                     {s.at ? ` · ${relative(s.at)}` : ""}
                   </span>
                 </li>
@@ -977,7 +982,7 @@ function DocView({
         />
       )}
       {fromLinks && (
-        <Modal title={`Bổ sung “${doc.title}” từ link`} onClose={() => setFromLinks(null)} width={760}>
+        <Modal title={`Bổ sung “${doc.title}” bằng AI`} onClose={() => setFromLinks(null)} width={760}>
           <LinkForm
             projectId={doc.business_project_id}
             docs={[doc]}
@@ -1186,7 +1191,7 @@ function AddDocs({
         label="Cách thêm"
         options={[
           { value: "upload", label: "Tải file lên" },
-          { value: "link", label: "Tổng hợp từ link (AI)" },
+          { value: "link", label: "Tổng hợp bằng AI (link, file)" },
           { value: "template", label: "Soạn mới (mẫu / trang trống)" },
         ]}
       />
