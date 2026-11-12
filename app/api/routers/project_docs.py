@@ -862,10 +862,11 @@ def update_doc(
 
 @router.delete("/docs/{doc_id}", status_code=204)
 def delete_doc(doc_id: int, principal: CurrentPrincipal, session: SessionDep) -> None:
-    """Gone for good, with every version: only an archived document (archive first)."""
+    """Gone for good, with every version, its original files and its drafts (docs/specs/29 §15,
+    user 2026-11-12: a wrong import or an outdated document is removed in one step, after the
+    screen's confirmation). Archiving stays the way to hide one and keep it. Images pasted into
+    it stay with the dự án (another document may show them)."""
     doc = docs.document_for(session, principal, doc_id, edit=True)
-    if doc.archived_at is None:
-        raise HTTPException(409, "chỉ xoá được tài liệu đã lưu trữ: lưu trữ trước")
     audit(
         session,
         principal.user_id,
@@ -874,6 +875,7 @@ def delete_doc(doc_id: int, principal: CurrentPrincipal, session: SessionDep) ->
         business_project=doc.business_project_id,
         title=doc.title,
         versions=doc.version_count,
+        archived=doc.archived_at is not None,
     )
     doc.current_version_id = None
     session.flush()

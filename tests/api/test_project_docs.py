@@ -134,7 +134,11 @@ def test_upload_read_search_and_versions(
     client.patch(f"/api/v1/docs/{doc['id']}", json={"title": "Sơ đồ hệ thống"}, headers=admin)
     hits = client.get("/api/v1/docs/search", params={"q": "so do"}, headers=an).json()
     assert hits and hits[0]["document_id"] == doc["id"]
-    assert client.delete(f"/api/v1/docs/{doc['id']}", headers=admin).status_code == 409
+    # A reader may not delete; deleting needs no archiving first (docs/specs/29 §15).
+    assert client.delete(f"/api/v1/docs/{doc['id']}", headers=an).status_code == 403
+    extra = _upload(client, admin, bp, "nhap-sai.md", b"# Nhap sai\n\nImport nham.").json()
+    assert client.delete(f"/api/v1/docs/{extra['id']}", headers=admin).status_code == 204
+    assert client.get(f"/api/v1/docs/{extra['id']}", headers=admin).status_code == 404
     client.patch(f"/api/v1/docs/{doc['id']}", json={"archived": True}, headers=admin)
     archived = client.get("/api/v1/docs/search", params={"q": "so do"}, headers=an).json()
     assert doc["id"] not in [h["document_id"] for h in archived]

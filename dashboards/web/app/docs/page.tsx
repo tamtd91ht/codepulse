@@ -835,6 +835,7 @@ function DocView({
                 </button>
               </>
             )}
+            {doc.can_edit && <IconButton icon="remove" tone="danger" label="Xoá tài liệu" disabled={busy} onClick={() => setConfirmDelete(true)} />}
           </div>
         </div>
         {doc.summary && <p className="docs-summary">{doc.summary}</p>}
@@ -1017,6 +1018,18 @@ function DocView({
               <button type="button" className="ghost" onClick={() => setConfirmDelete(false)} disabled={busy}>
                 Huỷ
               </button>
+              {!doc.archived && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setConfirmDelete(false);
+                    void act(() => api.patch(`/docs/${doc.id}`, { archived: true }), "Đã lưu trữ tài liệu (khôi phục được trong “Xem tài liệu đã lưu trữ”).");
+                  }}
+                >
+                  Lưu trữ thay vì xoá
+                </button>
+              )}
               <button
                 type="button"
                 className="danger"
@@ -1039,7 +1052,21 @@ function DocView({
             </>
           }
         >
-          <p>Mọi phiên bản ({doc.version}) và file gốc của tài liệu sẽ bị xoá, không khôi phục được.</p>
+          <p style={{ marginTop: 0 }}>
+            Xoá hẳn tài liệu khỏi dự án <strong>{doc.business_project}</strong>:
+          </p>
+          <ul className="doc-delete-list">
+            <li>
+              {doc.version} phiên bản và lịch sử thay đổi{doc.current.file_name ? `, file gốc (${doc.current.file_name}${doc.version > 1 ? "…" : ""})` : ""}
+            </li>
+            <li>kết quả tìm kiếm và bản nháp AI của tài liệu này</li>
+          </ul>
+          <p className="muted small">Không khôi phục được. Ảnh đã dán vào tài liệu vẫn giữ trong dự án.</p>
+          {!doc.archived && (
+            <Alert tone="info">
+              Chỉ muốn ẩn tài liệu cũ? <strong>Lưu trữ</strong> thì tài liệu biến khỏi danh sách và tìm kiếm nhưng vẫn khôi phục được.
+            </Alert>
+          )}
         </Modal>
       )}
     </div>

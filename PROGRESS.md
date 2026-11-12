@@ -266,3 +266,4 @@
 - Căn ảnh (user 2026-11-12, spec 29 §13.3): `![tên|50%|right](asset:id)` / `|left`, giữa mặc định; nút Trái/Giữa/Phải trên thanh ảnh của trình soạn; ảnh căn phải kéo góc trái.
 - Chữ chảy quanh ảnh (user 2026-11-12, spec 29 §13.4): `|wrap` sau `left`/`right`, mặc định rộng 40%; tiêu đề lớn, bảng, code luôn xuống dưới ảnh; ≤ 640 px bỏ bao quanh; nút “Chữ bao quanh” trên thanh ảnh; kéo góc đổi bề rộng khối ảnh, chữ chảy lại ngay.
 - Bảng trong trình soạn (user 2026-11-12, spec 29 §14): nút Bảng ▾ chọn N×M trên lưới 8×8; thanh bảng khi con trỏ trong bảng (thêm/xoá hàng, cột; căn cột; dàn thẳng); dán ô từ Excel / Google Sheets thành bảng. Logic ở `dashboards/web/lib/mdtable.ts`.
+- Xoá tài liệu (user 2026-11-12, spec 29 §15): nút Xoá trên thanh công cụ tài liệu, hộp xác nhận nêu thứ sẽ mất + lựa chọn “Lưu trữ thay vì xoá”; DELETE không còn đòi lưu trữ trước.

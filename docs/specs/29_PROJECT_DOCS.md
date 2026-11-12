@@ -455,3 +455,17 @@ Yêu cầu: chèn bảng bằng giao diện trong trình soạn.
 - Một dấu `|` trong câu thường không làm hiện thanh bảng (bảng phải có dòng phân cách ngay sau
   tiêu đề).
 
+## 15. Xoá tài liệu — user 2026-11-12 **[Quyết định]**
+
+Thay quy tắc cũ “chỉ xoá được tài liệu đã lưu trữ” (§9): người dùng không tìm ra cách xoá một
+tài liệu nhập sai hoặc quá cũ.
+
+- Nút **Xoá** (thùng rác) ngay trên thanh công cụ của tài liệu, cho người sửa được (`docs.edit`),
+  tài liệu đang dùng hay đã lưu trữ đều được.
+- Hộp xác nhận nói rõ thứ sẽ mất (số phiên bản, file gốc, bản nháp AI, kết quả tìm kiếm), không
+  khôi phục được, và đưa lựa chọn nhẹ hơn **Lưu trữ thay vì xoá** (ẩn, khôi phục được).
+- `DELETE /docs/{id}` không còn đòi lưu trữ trước; audit `doc.delete` ghi tiêu đề, số phiên bản,
+  đã lưu trữ hay chưa. Ảnh dán trong tài liệu (§13) ở lại với dự án.
+- Một phiên bản tải lên sai (không phải cả tài liệu): mở Lịch sử phiên bản và **Khôi phục** bản
+  trước (lịch sử không bị viết lại).
+
