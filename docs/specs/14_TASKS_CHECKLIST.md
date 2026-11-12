@@ -111,5 +111,6 @@
 - [x] 10.6 Tổng hợp từ link (AI): bản nháp tạo mới / bổ sung / nâng cấp theo mẫu chuẩn, link web và GitLab của repo trong dự án, duyệt + so sánh + sửa rồi lưu phiên bản nguồn `link`, nguồn của tài liệu (29 §12); nguồn là file tải lên (29 §12.8) hoặc văn bản dán (29 §12.9) hoặc ảnh chụp màn hình (29 §12.10)
 - [x] 10.7 Ảnh trong tài liệu: dán / kéo thả / chọn ảnh trong trình soạn, `asset:<id>`, ảnh ngoài hiện thành link (29 §13); đổi cỡ ảnh (29 §13.1), kéo góc ảnh (29 §13.2), căn ảnh (29 §13.3), chữ chảy quanh ảnh (29 §13.4)
 - [x] 10.8 Bảng trong trình soạn: chọn kích thước, thanh bảng (hàng, cột, căn cột, dàn thẳng), dán ô từ Excel (29 §14)
+- [x] 10.9 Xoá tài liệu trên thanh công cụ (29 §15); giữ link khi nhập Google Docs/Sheets, .docx, .xlsx, web (29 §16); một tài liệu cho nhiều dự án (29 §17)
 - [ ] **Demo**: push 2 commit → `/review-push` trong Claude Code → thông báo review xong trên web; nhập 3 file quy tắc vào một dự án → review sau ghi "Tệp quy tắc …" trong Căn cứ review; tải 1 Word + 1 PDF vào Tài liệu dự án, tìm không dấu, sửa và khôi phục phiên bản; dán 1 link wiki + 1 link README GitLab → bản nháp → so sánh → lưu
 

@@ -16,7 +16,7 @@ from urllib.parse import quote, unquote
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, undefer
 from starlette.concurrency import run_in_threadpool
@@ -27,7 +27,14 @@ from app.api.security import CurrentPrincipal, Principal
 from app.assistant import importers
 from app.docs import service as docs
 from app.docs.templates import BY_KEY, TEMPLATES
-from app.models import ProjectDocument, ProjectDocumentAsset, ProjectDocumentVersion, User
+from app.models import (
+    BusinessProject,
+    ProjectDocument,
+    ProjectDocumentAsset,
+    ProjectDocumentLink,
+    ProjectDocumentVersion,
+    User,
+)
 from app.models.project_docs import DOC_CATEGORIES
 
 router = APIRouter(tags=["project-docs"])
@@ -77,6 +84,10 @@ class DocItem(BaseModel):
     updated_at: str | None
     updated_by: Person | None
     stale: bool
+    # Shared (§17): how many dự án it belongs to; when listed in a dự án it is shared with,
+    # the name of its home.
+    projects: int = 1
+    shared_from: str | None = None
 
 
 class CategoryCount(BaseModel):
@@ -128,11 +139,22 @@ class DocSource(BaseModel):
     at: str | None
 
 
+class DocProject(BaseModel):
+    id: int
+    name: str
+    home: bool
+    can_edit: bool  # the reader may edit documents of this dự án
+
+
 class DocDetail(DocItem):
     business_project: str
     body: str
     current: VersionOut
     can_edit: bool
+    can_delete: bool = False  # only its home's editors (§17)
+    # The dự án it belongs to that the reader sees (home first), and how many others.
+    shared: list[DocProject] = []
+    hidden_projects: int = 0
     created_at: str | None
     created_by: Person | None
     # Every link the document was written from, across its versions (newest first).
@@ -297,14 +319,32 @@ def _detail(session: Session, principal: Principal, doc: ProjectDocument) -> Doc
     if version is None:
         raise HTTPException(404, "document has no content")
     people = _people(session, {doc.updated_by, doc.created_by, version.created_by})
-    bp = docs.project_for(session, principal, doc.business_project_id)
+    ids = docs.projects_of(session, doc)
+    names = dict(
+        session.execute(
+            select(BusinessProject.id, BusinessProject.name).where(BusinessProject.id.in_(ids))
+        ).all()
+    )
+    seen = [bp for bp in ids if docs.may_view(principal, bp)]
     item = _item(doc, version, people, datetime.now(UTC))
+    item.projects = len(ids)
     return DocDetail(
         **item.model_dump(),
-        business_project=bp.name,
+        business_project=names.get(doc.business_project_id, ""),
         body=version.body,
         current=_version_out(version, people, bool(_has_original(session, [version.id]))),
-        can_edit=docs.may_edit(principal, doc.business_project_id),
+        can_edit=docs.may_edit_doc(session, principal, doc),
+        can_delete=docs.may_delete_doc(principal, doc),
+        shared=[
+            DocProject(
+                id=bp,
+                name=names.get(bp, ""),
+                home=bp == doc.business_project_id,
+                can_edit=docs.may_edit(principal, bp),
+            )
+            for bp in seen
+        ],
+        hidden_projects=len(ids) - len(seen),
         created_at=_iso(doc.created_at),
         created_by=people.get(doc.created_by) if doc.created_by else None,
         sources=_sources(session, doc.id),
@@ -405,16 +445,28 @@ def _looks_plain(text: str) -> bool:
 def doc_projects(principal: CurrentPrincipal, session: SessionDep) -> list[ProjectRow]:
     """The dự án whose documents one may read, with how many active documents each has."""
     projects = docs.viewable_projects(session, principal)
-    counts = dict(
-        session.execute(
-            select(ProjectDocument.business_project_id, func.count())
-            .where(
-                ProjectDocument.archived_at.is_(None),
-                ProjectDocument.business_project_id.in_([p.id for p in projects]),
-            )
-            .group_by(ProjectDocument.business_project_id)
-        ).all()
-    )
+    wanted = [p.id for p in projects]
+    counts: dict[int, int] = {}
+    for bp_id, n in session.execute(
+        select(ProjectDocument.business_project_id, func.count())
+        .where(
+            ProjectDocument.archived_at.is_(None),
+            ProjectDocument.business_project_id.in_(wanted),
+        )
+        .group_by(ProjectDocument.business_project_id)
+    ).all():
+        counts[bp_id] = counts.get(bp_id, 0) + int(n)
+    # Shared with a dự án: a document of that dự án too (§17).
+    for bp_id, n in session.execute(
+        select(ProjectDocumentLink.business_project_id, func.count())
+        .join(ProjectDocument, ProjectDocument.id == ProjectDocumentLink.document_id)
+        .where(
+            ProjectDocument.archived_at.is_(None),
+            ProjectDocumentLink.business_project_id.in_(wanted),
+        )
+        .group_by(ProjectDocumentLink.business_project_id)
+    ).all():
+        counts[bp_id] = counts.get(bp_id, 0) + int(n)
     return [
         ProjectRow(
             id=p.id,
@@ -452,7 +504,7 @@ def list_docs(
     archived: bool = False,
 ) -> DocListOut:
     bp = docs.project_for(session, principal, business_project_id)
-    query = select(ProjectDocument).where(ProjectDocument.business_project_id == bp.id)
+    query = select(ProjectDocument).where(docs.in_project(bp.id))
     query = query.where(
         ProjectDocument.archived_at.is_not(None)
         if archived
@@ -471,18 +523,48 @@ def list_docs(
     active = dict(
         session.execute(
             select(ProjectDocument.category, func.count())
-            .where(
-                ProjectDocument.business_project_id == bp.id, ProjectDocument.archived_at.is_(None)
-            )
+            .where(docs.in_project(bp.id), ProjectDocument.archived_at.is_(None))
             .group_by(ProjectDocument.category)
         ).all()
     )
     covered = sum(1 for k in docs.CORE_CATEGORIES if active.get(k))
+    ids = [d.id for d in rows]
+    links: dict[int, int] = (
+        dict(
+            session.execute(
+                select(ProjectDocumentLink.document_id, func.count())
+                .where(ProjectDocumentLink.document_id.in_(ids))
+                .group_by(ProjectDocumentLink.document_id)
+            ).all()
+        )
+        if ids
+        else {}
+    )
+    homes = {d.business_project_id for d in rows if d.business_project_id != bp.id}
+    home_names = (
+        dict(
+            session.execute(
+                select(BusinessProject.id, BusinessProject.name).where(
+                    BusinessProject.id.in_(homes)
+                )
+            ).all()
+        )
+        if homes
+        else {}
+    )
+
+    def item(d: ProjectDocument) -> DocItem:
+        out = _item(d, versions.get(d.current_version_id or -1), people, now)
+        out.projects = 1 + int(links.get(d.id, 0))
+        if d.business_project_id != bp.id:
+            out.shared_from = home_names.get(d.business_project_id, "dự án khác")
+        return out
+
     return DocListOut(
         business_project_id=bp.id,
         business_project=bp.name,
         can_edit=docs.may_edit(principal, bp.id),
-        docs=[_item(d, versions.get(d.current_version_id or -1), people, now) for d in rows],
+        docs=[item(d) for d in rows],
         categories=_categories({k: int(v) for k, v in active.items()}),
         coverage=covered / len(docs.CORE_CATEGORIES),
         stale_days=docs.STALE_DAYS,
@@ -865,8 +947,13 @@ def delete_doc(doc_id: int, principal: CurrentPrincipal, session: SessionDep) ->
     """Gone for good, with every version, its original files and its drafts (docs/specs/29 §15,
     user 2026-11-12: a wrong import or an outdated document is removed in one step, after the
     screen's confirmation). Archiving stays the way to hide one and keep it. Images pasted into
-    it stay with the dự án (another document may show them)."""
+    it stay with the dự án (another document may show them). A shared document is deleted by
+    its home only; another dự án drops the link instead (§17)."""
     doc = docs.document_for(session, principal, doc_id, edit=True)
+    if not docs.may_delete_doc(principal, doc):
+        raise HTTPException(
+            403, "tài liệu thuộc dự án khác: bỏ liên kết với dự án của bạn thay vì xoá"
+        )
     audit(
         session,
         principal.user_id,
@@ -973,7 +1060,9 @@ def get_asset(asset_id: int, principal: CurrentPrincipal, session: SessionDep) -
     """An image of a document: whoever may read the dự án's documents sees it. Its bytes never
     change (a new image is a new asset), so browsers keep it."""
     row = session.get(ProjectDocumentAsset, asset_id)
-    if row is None or not docs.may_view(principal, row.business_project_id):
+    if row is None or not (
+        docs.may_view(principal, row.business_project_id) or _shared_image(session, principal, row)
+    ):
         raise HTTPException(404, "image not found")
     data = session.scalar(
         select(ProjectDocumentAsset.data).where(ProjectDocumentAsset.id == row.id)
@@ -987,3 +1076,86 @@ def get_asset(asset_id: int, principal: CurrentPrincipal, session: SessionDep) -
             "Cache-Control": "private, max-age=86400, immutable",
         },
     )
+
+
+def _shared_image(session: Session, principal: Principal, asset: ProjectDocumentAsset) -> bool:
+    """An image of a dự án one does not see, shown in one of its documents that is shared with a
+    dự án one sees (§17): the current text of such a document refers to it."""
+    seen = principal.visible_projects()
+    shared = select(ProjectDocumentLink.document_id)
+    if seen is not None:
+        shared = shared.where(ProjectDocumentLink.business_project_id.in_(seen))
+    hit = session.scalar(
+        select(ProjectDocument.id)
+        .join(
+            ProjectDocumentVersion, ProjectDocumentVersion.id == ProjectDocument.current_version_id
+        )
+        .where(
+            ProjectDocument.business_project_id == asset.business_project_id,
+            ProjectDocument.id.in_(shared),
+            ProjectDocumentVersion.body.contains(f"(asset:{asset.id})"),
+        )
+        .limit(1)
+    )
+    return hit is not None and principal.can("docs.view")
+
+
+# -- one document, several dự án (docs/specs/29 §17) ---------------------------------------------
+
+
+class ProjectsIn(BaseModel):
+    # The dự án it is shared with besides its home (the whole set: added and dropped at once).
+    project_ids: list[int] = Field(default_factory=list, max_length=50)
+
+
+@router.put("/docs/{doc_id}/projects", response_model=DocDetail)
+def set_projects(
+    doc_id: int, body: ProjectsIn, principal: CurrentPrincipal, session: SessionDep
+) -> DocDetail:
+    """Share a document with other dự án, or stop. Adding a dự án needs the right to edit
+    documents there (a document is not pushed into a dự án one does not run); dropping one needs
+    it there or at the home. Links to dự án the caller does not see are left as they are."""
+    doc = docs.document_for(session, principal, doc_id, edit=True)
+    session.refresh(doc, with_for_update=True)
+    home = doc.business_project_id
+    current = set(docs.linked_ids(session, doc.id))
+    wanted = {p for p in body.project_ids if p != home}
+    # A dự án the caller cannot see is never added; one already linked stays as it is.
+    if any(p not in current and not docs.may_view(principal, p) for p in wanted):
+        raise HTTPException(403, "bạn không có quyền sửa tài liệu của một dự án được chọn")
+    hidden = {p for p in current if not docs.may_view(principal, p)}
+    wanted = {p for p in wanted if docs.may_view(principal, p)} | hidden
+    added, dropped = wanted - current, current - wanted
+    for bp_id in added:
+        if session.get(BusinessProject, bp_id) is None:
+            raise HTTPException(422, "dự án không tồn tại")
+        if not docs.may_edit(principal, bp_id):
+            raise HTTPException(403, "bạn không có quyền sửa tài liệu của một dự án được chọn")
+    for bp_id in dropped:
+        if not (docs.may_edit(principal, bp_id) or docs.may_edit(principal, home)):
+            raise HTTPException(403, "bạn không có quyền bỏ liên kết với một dự án được chọn")
+    for bp_id in added:
+        session.add(
+            ProjectDocumentLink(
+                document_id=doc.id, business_project_id=bp_id, linked_by=principal.user_id
+            )
+        )
+    if dropped:
+        session.execute(
+            delete(ProjectDocumentLink).where(
+                ProjectDocumentLink.document_id == doc.id,
+                ProjectDocumentLink.business_project_id.in_(dropped),
+            )
+        )
+    if added or dropped:
+        audit(
+            session,
+            principal.user_id,
+            "doc.share",
+            f"doc:{doc.id}",
+            home=home,
+            added=sorted(added),
+            dropped=sorted(dropped),
+        )
+    session.commit()
+    return _detail(session, principal, doc)

@@ -364,7 +364,7 @@ def create_draft(
         if body.document_id is None:
             raise HTTPException(422, "chọn tài liệu cần bổ sung / nâng cấp")
         doc = docs.document_for(session, principal, body.document_id, edit=True)
-        if doc.business_project_id != bp.id:
+        if bp.id not in docs.projects_of(session, doc):
             raise HTTPException(422, "tài liệu không thuộc dự án này")
         if doc.archived_at is not None:
             raise HTTPException(409, "tài liệu đã lưu trữ: đưa trở lại trước khi bổ sung")

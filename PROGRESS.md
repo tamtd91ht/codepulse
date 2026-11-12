@@ -268,3 +268,4 @@
 - Bảng trong trình soạn (user 2026-11-12, spec 29 §14): nút Bảng ▾ chọn N×M trên lưới 8×8; thanh bảng khi con trỏ trong bảng (thêm/xoá hàng, cột; căn cột; dàn thẳng); dán ô từ Excel / Google Sheets thành bảng. Logic ở `dashboards/web/lib/mdtable.ts`.
 - Xoá tài liệu (user 2026-11-12, spec 29 §15): nút Xoá trên thanh công cụ tài liệu, hộp xác nhận nêu thứ sẽ mất + lựa chọn “Lưu trữ thay vì xoá”; DELETE không còn đòi lưu trữ trước.
 - Giữ link khi nhập (user 2026-11-12, spec 29 §16): link trong .docx/.xlsx/trang web thành link Markdown; Google Docs/Sheets đọc qua bản xuất .docx/.xlsx. Còn lại: dán từ Google giữ link trong trình soạn.
+- Một tài liệu cho nhiều dự án (user 2026-11-12, spec 29 §17): bảng `project_document_links` (migration c7e9a1b3d5f8), dự án gốc + liên kết; tài liệu hiện, đếm, tìm được ở mọi dự án của nó; sửa từ bất kỳ dự án nào; chỉ dự án gốc xoá; thêm dự án cần quyền sửa ở dự án đó. Nút 🔗 “Dự án dùng tài liệu này”.

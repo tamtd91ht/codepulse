@@ -476,3 +476,29 @@ tài liệu nhập sai hoặc quá cũ.
 - Link Google Docs / Sheets được đọc qua bản xuất `.docx` / `.xlsx` của Google (giữ link, mọi tab của sheet), không qua trang (là script). Tài liệu chưa chia sẻ công khai → báo rõ cách bật chia sẻ hoặc tải file lên.
 - AI tổng hợp được dặn giữ nguyên link của nguồn.
 - Còn lại: dán vùng ô / đoạn văn từ Google Sheets/Docs vào trình soạn giữ link (đọc HTML của clipboard).
+
+## 17. Một tài liệu dùng cho nhiều dự án — user 2026-11-12 **[Quyết định]**
+
+Yêu cầu: tài liệu OMICX nói về cả web, mobile và BE API, trong khi CodePulse tách dự án BE, FE,
+Mobile: tài liệu phải thuộc cả 3 thay vì 1:1.
+
+| Câu hỏi | Chọn | Vì sao |
+|---|---|---|
+| Mô hình | **Dự án gốc + liên kết**: `project_documents.business_project_id` giữ là dự án gốc (nơi tạo); bảng `project_document_links (document_id, business_project_id)` (migration `c7e9a1b3d5f8`) thêm các dự án dùng chung | Không phải viết lại mọi chỗ đang dùng dự án của tài liệu (bản nháp AI, ảnh, quyền); một nội dung, nhiều nơi thấy |
+| Ở dự án được liên kết | Như tài liệu của chính dự án đó: hiện trong danh sách, đếm vào số tài liệu và **độ đầy đủ**, **tìm** thấy, mở được; cây tài liệu có dấu 🔗 “Dùng chung từ dự án …” | Mỗi team đọc tài liệu ở dự án của mình |
+| Ai xem | Ai xem được tài liệu ở **bất kỳ** dự án nào của nó | |
+| Ai sửa | Ai sửa được tài liệu ở **bất kỳ** dự án nào của nó (một nội dung, sửa ở đâu cũng vậy) | Tài liệu chung được cả các team bổ sung |
+| Ai liên kết / bỏ liên kết | Thêm dự án X: cần quyền sửa tài liệu **ở X** (không đẩy tài liệu vào dự án mình không quản lý). Bỏ X: quyền sửa ở X hoặc ở dự án gốc. Dự án người dùng không thấy không bao giờ được thêm, liên kết sẵn có với dự án đó giữ nguyên | |
+| Ai xoá | **Chỉ dự án gốc** (người sửa được ở đó); dự án khác bỏ liên kết | Tránh một team xoá tài liệu của team khác |
+| Ảnh trong tài liệu | Ảnh (`asset:`) thuộc dự án gốc; người đọc ở dự án liên kết xem được ảnh mà nội dung hiện tại của tài liệu dùng chung có nhắc tới | |
+| Tìm kiếm | Kết quả mở tài liệu trong dự án đang tìm, nếu không thì dự án gốc (nếu thấy), nếu không thì dự án liên kết đầu tiên người đó thấy | |
+| Bản nháp AI | Bổ sung / nâng cấp được tài liệu dùng chung từ bất kỳ dự án nào của nó | |
+
+UI: trên tài liệu, dòng “Dùng chung: BE (gốc), FE, Mobile (và N dự án khác)”; nút 🔗 **Dự án dùng
+tài liệu này** mở danh sách dự án có ô tick (dự án gốc khoá; dự án không có quyền thì mờ kèm lý
+do); nút Xoá chỉ hiện ở người sửa được của dự án gốc.
+
+API: `PUT /docs/{id}/projects {project_ids}` (cả tập dự án liên kết, thêm và bỏ cùng lúc), audit
+`doc.share`; `GET /docs/{id}` thêm `shared[] (id, name, home, can_edit)`, `hidden_projects`,
+`can_delete`; danh sách thêm `projects`, `shared_from`.
+

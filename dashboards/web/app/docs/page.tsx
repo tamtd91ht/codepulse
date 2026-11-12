@@ -490,6 +490,15 @@ function DocTree({
                 >
                   <Icon name="file" size={14} />
                   <span className="docs-item-title">{d.title}</span>
+                  {(d.projects ?? 1) > 1 && (
+                    <span
+                      className="docs-shared"
+                      title={d.shared_from ? `Dùng chung từ dự án ${d.shared_from}` : `Dùng chung với ${(d.projects ?? 1) - 1} dự án khác`}
+                      aria-label="tài liệu dùng chung"
+                    >
+                      <Icon name="link" size={12} />
+                    </span>
+                  )}
                   {d.stale && <span className="docs-stale" title={`Không cập nhật hơn ${list.stale_days} ngày`} aria-label="có thể đã cũ" />}
                 </button>
               </li>
@@ -752,6 +761,7 @@ function DocView({
   const [replacing, setReplacing] = useState<UploadItem[]>([]);
   const [find, setFind] = useState(false);
   const [fromLinks, setFromLinks] = useState<DraftMode | null>(null);
+  const [sharing, setSharing] = useState(false);
   const waiting = (drafts?.drafts ?? []).filter((d) => d.document_id === doc.id && d.mode !== "new" && ["queued", "fetching", "writing", "ready"].includes(d.status));
   // The document's own first "# Title" repeats the page title: not shown twice.
   const outline = useMemo(() => docOutline(body).filter((o, i) => !(i === 0 && o.level === 1 && fold(o.text) === fold(doc.title))), [body, doc.title]);
@@ -835,7 +845,8 @@ function DocView({
                 </button>
               </>
             )}
-            {doc.can_edit && <IconButton icon="remove" tone="danger" label="Xoá tài liệu" disabled={busy} onClick={() => setConfirmDelete(true)} />}
+            {doc.can_edit && !doc.archived && <IconButton icon="link" label="Dự án dùng tài liệu này" onClick={() => setSharing(true)} />}
+            {doc.can_delete && <IconButton icon="remove" tone="danger" label="Xoá tài liệu" disabled={busy} onClick={() => setConfirmDelete(true)} />}
           </div>
         </div>
         {doc.summary && <p className="docs-summary">{doc.summary}</p>}
@@ -852,6 +863,19 @@ function DocView({
             </span>
           )}
           <span>~{readMinutes(shown.chars)} phút đọc</span>
+          {doc.shared.length + doc.hidden_projects > 1 && (
+            <span className="docs-shared-line">
+              <Icon name="link" size={12} /> Dùng chung:{" "}
+              {doc.shared.map((p, i) => (
+                <span key={p.id}>
+                  {i > 0 && ", "}
+                  {p.name}
+                  {p.home && " (gốc)"}
+                </span>
+              ))}
+              {doc.hidden_projects > 0 && ` và ${doc.hidden_projects} dự án khác`}
+            </span>
+          )}
         </div>
 
         {error && <Message text={`Lỗi: ${error}`} onClose={() => setError(null)} />}
@@ -982,6 +1006,16 @@ function DocView({
           }}
         />
       )}
+      {sharing && (
+        <ShareProjects
+          doc={doc}
+          onClose={() => setSharing(false)}
+          onSaved={async (d) => {
+            setSharing(false);
+            await onChanged(d, "Đã cập nhật các dự án dùng tài liệu này.");
+          }}
+        />
+      )}
       {fromLinks && (
         <Modal title={`Bổ sung “${doc.title}” bằng AI`} onClose={() => setFromLinks(null)} width={760}>
           <LinkForm
@@ -1070,6 +1104,104 @@ function DocView({
         </Modal>
       )}
     </div>
+  );
+}
+
+/**
+ * The dự án a document serves (docs/specs/29 §17): its home, and the ones it is shared with. One
+ * adds a dự án where one may edit documents; one drops a link there or as an editor of the home.
+ */
+function ShareProjects({ doc, onClose, onSaved }: { doc: DocDetail; onClose: () => void; onSaved: (d: DocDetail) => Promise<void> }) {
+  const projects = useApi<DocProject[]>("/docs/projects");
+  const home = doc.shared.find((p) => p.home);
+  const homeEditable = Boolean(home?.can_edit);
+  const [chosen, setChosen] = useState<Set<number>>(() => new Set(doc.shared.filter((p) => !p.home).map((p) => p.id)));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const linked = new Set(doc.shared.filter((p) => !p.home).map((p) => p.id));
+  const rows = (projects.data ?? []).filter((p) => p.id !== doc.business_project_id);
+  const changed = rows.some((p) => chosen.has(p.id) !== linked.has(p.id));
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const d = await api.put<DocDetail>(`/docs/${doc.id}/projects`, { project_ids: [...chosen] });
+      await onSaved(d);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Dự án dùng “${doc.title}”`}
+      onClose={onClose}
+      busy={busy}
+      width={560}
+      footer={
+        <>
+          <button type="button" className="ghost" onClick={onClose} disabled={busy}>
+            Huỷ
+          </button>
+          <button type="button" className="primary" onClick={() => void save()} disabled={busy || !changed}>
+            {busy ? "Đang lưu…" : "Lưu"}
+          </button>
+        </>
+      }
+    >
+      <p className="muted small" style={{ marginTop: 0 }}>
+        Một tài liệu dùng chung cho nhiều dự án (ví dụ tài liệu sản phẩm cho cả BE, FE, Mobile): hiện trong danh sách, độ đầy đủ và tìm kiếm của
+        từng dự án; sửa ở đâu cũng là một nội dung. Chỉ dự án gốc xoá được tài liệu.
+      </p>
+      {projects.error ? (
+        <Alert tone="error">Không tải được danh sách dự án: {projects.error.message}</Alert>
+      ) : !projects.data ? (
+        <Loading rows={4} />
+      ) : (
+        <ul className="docs-share-list">
+          <li>
+            <label className="inline-check">
+              <input type="checkbox" checked disabled />
+              <span>
+                {doc.business_project || home?.name} <Pill tone="info">gốc</Pill>
+              </span>
+            </label>
+          </li>
+          {rows.map((p) => {
+            const on = chosen.has(p.id);
+            // Adding needs the right to edit documents there; dropping needs it there or at home.
+            const allowed = on ? p.can_edit || homeEditable : p.can_edit;
+            return (
+              <li key={p.id}>
+                <label className={`inline-check${allowed ? "" : " muted"}`} title={allowed ? undefined : "Bạn không có quyền sửa tài liệu của dự án này"}>
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    disabled={busy || !allowed}
+                    onChange={(e) =>
+                      setChosen((old) => {
+                        const next = new Set(old);
+                        if (e.target.checked) next.add(p.id);
+                        else next.delete(p.id);
+                        return next;
+                      })
+                    }
+                  />
+                  <span>
+                    {p.name} <span className="muted small">({p.docs} tài liệu)</span>
+                  </span>
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {doc.hidden_projects > 0 && <p className="muted small">Còn dùng chung với {doc.hidden_projects} dự án bạn không xem được: giữ nguyên.</p>}
+      {error && <Alert tone="error">{error}</Alert>}
+    </Modal>
   );
 }
 

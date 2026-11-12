@@ -190,3 +190,97 @@ def test_templates_outsiders_and_refusals(
     assert _upload(client, admin, bp, "a.exe", b"MZ").status_code == 422
     assert _upload(client, admin, bp, "scan.pdf", b"%PDF-1.4 broken").status_code == 422
     assert _upload(client, admin, bp, "empty.md", b"").status_code == 422
+
+
+def test_one_document_shared_by_several_projects(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    """docs/specs/29 §17: an OMICX document made in BE, shared with FE and Mobile."""
+    from app.models import BusinessProject
+
+    be = world.project.business_project_id
+    assert be is not None
+    fe, mobile = BusinessProject(name="OMICX FE"), BusinessProject(name="OMICX Mobile")
+    db_session.add_all([fe, mobile])
+    db_session.flush()
+    # The FE manager runs FE only; the outsider reads FE only.
+    for user in (world.manager, world.outsider):
+        db_session.execute(
+            delete(ProjectGrant).where(
+                ProjectGrant.business_project_id == be, ProjectGrant.user_id == user.id
+            )
+        )
+    grant(db_session, world.manager, fe.id, "manage")
+    grant(db_session, world.outsider, fe.id, "view")
+    db_session.commit()
+    admin, manager, outsider = as_user(world.admin), as_user(world.manager), as_user(world.outsider)
+
+    image = client.post(
+        "/api/v1/docs/assets",
+        params={"business_project_id": be, "filename": "so-do.png"},
+        content=b"\x89PNG\r\n\x1a\n" + b"\x00" * 32,
+        headers={**admin, "Content-Type": "application/octet-stream"},
+    ).json()
+    doc = _upload(
+        client,
+        admin,
+        be,
+        "omicx.md",
+        f"# OMICX\n\nWeb, mobile và API.\n\n{image['markdown']}\n".encode(),
+    ).json()
+    assert client.get(f"/api/v1/docs/{doc['id']}", headers=outsider).status_code == 404
+
+    shared = client.put(
+        f"/api/v1/docs/{doc['id']}/projects",
+        json={"project_ids": [fe.id, mobile.id]},
+        headers=admin,
+    )
+    assert shared.status_code == 200, shared.text
+    body = shared.json()
+    assert body["shared"][0]["id"] == be and body["shared"][0]["home"] is True
+    assert {p["id"] for p in body["shared"]} == {be, fe.id, mobile.id} and body["projects"] == 3
+
+    # A reader of FE sees it in FE: list, count, search, its image; not its home.
+    seen = client.get(f"/api/v1/docs/{doc['id']}", headers=outsider).json()
+    assert [p["id"] for p in seen["shared"]] == [fe.id] and seen["hidden_projects"] == 2
+    assert seen["can_edit"] is False and seen["can_delete"] is False
+    listed = client.get(
+        "/api/v1/docs", params={"business_project_id": fe.id}, headers=outsider
+    ).json()
+    item = next(d for d in listed["docs"] if d["id"] == doc["id"])
+    assert item["shared_from"] and item["projects"] == 3
+    rows = {
+        p["id"]: p["docs"] for p in client.get("/api/v1/docs/projects", headers=outsider).json()
+    }
+    assert rows[fe.id] == 1
+    hits = client.get("/api/v1/docs/search", params={"q": "omicx"}, headers=outsider).json()
+    assert hits and hits[0]["document_id"] == doc["id"] and hits[0]["business_project_id"] == fe.id
+    assert client.get(f"/api/v1/docs/assets/{image['id']}", headers=outsider).status_code == 200
+
+    # The FE manager edits it (one text everywhere), may not delete it, may not push it into a
+    # dự án they do not run, may drop FE.
+    assert seen["current"]["number"] == 1
+    saved = client.put(
+        f"/api/v1/docs/{doc['id']}/content",
+        json={"body": "# OMICX\n\nSửa từ FE.", "base_version": 1},
+        headers=manager,
+    )
+    assert saved.status_code == 200, saved.text
+    assert client.delete(f"/api/v1/docs/{doc['id']}", headers=manager).status_code == 403
+    other = BusinessProject(name="Khác")
+    db_session.add(other)
+    db_session.commit()
+    pushed = client.put(
+        f"/api/v1/docs/{doc['id']}/projects",
+        json={"project_ids": [fe.id, other.id]},
+        headers=manager,
+    )
+    assert pushed.status_code == 403
+    dropped = client.put(
+        f"/api/v1/docs/{doc['id']}/projects", json={"project_ids": []}, headers=manager
+    )
+    assert dropped.status_code == 200, dropped.text
+    # Mobile, which the manager does not see, stayed shared.
+    assert client.get(f"/api/v1/docs/{doc['id']}", headers=admin).json()["projects"] == 2
+    assert client.get(f"/api/v1/docs/{doc['id']}", headers=outsider).status_code == 404
+    assert client.get(f"/api/v1/docs/assets/{image['id']}", headers=outsider).status_code == 404

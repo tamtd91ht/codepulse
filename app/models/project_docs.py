@@ -218,3 +218,21 @@ class ProjectDocumentAsset(Base):
     sha256: Mapped[str]
     data: Mapped[bytes] = deferred(mapped_column(LargeBinary, nullable=False))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProjectDocumentLink(Base):
+    """A document shared with another dự án (docs/specs/29 §17, user 2026-11-12): one OMICX
+    document serves the BE, FE and Mobile dự án. The document's own `business_project_id` is its
+    home (where it was made; only the home deletes it); each link makes it a document of one
+    more dự án: listed, counted, searched and editable there like its own."""
+
+    __tablename__ = "project_document_links"
+
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("project_documents.id", ondelete="CASCADE"), primary_key=True
+    )
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    linked_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import case, delete, func, literal, select
+from sqlalchemy import ColumnElement, case, delete, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.security import Principal
@@ -23,6 +23,7 @@ from app.models import (
     BusinessProject,
     ProjectDocument,
     ProjectDocumentChunk,
+    ProjectDocumentLink,
     ProjectDocumentVersion,
 )
 
@@ -93,13 +94,69 @@ def project_for(
     return bp
 
 
+# -- one document, several dự án (§17) ----------------------------------------------------------
+
+
+def linked_ids(session: Session, doc_id: int) -> list[int]:
+    """The dự án a document is shared with besides its home."""
+    return list(
+        session.scalars(
+            select(ProjectDocumentLink.business_project_id)
+            .where(ProjectDocumentLink.document_id == doc_id)
+            .order_by(ProjectDocumentLink.created_at)
+        )
+    )
+
+
+def projects_of(session: Session, doc: ProjectDocument) -> list[int]:
+    """Its home first, then the dự án it is shared with."""
+    return [doc.business_project_id, *linked_ids(session, doc.id)]
+
+
+def in_project(bp_id: int) -> ColumnElement[bool]:
+    """Documents of a dự án: made there, or shared with it."""
+    return or_(
+        ProjectDocument.business_project_id == bp_id,
+        ProjectDocument.id.in_(
+            select(ProjectDocumentLink.document_id).where(
+                ProjectDocumentLink.business_project_id == bp_id
+            )
+        ),
+    )
+
+
+def in_projects(ids: set[int]) -> ColumnElement[bool]:
+    return or_(
+        ProjectDocument.business_project_id.in_(ids),
+        ProjectDocument.id.in_(
+            select(ProjectDocumentLink.document_id).where(
+                ProjectDocumentLink.business_project_id.in_(ids)
+            )
+        ),
+    )
+
+
+def may_view_doc(session: Session, principal: Principal, doc: ProjectDocument) -> bool:
+    return any(may_view(principal, bp) for bp in projects_of(session, doc))
+
+
+def may_edit_doc(session: Session, principal: Principal, doc: ProjectDocument) -> bool:
+    """Who may edit it in any of its dự án may edit it (it is one text everywhere)."""
+    return any(may_edit(principal, bp) for bp in projects_of(session, doc))
+
+
+def may_delete_doc(principal: Principal, doc: ProjectDocument) -> bool:
+    """Only its home deletes it; a dự án it is shared with drops the link instead."""
+    return may_edit(principal, doc.business_project_id)
+
+
 def document_for(
     session: Session, principal: Principal, doc_id: int, edit: bool = False
 ) -> ProjectDocument:
     doc = session.get(ProjectDocument, doc_id)
-    if doc is None or not may_view(principal, doc.business_project_id):
+    if doc is None or not may_view_doc(session, principal, doc):
         raise HTTPException(404, "document not found")
-    if edit and not may_edit(principal, doc.business_project_id):
+    if edit and not may_edit_doc(session, principal, doc):
         raise HTTPException(403, "bạn không có quyền sửa tài liệu của dự án này")
     return doc
 
@@ -296,10 +353,10 @@ def search(
         .limit(SEARCH_CANDIDATES)
     )
     if bp_id is not None:
-        stmt = stmt.where(ProjectDocument.business_project_id == bp_id)
+        stmt = stmt.where(in_project(bp_id))
     seen = principal.visible_projects()
     if seen is not None:
-        stmt = stmt.where(ProjectDocument.business_project_id.in_(seen))
+        stmt = stmt.where(in_projects(seen))
     best: dict[int, Hit] = {}
     for r in session.execute(stmt):
         # Accented words of the query found as written count a little more ("thưởng" ≠ "thường").
@@ -320,4 +377,20 @@ def search(
             snippet=snippet(r.body, words),
             score=score,
         )
-    return sorted(best.values(), key=lambda h: -h.score)[:limit]
+    hits = sorted(best.values(), key=lambda h: -h.score)[:limit]
+    # Open a shared document in a dự án the reader sees: the one searched in, else its home
+    # when visible, else the first visible one it is shared with.
+    for h in hits:
+        if bp_id is not None:
+            target = bp_id
+        elif may_view(principal, h.business_project_id):
+            continue
+        else:
+            target = next(
+                (b for b in linked_ids(session, h.document_id) if may_view(principal, b)),
+                h.business_project_id,
+            )
+        if target != h.business_project_id:
+            bp = session.get(BusinessProject, target)
+            h.business_project_id, h.business_project = target, bp.name if bp else ""
+    return hits

@@ -11043,3 +11043,28 @@ button.ghost.danger:hover:not(:disabled) {
   display: grid;
   gap: 2px;
 }
+
+/* Tài liệu dùng chung nhiều dự án (docs/specs/29 §17) */
+.docs-shared {
+  display: inline-flex;
+  color: var(--accent);
+  margin-left: auto;
+}
+.docs-shared + .docs-stale {
+  margin-left: 4px;
+}
+.docs-shared-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.docs-share-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 50vh;
+  overflow: auto;
+}

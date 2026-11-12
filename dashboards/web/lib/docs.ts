@@ -22,6 +22,18 @@ export interface DocItem {
   updated_at: string | null;
   updated_by: Person | null;
   stale: boolean;
+  /** How many dự án it belongs to (docs/specs/29 §17). */
+  projects?: number;
+  /** Listed in a dự án it is shared with: the name of its home. */
+  shared_from?: string | null;
+}
+
+/** A dự án a document belongs to, as the reader sees it. */
+export interface DocSharedProject {
+  id: number;
+  name: string;
+  home: boolean;
+  can_edit: boolean;
 }
 
 export interface CategoryCount {
@@ -82,6 +94,9 @@ export interface DocDetail extends DocItem {
   created_by: Person | null;
   /** Every link the document was written from (Tổng hợp từ link), newest first. */
   sources: DocSource[];
+  can_delete: boolean;
+  shared: DocSharedProject[];
+  hidden_projects: number;
 }
 
 /* Tổng hợp từ link (docs/specs/29 §12). */
