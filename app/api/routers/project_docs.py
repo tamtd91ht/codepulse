@@ -7,6 +7,7 @@ An upload keeps the original file with the version (downloaded as is; a PDF open
 browser's viewer) and its text converted to Markdown, which is what is rendered and indexed.
 """
 
+import hashlib
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
@@ -16,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, undefer
 from starlette.concurrency import run_in_threadpool
 
@@ -25,7 +27,7 @@ from app.api.security import CurrentPrincipal, Principal
 from app.assistant import importers
 from app.docs import service as docs
 from app.docs.templates import BY_KEY, TEMPLATES
-from app.models import ProjectDocument, ProjectDocumentVersion, User
+from app.models import ProjectDocument, ProjectDocumentAsset, ProjectDocumentVersion, User
 from app.models.project_docs import DOC_CATEGORIES
 
 router = APIRouter(tags=["project-docs"])
@@ -877,3 +879,109 @@ def delete_doc(doc_id: int, principal: CurrentPrincipal, session: SessionDep) ->
     session.flush()
     session.delete(doc)
     session.commit()
+
+
+# -- images inside documents (docs/specs/29 §13) ------------------------------------------------
+
+ASSET_MAX_MB = 5
+
+
+class AssetOut(BaseModel):
+    id: int
+    name: str
+    mime: str
+    size: int
+    markdown: str  # what the editor inserts: ![name](asset:<id>)
+
+
+@router.post("/docs/assets", response_model=AssetOut, status_code=201)
+async def upload_asset(
+    request: Request,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    business_project_id: int,
+    filename: Annotated[str, Query(max_length=255)] = "",
+) -> AssetOut:
+    """An image for a document of the dự án (raw bytes: PNG, JPEG, WebP, GIF ≤ 5 MB). The same
+    image pasted again is the same asset."""
+    from app.docs.synthesis import image_mime
+
+    await run_in_threadpool(docs.project_for, session, principal, business_project_id, True)
+    limit = ASSET_MAX_MB * 1024 * 1024
+    await run_in_threadpool(session.commit)
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > limit:
+        raise HTTPException(413, f"ảnh lớn hơn {ASSET_MAX_MB} MB")
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > limit:
+            raise HTTPException(413, f"ảnh lớn hơn {ASSET_MAX_MB} MB")
+    raw = bytes(data)
+    mime = image_mime(raw)
+    if mime is None:
+        raise HTTPException(422, "chỉ nhận ảnh PNG, JPEG, WebP, GIF")
+    digest = hashlib.sha256(raw).hexdigest()
+    base = unquote(filename).replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    name = " ".join("".join(ch for ch in base if ch.isprintable()).replace("]", " ").split())
+    name = name[:80] or "Ảnh"
+
+    def store() -> AssetOut:
+        docs.project_for(session, principal, business_project_id, edit=True)
+        row = session.scalar(
+            select(ProjectDocumentAsset).where(
+                ProjectDocumentAsset.business_project_id == business_project_id,
+                ProjectDocumentAsset.sha256 == digest,
+            )
+        )
+        if row is None:
+            row = ProjectDocumentAsset(
+                business_project_id=business_project_id,
+                uploaded_by=principal.user_id,
+                name=name,
+                mime=mime,
+                size=len(raw),
+                sha256=digest,
+                data=raw,
+            )
+            session.add(row)
+            try:
+                session.commit()
+            except IntegrityError:  # the same image pasted twice at once
+                session.rollback()
+                row = session.scalars(
+                    select(ProjectDocumentAsset).where(
+                        ProjectDocumentAsset.business_project_id == business_project_id,
+                        ProjectDocumentAsset.sha256 == digest,
+                    )
+                ).one()
+        return AssetOut(
+            id=row.id,
+            name=name,
+            mime=row.mime,
+            size=row.size,
+            markdown=f"![{name}](asset:{row.id})",
+        )
+
+    return await run_in_threadpool(store)
+
+
+@router.get("/docs/assets/{asset_id}")
+def get_asset(asset_id: int, principal: CurrentPrincipal, session: SessionDep) -> Response:
+    """An image of a document: whoever may read the dự án's documents sees it. Its bytes never
+    change (a new image is a new asset), so browsers keep it."""
+    row = session.get(ProjectDocumentAsset, asset_id)
+    if row is None or not docs.may_view(principal, row.business_project_id):
+        raise HTTPException(404, "image not found")
+    data = session.scalar(
+        select(ProjectDocumentAsset.data).where(ProjectDocumentAsset.id == row.id)
+    )
+    return Response(
+        content=data or b"",
+        media_type=row.mime,
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "private, max-age=86400, immutable",
+        },
+    )

@@ -371,3 +371,20 @@ quá 5 link; giới hạn ngày; link GitLab của repo trong dự án (file, RE
   `GET /docs/drafts/images/{id}`, `DELETE /docs/drafts/images/{id}` (ảnh chưa gửi);
   `POST /docs/drafts` nhận `image_ids`.
 
+## 13. Ảnh trong tài liệu — user 2026-11-12 **[Quyết định]**
+
+Yêu cầu: dán ảnh trực tiếp vào trình soạn tài liệu.
+
+| Câu hỏi | Chọn | Vì sao |
+|---|---|---|
+| Đưa ảnh vào thế nào? | **Ctrl+V** trong ô soạn, **kéo thả** ảnh vào ô soạn, hoặc nút **Ảnh** trên thanh công cụ (chọn nhiều ảnh) | Ảnh chụp màn hình thường nằm trong clipboard |
+| Ghi trong Markdown ra sao? | `![tên](asset:<id>)`, chèn tại con trỏ thành một khối riêng; trong lúc tải hiện chỗ giữ `![Đang tải ảnh…]()` rồi thay | Tài liệu không gắn với địa chỉ máy chủ; trình hiển thị đổi `asset:` thành `/api/v1/docs/assets/<id>` |
+| Lưu ở đâu, bao lâu? | Bảng `project_document_assets` (migration `b6d8f0a2c4e7`), thuộc **dự án** (tài liệu mới chưa có id lúc dán), **không xoá theo phiên bản** (bản cũ vẫn hiện ảnh); cùng ảnh dán lại trong dự án = cùng một ảnh (sha256) | Lịch sử phiên bản phải xem lại được nguyên vẹn |
+| Ai xem? | Ai đọc được tài liệu của dự án (`docs.view` + dự án trong tầm nhìn); thêm ảnh cần `docs.edit`. Trả về kèm `nosniff`, CSP `sandbox`, cache riêng tư 1 ngày | |
+| Giới hạn | PNG, JPEG, WebP, GIF, ≤ 5 MB, loại kiểm từ byte đầu | |
+| Ảnh từ trang khác (`![](https://…)`) | **Không tự tải**: hiện thành link “🖼 tên” để bấm mở | Ảnh ngoài cho trang đó biết ai đang đọc tài liệu, và một địa chỉ dựng sẵn có thể mang nội dung ra ngoài (rủi ro đã nêu ở §12). Chỉ ảnh `asset:` và đường dẫn cùng trang được tải |
+| AI bổ sung / nâng cấp | Giữ nguyên ảnh `asset:` của tài liệu (prompt dặn; bộ lọc đầu ra §12.3 giữ ảnh `asset:`, vẫn gỡ ảnh ngoài) | |
+
+Ngoài phạm vi (IDEAS.md): dọn ảnh không còn tài liệu nào dùng; đổi cỡ / chú thích ảnh bằng giao
+diện; ảnh nhúng sẵn trong file Word/PDF tải lên.
+

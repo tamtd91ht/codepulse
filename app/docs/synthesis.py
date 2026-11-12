@@ -418,6 +418,7 @@ kỳ nội dung nào.
 tự của <standard> nếu được).
 - Thông tin đã có thì không lặp lại. Nguồn mâu thuẫn với tài liệu: giữ câu cũ, thêm ngay dưới đó \
 khung `> [!WARNING]` nêu nguồn nói khác thế nào `[n]`, và ghi vào `conflicts`.
+- Giữ nguyên mọi ảnh `![…](asset:N)` của tài liệu ở đúng chỗ.
 - Trả về TOÀN BỘ tài liệu sau khi bổ sung (không chỉ phần mới).""",
     "upgrade": """Nhiệm vụ: NÂNG CẤP <current_document> lên đúng chuẩn <standard> và gộp thông tin \
 từ các nguồn.
@@ -427,6 +428,7 @@ hình, tên người, link. Nội dung không thuộc mục nào của chuẩn: 
 - Gộp thông tin mới từ các nguồn vào đúng mục. Mâu thuẫn: giữ cả hai, đánh dấu bằng khung \
 `> [!WARNING]` và ghi vào `conflicts`.
 - Mục của chuẩn không có thông tin: giữ tiêu đề mục và chỗ `<cần bổ sung: …>`.
+- Giữ mọi ảnh `![…](asset:N)` của tài liệu, đặt cạnh nội dung nó minh hoạ.
 - Trả về TOÀN BỘ tài liệu sau khi nâng cấp.""",
 }
 
@@ -550,6 +552,8 @@ def defuse(body: str) -> tuple[str, int]:
 
         def image(m: re.Match[str]) -> str:
             nonlocal count
+            if m.lastindex and m.lastindex > 1 and re.fullmatch(r"asset:\d+", m.group(2).strip()):
+                return m.group(0)  # an image of the document itself (§13): served by us
             count += 1
             alt, url = (
                 m.group(1).strip(),

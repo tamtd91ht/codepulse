@@ -628,3 +628,76 @@ def test_screenshots_as_sources(
         select(ProjectDocumentDraftImage).where(ProjectDocumentDraftImage.draft_id == draft["id"])
     ).all()
     assert left == []  # screenshots are not kept once applied
+
+
+def test_images_inside_documents(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    bp = world.project.business_project_id
+    assert bp is not None
+    admin = as_user(world.admin)
+
+    def put(data: bytes, name: str, who: dict[str, str] = admin) -> Any:
+        return client.post(
+            "/api/v1/docs/assets",
+            params={"business_project_id": bp, "filename": name},
+            content=data,
+            headers={**who, "Content-Type": "application/octet-stream"},
+        )
+
+    first = put(PNG, "so-do-kien-truc.png")
+    assert first.status_code == 201, first.text
+    asset = first.json()
+    assert asset["markdown"] == f"![so-do-kien-truc](asset:{asset['id']})"
+    assert put(PNG, "khac.png").json()["id"] == asset["id"]  # same bytes, same asset
+    assert put(b"GIF00a not really", "x.gif").status_code == 422
+
+    # Readers of the dự án see it; they may not add images; outsiders do not see it.
+    grant(db_session, world.an, bp, "view")
+    db_session.commit()
+    reader = as_user(world.an)
+    seen = client.get(f"/api/v1/docs/assets/{asset['id']}", headers=reader)
+    assert seen.status_code == 200 and seen.content == PNG
+    assert (
+        seen.headers["content-type"] == "image/png"
+        and "sandbox" in seen.headers["content-security-policy"]
+    )
+    assert put(PNG, "x.png", reader).status_code == 403
+    db_session.execute(delete_grants(bp, world.outsider.id))
+    db_session.commit()
+    assert (
+        client.get(
+            f"/api/v1/docs/assets/{asset['id']}", headers=as_user(world.outsider)
+        ).status_code
+        == 404
+    )
+
+    # The document keeps the reference; a merge by the AI keeps it too.
+    body = f"# Kiến trúc\n\n{asset['markdown']}\n\nSơ đồ trên."
+    made = client.post(
+        "/api/v1/docs",
+        json={
+            "business_project_id": bp,
+            "title": "Kiến trúc",
+            "category": "architecture",
+            "body": body,
+        },
+        headers=admin,
+    )
+    assert made.status_code == 201 and asset["markdown"] in made.json()["body"]
+    kept, dropped = synthesis.defuse(body + "\n![x](https://evil.example/p)")
+    assert (
+        asset["markdown"] in kept
+        and "](https://evil" not in kept.replace("x (https://evil", "")
+        and dropped == 1
+    )
+
+
+def delete_grants(bp: int, user_id: int) -> Any:
+    from sqlalchemy import delete
+
+    from app.models import ProjectGrant
+
+    return delete(ProjectGrant).where(
+        ProjectGrant.business_project_id == bp, ProjectGrant.user_id == user_id
+    )

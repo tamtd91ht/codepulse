@@ -51,6 +51,7 @@ from app.models.notifications import NotificationWebhook, UserNotification
 from app.models.permissions import PermissionSet, PermissionSetItem, UserPermissionSet
 from app.models.project_docs import (
     ProjectDocument,
+    ProjectDocumentAsset,
     ProjectDocumentChunk,
     ProjectDocumentDraft,
     ProjectDocumentDraftImage,
@@ -117,6 +118,7 @@ __all__ = [
     "Project",
     "ProjectCriteriaSet",
     "ProjectDocument",
+    "ProjectDocumentAsset",
     "ProjectDocumentChunk",
     "ProjectDocumentDraft",
     "ProjectDocumentDraftImage",

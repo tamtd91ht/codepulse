@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DocMarkdown } from "@/components/DocMarkdown";
+import { Icon } from "@/components/icons";
 import { Alert, Drawer, Segmented } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { CATEGORY_LABEL, CATEGORY_ORDER, type DocCategory, type DocDetail, placeholders } from "@/lib/docs";
@@ -68,6 +69,9 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ body: string; at: number } | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(0);
+  const projectId = start.kind === "edit" ? start.doc.business_project_id : start.projectId;
   const dirty = body !== initial;
   const left = placeholders(body);
 
@@ -151,6 +155,41 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
       const caret = a + lineStart.length + s.before.length + chosen.length;
       el.setSelectionRange(caret, caret);
     });
+  }
+
+  // Images (docs/specs/29 §13): pasted, dropped or picked, stored by the API and written in
+  // the text as ![name](asset:<id>). A placeholder marks the spot while it uploads, so typing
+  // on meanwhile is fine.
+  const isImage = (f: File) => f.type.startsWith("image/");
+  async function addImages(files: File[]) {
+    const el = area.current;
+    const shots = files.filter(isImage);
+    if (!shots.length) return;
+    let at = el ? el.selectionEnd : body.length;
+    const marks = shots.map((_, i) => `![Đang tải ảnh ${Date.now()}-${i}…]()`);
+    setBody((text) => {
+      at = Math.min(at, text.length);
+      const before = text.slice(0, at);
+      const lead = !before || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+      return `${before}${lead}${marks.join("\n\n")}\n\n${text.slice(at)}`;
+    });
+    setUploading((n) => n + shots.length);
+    await Promise.all(
+      shots.map(async (file, i) => {
+        // A pasted screenshot is "image.png": no useful name, the server calls it "Ảnh".
+        const name = /^image\.\w+$/i.test(file.name) ? "" : file.name;
+        try {
+          if (file.size > 5 * 1024 * 1024) throw new Error(`${file.name || "ảnh"} lớn hơn 5 MB`);
+          const got = await api.postRaw<{ markdown: string }>(`/docs/assets?business_project_id=${projectId}&filename=${encodeURIComponent(name)}`, file);
+          setBody((text) => text.replace(marks[i], got.markdown));
+        } catch (e) {
+          setBody((text) => text.replace(`${marks[i]}\n\n`, "").replace(marks[i], ""));
+          setError(e instanceof ApiError ? e.message : String(e instanceof Error ? e.message : e));
+        } finally {
+          setUploading((n) => n - 1);
+        }
+      }),
+    );
   }
 
   function nextPlaceholder() {
@@ -245,6 +284,27 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
                 {s.label}
               </button>
             ))}
+            <button
+              type="button"
+              className="ghost sm"
+              title="Chèn ảnh (hoặc dán Ctrl+V / kéo thả ảnh vào ô soạn)"
+              onClick={() => picker.current?.click()}
+              disabled={mode === "preview"}
+            >
+              <Icon name="upload" size={14} /> Ảnh
+            </button>
+            <input
+              ref={picker}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              hidden
+              onChange={(e) => {
+                void addImages(Array.from(e.target.files ?? []));
+                e.target.value = "";
+              }}
+            />
+            {uploading > 0 && <span className="small muted">Đang tải {uploading} ảnh…</span>}
           </div>
           <span className="spacer" />
           {left > 0 && (
@@ -270,9 +330,24 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
               className="doc-editor-text"
               value={body}
               onChange={(e) => setBody(e.target.value)}
+              onPaste={(e) => {
+                const shots = Array.from(e.clipboardData.files).filter(isImage);
+                if (!shots.length) return; // text pastes as usual
+                e.preventDefault();
+                void addImages(shots);
+              }}
+              onDragOver={(e) => {
+                if (Array.from(e.dataTransfer.items).some((i) => i.kind === "file")) e.preventDefault();
+              }}
+              onDrop={(e) => {
+                const shots = Array.from(e.dataTransfer.files).filter(isImage);
+                if (!shots.length) return;
+                e.preventDefault();
+                void addImages(shots);
+              }}
               spellCheck={false}
               aria-label="Nội dung Markdown"
-              placeholder={"# Tiêu đề\n\nViết bằng Markdown: ## mục, - danh sách, | bảng |, ```code```, > [!NOTE] lưu ý…"}
+              placeholder={"# Tiêu đề\n\nViết bằng Markdown: ## mục, - danh sách, | bảng |, ```code```, > [!NOTE] lưu ý…\nDán ảnh chụp màn hình (Ctrl+V) hoặc kéo thả ảnh vào đây."}
             />
           )}
           {mode !== "write" && (

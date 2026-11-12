@@ -194,3 +194,27 @@ class ProjectDocumentDraftImage(Base):
     position: Mapped[int] = mapped_column(server_default="0", default=0)
     data: Mapped[bytes] = deferred(mapped_column(LargeBinary, nullable=False))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProjectDocumentAsset(Base):
+    """An image inside a document (docs/specs/29 §13): pasted or dropped into the editor, written
+    in the Markdown as `![name](asset:<id>)`. It belongs to the dự án (a new document has no id
+    yet when the image is pasted) and is never removed with a version: older versions still show
+    it. The same bytes pasted twice in a dự án are one asset."""
+
+    __tablename__ = "project_document_assets"
+    __table_args__ = (
+        UniqueConstraint("business_project_id", "sha256", name="uq_project_document_asset"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
+    uploaded_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    name: Mapped[str]
+    mime: Mapped[str]  # checked from the bytes
+    size: Mapped[int]
+    sha256: Mapped[str]
+    data: Mapped[bytes] = deferred(mapped_column(LargeBinary, nullable=False))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

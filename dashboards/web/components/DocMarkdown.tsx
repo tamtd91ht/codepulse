@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, type ReactNode, useState } from "react";
+import { type ReactNode, useState } from "react";
 
 /**
  * The document renderer (docs/specs/29 §5): Markdown as project documents use it, built as React
@@ -42,7 +42,7 @@ const UL = /^(\s*)[-*+]\s+(.*)$/;
 const OL = /^(\s*)(\d+)[.)]\s+(.*)$/;
 const FENCE = /^\s*(```+|~~~+)\s*([\w+#.-]*)/;
 const PAGE = /^-{3}\s*Trang\s+(\d+)\s*-{3}$/;
-const IMAGE = /^!\[([^\]]*)\]\((https?:\/\/[^\s)]+|\/[^\s)]*)\)\s*$/;
+const IMAGE = /^!\[([^\]]*)\]\((https?:\/\/[^\s)]+|\/[^\s)]*|asset:\d+)\)\s*$/;
 
 /** A heading's anchor: accent-free, lower case, words joined by "-"; unique within the page. */
 export function slugify(text: string, seen?: Map<string, number>): string {
@@ -258,6 +258,30 @@ export function plainText(text: string): string {
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1");
 }
 
+/**
+ * Where an image may be loaded from (docs/specs/29 §13): the document's own images
+ * (`asset:<id>`, served by the API to whoever may read the dự án) and same-site paths. An
+ * image on another site is not loaded (it would tell that site who reads the document, and a
+ * crafted address could carry its text away): it is shown as a link to open by hand.
+ */
+function imageSrc(src: string): string | null {
+  const asset = /^asset:(\d+)$/.exec(src.trim());
+  if (asset) return `/api/v1/docs/assets/${asset[1]}`;
+  if (src.startsWith("/") && !src.startsWith("//")) return src;
+  return null;
+}
+
+function ImageLink({ src, alt }: { src: string; alt: string }) {
+  const href = safeHref(src);
+  return href && /^https?:/i.test(href) ? (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="doc-image-link" title="Ảnh ở trang khác: không tự tải, bấm để mở">
+      🖼 {alt || "Ảnh"}
+    </a>
+  ) : (
+    <>{alt}</>
+  );
+}
+
 function safeHref(href: string): string | null {
   if (/^(https?:|mailto:)/i.test(href)) return href;
   if (href.startsWith("#")) return href;
@@ -321,8 +345,8 @@ export function Inline({ text, term }: { text: string; term?: string }) {
         </em>,
       );
     else if (m[9] !== undefined) {
-      const src = safeHref(m[9]);
-      parts.push(src && !src.startsWith("mailto") ? <img key={key++} src={src} alt={m[8]} loading="lazy" referrerPolicy="no-referrer" /> : m[8]);
+      const src = imageSrc(m[9]);
+      parts.push(src ? <img key={key++} src={src} alt={m[8]} loading="lazy" referrerPolicy="no-referrer" /> : <ImageLink key={key++} src={m[9]} alt={m[8]} />);
     } else if (m[11] !== undefined) {
       const href = safeHref(m[11]);
       const external = href ? /^https?:/i.test(href) : false;
@@ -461,14 +485,16 @@ function Blocks({ blocks, term, offset }: { blocks: Block[]; term?: string; offs
               </div>
             );
           case "img": {
-            const src = safeHref(b.src);
+            const src = imageSrc(b.src);
             return src ? (
               <figure key={i} className="doc-figure">
                 <img src={src} alt={b.alt} loading="lazy" referrerPolicy="no-referrer" />
                 {b.alt && <figcaption>{b.alt}</figcaption>}
               </figure>
             ) : (
-              <Fragment key={i} />
+              <p key={i}>
+                <ImageLink src={b.src} alt={b.alt} />
+              </p>
             );
           }
         }
