@@ -115,6 +115,8 @@ class Settings(BaseSettings):
     static_analysis: bool = True
     semgrep_config: str = "p/default"
     static_timeout_s: int = Field(default=120, ge=10, le=900)
+    # docs/specs/30 §9: the GỢI Ý KIỂM THỬ block when source changes come without tests.
+    review_test_hint: bool = True
     review_agent: bool = Field(
         default=True, validation_alias=AliasChoices("REVIEW_AGENT", "DEEP_REVIEW")
     )

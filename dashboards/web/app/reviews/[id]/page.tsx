@@ -8,6 +8,7 @@ import { CloseActions, ClosureNote } from "@/components/FindingClose";
 import { BasisCard, basisSummary, changedRules, previousRun } from "@/components/ReviewBasis";
 import { announceReviewQueued } from "@/components/ReviewActivity";
 import { StaticFindingsCard } from "@/components/StaticFindings";
+import { MrImpactCard } from "@/components/TestcaseImpact";
 import { Alert, Card, EmptyState, ExternalLink, IdChip, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { ApiError, api, can, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, TRIGGER_LABEL, VERDICT_LABEL, date, num } from "@/lib/format";
@@ -524,6 +525,7 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
       <ReviewCriteriaCard scores={review.criteria_scores} findings={review.findings} />
 
       <StaticFindingsCard findings={review.static_findings} basis={(review.basis as { static?: StaticBasis } | null)?.static} />
+      {review.target_type === "mr" && review.mr_id ? <MrImpactCard mrId={review.mr_id} /> : null}
 
       {review.intent && (review.intent.summary || review.intent.concerns.length > 0) && (
         <Card

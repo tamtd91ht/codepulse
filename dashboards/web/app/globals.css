@@ -11137,3 +11137,474 @@ button.ghost.danger:hover:not(:disabled) {
   font-size: 12px;
   overflow-x: auto;
 }
+
+/* ---------- Testcase (app/testcases/page.tsx, docs/specs/30) ---------- */
+
+.tc-project select {
+  min-width: 200px;
+}
+.tc-shell {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+  margin-top: 16px;
+}
+.tc-nav {
+  position: sticky;
+  top: calc(var(--topbar-h) + 16px);
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  max-height: calc(100vh - var(--topbar-h) - 32px);
+  overflow-y: auto;
+}
+.tc-nav-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tc-nav-actions {
+  display: flex;
+  gap: 2px;
+}
+.tc-suites {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+.tc-suites button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-weight: 400;
+}
+.tc-suites button:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+.tc-suites button.active {
+  background: var(--primary-soft);
+  color: var(--primary-text);
+  font-weight: 600;
+}
+.tc-suite-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tc-empty-nav {
+  padding: 6px 8px;
+}
+.tc-main {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.tc-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.tc-kpis > div {
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.tc-uncovered summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.tc-uncovered ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.tc-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.tc-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.tc-title h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.tc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.tc-problem {
+  align-self: end;
+  padding-bottom: 8px;
+}
+.tc-bulk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.tc-table {
+  width: 100%;
+}
+.tc-table td {
+  vertical-align: top;
+}
+.tc-table tr.muted td {
+  opacity: 0.6;
+}
+.tc-check {
+  width: 32px;
+}
+.tc-code-cell {
+  white-space: nowrap;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+.tc-row-title {
+  text-align: left;
+  font-weight: 500;
+  white-space: normal;
+}
+.tc-row-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 2px;
+}
+.tc-row-sub .warn {
+  color: var(--warn);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.tc-ai-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--primary-text);
+}
+.tc-foot {
+  margin: 0;
+}
+.tc-lines {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tc-view {
+  display: grid;
+  gap: 14px;
+}
+.tc-view-pills,
+.tc-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tc-dl {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 10px 14px;
+  margin: 0;
+}
+.tc-dl dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+.tc-dl dd {
+  margin: 0;
+}
+.tc-glob {
+  display: inline-block;
+  margin: 0 6px 4px 0;
+}
+.tc-history ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.tc-history li {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.tc-form-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.tc-form-row.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.tc-form-row .tc-code {
+  max-width: 180px;
+}
+.tc-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.tc-inline input {
+  flex: 1;
+  min-width: 220px;
+}
+.tc-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.tc-file.sm {
+  padding: 6px 10px;
+}
+.tc-file:hover {
+  background: var(--surface-hover);
+}
+.tc-file input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.tc-file:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.tc-import {
+  display: grid;
+  gap: 14px;
+}
+.tc-sheet {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.tc-sheet.off {
+  background: var(--surface-2);
+}
+.tc-sheet-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+.tc-map th {
+  min-width: 140px;
+  vertical-align: bottom;
+}
+.tc-map th select {
+  width: 100%;
+}
+.tc-map-head {
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+.tc-map-cell {
+  max-height: 3.6em;
+  overflow: hidden;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.tc-fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  margin: 0;
+}
+.tc-doc-pick {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.tc-count input {
+  max-width: 100px;
+}
+.tc-foot-note {
+  margin-right: auto;
+}
+.tc-runs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.tc-runs li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.tc-run {
+  display: grid;
+  gap: 14px;
+}
+.tc-summary {
+  margin: 0;
+  font-size: 15px;
+}
+.tc-h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.tc-issues {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.tc-issues li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.tc-codes {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--muted);
+}
+.tc-gaps {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.tc-proposals-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.tc-proposals {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.tc-proposals li {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.tc-proposals li.done {
+  background: var(--surface-2);
+  opacity: 0.75;
+}
+.tc-proposal {
+  display: grid;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.tc-proposal-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.tc-proposal-title {
+  width: 100%;
+  font-weight: 600;
+}
+.tc-impact-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.tc-regression {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+@media (max-width: 960px) {
+  .tc-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tc-nav {
+    position: static;
+    max-height: none;
+  }
+  .tc-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 640px) {
+  .tc-form-row,
+  .tc-form-row.three {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tc-dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tc-dl dt {
+    margin-top: 4px;
+  }
+}
+.tc-row-sub .tag,
+.tc-tags .tag,
+.tc-inline .tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 18px;
+}
+.tc-proposals li > label {
+  align-self: flex-start;
+  padding-top: 4px;
+}

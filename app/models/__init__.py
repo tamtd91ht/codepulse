@@ -70,6 +70,13 @@ from app.models.rule_files import ReviewRuleFile
 from app.models.secrets import AppSetting, LlmAccount, StoredSecret
 from app.models.source import BusinessProject, Connection, Project, ProjectGrant, RawGitlab
 from app.models.telegram import TelegramBot, TelegramRequest
+from app.models.testcases import (
+    TestAiRun,
+    TestCase,
+    TestCaseRevision,
+    TestSuite,
+    TestSuiteLink,
+)
 from app.models.tokens import ApiToken
 
 __all__ = [
@@ -148,6 +155,11 @@ __all__ = [
     "TeamMember",
     "TelegramBot",
     "TelegramRequest",
+    "TestAiRun",
+    "TestCase",
+    "TestCaseRevision",
+    "TestSuite",
+    "TestSuiteLink",
     "User",
     "UserNotification",
     "UserPermissionSet",

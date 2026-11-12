@@ -113,6 +113,8 @@ class ReviewTarget:
     criteria: str = ""
     # docs/specs/07: what Gitleaks / Semgrep found on the changed lines (render_hints; "": none).
     static: str = ""
+    # docs/specs/30 §9: GỢI Ý KIỂM THỬ when logic changed with no test (testing_hint; "": none).
+    tests: str = ""
 
 
 MAX_CRITERIA_CHARS = 20_000
@@ -158,10 +160,11 @@ def render_criteria(sets: list[CriteriaPromptSet]) -> str:
 
 
 def criteria_section(target: ReviewTarget) -> str:
-    """The TIÊU CHÍ block and the static-analysis hints, each followed by a blank line, or
-    nothing (the prompt then reads as before)."""
+    """The TIÊU CHÍ block, the static-analysis hints and the testing hint, each followed by a
+    blank line, or nothing (the prompt then reads as before)."""
     out = f"{target.criteria}\n\n" if target.criteria else ""
-    return out + (f"{target.static}\n\n" if target.static else "")
+    out += f"{target.static}\n\n" if target.static else ""
+    return out + (f"{target.tests}\n\n" if target.tests else "")
 
 
 def knowledge_sections(target: ReviewTarget) -> tuple[str, str]:

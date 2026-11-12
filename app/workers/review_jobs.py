@@ -106,6 +106,7 @@ def review_settings(settings: Settings, session: Session | None = None) -> Revie
         static_analysis=settings.static_analysis,
         semgrep_config=settings.semgrep_config,
         static_timeout_s=float(settings.static_timeout_s),
+        test_hint=settings.review_test_hint,
     )
 
 

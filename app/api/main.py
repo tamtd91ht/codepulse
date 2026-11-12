@@ -56,6 +56,8 @@ from app.api.routers import (
     stetho_history,
     team_report,
     telegram,
+    test_ai,
+    testcases,
     tokens,
 )
 from app.collector.gitlab.client import GitLabError
@@ -136,6 +138,8 @@ for api_router in (
     # Before project_docs: /docs/drafts must not be read as /docs/{doc_id}.
     doc_drafts.router,
     project_docs.router,
+    test_ai.router,
+    testcases.router,
 ):
     app.include_router(api_router, prefix="/api/v1")
 # docs/specs/11: CORS for the dashboard origin only; cookies need credentials.

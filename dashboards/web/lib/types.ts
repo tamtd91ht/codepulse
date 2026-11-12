@@ -218,6 +218,8 @@ export interface BoardFinding extends Finding {
 export interface Review {
   id: number;
   target_type: "mr" | "commit";
+  /** The merge request reviewed (target_type "mr"). */
+  mr_id?: number | null;
   reviewed_sha: string;
   author_user_id: number | null;
   status: string;

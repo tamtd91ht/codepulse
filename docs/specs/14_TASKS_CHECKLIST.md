@@ -112,5 +112,7 @@
 - [x] 10.7 Ảnh trong tài liệu: dán / kéo thả / chọn ảnh trong trình soạn, `asset:<id>`, ảnh ngoài hiện thành link (29 §13); đổi cỡ ảnh (29 §13.1), kéo góc ảnh (29 §13.2), căn ảnh (29 §13.3), chữ chảy quanh ảnh (29 §13.4)
 - [x] 10.8 Bảng trong trình soạn: chọn kích thước, thanh bảng (hàng, cột, căn cột, dàn thẳng), dán ô từ Excel (29 §14)
 - [x] 10.9 Xoá tài liệu trên thanh công cụ (29 §15); giữ link khi nhập Google Docs/Sheets, .docx, .xlsx, web (29 §16); một tài liệu cho nhiều dự án (29 §17)
+- [x] 10.10 Testcase: bộ + testcase + lịch sử + bộ dùng chung nhiều dự án, quyền theo `docs.*`, nhập Google Sheet / .xlsx / .csv (đoán cột, sửa cột, nhập lại theo mã), xuất .xlsx / .csv có cột chạy test, độ phủ (30 §3–§5, §10–§11)
+- [x] 10.11 AI testcase: sinh từ tài liệu / Jira / link / văn bản / file, rà soát bộ, phân tích MR; testcase cần test lại theo MR (Jira, glob vùng code, file test tự động) + tab "Cần test lại" + thẻ trên trang review; khối GỢI Ý KIỂM THỬ trong prompt review (30 §6–§9)
 - [ ] **Demo**: push 2 commit → `/review-push` trong Claude Code → thông báo review xong trên web; nhập 3 file quy tắc vào một dự án → review sau ghi "Tệp quy tắc …" trong Căn cứ review; tải 1 Word + 1 PDF vào Tài liệu dự án, tìm không dấu, sửa và khôi phục phiên bản; dán 1 link wiki + 1 link README GitLab → bản nháp → so sánh → lưu
 

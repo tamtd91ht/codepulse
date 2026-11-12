@@ -86,6 +86,7 @@ from app.review.rules import collect_rules, rule_files
 from app.review.schema import AgentFinding, Intent, LLMFinding
 from app.review.signals import detect_signals
 from app.review.status import decided_before, mark_fixed_findings, supersede_mr_reviews
+from app.review.testing_hint import testing_hint
 from app.review.verify import skipped_status, verify
 from app.scoring.criteria_store import SetVersion, clean_criteria, project_sets, store_scores
 from app.scoring.formula import ScoredFinding, review_score, weights_for
@@ -187,6 +188,8 @@ class ReviewSettings:
     static_timeout_s: float = 120.0
     static_max_files: int = 60
     static_max_file_bytes: int = 1_000_000
+    # docs/specs/30 §9: GỢI Ý KIỂM THỬ in the prompt when logic changes come without tests.
+    test_hint: bool = True
 
 
 @dataclass
@@ -946,6 +949,10 @@ class ReviewService:
         # stays open while the model works (docs/specs/19 §4.6).
         self._commit_step("prepare")
         self._static_pass(review, project, entries, sha, target)
+        if self._settings.test_hint:
+            target.tests, tests_seen = testing_hint(entries)
+            if review.basis is not None:
+                review.basis["tests"] = tests_seen
         outcome: PassOutcome | None = None
         if self._agent is not None and (agent_pass or self._verify_on()):
             # One checkout for the whole review: the agentic pass, the ±30 lines of context and
