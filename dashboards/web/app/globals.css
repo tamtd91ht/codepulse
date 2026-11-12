@@ -2700,6 +2700,9 @@ code.phrase {
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* Never wider than the screen, whatever its content asks for. */
+  min-width: 0;
+  max-width: 100vw;
   background: var(--surface);
   border-left: 1px solid var(--border);
   box-shadow: var(--shadow-lg);
@@ -2735,8 +2738,11 @@ code.phrase {
 }
 .side-drawer-body {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
   padding: 16px 20px 24px;
+  /* Its content may lay itself out by the drawer's width (@container side-drawer). */
+  container: side-drawer / inline-size;
 }
 .drawer-section + .drawer-section {
   margin-top: 18px;
@@ -6302,7 +6308,9 @@ button.crit-info-btn:focus-visible {
 }
 
 /* ---- Permissions of one person by feature (components/ProfilePermissions.tsx, docs/specs/21 §9) ---- */
-.perm-split { display: grid; grid-template-columns: minmax(150px, 190px) 1fr; gap: 12px; min-height: 280px; }
+/* minmax(0, 1fr): a long permission row wraps inside the panel instead of widening the drawer
+   that holds it (Admin › Hồ sơ thành viên ran off the screen's right edge, user 2026-11-12). */
+.perm-split { display: grid; grid-template-columns: minmax(150px, 190px) minmax(0, 1fr); gap: 12px; min-height: 280px; }
 .perm-groups { display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--border); padding-right: 8px; }
 .perm-group {
   display: flex; justify-content: space-between; align-items: center; gap: 8px;
@@ -6313,16 +6321,16 @@ button.crit-info-btn:focus-visible {
 .perm-group.active { background: var(--surface-2); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent, var(--chart-1)); }
 .perm-group:focus-visible { outline: 2px solid var(--accent, var(--chart-1)); outline-offset: 1px; }
 .perm-count { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.perm-panel { display: grid; gap: 8px; align-content: start; }
+.perm-panel { display: grid; gap: 8px; align-content: start; min-width: 0; }
 .perm-panel-head { display: grid; gap: 2px; }
 .perm-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .perm-row {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
   padding: 8px 10px; border-radius: var(--radius-sm, 8px); border: 1px solid var(--border);
 }
-.perm-row-label { display: grid; gap: 2px; min-width: 0; }
+.perm-row-label { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 .perm-row-label label { font-size: 13px; }
-.perm-row select { max-width: 220px; }
+.perm-row select { max-width: min(220px, 100%); min-width: 0; flex: 0 1 auto; }
 .perm-savebar {
   position: sticky; bottom: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px;
   padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm, 8px); background: var(--surface);
@@ -6330,6 +6338,16 @@ button.crit-info-btn:focus-visible {
 }
 @media (max-width: 640px) {
   .perm-split { grid-template-columns: 1fr; }
+  .perm-groups { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 0 0 6px; }
+  .perm-group { white-space: nowrap; }
+  .perm-group.active { box-shadow: inset 0 -2px 0 var(--accent, var(--chart-1)); }
+  .perm-row { flex-direction: column; align-items: stretch; }
+  .perm-row select { max-width: none; }
+}
+/* The same stacked layout when the permissions sit in a narrow drawer (the member's profile is
+   520px wide on any screen): the drawer's body is a size container. */
+@container side-drawer (max-width: 560px) {
+  .perm-split { grid-template-columns: minmax(0, 1fr); min-height: 0; }
   .perm-groups { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 0 0 6px; }
   .perm-group { white-space: nowrap; }
   .perm-group.active { box-shadow: inset 0 -2px 0 var(--accent, var(--chart-1)); }
