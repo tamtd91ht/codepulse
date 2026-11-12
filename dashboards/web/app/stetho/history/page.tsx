@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { type SubTab, SubTabs } from "@/components/AdminTabs";
 import { RangePicker, useUrlRange } from "@/components/Evaluation";
+import { StethoTabs } from "@/components/StethoTabs";
 import { Icon } from "@/components/icons";
 import { Alert, Card, Drawer, EmptyState, Loading, PageHeader, Pagination, Pill, StatStrip, StripStat } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
@@ -270,7 +271,8 @@ export default function StethoHistoryPage() {
   if (me && !admin)
     return (
       <>
-        <PageHeader title="Lịch sử Stetho" />
+        <PageHeader title="Stetho" />
+        <StethoTabs me={me} current="/stetho/history" />
         <Card collapsible={false}>
           <EmptyState icon="alert" title="Chỉ admin xem được lịch sử Stetho" />
         </Card>
@@ -288,9 +290,8 @@ export default function StethoHistoryPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Stetho"
-        title="Lịch sử Stetho"
-        subtitle="Câu hỏi của mọi người và vài ý chính của câu trả lời, 30 ngày gần nhất. Chỉ admin xem được; mỗi lần mở một cuộc trò chuyện được ghi nhật ký."
+        title="Stetho"
+        subtitle="Lịch sử: câu hỏi của mọi người và vài ý chính của câu trả lời, 30 ngày gần nhất. Chỉ admin xem được; mỗi lần mở một cuộc trò chuyện được ghi nhật ký."
         actions={
           <button
             type="button"
@@ -303,6 +304,7 @@ export default function StethoHistoryPage() {
           </button>
         }
       />
+      <StethoTabs me={me} current="/stetho/history" />
       {notice && <Alert tone="success">{notice}</Alert>}
       <div className="report-bar">
         <div className="report-bar-top">

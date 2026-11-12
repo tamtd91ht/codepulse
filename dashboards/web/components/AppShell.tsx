@@ -8,6 +8,7 @@ import { Icon, type IconName, IconButton } from "@/components/icons";
 import { InboxProvider, NotificationBell } from "@/components/Inbox";
 import { ReviewActivity } from "@/components/ReviewActivity";
 import { Stetho } from "@/components/Stetho";
+import { stethoHome } from "@/components/StethoTabs";
 import { RAIL_KEY, ThemeToggle } from "@/components/theme";
 import { UserMenu } from "@/components/UserMenu";
 import { can, managesAnyProject, useApi } from "@/lib/api";
@@ -115,10 +116,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const secondary: Item[] = [
     ...(isAdmin ? [{ href: "/admin", label: "Admin", icon: "settings" } as Item]
       : []),
-    // Tri thức Stetho (docs/specs/28): whoever may teach Stetho (admins by default).
-    ...(can(me, "assistant.train") ? [{ href: "/stetho", label: "Tri thức Stetho", icon: "stethoscope" } as Item] : []),
-    // Lịch sử Stetho (docs/specs/28 §9): admins only (ADMIN_EMAILS).
-    ...(isAdmin ? [{ href: "/stetho/history", label: "Lịch sử Stetho", icon: "inbox" } as Item] : []),
+    // Stetho (docs/specs/28): one menu, tabs Tri thức | Lịch sử inside (components/StethoTabs);
+    // the link opens the first tab one may see.
+    ...(me && stethoHome(me) ? [{ href: stethoHome(me) as string, label: "Stetho", icon: "stethoscope" } as Item] : []),
     { href: "/guide", label: "Hướng dẫn", icon: "book" },
   ];
 
@@ -135,6 +135,22 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const navLink = (item: Item) => {
     const under = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
+    // Stetho is one menu for both of its tabs.
+    if (item.label === "Stetho") {
+      const on = under("/stetho");
+      return (
+        <Link
+          key={item.href}
+          href={item.href}
+          className={`nav-link${on ? " active" : ""}`}
+          aria-current={on ? "page" : undefined}
+          title={rail ? item.label : undefined}
+        >
+          <Icon name={item.icon} size={18} />
+          <span className="label">{item.label}</span>
+        </Link>
+      );
+    }
     // The most specific item wins: /reviews/request is "Yêu cầu review", not "Kết quả review".
     const active =
       pathname === item.href ||

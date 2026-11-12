@@ -5,6 +5,7 @@ import { type FormEvent, useRef, useState } from "react";
 
 import { Icon, IconButton } from "@/components/icons";
 import { Markdown } from "@/components/Markdown";
+import { StethoTabs } from "@/components/StethoTabs";
 import { Alert, Card, Drawer, EmptyState, Loading, PageHeader, Pill } from "@/components/ui";
 import { ApiError, api, can, useApi } from "@/lib/api";
 import { relative } from "@/lib/format";
@@ -93,7 +94,7 @@ function Editor({ doc, onClose, onSaved }: { doc: Doc | "new"; onClose: () => vo
   };
 
   return (
-    <Drawer title={isNew ? "Viết tài liệu" : doc.title} onClose={onClose} width="wide">
+    <Drawer title={isNew ? "Nhập thủ công" : doc.title} onClose={onClose} width="wide">
       {!isNew && !current ? (
         <Loading error={error} rows={6} />
       ) : (
@@ -256,7 +257,8 @@ export default function StethoKnowledgePage() {
   if (me && !can(me, "assistant.train"))
     return (
       <>
-        <PageHeader title="Tri thức Stetho" />
+        <PageHeader title="Stetho" />
+        <StethoTabs me={me} current="/stetho" />
         <Card collapsible={false}>
           <EmptyState icon="alert" title="Bạn chưa có quyền dạy Stetho">
             Quyền “Dạy Stetho” (assistant.train) do admin cấp ở Admin › Phân quyền.
@@ -269,15 +271,10 @@ export default function StethoKnowledgePage() {
   return (
     <>
       <PageHeader
-        eyebrow="Stetho"
-        title="Tri thức Stetho"
-        subtitle="Tài liệu Stetho dựa vào để trả lời: quy trình, chuẩn, hướng dẫn nội bộ. Stetho trả lời đúng theo nội dung ở đây và ghi nguồn."
-        actions={
-          <button className="primary" onClick={() => setEditing("new")}>
-            <Icon name="plus" size={14} /> Viết tài liệu
-          </button>
-        }
+        title="Stetho"
+        subtitle="Trợ lý AI của CodePulse: tri thức Stetho dựa vào để trả lời (quy trình, chuẩn, hướng dẫn nội bộ; trả lời đúng theo đó và ghi nguồn) và lịch sử hỏi đáp."
       />
+      <StethoTabs me={me} current="/stetho" />
       {problem && <Alert tone="error">{problem}</Alert>}
       {notice && <Alert tone="success">{notice}</Alert>}
 
@@ -302,6 +299,10 @@ export default function StethoKnowledgePage() {
               />
               <button onClick={() => files.current?.click()} disabled={busy !== null}>
                 <Icon name="download" size={14} /> {busy === "upload" ? "Đang nhập…" : "Tải file lên"}
+              </button>
+              {/* Nhập thủ công: gõ hoặc dán nội dung (Markdown) thay vì tải file. */}
+              <button type="button" className="primary" onClick={() => setEditing("new")} disabled={busy !== null}>
+                <Icon name="edit" size={14} /> Nhập thủ công
               </button>
               <span className="muted small">.md, .txt, .doc, .docx, .xlsx · tối đa {d?.max_file_mb ?? 10} MB mỗi file</span>
             </div>

@@ -10301,3 +10301,31 @@ pre.doc-plain {
     display: none;
   }
 }
+
+/* Page-level link tabs (Stetho › Tri thức | Lịch sử): the underline tabs, as links. */
+.tabs.page-tabs {
+  margin-bottom: 18px;
+}
+.tabs.page-tabs a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  color: var(--muted);
+  text-decoration: none;
+}
+.tabs.page-tabs a:hover {
+  color: var(--text);
+}
+.tabs.page-tabs a.active {
+  color: var(--primary-text);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+.tabs.page-tabs a:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
