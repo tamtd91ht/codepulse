@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Modal } from "@/components/CriteriaParts";
-import { Icon } from "@/components/icons";
+import { Icon, IconButton } from "@/components/icons";
 import { MoreMenu } from "@/components/MoreMenu";
 import { AiModal, RunDrawer, RunsCard } from "@/components/TestcaseAi";
 import { RegressionView } from "@/components/TestcaseImpact";
@@ -24,6 +24,7 @@ import {
   type Stats,
   type Suite,
   type TcProject,
+  type TestCase,
 } from "@/lib/testcases";
 import type { Me } from "@/lib/types";
 
@@ -203,6 +204,8 @@ function CasesTab({
   const [open, setOpen] = useState<number | "new" | null>(null);
   const [modal, setModal] = useState<null | "suite" | "rename" | "share" | "import" | "generate" | "audit" | "delete">(null);
   const [run, setRun] = useState<number | null>(null);
+  // Cases asked to be deleted (one from its row, or the ticked ones): confirmed in a modal.
+  const [deleting, setDeleting] = useState<TestCase[] | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -402,6 +405,9 @@ function CasesTab({
             <button className="ghost sm" disabled={busy} onClick={() => void bulk({ action: "status", status: "obsolete" })}>
               Đánh dấu lỗi thời
             </button>
+            <button className="ghost sm tc-danger" disabled={busy} onClick={() => setDeleting(all.filter((c) => picked.has(c.id)))}>
+              <Icon name="remove" size={14} /> Xoá
+            </button>
             <button className="ghost sm" disabled={busy} onClick={() => setPicked(new Set())}>
               Bỏ chọn
             </button>
@@ -436,6 +442,7 @@ function CasesTab({
                     <th>Loại</th>
                     <th>Trạng thái</th>
                     <th>Jira</th>
+                    {canEdit && <th className="tc-row-actions" aria-label="Thao tác" />}
                   </tr>
                 </thead>
                 <tbody>
@@ -484,11 +491,16 @@ function CasesTab({
                       <td>
                         <PriorityPill value={c.priority} />
                       </td>
-                      <td className="small">{KIND_LABEL[c.kind]}</td>
+                      <td className="small tc-nowrap">{KIND_LABEL[c.kind]}</td>
                       <td>
                         <StatusPill value={c.status} />
                       </td>
-                      <td className="small">{c.jira_keys.join(", ")}</td>
+                      <td className="small tc-nowrap">{c.jira_keys.join(", ")}</td>
+                      {canEdit && (
+                        <td className="tc-row-actions">
+                          <IconButton icon="remove" tone="danger" label="Xoá testcase" className="tip-left" onClick={() => setDeleting([c])} />
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -535,6 +547,18 @@ function CasesTab({
       )}
       {(modal === "generate" || modal === "audit") && suite && (
         <AiModal kind={modal} projectId={project.id} suite={suite} limits={runs.data} onClose={() => setModal(null)} onAsked={asked} />
+      )}
+      {deleting && (
+        <DeleteCases
+          cases={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={(n) => {
+            setMessage(`Đã xoá ${n} testcase.`);
+            setPicked(new Set());
+            if (typeof open === "number" && deleting.some((c) => c.id === open)) setOpen(null);
+            void refresh();
+          }}
+        />
       )}
       {modal === "delete" && suite && (
         <DeleteSuite
@@ -621,6 +645,61 @@ function CoverageStrip({ stats, error }: { stats: Stats | undefined; error: Erro
         </details>
       )}
     </>
+  );
+}
+
+/** Delete one case or the ticked ones, for good (their history too). */
+function DeleteCases({ cases, onClose, onDeleted }: { cases: TestCase[]; onClose: () => void; onDeleted: (n: number) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const remove = async () => {
+    setBusy(true);
+    try {
+      const got = await api.post<{ changed: number }>("/testcases/bulk", { ids: cases.map((c) => c.id), action: "delete" });
+      onDeleted(got.changed);
+      onClose();
+    } catch (e) {
+      setError(errorText(e));
+      setBusy(false);
+    }
+  };
+  const one = cases.length === 1 ? cases[0] : null;
+  return (
+    <Modal
+      title={one ? `Xoá testcase ${one.code}?` : `Xoá ${cases.length} testcase?`}
+      onClose={onClose}
+      busy={busy}
+      footer={
+        <>
+          <button className="ghost" onClick={onClose} disabled={busy}>
+            Huỷ
+          </button>
+          <button className="danger" onClick={() => void remove()} disabled={busy}>
+            {busy ? "Đang xoá…" : one ? "Xoá testcase" : `Xoá ${cases.length} testcase`}
+          </button>
+        </>
+      }
+    >
+      {error && <Alert tone="error">{error}</Alert>}
+      {one ? (
+        <p>
+          <strong>{one.title}</strong> cùng lịch sử sửa sẽ bị xoá hẳn, không khôi phục được.
+        </p>
+      ) : (
+        <>
+          <p>Các testcase sau cùng lịch sử sửa sẽ bị xoá hẳn, không khôi phục được:</p>
+          <ul className="tc-delete-list small">
+            {cases.slice(0, 8).map((c) => (
+              <li key={c.id}>
+                <span className="tc-codes">{c.code}</span> {c.title}
+              </li>
+            ))}
+            {cases.length > 8 && <li className="muted">… và {cases.length - 8} testcase khác</li>}
+          </ul>
+        </>
+      )}
+      <p className="small muted">Nếu testcase chỉ không còn dùng, có thể đổi trạng thái sang “Lỗi thời” thay vì xoá: vẫn giữ để tra cứu và không bị gợi ý test lại.</p>
+    </Modal>
   );
 }
 

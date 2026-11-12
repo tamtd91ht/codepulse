@@ -11616,3 +11616,31 @@ button.ghost.danger:hover:not(:disabled) {
   align-self: flex-start;
   padding-top: 4px;
 }
+.tc-row-actions {
+  width: 44px;
+  text-align: right;
+}
+.tc-table tr .tc-row-actions .icon-btn {
+  opacity: 0.55;
+}
+.tc-table tr:hover .tc-row-actions .icon-btn,
+.tc-table tr .tc-row-actions .icon-btn:focus-visible {
+  opacity: 1;
+}
+/* The row's delete button sits at the table's right edge: its tooltip opens to the left. */
+.icon-btn.tip-left[data-tip]:hover::after,
+.icon-btn.tip-left[data-tip]:focus-visible::after {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+button.tc-danger {
+  color: var(--bad);
+}
+.tc-delete-list {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+.tc-nowrap {
+  white-space: nowrap;
+}
