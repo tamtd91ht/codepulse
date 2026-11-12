@@ -276,13 +276,38 @@ function imageSrc(src: string): string | null {
  * half the page width, `![Sơ đồ|480](asset:12)` 480 px (never wider than the page). Without
  * one the image keeps its own size. Other Markdown readers just show "Sơ đồ|50%" as its text.
  */
-export function imageSize(alt: string): { alt: string; size: string | null; style?: CSSProperties } {
-  const m = /^(.*?)\|\s*(\d{1,4})\s*(px|%)?\s*$/.exec(alt);
-  if (!m) return { alt, size: null };
-  const name = m[1].trim();
-  const n = Number(m[2]);
-  if (m[3] === "%") return n >= 5 && n <= 100 ? { alt: name, size: `${n}%`, style: { width: `${n}%` } } : { alt: name, size: null };
-  return n >= 16 && n <= 2000 ? { alt: name, size: `${n}`, style: { width: `${n}px` } } : { alt: name, size: null };
+export type ImageAlign = "left" | "center" | "right";
+
+/**
+ * Also its place (docs/specs/29 §13.3): `|left`, `|right` or `|center` (the default) after the
+ * name or the size, in any order: `![Sơ đồ|50%|right](asset:12)`.
+ */
+export function imageSize(alt: string): { alt: string; size: string | null; align: ImageAlign | null; style?: CSSProperties } {
+  const parts = alt.split("|");
+  let size: string | null = null;
+  let align: ImageAlign | null = null;
+  let style: CSSProperties | undefined;
+  // Read the options from the end; whatever is not one belongs to the name.
+  while (parts.length > 1) {
+    const token = parts[parts.length - 1].trim().toLowerCase();
+    const m = /^(\d{1,4})\s*(px|%)?$/.exec(token);
+    if (m && size === null) {
+      const n = Number(m[1]);
+      if (m[2] === "%" ? n >= 5 && n <= 100 : n >= 16 && n <= 2000) {
+        size = m[2] === "%" ? `${n}%` : `${n}`;
+        style = { width: m[2] === "%" ? `${n}%` : `${n}px` };
+      }
+    } else if ((token === "left" || token === "right" || token === "center") && align === null) {
+      align = token;
+    } else break;
+    parts.pop();
+  }
+  return { alt: parts.join("|").trim(), size, align, style };
+}
+
+/** The image line as written: name, then size, then place (each only when set). */
+export function imageLine(name: string, size: string | null, align: ImageAlign | null, src: string): string {
+  return `![${name}${size ? `|${size}` : ""}${align && align !== "center" ? `|${align}` : ""}](${src})`;
 }
 
 /**
@@ -294,11 +319,18 @@ export const ImageResize = createContext<((mdSrc: string, size: string) => void)
 
 const STEP = 5; // %
 
+function alignFactor(figure: Element | null): number {
+  const align = figure ? getComputedStyle(figure).textAlign : "left";
+  return align === "center" ? 2 : align === "right" || align === "end" ? -1 : 1;
+}
+
 function ResizableImage({ src, alt, style, mdSrc }: { src: string; alt: string; style?: CSSProperties; mdSrc: string }) {
   const onResize = useContext(ImageResize);
   const img = useRef<HTMLImageElement>(null);
   const [live, setLive] = useState<number | null>(null); // % while dragging
-  const drag = useRef<{ x: number; width: number; box: number; centered: boolean } | null>(null);
+  const drag = useRef<{ x: number; width: number; box: number; factor: number } | null>(null);
+  // Which way the image grows: right-aligned ones grow to the left (their handle sits on the left).
+  const [side, setSide] = useState<"left" | "right">("right");
   if (!onResize) return <img src={src} alt={alt} style={style} data-md-src={mdSrc} loading="lazy" referrerPolicy="no-referrer" />;
 
   const box = () => img.current?.closest("figure")?.clientWidth || img.current?.parentElement?.clientWidth || 1;
@@ -319,15 +351,16 @@ function ResizableImage({ src, alt, style, mdSrc }: { src: string; alt: string; 
       x: e.clientX,
       width: img.current.getBoundingClientRect().width,
       box: box(),
-      // A centred image grows on both sides: the handle moves half as far as the width grows.
-      centered: figure ? getComputedStyle(figure).textAlign === "center" : false,
+      // A centred image grows on both sides: the handle moves half as far as the width grows;
+      // a right-aligned one grows leftwards, its handle on the left.
+      factor: alignFactor(figure),
     };
     setLive(current());
   };
   const move = (e: PointerEvent<HTMLSpanElement>) => {
     const d = drag.current;
     if (!d) return;
-    const dx = (e.clientX - d.x) * (d.centered ? 2 : 1);
+    const dx = (e.clientX - d.x) * d.factor;
     const width = Math.min(d.box, Math.max(40, d.width + dx));
     setLive(Math.min(100, Math.max(STEP, Math.round((width / d.box) * 100))));
   };
@@ -340,7 +373,7 @@ function ResizableImage({ src, alt, style, mdSrc }: { src: string; alt: string; 
     } catch {
       /* not captured */
     }
-    const dx = (e.clientX - d.x) * (d.centered ? 2 : 1);
+    const dx = (e.clientX - d.x) * d.factor;
     const width = Math.min(d.box, Math.max(40, d.width + dx));
     setLive(null);
     if (Math.abs(dx) > 2) onResize(mdSrc, `${percent(width, d.box)}%`);
@@ -357,7 +390,8 @@ function ResizableImage({ src, alt, style, mdSrc }: { src: string; alt: string; 
       <img ref={img} src={src} alt={alt} style={live !== null || style ? { width: "100%" } : undefined} data-md-src={mdSrc} loading="lazy" referrerPolicy="no-referrer" />
       {live !== null && <span className="doc-img-size">{live}%</span>}
       <span
-        className="doc-img-handle"
+        className={`doc-img-handle${side === "left" ? " on-left" : ""}`}
+        onPointerEnter={() => setSide(alignFactor(img.current?.closest("figure") ?? null) < 0 ? "left" : "right")}
         role="slider"
         tabIndex={0}
         aria-label={`Kéo để đổi cỡ ảnh ${alt}`.trim()}
@@ -604,7 +638,7 @@ function Blocks({ blocks, term, offset }: { blocks: Block[]; term?: string; offs
             const src = imageSrc(b.src);
             const sized = imageSize(b.alt);
             return src ? (
-              <figure key={i} className={`doc-figure${sized.size ? " sized" : ""}`}>
+              <figure key={i} className={`doc-figure${sized.size ? " sized" : ""}${sized.align && sized.align !== "center" ? ` align-${sized.align}` : ""}`}>
                 <ResizableImage src={src} alt={sized.alt} style={sized.style} mdSrc={b.src} />
                 {sized.alt && <figcaption>{sized.alt}</figcaption>}
               </figure>

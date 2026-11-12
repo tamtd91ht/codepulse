@@ -18,3 +18,4 @@
 - Tài liệu dự án: khôi phục một phiên bản tải file lên hiện chép lại file gốc (≤ 20 MB) vào phiên bản mới; nên trỏ về file của phiên bản cũ thay vì chép (review 2026-11-11).
 - Tài liệu dự án › Tổng hợp từ link (spec 29 §12.7): theo dõi link nguồn và đề xuất cập nhật khi trang đổi; đọc Confluence/Google Docs qua OAuth; tổng hợp từ cả thư mục `docs/` của repo.
 - Ảnh trong tài liệu (spec 29 §13): dọn ảnh không còn phiên bản nào dùng; trích ảnh nhúng trong Word/PDF tải lên thành ảnh của tài liệu.
+- Ảnh trong tài liệu: chữ chảy quanh ảnh căn trái/phải (spec 29 §13.3 chỉ căn, giữ khối riêng vì màn hình hẹp).

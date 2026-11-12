@@ -407,6 +407,16 @@ Yêu cầu: dán ảnh trực tiếp vào trình soạn tài liệu.
 - Ảnh căn giữa nở về hai phía: bề rộng tăng gấp đôi quãng kéo để tay nắm đi theo con trỏ.
 - Bàn phím: tay nắm nhận focus (Tab), phím mũi tên trái/phải (lên/xuống) đổi ±5%.
 
+### 13.3 Căn ảnh trái / giữa / phải (user 2026-11-12) **[Quyết định]**
+
+- Ghi sau tên (và cỡ, nếu có): `![Sơ đồ|50%|right](asset:12)`, `|left`, `|right`; giữa là mặc
+  định nên không ghi `|center` (đọc được nếu có). Thứ tự cỡ / căn không quan trọng khi đọc; khi
+  viết luôn là tên → cỡ → căn.
+- Thanh ảnh trong trình soạn (§13.1) có thêm nhóm **Trái / Giữa / Phải**; chú thích ảnh căn theo.
+- Chỉ căn, **không cho chữ chảy quanh ảnh**: tài liệu đọc cả trên điện thoại, chữ bao quanh ảnh
+  hẹp sẽ vỡ dòng; ảnh căn trái/phải vẫn chiếm một khối riêng.
+- Kéo góc (§13.2): ảnh căn phải có tay nắm ở góc dưới **trái** và nở sang trái.
+
 Ngoài phạm vi (IDEAS.md): dọn ảnh không còn tài liệu nào dùng; ảnh nhúng sẵn trong file Word/PDF
-tải lên.
+tải lên; chữ chảy quanh ảnh.
 

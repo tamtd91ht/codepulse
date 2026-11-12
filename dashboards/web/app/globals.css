@@ -10865,3 +10865,56 @@ button.ghost.danger:hover:not(:disabled) {
     transition: none;
   }
 }
+
+/* Căn ảnh (docs/specs/29 §13.3) */
+.doc-figure.align-left {
+  text-align: left;
+}
+.doc-figure.align-right {
+  text-align: right;
+}
+.doc-editor-align {
+  display: inline-flex;
+  gap: 2px;
+}
+.doc-editor-align button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.doc-editor-sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--border-strong);
+}
+.doc-align-icon {
+  display: inline-grid;
+  gap: 2px;
+  width: 14px;
+}
+.doc-align-icon i {
+  display: block;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+}
+.doc-align-icon i:nth-child(2) {
+  width: 60%;
+}
+.doc-align-icon.center i:nth-child(2) {
+  justify-self: center;
+}
+.doc-align-icon.right i:nth-child(2) {
+  justify-self: end;
+}
+.doc-img-handle.on-left {
+  right: auto;
+  left: -6px;
+  cursor: nesw-resize;
+}
+.doc-figure.align-right .doc-img-handle {
+  right: auto;
+  left: -6px;
+  cursor: nesw-resize;
+}

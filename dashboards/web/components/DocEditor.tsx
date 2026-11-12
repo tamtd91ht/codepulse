@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { DocMarkdown, ImageResize, imageSize } from "@/components/DocMarkdown";
+import { DocMarkdown, type ImageAlign, ImageResize, imageLine, imageSize } from "@/components/DocMarkdown";
 import { Icon } from "@/components/icons";
 import { Alert, Drawer, Segmented } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
@@ -73,7 +73,14 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
   const [uploading, setUploading] = useState(0);
   const projectId = start.kind === "edit" ? start.doc.business_project_id : start.projectId;
   // The image line the caret is on (docs/specs/29 §13.1): its size bar shows.
-  const [onImage, setOnImage] = useState<{ start: number; end: number; name: string; size: string | null; src: string } | null>(null);
+  const [onImage, setOnImage] = useState<{
+    start: number;
+    end: number;
+    name: string;
+    size: string | null;
+    align: ImageAlign | null;
+    src: string;
+  } | null>(null);
   const [customSize, setCustomSize] = useState("");
   const dirty = body !== initial;
   const left = placeholders(body);
@@ -207,18 +214,18 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
     const m = IMAGE_LINE.exec(text.slice(start, end));
     if (!m) return setOnImage(null);
     const sized = imageSize(m[1]);
-    setOnImage({ start, end, name: sized.alt, size: sized.size, src: m[2] });
+    setOnImage({ start, end, name: sized.alt, size: sized.size, align: sized.align, src: m[2] });
     setCustomSize(sized.size && !sized.size.endsWith("%") ? sized.size : "");
   }
 
-  /** Rewrite the image line under the caret with `size` ("50%", "480") or none. */
-  function resize(size: string | null) {
+  /** Rewrite the image line under the caret with `size` ("50%", "480", none) and its place. */
+  function resize(size: string | null, align: ImageAlign | null = onImage?.align ?? null) {
     const el = area.current;
     if (!el || !onImage) return;
-    const line = `![${onImage.name}${size ? `|${size}` : ""}](${onImage.src})`;
+    const line = imageLine(onImage.name, size, align, onImage.src);
     const text = el.value;
     setBody(text.slice(0, onImage.start) + line + text.slice(onImage.end));
-    setOnImage({ ...onImage, end: onImage.start + line.length, size });
+    setOnImage({ ...onImage, end: onImage.start + line.length, size, align });
     requestAnimationFrame(() => {
       el.focus();
       el.setSelectionRange(onImage.start + line.length, onImage.start + line.length);
@@ -236,10 +243,10 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
     const end = nl < 0 ? text.length : nl;
     const m = IMAGE_LINE.exec(text.slice(start, end));
     if (!m) return;
-    const name = imageSize(m[1]).alt;
-    const line = `![${name}|${size}](${m[2]})`;
+    const { alt: name, align } = imageSize(m[1]);
+    const line = imageLine(name, size, align, m[2]);
     setBody(text.slice(0, start) + line + text.slice(end));
-    setOnImage({ start, end: start + line.length, name, size, src: m[2] });
+    setOnImage({ start, end: start + line.length, name, size, align, src: m[2] });
     setCustomSize("");
   }
 
@@ -390,10 +397,40 @@ export function DocEditor({ start, onClose, onSaved }: { start: EditorStart; onC
           />
         </div>
         {onImage && mode !== "preview" && (
-          <div className="doc-editor-imagebar" role="toolbar" aria-label="Cỡ ảnh">
+          <div className="doc-editor-imagebar" role="toolbar" aria-label="Cỡ và vị trí ảnh">
             <span className="small muted">
-              Cỡ ảnh “{onImage.name || "Ảnh"}”:
+              Ảnh “{onImage.name || "Ảnh"}”:
             </span>
+            <span className="doc-editor-align" role="group" aria-label="Căn ảnh">
+              {(
+                [
+                  { label: "Trái", align: "left" },
+                  { label: "Giữa", align: "center" },
+                  { label: "Phải", align: "right" },
+                ] as { label: string; align: ImageAlign }[]
+              ).map((o) => {
+                const on = (onImage.align ?? "center") === o.align;
+                return (
+                  <button
+                    key={o.align}
+                    type="button"
+                    className={`sm${on ? " active" : " ghost"}`}
+                    aria-pressed={on}
+                    title={`Căn ${o.label.toLowerCase()}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => resize(onImage.size, o.align)}
+                  >
+                    <span className={`doc-align-icon ${o.align}`} aria-hidden="true">
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                    {o.label}
+                  </button>
+                );
+              })}
+            </span>
+            <span className="doc-editor-sep" aria-hidden="true" />
             {[
               { label: "Nhỏ", size: "25%" },
               { label: "Vừa", size: "50%" },
