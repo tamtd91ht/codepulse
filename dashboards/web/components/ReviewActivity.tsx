@@ -35,6 +35,7 @@ const KNOWLEDGE_STAGES: { id: string; label: string }[] = [
 ];
 const STAGES: { id: string; label: string }[] = [
   { id: "diff", label: "Lấy diff" },
+  { id: "static", label: "Kiểm tra tĩnh" },
   { id: "checkout", label: "Tải mã nguồn" },
   { id: "agent", label: "Review AI" },
   { id: "verify", label: "Kiểm chứng" },
@@ -43,6 +44,7 @@ const STAGES: { id: string; label: string }[] = [
 const STAGE_LABEL: Record<string, string> = {
   start: "Chuẩn bị",
   diff: "Lấy diff từ GitLab",
+  static: "Kiểm tra tĩnh (Gitleaks, Semgrep)",
   checkout: "Tải bản sao repo",
   llm: "AI đang review (không tool)",
   agent: "AI đang review trong repo",

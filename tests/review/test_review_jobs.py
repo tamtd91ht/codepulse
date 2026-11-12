@@ -10,10 +10,12 @@ from app.workers.review_jobs import STALE_GRACE_S, review_job_timeout, review_se
 
 def test_job_timeout_follows_the_review_and_verification_settings() -> None:
     defaults = Settings()
-    assert review_job_timeout(defaults) == 480 * 3 + 12 * VERIFY_TIMEOUT_S + 600 == 3480
-    assert timedelta(seconds=3480 + STALE_GRACE_S) == STALE_RUNNING  # the module default
+    # + 2 x STATIC_TIMEOUT_S for the static-analysis step (docs/specs/07).
+    assert review_job_timeout(defaults) == 480 * 3 + 12 * VERIFY_TIMEOUT_S + 600 + 240 == 3720
+    assert timedelta(seconds=3720 + STALE_GRACE_S) == STALE_RUNNING  # the module default
     patient = Settings(review_timeout_s=900, verify_max_findings=20)
-    assert review_job_timeout(patient) == 900 * 3 + 20 * 120 + 600
+    assert review_job_timeout(patient) == 900 * 3 + 20 * 120 + 600 + 240
+    assert review_job_timeout(Settings(static_analysis=False)) == 3480
     assert enqueued_with is review_job_timeout  # the enqueue sites use the same function
 
 

@@ -109,6 +109,12 @@ class Settings(BaseSettings):
     # Review flow v2 (docs/specs/19 §4, §8): the main pass runs with read-only tools inside a
     # copy of the repository (REVIEW_AGENT); below REVIEW_AGENT_MIN_LOC only the no-tool pass
     # runs. The DEEP_REVIEW* names of docs/specs/18 still work as aliases.
+    # docs/specs/07 (user 2026-11-12): Gitleaks / Semgrep on the changed lines as review
+    # hints, when installed on the worker. SEMGREP_CONFIG: a registry ruleset (needs the
+    # worker to reach semgrep.dev) or a path to local rules.
+    static_analysis: bool = True
+    semgrep_config: str = "p/default"
+    static_timeout_s: int = Field(default=120, ge=10, le=900)
     review_agent: bool = Field(
         default=True, validation_alias=AliasChoices("REVIEW_AGENT", "DEEP_REVIEW")
     )

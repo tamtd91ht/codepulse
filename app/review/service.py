@@ -13,6 +13,7 @@ rolled-back session.
 """
 
 import logging
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -26,6 +27,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.collector.gitlab.client import ArchiveTooLarge, GitLabClient, GitLabError
+from app.collector.gitlab.diffstat import is_ignored
 from app.models import (
     Account,
     BusinessProject,
@@ -34,6 +36,7 @@ from app.models import (
     Project,
     Review,
     ReviewFinding,
+    ReviewStaticFinding,
     User,
 )
 from app.models.review import CHANGE_TIME_UNKNOWN
@@ -55,7 +58,15 @@ from app.review.claude_repo import (
 )
 from app.review.live import LiveTracker, describe
 from app.review.postprocess import Finding, postprocess
-from app.review.prepare import ContextFetcher, DiffFile, PreparedDiff, chunk, prepare, redact
+from app.review.prepare import (
+    ContextFetcher,
+    DiffFile,
+    PreparedDiff,
+    chunk,
+    parse_diff,
+    prepare,
+    redact,
+)
 from app.review.profile import render_profile
 from app.review.progress import NullProgress, ProgressSink
 from app.review.prompt import (
@@ -79,6 +90,13 @@ from app.review.verify import skipped_status, verify
 from app.scoring.criteria_store import SetVersion, clean_criteria, project_sets, store_scores
 from app.scoring.formula import ScoredFinding, review_score, weights_for
 from app.scoring.verdict import assess
+from app.static_analysis.runner import (
+    StaticReport,
+    ToolRun,
+    render_hints,
+    run_static,
+)
+from app.static_analysis.runner import available as static_available
 
 NOTHING_TO_REVIEW = "no reviewable files"
 
@@ -113,9 +131,10 @@ ASKED_TRIGGERS = frozenset({"dashboard", "telegram", "rerun", "mcp"})
 VERIFY_TIMEOUT_S = 120.0  # docs/specs/19 §4.3: one verification call
 # A "running" review older than this was left by a killed worker and may be taken over. It must
 # exceed the RQ job timeout (app.workers.review_jobs.review_job_timeout: 3 x REVIEW_TIMEOUT_S +
-# VERIFY_MAX_FINDINGS x 120 s + 10 min, 58 min with the defaults) by 5 min; the worker derives
-# `ReviewSettings.stale_running` from its settings, this is the default-settings value.
-STALE_RUNNING = timedelta(minutes=63)
+# VERIFY_MAX_FINDINGS x 120 s + 10 min + 2 x STATIC_TIMEOUT_S, 62 min with the defaults) by
+# 5 min; the worker derives `ReviewSettings.stale_running` from its settings, this is the
+# default-settings value.
+STALE_RUNNING = timedelta(minutes=67)
 # The PROFILE block of a prompt when the compiled knowledge carries the domain already.
 KNOWLEDGE_DOMAIN_NOTE = "(see the DOMAIN section of PROJECT KNOWLEDGE below)"
 
@@ -162,6 +181,12 @@ class ReviewSettings:
     # Review again once the LLM works again (app/review/llm_recovery.py).
     llm_auto_resume: bool = False
     llm_probe_interval_min: int = 30
+    # docs/specs/07: Gitleaks / Semgrep on the changed lines, as hints (when installed).
+    static_analysis: bool = True
+    semgrep_config: str = "p/default"
+    static_timeout_s: float = 120.0
+    static_max_files: int = 60
+    static_max_file_bytes: int = 1_000_000
 
 
 @dataclass
@@ -219,6 +244,8 @@ class ReviewService:
         agent: AgenticProvider | None = None,
         progress: ProgressSink | None = None,
         short_transactions: bool = False,
+        static_runner: Callable[..., StaticReport] | None = None,
+        static_tools: Callable[[], dict[str, str | None]] | None = None,
     ) -> None:
         """`short_transactions` (docs/specs/19 §4.6, the workers): the service commits after
         the claim, the preparation and the save, so no lock or transaction outlives a step
@@ -240,6 +267,10 @@ class ReviewService:
         self._clock = clock
         self._agent = agent  # tools in a checkout ([1], [2]); None = no-tool reviews only
         self._short = short_transactions
+        # docs/specs/07: the static tools (tests pass fakes) and each review's report.
+        self._static_runner = static_runner or run_static
+        self._static_tools = static_tools or static_available
+        self._static: dict[int, StaticReport] = {}
 
     # -- entry points --------------------------------------------------------------------------
 
@@ -914,6 +945,7 @@ class ReviewService:
         # Everything the passes need from the database is loaded: end the transaction so none
         # stays open while the model works (docs/specs/19 §4.6).
         self._commit_step("prepare")
+        self._static_pass(review, project, entries, sha, target)
         outcome: PassOutcome | None = None
         if self._agent is not None and (agent_pass or self._verify_on()):
             # One checkout for the whole review: the agentic pass, the ±30 lines of context and
@@ -938,6 +970,107 @@ class ReviewService:
         if outcome.failed is not None:
             return self._fail(review, outcome.failed)
         return self._store(review, prepared, outcome)
+
+    def _static_pass(
+        self,
+        review: Review,
+        project: Project,
+        entries: list[dict[str, Any]],
+        sha: str,
+        target: ReviewTarget,
+    ) -> None:
+        """Gitleaks / Semgrep on the files the change touches, read at `sha`; what lies on its
+        added lines becomes hints in the prompt and rows kept with the review (docs/specs/07).
+        Never fails the review: a missing tool or an error is noted in the basis."""
+        s = self._settings
+        if not s.static_analysis or not project.static_analysis:
+            return
+        tools = self._static_tools()
+        if not any(tools.values()):
+            self._static[review.id] = StaticReport(
+                tools={name: ToolRun(error="chưa cài trên worker") for name in tools}
+            )
+            return
+        self._step(review.id, "static", "kiểm tra tĩnh")
+        # One budget for the whole step (reading the files and both tools): the review job's
+        # timeout counts 2 x STATIC_TIMEOUT_S for it (app/workers/review_jobs.py).
+        started = time.monotonic()
+        deadline = started + 2 * s.static_timeout_s
+        files: dict[str, str] = {}
+        added: dict[str, set[int]] = {}
+        sensitive: set[str] = set()
+        for entry in entries:
+            if time.monotonic() - started > s.static_timeout_s / 2:
+                break  # GitLab is slow: check what was read
+            path = entry.get("new_path") or ""
+            if (
+                not path
+                or entry.get("deleted_file")
+                or not entry.get("diff")
+                or is_ignored(path, s.ignore_paths)
+            ):
+                continue
+            lines = set(parse_diff(path, entry["diff"]).added_lines)
+            if not lines:
+                continue
+            if len(files) >= s.static_max_files:
+                break
+            try:
+                text = self._client.file_raw(project.external_id, path, sha)
+            except GitLabError:
+                continue
+            if len(text.encode("utf-8")) > s.static_max_file_bytes or "\x00" in text:
+                continue
+            files[path] = text
+            added[path] = lines
+            if is_ignored(path, s.sensitive_paths):
+                sensitive.add(path)  # scanned for secrets; no line of it is kept
+        try:
+            report = self._static_runner(
+                files,
+                added,
+                semgrep_config=s.semgrep_config,
+                timeout_s=s.static_timeout_s,
+                tools=tools,
+                deadline=deadline,
+                sensitive=sensitive,
+            )
+        except Exception:
+            log.exception("static analysis failed", extra={"review_id": review.id})
+            return
+        self._static[review.id] = report
+        target.static = render_hints(report.findings)
+
+    def _store_static(self, review: Review, ai: list[Any]) -> None:
+        """The static findings of this review, each marked when an AI finding sits on the same
+        lines (±3): the model agreed. Not counted anywhere yet (docs/specs/07, shadow mode)."""
+        report = self._static.pop(review.id, None)
+        if report is None:
+            return
+        spans = [(f.file_path, f.line_start or 0, f.line_end or f.line_start or 0) for f in ai]
+        for sf in report.findings:
+            agreed = any(
+                path == sf.file_path and start - 3 <= sf.line_end and sf.line_start <= end + 3
+                for path, start, end in spans
+            )
+            self._session.add(
+                ReviewStaticFinding(
+                    review_id=review.id,
+                    tool=sf.tool,
+                    rule_id=sf.rule_id,
+                    severity=sf.severity,
+                    category=sf.category,
+                    file_path=sf.file_path,
+                    line_start=sf.line_start,
+                    line_end=sf.line_end,
+                    title=sf.title[:300],
+                    message=sf.message,
+                    code_excerpt=sf.excerpt,
+                    fingerprint=sf.fingerprint,
+                    confirmed_by_ai=agreed,
+                )
+            )
+        review.basis = {**(review.basis or {}), "static": report.basis()}
 
     @staticmethod
     def _languages(prepared: PreparedDiff) -> set[str]:
@@ -1230,6 +1363,7 @@ class ReviewService:
                 )
             )
         self._session.add_all(stored)
+        self._store_static(review, final)
         review.verdict, review.risk_score = assess(
             (f.severity, f.status, f.verified) for f in final
         )

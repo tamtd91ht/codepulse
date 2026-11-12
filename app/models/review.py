@@ -311,3 +311,32 @@ class LlmHealth(TimestampMixin, Base):
     probes: Mapped[int] = mapped_column(server_default="0", default=0)
     recovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     requeued_last: Mapped[int | None]
+
+
+class ReviewStaticFinding(Base):
+    """What Gitleaks / Semgrep found on the lines a reviewed change adds (docs/specs/07, user
+    2026-11-12). Kept apart from review_findings: shown on the review and given to the model as
+    hints, not counted in scores, boards or reports while their false positives are measured."""
+
+    __tablename__ = "review_static_findings"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    review_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("reviews.id", ondelete="CASCADE"), index=True
+    )
+    tool: Mapped[str]  # gitleaks | semgrep
+    rule_id: Mapped[str]
+    severity: Mapped[str]
+    category: Mapped[str]
+    file_path: Mapped[str]
+    line_start: Mapped[int]
+    line_end: Mapped[int]
+    title: Mapped[str]
+    message: Mapped[str | None]
+    code_excerpt: Mapped[str | None]  # masked: no secret is stored
+    fingerprint: Mapped[str]
+    # An AI finding of the same review sits on the same lines (±3): the model agreed.
+    confirmed_by_ai: Mapped[bool] = mapped_column(server_default="false", default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )

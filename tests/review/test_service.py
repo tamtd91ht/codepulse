@@ -1196,3 +1196,101 @@ def test_an_asked_run_that_does_not_happen_says_why_in_the_live_view(
         assert service.review_commit(project, commit, trigger="dashboard") is None
         assert progress.recent()[0]["error"] == "repo đã tắt review"
     assert progress.active() == []
+
+
+def test_static_analysis_hints_are_kept_apart_and_never_scored(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    """docs/specs/07: Gitleaks / Semgrep on the added lines reach the prompt as hints and are
+    stored apart, marked when the model agreed; the score is the AI findings' alone."""
+    from app.models import ReviewStaticFinding
+    from app.static_analysis.runner import StaticFinding, StaticReport, ToolRun
+
+    project, merge_request = mr
+    seen: dict[str, Any] = {}
+
+    def fake_runner(files: dict[str, str], added: dict[str, set[int]], **kw: Any) -> StaticReport:
+        seen.update(files=dict(files), added={k: sorted(v) for k, v in added.items()}, kw=kw)
+        hit = dict(
+            tool="semgrep", category="security", file_path="app/review/parser.py", excerpt="x"
+        )
+        return StaticReport(
+            findings=[
+                StaticFinding(
+                    rule_id="semgrep:python.sqlalchemy.security.sqli",
+                    severity="high",
+                    line_start=5,
+                    line_end=5,
+                    title="Sqli",
+                    message="SQL built from input",
+                    fingerprint="f1",
+                    **hit,
+                ),
+                StaticFinding(
+                    rule_id="semgrep:python.lang.security.audit.eval",
+                    severity="medium",
+                    line_start=30,
+                    line_end=30,
+                    title="Eval",
+                    message="eval",
+                    fingerprint="f2",
+                    **hit,
+                ),
+            ],
+            tools={"semgrep": ToolRun(ran=True, found=2), "gitleaks": ToolRun(ran=True)},
+            files=len(files),
+        )
+
+    provider = FakeLLMProvider(sqli)
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        # Before mount(): its "no file" route would answer first.
+        router.get(url__regex=rf"{API}/projects/1001/repository/files/.*/raw").respond(
+            text="line\n" * 40
+        )
+        mount(router)
+        router.get(f"{API}/projects/1001/merge_requests/1").respond(
+            json=fixture("merge_requests.json")[0]
+        )
+        review = ReviewService(
+            db_session,
+            client,
+            provider,
+            SETTINGS,
+            static_runner=fake_runner,
+            static_tools=lambda: {"gitleaks": "/bin/gitleaks", "semgrep": "/bin/semgrep"},
+        ).review_mr(project, merge_request, HEAD)
+
+    assert review.status == "done"
+    assert "app/review/parser.py" in seen["files"] and "yarn.lock" not in seen["files"]
+    assert seen["added"]["app/review/parser.py"]  # only the added lines are checked
+    assert seen["kw"]["semgrep_config"] == "p/default"
+    assert "STATIC ANALYSIS" in provider.prompts[0].user
+    assert "semgrep:python.sqlalchemy.security.sqli" in provider.prompts[0].user
+    rows = db_session.scalars(
+        select(ReviewStaticFinding)
+        .where(ReviewStaticFinding.review_id == review.id)
+        .order_by(ReviewStaticFinding.line_start)
+    ).all()
+    assert [(r.line_start, r.confirmed_by_ai) for r in rows] == [(5, True), (30, False)]
+    assert float(review.score) == 50.0  # as without them: hints are not scored
+    ai = db_session.scalars(select(ReviewFinding).where(ReviewFinding.review_id == review.id)).all()
+    assert all(f.source == "ai" for f in ai)
+    assert review.basis is not None and review.basis["static"]["found"] == 2
+
+    # Off for the repo: nothing runs.
+    project.static_analysis = False
+    seen.clear()
+    with respx.mock(assert_all_called=False) as router, GitLabClient(BASE, "t") as client:
+        mount(router)
+        router.get(f"{API}/projects/1001/merge_requests/1").respond(
+            json=fixture("merge_requests.json")[0]
+        )
+        ReviewService(
+            db_session,
+            client,
+            FakeLLMProvider(sqli),
+            SETTINGS,
+            static_runner=fake_runner,
+            static_tools=lambda: {"gitleaks": "/bin/gitleaks", "semgrep": None},
+        ).review_mr(project, merge_request, HEAD, force=True)
+    assert seen == {}

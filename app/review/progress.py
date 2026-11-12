@@ -42,7 +42,18 @@ RECENT_TTL_S = 60 * 60
 SOCKET_TIMEOUT_S = 2.0
 
 # Stage ids the worker reports, in order (the web maps them to labels).
-STAGES = ("start", "diff", "checkout", "llm", "agent", "verify", "deep", "profile", "save")
+STAGES = (
+    "start",
+    "diff",
+    "static",
+    "checkout",
+    "llm",
+    "agent",
+    "verify",
+    "deep",
+    "profile",
+    "save",
+)
 # Fields of a running record kept in the "recent" list (people and target, no stage details).
 RECENT_FIELDS = (
     "review_id",

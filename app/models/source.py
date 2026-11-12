@@ -94,6 +94,8 @@ class Project(TimestampMixin, Base):
     review_rules_paths: Mapped[str | None]
     # docs/specs/18: second pass with the repo open, and the cached project profile.
     deep_review: Mapped[bool] = mapped_column(server_default="true")
+    # docs/specs/07: Gitleaks / Semgrep on the changed lines, as hints for the review.
+    static_analysis: Mapped[bool] = mapped_column(server_default="true", default=True)
     profile: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     profile_sha: Mapped[str | None]
     profile_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

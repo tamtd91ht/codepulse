@@ -469,6 +469,30 @@ export interface ReviewDetail extends Review {
   criteria_scores?: ReviewCriteriaScore[];
   /** docs/specs/27 §17: the Jira issues an MR names; null for a commit review. */
   jira?: MrJira | null;
+  /** docs/specs/07: Gitleaks / Semgrep on the added lines (hints, not scored). */
+  static_findings?: StaticFinding[];
+}
+
+export interface StaticFinding {
+  id: number;
+  tool: "gitleaks" | "semgrep" | string;
+  rule_id: string;
+  severity: string;
+  category: string;
+  file_path: string;
+  line_start: number;
+  line_end: number;
+  title: string;
+  message: string | null;
+  code_excerpt: string | null;
+  confirmed_by_ai: boolean;
+}
+
+/** review.basis.static: what ran. */
+export interface StaticBasis {
+  files: number;
+  found: number;
+  tools: Record<string, { ran: boolean; found: number; seconds: number; error: string | null; version: string | null }>;
 }
 
 export interface JiraIssueRef {
@@ -901,6 +925,8 @@ export interface Project {
   review_rules: string | null;
   review_rules_paths: string | null;
   deep_review: boolean;
+  /** docs/specs/07: Gitleaks / Semgrep hints in its reviews. */
+  static_analysis?: boolean;
   /** Rebuild the review knowledge when a push to the default branch touches .claude/ (docs/specs/19 §3.4). */
   knowledge_auto_refresh: boolean;
   profile_at: string | null;

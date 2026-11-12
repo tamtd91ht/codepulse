@@ -18,5 +18,5 @@
 - Tài liệu dự án: khôi phục một phiên bản tải file lên hiện chép lại file gốc (≤ 20 MB) vào phiên bản mới; nên trỏ về file của phiên bản cũ thay vì chép (review 2026-11-11).
 - Tài liệu dự án › Tổng hợp từ link (spec 29 §12.7): theo dõi link nguồn và đề xuất cập nhật khi trang đổi; đọc Confluence/Google Docs qua OAuth; tổng hợp từ cả thư mục `docs/` của repo.
 - Ảnh trong tài liệu (spec 29 §13): dọn ảnh không còn phiên bản nào dùng; trích ảnh nhúng trong Word/PDF tải lên thành ảnh của tài liệu.
-- Tích hợp SonarQube / SonarLint vào CodePulse (user 2026-11-12, tạm hoãn): cần đánh giá phương án tối ưu (đọc kết quả SonarQube Server/Cloud qua API vào review và điểm chất lượng, hay chạy sonar-scanner trong pipeline review) trước khi làm.
+- SonarQube (khi công ty có): đọc `/api/issues/search` vào review như Semgrep (spec 07 phương án A); artifact Code Quality của GitLab (phương án D). Tính finding tĩnh vào điểm sau khi đo tỉ lệ “AI đồng ý”.
 - Đăng nhập bằng mật khẩu cho người không có tài khoản GitLab: người dùng quyết định KHÔNG làm (2026-11-12) — bắt buộc đăng nhập qua GitLab.

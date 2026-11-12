@@ -58,7 +58,14 @@ from app.models.project_docs import (
     ProjectDocumentLink,
     ProjectDocumentVersion,
 )
-from app.models.review import FindingClosure, FindingDispute, LlmHealth, Review, ReviewFinding
+from app.models.review import (
+    FindingClosure,
+    FindingDispute,
+    LlmHealth,
+    Review,
+    ReviewFinding,
+    ReviewStaticFinding,
+)
 from app.models.rule_files import ReviewRuleFile
 from app.models.secrets import AppSetting, LlmAccount, StoredSecret
 from app.models.source import BusinessProject, Connection, Project, ProjectGrant, RawGitlab
@@ -135,6 +142,7 @@ __all__ = [
     "ReviewKnowledge",
     "ReviewKnowledgeEdit",
     "ReviewRuleFile",
+    "ReviewStaticFinding",
     "StoredSecret",
     "Team",
     "TeamMember",

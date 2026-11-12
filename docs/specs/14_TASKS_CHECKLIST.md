@@ -57,7 +57,7 @@
 - [ ] **Demo**: nhận báo cáo tuần thật qua Slack/email
 
 ## Phase 6 – Mở rộng (tuỳ chọn)
-- [ ] 6.1 Semgrep / Gitleaks / SonarQube (07)
+- [x] 6.1 Semgrep / Gitleaks (07, phương án C, user 2026-11-12: gợi ý cho AI, chưa tính điểm); SonarQube để sau khi có
 - [ ] 6.2 Inline discussion trên MR cho critical/high
 - [ ] 6.3 AI tóm tắt "điểm mạnh / cần cải thiện" mỗi tháng cho từng dev
 - [ ] 6.4 Collector GitHub (implement interface `Collector`)

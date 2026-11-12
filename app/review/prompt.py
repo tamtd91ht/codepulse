@@ -111,6 +111,8 @@ class ReviewTarget:
     guidance: str = ""  # shared .claude files chosen for this change (app/review/claude_kit.py)
     # docs/specs/22 §4: the dự án's criteria sets, rendered by render_criteria ("": none).
     criteria: str = ""
+    # docs/specs/07: what Gitleaks / Semgrep found on the changed lines (render_hints; "": none).
+    static: str = ""
 
 
 MAX_CRITERIA_CHARS = 20_000
@@ -156,8 +158,10 @@ def render_criteria(sets: list[CriteriaPromptSet]) -> str:
 
 
 def criteria_section(target: ReviewTarget) -> str:
-    """The TIÊU CHÍ block followed by a blank line, or nothing (the prompt then reads as before)."""
-    return f"{target.criteria}\n\n" if target.criteria else ""
+    """The TIÊU CHÍ block and the static-analysis hints, each followed by a blank line, or
+    nothing (the prompt then reads as before)."""
+    out = f"{target.criteria}\n\n" if target.criteria else ""
+    return out + (f"{target.static}\n\n" if target.static else "")
 
 
 def knowledge_sections(target: ReviewTarget) -> tuple[str, str]:

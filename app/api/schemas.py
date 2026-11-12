@@ -123,6 +123,7 @@ class ProjectOut(ORM):
     review_rules: str | None = None
     review_rules_paths: str | None = None
     deep_review: bool = True
+    static_analysis: bool = True  # docs/specs/07
     knowledge_auto_refresh: bool = False  # docs/specs/19 §3.4
     production_environment: str | None = None  # docs/specs/20 D2
     review_branch: str | None = None  # NULL: default branch; "*": every branch
@@ -220,6 +221,7 @@ class ProjectPatch(BaseModel):
     # Comma/newline separated paths inside the repo, read on the default branch (max 10).
     review_rules_paths: str | None = Field(default=None, max_length=2000)
     deep_review: bool | None = None  # docs/specs/18
+    static_analysis: bool | None = None  # docs/specs/07: Gitleaks / Semgrep hints
     knowledge_auto_refresh: bool | None = None  # docs/specs/19 §3.4
     # docs/specs/17 §Nhánh review: "" clears (default branch), "*" every branch.
     review_branch: str | None = Field(default=None, max_length=255)
@@ -620,8 +622,29 @@ class MrJiraOut(BaseModel):
     expected: bool  # the task source is Jira: an MR should name its issue
 
 
+class StaticFindingOut(BaseModel):
+    """What Gitleaks / Semgrep found on the change's added lines (docs/specs/07): a hint, not
+    counted in the score."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    tool: str
+    rule_id: str
+    severity: str
+    category: str
+    file_path: str
+    line_start: int
+    line_end: int
+    title: str
+    message: str | None
+    code_excerpt: str | None
+    confirmed_by_ai: bool
+
+
 class ReviewDetail(ReviewOut):
     findings: list[FindingOut]
+    static_findings: list[StaticFindingOut] = []
     project: str | None
     web_url: str | None
     history: list[ReviewRound] = []  # every review of this MR / commit, oldest first

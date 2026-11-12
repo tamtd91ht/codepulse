@@ -59,6 +59,7 @@ from app.models import (
     Project,
     Review,
     ReviewFinding,
+    ReviewStaticFinding,
     TeamMember,
     User,
 )
@@ -415,6 +416,13 @@ def get_review(
     return {
         **ReviewOut.model_validate(review).model_dump(),
         "findings": findings,
+        "static_findings": list(
+            session.scalars(
+                select(ReviewStaticFinding)
+                .where(ReviewStaticFinding.review_id == review.id)
+                .order_by(ReviewStaticFinding.id)
+            )
+        ),
         "project": project.path_with_namespace if project else None,
         "web_url": url,
         "history": _history(session, review),

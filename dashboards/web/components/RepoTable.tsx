@@ -7,10 +7,15 @@ import { IconButton } from "@/components/icons";
 import { date, localDay } from "@/lib/format";
 import type { Project } from "@/lib/types";
 
-export type Flag = "review_enabled" | "deep_review" | "knowledge_auto_refresh" | "post_mr_comment" | "allow_external_llm";
+export type Flag = "review_enabled" | "deep_review" | "static_analysis" | "knowledge_auto_refresh" | "post_mr_comment" | "allow_external_llm";
 export const FLAGS: { key: Flag; label: string; hint: string }[] = [
   { key: "review_enabled", label: "Review", hint: "AI review MR/commit mới" },
   { key: "deep_review", label: "Sâu", hint: "Lượt hai: mở mã nguồn để đối chứng từng finding và tìm lỗi xuyên file (tốn thêm LLM; chỉ có tác dụng khi cờ Review bật)" },
+  {
+    key: "static_analysis",
+    label: "Tĩnh",
+    hint: "Kiểm tra tĩnh: Gitleaks (secret lộ) và Semgrep (lỗi bảo mật, bug) trên dòng thay đổi, làm gợi ý cho AI review; chưa tính điểm",
+  },
   { key: "knowledge_auto_refresh", label: "Tự rà soát", hint: "Push lên nhánh mặc định chạm .claude/ hoặc CLAUDE.md thì tự biên dịch lại tiền đề review (tối đa 1 lần/giờ; tốn LLM)" },
   { key: "post_mr_comment", label: "Comment", hint: "Đăng comment tổng hợp lên MR" },
   { key: "allow_external_llm", label: "LLM", hint: "Cho gửi code ra LLM bên ngoài (thiếu thì không review)" },

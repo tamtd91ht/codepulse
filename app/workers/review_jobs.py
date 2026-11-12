@@ -53,7 +53,10 @@ def review_job_timeout(settings: Settings) -> int:
     checkout and the no-tool fallback. `ReviewSettings.stale_running` is this plus
     STALE_GRACE_S, so a review the worker was killed in is always taken over."""
     return int(
-        settings.review_timeout_s * 3 + settings.verify_max_findings * VERIFY_TIMEOUT_S + 600
+        settings.review_timeout_s * 3
+        + settings.verify_max_findings * VERIFY_TIMEOUT_S
+        + 600
+        + (settings.static_timeout_s * 2 if settings.static_analysis else 0)
     )
 
 
@@ -100,6 +103,9 @@ def review_settings(settings: Settings, session: Session | None = None) -> Revie
         llm_probe_interval_min=int(
             edited.get("llm_probe_interval_min", settings.llm_probe_interval_min)
         ),
+        static_analysis=settings.static_analysis,
+        semgrep_config=settings.semgrep_config,
+        static_timeout_s=float(settings.static_timeout_s),
     )
 
 

@@ -11081,3 +11081,59 @@ button.ghost.danger:hover:not(:disabled) {
 .docs-more .llm-acc-menu button.bad {
   color: var(--danger);
 }
+
+/* Kiểm tra tĩnh (docs/specs/07) */
+.static-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.static-list li {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.static-list li.secret {
+  border-color: var(--danger);
+}
+.static-row {
+  width: 100%;
+  height: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  text-align: left;
+  white-space: normal;
+  font-weight: 400;
+}
+.static-row:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.static-title {
+  font-weight: 600;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.static-detail {
+  padding: 0 12px 10px;
+  display: grid;
+  gap: 6px;
+}
+.static-detail p {
+  margin: 0;
+}
+.static-code {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: 12px;
+  overflow-x: auto;
+}
