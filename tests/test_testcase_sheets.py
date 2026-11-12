@@ -69,6 +69,17 @@ def test_header_found_below_a_title_and_columns_guessed() -> None:
         ("Trạng thái", None),
         ("Người test", None),
         ("Actual result", None),
+        ("ID", "case_id"),
+        ("Mã gốc", "code"),
+        ("Section", "section"),
+        ("Template", "template"),
+        ("Type", "type"),
+        ("Estimate", "estimate"),
+        ("References", "jira_keys"),
+        ("Milestone", "milestone"),
+        ("Steps (Step)", "step_content"),
+        ("Steps (Expected Result)", "step_expected"),
+        ("Expected Result", "expected"),
     ],
 )
 def test_header_words(header: str, field: str | None) -> None:
@@ -92,6 +103,7 @@ def test_rows_become_cases_with_merged_sections_and_values() -> None:
     assert first["code"] == "TC1" and first["priority"] == "high" and first["kind"] == "automated"
     assert first["steps"] == "1. Nhập\n2. Bấm" and first["jira_keys"] == ["OMX-12"]
     assert second["priority"] == "critical" and second["tags"] == ["Smoke"]
+    assert second["type"] == "smoke"  # "Loại" holding a TestRail type sets it too
     assert second["kind"] == "manual" and second["jira_keys"] == ["OMX-13", "OMX-12"]
     assert third["priority"] == "low"
 
@@ -124,13 +136,19 @@ def test_xlsx_with_links_and_csv_with_bom() -> None:
         sheets.read_file("tc.pdf", b"%PDF")
 
 
+CTX = sheets.Context(paths={1: "Auth", 2: "Auth > Web"})
+
+
 def _case(**kw: object) -> TestCase:
     base: dict[str, object] = {
         "id": 1,
         "suite_id": 1,
         "code": "TC-1",
         "title": "Đăng nhập",
-        "section": "Auth",
+        "section_id": 1,
+        "template": "text",
+        "steps_list": [],
+        "type": "functional",
         "priority": "high",
         "kind": "manual",
         "status": "approved",
@@ -144,19 +162,23 @@ def _case(**kw: object) -> TestCase:
 
 def test_export_round_trips_and_never_writes_a_formula() -> None:
     cases = [_case(steps='=HYPERLINK("x")', expected="- vào trang chủ")]
-    data = sheets.write_xlsx([("Đăng/nhập", cases)], {1: "!7: Jira OMX-1"})
+    data = sheets.write_xlsx([("Đăng/nhập", cases)], {1: "!7: Jira OMX-1"}, CTX)
     book = load_workbook(io.BytesIO(data))
     ws = book.worksheets[0]
     assert ws.title == "Đăng nhập"
     head = [c.value for c in ws[1]]
-    assert head[:3] == ["Mã", "Chức năng", "Tiêu đề"] and "Kết quả thực tế" in head
-    row = [c.value for c in ws[2]]
+    assert head[:4] == ["ID", "Mã gốc", "Thư mục", "Tiêu đề"] and "Kết quả thực tế" in head
+    row = dict(zip(head, [c.value for c in ws[2]], strict=True))
     # Written as text, never as a formula.
-    assert row[4] == '=HYPERLINK("x")' and ws.cell(2, 5).data_type == "s"
-    assert row[0] == "TC-1" and row[6] == "- vào trang chủ"
-    assert row[7] == "Cao" and "!7: Jira OMX-1" in row
-    csv_data = sheets.write_csv([("Auth", cases)])
+    steps_col = head.index("Các bước") + 1
+    assert row["Các bước"] == '=HYPERLINK("x")' and ws.cell(2, steps_col).data_type == "s"
+    assert row["ID"] == "C1" and row["Mã gốc"] == "TC-1" and row["Thư mục"] == "Auth"
+    assert row["Kết quả mong đợi"] == "- vào trang chủ"
+    assert row["Ưu tiên"] == "Cao" and row["Lý do cần test lại"] == "!7: Jira OMX-1"
+    csv_data = sheets.write_csv([("Auth", cases)], None, CTX)
     assert csv_data.startswith("﻿".encode()) and b"'=HYPERLINK" in csv_data
+    trail = sheets.write_testrail([("Auth", cases)], CTX)
+    assert b"'=HYPERLINK" in trail
 
 
 def test_export_then_import_keeps_every_field() -> None:
@@ -168,15 +190,19 @@ def test_export_then_import_keeps_every_field() -> None:
         tags=["smoke", "regression"],
         jira_keys=["OMX-1"],
         code_paths=["src/auth/**"],
+        type="security",
+        estimate_s=5400,
     )
     for data, read in (
-        (sheets.write_xlsx([("Auth", [case])], {1: "!7"}), sheets.read_xlsx),
-        (sheets.write_csv([("Auth", [case])], {1: "!7"}), sheets.read_csv),
+        (sheets.write_xlsx([("Auth", [case])], {1: "!7"}, CTX), sheets.read_xlsx),
+        (sheets.write_csv([("Auth", [case])], {1: "!7"}, CTX), sheets.read_csv),
     ):
         [back] = read(data)
         sheets.guess(back)
         [got] = sheets.to_cases(back.rows, back.header_row, back.mapping).cases
         assert got["title"] == "Đăng nhập" and got["section"] == "Auth" and got["code"] == "TC-1"
+        assert got["case_id"] == 1 and got["template"] == "text"
+        assert got["type"] == "security" and got["estimate_s"] == 5400
         assert got["tags"] == ["smoke", "regression"] and got["kind"] == "automated"
         assert got["automation"] == "tests/test_login.py::test_ok"
         assert got["jira_keys"] == ["OMX-1"] and got["code_paths"] == ["src/auth/**"]
@@ -187,6 +213,166 @@ def test_a_partial_sheet_sets_only_its_columns() -> None:
     rows = [["Mã", "Tiêu đề"], ["TC-1", "Đăng nhập"]]
     [got] = sheets.to_cases(rows, 0, {"code": 0, "title": 1}).cases
     assert got == {"code": "TC-1", "title": "Đăng nhập"}
+
+
+STEPS = [
+    {"content": "Mở trang\nđăng nhập", "expected": "Hiện form"},
+    {"content": "Nhập email", "expected": ""},
+    {"content": "Bấm Đăng nhập", "expected": "Vào trang chủ"},
+]
+
+
+def test_steps_template_round_trips_through_every_format() -> None:
+    case = _case(template="steps", steps_list=STEPS, section_id=2, steps="cũ", expected="cũ")
+    xlsx, csv_ = sheets.write_xlsx([("A", [case])], None, CTX), sheets.write_csv([("A", [case])])
+    trail = sheets.write_testrail([("A", [case])], CTX)
+    for data, read in ((xlsx, sheets.read_xlsx), (csv_, sheets.read_csv), (trail, sheets.read_csv)):
+        [back] = read(data)
+        sheets.guess(back)
+        [got] = sheets.to_cases(back.rows, back.header_row, back.mapping).cases
+        assert got["template"] == "steps" and got["steps_list"] == STEPS
+        assert "steps" not in got and "expected" not in got  # the text fields are left alone
+    [back] = sheets.read_csv(trail)
+    assert back.rows[0] == list(sheets.TESTRAIL_COLUMNS)
+    assert len(back.rows) == 4  # header + one row per step (multi-row)
+    assert back.rows[1][:4] == ["C1", "Đăng nhập", "Auth > Web", "Test Case (Steps)"]
+    assert back.rows[2][:12] == [""] * 12 and back.rows[2][12] == "Nhập email"
+
+
+def test_testrail_csv_import_with_sections_and_continued_steps() -> None:
+    rows = [
+        list(sheets.TESTRAIL_COLUMNS),
+        [
+            "",
+            "Đăng nhập",
+            "Auth > Web",
+            "Test Case (Steps)",
+            "Smoke & Sanity",
+            "Critical",
+            "1h 30m",
+            "OMX-1, OMX-2",
+            "Sprint 1",
+            "Có tài khoản",
+            "",
+            "",
+            "Mở trang",
+            "Hiện form",
+        ],
+        ["", "", "", "", "", "", "", "", "", "", "", "", "Bấm nút", "Vào"],
+        [
+            "C42",
+            "Đăng xuất",
+            "Auth",
+            "Test Case (Text)",
+            "Functional",
+            "Low",
+            "5",
+            "",
+            "",
+            "",
+            "1. Bấm\n2. Xác nhận",
+            "1. Hỏi lại\n2. Ra trang đăng nhập",
+            "",
+            "",
+        ],
+    ]
+    sheet = sheets.guess(sheets.Sheet("tr", rows))
+    first, second = sheets.to_cases(sheet.rows, sheet.header_row, sheet.mapping).cases
+    assert first["section"] == "Auth > Web" and first["type"] == "smoke"
+    assert first["priority"] == "critical" and first["estimate_s"] == 5400
+    assert first["jira_keys"] == ["OMX-1", "OMX-2"] and first["milestone"] == "Sprint 1"
+    assert first["steps_list"] == [
+        {"content": "Mở trang", "expected": "Hiện form"},
+        {"content": "Bấm nút", "expected": "Vào"},
+    ]
+    # Template "text" given: numbered texts stay text.
+    assert second["case_id"] == 42 and second["template"] == "text"
+    assert second["steps"] == "1. Bấm\n2. Xác nhận" and second["estimate_s"] == 300
+
+
+def test_numbered_steps_and_results_of_the_same_count_become_steps() -> None:
+    rows = [
+        ["Tiêu đề", "Các bước", "Kết quả mong đợi"],
+        ["A", "1. Mở\n2. Bấm", "1. Hiện form\n2. Vào"],
+        ["B", "1. Mở\n2. Bấm", "Vào"],
+    ]
+    a, b = sheets.to_cases(rows, 0, {"title": 0, "steps": 1, "expected": 2}).cases
+    assert a["template"] == "steps" and a["steps_list"] == [
+        {"content": "Mở", "expected": "Hiện form"},
+        {"content": "Bấm", "expected": "Vào"},
+    ]
+    assert "template" not in b and b["steps"] == "1. Mở\n2. Bấm"
+
+
+def test_case_fields_steps_and_estimate() -> None:
+    from app.testcases import content
+    from app.testcases import service as tc
+
+    assert content.parse_estimate("1h 30m") == 5400 and content.parse_estimate("45") == 2700
+    assert content.format_estimate(5430) == "1h 30m 30s"
+    assert tc.clean({"title": "a", "estimate": "2m"})["estimate_s"] == 120
+    assert tc.clean({"title": "a", "estimate": ""})["estimate_s"] is None
+    with pytest.raises(tc.FieldError):
+        tc.clean({"title": "a", "estimate": "sớm thôi"})
+    got = tc.clean(
+        {"title": "a", "steps_list": [{"content": " x ", "expected": None}, {}, {"shared": 3}]}
+    )
+    assert got["steps_list"] == [{"content": "x", "expected": ""}, {"shared": 3}]
+    for bad in ("x", [1], [{"content": "a" * 5001}], [{"content": "a"}] * 101, [{"shared": 0}]):
+        with pytest.raises(tc.FieldError):
+            tc.clean({"title": "a", "steps_list": bad})
+    with pytest.raises(tc.FieldError):
+        tc.clean({"title": "a", "type": "nope"})
+    steps_case = _case(template="steps", steps_list=[])
+    assert tc.problems(steps_case) == ["thiếu các bước"]
+    steps_case.steps_list = [{"content": "a", "expected": ""}]
+    assert tc.problems(steps_case) == ["thiếu kết quả mong đợi"]
+    steps_case.steps_list = [{"content": "a", "expected": ""}, {"shared": 9}]
+    assert tc.problems(steps_case) == []
+
+
+@pytest.mark.parametrize(
+    ("text", "seconds"),
+    [
+        ("30 giây", 30),
+        ("30 giay", 30),
+        ("30s", 30),
+        ("45 sec", 45),
+        ("5 phút", 300),
+        ("5 phut", 300),
+        ("5ph", 300),
+        ("5 min", 300),
+        ("2 giờ", 7200),
+        ("2 gio", 7200),
+        ("1 hr", 3600),
+        ("1h 30m 15s", 5415),
+        ("1,5h", 5400),
+        ("1:30", 5400),
+        ("10", 600),
+        ("5 apples", None),
+        ("2 days", None),
+        ("1h trở lên", None),
+        ("abc", None),
+        ("0", None),
+    ],
+)
+def test_parse_estimate_units(text: str, seconds: int | None) -> None:
+    from app.testcases import content
+
+    assert content.parse_estimate(text) == seconds
+
+
+def test_import_template_files_read_back() -> None:
+    for fmt, read in (("xlsx", sheets.read_xlsx), ("testrail", sheets.read_csv)):
+        [back] = read(sheets.template_file(fmt))
+        sheets.guess(back)
+        cases = sheets.to_cases(back.rows, back.header_row, back.mapping).cases
+        assert [c["title"] for c in cases] == [
+            "Đăng nhập với tài khoản hợp lệ",
+            "Đăng nhập sai mật khẩu",
+        ]
+        assert cases[0]["template"] == "steps" and len(cases[0]["steps_list"]) == 3
+        assert cases[0]["section"] == "Đăng nhập > Web" and "case_id" not in cases[0]
 
 
 def test_control_characters_and_wild_globs() -> None:

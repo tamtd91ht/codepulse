@@ -6,12 +6,12 @@ several dự án is read and edited from any of them; only its home deletes it.
 """
 
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -33,13 +33,17 @@ from app.models import (
     TestAiRun,
     TestCase,
     TestCaseRevision,
+    TestMilestone,
+    TestSection,
+    TestSharedStep,
     TestSuite,
     TestSuiteLink,
 )
-from app.models.testcases import CASE_STATUSES, PRIORITIES
+from app.models.testcases import CASE_STATUSES, CASE_TYPES, PRIORITIES
+from app.testcases import content, sheets
 from app.testcases import impact as imp
 from app.testcases import service as tc
-from app.testcases import sheets
+from app.testcases.runs import refresh_open_snapshots
 
 router = APIRouter(tags=["testcases"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -47,6 +51,23 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 Priority = Literal["critical", "high", "medium", "low"]
 Kind = Literal["manual", "automated"]
 Status = Literal["draft", "approved", "obsolete"]
+Template = Literal["text", "steps"]
+CaseType = Literal[
+    "acceptance",
+    "accessibility",
+    "automated",
+    "compatibility",
+    "destructive",
+    "functional",
+    "other",
+    "performance",
+    "regression",
+    "security",
+    "smoke",
+    "usability",
+]
+if set(get_args(CaseType)) != set(CASE_TYPES):  # a type added in one place only
+    raise RuntimeError("CaseType must name every CASE_TYPES entry")
 JIRA_DAYS = 90
 REGRESSION_DAYS = 14
 MAX_IMPORT_CELL = 20_000
@@ -75,7 +96,7 @@ class SuitePatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=tc.NAME_MAX)
     description: str | None = Field(default=None, max_length=2000)
     archived: bool | None = None
-    position: int | None = None
+    position: int | None = Field(default=None, ge=0, le=1_000_000)
 
 
 class SuiteOut(BaseModel):
@@ -103,21 +124,28 @@ class ProjectsIn(BaseModel):
 
 
 class CaseFields(BaseModel):
-    code: str | None = Field(default=None, max_length=tc.CODE_MAX)
-    section: str | None = Field(default=None, max_length=tc.SECTION_MAX)
+    """What the editor sends (docs/specs/30 §14.1): never a code (keys are C<id>; `code` is the
+    sheet's own, set by imports only); an unknown field such as `code` is ignored."""
+
+    section_id: int | None = None
     title: str | None = Field(default=None, max_length=tc.TITLE_MAX)
+    template: Template | None = None
     preconditions: str | None = Field(default=None, max_length=tc.TEXT_MAX)
     steps: str | None = Field(default=None, max_length=tc.TEXT_MAX)
     test_data: str | None = Field(default=None, max_length=tc.TEXT_MAX)
     expected: str | None = Field(default=None, max_length=tc.TEXT_MAX)
+    steps_list: list[dict[str, Any]] | None = Field(default=None, max_length=content.STEP_MAX)
     notes: str | None = Field(default=None, max_length=tc.TEXT_MAX)
     priority: Priority | None = None
+    type: CaseType | None = None
     kind: Kind | None = None
     automation: str | None = Field(default=None, max_length=tc.AUTOMATION_MAX)
     tags: list[str] | None = Field(default=None, max_length=tc.LIST_MAX)
     jira_keys: list[str] | None = Field(default=None, max_length=tc.LIST_MAX)
     code_paths: list[str] | None = Field(default=None, max_length=tc.LIST_MAX)
     status: Status | None = None
+    milestone_id: int | None = None
+    estimate: str | None = Field(default=None, max_length=tc.ESTIMATE_MAX)
 
 
 class CaseIn(CaseFields):
@@ -131,16 +159,22 @@ class CasePatch(CaseFields):
 
 class CaseOut(BaseModel):
     id: int
+    key: str  # C<id>
     suite_id: int
-    code: str
-    section: str | None
+    code: str | None  # the sheet's code it was imported with ("Mã gốc")
+    section_id: int | None
+    section: str | None  # the section's path "A > B"
     title: str
+    template: str
     preconditions: str | None
     steps: str | None
     test_data: str | None
     expected: str | None
+    steps_list: list[dict[str, Any]]
+    steps_view: list[dict[str, Any]]  # shared steps expanded
     notes: str | None
     priority: str
+    type: str
     kind: str
     automation: str | None
     tags: list[str]
@@ -150,6 +184,9 @@ class CaseOut(BaseModel):
     source: str
     revision: int
     problems: list[str]
+    estimate_s: int | None
+    estimate: str | None
+    milestone_id: int | None
     updated_at: str | None
 
 
@@ -172,17 +209,51 @@ class CaseDetail(CaseOut):
 class CaseList(BaseModel):
     items: list[CaseOut]
     total: int
-    sections: list[str]
     tags: list[str]
     can_edit: bool
 
 
 class BulkIn(BaseModel):
     ids: list[int] = Field(min_length=1, max_length=500)
-    action: Literal["status", "priority", "move", "delete"]
+    action: Literal["status", "priority", "move", "delete", "section", "type", "milestone"]
     status: Status | None = None
     priority: Priority | None = None
     suite_id: int | None = None
+    section_id: int | None = None  # action "section": None = the suite's root
+    type: CaseType | None = None
+    milestone_id: int | None = None  # action "milestone": None = none
+
+
+class SectionOut(BaseModel):
+    id: int
+    suite_id: int
+    parent_id: int | None
+    name: str
+    description: str | None
+    position: int
+    depth: int
+    path: str
+    cases: int  # directly inside, not obsolete
+    total: int  # with every section below
+
+
+class SectionIn(BaseModel):
+    suite_id: int
+    parent_id: int | None = None
+    name: str = Field(min_length=1, max_length=tc.SECTION_MAX)
+    description: str | None = Field(default=None, max_length=tc.SECTION_DESCRIPTION_MAX)
+
+
+class SectionPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=tc.SECTION_MAX)
+    description: str | None = Field(default=None, max_length=tc.SECTION_DESCRIPTION_MAX)
+    parent_id: int | None = None  # given (even null): moved there
+    position: int | None = Field(default=None, ge=0, le=1_000_000)
+
+
+class SectionDeleted(BaseModel):
+    sections: int
+    cases: int
 
 
 class BulkOut(BaseModel):
@@ -313,19 +384,26 @@ class RegressionOut(BaseModel):
 # -- helpers ---------------------------------------------------------------------------------------
 
 
-def _case_out(case: TestCase) -> CaseOut:
+def _case_out(case: TestCase, paths: dict[int, str], shared: dict[int, TestSharedStep]) -> CaseOut:
+    view = content.expand_steps(case.steps_list, shared) if case.template == "steps" else []
     return CaseOut(
         id=case.id,
+        key=content.key("case", case.id) or "",
         suite_id=case.suite_id,
         code=case.code,
-        section=case.section,
+        section_id=case.section_id,
+        section=paths.get(case.section_id) if case.section_id else None,
         title=case.title,
+        template=case.template,
         preconditions=case.preconditions,
         steps=case.steps,
         test_data=case.test_data,
         expected=case.expected,
+        steps_list=list(case.steps_list or []),
+        steps_view=view,
         notes=case.notes,
         priority=case.priority,
+        type=case.type,
         kind=case.kind,
         automation=case.automation,
         tags=list(case.tags or []),
@@ -334,9 +412,30 @@ def _case_out(case: TestCase) -> CaseOut:
         status=case.status,
         source=case.source,
         revision=case.revision,
-        problems=tc.problems(case),
+        problems=tc.problems(case, shared),
+        estimate_s=case.estimate_s,
+        estimate=content.format_estimate(case.estimate_s),
+        milestone_id=case.milestone_id,
         updated_at=_iso(case.updated_at),
     )
+
+
+def case_outs(session: Session, cases: list[TestCase]) -> list[CaseOut]:
+    """Cases as shown, with their section paths and shared steps read once for all."""
+    paths = content.section_paths(session, {c.suite_id for c in cases})
+    shared = content.shared_map(
+        session, [i for c in cases for i in content.shared_ids(c.steps_list)]
+    )
+    return [_case_out(c, paths, shared) for c in cases]
+
+
+def _check(
+    session: Session, suite: TestSuite, values: dict[str, Any], current: TestCase | None = None
+) -> dict[str, Any]:
+    try:
+        return tc.check_refs(session, suite, values, current=current)
+    except tc.FieldError as exc:
+        raise HTTPException(422, str(exc)) from None
 
 
 def _suite_out(
@@ -574,12 +673,16 @@ def list_cases(
     priority: Priority | None = None,
     status: Status | None = None,
     kind: Kind | None = None,
-    section: Annotated[str | None, Query(max_length=tc.SECTION_MAX)] = None,
+    section_id: int | None = None,
+    type: CaseType | None = None,
+    milestone_id: int | None = None,
     tag: Annotated[str | None, Query(max_length=tc.TAG_MAX)] = None,
     problem: bool = False,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 200,
 ) -> CaseList:
+    """`section_id`: the cases of that section and every one below it. `q` also finds a case by
+    its key ("C12")."""
     bp = tc.project_for(session, principal, business_project_id)
     if suite_id is not None:
         suite = tc.suite_for(session, principal, suite_id)
@@ -589,15 +692,6 @@ def list_cases(
     else:
         scope = [s.id for s in _project_suites(session, bp.id)]
     base = select(TestCase).where(TestCase.suite_id.in_(scope or [0]))
-    sections = sorted(
-        {
-            s
-            for s in session.scalars(
-                select(TestCase.section).where(TestCase.suite_id.in_(scope or [0])).distinct()
-            )
-            if s
-        }
-    )[:300]
     tags = sorted(
         set(
             session.scalars(
@@ -608,8 +702,12 @@ def list_cases(
         )
     )[:200]
     query = base
-    for word in fold(q or "").split()[:8]:
-        query = query.where(TestCase.search.contains(word, autoescape=True))
+    case_key = content.case_id_of(q or "")
+    if case_key is not None:
+        query = query.where(TestCase.id == case_key)
+    else:
+        for word in fold(q or "").split()[:8]:
+            query = query.where(TestCase.search.contains(word, autoescape=True))
     if priority:
         query = query.where(TestCase.priority == priority)
     if status:
@@ -618,27 +716,30 @@ def list_cases(
         query = query.where(TestCase.status != "obsolete")
     if kind:
         query = query.where(TestCase.kind == kind)
-    if section:
-        query = query.where(TestCase.section == section)
+    if type:
+        query = query.where(TestCase.type == type)
+    if milestone_id is not None:
+        query = query.where(TestCase.milestone_id == milestone_id)
+    if section_id is not None:
+        section = session.get(TestSection, section_id)
+        if section is None or section.suite_id not in scope:
+            raise HTTPException(404, "thư mục không thuộc bộ testcase này")
+        query = query.where(TestCase.section_id.in_(tc.section_scope(session, section)))
     if tag:
         query = query.where(TestCase.tags.contains([tag]))
     if problem:
-        query = query.where(
-            or_(
-                func.coalesce(func.trim(TestCase.steps), "") == "",
-                func.coalesce(func.trim(TestCase.expected), "") == "",
-            )
-        )
+        query = query.where(tc.problem_clause())
     total = session.scalar(select(func.count()).select_from(query.subquery())) or 0
-    rows = session.scalars(
-        query.order_by(TestCase.suite_id, TestCase.position, TestCase.id)
-        .offset(offset)
-        .limit(limit)
+    rows = list(
+        session.scalars(
+            query.order_by(TestCase.suite_id, TestCase.position, TestCase.id)
+            .offset(offset)
+            .limit(limit)
+        )
     )
     return CaseList(
-        items=[_case_out(c) for c in rows],
+        items=case_outs(session, rows),
         total=int(total),
-        sections=sections,
         tags=tags,
         can_edit=tc.may_edit(principal, bp.id),
     )
@@ -649,13 +750,10 @@ def create_case(body: CaseIn, principal: CurrentPrincipal, session: SessionDep) 
     suite = tc.suite_for(session, principal, body.suite_id, edit=True)
     values = _clean(body.model_dump(exclude={"suite_id"}, exclude_none=True), partial=False)
     values.setdefault("status", "draft")
-    session.refresh(suite, with_for_update=True)  # one code chooser at a time
-    try:
-        case = tc.create(session, suite, values, user_id=principal.user_id, source="manual")
-    except tc.FieldError as exc:
-        raise HTTPException(422, str(exc)) from None
+    _check(session, suite, values)
+    case = tc.create(session, suite, values, user_id=principal.user_id, source="manual")
     session.commit()
-    return _case_out(case)
+    return case_outs(session, [case])[0]
 
 
 def _detail(session: Session, principal: Principal, case: TestCase, suite: TestSuite) -> CaseDetail:
@@ -671,7 +769,7 @@ def _detail(session: Session, principal: Principal, case: TestCase, suite: TestS
         session, {case.created_by, case.updated_by, *(r.changed_by for r in revisions)}
     )
     return CaseDetail(
-        **_case_out(case).model_dump(),
+        **case_outs(session, [case])[0].model_dump(),
         can_edit=tc.may_edit_suite(session, principal, suite),
         created_by=people.get(case.created_by or 0),
         updated_by=people.get(case.updated_by or 0),
@@ -706,6 +804,7 @@ def update_case(
             409, "testcase vừa được người khác sửa; tải lại để xem bản mới rồi sửa tiếp"
         )
     values = _clean(body.model_dump(exclude={"revision"}, exclude_unset=True), partial=True)
+    _check(session, suite, values, current=case)
     try:
         tc.change(session, case, values, user_id=principal.user_id, via="editor")
     except tc.FieldError as exc:
@@ -722,9 +821,10 @@ def delete_case(case_id: int, principal: CurrentPrincipal, session: SessionDep) 
         principal.user_id,
         "testcase.delete",
         f"test_case:{case.id}",
-        code=case.code,
+        key=content.key("case", case.id),
         title=case.title[:200],
     )
+    refresh_open_snapshots(session, [case.id])  # open runs keep the case as it was
     session.delete(case)
     session.commit()
 
@@ -742,7 +842,12 @@ def restore_case(
     )
     if rev is None:
         raise HTTPException(404, "không có bản này trong lịch sử")
-    values = _clean({k: v for k, v in rev.snapshot.items() if k in tc.FIELDS}, partial=True)
+    try:
+        values = tc.clean({k: v for k, v in rev.snapshot.items() if k in tc.RESTORED}, partial=True)
+    except tc.FieldError as exc:
+        raise HTTPException(409, str(exc)) from None
+    # A section, milestone or shared step gone since: dropped rather than refused.
+    tc.check_refs(session, suite, values, lenient=True)
     try:
         tc.change(session, case, values, user_id=principal.user_id, via="restore")
     except tc.FieldError as exc:
@@ -766,6 +871,16 @@ def bulk(body: BulkIn, principal: CurrentPrincipal, session: SessionDep) -> Bulk
             raise HTTPException(404, "có testcase không còn")
         if not tc.may_edit_suite(session, principal, suite):
             raise HTTPException(403, "có testcase bạn không có quyền sửa")
+    if body.action == "section":
+        # The section endpoints lock the suite for every tree change (and a section delete then
+        # removes cases): locked first, the same order, so a section deleted meanwhile is seen
+        # as gone (422) rather than a foreign key error.
+        session.execute(
+            select(TestSuite.id)
+            .where(TestSuite.id.in_(set(found.values())))
+            .order_by(TestSuite.id)
+            .with_for_update()
+        )
     cases = list(
         session.scalars(
             select(TestCase)
@@ -778,6 +893,7 @@ def bulk(body: BulkIn, principal: CurrentPrincipal, session: SessionDep) -> Bulk
         raise HTTPException(409, "testcase vừa bị chuyển hoặc xoá; tải lại rồi thử lại")
     changed = 0
     if body.action == "delete":
+        refresh_open_snapshots(session, [c.id for c in cases])
         for case in cases:
             session.delete(case)
         changed = len(cases)
@@ -787,28 +903,185 @@ def bulk(body: BulkIn, principal: CurrentPrincipal, session: SessionDep) -> Bulk
             raise HTTPException(422, "chọn bộ testcase đích")
         target = tc.suite_for(session, principal, body.suite_id, edit=True)
         session.refresh(target, with_for_update=True)
-        codes = tc.Codes(session, target.id)
+        taken = {
+            c
+            for c in session.scalars(select(TestCase.code).where(TestCase.suite_id == target.id))
+            if c
+        }
+        target_projects = set(tc.projects_of(session, target))
+        shared_ok = {
+            i
+            for i, s in content.shared_map(
+                session, [i for c in cases for i in content.shared_ids(c.steps_list)]
+            ).items()
+            if s.business_project_id in target_projects
+        }
         position = tc.next_position(session, target.id)
         for case in cases:
             if case.suite_id == target.id:
                 continue
             tc.record(session, case, user_id=principal.user_id, via="bulk")
             case.suite_id = target.id
-            case.code = codes.free(case.code)
+            case.section_id = None  # the sections are the old suite's
+            if case.code in taken:
+                case.code = None
+            elif case.code:
+                taken.add(case.code)
+            if case.milestone_id is not None:
+                milestone = session.get(TestMilestone, case.milestone_id)
+                if milestone is None or milestone.business_project_id not in target_projects:
+                    case.milestone_id = None
+            if any(i not in shared_ok for i in content.shared_ids(case.steps_list)):
+                # Shared steps of a dự án the target is not in: copied in as plain steps.
+                block = content.shared_map(session, content.shared_ids(case.steps_list))
+                kept: list[dict[str, Any]] = []
+                for step in case.steps_list or []:
+                    if "shared" in step and step["shared"] not in shared_ok:
+                        kept += [
+                            {"content": s["content"], "expected": s["expected"]}
+                            for s in content.expand_steps([step], block)
+                        ]
+                    else:
+                        kept.append(step)
+                case.steps_list = kept[: content.STEP_MAX]
             case.position = position
             position += 1
             changed += 1
             session.flush()
     else:
-        field_ = "status" if body.action == "status" else "priority"
-        value = body.status if body.action == "status" else body.priority
-        if value is None:
-            raise HTTPException(422, "chọn giá trị")
+        values: dict[str, Any]
+        if body.action == "section":
+            values = {"section_id": body.section_id}
+        elif body.action == "milestone":
+            values = {"milestone_id": body.milestone_id}
+        else:
+            value = {"status": body.status, "priority": body.priority, "type": body.type}[
+                body.action
+            ]
+            if value is None:
+                raise HTTPException(422, "chọn giá trị")
+            values = {body.action: value}
+        suites = {
+            s.id: s
+            for s in session.scalars(select(TestSuite).where(TestSuite.id.in_(set(found.values()))))
+        }
         for case in cases:
-            if tc.change(session, case, {field_: value}, user_id=principal.user_id, via="bulk"):
-                changed += 1
+            try:
+                checked = tc.check_refs(session, suites[case.suite_id], dict(values))
+                if tc.change(session, case, checked, user_id=principal.user_id, via="bulk"):
+                    changed += 1
+            except tc.FieldError as exc:
+                raise HTTPException(422, str(exc)) from None
     session.commit()
     return BulkOut(changed=changed)
+
+
+# -- sections --------------------------------------------------------------------------------------
+
+
+def _section_for(
+    session: Session, principal: Principal, section_id: int, *, edit: bool = False
+) -> tuple[TestSection, TestSuite]:
+    section = session.get(TestSection, section_id)
+    if section is None:
+        raise HTTPException(404, "thư mục không tồn tại")
+    try:
+        suite = tc.suite_for(session, principal, section.suite_id, edit=edit)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise HTTPException(404, "thư mục không tồn tại") from None
+        raise
+    return section, suite
+
+
+def _sections_out(session: Session, suite_id: int) -> list[SectionOut]:
+    return [
+        SectionOut(
+            id=r.section.id,
+            suite_id=r.section.suite_id,
+            parent_id=r.section.parent_id,
+            name=r.section.name,
+            description=r.section.description,
+            position=r.section.position,
+            depth=r.depth,
+            path=r.path,
+            cases=r.cases,
+            total=r.total,
+        )
+        for r in tc.section_tree(session, suite_id)
+    ]
+
+
+def _one_section(session: Session, section: TestSection) -> SectionOut:
+    return next(s for s in _sections_out(session, section.suite_id) if s.id == section.id)
+
+
+@router.get("/testcases/sections", response_model=list[SectionOut])
+def list_sections(
+    principal: CurrentPrincipal, session: SessionDep, suite_id: int
+) -> list[SectionOut]:
+    """The suite's section tree in reading order (each parent, then its sections)."""
+    suite = tc.suite_for(session, principal, suite_id)
+    return _sections_out(session, suite.id)
+
+
+@router.post("/testcases/sections", response_model=SectionOut, status_code=201)
+def create_section(body: SectionIn, principal: CurrentPrincipal, session: SessionDep) -> SectionOut:
+    suite = tc.suite_for(session, principal, body.suite_id, edit=True)
+    session.refresh(suite, with_for_update=True)  # one tree change at a time
+    try:
+        section = tc.create_section(
+            session, suite, parent_id=body.parent_id, name=body.name, description=body.description
+        )
+    except tc.FieldError as exc:
+        raise HTTPException(422, str(exc)) from None
+    session.commit()
+    return _one_section(session, section)
+
+
+@router.patch("/testcases/sections/{section_id:int}", response_model=SectionOut)
+def update_section(
+    section_id: int, body: SectionPatch, principal: CurrentPrincipal, session: SessionDep
+) -> SectionOut:
+    """Rename, describe, move (`parent_id` given, null: the suite's root) or reorder."""
+    section, suite = _section_for(session, principal, section_id, edit=True)
+    session.refresh(suite, with_for_update=True)
+    try:
+        if body.name is not None:
+            section.name = tc.section_name(body.name)
+        if "description" in body.model_fields_set:
+            about = (body.description or "").strip()
+            section.description = about or None
+        if "parent_id" in body.model_fields_set:
+            tc.move_section(session, section, body.parent_id)
+    except tc.FieldError as exc:
+        raise HTTPException(422, str(exc)) from None
+    if body.position is not None:
+        section.position = body.position
+    session.commit()
+    return _one_section(session, section)
+
+
+@router.delete("/testcases/sections/{section_id:int}", response_model=SectionDeleted)
+def delete_section(
+    section_id: int, principal: CurrentPrincipal, session: SessionDep
+) -> SectionDeleted:
+    """The section, every section below it and their cases (TestRail's way)."""
+    section, suite = _section_for(session, principal, section_id, edit=True)
+    session.refresh(suite, with_for_update=True)
+    name = section.name
+    sections, cases = tc.delete_section(session, section)
+    audit(
+        session,
+        principal.user_id,
+        "testcase.section.delete",
+        f"test_section:{section_id}",
+        name=name,
+        sections=sections,
+        cases=cases,
+    )
+    session.commit()
+    return SectionDeleted(sections=sections, cases=cases)
 
 
 # -- coverage --------------------------------------------------------------------------------------
@@ -822,10 +1095,7 @@ def stats(principal: CurrentPrincipal, session: SessionDep, business_project_id:
     by_priority = {p: 0 for p in PRIORITIES}
     automated = problems = 0
     covered_keys: set[str] = set()
-    missing = or_(
-        func.coalesce(func.trim(TestCase.steps), "") == "",
-        func.coalesce(func.trim(TestCase.expected), "") == "",
-    )
+    missing = tc.problem_clause()
     for status_, priority_, kind_, missed, n in session.execute(
         select(TestCase.status, TestCase.priority, TestCase.kind, missing, func.count())
         .where(TestCase.suite_id.in_(scope))
@@ -943,8 +1213,9 @@ async def read_file(
     return await run_in_threadpool(convert)
 
 
-def _key(values: dict[str, Any]) -> str:
-    return fold(f"{values.get('section') or ''}|{values.get('title') or ''}")
+def _key(path: str, title: str) -> str:
+    parts = [p.strip() for p in path.split(">") if p.strip()]
+    return fold(f"{content.PATH_SEP.join(' '.join(p.split()) for p in parts)}|{title}")
 
 
 @router.post("/testcases/import", response_model=ImportOut)
@@ -998,32 +1269,63 @@ def import_sheets(body: ImportIn, principal: CurrentPrincipal, session: SessionD
                 .order_by(TestCase.position, TestCase.id)
             )
         )
-        by_code = {c.code: c for c in existing}
+        paths = content.section_paths(session, [suite.id])
+        folders: dict[tuple[int | None, str], int] = {}
+        milestones = {
+            fold(name): ms_id
+            for ms_id, name in session.execute(
+                select(TestMilestone.id, TestMilestone.name)
+                .where(TestMilestone.business_project_id.in_(tc.projects_of(session, suite)))
+                .order_by(TestMilestone.id)
+            )
+        }
+        by_id = {c.id: c for c in existing}
+        by_code = {c.code: c for c in existing if c.code}
         # Rows without a code: the cases of the same section and title, in order.
         by_text: dict[str, list[TestCase]] = {}
         for c in existing:
-            by_text.setdefault(_key(tc.snapshot(c)), []).append(c)
-        codes = tc.Codes(session, suite.id)
+            by_text.setdefault(_key(paths.get(c.section_id or 0, ""), c.title), []).append(c)
         seen: set[int] = set()
         created = updated = unchanged = 0
         position = tc.next_position(session, suite.id)
         for values in mapped.cases:
-            code = values.pop("code", "") or ""
-            if code:
-                case = by_code.get(code)
+            case_id = values.pop("case_id", None)
+            path = values.pop("section", None)
+            milestone = values.pop("milestone", None)
+            code = values.pop("code", None) or ""
+            if path is not None:
+                values["section_id"] = content.section_for_path(session, suite.id, path, folders)
+            if milestone is not None:
+                found_ms = milestones.get(fold(milestone)) if milestone else None
+                if found_ms is not None or not milestone:
+                    values["milestone_id"] = found_ms
+            case: TestCase | None
+            if case_id is not None and case_id in by_id:
+                case = by_id[case_id]
             else:
-                same = [c for c in by_text.get(_key(values), []) if id(c) not in seen]
-                case = same[0] if same else None
+                case = by_code.get(code) if code else None
+                if case is None:
+                    # No code, or one matching nothing: an old export's "TC-nnnn" whose code was
+                    # dropped by the move to C<id> keys still finds its case by section and title
+                    # (only among cases without a code of their own).
+                    same = [
+                        c
+                        for c in by_text.get(_key(path or "", values["title"]), [])
+                        if id(c) not in seen and not (code and c.code)
+                    ]
+                    case = same[0] if same else None
             if case is not None and id(case) not in seen:
                 seen.add(id(case))
-                if code:
+                if code and by_code.get(code, case) is case:
                     values["code"] = code
+                    by_code[code] = case
                 if tc.change(session, case, values, user_id=principal.user_id, via="import"):
                     updated += 1
                 else:
                     unchanged += 1
                 continue
-            values["code"] = code
+            if code and code not in by_code:
+                values["code"] = code
             values.setdefault("status", "draft")
             new = tc.create(
                 session,
@@ -1032,11 +1334,11 @@ def import_sheets(body: ImportIn, principal: CurrentPrincipal, session: SessionD
                 user_id=principal.user_id,
                 source="import",
                 position=position,
-                codes=codes,
                 flush=False,
             )
             position += 1
-            by_code[new.code] = new
+            if new.code:
+                by_code[new.code] = new
             seen.add(id(new))
             created += 1
         session.flush()
@@ -1066,13 +1368,28 @@ def import_sheets(body: ImportIn, principal: CurrentPrincipal, session: SessionD
 
 
 def _download(
-    groups: list[tuple[str, list[Any]]], name: str, fmt: str, extra: dict[int, str] | None = None
+    session: Session,
+    groups: list[tuple[str, list[Any]]],
+    name: str,
+    fmt: str,
+    extra: dict[int, str] | None = None,
 ) -> Response:
-    if fmt == "csv":
-        data = sheets.write_csv(groups, extra)
+    ctx = sheets.context_for(session, [c for _, cases in groups for c in cases])
+    return _file(
+        sheets.write_testrail(groups, ctx)
+        if fmt == "testrail"
+        else sheets.write_csv(groups, extra, ctx)
+        if fmt == "csv"
+        else sheets.write_xlsx(groups, extra, ctx),
+        name,
+        fmt,
+    )
+
+
+def _file(data: bytes, name: str, fmt: str) -> Response:
+    if fmt in ("csv", "testrail"):
         mime, ext = "text/csv; charset=utf-8", "csv"
     else:
-        data = sheets.write_xlsx(groups, extra)
         mime, ext = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"
     from urllib.parse import quote
 
@@ -1094,9 +1411,10 @@ def export(
     session: SessionDep,
     business_project_id: int,
     suite_id: int | None = None,
-    format: Literal["xlsx", "csv"] = "xlsx",
+    format: Literal["xlsx", "csv", "testrail"] = "xlsx",
     include_obsolete: bool = False,
 ) -> Response:
+    """Each suite on a tab (.xlsx), or a .csv; `testrail`: TestRail's CSV, one row per step."""
     bp = tc.project_for(session, principal, business_project_id)
     if suite_id is not None:
         suite = tc.suite_for(session, principal, suite_id)
@@ -1116,7 +1434,15 @@ def export(
     name = (
         f"Testcase {suites[0].name}" if suite_id is not None and suites else f"Testcase {bp.name}"
     )
-    return _download(groups, name, format)
+    return _download(session, groups, name, format)
+
+
+@router.get("/testcases/import/template")
+def import_template(
+    principal: CurrentPrincipal, format: Literal["xlsx", "testrail"] = "xlsx"
+) -> Response:
+    """A sample file to fill in and import: our columns (.xlsx) or TestRail's CSV."""
+    return _file(sheets.template_file(format), "Testcase mau", format)
 
 
 # -- merge requests --------------------------------------------------------------------------------
@@ -1158,23 +1484,22 @@ def _review_ids(
 def _impact_cases(
     session: Session, item: imp.MrImpact, cases: dict[int, TestCase], suites: dict[int, str]
 ) -> list[ImpactCase]:
-    ids = list(dict.fromkeys([*item.matched, *item.ai_cases]))
+    ids = [i for i in dict.fromkeys([*item.matched, *item.ai_cases]) if i in cases]
+    shown = dict(zip(ids, case_outs(session, [cases[i] for i in ids]), strict=True))
     out = []
     for case_id in ids:
-        case = cases.get(case_id)
-        if case is None:
-            continue
+        case = cases[case_id]
         ai = item.ai_cases.get(case_id) or {}
         out.append(
             ImpactCase(
-                case=_case_out(case),
+                case=shown[case_id],
                 suite=suites.get(case.suite_id, ""),
                 reasons=item.matched.get(case_id, []),
                 ai_reason=ai.get("reason"),
                 confidence=ai.get("confidence"),
             )
         )
-    out.sort(key=lambda c: (tc.PRIORITY_RANK.get(c.case.priority, 9), c.case.code))
+    out.sort(key=lambda c: (tc.PRIORITY_RANK.get(c.case.priority, 9), c.case.id))
     return out
 
 
@@ -1238,20 +1563,21 @@ def _regression(
     cases, suites = _lookup(session, set(reasons))
     reviews = _review_ids(session, principal, [m.id for m in mrs], bp.id)
     listed = []
-    for case_id, why in reasons.items():
-        case = cases.get(case_id)
-        if case is None:
-            continue
+    found = [i for i in reasons if i in cases]
+    shown = dict(zip(found, case_outs(session, [cases[i] for i in found]), strict=True))
+    for case_id in found:
+        why = reasons[case_id]
+        case = cases[case_id]
         listed.append(
             ImpactCase(
-                case=_case_out(case),
+                case=shown[case_id],
                 suite=suites.get(case.suite_id, ""),
                 reasons=why,
                 ai_reason=None,
                 confidence=None,
             )
         )
-    listed.sort(key=lambda c: (tc.PRIORITY_RANK.get(c.case.priority, 9), c.suite, c.case.code))
+    listed.sort(key=lambda c: (tc.PRIORITY_RANK.get(c.case.priority, 9), c.suite, c.case.id))
     branches = sorted(
         b
         for b in session.scalars(
@@ -1313,4 +1639,4 @@ def regression_export(
         case = cases.get(item.case.id)
         if case is not None:
             groups.setdefault(item.suite or "Testcase", []).append(case)
-    return _download(list(groups.items()), f"Can test lai {days} ngay", format, why)
+    return _download(session, list(groups.items()), f"Can test lai {days} ngay", format, why)

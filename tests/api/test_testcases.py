@@ -55,21 +55,22 @@ def test_cases_history_and_permissions(
         client,
         admin,
         suite["id"],
-        section="Auth",
         steps="1. Nhập email\n2. Bấm Đăng nhập",
         priority="high",
         jira_keys=["omx-12", "rác"],
         tags=["smoke", "Smoke"],
     )
-    assert case["code"] == "TC-0001" and case["jira_keys"] == ["OMX-12"]
+    # Nobody types a code: the key is C<id>; `code` (the sheet's) is not taken from the editor.
+    assert case["key"] == f"C{case['id']}" and case["code"] is None
+    assert case["jira_keys"] == ["OMX-12"] and case["template"] == "text"
     assert case["tags"] == ["smoke"] and case["status"] == "draft"
     assert case["problems"] == ["thiếu kết quả mong đợi"]
     second = _case(client, admin, suite["id"], title="Sai mật khẩu", code="TC-0001")
-    assert second["code"] == "TC-0002"  # the code was taken
+    assert second["code"] is None and second["key"] == f"C{second['id']}"
 
     # A member of the dự án reads, cannot write.
     listed = client.get(f"{API}/testcases", params={"business_project_id": bp}, headers=an).json()
-    assert listed["total"] == 2 and listed["can_edit"] is False and listed["sections"] == ["Auth"]
+    assert listed["total"] == 2 and listed["can_edit"] is False and "sections" not in listed
     assert (
         client.patch(
             f"{API}/testcases/{case['id']}", json={"revision": 1, "title": "x"}, headers=an
@@ -80,6 +81,10 @@ def test_cases_history_and_permissions(
         f"{API}/testcases", params={"business_project_id": bp, "q": "dang nhap dung"}, headers=an
     ).json()
     assert [c["id"] for c in found["items"]] == [case["id"]]
+    by_key = client.get(
+        f"{API}/testcases", params={"business_project_id": bp, "q": second["key"]}, headers=an
+    ).json()
+    assert [c["id"] for c in by_key["items"]] == [second["id"]]
 
     edited = client.patch(
         f"{API}/testcases/{case['id']}",
@@ -95,10 +100,11 @@ def test_cases_history_and_permissions(
         f"{API}/testcases/{case['id']}", json={"revision": 1, "title": "x"}, headers=admin
     )
     assert stale.status_code == 409
-    clash = client.patch(
+    ignored = client.patch(
         f"{API}/testcases/{case['id']}", json={"revision": 2, "code": "TC-0002"}, headers=admin
     )
-    assert clash.status_code == 422
+    assert ignored.status_code == 200 and ignored.json()["code"] is None
+    assert ignored.json()["revision"] == 2  # nothing changed
     restored = client.post(f"{API}/testcases/{case['id']}/restore/1", headers=admin).json()
     assert restored["expected"] is None and restored["revision"] == 3
 
@@ -250,7 +256,8 @@ def test_import_then_import_again_and_export(
     )
     assert exported.status_code == 200
     ws = load_workbook(io.BytesIO(exported.content)).worksheets[0]
-    assert ws.title == "Thanh toán" and ws["C2"].value == "Thanh toán thẻ Visa"
+    assert ws.title == "Thanh toán" and ws["D2"].value == "Thanh toán thẻ Visa"
+    assert ws["A2"].value == f"C{first['id']}" and ws["B2"].value == "TC-1"
     assert [c.value for c in ws[1]][-4:] == [
         "Kết quả thực tế",
         "Trạng thái chạy",
@@ -340,11 +347,15 @@ def _run(db_session: Session, run_id: int, answer: dict[str, Any]) -> FakeLLMPro
 
 
 PROPOSAL = {
-    "section": "Hoàn tiền",
+    "section": "Thanh toán > Hoàn tiền",
     "title": "Hoàn tiền một phần đơn đã thanh toán",
-    "steps": "1. Mở đơn\n2. Bấm Hoàn tiền",
-    "expected": "Số tiền hoàn được ghi nhận",
+    "steps_list": [
+        {"content": "Mở đơn", "expected": ""},
+        {"content": "Bấm Hoàn tiền", "expected": "Số tiền hoàn được ghi nhận"},
+    ],
     "priority": "high",
+    "type": "regression",
+    "estimate": "5 phút",
     "tags": ["regression"],
     "jira_keys": ["OMX-5", "BIA-1"],
 }
@@ -391,7 +402,10 @@ def test_ai_generate_audit_and_impact(
     assert "hoàn tiền một phần" in prompt and "</source> bỏ" not in prompt  # fenced
     got = client.get(f"{API}/testcases/ai/{run['id']}", headers=admin).json()
     assert got["status"] == "ready" and len(got["result"]["cases"]) == 1
-    assert got["result"]["cases"][0]["jira_keys"] == ["OMX-5"]  # only keys it was given
+    proposal = got["result"]["cases"][0]
+    assert proposal["jira_keys"] == ["OMX-5"]  # only keys it was given
+    assert proposal["template"] == "steps" and proposal["section"] == "Thanh toán > Hoàn tiền"
+    assert proposal["type"] == "regression" and proposal["estimate"] == "5m"
     applied = client.post(
         f"{API}/testcases/ai/{run['id']}/apply",
         json={"items": [{"index": 0, "title": "Hoàn tiền một phần"}]},
@@ -404,6 +418,16 @@ def test_ai_generate_audit_and_impact(
         and added["source"] == "ai"
         and added["status"] == "draft"
     )
+    assert added["template"] == "steps" and added["section"] == "Thanh toán > Hoàn tiền"
+    assert added["steps_list"] == PROPOSAL["steps_list"] and added["estimate_s"] == 300
+    assert added["problems"] == [] and added["type"] == "regression"
+    tree = client.get(
+        f"{API}/testcases/sections", params={"suite_id": suite["id"]}, headers=admin
+    ).json()
+    assert [(s["path"], s["depth"], s["cases"], s["total"]) for s in tree] == [
+        ("Thanh toán", 0, 0, 1),
+        ("Thanh toán > Hoàn tiền", 1, 1, 1),
+    ]
     assert (
         client.post(
             f"{API}/testcases/ai/{run['id']}/apply", json={"items": [{"index": 0}]}, headers=admin
@@ -416,14 +440,14 @@ def test_ai_generate_audit_and_impact(
         json={"kind": "audit", "business_project_id": bp, "suite_id": suite["id"]},
         headers=admin,
     ).json()
-    _run(
+    audited = _run(
         db_session,
         audit["id"],
         {
             "summary": "Thiếu kết quả mong đợi",
             "issues": [
                 {
-                    "codes": [existing["code"]],
+                    "codes": [existing["key"]],
                     "kind": "missing_expected",
                     "message": "Ghi rõ kết quả",
                 }
@@ -431,6 +455,7 @@ def test_ai_generate_audit_and_impact(
             "cases": [],
         },
     )
+    assert f'<case code="{existing["key"]}"' in audited.prompts[0].user
     seen = client.get(f"{API}/testcases/ai/{audit['id']}", headers=admin).json()
     assert seen["result"]["issues"][0]["kind"] == "missing_expected"
 
@@ -539,4 +564,5 @@ def test_bulk_on_a_hidden_project_is_not_found(
     assert moved.json() == {"changed": 1}
     after = client.get(f"{API}/testcases/{case['id']}", headers=admin).json()
     assert after["suite_id"] == other["id"] and after["revision"] == 2
+    assert after["section_id"] is None
     assert after["revisions"][0]["via"] == "bulk"

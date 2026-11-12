@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Modal } from "@/components/CriteriaParts";
 import { Icon } from "@/components/icons";
-import { PriorityPill, errorText } from "@/components/TestcaseParts";
+import { PriorityPill, StepsTable, errorText } from "@/components/TestcaseParts";
 import { Alert, Card, Drawer, Loading, Pill } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 import type { DocList, ExtractedFile } from "@/lib/docs";
@@ -18,6 +18,7 @@ import {
   type Proposal,
   type RunList,
   type Suite,
+  TYPE_LABEL,
   splitList,
 } from "@/lib/testcases";
 
@@ -428,7 +429,13 @@ export function RunDrawer({
                     <div className="tc-proposal">
                       <div className="tc-proposal-head">
                         <PriorityPill value={p.priority} />
-                        {p.section && <span className="small muted">{p.section}</span>}
+                        {p.type && <Pill>{TYPE_LABEL[p.type] ?? p.type}</Pill>}
+                        {p.estimate && <Pill icon="history">{p.estimate}</Pill>}
+                        {p.section && (
+                          <span className="small muted tc-proposal-section">
+                            <Icon name="folder" size={12} /> {p.section}
+                          </span>
+                        )}
                         {applied.has(i) && <Pill tone="good">Đã thêm</Pill>}
                       </div>
                       {applied.has(i) ? (
@@ -441,8 +448,12 @@ export function RunDrawer({
                           <span className="muted">Tiền điều kiện:</span> {p.preconditions}
                         </div>
                       )}
-                      {p.steps && <div className="tc-lines small">{p.steps}</div>}
-                      {p.expected && (
+                      {p.steps_list?.length ? (
+                        <StepsTable steps={p.steps_list.map((s) => ({ content: s.content, expected: s.expected ?? null }))} />
+                      ) : (
+                        p.steps && <div className="tc-lines small">{p.steps}</div>
+                      )}
+                      {p.expected && !p.steps_list?.length && (
                         <div className="small">
                           <span className="muted">Kết quả mong đợi:</span> {p.expected}
                         </div>

@@ -267,3 +267,191 @@ Trang review của MR: thẻ "Testcase liên quan" (§8.4).
 - Ghép MR: Jira, glob, automation; testcase lỗi thời không ghép.
 - AI: prompt chứa nguồn trong thẻ, kết quả sai dạng → failed; áp dụng tạo testcase `draft`/`ai`.
 - Review: khối GỢI Ý KIỂM THỬ có khi đổi mã nguồn không có test, không có khi có file test.
+
+## 13. Mô hình TestRail (user 2026-11-12: "làm full luôn đi, mang hết những cái tối ưu của testrail qua đây, ngoài ra các mã nên tự động gen đỡ bắt người dùng nhập")
+
+Thay quyết định §1 "không làm mức 3": CodePulse là **nơi gốc** của testcase và nơi chạy test;
+Google Sheet / Excel / CSV chỉ còn là đường nhập/xuất (kể cả CSV đúng định dạng TestRail).
+
+### 13.1 Mã tự sinh **[Quyết định]**
+
+Người dùng không nhập mã nào. Mỗi đối tượng có ID cố định theo kiểu TestRail, hiện kèm tiền tố:
+
+| Đối tượng | Mã |
+|---|---|
+| Testcase | `C<id>` (không đổi khi chuyển bộ / thư mục) |
+| Test run | `R<id>` |
+| Test (một testcase trong một run) | `T<id>` |
+| Test plan | `P<id>` |
+| Milestone | `M<id>` |
+| Bước dùng chung | `SS<id>` |
+
+Cột `code` cũ thành **"Mã gốc"** (chỉ đọc): mã của dòng trong sheet đã nhập, dùng để ghép khi nhập
+lại. Mã `TC-0001` do CodePulse tự cấp trước đây bị bỏ (migration). Nhập lại một file có cột `ID` dạng
+`C123` thì cập nhật đúng testcase đó.
+
+### 13.2 Cây thư mục (Section)
+
+`test_sections (suite_id, parent_id, name, description, position)`: thư mục lồng nhiều cấp trong một
+bộ, sắp thứ tự, kéo thả testcase / thư mục để chuyển. Testcase có `section_id` (trống: gốc của bộ).
+Xoá thư mục xoá cả thư mục con và testcase bên trong (như TestRail; màn hình hỏi lại, nêu số lượng).
+Migration chuyển chuỗi "chức năng" cũ thành thư mục; khi nhập, `A > B > C` thành 3 cấp.
+
+### 13.3 Trường của testcase
+
+- **Template**: `text` (Tiền điều kiện, Các bước, Kết quả mong đợi dạng chữ) hoặc `steps` (bảng
+  bước, **mỗi bước một kết quả mong đợi**, có thể chèn **bước dùng chung**). Nút "Tách thành các
+  bước" chuyển dạng chữ đánh số sang bảng bước.
+- **Type** (danh sách TestRail): Acceptance, Accessibility, Automated, Compatibility, Destructive,
+  Functional (mặc định), Other, Performance, Regression, Security, Smoke & Sanity, Usability.
+  Migration lấy từ nhãn cũ (smoke, regression, security, performance…).
+- **Estimate**: thời gian ước tính, nhập `30s`, `5m`, `1h 30m` (số trơn = phút).
+- **Milestone** (tuỳ chọn), **References** = mã Jira (đã có), Priority, Automation (đã có).
+- Bỏ "Mã" khỏi form.
+
+### 13.4 Bước dùng chung (Shared steps)
+
+`test_shared_steps (business_project_id, title, steps)`: chuỗi bước dùng lại ("Đăng nhập bằng tài
+khoản quản trị"). Testcase dạng `steps` chèn bằng `{"shared": id}`; sửa bước dùng chung là mọi
+testcase dùng nó đổi theo. Không xoá được khi còn testcase dùng (báo số lượng).
+
+### 13.5 Milestone, Cấu hình
+
+- `test_milestones (business_project_id, name, description, start_on, due_on, completed_at)`: đợt
+  release / sprint. Run, plan, testcase gắn milestone; trang milestone có tiến độ gộp các run.
+- `test_config_groups` + `test_configs`: nhóm cấu hình (Trình duyệt: Chrome, Safari; Nền tảng:
+  Android, iOS…). Plan chọn cấu hình → mỗi tổ hợp một run.
+
+### 13.6 Test run, test, kết quả
+
+- **Run** `test_runs`: tên, mô tả, milestone, người được giao mặc định, mã Jira, cấu hình, nguồn
+  (`manual`, `regression`, `plan`), đóng (`completed_at`). Chọn testcase: cả bộ / theo thư mục /
+  theo bộ lọc (ưu tiên, type, nhãn) / testcase đã tick / danh sách **Cần test lại** của một đợt
+  (§8.3). Run để mở thì thêm / bớt testcase được.
+- **Test** `test_run_tests`: một testcase trong run, trạng thái `untested` → kết quả mới nhất; người
+  được giao. Khi run còn mở, test hiện nội dung **hiện tại** của testcase; khi đóng run, nội dung được
+  chốt (ảnh chụp), sửa testcase sau đó không đổi run cũ. Testcase bị xoá: test giữ ảnh chụp.
+- **Kết quả** `test_results`: Passed / Failed / Blocked / Retest (TestRail), bình luận, phiên bản
+  (build), thời gian chạy, mã bug Jira (defects), giao lại người khác; testcase dạng bước ghi trạng
+  thái + kết quả thực tế **từng bước**. Mọi kết quả giữ lịch sử; trạng thái test = kết quả mới nhất.
+  Ghi kết quả hàng loạt (chọn nhiều test → Passed).
+- **Plan** `test_plans`: nhóm nhiều run (mỗi lựa chọn testcase × tổ hợp cấu hình), tiến độ gộp, đóng
+  plan đóng mọi run.
+- Quyền: xem theo `docs.view`; tạo / sửa / đóng run, plan, milestone, cấu hình, bước dùng chung theo
+  `docs.edit`; **ghi kết quả**: `docs.edit` hoặc người được giao test / run.
+- Báo cáo: thanh tiến độ theo trạng thái (run, plan, milestone), lịch sử kết quả của từng testcase
+  (trên trang testcase), xuất run ra Excel (trạng thái, người chạy, bình luận, defects).
+
+### 13.7 Nhập / xuất kiểu TestRail
+
+- Xuất thêm định dạng **TestRail CSV**: `ID, Title, Section, Template, Type, Priority, Estimate,
+  References, Milestone, Preconditions, Steps, Expected Result, Steps (Step), Steps (Expected
+  Result)`; testcase dạng bước viết mỗi bước một dòng (dòng sau để trống các cột của testcase), đúng
+  kiểu "multi-row" của TestRail.
+- Nhập nhận cả định dạng này (cột `Section` có `>` thành cây, dòng tiếp theo không có Title là bước
+  tiếp theo) lẫn sheet cũ. Ô "Các bước" và "Kết quả mong đợi" đều đánh số cùng số bước thì thành bảng
+  bước.
+
+### 13.8 AI
+
+Sinh / rà soát / đề xuất testcase theo dạng `steps` (mỗi bước có kết quả mong đợi), kèm type,
+estimate, đường dẫn thư mục; áp dụng thì tạo thư mục còn thiếu.
+
+## 14. API mô hình TestRail (hợp đồng giữa backend và giao diện)
+
+Quy ước: mọi `key` do server sinh (`C<id>`, `R<id>`, `T<id>`, `P<id>`, `M<id>`, `SS<id>`).
+`Person = {id, name}`. `Counts = {untested, passed, failed, blocked, retest, total}`. Thời gian ISO
+8601, ngày `YYYY-MM-DD`. Hàm dùng chung: `app/testcases/content.py` (key, nhãn, đường dẫn thư mục,
+mở rộng bước dùng chung, estimate, quyền ghi kết quả).
+
+### 14.1 Testcase (`app/api/routers/testcases.py`)
+
+- `CaseOut` (thay bản cũ): thêm `key` ("C12"), `code` (mã gốc từ sheet, có thể null), `section_id`,
+  `section` (đường dẫn "A > B" hoặc null), `template` (`text|steps`), `steps_list` (thô:
+  `[{content, expected} | {shared: id}]`), `steps_view` (đã mở rộng: `[{content, expected,
+  shared_id?, shared_title?}]`), `type`, `estimate_s`, `estimate` ("1h 30m" | null), `milestone_id`;
+  giữ `id, suite_id, title, preconditions, steps, expected, test_data, notes, priority, kind,
+  automation, tags, jira_keys, code_paths, status, source, revision, problems, updated_at`.
+- Đầu vào tạo / sửa: `section_id, title, template, preconditions, steps, expected, steps_list,
+  test_data, notes, priority, type, kind, automation, tags, jira_keys, code_paths, status,
+  milestone_id, estimate` (chuỗi, server parse). **Không nhận `code`.** PATCH vẫn kèm `revision`.
+- `GET /testcases`: thêm bộ lọc `section_id` (gồm thư mục con), `type`, `milestone_id`; bỏ
+  `section`. Trả `{items, total, tags, can_edit}`.
+- `POST /testcases/bulk`: thêm `action` `section` (`section_id`, null = gốc của bộ), `type`
+  (`type`), `milestone` (`milestone_id`).
+- Thư mục:
+  - `GET /testcases/sections?suite_id=` → `[{id, suite_id, parent_id, name, description, position,
+    depth, path, cases (trực tiếp), total (gồm thư mục con)}]` theo thứ tự đọc cây (không tính case
+    lỗi thời).
+  - `POST /testcases/sections {suite_id, parent_id?, name, description?}`.
+  - `PATCH /testcases/sections/{id} {name?, description?, parent_id?, position?}`: có `parent_id`
+    (kể cả null) là chuyển chỗ; không cho vào chính nó / thư mục con của nó.
+  - `DELETE /testcases/sections/{id}` → xoá cả thư mục con và case bên trong, trả
+    `{sections, cases}` đã xoá.
+- `GET /testcases/import/template?format=xlsx|testrail`: file mẫu để nhập.
+- `GET /testcases/export`: thêm `format=testrail` (CSV nhiều dòng một case, §13.7).
+- Nhập: thêm ánh xạ cột `type, estimate, template, step_content, step_expected, milestone`; `code`
+  dạng `C123` = cập nhật case đó; `section` dạng `A > B` thành cây.
+- AI (`/testcases/ai`): đề xuất có thêm `template: "steps"`, `steps_list`, `type`, `estimate`,
+  `section` (đường dẫn).
+
+### 14.2 Thiết lập (`app/api/routers/test_runs.py`)
+
+- Milestone: `GET /testcases/milestones?business_project_id=` → `[{id, key, name, description,
+  start_on, due_on, completed_at, runs, counts, can_edit}]`; `POST {business_project_id, name,
+  description?, start_on?, due_on?}`; `PATCH /testcases/milestones/{id} {name?, description?,
+  start_on?, due_on?, completed?: bool}`; `DELETE`.
+- Cấu hình: `GET /testcases/configs?business_project_id=` → `[{id, name, configs: [{id, name}]}]`;
+  `POST /testcases/config-groups {business_project_id, name}`; `PATCH|DELETE
+  /testcases/config-groups/{id}`; `POST /testcases/configs {group_id, name}`; `PATCH|DELETE
+  /testcases/configs/{id}`.
+- Bước dùng chung: `GET /testcases/shared-steps?business_project_id=` → `[{id, key, title, steps:
+  [{content, expected}], used_by, updated_at, can_edit}]`; `POST {business_project_id, title,
+  steps}`; `PATCH /testcases/shared-steps/{id} {title?, steps?}`; `DELETE` (409 khi còn case dùng).
+- Người giao được: `GET /testcases/people?business_project_id=` → `[Person]` (người của dự án và
+  admin đang hoạt động).
+
+### 14.3 Run, test, kết quả (`app/api/routers/test_runs.py`, `app/testcases/runs.py`)
+
+- `Selection` (chọn case cho run / plan): `{suite_id?, section_ids?: [int], case_ids?: [int], all?:
+  bool, priority?: [str], type?: [str], tags?: [str], regression?: {days: int, target_branch?:
+  str}}`. Không lấy case lỗi thời; `section_ids` gồm thư mục con; `all` không có `suite_id` = mọi bộ
+  của dự án; `regression` = danh sách Cần test lại §8.3.
+- `RunOut = {id, key, business_project_id, plan_id, plan_name, milestone_id, milestone_name, name,
+  description, config, config_ids, assigned_to: Person|null, refs, source, source_meta,
+  completed_at, created_at, created_by: Person|null, counts, can_edit}`.
+- `GET /testcases/runs?business_project_id=&state=open|completed|all&milestone_id=&plan_id=` →
+  `[RunOut]` (mới trước).
+- `POST /testcases/runs {business_project_id, name?, description?, milestone_id?, assigned_to?,
+  refs?, selection}` → `RunOut` (tên mặc định "Test run <dd/mm/yyyy>" hoặc "Regression <n> ngày
+  (<dd/mm>)"); không chọn được case nào → 422.
+- `GET /testcases/runs/{id}` → `RunOut`; `PATCH /testcases/runs/{id} {name?, description?,
+  milestone_id?, assigned_to?, refs?, add?: Selection, remove_test_ids?: [int]}` (run đã đóng →
+  409); `POST /testcases/runs/{id}/close` (chốt ảnh chụp) → `RunOut`; `DELETE`.
+- `GET /testcases/runs/{id}/tests?status=&assigned_to=&q=` → `{items: [TestOut], total}`;
+  `TestOut = {id, key, run_id, case_id, case_key, title, section, priority, type, status,
+  assigned_to, tested_at, estimate_s, defects, latest_comment}`.
+- `GET /testcases/tests/{id}` → `TestDetail = TestOut + {content, results, run: {id, key, name,
+  completed}, can_record, can_edit}`; `content = {case_key, title, section, template,
+  preconditions, steps, expected, steps_list, test_data, notes, priority, type, estimate_s, refs,
+  automation}` (xem `content.case_content`).
+- `POST /testcases/tests/{id}/results {status?, comment?, version?, elapsed?: "1m 30s", defects?:
+  [str], step_results?: [{status, actual}], assigned_to?: int|null}` → `TestDetail`;
+  `ResultOut = {id, status, comment, version, elapsed_s, elapsed, defects, step_results,
+  assigned_to, created_by, created_at}`.
+- `POST /testcases/runs/{id}/results {test_ids, status?, comment?, version?, defects?,
+  assigned_to?}` → `{changed}` (ghi hàng loạt).
+- `GET /testcases/runs/{id}/export` → .xlsx.
+- `GET /testcases/{case_id}/results` → `[{result: ResultOut, test_id, test_key, run_id, run_key,
+  run_name, config, completed}]` (50 mới nhất): lịch sử kết quả của một case.
+
+### 14.4 Plan
+
+- `PlanOut = {id, key, name, description, milestone_id, milestone_name, completed_at, created_at,
+  counts, runs, can_edit}`; `GET /testcases/plans?business_project_id=&state=` → `[PlanOut]`.
+- `POST /testcases/plans {business_project_id, name, description?, milestone_id?, entries: [{name?,
+  selection, config_ids?: [int], assigned_to?}]}` → `PlanDetail`: mỗi entry sinh một run cho mỗi
+  tổ hợp cấu hình (tích Descartes theo nhóm của các `config_ids` đã chọn; không chọn → 1 run).
+- `GET /testcases/plans/{id}` → `PlanDetail = PlanOut + {runs: [RunOut]}`; `PATCH
+  /testcases/plans/{id} {name?, description?, milestone_id?, add_entries?}`; `POST
+  /testcases/plans/{id}/close` (đóng mọi run); `DELETE`.

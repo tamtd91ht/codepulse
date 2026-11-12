@@ -8,14 +8,20 @@ code (Jira keys, globs over the repo paths it covers, its automated test file).
 TestCaseRevision: the case as it was before each change. TestAiRun: one AI job: writing cases
 from sources (generate), reviewing a suite (audit), or the cases a merge request calls for
 (impact); a person applies what it proposes.
+
+The TestRail model (docs/specs/30 §13): TestSection, a tree of folders in a suite; cases in the
+"steps" template (one expected result per step, shared steps inserted); TestSharedStep,
+TestMilestone, TestConfigGroup / TestConfig; TestPlan groups TestRuns; a TestRunTest is one case in
+one run, its TestResults the history of what testers recorded.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -34,6 +40,25 @@ CASE_KINDS = ("manual", "automated")
 CASE_STATUSES = ("draft", "approved", "obsolete")
 CASE_SOURCES = ("manual", "import", "ai")
 REVISION_VIA = ("editor", "import", "ai", "restore", "bulk")
+TEMPLATES = ("text", "steps")
+# TestRail's case types (docs/specs/30 §13.3).
+CASE_TYPES = (
+    "acceptance",
+    "accessibility",
+    "automated",
+    "compatibility",
+    "destructive",
+    "functional",
+    "other",
+    "performance",
+    "regression",
+    "security",
+    "smoke",
+    "usability",
+)
+TEST_STATUSES = ("untested", "passed", "failed", "blocked", "retest")
+RESULT_STATUSES = ("passed", "failed", "blocked", "retest")
+RUN_SOURCES = ("manual", "regression", "plan")
 AI_KINDS = ("generate", "audit", "impact")
 AI_STATUSES = ("queued", "fetching", "writing", "ready", "failed", "applied", "discarded")
 
@@ -82,6 +107,8 @@ class TestCase(TimestampMixin, Base):
         CheckConstraint(f"kind IN {CASE_KINDS}", name="kind"),
         CheckConstraint(f"status IN {CASE_STATUSES}", name="status"),
         CheckConstraint(f"source IN {CASE_SOURCES}", name="source"),
+        CheckConstraint(f"template IN {TEMPLATES}", name="template"),
+        CheckConstraint(f"type IN {CASE_TYPES}", name="type"),
         Index(
             "ix_test_cases_jira_keys",
             "jira_keys",
@@ -94,9 +121,22 @@ class TestCase(TimestampMixin, Base):
     suite_id: Mapped[int] = mapped_column(
         ForeignKey("test_suites.id", ondelete="CASCADE"), index=True
     )
-    code: Mapped[str]
-    section: Mapped[str | None]  # chức năng / màn hình
+    # The code of the sheet row it was imported from ("Mã gốc"); its own key is C<id>.
+    code: Mapped[str | None]
+    section_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_sections.id", ondelete="CASCADE"), index=True
+    )
     title: Mapped[str]
+    template: Mapped[str] = mapped_column(server_default="text", default="text")
+    # Template "steps": [{"content", "expected"} | {"shared": <shared step id>}].
+    steps_list: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, server_default="[]", default=list
+    )
+    type: Mapped[str] = mapped_column(server_default="functional", default="functional")
+    estimate_s: Mapped[int | None]
+    milestone_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_milestones.id", ondelete="SET NULL"), index=True
+    )
     preconditions: Mapped[str | None]
     steps: Mapped[str | None]
     test_data: Mapped[str | None]
@@ -178,3 +218,180 @@ class TestAiRun(Base):
     requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TestSection(TimestampMixin, Base):
+    """A folder of a suite; `parent_id` makes the tree (docs/specs/30 §13.2)."""
+
+    __tablename__ = "test_sections"
+    __test__ = False
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    suite_id: Mapped[int] = mapped_column(
+        ForeignKey("test_suites.id", ondelete="CASCADE"), index=True
+    )
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_sections.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str]
+    description: Mapped[str | None]
+    position: Mapped[int] = mapped_column(server_default="0", default=0)
+
+
+class TestSharedStep(TimestampMixin, Base):
+    """Steps several cases insert (docs/specs/30 §13.4): [{"content", "expected"}]."""
+
+    __tablename__ = "test_shared_steps"
+    __test__ = False
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str]
+    steps: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, server_default="[]", default=list)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class TestMilestone(TimestampMixin, Base):
+    __tablename__ = "test_milestones"
+    __test__ = False
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str]
+    description: Mapped[str | None]
+    start_on: Mapped[date | None] = mapped_column(Date)
+    due_on: Mapped[date | None] = mapped_column(Date)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class TestConfigGroup(TimestampMixin, Base):
+    """A kind of configuration (Trình duyệt, Nền tảng…) a plan multiplies its runs by."""
+
+    __tablename__ = "test_config_groups"
+    __test__ = False
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str]
+    position: Mapped[int] = mapped_column(server_default="0", default=0)
+
+
+class TestConfig(TimestampMixin, Base):
+    __tablename__ = "test_configs"
+    __test__ = False
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey("test_config_groups.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str]
+    position: Mapped[int] = mapped_column(server_default="0", default=0)
+
+
+class TestPlan(TimestampMixin, Base):
+    __tablename__ = "test_plans"
+    __test__ = False
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str]
+    description: Mapped[str | None]
+    milestone_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_milestones.id", ondelete="SET NULL"), index=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class TestRun(TimestampMixin, Base):
+    __tablename__ = "test_runs"
+    __test__ = False
+    __table_args__ = (CheckConstraint(f"source IN {RUN_SOURCES}", name="source"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
+    plan_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_plans.id", ondelete="CASCADE"), index=True
+    )
+    milestone_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_milestones.id", ondelete="SET NULL"), index=True
+    )
+    name: Mapped[str]
+    description: Mapped[str | None]
+    # The configurations of this run (a plan's combination), and their names shown.
+    config_ids: Mapped[list[int]] = mapped_column(JSONB, server_default="[]", default=list)
+    config: Mapped[str | None]
+    assigned_to: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    refs: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
+    source: Mapped[str] = mapped_column(server_default="manual", default="manual")
+    # How the cases were chosen (suite, sections, filters; the MRs of a regression list).
+    source_meta: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class TestRunTest(Base):
+    """One case in one run. While the run is open it shows the case as it is now; closing the
+    run keeps `snapshot` (also kept if the case is deleted)."""
+
+    __tablename__ = "test_run_tests"
+    __test__ = False
+    __table_args__ = (
+        UniqueConstraint("run_id", "case_id", name="uq_test_run_tests_run_case"),
+        CheckConstraint(f"status IN {TEST_STATUSES}", name="status"),
+        Index("ix_test_run_tests_run_id_status", "run_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"))
+    case_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_cases.id", ondelete="SET NULL"), index=True
+    )
+    title: Mapped[str]
+    section: Mapped[str | None]  # the section path when added / closed
+    priority: Mapped[str]
+    type: Mapped[str]
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
+    status: Mapped[str] = mapped_column(server_default="untested", default="untested")
+    assigned_to: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    position: Mapped[int] = mapped_column(server_default="0", default=0)
+    tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TestResult(Base):
+    __tablename__ = "test_results"
+    __test__ = False
+    __table_args__ = (
+        CheckConstraint(f"status IS NULL OR status IN {RESULT_STATUSES}", name="status"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    test_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("test_run_tests.id", ondelete="CASCADE"), index=True
+    )
+    # None: a comment or a reassignment only.
+    status: Mapped[str | None]
+    comment: Mapped[str | None]
+    version: Mapped[str | None]
+    elapsed_s: Mapped[int | None]
+    defects: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
+    # Template "steps": [{"status", "actual"}] in the order of the steps.
+    step_results: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, server_default="[]", default=list
+    )
+    assigned_to: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

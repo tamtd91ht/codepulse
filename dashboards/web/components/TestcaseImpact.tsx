@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Icon } from "@/components/icons";
 import { RunDrawer } from "@/components/TestcaseAi";
 import { CaseDrawer, PriorityPill, errorText } from "@/components/TestcaseParts";
+import { CreateRunModal } from "@/components/TestRuns";
 import { Alert, Card, EmptyState, Loading, Pill } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 import { dateTimeMin } from "@/lib/format";
@@ -156,7 +157,7 @@ export function MrImpactCard({ mrId }: { mrId: number }) {
 }
 
 /** Tab "Cần test lại": the MRs merged in a period and every case they call for. */
-export function RegressionView({ projectId, canEdit }: { projectId: number; canEdit: boolean }) {
+export function RegressionView({ projectId, canEdit, onRunCreated }: { projectId: number; canEdit: boolean; onRunCreated?: (runId: number) => void }) {
   const [days, setDays] = useState(14);
   const [branch, setBranch] = useState("");
   const params = `business_project_id=${projectId}&days=${days}${branch ? `&target_branch=${encodeURIComponent(branch)}` : ""}`;
@@ -167,6 +168,7 @@ export function RegressionView({ projectId, canEdit }: { projectId: number; canE
   const [open, setOpen] = useState<number | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const d = data.data;
 
   const analyse = async (mrId: number) => {
@@ -208,8 +210,13 @@ export function RegressionView({ projectId, canEdit }: { projectId: number; canE
         </label>
         <span className="spacer" />
         <a className="button sm" href={`/api/v1/testcases/regression/export?${params}`} download>
-          <Icon name="download" size={14} /> Xuất Excel để chạy test
+          <Icon name="download" size={14} /> Xuất Excel
         </a>
+        {canEdit && (
+          <button type="button" className="sm primary" onClick={() => setCreating(true)} disabled={!d?.cases.length}>
+            <Icon name="plus" size={14} /> Tạo test run
+          </button>
+        )}
       </div>
       {error && (
         <Alert tone="error" onClose={() => setError(null)}>
@@ -286,6 +293,17 @@ export function RegressionView({ projectId, canEdit }: { projectId: number; canE
         </>
       )}
       {open !== null && <CaseDrawer caseId={open} suite={null} sections={[]} onClose={() => setOpen(null)} onSaved={() => void data.mutate()} />}
+      {creating && (
+        <CreateRunModal
+          projectId={projectId}
+          initial={{ regression: { days, ...(branch ? { target_branch: branch } : {}) } }}
+          onClose={() => setCreating(false)}
+          onCreated={(id) => {
+            setCreating(false);
+            onRunCreated?.(id);
+          }}
+        />
+      )}
     </div>
   );
 }

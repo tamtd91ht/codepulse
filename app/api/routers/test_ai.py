@@ -19,14 +19,14 @@ from app.api.audit import audit
 from app.api.deps import get_queue, get_session
 from app.api.routers.doc_drafts import FileIn
 from app.api.routers.project_docs import _iso
-from app.api.routers.testcases import CaseFields, CaseOut, _case_out
+from app.api.routers.testcases import CaseFields, CaseOut, case_outs
 from app.api.security import CurrentPrincipal, Principal
 from app.assistant import importers
 from app.config import Settings, get_settings
 from app.docs import service as docs
 from app.docs import synthesis
 from app.models import AuditLog, MergeRequest, Project, TestAiRun, TestSuite, User
-from app.testcases import ai
+from app.testcases import ai, content
 from app.testcases import service as tc
 from app.workers.knowledge_jobs import month_spend_usd
 from app.workers.queues import review_queue
@@ -82,6 +82,8 @@ class RunList(BaseModel):
 
 class ApplyItem(CaseFields):
     index: int = Field(ge=0, le=ai.MAX_PROPOSED)
+    # The proposal's section path edited ("A > B"; "" = the suite's root); its folders are made.
+    section: str | None = Field(default=None, max_length=1_000)
 
 
 class ApplyIn(BaseModel):
@@ -368,8 +370,8 @@ def apply_run(
     suite = tc.suite_for(session, principal, suite_id, edit=True)
     if run.business_project_id not in tc.projects_of(session, suite):
         raise HTTPException(422, "bộ testcase không thuộc dự án này")
-    session.refresh(suite, with_for_update=True)  # one code chooser at a time
-    codes = tc.Codes(session, suite.id)
+    session.refresh(suite, with_for_update=True)  # one apply (and its folders) at a time
+    folders: dict[tuple[int | None, str], int] = {}
     applied = set(run.result.get("applied") or [])
     added = []
     position = tc.next_position(session, suite.id)
@@ -381,9 +383,14 @@ def apply_run(
         base["status"] = body.status
         try:
             values = tc.clean(base)
+            values.pop("code", None)
+            if "section_id" not in values:
+                values["section_id"] = content.section_for_path(
+                    session, suite.id, str(base.get("section") or ""), folders
+                )
+            tc.check_refs(session, suite, values)
         except tc.FieldError as exc:
             raise HTTPException(422, f"đề xuất {item.index + 1}: {exc}") from None
-        values.pop("code", None)
         case = tc.create(
             session,
             suite,
@@ -391,7 +398,6 @@ def apply_run(
             user_id=principal.user_id,
             source="ai",
             position=position,
-            codes=codes,
         )
         position += 1
         applied.add(item.index)
@@ -410,7 +416,7 @@ def apply_run(
         added=len(added),
     )
     session.commit()
-    return ApplyOut(added=[_case_out(c) for c in added])
+    return ApplyOut(added=case_outs(session, added))
 
 
 @router.delete("/testcases/ai/{run_id}", status_code=204)

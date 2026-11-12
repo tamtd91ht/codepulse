@@ -12,19 +12,30 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import ColumnElement, func, or_, select
+from sqlalchemy import ColumnElement, and_, func, literal_column, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.security import Principal
 from app.assistant.knowledge import fold
 from app.docs import service as docs
-from app.models import TestCase, TestCaseRevision, TestSuite, TestSuiteLink
-from app.models.testcases import CASE_KINDS, CASE_STATUSES, PRIORITIES
+from app.models import (
+    TestCase,
+    TestCaseRevision,
+    TestMilestone,
+    TestSection,
+    TestSharedStep,
+    TestSuite,
+    TestSuiteLink,
+)
+from app.models.testcases import CASE_KINDS, CASE_STATUSES, CASE_TYPES, PRIORITIES, TEMPLATES
+from app.testcases import content
 
 NAME_MAX = 200
 CODE_MAX = 40
 TITLE_MAX = 500
 SECTION_MAX = 200
+SECTION_DESCRIPTION_MAX = 2_000
+ESTIMATE_MAX = 40
 TEXT_MAX = 10_000
 AUTOMATION_MAX = 500
 LIST_MAX = 20
@@ -38,21 +49,28 @@ JIRA_KEY = re.compile(r"\b([A-Z][A-Z0-9]{1,9}-\d{1,7})\b")
 # The fields a revision keeps and a restore puts back.
 FIELDS = (
     "code",
-    "section",
+    "section_id",
     "title",
+    "template",
     "preconditions",
     "steps",
     "test_data",
     "expected",
+    "steps_list",
     "notes",
     "priority",
+    "type",
     "kind",
     "automation",
     "tags",
     "jira_keys",
     "code_paths",
     "status",
+    "milestone_id",
+    "estimate_s",
 )
+# What a restore puts back: not the sheet's code (only an import sets it).
+RESTORED = tuple(f for f in FIELDS if f != "code")
 TEXT_FIELDS = ("preconditions", "steps", "test_data", "expected", "notes")
 PRIORITY_LABEL = {"critical": "Rất cao", "high": "Cao", "medium": "Trung bình", "low": "Thấp"}
 KIND_LABEL = {"manual": "Thủ công", "automated": "Tự động"}
@@ -188,11 +206,65 @@ def globs(values: Any) -> list[str]:
     return out
 
 
+def _ref(value: Any, what: str) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise FieldError(f"{what} không hợp lệ")
+    return value
+
+
+def _step_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str | int | float):
+        raise FieldError("bước không hợp lệ")
+    text = CONTROL.sub("", str(value).replace("\r\n", "\n").replace("\r", "\n")).strip()
+    if len(text) > content.STEP_TEXT_MAX:
+        raise FieldError(f"mỗi bước tối đa {content.STEP_TEXT_MAX} ký tự")
+    return text
+
+
+def steps_clean(values: Any) -> list[dict[str, Any]]:
+    """Template "steps": [{"content", "expected"} | {"shared": id}], empty steps dropped."""
+    if values is None:
+        return []
+    if not isinstance(values, list):
+        raise FieldError("danh sách bước không hợp lệ")
+    out: list[dict[str, Any]] = []
+    for step in values:
+        if not isinstance(step, dict):
+            raise FieldError("bước không hợp lệ")
+        if step.get("shared") is not None:
+            out.append({"shared": _ref(step.get("shared"), "bước dùng chung")})
+            continue
+        text, expected = _step_text(step.get("content")), _step_text(step.get("expected"))
+        if text or expected:
+            out.append({"content": text, "expected": expected})
+    if len(out) > content.STEP_MAX:
+        raise FieldError(f"tối đa {content.STEP_MAX} bước")
+    return out
+
+
+def estimate_of(value: Any) -> int | None:
+    """Seconds of an estimate typed ("30s", "5m", "1h 30m"); empty: None; unreadable: refused."""
+    if value is None or not str(value).strip():
+        return None
+    seconds = content.parse_estimate(str(value)[:ESTIMATE_MAX])
+    if seconds is None:
+        raise FieldError("thời gian ước tính không đọc được (ví dụ: 30s, 5m, 1h 30m)")
+    return seconds
+
+
 def clean(values: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
     """The case's fields as kept: trimmed, bounded, enums checked. With `partial`, only the
-    fields given."""
+    fields given. `estimate` (text) is read into `estimate_s`. References (section, milestone,
+    shared steps) are checked against the suite by `check_refs`."""
     out: dict[str, Any] = {}
     for key, value in values.items():
+        if key == "estimate":
+            out["estimate_s"] = estimate_of(value)
+            continue
         if key not in FIELDS:
             continue
         if key == "title":
@@ -200,9 +272,21 @@ def clean(values: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
             if not out[key]:
                 raise FieldError("testcase cần tiêu đề")
         elif key == "code":
-            out[key] = _line(value, CODE_MAX)
-        elif key == "section":
-            out[key] = _line(value, SECTION_MAX) or None
+            out[key] = _line(value, CODE_MAX) or None
+        elif key == "section_id":
+            out[key] = _ref(value, "thư mục")
+        elif key == "milestone_id":
+            out[key] = _ref(value, "milestone")
+        elif key == "estimate_s":
+            if "estimate" in values:
+                continue
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+            ):
+                raise FieldError("thời gian ước tính không hợp lệ")
+            out[key] = min(value, 7 * 24 * 3600) if value else None
+        elif key == "steps_list":
+            out[key] = steps_clean(value)
         elif key == "automation":
             out[key] = _line(value, AUTOMATION_MAX) or None
         elif key in TEXT_FIELDS:
@@ -221,6 +305,14 @@ def clean(values: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
             if value not in CASE_KINDS:
                 raise FieldError("loại không hợp lệ")
             out[key] = value
+        elif key == "type":
+            if value not in CASE_TYPES:
+                raise FieldError("type không hợp lệ")
+            out[key] = value
+        elif key == "template":
+            if value not in TEMPLATES:
+                raise FieldError("template không hợp lệ")
+            out[key] = value
         elif key == "status":
             if value not in CASE_STATUSES:
                 raise FieldError("trạng thái không hợp lệ")
@@ -230,14 +322,61 @@ def clean(values: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
     return out
 
 
+def check_refs(
+    session: Session,
+    suite: TestSuite,
+    values: dict[str, Any],
+    *,
+    lenient: bool = False,
+    current: TestCase | None = None,
+) -> dict[str, Any]:
+    """The section must be of the suite, the milestone and the shared steps of one of its dự
+    án. `lenient` (a restore): a reference gone is dropped instead of refused. `current` (an
+    edit): a milestone or shared step the case already refers to stays accepted, even when the
+    suite is no longer shared with its dự án; only new references are checked."""
+    projects = projects_of(session, suite)
+    had_milestone = current.milestone_id if current is not None else None
+    had_shared = set(content.shared_ids(current.steps_list)) if current is not None else set()
+    section_id = values.get("section_id")
+    if section_id is not None:
+        section = session.get(TestSection, section_id)
+        if section is None or section.suite_id != suite.id:
+            if not lenient:
+                raise FieldError("thư mục không thuộc bộ testcase này")
+            values["section_id"] = None
+    milestone_id = values.get("milestone_id")
+    if milestone_id is not None and milestone_id != had_milestone:
+        milestone = session.get(TestMilestone, milestone_id)
+        if milestone is None or milestone.business_project_id not in projects:
+            if not lenient:
+                raise FieldError("milestone không thuộc dự án của bộ testcase")
+            values["milestone_id"] = None
+    wanted = content.shared_ids(values.get("steps_list"))
+    if wanted:
+        found = content.shared_map(session, wanted)
+        ok = {i for i, s in found.items() if s.business_project_id in projects}
+        ok |= had_shared & set(found)  # still there, and the case already had it
+        if not lenient and set(wanted) - ok:
+            raise FieldError("bước dùng chung không thuộc dự án của bộ testcase")
+        values["steps_list"] = [
+            s for s in values["steps_list"] if "shared" not in s or s["shared"] in ok
+        ]
+    return values
+
+
 def search_text(case: TestCase) -> str:
+    steps = " ".join(
+        f"{s.get('content') or ''} {s.get('expected') or ''}"
+        for s in case.steps_list or []
+        if isinstance(s, dict)
+    )
     parts = [
-        case.code,
-        case.section or "",
+        case.code or "",
         case.title,
         case.preconditions or "",
         case.steps or "",
         case.expected or "",
+        steps,
         " ".join(case.tags or []),
         " ".join(case.jira_keys or []),
     ]
@@ -248,9 +387,19 @@ def snapshot(case: TestCase) -> dict[str, Any]:
     return {f: getattr(case, f) for f in FIELDS}
 
 
-def problems(case: TestCase) -> list[str]:
-    """What a tester would miss (docs/specs/30 §7, checked here, no AI)."""
+def problems(case: TestCase, shared: dict[int, TestSharedStep] | None = None) -> list[str]:
+    """What a tester would miss (docs/specs/30 §7, checked here, no AI). A shared step counts as
+    a step with its expected result unless `shared` says otherwise."""
     out = []
+    if case.template == "steps":
+        steps = [s for s in case.steps_list or [] if isinstance(s, dict)]
+        if shared is not None:
+            steps = content.expand_steps(steps, shared)
+        if not steps:
+            return ["thiếu các bước"]
+        if not any("shared" in s or (s.get("expected") or "").strip() for s in steps):
+            out.append("thiếu kết quả mong đợi")
+        return out
     if not (case.steps or "").strip():
         out.append("thiếu các bước")
     if not (case.expected or "").strip():
@@ -258,53 +407,38 @@ def problems(case: TestCase) -> list[str]:
     return out
 
 
-class Codes:
-    """The codes of one suite, read once: free codes handed out without a query each (an import
-    of thousands of rows). Callers lock the suite row first so two requests cannot hand out the
-    same code."""
-
-    def __init__(self, session: Session, suite_id: int) -> None:
-        self.taken = set(
-            session.scalars(select(TestCase.code).where(TestCase.suite_id == suite_id))
-        )
-        self.top = max(
-            (int(m.group(1)) for c in self.taken if (m := re.fullmatch(r"TC-(\d+)", c))),
-            default=0,
-        )
-
-    def free(self, wanted: str = "") -> str:
-        if wanted and wanted not in self.taken:
-            self.taken.add(wanted)
-            return wanted
-        while True:
-            self.top += 1
-            code = f"TC-{self.top:04d}"
-            if code not in self.taken:
-                self.taken.add(code)
-                return code
+# A step with its expected result, or a shared step (jsonpath over steps_list).
+_STEP_DONE: ColumnElement[Any] = literal_column(
+    """'$[*] ? (exists(@.shared) || @.expected != "")'::jsonpath"""
+)
 
 
-def next_codes(session: Session, suite_id: int, count: int) -> list[str]:
-    """`count` free codes TC-0001… after the highest TC-number of the suite."""
-    taken = set(session.scalars(select(TestCase.code).where(TestCase.suite_id == suite_id)))
-    top = 0
-    for code in taken:
-        m = re.fullmatch(r"TC-(\d+)", code)
-        if m:
-            top = max(top, int(m.group(1)))
-    out: list[str] = []
-    n = top
-    while len(out) < count:
-        n += 1
-        code = f"TC-{n:04d}"
-        if code not in taken:
-            out.append(code)
-    return out
+def problem_clause() -> ColumnElement[bool]:
+    """SQL twin of `problems`: the cases missing steps or an expected result."""
+    blank = func.coalesce(func.trim(TestCase.steps), "") == ""
+    no_expected = func.coalesce(func.trim(TestCase.expected), "") == ""
+    return or_(
+        and_(TestCase.template != "steps", or_(blank, no_expected)),
+        and_(
+            TestCase.template == "steps",
+            or_(
+                func.jsonb_array_length(TestCase.steps_list) == 0,
+                ~func.jsonb_path_exists(TestCase.steps_list, _STEP_DONE),
+            ),
+        ),
+    )
 
 
 def next_position(session: Session, suite_id: int) -> int:
     top = session.scalar(select(func.max(TestCase.position)).where(TestCase.suite_id == suite_id))
     return int(top or 0) + 1
+
+
+def code_taken(session: Session, suite_id: int, code: str, case_id: int | None = None) -> bool:
+    query = select(TestCase.id).where(TestCase.suite_id == suite_id, TestCase.code == code)
+    if case_id is not None:
+        query = query.where(TestCase.id != case_id)
+    return session.scalar(query.limit(1)) is not None
 
 
 def create(
@@ -315,15 +449,13 @@ def create(
     user_id: int | None,
     source: str,
     position: int | None = None,
-    codes: Codes | None = None,
     flush: bool = True,
 ) -> TestCase:
-    """A new case of `suite` from cleaned values (a free code given when none or taken)."""
-    code = (codes or Codes(session, suite.id)).free(values.get("code") or "")
+    """A new case of `suite` from cleaned values. Its key is C<id>; `code` is only the sheet's
+    code of an import (the caller keeps it unique in the suite)."""
     case = TestCase(
         suite_id=suite.id,
-        **{k: v for k, v in values.items() if k != "code"},
-        code=code,
+        **values,
         source=source,
         revision=1,
         position=position if position is not None else next_position(session, suite.id),
@@ -333,6 +465,9 @@ def create(
     case.tags = case.tags or []
     case.jira_keys = case.jira_keys or []
     case.code_paths = case.code_paths or []
+    case.steps_list = case.steps_list or []
+    case.template = case.template or "text"
+    case.type = case.type or "functional"
     case.search = search_text(case)
     session.add(case)
     if flush:
@@ -365,22 +500,165 @@ def change(
     changed = {k: v for k, v in values.items() if getattr(case, k) != v}
     if not changed:
         return False
-    if "code" in changed:
-        code = changed["code"]
-        if not code:
-            raise FieldError("mã testcase không được trống")
-        clash = session.scalar(
-            select(TestCase.id).where(
-                TestCase.suite_id == case.suite_id, TestCase.code == code, TestCase.id != case.id
-            )
-        )
-        if clash:
-            raise FieldError(f"mã {code} đã có trong bộ")
+    code = changed.get("code")
+    if code and code_taken(session, case.suite_id, code, case.id):
+        raise FieldError(f"mã {code} đã có trong bộ")
     record(session, case, user_id=user_id, via=via)
     for key, value in changed.items():
         setattr(case, key, value)
     case.search = search_text(case)
     return True
+
+
+# -- sections --------------------------------------------------------------------------------------
+
+
+@dataclass
+class SectionRow:
+    section: TestSection
+    depth: int
+    path: str
+    cases: int  # directly inside, not obsolete
+    total: int  # with every section below
+
+
+def section_tree(session: Session, suite_id: int) -> list[SectionRow]:
+    """The suite's sections in reading order, with their case counts."""
+    sections = content.section_rows(session, [suite_id])
+    paths = content.paths_of(sections)
+    direct: dict[int, int] = {
+        sid: int(n)
+        for sid, n in session.execute(
+            select(TestCase.section_id, func.count())
+            .where(
+                TestCase.suite_id == suite_id,
+                TestCase.section_id.is_not(None),
+                TestCase.status != "obsolete",
+            )
+            .group_by(TestCase.section_id)
+        ).all()
+        if sid is not None
+    }
+    out = []
+    for section, depth in content.tree_order(sections):
+        below = content.descendants(sections, section.id)
+        out.append(
+            SectionRow(
+                section=section,
+                depth=depth,
+                path=paths.get(section.id, section.name),
+                cases=direct.get(section.id, 0),
+                total=sum(direct.get(i, 0) for i in below),
+            )
+        )
+    return out
+
+
+def _depth(sections: list[TestSection], section_id: int | None) -> int:
+    """How deep a section is (a top one: 1; the suite's root: 0)."""
+    by_id = {s.id: s for s in sections}
+    depth = 0
+    while section_id is not None and section_id in by_id and depth <= content.SECTION_DEPTH_MAX:
+        depth += 1
+        section_id = by_id[section_id].parent_id
+    return depth
+
+
+def _height(sections: list[TestSection], root: int) -> int:
+    """Levels of the subtree of `root` (itself only: 1)."""
+    children: dict[int | None, list[int]] = {}
+    for s in sections:
+        children.setdefault(s.parent_id, []).append(s.id)
+
+    def walk(node: int, level: int) -> int:
+        if level > content.SECTION_DEPTH_MAX:
+            return level
+        return max([level, *(walk(c, level + 1) for c in children.get(node, []))])
+
+    return walk(root, 1)
+
+
+def _parent_in(session: Session, suite_id: int, parent_id: int | None) -> None:
+    if parent_id is None:
+        return
+    parent = session.get(TestSection, parent_id)
+    if parent is None or parent.suite_id != suite_id:
+        raise FieldError("thư mục cha không thuộc bộ testcase này")
+
+
+def _sibling_end(session: Session, suite_id: int, parent_id: int | None) -> int:
+    query = select(func.max(TestSection.position)).where(TestSection.suite_id == suite_id)
+    query = query.where(
+        TestSection.parent_id.is_(None) if parent_id is None else TestSection.parent_id == parent_id
+    )
+    return int(session.scalar(query) or 0) + 1
+
+
+def section_name(value: Any) -> str:
+    name = _line(value, SECTION_MAX)
+    if not name:
+        raise FieldError("thư mục cần tên")
+    return name
+
+
+def create_section(
+    session: Session,
+    suite: TestSuite,
+    *,
+    parent_id: int | None,
+    name: str,
+    description: str | None = None,
+) -> TestSection:
+    _parent_in(session, suite.id, parent_id)
+    sections = content.section_rows(session, [suite.id])
+    if _depth(sections, parent_id) + 1 > content.SECTION_DEPTH_MAX:
+        raise FieldError(f"thư mục lồng tối đa {content.SECTION_DEPTH_MAX} cấp")
+    about = _text(description)
+    section = TestSection(
+        suite_id=suite.id,
+        parent_id=parent_id,
+        name=section_name(name),
+        description=about[:SECTION_DESCRIPTION_MAX] if about else None,
+        position=_sibling_end(session, suite.id, parent_id),
+    )
+    session.add(section)
+    session.flush()
+    return section
+
+
+def move_section(session: Session, section: TestSection, parent_id: int | None) -> None:
+    """Under another section of the same suite (None: the suite's root); never into itself or
+    one of its own sections."""
+    if parent_id == section.parent_id:
+        return
+    _parent_in(session, section.suite_id, parent_id)
+    sections = content.section_rows(session, [section.suite_id])
+    if parent_id is not None and parent_id in content.descendants(sections, section.id):
+        raise FieldError("không chuyển thư mục vào chính nó hoặc thư mục con của nó")
+    if _depth(sections, parent_id) + _height(sections, section.id) > content.SECTION_DEPTH_MAX:
+        raise FieldError(f"thư mục lồng tối đa {content.SECTION_DEPTH_MAX} cấp")
+    section.parent_id = parent_id
+    section.position = _sibling_end(session, section.suite_id, parent_id)
+
+
+def delete_section(session: Session, section: TestSection) -> tuple[int, int]:
+    """The section, every one below it and their cases (the database cascades); returns
+    (sections, cases) removed."""
+    from app.testcases.runs import refresh_open_snapshots  # runs imports this module
+
+    sections = content.section_rows(session, [section.suite_id])
+    ids = content.descendants(sections, section.id)
+    case_ids = list(session.scalars(select(TestCase.id).where(TestCase.section_id.in_(ids))))
+    # Open runs keep their own copy of each case: refreshed before the cases go.
+    refresh_open_snapshots(session, case_ids)
+    session.delete(section)
+    session.flush()
+    return len(ids), len(case_ids)
+
+
+def section_scope(session: Session, section: TestSection) -> set[int]:
+    """The section and every one below it."""
+    return content.descendants(content.section_rows(session, [section.suite_id]), section.id)
 
 
 @dataclass
