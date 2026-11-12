@@ -7,7 +7,7 @@ import { DocEditor, type EditorStart } from "@/components/DocEditor";
 import { DraftReview, DraftsCard, LinkForm, useDrafts } from "@/components/DocFromLinks";
 import { DocHistory } from "@/components/DocHistory";
 import { DocMarkdown, docOutline, fold, type OutlineItem } from "@/components/DocMarkdown";
-import { Icon, IconButton } from "@/components/icons";
+import { Icon, IconButton, type IconName } from "@/components/icons";
 import { Alert, EmptyState, Loading, Message, PageHeader, Pill, Segmented, Skeleton } from "@/components/ui";
 import { UploadDrop, type UploadItem, UploadList, fileSize, uploadAll } from "@/components/UploadDrop";
 import { ApiError, api, can, useApi } from "@/lib/api";
@@ -831,11 +831,9 @@ function DocView({
                 <Icon name="download" />
               </a>
             )}
-            <IconButton icon="printer" label="In / lưu PDF" onClick={() => window.print()} />
             {doc.can_edit && !doc.archived && (
               <>
                 <IconButton icon="pin" label={doc.pinned ? "Bỏ ghim" : "Ghim lên đầu"} aria-pressed={doc.pinned} disabled={busy} onClick={() => void act(() => api.patch(`/docs/${doc.id}`, { pinned: !doc.pinned }))} />
-                <IconButton icon="settings" label="Đổi tên, nhóm" onClick={() => setRenaming(true)} />
                 <UploadButton disabled={busy} onFiles={(f) => void newVersion(f)} />
                 <button type="button" className="sm" onClick={() => setFromLinks("merge")} disabled={busy || Boolean(old)} title="AI đọc link / file và bổ sung / nâng cấp tài liệu này; bạn duyệt trước khi lưu">
                   <Icon name="sparkle" size={14} /> Bổ sung bằng AI
@@ -845,8 +843,24 @@ function DocView({
                 </button>
               </>
             )}
-            {doc.can_edit && !doc.archived && <IconButton icon="link" label="Dự án dùng tài liệu này" onClick={() => setSharing(true)} />}
-            {doc.can_delete && <IconButton icon="remove" tone="danger" label="Xoá tài liệu" disabled={busy} onClick={() => setConfirmDelete(true)} />}
+            <MoreMenu
+                items={[
+                  ...(doc.can_edit && !doc.archived ? [{ icon: "settings" as const, label: "Đổi tên, nhóm", run: () => setRenaming(true) }] : []),
+                  ...(doc.can_edit && !doc.archived ? [{ icon: "link" as const, label: "Dự án dùng tài liệu này", run: () => setSharing(true) }] : []),
+                  { icon: "printer" as const, label: "In / lưu PDF", run: () => window.print() },
+                  ...(doc.can_edit && !doc.archived
+                    ? [
+                        {
+                          icon: "folder" as const,
+                          label: "Lưu trữ",
+                          run: () => void act(() => api.patch(`/docs/${doc.id}`, { archived: true }), "Đã lưu trữ tài liệu."),
+                        },
+                      ]
+                    : []),
+                  ...(doc.can_delete ? [{ icon: "remove" as const, label: "Xoá tài liệu", danger: true, run: () => setConfirmDelete(true) }] : []),
+                ]}
+                disabled={busy}
+              />
           </div>
         </div>
         {doc.summary && <p className="docs-summary">{doc.summary}</p>}
@@ -1202,6 +1216,49 @@ function ShareProjects({ doc, onClose, onSaved }: { doc: DocDetail; onClose: () 
       {doc.hidden_projects > 0 && <p className="muted small">Còn dùng chung với {doc.hidden_projects} dự án bạn không xem được: giữ nguyên.</p>}
       {error && <Alert tone="error">{error}</Alert>}
     </Modal>
+  );
+}
+
+/** The "…" menu of a document's less frequent actions (share, archive, delete). */
+function MoreMenu({ items, disabled }: { items: { icon: IconName; label: string; danger?: boolean; run: () => void }[]; disabled?: boolean }) {
+  const box = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const away = (e: MouseEvent | KeyboardEvent) => {
+      const el = box.current;
+      if (!el?.open) return;
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !el.contains(e.target as Node)) el.open = false;
+    };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", away);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", away);
+    };
+  }, []);
+  if (!items.length) return null;
+  return (
+    <details className="llm-acc-more docs-more" ref={box}>
+      <summary className="icon-btn" aria-label="Thêm thao tác" title="Thêm thao tác" aria-disabled={disabled}>
+        <Icon name="more" />
+      </summary>
+      <div className="llm-acc-menu" role="menu">
+        {items.map((it) => (
+          <button
+            key={it.label}
+            type="button"
+            role="menuitem"
+            className={it.danger ? "bad" : undefined}
+            disabled={disabled}
+            onClick={() => {
+              if (box.current) box.current.open = false;
+              it.run();
+            }}
+          >
+            <Icon name={it.icon} size={14} /> {it.label}
+          </button>
+        ))}
+      </div>
+    </details>
   );
 }
 

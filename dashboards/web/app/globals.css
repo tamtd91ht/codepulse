@@ -11068,3 +11068,16 @@ button.ghost.danger:hover:not(:disabled) {
   max-height: 50vh;
   overflow: auto;
 }
+
+.docs-more .llm-acc-menu {
+  min-width: 220px;
+}
+.docs-more .llm-acc-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.docs-more .llm-acc-menu button.bad {
+  color: var(--danger);
+}

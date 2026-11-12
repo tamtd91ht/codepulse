@@ -502,3 +502,5 @@ API: `PUT /docs/{id}/projects {project_ids}` (cả tập dự án liên kết, t
 `doc.share`; `GET /docs/{id}` thêm `shared[] (id, name, home, can_edit)`, `hidden_projects`,
 `can_delete`; danh sách thêm `projects`, `shared_from`.
 
+
+Thanh công cụ của tài liệu (user 2026-11-12): các thao tác ít dùng gom vào menu **…** (Đổi tên, nhóm · Dự án dùng tài liệu này · In / lưu PDF · Lưu trữ · Xoá tài liệu, mục Xoá màu đỏ, chỉ hiện ở người sửa được của dự án gốc) để thanh nằm trên một dòng.
