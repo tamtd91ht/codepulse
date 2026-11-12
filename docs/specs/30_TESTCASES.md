@@ -487,7 +487,8 @@ mở rộng bước dùng chung, estimate, quyền ghi kết quả).
 - **G11 token:** dùng lại token cá nhân `cpat_…` (spec 26), thêm scope `testcases:read`,
   `testcases:write`, `results:write`. Token có thể gắn một dự án (`business_project_id`): chỉ dùng
   được trong dự án đó. Bearer token chỉ mở `/api/v1/testcases/*`; quyền vẫn là của chủ token, và
-  không vượt scope. OpenAPI ở `/api/v1/docs/openapi.json`, Swagger ở `/api/v1/docs`.
+  không vượt scope. Swagger ở `/api/v1/testcases/api-docs`, OpenAPI JSON ở
+  `/api/v1/testcases/api-docs/openapi.json` (`/api/v1/docs` là API tài liệu dự án nên không dùng).
 - **G11 webhook:** dùng lại webhook theo dự án (Admin › Webhook), thêm sự kiện `run.closed`,
   `result.failed`, `case.status_changed`, `plan.closed`. Payload ký HMAC-SHA256. Gửi lỗi tự thử
   lại 3 lần, rồi đánh dấu failed; xem và gửi lại được.
@@ -498,9 +499,94 @@ mở rộng bước dùng chung, estimate, quyền ghi kết quả).
   tắt mặc định; các phần khác của tích hợp Jira vẫn chỉ đọc.
 - **G2 code_paths:** dạng mới `{repo}:{glob}`; dạng cũ không có `repo:` vẫn hiểu là mọi repo của dự
   án (không phá dữ liệu cũ). Thư mục và bộ có `code_paths` riêng, case con kế thừa.
+  - `repo` = `path_with_namespace` hoặc phần cuối của nó (không phân biệt hoa thường); phải là repo
+    của dự án của bộ (gốc hoặc dùng chung), tên ngắn trùng nhiều repo thì bắt ghi đủ. Chỉ kiểm tra
+    mục mới (mục đã lưu vẫn giữ); khôi phục revision không kiểm tra.
+  - Vùng code hiệu lực của case = của bộ + chuỗi thư mục (gốc trước) + của case. Case ghi `!X` bỏ
+    mục kế thừa đúng bằng `X`; `!glob` (không repo) bỏ glob đó ở mọi repo. Bộ / thư mục không nhận
+    `!`. MR ghép theo repo của MR: mục `repo:` của repo khác không khớp.
+  - API: `PATCH /testcases/suites/{id}` và `PATCH /testcases/sections/{id}` nhận `code_paths`;
+    `GET /testcases/repos?business_project_id=` (gợi ý repo); `GET /testcases/issue-docs?key=`
+    (tài liệu nhắc mã Jira); `GET /testcases/traceability[/export]?business_project_id=&milestone_id=
+    &sprint=&label=&q=&days=&uncovered=&limit=&offset=` (Issue chưa có epic/sprint riêng: `sprint` =
+    sprint / version đồng bộ ở `issues.milestone`, epic lọc theo nhãn). Ma trận phân trang theo
+    issue (`limit` mặc định 200, tối đa 500) và trả `total`; `issues` / `covered` đếm mọi issue khớp
+    bộ lọc (không giới hạn số case); kết quả gần nhất của case = lượt test có `tested_at` mới nhất
+    (chưa test thì của run mới nhất). Export CSV đi hết các trang (tối đa 5 000 issue), ô bắt đầu
+    bằng `= + - @`, tab, CR được thêm `'`. AI `kind: "links"` (`suite_id`, `section_id?`) chỉ gửi
+    repo của dự án của lượt AI có `allow_external_llm` khác false, issue Jira và tiêu đề tài liệu
+    của dự án đó; và `POST /testcases/ai/{id}/apply-links {items: [{id, jira_keys, code_paths}]}`
+    (cộng thêm vào case qua `service.change`, mỗi case một revision `via=ai`); `generate` nhận
+    `auto_docs: true` để tự thêm tài liệu nhắc mã Jira; mã Jira mà tài liệu nguồn nhắc (và có trong
+    dự án) được gợi ý cho đề xuất.
+  - "% issue Jira 90 ngày có testcase" tính trực tiếp mỗi lần gọi `/testcases/stats` (không cache).
 - **X4 bot comment MR:** dùng cơ chế comment MR đã có của review (`post_mr_comment`).
 - **Lịch gửi báo cáo (G4):** gửi qua Telegram / webhook đã có. Email / Slack ghi IDEAS nếu chưa có kênh.
 
 ### 15.3 Tiến độ
 
 Ghi ở `PROGRESS.md` theo từng hạng mục.
+
+### 15.4 G1 – quyết định **[Quyết định]**
+
+Kết quả automation từ CI (`app/testcases/ci.py`, `app/api/routers/test_ci.py`, CLI `tools/codepulse_cli.py`).
+
+- **API:** `POST /testcases/runs/import-results` (multipart: `file` + `business_project_id`,
+  `suite_id?`, `run_name?`, `run_id?`, `milestone_id?`, `config_ids?` ("1,2"), `close_run?`,
+  `mr_iid?`, `commit_sha?`, `branch?`, `project?` (đường dẫn repo GitLab, `$CI_PROJECT_PATH`),
+  `auto_create?`) → 202 `{import_id, status}`; xử lý nền (RQ, hàng `default`).
+  `GET /testcases/ci-imports/{id}` → tiến độ `{status, total, done, mapped, created_cases, skipped,
+  unmapped[], run_id, run_key, error, ...}`; `GET /testcases/ci-imports?business_project_id=` → 20
+  lượt gần nhất. Tối đa 20 MB, 5 000 test / báo cáo, 5 lượt chưa xong / dự án (429).
+- **Quyền:** có `run_id` (run đang mở của dự án) → `tests.run` (hoặc `tests.manage`); không có →
+  tạo run mới, cần `tests.manage`; `auto_create` cần thêm `tests.edit` và `suite_id`. Token chỉ có
+  scope `results:write` gọi được endpoint này (G11).
+- **Định dạng** nhận theo nội dung (không theo tên file): JUnit XML (cả xUnit / TestNG kiểu JUnit),
+  TestNG `testng-results.xml`, xUnit.net v2 XML, Playwright JSON reporter, Cucumber JSON. XML có
+  `DOCTYPE` (nên có thể có ENTITY: "billion laughs", XXE) hoặc không phải UTF-8 bị từ chối (422).
+- **Ghép:** (1) mã `C<id>` trong tên test, tag, annotation, property (`@C12`, `[C12]`, `C12:`,
+  `test_C12_x`; một test có thể mang nhiều mã) của case còn hiệu lực trong một bộ của dự án;
+  (2) `automation_id` = `classname.name` (Playwright: `file > describe.title`; Cucumber:
+  `feature.scenario`), trong `suite_id` nếu có; (3) `auto_create`: case `kind=automated`,
+  `type=automated`, `status=draft`, `source=import`, tiêu đề = tên test, thư mục
+  "Automation > Unmapped"; còn lại liệt kê ở `unmapped`. Nhiều test vào cùng một case: Failed thắng.
+- **Skipped:** không ghi kết quả (như TestRail: test vẫn được thêm vào run, giữ "Chưa chạy"), đếm
+  riêng ở `skipped`. Failure / error / timedOut → Failed.
+- **Không trùng:** một run có một kết quả CI cho mỗi test và mỗi commit. Gửi lại vào cùng run
+  (`run_id`) cùng commit → cập nhật kết quả đó (các trạng thái đã thấy giữ ở `ci.attempts`); commit
+  khác → thêm kết quả mới (lịch sử).
+- **Kết quả CI:** `source=ci`, `elapsed_s` (làm tròn lên), `log` (message), `stack`, `attachments`
+  (Playwright attachments, `[[ATTACHMENT|path]]` của JUnit: chỉ lưu đường dẫn, không lưu file),
+  `ci = {commit_sha, branch, mr_iid, project, test_name, file, import_id, attempts}`. Failed bắn
+  webhook `result.failed` (G11).
+- **Flaky** (tính lại cho các case vừa có kết quả): pass và fail trên cùng commit (kể cả các lần
+  retry của Playwright), hoặc đổi trạng thái ≥ 3 lần trong 10 kết quả CI gần nhất. Hiện "Flaky" ở
+  test trong run và ở trang case.
+- **"% tự động"** (`GET /testcases/stats` → `automated_ci`): case `automated` còn hiệu lực có kết
+  quả CI trong 30 ngày.
+- **Cần test lại của MR:** case có kết quả CI gửi kèm `mr_iid` = IID của MR (và `project` trùng repo
+  của MR, nếu có gửi) hiện trong `GET /testcases/impact/mr/{id}` với lý do "CI: Failed (R12, abc12345)".
+- **Hiệu năng:** nạp case theo mã và theo automation_id một lần, chèn / cập nhật kết quả hàng loạt
+  theo lô 500 test (lưu tiến độ sau mỗi lô); 5 000 test (kèm tự tạo 5 000 case) < 30 s (có test).
+- **Automation ID** sửa được trong form case (duy nhất trong bộ: trùng → 422; chuyển bộ mà trùng thì
+  bỏ automation ID của case được chuyển).
+
+Ví dụ GitLab CI:
+
+```yaml
+test:
+  script:
+    - pytest --junitxml=reports/junit.xml || true
+    - python3 tools/codepulse_cli.py results upload --url "$CODEPULSE_URL"
+        --token "$CODEPULSE_TOKEN" --project 8 --suite 3 --file reports/junit.xml
+        --mr "$CI_MERGE_REQUEST_IID" --commit "$CI_COMMIT_SHA"
+        --branch "$CI_COMMIT_REF_NAME" --repo "$CI_PROJECT_PATH" --wait
+  artifacts:
+    when: always
+    reports:
+      junit: reports/junit.xml
+```
+
+Không có Python: `curl -H "Authorization: Bearer $CODEPULSE_TOKEN" -F business_project_id=8
+-F suite_id=3 -F commit_sha=$CI_COMMIT_SHA -F file=@reports/junit.xml
+$CODEPULSE_URL/api/v1/testcases/runs/import-results`.

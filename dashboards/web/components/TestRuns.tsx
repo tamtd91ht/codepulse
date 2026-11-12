@@ -2,6 +2,7 @@
 
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 
+import { CiBadge, CiImportModal, CiResult, FlakyPill } from "@/components/CiImport";
 import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
 import { MoreMenu } from "@/components/MoreMenu";
@@ -281,7 +282,7 @@ export function RunsTab({
   const [state, setState] = useState<"open" | "completed">("open");
   const runs = useApi<RunOut[]>(`/testcases/runs?business_project_id=${projectId}&state=${state}`, { keepPreviousData: true });
   const plans = useApi<PlanOut[]>(`/testcases/plans?business_project_id=${projectId}&state=${state}`, { keepPreviousData: true });
-  const [creating, setCreating] = useState<"run" | "plan" | null>(null);
+  const [creating, setCreating] = useState<"run" | "plan" | "ci" | null>(null);
   const single = (runs.data ?? []).filter((r) => r.plan_id == null);
 
   return (
@@ -299,6 +300,9 @@ export function RunsTab({
         <span className="spacer" />
         {canEdit && (
           <>
+            <button type="button" className="sm" onClick={() => setCreating("ci")}>
+              <Icon name="upload" size={14} /> Nhập kết quả CI
+            </button>
             <button type="button" className="sm" onClick={() => setCreating("plan")}>
               <Icon name="folder" size={14} /> Tạo test plan
             </button>
@@ -361,6 +365,20 @@ export function RunsTab({
           projectId={projectId}
           onClose={() => setCreating(null)}
           onCreated={(id) => {
+            setCreating(null);
+            void runs.mutate();
+            onOpenRun(id);
+          }}
+        />
+      )}
+      {creating === "ci" && (
+        <CiImportModal
+          projectId={projectId}
+          onClose={() => {
+            setCreating(null);
+            void runs.mutate();
+          }}
+          onOpenRun={(id) => {
             setCreating(null);
             void runs.mutate();
             onOpenRun(id);
@@ -798,6 +816,7 @@ function GroupRows({
               <button type="button" className="link tc-row-title" onClick={() => onOpen(t.id)}>
                 {t.title}
               </button>
+              {t.flaky && <> <FlakyPill /></>}
               <div className="small muted">
                 {t.case_key ?? "Testcase đã xoá"}
                 {t.defects.length ? ` · Bug: ${t.defects.join(", ")}` : ""}
@@ -1138,13 +1157,15 @@ function History({ detail }: { detail: TestDetail }) {
               <span className={`tr-dot st-${x.status ?? "untested"}`} aria-hidden="true" />
               <div>
                 <div className="small">
-                  {x.status ? <StatusPill status={x.status} /> : <span className="pill">Cập nhật</span>} <strong>{x.created_by?.name ?? "—"}</strong>{" "}
+                  {x.status ? <StatusPill status={x.status} /> : <span className="pill">Cập nhật</span>} {x.source === "ci" && <CiBadge />}{" "}
+                  <strong>{x.created_by?.name ?? "—"}</strong>{" "}
                   <span className="muted">{dateTimeMin(x.created_at)}</span>
                   {x.version && <span className="muted"> · bản {x.version}</span>}
                   {(x.elapsed || x.elapsed_s) && <span className="muted"> · {x.elapsed ?? durationText(x.elapsed_s)}</span>}
                   {x.assigned_to && <span className="muted"> · giao {x.assigned_to.name}</span>}
                 </div>
                 {x.comment && <div className="tr-pre small">{x.comment}</div>}
+                <CiResult result={x} />
                 {x.defects.length > 0 && <div className="small">Bug: {x.defects.join(", ")}</div>}
                 {x.step_results && x.step_results.some((s) => s.status !== "untested" || s.actual) && (
                   <ul className="tr-step-hist small">

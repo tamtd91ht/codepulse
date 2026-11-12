@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { type ReactNode, useState } from "react";
 
+
 import { Modal } from "@/components/CriteriaParts";
 import { Icon } from "@/components/icons";
 import { CopyBlock, mcpAddCommand, useMcpUrl } from "@/components/McpConnect";
 import { Alert, Card, Drawer, EmptyState, Expander, Loading, Message, Pill } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { date, relative } from "@/lib/format";
+import type { TcProject } from "@/lib/testcases";
 import type { ApiToken, ApiTokenCreated, ApiTokenScope } from "@/lib/types";
 
 /** docs/specs/26 §2: at most this many tokens still valid per person. */
@@ -21,7 +23,48 @@ const SCOPE_LABEL: Record<ApiTokenScope, { label: string; hint: string }> = {
   "findings:read": { label: "Đọc finding", hint: "Đọc finding critical/high và yêu cầu đóng của bạn" },
   "findings:close_request": { label: "Gửi yêu cầu đóng", hint: "Gửi và rút yêu cầu đóng finding (vẫn qua manager duyệt)" },
   "reviews:request": { label: "Yêu cầu review", hint: "Yêu cầu review commit đã push và xem tiến độ (tốn lượt review)" },
+  "testcases:read": { label: "Đọc testcase", hint: "API testcase: đọc bộ testcase, case, test run, kết quả" },
+  "testcases:write": { label: "Sửa testcase", hint: "API testcase: tạo, sửa testcase, test run, plan (gồm cả đọc và ghi kết quả)" },
+  "results:write": { label: "Ghi kết quả test", hint: "API testcase: chỉ ghi kết quả test (CI), không sửa testcase" },
 };
+
+/** docs/specs/30 §15: the testcase API scopes, in the order shown. */
+const TESTCASE_SCOPES = ["testcases:read", "testcases:write", "results:write"] as const;
+
+/** The curl example of the "Dùng API" help. */
+export function apiCurlExample(base: string, token = "cpat_…"): string {
+  return [
+    `curl -H "Authorization: Bearer ${token}" \\`,
+    `  "${base}/api/v1/testcases/projects"`,
+    "",
+    "# Ghi kết quả một test (scope results:write)",
+    `curl -X POST -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \\`,
+    `  -d '{"status": "failed", "comment": "Lỗi 500"}' \\`,
+    `  "${base}/api/v1/testcases/tests/123/results"`,
+  ].join("\n");
+}
+
+/** The dashboard's origin (the API is served under it, like /mcp). */
+function useApiBase(): string {
+  return useMcpUrl().replace(/\/mcp$/, "");
+}
+
+/** "Dùng API": how a script or CI calls the testcase API with a token. */
+function ApiHelp({ token }: { token?: string }) {
+  const base = useApiBase();
+  return (
+    <div className="token-reveal-field">
+      <span className="small muted">
+        Dùng API testcase (token cần scope Đọc / Sửa testcase hoặc Ghi kết quả). Tài liệu đầy đủ:{" "}
+        <a href="/api/v1/testcases/api-docs" target="_blank" rel="noreferrer">
+          OpenAPI
+        </a>
+        .
+      </span>
+      <CopyBlock label="Ví dụ curl" text={apiCurlExample(base, token)} secret={Boolean(token)} />
+    </div>
+  );
+}
 
 const errorText = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
 
@@ -87,6 +130,11 @@ function TokenRow({
               {SCOPE_LABEL[s]?.label ?? s}
             </span>
           ))}
+          {t.business_project_id != null && (
+            <span className="chip small" title="Token chỉ dùng được trong dự án này">
+              Dự án: {t.business_project_name ?? `#${t.business_project_id}`}
+            </span>
+          )}
         </div>
         <div className="meta small muted">
           <code>{tokenMask(t.prefix)}</code> · tạo {date(t.created_at)} ·{" "}
@@ -212,20 +260,39 @@ function CreateTokenModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const [name, setName] = useState("");
   const [closeScope, setCloseScope] = useState(true);
   const [reviewScope, setReviewScope] = useState(true);
+  const [mcp, setMcp] = useState(true);
+  const [tcScopes, setTcScopes] = useState<ApiTokenScope[]>([]);
+  const [projectId, setProjectId] = useState<number | null>(null);
+  const projects = useApi<TcProject[]>(tcScopes.length ? "/testcases/projects" : null);
   const [days, setDays] = useState<Days>(90);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const ready = name.trim().length > 0 && name.trim().length <= NAME_MAX;
+  const ready = name.trim().length > 0 && name.trim().length <= NAME_MAX && (mcp || tcScopes.length > 0);
+
+  function toggleTc(scope: ApiTokenScope, on: boolean) {
+    setTcScopes((cur) => (on ? [...cur.filter((s) => s !== scope), scope] : cur.filter((s) => s !== scope)));
+  }
 
   async function create() {
     if (!ready || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const scopes: ApiTokenScope[] = ["findings:read"];
-      if (closeScope) scopes.push("findings:close_request");
-      if (reviewScope) scopes.push("reviews:request");
-      onCreated(await api.post<ApiTokenCreated>("/me/tokens", { name: name.trim(), scopes, days }));
+      const scopes: ApiTokenScope[] = [];
+      if (mcp) {
+        scopes.push("findings:read");
+        if (closeScope) scopes.push("findings:close_request");
+        if (reviewScope) scopes.push("reviews:request");
+      }
+      scopes.push(...tcScopes);
+      onCreated(
+        await api.post<ApiTokenCreated>("/me/tokens", {
+          name: name.trim(),
+          scopes,
+          days,
+          business_project_id: tcScopes.length ? projectId : null,
+        }),
+      );
     } catch (e) {
       setError(
         e instanceof ApiError && e.status === 409
@@ -275,19 +342,59 @@ function CreateTokenModal({ onClose, onCreated }: { onClose: () => void; onCreat
           />
         </label>
         <label className="inline-check token-scope">
-          <input type="checkbox" checked={closeScope} onChange={(e) => setCloseScope(e.target.checked)} />
+          <input type="checkbox" checked={mcp} onChange={(e) => setMcp(e.target.checked)} />
           <span>
-            Cho phép gửi yêu cầu đóng finding
-            <span className="muted small"> Bỏ tick nếu token chỉ để đọc (CI, script). Đọc finding luôn được bật.</span>
+            Dùng cho Claude Code (MCP)
+            <span className="muted small"> Đọc finding critical/high của bạn.</span>
           </span>
         </label>
-        <label className="inline-check token-scope">
-          <input type="checkbox" checked={reviewScope} onChange={(e) => setReviewScope(e.target.checked)} />
-          <span>
-            Cho phép yêu cầu review commit đã push
-            <span className="muted small"> Claude Code gọi review ngay sau khi push; mỗi review tốn một lượt, có giới hạn mỗi ngày.</span>
-          </span>
-        </label>
+        {mcp && (
+          <>
+            <label className="inline-check token-scope">
+              <input type="checkbox" checked={closeScope} onChange={(e) => setCloseScope(e.target.checked)} />
+              <span>
+                Cho phép gửi yêu cầu đóng finding
+                <span className="muted small"> Bỏ tick nếu token chỉ để đọc (CI, script). Đọc finding luôn được bật.</span>
+              </span>
+            </label>
+            <label className="inline-check token-scope">
+              <input type="checkbox" checked={reviewScope} onChange={(e) => setReviewScope(e.target.checked)} />
+              <span>
+                Cho phép yêu cầu review commit đã push
+                <span className="muted small"> Claude Code gọi review ngay sau khi push; mỗi review tốn một lượt, có giới hạn mỗi ngày.</span>
+              </span>
+            </label>
+          </>
+        )}
+        <fieldset className="adm-field">
+          <legend className="small muted">API testcase (/api/v1/testcases)</legend>
+          {TESTCASE_SCOPES.map((scope) => (
+            <label key={scope} className="inline-check token-scope">
+              <input type="checkbox" checked={tcScopes.includes(scope)} onChange={(e) => toggleTc(scope, e.target.checked)} />
+              <span>
+                {SCOPE_LABEL[scope].label}
+                <span className="muted small"> {SCOPE_LABEL[scope].hint}.</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        {tcScopes.length > 0 && (
+          <label className="adm-field">
+            <span className="small muted">Chỉ dùng trong dự án</span>
+            <select
+              value={projectId ?? ""}
+              onChange={(e) => setProjectId(e.target.value ? Number(e.target.value) : null)}
+              disabled={!projects.data}
+            >
+              <option value="">Mọi dự án bạn xem được</option>
+              {(projects.data ?? []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="adm-field">
           <span className="small muted">Hạn dùng</span>
           <select value={days} onChange={(e) => setDays(Number(e.target.value) as Days)}>
@@ -298,7 +405,10 @@ function CreateTokenModal({ onClose, onCreated }: { onClose: () => void; onCreat
             ))}
           </select>
         </label>
-        <p className="muted small">Token chỉ dùng cho kết nối MCP của Claude Code, có quyền như bạn trong phạm vi đã chọn.</p>
+        <p className="muted small">
+          Token dùng cho Claude Code (MCP) và API testcase, có quyền như bạn trong phạm vi đã chọn; không dùng được cho các API
+          khác.
+        </p>
       </form>
     </Modal>
   );
@@ -317,10 +427,13 @@ function RevealPanel({ token, onDone }: { token: ApiTokenCreated; onDone: () => 
         <span className="small muted">Token</span>
         <CopyBlock label="Token" text={token.token} secret />
       </div>
-      <div className="token-reveal-field">
-        <span className="small muted">Chạy trong terminal để thêm CodePulse vào Claude Code</span>
-        <CopyBlock label="Lệnh claude mcp add" text={mcpAddCommand(url, token.token)} secret />
-      </div>
+      {token.scopes.includes("findings:read") && (
+        <div className="token-reveal-field">
+          <span className="small muted">Chạy trong terminal để thêm CodePulse vào Claude Code</span>
+          <CopyBlock label="Lệnh claude mcp add" text={mcpAddCommand(url, token.token)} secret />
+        </div>
+      )}
+      {token.scopes.some((s) => (TESTCASE_SCOPES as readonly string[]).includes(s)) && <ApiHelp token={token.token} />}
       <div className="adm-form-foot">
         <button type="button" onClick={onDone}>
           Tôi đã lưu token
@@ -384,6 +497,9 @@ export function MyTokensCard() {
       <div className="muted small token-foot">
         Cách dùng và mẫu <code>.mcp.json</code>: <Link href="/guide/mcp">Hướng dẫn › Tích hợp MCP</Link>.
       </div>
+      <Expander summary="Dùng API testcase">
+        <ApiHelp />
+      </Expander>
     </Card>
   );
 }

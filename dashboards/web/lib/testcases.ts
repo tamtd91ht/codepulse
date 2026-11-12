@@ -43,6 +43,8 @@ export interface Suite {
   can_edit: boolean;
   can_delete: boolean;
   updated_at: string | null;
+  /** "Vùng code" every case inherits: "{repo}:{glob}" or a bare glob (§15.2 G2). */
+  code_paths?: string[];
 }
 
 /* ---- TestRail model (docs/specs/30 §13, §14.1) ---- */
@@ -114,6 +116,8 @@ export interface Section {
   cases: number;
   /** Cases here and in the sub-sections. */
   total: number;
+  /** "Vùng code" its cases and sub-sections inherit. */
+  code_paths?: string[];
 }
 
 export interface SharedSteps {
@@ -224,6 +228,8 @@ export interface CaseValues {
   priority?: Priority;
   kind?: CaseKind;
   automation?: string | null;
+  /** §15 G1: "classname.name" in CI reports, unique in the suite. */
+  automation_id?: string | null;
   tags?: string[];
   jira_keys?: string[];
   code_paths?: string[];
@@ -255,6 +261,9 @@ export interface TestCase {
   priority: Priority;
   kind: CaseKind;
   automation: string | null;
+  automation_id?: string | null;
+  /** §15 G1: its CI results disagree. */
+  flaky?: boolean;
   tags: string[];
   jira_keys: string[];
   code_paths: string[];
@@ -331,7 +340,7 @@ export interface ImportResult {
   missing: number;
 }
 
-export type AiKind = "generate" | "audit" | "impact";
+export type AiKind = "generate" | "audit" | "impact" | "links";
 export type AiStatus = "queued" | "fetching" | "writing" | "ready" | "failed" | "applied" | "discarded";
 
 export interface Proposal {
@@ -375,6 +384,7 @@ export interface AiRun {
     missing?: Proposal[];
     gaps?: string[];
     issues?: AiIssue[];
+    links?: LinkSuggestion[];
     warnings?: string[];
     applied?: number[];
   } | null;
@@ -393,7 +403,7 @@ export interface RunList {
   max_count: number;
 }
 
-export const AI_KIND_LABEL: Record<AiKind, string> = { generate: "Sinh testcase", audit: "Rà soát bộ", impact: "Phân tích MR" };
+export const AI_KIND_LABEL: Record<AiKind, string> = { generate: "Sinh testcase", audit: "Rà soát bộ", impact: "Phân tích MR", links: "Gợi ý liên kết" };
 export const AI_STATUS_LABEL: Record<AiStatus, string> = {
   queued: "Đang chờ",
   fetching: "Đang đọc nguồn",
@@ -475,4 +485,70 @@ export function splitList(text: string): string[] {
     .split(/[\n,;]/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/* ---- Links to Jira and code (docs/specs/30 §15.2 G2) ---- */
+
+/** One AI link suggestion: what to add to a case. */
+export interface LinkSuggestion {
+  id: number;
+  key: string;
+  title: string;
+  current_jira: string[];
+  current_code: string[];
+  jira_keys: string[];
+  code_paths: string[];
+  reason: string;
+}
+
+export interface RepoRef {
+  id: number;
+  /** path_with_namespace: "{path}:{glob}". */
+  path: string;
+  /** Its last part: "{name}:{glob}" works too. */
+  name: string;
+  folders: string[];
+}
+
+export interface IssueDoc {
+  id: number;
+  title: string;
+  keys: string[];
+}
+
+export interface TraceCase {
+  id: number;
+  key: string;
+  title: string;
+  status: CaseStatus;
+  suite: string;
+  run_id: number | null;
+  run_key: string | null;
+  run_name: string | null;
+  test_status: ResultStatus | "untested" | null;
+  defects: string[];
+}
+
+export interface TraceRow {
+  key: string;
+  title: string;
+  type: string | null;
+  state: string | null;
+  sprint: string | null;
+  labels: string[];
+  url: string | null;
+  cases: TraceCase[];
+}
+
+export interface Trace {
+  rows: TraceRow[];
+  issues: number;
+  covered: number;
+  without_requirement: number;
+  sprints: string[];
+  labels: string[];
+  /** Issues the pages go through ("chưa có testcase" applied); `rows` is one page of them. */
+  total: number;
+  limit: number;
+  offset: number;
 }

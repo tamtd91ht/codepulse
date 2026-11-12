@@ -20,6 +20,7 @@ from app.api.security import Principal
 from app.assistant.knowledge import fold
 from app.models import (
     BusinessProject,
+    Project,
     TestCase,
     TestCaseRevision,
     TestMilestone,
@@ -63,6 +64,7 @@ FIELDS = (
     "type",
     "kind",
     "automation",
+    "automation_id",
     "tags",
     "jira_keys",
     "code_paths",
@@ -248,15 +250,109 @@ def glob_clean(pattern: str) -> str:
     return "" if len(re.findall(r"\*+|\?", g)) > GLOB_WILDCARDS else g
 
 
+@dataclass(frozen=True)
+class CodePath:
+    """One code_paths entry (docs/specs/30 §15.2 G2): "[!][{repo}:]{glob}". No repo: any repo
+    of the dự án. "!" (a case only): drop an entry its section or suite gives it."""
+
+    repo: str | None
+    glob: str
+    negate: bool = False
+
+    def text(self, *, negate: bool | None = None) -> str:
+        bang = "!" if (self.negate if negate is None else negate) else ""
+        return f"{bang}{self.repo + ':' if self.repo else ''}{self.glob}"
+
+
+# "{repo}:" before a glob: a GitLab path (group/sub/name) or its last part, without wildcards.
+_REPO_PREFIX = re.compile(r"^([A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)*)\s*:\s*(.*)$")
+
+
+def code_path(entry: str) -> CodePath:
+    raw = entry.strip()
+    negate = raw.startswith("!")
+    if negate:
+        raw = raw[1:].strip()
+    found = _REPO_PREFIX.match(raw)
+    if found:
+        return CodePath(found.group(1), found.group(2).strip(), negate)
+    return CodePath(None, raw, negate)
+
+
+def repo_matches(ref: str, full: str) -> bool:
+    """`ref` (a code path's repo) names the repo `full` (path_with_namespace): the whole path
+    or its last part, letter case aside."""
+    ref, full = ref.strip().lower(), full.strip().lower()
+    return bool(ref) and (ref == full or ref == full.rsplit("/", 1)[-1])
+
+
 def globs(values: Any) -> list[str]:
     out = []
     for raw in _list(values, GLOB_MAX):
-        g = glob_clean(raw)
-        if not g and raw.strip():
+        entry = code_path(raw)
+        g = glob_clean(entry.glob)
+        if not g and entry.glob.strip():
             raise FieldError(f"mẫu “{raw[:60]}” có quá nhiều * / ? (tối đa {GLOB_WILDCARDS})")
-        if g and g not in out:
-            out.append(g)
+        if not g:
+            continue
+        text = CodePath(entry.repo, g, entry.negate).text()
+        if text not in out:
+            out.append(text)
     return out
+
+
+def repos_of(session: Session, bp_ids: Iterable[int]) -> list[str]:
+    """The GitLab paths of the repos of these dự án."""
+    wanted = sorted(set(bp_ids)) or [0]
+    return sorted(
+        session.scalars(
+            select(Project.path_with_namespace).where(Project.business_project_id.in_(wanted))
+        )
+    )
+
+
+def area_paths(
+    session: Session, suite: TestSuite, values: Any, current: list[str] | None
+) -> list[str]:
+    """The code_paths of a suite or a section ("Vùng code"), cleaned and checked: no "!"."""
+    out = globs(values)
+    check_code_paths(
+        session, projects_of(session, suite), out, known=current or [], negate_ok=False
+    )
+    return out
+
+
+def check_code_paths(
+    session: Session,
+    bp_ids: Iterable[int],
+    entries: list[str],
+    *,
+    known: Iterable[str] = (),
+    negate_ok: bool = True,
+) -> None:
+    """Every "{repo}:" must name one repo of the dự án (entries in `known`, already kept, are
+    not checked again)."""
+    kept = set(known)
+    repos: list[str] | None = None
+    for entry in entries:
+        if entry in kept:
+            continue
+        path = code_path(entry)
+        if path.negate and not negate_ok:
+            raise FieldError("dấu ! (bỏ vùng kế thừa) chỉ dùng trong testcase")
+        if not path.repo:
+            continue
+        if repos is None:
+            repos = repos_of(session, bp_ids)
+        hits = [r for r in repos if repo_matches(path.repo, r)]
+        if not hits:
+            listed = ", ".join(repos[:10]) if repos else "dự án chưa gắn repo nào"
+            raise FieldError(f"repo “{path.repo[:80]}” không thuộc dự án ({listed})")
+        if len(hits) > 1 and path.repo.lower() not in (h.lower() for h in hits):
+            raise FieldError(
+                f"tên “{path.repo[:80]}” trùng nhiều repo ({', '.join(hits[:5])}); "
+                "ghi đủ đường dẫn repo"
+            )
 
 
 def _ref(value: Any, what: str) -> int | None:
@@ -340,7 +436,7 @@ def clean(values: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
             out[key] = min(value, 7 * 24 * 3600) if value else None
         elif key == "steps_list":
             out[key] = steps_clean(value)
-        elif key == "automation":
+        elif key in ("automation", "automation_id"):
             out[key] = _line(value, AUTOMATION_MAX) or None
         elif key in TEXT_FIELDS:
             out[key] = _text(value)
@@ -404,6 +500,10 @@ def check_refs(
             if not lenient:
                 raise FieldError("milestone không thuộc dự án của bộ testcase")
             values["milestone_id"] = None
+    if values.get("code_paths") and not lenient:
+        # A "{repo}:" must be a repo of the suite's dự án; entries the case had stay.
+        had_paths = (current.code_paths or []) if current is not None else []
+        check_code_paths(session, projects, values["code_paths"], known=had_paths)
     wanted = content.shared_ids(values.get("steps_list"))
     if wanted:
         found = content.shared_map(session, wanted)
@@ -414,7 +514,26 @@ def check_refs(
         values["steps_list"] = [
             s for s in values["steps_list"] if "shared" not in s or s["shared"] in ok
         ]
+    automation_id = values.get("automation_id")
+    if automation_id and automation_taken(
+        session, suite.id, automation_id, current.id if current is not None else None
+    ):
+        if not lenient:
+            raise FieldError(f"automation ID {automation_id} đã có ở testcase khác trong bộ")
+        values.pop("automation_id")
     return values
+
+
+def automation_taken(
+    session: Session, suite_id: int, automation_id: str, case_id: int | None = None
+) -> bool:
+    """§15 G1: an automation ID names one case of a suite."""
+    query = select(TestCase.id).where(
+        TestCase.suite_id == suite_id, TestCase.automation_id == automation_id
+    )
+    if case_id is not None:
+        query = query.where(TestCase.id != case_id)
+    return session.scalar(query.limit(1)) is not None
 
 
 def search_text(case: TestCase) -> str:

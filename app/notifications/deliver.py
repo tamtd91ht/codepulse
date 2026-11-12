@@ -40,6 +40,19 @@ def sign(secret: str, timestamp: str, body: bytes) -> str:
 
 
 def body_for(fmt: str, event: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if fmt in ("slack", "teams") and "review" not in payload:
+        # Testcase events (app/testcases/events.py) carry their own one-line `text`.
+        line = str(payload.get("text") or EVENT_LABEL.get(event, event))
+        if fmt == "slack":
+            return {"text": line, "mrkdwn": True}
+        title = f"CodePulse: {EVENT_LABEL.get(event, event)}"
+        return {
+            "@type": "MessageCard",
+            "@context": "https://schema.org/extensions",
+            "summary": title,
+            "title": title,
+            "text": line,
+        }
     if fmt == "slack":
         return {"text": text(event, payload), "mrkdwn": True}
     if fmt == "teams":

@@ -5,6 +5,7 @@ ADMIN_EMAILS setting; everyone else is a developer. Phase 0 decision: individual
 visible to the person and their lead only, so a manager sees team aggregates, never per-person rows.
 """
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -12,6 +13,7 @@ from typing import Annotated, Any
 
 import jwt
 from fastapi import Depends, HTTPException, Request
+from redis import Redis
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -28,6 +30,7 @@ from app.models import (
     UserPermissionSet,
 )
 from app.permissions.catalog import BY_KEY, FLAG, everything, merge
+from app.ratelimit import WindowCounter
 
 SESSION_COOKIE = "codepulse_session"
 ALGORITHM = "HS256"
@@ -78,6 +81,16 @@ class Principal:
     # People in the teams this person manages (sub-teams included): the "team" scope with
     # lead_members.
     managed_members: set[int] = field(default_factory=set)
+    # docs/specs/30 §15 (G11): set when the caller is a personal access token (cpat_), not a
+    # dashboard session: its id, scopes and the one dự án it is bound to (None: every dự án of
+    # its owner). A bound token sees no other dự án, whatever its owner may.
+    token_id: int | None = None
+    token_scopes: tuple[str, ...] | None = None
+    token_project: int | None = None
+
+    def _bound_out(self, bp_id: int | None) -> bool:
+        """A dự án outside the one the token is bound to."""
+        return self.token_project is not None and bp_id != self.token_project
 
     # -- docs/specs/21 ---------------------------------------------------------------------
 
@@ -105,6 +118,8 @@ class Principal:
         work; with "team" also the people one leads or manages; with "project" also everyone in a
         dự án one manages; with "all" everyone in a dự án one can access. "team" is
         `team_people(key)`."""
+        if self._bound_out(bp_id):
+            return False
         if self.is_admin:
             return True
         held = self.perms.get(key)
@@ -152,22 +167,32 @@ class Principal:
 
     def visible_projects(self) -> set[int] | None:
         """None means every dự án (admin)."""
+        if self.token_project is not None:
+            return {self.token_project} if self.can_view_project(self.token_project) else set()
         return None if self.is_admin else set(self.project_roles)
 
     def managed_projects(self) -> set[int] | None:
         """None means every dự án (admin)."""
+        if self.token_project is not None:
+            return {self.token_project} if self.can_manage_project(self.token_project) else set()
         if self.is_admin:
             return None
         return {bp for bp, role in self.project_roles.items() if role == "manage"}
 
     def can_view_project(self, bp_id: int | None) -> bool:
+        if self._bound_out(bp_id):
+            return False
         return self.is_admin or (bp_id is not None and bp_id in self.project_roles)
 
     def can_manage_project(self, bp_id: int | None) -> bool:
+        if self._bound_out(bp_id):
+            return False
         return self.is_admin or (bp_id is not None and self.project_roles.get(bp_id) == "manage")
 
     def can_see_work(self, author_user_id: int | None, bp_id: int | None) -> bool:
         """A review, its findings or a commit, in a repo of dự án `bp_id`."""
+        if self._bound_out(bp_id):
+            return False
         if self.is_admin or (author_user_id is not None and author_user_id == self.user_id):
             return True
         if not self.can_view_project(bp_id):
@@ -313,8 +338,87 @@ def current_principal(
         token = header[7:].strip()
     if not token:
         raise HTTPException(401, "not signed in")
-    principal = load_principal(session, read_token(token, settings), settings)
+    if token.startswith(API_TOKEN_PREFIX):
+        principal = token_principal(request, session, settings, token)
+    else:
+        principal = load_principal(session, read_token(token, settings), settings)
     request.state.principal = principal
+    return principal
+
+
+# -- the public testcase API (docs/specs/30 §15, G11) ----------------------------------------------
+
+API_TOKEN_PREFIX = "cpat_"  # noqa: S105 - app/mcp/tokens.py TOKEN_PREFIX (no import cycle)
+TESTCASE_API = "/api/v1/testcases"
+TOKEN_RATE_PER_MINUTE = 600
+READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# Recording results (POST only): a CI token holding results:write only may call these, and read
+# its CI imports (CI_IMPORT_PATHS, the CLI's --wait), and nothing else.
+RESULT_PATHS = re.compile(
+    r"^/api/v1/testcases/(?:tests/\d+/results|runs/\d+/results|runs/import-results)/?$"
+)
+CI_IMPORT_PATHS = re.compile(r"^/api/v1/testcases/ci-imports(?:/\d+)?/?$")
+
+_rate_redis: Redis | None = None
+
+
+def _token_rate_store() -> Any:
+    """One Redis client per process (lazy): a client per call would open a connection pool each
+    time."""
+    global _rate_redis
+    if _rate_redis is None:
+        _rate_redis = Redis.from_url(
+            str(get_settings().redis_url), socket_connect_timeout=0.5, socket_timeout=0.5
+        )
+    return _rate_redis
+
+
+# One per process; tests swap it (WindowCounter(None) counts in memory).
+token_rate = WindowCounter(_token_rate_store)
+
+
+def _under(path: str, prefix: str) -> bool:
+    return path == prefix or path.startswith(prefix + "/")
+
+
+def needed_scopes(method: str, path: str) -> tuple[str, ...]:
+    """Any one of these scopes lets a token make this call."""
+    verb = method.upper()
+    if verb in READ_METHODS:
+        if CI_IMPORT_PATHS.match(path):
+            return ("testcases:read", "testcases:write", "results:write")
+        return ("testcases:read", "testcases:write")
+    if verb == "POST" and RESULT_PATHS.match(path):
+        return ("results:write", "testcases:write")
+    return ("testcases:write",)
+
+
+def token_principal(request: Request, session: Session, settings: Settings, raw: str) -> Principal:
+    """A personal access token on the testcase API: only /api/v1/testcases/* (its OpenAPI docs
+    included), within the token's scopes and rate; its owner's permissions, narrowed to its
+    dự án."""
+    from app.mcp.tokens import TokenError, authenticate  # app.mcp.tokens imports this module
+
+    path = request.url.path
+    if not _under(path, TESTCASE_API):
+        raise HTTPException(401, "token chỉ dùng cho /api/v1/testcases")
+    try:
+        auth = authenticate(session, raw, settings)
+    except TokenError as exc:
+        raise HTTPException(401, str(exc)) from exc
+    session.commit()  # last_used_at, even when the call is refused below
+    principal = auth.principal
+    wait = token_rate.hit(f"cp:api:rate:{principal.token_id}", TOKEN_RATE_PER_MINUTE)
+    if wait is not None:
+        raise HTTPException(
+            429,
+            f"quá {TOKEN_RATE_PER_MINUTE} lần gọi mỗi phút: chờ {wait} giây",
+            headers={"Retry-After": str(wait)},
+        )
+    wanted = needed_scopes(request.method, path)
+    held = principal.token_scopes or ()
+    if not any(s in held for s in wanted):
+        raise HTTPException(403, f"token thiếu scope {' hoặc '.join(wanted)}")
     return principal
 
 

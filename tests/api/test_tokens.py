@@ -36,6 +36,9 @@ FIELDS = {
     "revoked_at",
     "created_at",
     "active",
+    # docs/specs/30 §15 (G11): the dự án a token is bound to.
+    "business_project_id",
+    "business_project_name",
 }
 
 

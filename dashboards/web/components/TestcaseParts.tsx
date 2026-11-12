@@ -2,8 +2,10 @@
 
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
+import { FlakyPill } from "@/components/CiImport";
 import { Modal, ReorderControls, useDragList } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
+import { CodePathsField } from "@/components/TestcaseLinks";
 import { SectionOptions } from "@/components/TestcaseSections";
 import { Alert, Drawer, Loading, Pill, Segmented } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
@@ -139,6 +141,7 @@ type Draft = {
   estimate: string;
   milestone_id: string;
   automation: string;
+  automation_id: string;
   tags: string;
   jira_keys: string;
   code_paths: string;
@@ -165,6 +168,7 @@ function toDraft(c?: Partial<TestCase>, sectionId?: number | null): Draft {
     estimate: c?.estimate ?? "",
     milestone_id: c?.milestone_id ? String(c.milestone_id) : "",
     automation: c?.automation ?? "",
+    automation_id: c?.automation_id ?? "",
     tags: (c?.tags ?? []).join(", "),
     jira_keys: (c?.jira_keys ?? []).join(", "),
     code_paths: (c?.code_paths ?? []).join("\n"),
@@ -191,6 +195,7 @@ function fromDraft(d: Draft): CaseValues {
     estimate: d.estimate.trim() || null,
     milestone_id: d.milestone_id ? Number(d.milestone_id) : null,
     automation: d.automation,
+    automation_id: d.automation_id.trim() || null,
     tags: splitList(d.tags),
     jira_keys: splitList(d.jira_keys),
     code_paths: splitList(d.code_paths),
@@ -485,12 +490,18 @@ function CaseForm({
         </label>
       </div>
       <label className="adm-field">
-        <span className="small muted">Vùng code phủ (glob, mỗi dòng một mẫu) — để gợi ý test lại khi MR đổi các file này</span>
-        <textarea {...field("code_paths")} rows={2} placeholder={"src/payment/**\n**/checkout*.ts"} />
+        <span className="small muted">
+          Vùng code phủ (mỗi dòng một mẫu, dạng repo:glob hoặc glob) — để gợi ý test lại khi MR đổi các file này. Kế thừa thêm vùng của thư mục và bộ; ghi !mẫu để bỏ một vùng kế thừa
+        </span>
+        <textarea {...field("code_paths")} rows={2} placeholder={"customer-service:src/payment/**\n**/checkout*.ts"} />
       </label>
       <label className="adm-field">
         <span className="small muted">File test tự động (đường dẫn trong repo, có thể kèm ::tên test)</span>
         <input {...field("automation")} maxLength={500} placeholder="tests/test_refund.py::test_partial" />
+      </label>
+      <label className="adm-field">
+        <span className="small muted">Automation ID (tên test trong báo cáo CI, dạng classname.name; duy nhất trong bộ)</span>
+        <input {...field("automation_id")} maxLength={500} placeholder="tests.test_refund.test_partial" />
       </label>
       <label className="adm-field">
         <span className="small muted">Ghi chú</span>
@@ -835,6 +846,14 @@ export function CaseDrawer({
                 </dd>
               </>
             )}
+            {(c.automation_id || c.flaky) && (
+              <>
+                <dt>Automation ID</dt>
+                <dd>
+                  {c.automation_id && <code>{c.automation_id}</code>} {c.flaky && <FlakyPill />}
+                </dd>
+              </>
+            )}
             {c.notes && (
               <>
                 <dt>Ghi chú</dt>
@@ -895,6 +914,7 @@ export function SuiteModal({
 }) {
   const [name, setName] = useState(suite?.name ?? "");
   const [description, setDescription] = useState(suite?.description ?? "");
+  const [codePaths, setCodePaths] = useState((suite?.code_paths ?? []).join("\n"));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const save = async () => {
@@ -902,7 +922,7 @@ export function SuiteModal({
     setError(null);
     try {
       const got = suite
-        ? await api.patch<Suite>(`/testcases/suites/${suite.id}`, { name, description })
+        ? await api.patch<Suite>(`/testcases/suites/${suite.id}`, { name, description, code_paths: splitList(codePaths) })
         : await api.post<Suite>("/testcases/suites", { business_project_id: projectId, name, description });
       onSaved(got);
       onClose();
@@ -943,6 +963,7 @@ export function SuiteModal({
           <span className="small muted">Mô tả</span>
           <textarea value={description} rows={2} maxLength={2000} onChange={(e) => setDescription(e.target.value)} />
         </label>
+        {suite && <CodePathsField projectId={projectId} value={codePaths} onChange={setCodePaths} />}
       </form>
     </Modal>
   );

@@ -9,7 +9,7 @@ service. Scoped to one dự án or one repo, or to everything when both are NULL
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, text
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -75,3 +75,30 @@ class UserNotification(TimestampMixin, Base):
     actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     ref: Mapped[str | None]  # review:12, finding:40, dispute:7
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+WEBHOOK_DELIVERY_STATUSES = ("pending", "delivered", "failed")
+
+
+class WebhookDelivery(Base):
+    """One event sent (or to send) to a webhook (docs/specs/30 §15, G11): kept so a failed one can
+    be looked at and sent again from the screen."""
+
+    __tablename__ = "webhook_deliveries"
+    __table_args__ = (
+        CheckConstraint(f"status IN {WEBHOOK_DELIVERY_STATUSES}", name="status"),
+        Index("ix_webhook_deliveries_webhook_id_created_at", "webhook_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    webhook_id: Mapped[int] = mapped_column(
+        ForeignKey("notification_webhooks.id", ondelete="CASCADE")
+    )
+    event: Mapped[str]
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(server_default="pending", default="pending")
+    attempts: Mapped[int] = mapped_column(server_default="0", default=0)
+    last_status_code: Mapped[int | None]
+    last_error: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

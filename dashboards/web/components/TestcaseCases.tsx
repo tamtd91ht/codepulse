@@ -6,6 +6,7 @@ import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
 import { MoreMenu } from "@/components/MoreMenu";
 import { AiModal, RunDrawer, RunsCard } from "@/components/TestcaseAi";
+import { GenerateFromIssue, askLinks } from "@/components/TestcaseLinks";
 import { CaseDrawer, ExportMenu, ImportModal, PriorityPill, ShareModal, StatusPill, SuiteModal, errorText } from "@/components/TestcaseParts";
 import { CASE_DRAG_TYPE, SectionOptions, SectionTree } from "@/components/TestcaseSections";
 import { CreateRunModal } from "@/components/TestRuns";
@@ -147,6 +148,15 @@ export function CasesTab({
     void runs.mutate();
     setRun(r.id);
   };
+  // §15.2 G2: AI link suggestions over the suite (or the chosen section), reviewed in the run.
+  const suggestLinks = async (id: number) => {
+    try {
+      asked(await askLinks(project.id, id, sectionId ?? null));
+    } catch (e) {
+      setMessage(`Lỗi: ${errorText(e)}`);
+    }
+  };
+  const [fromIssue, setFromIssue] = useState<{ key: string; title: string | null } | null>(null);
 
   const list = cases.data;
   const all = useMemo(() => list?.items ?? [], [list]);
@@ -215,6 +225,7 @@ export function CasesTab({
         ...(suite.can_edit ? [{ icon: "link" as const, label: "Dự án dùng chung", run: () => setModal("share") }] : []),
         ...(suite.can_edit && suite.source_url ? [{ icon: "sync" as const, label: "Nhập lại từ Google Sheet", run: () => setModal("import") }] : []),
         ...(suite.can_edit && suite.total ? [{ icon: "sparkle" as const, label: "Rà soát bằng AI", run: () => setModal("audit") }] : []),
+        ...(suite.can_edit && suite.total ? [{ icon: "link" as const, label: "Gợi ý Jira / vùng code bằng AI", run: () => void suggestLinks(suite.id) }] : []),
         ...(suite.can_edit ? [{ icon: "folder" as const, label: suite.archived ? "Đưa trở lại" : "Lưu trữ", run: () => void archive(suite, !suite.archived) }] : []),
         ...(suite.can_delete ? [{ icon: "remove" as const, label: "Xoá bộ", danger: true, run: () => setModal("delete") }] : []),
       ]
@@ -365,7 +376,7 @@ export function CasesTab({
 
       <section className="tc-main">
         <Message text={message} onClose={() => setMessage(null)} />
-        <CoverageStrip stats={stats.data} error={stats.error} />
+        <CoverageStrip stats={stats.data} error={stats.error} onGenerate={canEdit && (suites.data ?? []).some((s) => s.can_edit) ? setFromIssue : undefined} />
 
         <div className="tc-head">
           <div className="tc-title">
@@ -603,6 +614,17 @@ export function CasesTab({
       {(modal === "generate" || modal === "audit") && suite && (
         <AiModal kind={modal} projectId={project.id} suite={suite} limits={runs.data} onClose={() => setModal(null)} onAsked={asked} />
       )}
+      {fromIssue && (
+        <GenerateFromIssue
+          projectId={project.id}
+          issueKey={fromIssue.key}
+          issueTitle={fromIssue.title}
+          suites={suiteList.filter((s) => s.can_edit)}
+          initialSuite={suite?.can_edit ? suite.id : null}
+          onClose={() => setFromIssue(null)}
+          onAsked={asked}
+        />
+      )}
       {deleting && (
         <DeleteCases
           cases={deleting}
@@ -660,7 +682,15 @@ function Select({ label, value, onChange, options, all }: { label: string; value
   );
 }
 
-function CoverageStrip({ stats, error }: { stats: Stats | undefined; error: Error | undefined }) {
+function CoverageStrip({
+  stats,
+  error,
+  onGenerate,
+}: {
+  stats: Stats | undefined;
+  error: Error | undefined;
+  onGenerate?: (issue: { key: string; title: string | null }) => void;
+}) {
   if (error) return null;
   if (!stats)
     return (
@@ -708,6 +738,14 @@ function CoverageStrip({ stats, error }: { stats: Stats | undefined; error: Erro
                   <strong>{u.key}</strong>
                 )}{" "}
                 {u.title}
+                {onGenerate && (
+                  <>
+                    {" "}
+                    <button type="button" className="link sm" onClick={() => onGenerate({ key: u.key, title: u.title })}>
+                      <Icon name="sparkle" size={12} /> Sinh testcase
+                    </button>
+                  </>
+                )}
               </li>
             ))}
           </ul>

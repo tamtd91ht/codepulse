@@ -39,7 +39,9 @@ from app.models import (
     TestSuiteLink,
 )
 from app.models.testcases import CASE_STATUSES, CASE_TYPES, PRIORITIES
+from app.testcases import ci as tc_ci
 from app.testcases import content, sheets
+from app.testcases import events as tc_events
 from app.testcases import impact as imp
 from app.testcases import service as tc
 from app.testcases.runs import refresh_open_snapshots
@@ -98,6 +100,8 @@ class SuitePatch(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     archived: bool | None = None
     position: int | None = Field(default=None, ge=0, le=1_000_000)
+    # §15.2 G2: "{repo}:{glob}" or a bare glob, inherited by every case of the suite.
+    code_paths: list[str] | None = Field(default=None, max_length=tc.LIST_MAX)
 
 
 class SuiteOut(BaseModel):
@@ -118,6 +122,7 @@ class SuiteOut(BaseModel):
     can_edit: bool
     can_delete: bool
     updated_at: str | None
+    code_paths: list[str] = []
 
 
 class ProjectsIn(BaseModel):
@@ -141,6 +146,8 @@ class CaseFields(BaseModel):
     type: CaseType | None = None
     kind: Kind | None = None
     automation: str | None = Field(default=None, max_length=tc.AUTOMATION_MAX)
+    # §15 G1: "classname.name" of the automated test in CI reports, unique in the suite.
+    automation_id: str | None = Field(default=None, max_length=tc.AUTOMATION_MAX)
     tags: list[str] | None = Field(default=None, max_length=tc.LIST_MAX)
     jira_keys: list[str] | None = Field(default=None, max_length=tc.LIST_MAX)
     code_paths: list[str] | None = Field(default=None, max_length=tc.LIST_MAX)
@@ -178,6 +185,8 @@ class CaseOut(BaseModel):
     type: str
     kind: str
     automation: str | None
+    automation_id: str | None = None
+    flaky: bool = False
     tags: list[str]
     jira_keys: list[str]
     code_paths: list[str]
@@ -236,6 +245,7 @@ class SectionOut(BaseModel):
     path: str
     cases: int  # directly inside, not obsolete
     total: int  # with every section below
+    code_paths: list[str] = []  # §15.2 G2: inherited by its cases and sub-folders
 
 
 class SectionIn(BaseModel):
@@ -250,6 +260,7 @@ class SectionPatch(BaseModel):
     description: str | None = Field(default=None, max_length=tc.SECTION_DESCRIPTION_MAX)
     parent_id: int | None = None  # given (even null): moved there
     position: int | None = Field(default=None, ge=0, le=1_000_000)
+    code_paths: list[str] | None = Field(default=None, max_length=tc.LIST_MAX)
 
 
 class SectionDeleted(BaseModel):
@@ -272,6 +283,8 @@ class StatsOut(BaseModel):
     by_status: dict[str, int]
     by_priority: dict[str, int]
     automated: int
+    # §15 G1 "% tự động": automated cases with a CI result in the last 30 days.
+    automated_ci: int = 0
     problems: int
     jira_issues: int
     jira_covered: int
@@ -407,6 +420,8 @@ def _case_out(case: TestCase, paths: dict[int, str], shared: dict[int, TestShare
         type=case.type,
         kind=case.kind,
         automation=case.automation,
+        automation_id=case.automation_id,
+        flaky=bool(case.flaky),
         tags=list(case.tags or []),
         jira_keys=list(case.jira_keys or []),
         code_paths=list(case.code_paths or []),
@@ -468,6 +483,7 @@ def _suite_out(
         can_edit=any(tc.may_edit(principal, p) for p in projects),
         can_delete=tc.may_edit(principal, suite.business_project_id),
         updated_at=_iso(suite.updated_at),
+        code_paths=list(suite.code_paths or []),
     )
 
 
@@ -587,6 +603,11 @@ def update_suite(
         suite.position = body.position
     if body.archived is not None:
         suite.archived_at = datetime.now(UTC) if body.archived else None
+    if body.code_paths is not None:
+        try:
+            suite.code_paths = tc.area_paths(session, suite, body.code_paths, suite.code_paths)
+        except tc.FieldError as exc:
+            raise HTTPException(422, str(exc)) from None
     suite.updated_by = principal.user_id
     session.commit()
     counts = tc.counts(session, [suite.id])[suite.id]
@@ -808,10 +829,12 @@ def update_case(
         )
     values = _clean(body.model_dump(exclude={"revision"}, exclude_unset=True), partial=True)
     _check(session, suite, values, current=case)
+    before = case.status
     try:
         tc.change(session, case, values, user_id=principal.user_id, via="editor")
     except tc.FieldError as exc:
         raise HTTPException(422, str(exc)) from None
+    tc_events.case_status_changed(session, suite.business_project_id, case.id, before, case.status)
     session.commit()
     return _detail(session, principal, case, suite)
 
@@ -851,10 +874,12 @@ def restore_case(
         raise HTTPException(409, str(exc)) from None
     # A section, milestone or shared step gone since: dropped rather than refused.
     tc.check_refs(session, suite, values, lenient=True)
+    before = case.status
     try:
         tc.change(session, case, values, user_id=principal.user_id, via="restore")
     except tc.FieldError as exc:
         raise HTTPException(409, str(exc)) from None
+    tc_events.case_status_changed(session, suite.business_project_id, case.id, before, case.status)
     session.commit()
     return _detail(session, principal, case, suite)
 
@@ -924,6 +949,10 @@ def bulk(body: BulkIn, principal: CurrentPrincipal, session: SessionDep) -> Bulk
             if case.suite_id == target.id:
                 continue
             tc.record(session, case, user_id=principal.user_id, via="bulk")
+            if case.automation_id and tc.automation_taken(
+                session, target.id, case.automation_id, case.id
+            ):
+                case.automation_id = None  # §15 G1: unique in a suite (checked before moving)
             case.suite_id = target.id
             case.section_id = None  # the sections are the old suite's
             if case.code in taken:
@@ -969,12 +998,16 @@ def bulk(body: BulkIn, principal: CurrentPrincipal, session: SessionDep) -> Bulk
             for s in session.scalars(select(TestSuite).where(TestSuite.id.in_(set(found.values()))))
         }
         for case in cases:
+            before = case.status
             try:
                 checked = tc.check_refs(session, suites[case.suite_id], dict(values))
                 if tc.change(session, case, checked, user_id=principal.user_id, via="bulk"):
                     changed += 1
             except tc.FieldError as exc:
                 raise HTTPException(422, str(exc)) from None
+            tc_events.case_status_changed(
+                session, suites[case.suite_id].business_project_id, case.id, before, case.status
+            )
     session.commit()
     return BulkOut(changed=changed)
 
@@ -1010,6 +1043,7 @@ def _sections_out(session: Session, suite_id: int) -> list[SectionOut]:
             path=r.path,
             cases=r.cases,
             total=r.total,
+            code_paths=list(r.section.code_paths or []),
         )
         for r in tc.section_tree(session, suite_id)
     ]
@@ -1057,6 +1091,8 @@ def update_section(
             section.description = about or None
         if "parent_id" in body.model_fields_set:
             tc.move_section(session, section, body.parent_id)
+        if body.code_paths is not None:
+            section.code_paths = tc.area_paths(session, suite, body.code_paths, section.code_paths)
     except tc.FieldError as exc:
         raise HTTPException(422, str(exc)) from None
     if body.position is not None:
@@ -1136,6 +1172,7 @@ def stats(principal: CurrentPrincipal, session: SessionDep, business_project_id:
         by_status=by_status,
         by_priority=by_priority,
         automated=automated,
+        automated_ci=tc_ci.automated_with_ci(session, scope),
         problems=problems,
         jira_issues=len(issues),
         jira_covered=len(issues) - len(uncovered),
@@ -1526,6 +1563,11 @@ def mr_impact(mr_id: int, principal: CurrentPrincipal, session: SessionDep) -> M
     if mr is None or repo is None or bp_id is None or not tc.may_view(principal, bp_id):
         raise HTTPException(404, "merge request không thuộc dự án nào bạn xem được")
     [item] = imp.for_mrs(session, [mr], [bp_id])
+    # §15 G1 AC4: the cases CI reported results for on this MR.
+    for case_id, reason in tc_ci.mr_ci_reasons(
+        session, bp_id, mr.iid, repo.path_with_namespace
+    ).items():
+        item.matched.setdefault(case_id, []).append(reason)
     latest = session.scalar(
         select(TestAiRun)
         .where(TestAiRun.kind == "impact", TestAiRun.merge_request_id == mr.id)

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Modal } from "@/components/CriteriaParts";
 import { Icon } from "@/components/icons";
+import { LinksReview } from "@/components/TestcaseLinks";
 import { PriorityPill, StepsTable, errorText } from "@/components/TestcaseParts";
 import { Alert, Card, Drawer, Loading, Pill } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
@@ -387,6 +388,15 @@ export function RunDrawer({
                 ))}
               </ul>
             </Alert>
+          )}
+          {r.kind === "links" && r.result && (
+            <LinksReview
+              run={r}
+              onApplied={() => {
+                void run.mutate();
+                onChanged();
+              }}
+            />
           )}
           {r.kind === "impact" && r.result && (
             <p className="small muted">Testcase cần test lại được hiển thị ở thẻ “Testcase liên quan” của review và tab “Cần test lại”. Dưới đây là testcase AI đề xuất thêm.</p>

@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import CommitFile, MergeRequest, MrCommit, Project, TestAiRun, TestCase, TestSuite
+from app.testcases import content
 from app.testcases import service as tc
 
 MAX_PATHS = 400  # of one MR, matched and sent to the AI
@@ -141,18 +142,95 @@ def project_cases(session: Session, bp_ids: list[int]) -> list[TestCase]:
     )
 
 
-def match(cases: list[TestCase], jira: list[str], paths: list[Changed]) -> dict[int, list[str]]:
-    """case id -> why it is called for (Vietnamese, shown as is)."""
+def effective_paths(inherited: list[str], own: list[str]) -> list[str]:
+    """A case's code globs (§15.2 G2): its suite's and its sections' (root first), then its own.
+    An own "!X" drops the inherited entry X; a bare "!glob" drops that glob in every repo."""
+    drop_exact: set[str] = set()
+    drop_glob: set[str] = set()
+    added: list[str] = []
+    for entry in own:
+        path = tc.code_path(entry)
+        if path.negate:
+            drop_exact.add(path.text(negate=False))
+            if not path.repo:
+                drop_glob.add(path.glob)
+        else:
+            added.append(entry)
+    out: list[str] = []
+    for entry in inherited:
+        path = tc.code_path(entry)
+        if entry in drop_exact or path.glob in drop_glob:
+            continue
+        if entry not in out:
+            out.append(entry)
+    for entry in added:
+        if entry not in out:
+            out.append(entry)
+    return out
+
+
+def inherited_paths(session: Session, cases: list[TestCase]) -> dict[int, list[str]]:
+    """case id -> its effective code globs (suite, section chain, own)."""
+    suite_ids = {c.suite_id for c in cases}
+    if not suite_ids:
+        return {}
+    suites: dict[int, list[str]] = {
+        sid: list(paths or [])
+        for sid, paths in session.execute(
+            select(TestSuite.id, TestSuite.code_paths).where(TestSuite.id.in_(suite_ids))
+        )
+    }
+    sections = {s.id: s for s in content.section_rows(session, suite_ids)}
+    chains: dict[int, list[str]] = {}
+
+    def chain(section_id: int) -> list[str]:
+        if section_id in chains:
+            return chains[section_id]
+        ids: list[int] = []
+        node: int | None = section_id
+        while node is not None and node in sections and len(ids) <= content.SECTION_DEPTH_MAX:
+            ids.append(node)
+            node = sections[node].parent_id
+        chains[section_id] = [p for i in reversed(ids) for p in sections[i].code_paths or []]
+        return chains[section_id]
+
+    out: dict[int, list[str]] = {}
+    for case in cases:
+        above = list(suites.get(case.suite_id, []))
+        if case.section_id is not None:
+            above += chain(case.section_id)
+        out[case.id] = effective_paths(above, list(case.code_paths or []))
+    return out
+
+
+def match(
+    cases: list[TestCase],
+    jira: list[str],
+    paths: list[Changed],
+    *,
+    repo: str = "",
+    globs: dict[int, list[str]] | None = None,
+) -> dict[int, list[str]]:
+    """case id -> why it is called for (Vietnamese, shown as is). `repo` is the MR's repo
+    (path_with_namespace): a "{repo}:{glob}" of another repo does not match. `globs` are the
+    cases' effective globs (inherited_paths); without it, each case's own."""
     out: dict[int, list[str]] = {}
     keys = {k.upper() for k in jira}
     names = [c.path for c in paths]
+    hits: dict[str, str | None] = {}  # a glob shared by many cases is matched once
     for case in cases:
         why: list[str] = []
         for key in case.jira_keys or []:
             if key in keys:
                 why.append(f"Jira {key}")
-        for pattern in case.code_paths or []:
-            hit = next((p for p in names if glob_match(pattern, p)), None)
+        own = globs.get(case.id) if globs is not None else None
+        for pattern in own if own is not None else case.code_paths or []:
+            entry = tc.code_path(pattern)
+            if entry.negate or (entry.repo and not tc.repo_matches(entry.repo, repo)):
+                continue
+            if entry.glob not in hits:
+                hits[entry.glob] = next((p for p in names if glob_match(entry.glob, p)), None)
+            hit = hits[entry.glob]
             if hit:
                 why.append(f"{hit} khớp {pattern}")
                 break
@@ -216,15 +294,23 @@ def for_mrs(session: Session, mrs: list[MergeRequest], bp_ids: list[int]) -> lis
             )
         ).all()
     )
+    globs = inherited_paths(session, cases)
     out = []
     for mr in mrs:
         found = ai_cases(ai.get(mr.id))
+        repo = repos.get(mr.project_id or 0, "")
         out.append(
             MrImpact(
                 mr=mr,
-                repo=repos.get(mr.project_id or 0, ""),
+                repo=repo,
                 paths=paths.get(mr.id, []),
-                matched=match(cases, list(mr.jira_keys or []), paths.get(mr.id, [])),
+                matched=match(
+                    cases,
+                    list(mr.jira_keys or []),
+                    paths.get(mr.id, []),
+                    repo=repo,
+                    globs=globs,
+                ),
                 ai=ai.get(mr.id),
                 ai_cases={k: v for k, v in found.items() if k in live},
             )

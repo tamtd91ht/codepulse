@@ -57,7 +57,10 @@ from app.api.routers import (
     team_report,
     telegram,
     test_ai,
+    test_ci,
+    test_links,
     test_runs,
+    testcase_api_docs,
     testcases,
     tokens,
 )
@@ -141,6 +144,9 @@ for api_router in (
     project_docs.router,
     test_ai.router,
     # Before testcases: /testcases/runs, /testcases/people... are not a case id.
+    testcase_api_docs.router,
+    test_ci.router,
+    test_links.router,
     test_runs.router,
     testcases.router,
 ):

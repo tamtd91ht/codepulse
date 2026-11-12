@@ -40,6 +40,7 @@ from app.models import (
     User,
 )
 from app.testcases import content
+from app.testcases import events as tc_events
 from app.testcases import runs as rs
 from app.testcases import service as tc
 
@@ -247,6 +248,7 @@ class TestOut(BaseModel):
     estimate_s: int | None
     defects: list[str]
     latest_comment: str | None
+    flaky: bool = False  # §15 G1: the case's CI results disagree
 
 
 class TestsOut(BaseModel):
@@ -268,6 +270,12 @@ class ResultOut(BaseModel):
     assigned_to: Person | None
     created_by: Person | None
     created_at: str | None
+    # §15 G1: "ci" results carry the failure log, stack trace, attachments and CI facts.
+    source: str = "manual"
+    log: str | None = None
+    stack: str | None = None
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
+    ci: dict[str, Any] = Field(default_factory=dict)
 
 
 class RunBrief(BaseModel):
@@ -528,6 +536,12 @@ def _test_outs(
 ) -> tuple[list[TestOut], dict[int, dict[str, Any]]]:
     shown = rs.views(session, run, tests)
     defects, comments = rs.result_extras(session, [t.id for t in tests])
+    case_ids = {t.case_id for t in tests if t.case_id is not None}
+    flaky = (
+        set(session.scalars(select(TestCase.id).where(TestCase.id.in_(case_ids), TestCase.flaky)))
+        if case_ids
+        else set()
+    )
     people = _people(session, {t.assigned_to for t in tests})
     out = [
         TestOut(
@@ -546,6 +560,7 @@ def _test_outs(
             estimate_s=shown[t.id].get("estimate_s"),
             defects=defects.get(t.id, []),
             latest_comment=comments.get(t.id),
+            flaky=t.case_id in flaky,
         )
         for t in tests
     ]
@@ -567,6 +582,11 @@ def _result_outs(session: Session, results: list[TestResult]) -> list[ResultOut]
             assigned_to=people.get(r.assigned_to) if r.assigned_to else None,
             created_by=people.get(r.created_by) if r.created_by else None,
             created_at=_iso(r.created_at),
+            source=r.source,
+            log=r.log,
+            stack=r.stack,
+            attachments=list(r.attachments or []),
+            ci=dict(r.ci or {}),
         )
         for r in results
     ]
@@ -1175,6 +1195,7 @@ def close_run(run_id: int, principal: CurrentPrincipal, session: SessionDep) -> 
     run = _run_for(session, principal, run_id, edit=True, lock=True, open_only=True)
     rs.close_run(session, run, _now())
     audit(session, principal.user_id, "testrun.close", f"test_run:{run.id}")
+    tc_events.run_closed(session, run)  # docs/specs/30 §15: webhook run.closed
     session.commit()
     return _run_outs(session, principal, [run])[0]
 
@@ -1289,6 +1310,9 @@ def add_result(
             else None
         ),
     )
+    tc_events.results_failed(
+        session, run, [test], status=body.status, comment=body.comment, defects=defects
+    )
     session.commit()
     return _detail(session, principal, test, run)
 
@@ -1350,6 +1374,9 @@ def bulk_results(
         f"test_run:{run.id}",
         tests=len(tests),
         status=body.status,
+    )
+    tc_events.results_failed(
+        session, run, tests, status=body.status, comment=body.comment, defects=defects
     )
     session.commit()
     return Changed(changed=len(tests))
@@ -1658,6 +1685,7 @@ def close_plan(plan_id: int, principal: CurrentPrincipal, session: SessionDep) -
         rs.close_run(session, run, now)
     plan.completed_at = now
     audit(session, principal.user_id, "testplan.close", f"test_plan:{plan.id}")
+    tc_events.plan_closed(session, plan)  # docs/specs/30 §15: webhook plan.closed
     session.commit()
     return _plan_detail(session, principal, plan)
 

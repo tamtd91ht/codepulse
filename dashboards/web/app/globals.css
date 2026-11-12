@@ -11299,6 +11299,26 @@ button.ghost.danger:hover:not(:disabled) {
 .tc-table tr.muted td {
   opacity: 0.6;
 }
+/* §15.2 G2: link suggestions edited in place, the traceability matrix's case lists. */
+.tc-link-edit {
+  display: grid;
+  gap: 4px;
+  min-width: 220px;
+}
+.tc-link-edit textarea {
+  font-family: var(--font-mono, monospace);
+}
+.tc-trace-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.tc-row-actions {
+  display: inline-flex;
+  gap: 4px;
+}
 .tc-check {
   width: 32px;
 }
@@ -12621,4 +12641,64 @@ button.tr-chip[aria-pressed="true"]:hover:not(:disabled) {
 }
 .tr-save-hint {
   margin-right: auto;
+}
+
+/* CI results (docs/specs/30a G1): import progress, failure log, stack trace. */
+.ci-progress {
+  height: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.ci-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.ci-summary,
+.ci-unmapped {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+.ci-unmapped {
+  max-height: 220px;
+  overflow: auto;
+}
+.ci-result {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+}
+.ci-log {
+  color: var(--bad-text);
+  background: var(--bad-soft);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+.ci-stack summary {
+  cursor: pointer;
+  color: var(--link);
+}
+.ci-stack summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ci-stack pre {
+  margin: 4px 0 0;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+}
+.ci-attachment {
+  margin-right: 6px;
 }

@@ -1,8 +1,10 @@
 """Personal access tokens (docs/specs/26 §2): make, look up, check scope.
 
-A token is `cpat_<43 url-safe chars>`; only its SHA-256 is stored. It works only on /mcp
-(app/mcp/server.py) and never beyond its owner's permissions: the principal is loaded with
-`load_principal`, exactly as for a dashboard session.
+A token is `cpat_<43 url-safe chars>`; only its SHA-256 is stored. It works on /mcp
+(app/mcp/server.py) and, with a `testcases:*` / `results:write` scope, on /api/v1/testcases/*
+(docs/specs/30 §15, app/api/security.py), never beyond its owner's permissions: the principal is
+loaded with `load_principal`, exactly as for a dashboard session, then narrowed to the token's
+dự án when it is bound to one.
 """
 
 import hashlib
@@ -23,7 +25,13 @@ SCOPE_READ = "findings:read"
 SCOPE_CLOSE = "findings:close_request"
 # docs/specs/26 §22 (user 2026-11-11): ask for a review of pushed commits from Claude Code.
 SCOPE_REVIEW = "reviews:request"
-SCOPES = (SCOPE_READ, SCOPE_CLOSE, SCOPE_REVIEW)
+MCP_SCOPES = (SCOPE_READ, SCOPE_CLOSE, SCOPE_REVIEW)
+# docs/specs/30 §15 (G11): the public testcase API (/api/v1/testcases/*, app/api/security.py).
+SCOPE_TC_READ = "testcases:read"
+SCOPE_TC_WRITE = "testcases:write"
+SCOPE_RESULTS_WRITE = "results:write"
+TESTCASE_SCOPES = (SCOPE_TC_READ, SCOPE_TC_WRITE, SCOPE_RESULTS_WRITE)
+SCOPES = MCP_SCOPES + TESTCASE_SCOPES
 VALID_DAYS = (30, 90, 180, 365)
 DEFAULT_DAYS = 90
 MAX_ACTIVE_PER_USER = 10
@@ -70,9 +78,11 @@ def create_token(
     scopes: list[str],
     days: int = DEFAULT_DAYS,
     now: datetime | None = None,
+    business_project_id: int | None = None,
 ) -> tuple[ApiToken, str]:
     """A new token row (flushed, not committed) and the token itself, shown once.
-    HTTPException 422/409 for bad input or too many active tokens."""
+    HTTPException 422/409 for bad input or too many active tokens. The caller checks that its
+    owner may see `business_project_id` (the dự án the token is bound to)."""
     clean = name.strip()
     if not clean or len(clean) > NAME_MAX:
         raise HTTPException(422, f"tên token cần 1-{NAME_MAX} ký tự")
@@ -88,8 +98,10 @@ def create_token(
         )
     secret = secrets.token_urlsafe(32)
     raw = f"{TOKEN_PREFIX}{secret}"
-    # findings:read always; the order of SCOPES, no duplicates.
-    granted = [s for s in SCOPES if s == SCOPE_READ or s in scopes]
+    # findings:read always for an MCP token (any MCP scope asked, or none at all); a token for the
+    # testcase API only stays out of /mcp. The order of SCOPES, no duplicates.
+    api_only = bool(scopes) and all(s in TESTCASE_SCOPES for s in scopes)
+    granted = [s for s in SCOPES if (s == SCOPE_READ and not api_only) or s in scopes]
     token = ApiToken(
         user_id=user_id,
         name=clean,
@@ -97,6 +109,7 @@ def create_token(
         token_hash=hash_token(raw),
         scopes=granted,
         expires_at=at + timedelta(days=days),
+        business_project_id=business_project_id,
     )
     session.add(token)
     session.flush()
@@ -124,6 +137,11 @@ def authenticate(
         raise TokenError("tài khoản của token không còn hoạt động") from exc
     if token.last_used_at is None or at - token.last_used_at >= TOUCH_EVERY:
         token.last_used_at = at
+    # docs/specs/30 §15: what the token may do, and the one dự án it is bound to (if any); the
+    # dự án rules of Principal then refuse every other dự án.
+    principal.token_id = int(token.id)
+    principal.token_scopes = tuple(token.scopes or [])
+    principal.token_project = token.business_project_id
     return TokenAuth(token=token, principal=principal)
 
 

@@ -730,7 +730,14 @@ export interface ClosureMeta {
 
 /* ---- personal access tokens for the MCP server (docs/specs/26 §2) ---- */
 
-export type ApiTokenScope = "findings:read" | "findings:close_request" | "reviews:request";
+export type ApiTokenScope =
+  | "findings:read"
+  | "findings:close_request"
+  | "reviews:request"
+  // docs/specs/30 §15 (G11): the public testcase API.
+  | "testcases:read"
+  | "testcases:write"
+  | "results:write";
 
 export interface ApiToken {
   id: number;
@@ -742,6 +749,9 @@ export interface ApiToken {
   last_used_at: string | null;
   revoked_at: string | null;
   created_at: string;
+  /** Bound to this dự án only (testcase API); null: every dự án of its owner. */
+  business_project_id?: number | null;
+  business_project_name?: string | null;
   /** Not revoked and not expired. */
   active: boolean;
 }
@@ -830,7 +840,29 @@ export interface Connection {
 }
 
 /** Outbound notification webhook (docs/specs/16): finished reviews POSTed to an endpoint. */
-export type WebhookEvent = "review.done" | "review.failed" | "review.severe";
+export type WebhookEvent =
+  | "review.done"
+  | "review.failed"
+  | "review.severe"
+  // docs/specs/30 §15 (G11): testcase events.
+  | "run.closed"
+  | "result.failed"
+  | "case.status_changed"
+  | "plan.closed";
+
+/** GET /webhooks/{id}/deliveries: one event sent (or to send) to a webhook. */
+export interface WebhookDelivery {
+  id: number;
+  webhook_id: number;
+  event: string;
+  status: "pending" | "delivered" | "failed";
+  attempts: number;
+  last_status_code: number | null;
+  last_error: string | null;
+  created_at: string;
+  delivered_at: string | null;
+  payload: Record<string, unknown>;
+}
 export type WebhookFormat = "json" | "slack" | "teams";
 
 export interface NotificationWebhook {

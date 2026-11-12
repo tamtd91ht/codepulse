@@ -286,7 +286,16 @@ class UserOut(ORM):
 
 # -- notification webhooks (docs/specs/16) --------------------------------------------------------
 
-WebhookEvent = Literal["review.done", "review.failed", "review.severe"]
+WebhookEvent = Literal[
+    "review.done",
+    "review.failed",
+    "review.severe",
+    # docs/specs/30 §15 (G11): testcase events (app/testcases/events.py).
+    "run.closed",
+    "result.failed",
+    "case.status_changed",
+    "plan.closed",
+]
 WebhookFormat = Literal["json", "slack", "teams"]
 
 
@@ -324,7 +333,7 @@ class NotificationWebhookIn(BaseModel):
     url: WebhookUrl
     format: WebhookFormat = "json"
     secret: WebhookSecret | None = None
-    events: list[WebhookEvent] = Field(min_length=1, max_length=3)
+    events: list[WebhookEvent] = Field(min_length=1, max_length=7)
     business_project_id: int | None = None
     project_id: int | None = None  # pinned repo; with business_project_id it must belong to it
     enabled: bool = True
@@ -340,7 +349,7 @@ class NotificationWebhookPatch(BaseModel):
     url: WebhookUrl | None = None
     format: WebhookFormat | None = None
     secret: WebhookSecret | Literal[""] | None = None  # "" (or null) removes it
-    events: list[WebhookEvent] | None = Field(default=None, min_length=1, max_length=3)
+    events: list[WebhookEvent] | None = Field(default=None, min_length=1, max_length=7)
     business_project_id: int | None = None
     project_id: int | None = None
     enabled: bool | None = None

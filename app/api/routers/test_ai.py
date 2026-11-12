@@ -25,8 +25,19 @@ from app.assistant import importers
 from app.config import Settings, get_settings
 from app.docs import service as docs
 from app.docs import synthesis
-from app.models import AuditLog, MergeRequest, Project, TestAiRun, TestSuite, User
+from app.models import (
+    AuditLog,
+    MergeRequest,
+    Project,
+    ProjectDocument,
+    TestAiRun,
+    TestCase,
+    TestSection,
+    TestSuite,
+    User,
+)
 from app.testcases import ai, content
+from app.testcases import links as tl
 from app.testcases import service as tc
 from app.workers.knowledge_jobs import month_spend_usd
 from app.workers.queues import review_queue
@@ -39,10 +50,13 @@ LIST_DAYS = 14
 
 
 class RunIn(BaseModel):
-    kind: Literal["generate", "audit", "impact"]
+    kind: Literal["generate", "audit", "impact", "links"]
     business_project_id: int
     suite_id: int | None = None
+    section_id: int | None = None  # links: only the cases of this section (and below)
     merge_request_id: int | None = None
+    # generate: add the dự án's documents naming the Jira keys asked for (§15.2 G2).
+    auto_docs: bool = False
     doc_ids: list[int] = Field(default_factory=list, max_length=ai.MAX_SOURCES)
     jira_keys: list[str] = Field(default_factory=list, max_length=ai.MAX_JIRA)
     urls: list[str] = Field(default_factory=list, max_length=ai.MAX_SOURCES)
@@ -195,7 +209,7 @@ def list_runs(
     principal: CurrentPrincipal,
     session: SessionDep,
     business_project_id: int,
-    kind: Literal["generate", "audit", "impact"] | None = None,
+    kind: Literal["generate", "audit", "impact", "links"] | None = None,
     suite_id: int | None = None,
 ) -> RunList:
     bp = tc.project_for(session, principal, business_project_id, edit=True)
@@ -237,15 +251,32 @@ def create_run(
     bp = tc.project_for(session, principal, body.business_project_id, edit=True)
     data: dict[str, Any] = {"instruction": (body.instruction or "").strip() or None}
     suite_id = mr_id = None
-    if body.kind in ("generate", "audit"):
+    if body.kind in ("generate", "audit", "links"):
         if body.suite_id is None:
             raise HTTPException(422, "chọn bộ testcase")
         suite = tc.suite_for(session, principal, body.suite_id, edit=True)
         if bp.id not in tc.projects_of(session, suite):
             raise HTTPException(422, "bộ testcase không thuộc dự án này")
         suite_id = suite.id
+    if body.kind == "links" and body.section_id is not None:
+        section = session.get(TestSection, body.section_id)
+        if section is None or section.suite_id != suite_id:
+            raise HTTPException(422, "thư mục không thuộc bộ testcase này")
+        data["section_id"] = section.id
     if body.kind == "generate":
         keys = tc.jira_keys(body.jira_keys)
+        if body.auto_docs and keys:
+            # The reverse way (§15.2 G2): an uncovered issue and the documents naming it.
+            room = ai.MAX_SOURCES - len(body.doc_ids) - len(body.files) - len(body.urls) - 1
+            found = [
+                session.get(ProjectDocument, d.id)
+                for d in tl.documents_mentioning(session, bp.id, keys)
+                if d.id not in body.doc_ids
+            ]
+            picked = [
+                d.id for d in found if d is not None and docs.may_view_doc(session, principal, d)
+            ]
+            body.doc_ids = [*body.doc_ids, *picked[: max(room, 0)]]
         try:
             urls = (
                 synthesis.clean_urls(body.urls, files=len(body.files) + len(body.doc_ids) + 1)
@@ -363,6 +394,8 @@ def apply_run(
     run = _run(session, principal, run_id, lock=True)
     if run.status not in ("ready", "applied") or not run.result:
         raise HTTPException(409, "lượt AI chưa có kết quả")
+    if run.kind == "links":
+        raise HTTPException(422, "gợi ý liên kết áp dụng qua /apply-links")
     proposals = (
         run.result.get("missing") if run.kind == "impact" else run.result.get("cases")
     ) or []
@@ -419,6 +452,76 @@ def apply_run(
     )
     session.commit()
     return ApplyOut(added=case_outs(session, added))
+
+
+class LinkItem(BaseModel):
+    id: int  # the case
+    jira_keys: list[str] = Field(default_factory=list, max_length=tc.LIST_MAX)
+    code_paths: list[str] = Field(default_factory=list, max_length=tc.LIST_MAX)
+
+
+class LinksIn(BaseModel):
+    # The accepted suggestions (edited on the screen if need be): added to what each case has.
+    items: list[LinkItem] = Field(min_length=1, max_length=ai.LINKS_MAX_CASES)
+
+
+class LinksOut(BaseModel):
+    changed: int
+    cases: list[CaseOut]
+
+
+@router.post("/testcases/ai/{run_id}/apply-links", response_model=LinksOut)
+def apply_links(
+    run_id: int, body: LinksIn, principal: CurrentPrincipal, session: SessionDep
+) -> LinksOut:
+    """Accept link suggestions in one go (§15.2 G2): each case changed through the editor's
+    rules, so each gets a revision; a case outside the run's suggestions is refused."""
+    run = _run(session, principal, run_id, lock=True)
+    if run.kind != "links" or run.status not in ("ready", "applied") or not run.result:
+        raise HTTPException(409, "lượt AI chưa có gợi ý liên kết")
+    suggested = {i.get("id") for i in run.result.get("links") or [] if isinstance(i, dict)}
+    wanted = {i.id: i for i in body.items}
+    if set(wanted) - suggested:
+        raise HTTPException(422, "có testcase không nằm trong gợi ý của lượt AI này")
+    cases = list(
+        session.scalars(
+            select(TestCase).where(TestCase.id.in_(wanted)).order_by(TestCase.id).with_for_update()
+        )
+    )
+    suites: dict[int, TestSuite] = {}
+    changed: list[TestCase] = []
+    for case in cases:
+        suite = suites.get(case.suite_id) or tc.suite_for(
+            session, principal, case.suite_id, edit=True
+        )
+        suites[suite.id] = suite
+        item = wanted[case.id]
+        try:
+            values = tc.clean(
+                {
+                    "jira_keys": [*(case.jira_keys or []), *item.jira_keys],
+                    "code_paths": [*(case.code_paths or []), *item.code_paths],
+                },
+                partial=True,
+            )
+            tc.check_refs(session, suite, values, current=case)
+            if tc.change(session, case, values, user_id=principal.user_id, via="ai"):
+                changed.append(case)
+        except tc.FieldError as exc:
+            raise HTTPException(422, f"{content.key('case', case.id)}: {exc}") from None
+    done = set(run.result.get("applied") or []) | set(wanted)
+    run.result = {**run.result, "applied": sorted(done)}
+    run.applied_count = len(done)
+    run.status = "applied"
+    audit(
+        session,
+        principal.user_id,
+        "testcase.ai.links",
+        f"test_ai:{run.id}",
+        changed=len(changed),
+    )
+    session.commit()
+    return LinksOut(changed=len(changed), cases=case_outs(session, changed))
 
 
 @router.delete("/testcases/ai/{run_id}", status_code=204)

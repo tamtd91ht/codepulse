@@ -47,7 +47,7 @@ from app.models.jira import JiraProject, JiraProjectScope
 from app.models.knowledge import ReviewKnowledge, ReviewKnowledgeEdit
 from app.models.mcp import McpCall
 from app.models.metrics import MetricsTeamPeriod, MetricsUserPeriod
-from app.models.notifications import NotificationWebhook, UserNotification
+from app.models.notifications import NotificationWebhook, UserNotification, WebhookDelivery
 from app.models.permissions import PermissionSet, PermissionSetItem, UserPermissionSet
 from app.models.project_docs import (
     ProjectDocument,
@@ -74,6 +74,7 @@ from app.models.testcases import (
     TestAiRun,
     TestCase,
     TestCaseRevision,
+    TestCiImport,
     TestConfig,
     TestConfigGroup,
     TestMilestone,
@@ -167,6 +168,7 @@ __all__ = [
     "TestAiRun",
     "TestCase",
     "TestCaseRevision",
+    "TestCiImport",
     "TestConfig",
     "TestConfigGroup",
     "TestMilestone",
@@ -181,4 +183,5 @@ __all__ = [
     "User",
     "UserNotification",
     "UserPermissionSet",
+    "WebhookDelivery",
 ]

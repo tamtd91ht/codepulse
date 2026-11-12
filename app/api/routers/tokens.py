@@ -19,8 +19,8 @@ from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.schemas import ORM
 from app.api.security import AdminPrincipal, CurrentPrincipal
-from app.mcp.tokens import DEFAULT_DAYS, SCOPES, create_token, revoke
-from app.models import ApiToken, User
+from app.mcp.tokens import DEFAULT_DAYS, MCP_SCOPES, create_token, revoke
+from app.models import ApiToken, BusinessProject, User
 
 router = APIRouter(tags=["tokens"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -35,6 +35,8 @@ class TokenOut(ORM):
     last_used_at: datetime | None
     revoked_at: datetime | None
     created_at: datetime
+    business_project_id: int | None = None  # docs/specs/30 §15: bound to this dự án only
+    business_project_name: str | None = None
     active: bool = False
 
 
@@ -44,14 +46,18 @@ class TokenCreated(TokenOut):
 
 class TokenIn(BaseModel):
     name: str
-    scopes: list[str] = Field(default_factory=lambda: list(SCOPES))
+    scopes: list[str] = Field(default_factory=lambda: list(MCP_SCOPES))
     days: int = DEFAULT_DAYS
+    business_project_id: int | None = None
 
 
-def _out(token: ApiToken, now: datetime | None = None) -> TokenOut:
+def _out(token: ApiToken, now: datetime | None = None, session: Session | None = None) -> TokenOut:
     at = now or datetime.now(UTC)
     out = TokenOut.model_validate(token)
     out.active = token.revoked_at is None and token.expires_at > at
+    if token.business_project_id is not None and session is not None:
+        bp = session.get(BusinessProject, token.business_project_id)
+        out.business_project_name = bp.name if bp else None
     return out
 
 
@@ -62,7 +68,7 @@ def _list(session: Session, user_id: int) -> list[TokenOut]:
         .order_by(ApiToken.created_at.desc(), ApiToken.id.desc())
     )
     now = datetime.now(UTC)
-    return [_out(t, now) for t in rows]
+    return [_out(t, now, session) for t in rows]
 
 
 def _revoke(session: Session, token: ApiToken, by_user_id: int, by_admin: bool) -> TokenOut:
@@ -78,7 +84,7 @@ def _revoke(session: Session, token: ApiToken, by_user_id: int, by_admin: bool) 
         )
     session.commit()
     session.refresh(token)
-    return _out(token)
+    return _out(token, session=session)
 
 
 @router.get("/me/tokens", response_model=list[TokenOut])
@@ -89,7 +95,14 @@ def my_tokens(principal: CurrentPrincipal, session: SessionDep) -> list[TokenOut
 
 @router.post("/me/tokens", response_model=TokenCreated, status_code=201)
 def make_token(body: TokenIn, principal: CurrentPrincipal, session: SessionDep) -> TokenCreated:
-    token, raw = create_token(session, principal.user_id, body.name, body.scopes, body.days)
+    bp_id = body.business_project_id
+    if bp_id is not None and (
+        session.get(BusinessProject, bp_id) is None or not principal.can_view_project(bp_id)
+    ):
+        raise HTTPException(404, "không tìm thấy dự án")
+    token, raw = create_token(
+        session, principal.user_id, body.name, body.scopes, body.days, business_project_id=bp_id
+    )
     audit(
         session,
         principal.user_id,
@@ -98,10 +111,11 @@ def make_token(body: TokenIn, principal: CurrentPrincipal, session: SessionDep) 
         name=token.name,
         scopes=token.scopes,
         expires_at=token.expires_at.isoformat(),
+        business_project_id=bp_id,
     )
     session.commit()
     session.refresh(token)
-    return TokenCreated(**_out(token).model_dump(), token=raw)
+    return TokenCreated(**_out(token, session=session).model_dump(), token=raw)
 
 
 @router.post("/me/tokens/{token_id}/revoke", response_model=TokenOut)

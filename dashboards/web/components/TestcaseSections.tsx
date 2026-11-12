@@ -7,7 +7,8 @@ import { Icon, IconButton } from "@/components/icons";
 import { MoreMenu } from "@/components/MoreMenu";
 import { Alert, Loading } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
-import type { Section, Suite } from "@/lib/testcases";
+import { CodePathsField } from "@/components/TestcaseLinks";
+import { type Section, type Suite, splitList } from "@/lib/testcases";
 
 /*
  * The section tree of a suite (docs/specs/30 §13.2), TestRail's left tree: pick a section to see
@@ -288,6 +289,7 @@ function SectionModal({
 }) {
   const [name, setName] = useState(section?.name ?? "");
   const [description, setDescription] = useState(section?.description ?? "");
+  const [codePaths, setCodePaths] = useState((section?.code_paths ?? []).join("\n"));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const save = async () => {
@@ -296,9 +298,11 @@ function SectionModal({
     setError(null);
     try {
       const body = { name: name.trim(), description: description.trim() || null };
-      const got = section
-        ? await api.patch<Section>(`/testcases/sections/${section.id}`, body)
+      const paths = splitList(codePaths);
+      let got = section
+        ? await api.patch<Section>(`/testcases/sections/${section.id}`, { ...body, code_paths: paths })
         : await api.post<Section>("/testcases/sections", { ...body, suite_id: suite.id, parent_id: parent?.id ?? null });
+      if (!section && paths.length) got = await api.patch<Section>(`/testcases/sections/${got.id}`, { code_paths: paths });
       await onSaved(got);
       onClose();
     } catch (e) {
@@ -338,6 +342,7 @@ function SectionModal({
           <span className="small muted">Mô tả</span>
           <textarea value={description} rows={2} maxLength={2000} onChange={(e) => setDescription(e.target.value)} />
         </label>
+        <CodePathsField projectId={suite.business_project_id} value={codePaths} onChange={setCodePaths} />
       </form>
     </Modal>
   );

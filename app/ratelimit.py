@@ -115,6 +115,56 @@ class RedisRateLimiter:
             self._sleep(wait_ms / 1000.0 + 0.001 if wait_ms > 0 else 0.05)
 
 
+class CounterStore(Protocol):
+    """The slice of `redis.Redis` a `WindowCounter` uses."""
+
+    def incr(self, name: str) -> int: ...
+    def expire(self, name: str, time: int) -> bool: ...
+
+
+class WindowCounter:
+    """Server-side cap: at most `limit` hits of one key per minute window; past it the caller is
+    refused (HTTP 429), not paced. Counted in Redis so every API worker shares the window; when
+    Redis is missing or down, counted in this process (and Redis is retried a minute later)."""
+
+    def __init__(
+        self,
+        redis: Callable[[], CounterStore] | None = None,
+        *,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        self._redis = redis
+        self._clock = clock
+        self._local: dict[str, int] = {}
+        self._local_minute = -1
+        self._redis_down_until = 0.0
+
+    def hit(self, key: str, limit: int) -> int | None:
+        """Count one hit; seconds until the window ends when over `limit`, else None."""
+        now = self._clock()
+        minute = int(now // WINDOW_S)
+        count: int | None = None
+        if self._redis is not None and now >= self._redis_down_until:
+            name = f"{key}:{minute}"
+            try:
+                store = self._redis()
+                count = store.incr(name)
+                if count == 1:
+                    store.expire(name, 2 * WINDOW_S)
+            except (RedisError, OSError) as exc:
+                log.warning("rate counter unavailable, counting locally", extra={"error": str(exc)})
+                self._redis_down_until = now + WINDOW_S
+                count = None
+        if count is None:
+            if minute != self._local_minute:
+                self._local, self._local_minute = {}, minute
+            count = self._local.get(key, 0) + 1
+            self._local[key] = count
+        if count <= limit:
+            return None
+        return max(1, WINDOW_S - int(now % WINDOW_S))
+
+
 def shared_limiter(
     max_per_minute: int,
     redis: RedisCommands | None = None,

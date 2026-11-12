@@ -2,17 +2,19 @@
 docs/specs/16_NOTIFICATION_WEBHOOKS.md. Secrets are encrypted at rest and never returned."""
 
 import logging
-from typing import Annotated, Any
+from datetime import datetime
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.admin_settings import link_base
 from app.api.audit import audit
-from app.api.deps import get_secret_box, get_session
+from app.api.deps import get_queue, get_secret_box, get_session
 from app.api.schemas import (
     NotificationWebhookIn,
     NotificationWebhookOut,
@@ -21,9 +23,11 @@ from app.api.schemas import (
 from app.api.security import Principal, require
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
-from app.models import BusinessProject, NotificationWebhook, Project
+from app.models import BusinessProject, NotificationWebhook, Project, WebhookDelivery
 from app.notifications.deliver import TIMEOUT_S
 from app.notifications.jobs import send_test
+from app.testcases import events as tc_events
+from app.testcases.events import Enqueuer
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["notifications"])
@@ -204,3 +208,86 @@ def test_webhook(
         "attempts": result.attempts,
         "enabled": hook.enabled,
     }
+
+
+# -- delivery history (docs/specs/30 §15, G11: testcase events) -----------------------------------
+
+DELIVERIES_SHOWN = 100
+
+
+class DeliveryOut(BaseModel):
+    id: int
+    webhook_id: int
+    event: str
+    status: str
+    attempts: int
+    last_status_code: int | None
+    last_error: str | None
+    created_at: datetime
+    delivered_at: datetime | None
+    payload: dict[str, Any]
+
+
+def _delivery_out(row: WebhookDelivery) -> DeliveryOut:
+    return DeliveryOut(
+        id=row.id,
+        webhook_id=row.webhook_id,
+        event=row.event,
+        status=row.status,
+        attempts=row.attempts,
+        last_status_code=row.last_status_code,
+        last_error=row.last_error,
+        created_at=row.created_at,
+        delivered_at=row.delivered_at,
+        payload=dict(row.payload or {}),
+    )
+
+
+@router.get("/webhooks/{webhook_id}/deliveries", response_model=list[DeliveryOut])
+def list_deliveries(
+    webhook_id: int,
+    principal: NotificationsPrincipal,
+    session: SessionDep,
+    status: Annotated[Literal["pending", "delivered", "failed"] | None, Query()] = None,
+) -> list[DeliveryOut]:
+    """The latest DELIVERIES_SHOWN deliveries of this hook, newest first."""
+    _get(session, NotificationWebhook, webhook_id, "webhook")
+    query = select(WebhookDelivery).where(WebhookDelivery.webhook_id == webhook_id)
+    if status is not None:
+        query = query.where(WebhookDelivery.status == status)
+    rows = session.scalars(
+        query.order_by(WebhookDelivery.created_at.desc(), WebhookDelivery.id.desc()).limit(
+            DELIVERIES_SHOWN
+        )
+    )
+    return [_delivery_out(r) for r in rows]
+
+
+@router.post("/webhooks/{webhook_id}/deliveries/{delivery_id}/resend", response_model=DeliveryOut)
+def resend_delivery(
+    webhook_id: int,
+    delivery_id: int,
+    principal: NotificationsPrincipal,
+    session: SessionDep,
+    queue: Annotated[Enqueuer, Depends(get_queue)],
+) -> DeliveryOut:
+    """Send the same event again: back to pending, queued once this commits."""
+    row = session.get(WebhookDelivery, delivery_id)
+    if row is None or row.webhook_id != webhook_id:
+        raise HTTPException(404, "delivery not found")
+    if row.status == "pending":
+        raise HTTPException(409, "lần gửi này đang chờ gửi")
+    row.status, row.last_error = "pending", None
+    audit(
+        session,
+        principal.user_id,
+        "webhook.resend",
+        f"webhook:{webhook_id}",
+        delivery_id=delivery_id,
+        event=row.event,
+    )
+    session.commit()
+    if not tc_events.enqueue(queue, [delivery_id]):
+        raise HTTPException(503, "không xếp được việc gửi (hàng đợi lỗi), thử lại sau")
+    session.refresh(row)
+    return _delivery_out(row)

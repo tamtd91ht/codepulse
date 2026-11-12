@@ -26,6 +26,11 @@ EVENT_LABEL = {
     "review.failed": "Review lỗi",
     "review.severe": "Review có critical/high",
     "ping": "Kiểm tra webhook",
+    # docs/specs/30 §15 (G11): app/testcases/events.py
+    "run.closed": "Đóng test run",
+    "result.failed": "Kết quả test Failed",
+    "case.status_changed": "Testcase đổi trạng thái",
+    "plan.closed": "Đóng test plan",
 }
 SEVERITIES = ("critical", "high", "medium", "low", "info")
 SEVERE = ("critical", "high")

@@ -77,6 +77,8 @@ export interface TestOut {
   estimate_s: number | null;
   defects: string[];
   latest_comment: string | null;
+  /** §15 G1: the case's CI results disagree. */
+  flaky?: boolean;
 }
 
 export interface TestList {
@@ -128,6 +130,12 @@ export interface ResultOut {
   assigned_to: Person | null;
   created_by: Person | null;
   created_at: string | null;
+  /** §15 G1: "ci" results carry the failure log, stack trace, attachments and CI facts. */
+  source?: "manual" | "ci";
+  log?: string | null;
+  stack?: string | null;
+  attachments?: { name?: string; path?: string; content_type?: string }[];
+  ci?: { commit_sha?: string; branch?: string; mr_iid?: number; test_name?: string; file?: string; import_id?: number; attempts?: string[] };
 }
 
 export interface TestDetail extends TestOut {
@@ -247,4 +255,4 @@ export function today(): string {
 
 export const dayText = (d: string | null | undefined) => (d ? d.split("-").reverse().join("/") : "");
 
-export const SOURCE_LABEL: Record<string, string> = { manual: "Thủ công", regression: "Cần test lại", plan: "Từ plan" };
+export const SOURCE_LABEL: Record<string, string> = { manual: "Thủ công", regression: "Cần test lại", plan: "Từ plan", ci: "Từ CI" };

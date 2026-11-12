@@ -26,12 +26,13 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    LargeBinary,
     String,
     UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, deferred, mapped_column
 
 from app.models.base import Base, TimestampMixin
 
@@ -58,8 +59,10 @@ CASE_TYPES = (
 )
 TEST_STATUSES = ("untested", "passed", "failed", "blocked", "retest")
 RESULT_STATUSES = ("passed", "failed", "blocked", "retest")
-RUN_SOURCES = ("manual", "regression", "plan")
-AI_KINDS = ("generate", "audit", "impact")
+RUN_SOURCES = ("manual", "regression", "plan", "ci")
+RESULT_SOURCES = ("manual", "ci")
+CI_IMPORT_STATUSES = ("queued", "running", "done", "failed")
+AI_KINDS = ("generate", "audit", "impact", "links")
 AI_STATUSES = ("queued", "fetching", "writing", "ready", "failed", "applied", "discarded")
 
 
@@ -76,6 +79,8 @@ class TestSuite(TimestampMixin, Base):
     # Where it was imported from: the Google Sheet's link and the tab ("Nhập lại").
     source_url: Mapped[str | None]
     source_sheet: Mapped[str | None]
+    # §15 G2: code globs every case of the suite inherits (a case's own add to them).
+    code_paths: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
     position: Mapped[int] = mapped_column(server_default="0", default=0)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
@@ -109,6 +114,13 @@ class TestCase(TimestampMixin, Base):
         CheckConstraint(f"source IN {CASE_SOURCES}", name="source"),
         CheckConstraint(f"template IN {TEMPLATES}", name="template"),
         CheckConstraint(f"type IN {CASE_TYPES}", name="type"),
+        Index(
+            "uq_test_cases_suite_automation_id",
+            "suite_id",
+            "automation_id",
+            unique=True,
+            postgresql_where="automation_id IS NOT NULL",
+        ),
         Index(
             "ix_test_cases_jira_keys",
             "jira_keys",
@@ -148,8 +160,13 @@ class TestCase(TimestampMixin, Base):
     automation: Mapped[str | None]
     tags: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
     jira_keys: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
-    # Globs over the dự án's repo paths the case covers (docs/specs/30 §8.1).
+    # Globs over the dự án's repo paths the case covers (docs/specs/30 §8.1); "{repo}:{glob}" or
+    # a bare glob (every repo of the dự án), §15 G2.
     code_paths: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
+    # §15 G1: the automated test's identity in CI reports ("classname.name"), unique in a suite.
+    automation_id: Mapped[str | None]
+    # §15 G1: CI results disagree (pass and fail on one commit, or flipping often).
+    flaky: Mapped[bool] = mapped_column(server_default="false", default=False)
     status: Mapped[str] = mapped_column(server_default="draft", default="draft")
     source: Mapped[str] = mapped_column(server_default="manual", default="manual")
     revision: Mapped[int] = mapped_column(server_default="1", default=1)
@@ -236,6 +253,8 @@ class TestSection(TimestampMixin, Base):
     name: Mapped[str]
     description: Mapped[str | None]
     position: Mapped[int] = mapped_column(server_default="0", default=0)
+    # §15 G2: code globs the cases of this folder (and its sub-folders) inherit.
+    code_paths: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
 
 
 class TestSharedStep(TimestampMixin, Base):
@@ -376,6 +395,7 @@ class TestResult(Base):
     __test__ = False
     __table_args__ = (
         CheckConstraint(f"status IS NULL OR status IN {RESULT_STATUSES}", name="status"),
+        CheckConstraint(f"source IN {RESULT_SOURCES}", name="source"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -393,5 +413,50 @@ class TestResult(Base):
         JSONB, server_default="[]", default=list
     )
     assigned_to: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # §15 G1: "manual" (a tester) or "ci" (a report uploaded from CI) with what CI said.
+    source: Mapped[str] = mapped_column(server_default="manual", default="manual")
+    log: Mapped[str | None]  # the failure message / output
+    stack: Mapped[str | None]  # the stack trace
+    attachments: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, server_default="[]", default=list
+    )
+    # {commit_sha, branch, mr_iid, test_name, file, import_id}
+    ci: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TestCiImport(Base):
+    """One CI report uploaded (§15 G1): parsed in the background into a run's results. The file
+    is kept until it is processed."""
+
+    __tablename__ = "test_ci_imports"
+    __test__ = False
+    __table_args__ = (CheckConstraint(f"status IN {CI_IMPORT_STATUSES}", name="status"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
+    suite_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_suites.id", ondelete="SET NULL"), index=True
+    )
+    run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), index=True
+    )
+    status: Mapped[str] = mapped_column(server_default="queued", default="queued")
+    format: Mapped[str | None]  # junit | testng | xunit | playwright | cucumber
+    file_name: Mapped[str | None]
+    # The parameters it was sent with (run_name, milestone_id, config_ids, close_run, mr_iid,
+    # commit_sha, branch, auto_create).
+    params: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
+    data: Mapped[bytes | None] = deferred(mapped_column(LargeBinary))
+    total: Mapped[int] = mapped_column(server_default="0", default=0)
+    done: Mapped[int] = mapped_column(server_default="0", default=0)  # progress
+    mapped: Mapped[int] = mapped_column(server_default="0", default=0)
+    created_cases: Mapped[int] = mapped_column(server_default="0", default=0)
+    unmapped: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
+    error: Mapped[str | None]
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

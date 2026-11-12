@@ -6,13 +6,131 @@ import { Icon, IconButton } from "@/components/icons";
 import { Card, Drawer, EmptyState, Expander, Loading, Message, Pill } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { dateTime, relative } from "@/lib/format";
-import type { BusinessProject, NotificationWebhook, Project, WebhookEvent, WebhookFormat, WebhookTestResult } from "@/lib/types";
+import type {
+  BusinessProject,
+  NotificationWebhook,
+  Project,
+  WebhookDelivery,
+  WebhookEvent,
+  WebhookFormat,
+  WebhookTestResult,
+} from "@/lib/types";
 
 const EVENTS: { key: WebhookEvent; label: string; hint: string }[] = [
   { key: "review.done", label: "Review xong", hint: "Mọi review hoàn tất, kèm điểm và số finding" },
   { key: "review.severe", label: "Có critical/high", hint: "Chỉ review có finding critical hoặc high (kênh cảnh báo)" },
   { key: "review.failed", label: "Review lỗi", hint: "Review thất bại (GitLab, LLM, ngân sách)" },
+  // docs/specs/30 §15 (G11): testcase events (webhook of a dự án or of every dự án, not of a repo).
+  { key: "run.closed", label: "Đóng test run", hint: "Test run được đóng, kèm số test theo trạng thái" },
+  { key: "result.failed", label: "Kết quả Failed", hint: "Mỗi kết quả test Failed (test, case, run, bình luận, bug)" },
+  { key: "case.status_changed", label: "Testcase đổi trạng thái", hint: "Testcase đổi trạng thái (nháp, đã duyệt, lỗi thời)" },
+  { key: "plan.closed", label: "Đóng test plan", hint: "Test plan được đóng" },
 ];
+const DELIVERY_STATUS: Record<WebhookDelivery["status"], { label: string; tone: "info" | "good" | "bad" }> = {
+  pending: { label: "Đang chờ", tone: "info" },
+  delivered: { label: "Đã gửi", tone: "good" },
+  failed: { label: "Lỗi", tone: "bad" },
+};
+
+/** "Lịch sử gửi" of one webhook: the latest 100 testcase events, a failed one can be sent again. */
+function DeliveriesDrawer({ hook, onClose }: { hook: NotificationWebhook; onClose: () => void }) {
+  const [status, setStatus] = useState("");
+  const list = useApi<WebhookDelivery[]>(`/webhooks/${hook.id}/deliveries${status ? `?status=${status}` : ""}`);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [tone, setTone] = useState<"success" | "error">("success");
+
+  async function resend(d: WebhookDelivery) {
+    setBusy(d.id);
+    try {
+      await api.post(`/webhooks/${hook.id}/deliveries/${d.id}/resend`);
+      setTone("success");
+      setMessage("Đã xếp lịch gửi lại.");
+      await list.mutate();
+    } catch (e) {
+      setTone("error");
+      setMessage(`Lỗi: ${describe(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <Drawer title={`Lịch sử gửi: ${hook.name}`} width={760} onClose={onClose}>
+      <p className="muted small" style={{ marginTop: 0 }}>
+        Các sự kiện testcase gần nhất (tối đa 100). Mỗi lần gửi thử tối đa 3 lần; lỗi cả 3 lần thì báo Lỗi, bấm Gửi lại để gửi lần nữa.
+      </p>
+      <Message text={message} tone={tone} onClose={() => setMessage(null)} />
+      <div className="toolbar" style={{ margin: "0 0 8px" }}>
+        <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Lọc trạng thái">
+          <option value="">Mọi trạng thái</option>
+          <option value="failed">Lỗi</option>
+          <option value="pending">Đang chờ</option>
+          <option value="delivered">Đã gửi</option>
+        </select>
+      </div>
+      {!list.data ? (
+        <>
+          <Loading error={list.error} rows={4} />
+          {list.error && (
+            <button type="button" className="sm" onClick={() => void list.mutate()}>
+              Thử lại
+            </button>
+          )}
+        </>
+      ) : list.data.length === 0 ? (
+        <EmptyState icon="webhook" title="Chưa có lần gửi nào">
+          Webhook nhận sự kiện testcase (đóng run, kết quả Failed…) sẽ hiện ở đây.
+        </EmptyState>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Thời gian</th>
+                <th>Sự kiện</th>
+                <th>Trạng thái</th>
+                <th>Mã</th>
+                <th>Lỗi</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {list.data.map((d) => (
+                <tr key={d.id}>
+                  <td>
+                    <span title={dateTime(d.created_at)}>{relative(d.created_at)}</span>
+                  </td>
+                  <td>
+                    {EVENTS.find((e) => e.key === d.event)?.label ?? d.event}
+                    {typeof d.payload.text === "string" && (
+                      <div className="muted small url-cell" title={d.payload.text}>
+                        {d.payload.text}
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    <Pill tone={DELIVERY_STATUS[d.status].tone}>{DELIVERY_STATUS[d.status].label}</Pill>
+                    <div className="muted small">{d.attempts} lần thử</div>
+                  </td>
+                  <td>{d.last_status_code ?? "—"}</td>
+                  <td className="small">{d.last_error ? <span className="error">{d.last_error}</span> : <span className="muted">—</span>}</td>
+                  <td>
+                    {d.status !== "pending" && (
+                      <button type="button" className="sm" disabled={busy === d.id} onClick={() => void resend(d)}>
+                        {busy === d.id ? "Đang gửi…" : "Gửi lại"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Drawer>
+  );
+}
 const FORMATS: { key: WebhookFormat; label: string; hint: string }[] = [
   { key: "json", label: "JSON", hint: "Payload CodePulse, ký HMAC-SHA256 nếu có secret" },
   { key: "slack", label: "Slack", hint: "Incoming webhook của Slack (text mrkdwn)" },
@@ -39,6 +157,7 @@ export function WebhookAdmin() {
   const [editing, setEditing] = useState<NotificationWebhook | null>(null);
   const [formProject, setFormProject] = useState(ALL);
   const [tests, setTests] = useState<Record<number, WebhookTestResult>>({});
+  const [history, setHistory] = useState<NotificationWebhook | null>(null);
   // The add / edit form lives in a drawer: open for a new hook (editing null) or for `editing`.
   const [formOpen, setFormOpen] = useState(false);
   const closeForm = () => {
@@ -236,6 +355,7 @@ export function WebhookAdmin() {
                               )
                             }
                           />
+                          <IconButton icon="history" label="Lịch sử gửi" onClick={() => setHistory(h)} />
                           <IconButton
                             icon="edit"
                             label="Sửa"
@@ -273,6 +393,8 @@ export function WebhookAdmin() {
           </div>
         )}
       </Card>
+
+      {history && <DeliveriesDrawer hook={history} onClose={() => setHistory(null)} />}
 
       {formOpen && (
         <Drawer title={editing ? `Sửa webhook: ${editing.name}` : "Thêm webhook"} width={640} onClose={closeForm}>
@@ -332,7 +454,7 @@ export function WebhookAdmin() {
                 autoComplete="new-password"
               />
             </div>
-            <div className="toolbar" style={{ margin: 0 }}>
+            <div className="toolbar" style={{ margin: 0, flexWrap: "wrap" }}>
               {EVENTS.map((ev) => (
                 <label key={ev.key} title={ev.hint}>
                   <input
@@ -360,6 +482,11 @@ export function WebhookAdmin() {
               loc_reviewed, summary, findings theo mức độ, top_findings, url, web_url), <code>project</code>,{" "}
               <code>business_project</code>, <code>author</code>. Chi tiết trong <code>docs/specs/16_NOTIFICATION_WEBHOOKS.md</code>.
               Endpoint cần trả 2xx trong 10 giây; 5xx/429 được thử lại 3 lần.
+            </p>
+            <p style={{ marginBottom: 0 }}>
+              <strong>Sự kiện testcase</strong> (run.closed, result.failed, case.status_changed, plan.closed): body gồm <code>event</code>,{" "}
+              <code>business_project</code>, <code>text</code> và các khoá như <code>run_key</code>, <code>test_key</code>, <code>case_key</code>,{" "}
+              <code>counts</code>, <code>from</code>/<code>to</code>; cùng chữ ký HMAC. Xem và gửi lại ở “Lịch sử gửi”.
             </p>
           </Expander>
         </Drawer>
