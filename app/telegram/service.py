@@ -1213,7 +1213,7 @@ class BotService:
             if not reset:
                 return review
             # Like POST /reviews/{id}/rerun: a failed or skipped review may run again.
-            review.status, review.error = "queued", None
+            review.status, review.error, review.finished_at = "queued", None, None
             return None
         return review
 

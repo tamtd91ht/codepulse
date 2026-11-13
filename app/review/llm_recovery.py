@@ -172,7 +172,7 @@ def requeue_waiting(session: Session, enqueue: Any) -> dict[str, int]:
                     review.error = f"{WAITING_ERROR} — không review lại: {reason}"[:1000]
                 continue
             args, func_name, job_id = _job(session, review)
-            review.status, review.error = "queued", None
+            review.status, review.error, review.finished_at = "queued", None, None
             session.flush()
             enqueue(
                 f"app.workers.review_jobs.{func_name}",

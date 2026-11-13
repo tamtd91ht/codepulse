@@ -638,9 +638,10 @@ def _queue_rerun(
     else:
         args = (project.id, review.reviewed_sha)
         func, job_id = "review_commit_job", f"review-commit-{review.reviewed_sha[:12]}"
-    previous = review.status, review.error
+    previous = review.status, review.error, review.finished_at
     if review.status != "done":
-        review.status, review.error = "queued", None
+        # Waiting again: no end time until this run ends.
+        review.status, review.error, review.finished_at = "queued", None, None
     # The row stays locked until this request commits: the worker's claim (SELECT … FOR UPDATE)
     # waits for it instead of being overwritten by this "queued".
     session.flush()
@@ -662,7 +663,7 @@ def _queue_rerun(
     except Exception:
         # Redis not answering: this one did not start; earlier ones of a batch did and are kept.
         log.exception("review rerun not queued", extra={"review_id": review.id})
-        review.status, review.error = previous
+        review.status, review.error, review.finished_at = previous
         raise HTTPException(503, "job queue unavailable; try again") from None
     audit(
         session,

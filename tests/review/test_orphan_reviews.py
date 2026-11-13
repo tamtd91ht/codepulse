@@ -73,7 +73,7 @@ def test_a_review_with_no_job_is_queued_again_in_its_lane(
     assert kwargs["requested_by"] == review.requested_by_user_id
     assert "-rerun-orphan-" in kwargs["job_id"]
     db_session.refresh(review)
-    assert (review.status, review.error) == ("queued", None)
+    assert (review.status, review.error, review.finished_at) == ("queued", None, None)
 
 
 def test_a_review_whose_job_is_still_there_is_left_alone(

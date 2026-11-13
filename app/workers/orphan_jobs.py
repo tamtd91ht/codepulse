@@ -223,7 +223,7 @@ def requeue_orphans(
                 failed += 1
                 log.warning("orphan review failed", extra={"review_id": review.id, "lost": lost})
             continue
-        if not _move(session, review, snapshot, status="queued", error=None):
+        if not _move(session, review, snapshot, status="queued", error=None, finished_at=None):
             continue
         args, func_name, job_id = job
         try:

@@ -65,7 +65,7 @@ def test_offered_and_queued_again_past_ten_minutes(
     assert func.endswith("review_commit_job") and args[1] == "b" * 40
     assert kwargs["force"] is False
     db_session.refresh(world.binh_review)
-    assert world.binh_review.status == "queued"
+    assert world.binh_review.status == "queued" and world.binh_review.finished_at is None
 
 
 def test_never_while_a_job_is_still_behind_it(
@@ -112,3 +112,16 @@ def test_a_member_is_not_offered_it(
     _since(db_session, world.binh_review, "queued", timedelta(minutes=40))
     sent = client.post(f"/api/v1/reviews/{world.binh_review.id}/rerun", headers=as_user(world.an))
     assert sent.status_code in (403, 404)
+
+
+def test_a_failed_review_run_again_waits_with_no_end_time(
+    client: TestClient, world: World, lead: Any, queue: FakeQueue, db_session: Session
+) -> None:
+    """User 2026-11-13: "Đang chạy" beside a "Review xong" time."""
+    world.binh_review.status = "failed"
+    world.binh_review.finished_at = datetime.now(UTC) - timedelta(hours=2)
+    db_session.commit()
+    sent = client.post(f"/api/v1/reviews/{world.binh_review.id}/rerun", headers=lead)
+    assert sent.status_code == 202
+    db_session.refresh(world.binh_review)
+    assert (world.binh_review.status, world.binh_review.finished_at) == ("queued", None)

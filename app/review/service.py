@@ -806,6 +806,9 @@ class ReviewService:
             )
             return None
         review.status, review.error = "running", None
+        # A failed/skipped/stale row taken over: its old end time is not this run's (the list
+        # showed "Đang chạy" beside a "Review xong" time, user 2026-11-13).
+        review.finished_at = None
         review.basis = None  # a failed/skipped row taken over: its old basis is not this run's
         review.deep, review.mode = None, "fast"
         review.prompt_tokens, review.completion_tokens, review.cost_usd = 0, 0, Decimal(0)

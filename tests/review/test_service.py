@@ -367,6 +367,32 @@ def test_a_rerun_of_a_failed_review_records_the_new_trigger(
     assert (again.trigger, again.requested_by_user_id) == ("rerun", None)  # 999 is nobody
 
 
+def test_a_failed_review_run_again_has_no_end_time_while_it_runs(
+    db_session: Session, mr: tuple[Project, MergeRequest]
+) -> None:
+    """User 2026-11-13: the list showed "Đang chạy" beside the earlier run's "Review xong"."""
+    from app.review.providers.fake import no_findings
+
+    project, merge_request = mr
+
+    def boom(prompt: ReviewPrompt) -> Any:
+        raise LLMError("claude failed")
+
+    failed = run(db_session, FakeLLMProvider(boom), project, merge_request)
+    assert failed.status == "failed" and failed.finished_at is not None
+    seen: list[Any] = []
+
+    def look(prompt: ReviewPrompt) -> Any:
+        row = db_session.get(Review, failed.id)
+        assert row is not None
+        seen.append((row.status, row.finished_at))
+        return no_findings(prompt)
+
+    again = run(db_session, FakeLLMProvider(look), project, merge_request)
+    assert seen and seen[0] == ("running", None)
+    assert again.status == "done" and again.finished_at is not None
+
+
 def test_rules_files_touched_by_the_diff_are_not_used(db_session: Session) -> None:
     from app.review.rules import build_rules
 
