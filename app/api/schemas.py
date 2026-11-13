@@ -548,6 +548,8 @@ class ReviewOut(ORM):
     error: str | None
     started_at: datetime | None
     finished_at: datetime | None
+    # Queued: since when it waits; running: since when it runs; else null (Review.waiting_since).
+    waiting_since: datetime | None = None
     # docs/specs/17
     verdict: str | None = None
     risk_score: int | None = None

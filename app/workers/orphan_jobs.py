@@ -131,6 +131,27 @@ def candidates(session: Session, now: datetime) -> list[Review]:
 
 Present = Callable[[], tuple[set[MrKey], set[str]]]
 
+# A review queued or running longer than this may be re-run by hand when no job is behind it
+# (user 2026-11-13: the list and the detail page offer "Review lại" past it).
+STUCK_AFTER = GRACE
+
+
+def looks_stuck(review: Review, now: datetime | None = None) -> bool:
+    """Queued or running past STUCK_AFTER (`Review.waiting_since`). Only a hint: `job_alive`
+    says whether it really is."""
+    since = review.waiting_since
+    return since is not None and since < (now or datetime.now(UTC)) - STUCK_AFTER
+
+
+def job_alive(session: Session, redis: Redis, review: Review) -> bool:
+    """Whether a job for this review waits, waits to be retried or runs. Raises when Redis
+    cannot be read (the caller must not take a live review for lost)."""
+    job = _job_of(session, review)
+    if job is None:
+        return False
+    mrs, commits = present_jobs(redis)
+    return _has_job(job[2], mrs, commits)
+
 
 def _job_of(session: Session, review: Review) -> tuple[tuple[Any, ...], str, str] | None:
     """(job args, job function, job id) of the review, None when its repo or MR is gone."""

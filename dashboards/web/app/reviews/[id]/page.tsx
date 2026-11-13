@@ -137,6 +137,8 @@ function RerunBar({
 }) {
   const [busy, setBusy] = useState(false);
   const finished = review.status === "done";
+  // Queued or running past 10 minutes (can_rerun says so): perhaps stuck.
+  const stuck = review.status === "queued" || review.status === "running";
   const blocked = busy || !!state?.pending || !review.can_rerun;
   // Skipped as "MR quá lớn: N LOC": a lead may run it anyway, past MAX_REVIEW_LOC, this once.
   const tooLarge = review.status === "skipped" && /^MR quá lớn/.test(review.error ?? "");
@@ -154,7 +156,11 @@ function RerunBar({
       {state && <Alert tone={state.tone}>{state.message}</Alert>}
       <div className="toolbar rerun-bar" style={{ marginBottom: 12 }}>
       <span className="muted small">
-        {finished
+        {stuck
+            ? `${review.status === "queued" ? "Đang chờ" : "Đang chạy"}${
+                review.waiting_since ? ` đã ${Math.floor((Date.now() - new Date(review.waiting_since).getTime()) / 60_000)} phút` : " quá 10 phút"
+              } mà chưa xong. Nếu bị treo (worker dừng giữa chừng), review lại; nếu review vẫn đang chạy, hệ thống sẽ báo và không chạy trùng.`
+            : finished
             ? review.target_type === "mr"
               ? "MR còn mở ở đúng head này: có thể review lại thành lần mới; lần hiện tại được giữ làm lịch sử."
               : "Có thể review lại commit này thành lần mới; lần hiện tại được giữ làm lịch sử."
@@ -189,7 +195,7 @@ function RerunBar({
             await run(finished);
           }}
         >
-          {busy ? "Đang gửi…" : state?.pending ? "Đang chờ worker…" : finished ? "↻ Review lại" : "Chạy lại"}
+          {busy ? "Đang gửi…" : state?.pending ? "Đang chờ worker…" : finished || stuck ? "↻ Review lại" : "Chạy lại"}
         </button>
       )}
       </div>

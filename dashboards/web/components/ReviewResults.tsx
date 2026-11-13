@@ -16,6 +16,11 @@ const PAGE = 25;
 // POST /reviews/rerun takes this many ids at a time.
 const BATCH = 100;
 
+/** Whole minutes from an ISO time to now. */
+function minutesSince(iso: string): number {
+  return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60_000));
+}
+
 const STATUS: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "info" }> = {
   failed: { label: "Lỗi", tone: "bad" },
   skipped: { label: "Bỏ qua", tone: "warn" },
@@ -89,6 +94,23 @@ export function ReviewResults({
   const [finding, setFinding] = useState(false);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<{ tone: "success" | "warning" | "error"; text: string } | null>(null);
+  const [rerunning, setRerunning] = useState<number | null>(null);
+
+  // One review queued/running past 10 minutes: run it again if nothing is behind it any more.
+  async function rerunStuck(r: ReviewListItem): Promise<void> {
+    setRerunning(r.id);
+    try {
+      await api.post(`/reviews/${r.id}/rerun`, { force: false });
+      setSent({ tone: "success", text: `Đã đưa ${r.target} vào hàng đợi lại; tiến trình hiện ở góc phải màn hình.` });
+      announceReviewQueued();
+    } catch (e) {
+      // 409: still queued or running for real (not stuck): say so, nothing was run twice.
+      setSent({ tone: "warning", text: `${r.target}: ${e instanceof ApiError ? e.message : String(e)}` });
+    } finally {
+      setRerunning(null);
+      void pages.mutate();
+    }
+  }
   // Everyone whose reviews the viewer may see (developer: themselves; lead: the team; admin: all).
   const { data: people } = useApi<Person[]>(person === undefined ? "/people" : null);
 
@@ -499,6 +521,22 @@ export function ReviewResults({
                       <td>{r.verdict ? <span className={`verdict ${r.verdict}`}>{VERDICT_LABEL[r.verdict]}</span> : <span className="muted">—</span>}</td>
                       <td className="num">
                         {r.status === "done" ? <strong>{num(r.score, 0)}</strong> : <Pill tone={st?.tone}>{st?.label ?? r.status}</Pill>}
+                        {/* Queued or running past 10 minutes (the API's can_rerun says so): it may
+                            be stuck; the server re-runs it only when no job is behind it. */}
+                        {r.can_rerun && (r.status === "queued" || r.status === "running") && (
+                          <div className="stuck-rerun">
+                            {r.waiting_since && <span className="muted small">{minutesSince(r.waiting_since)} phút</span>}
+                            <button
+                              type="button"
+                              className="sm"
+                              disabled={rerunning === r.id}
+                              title="Đang chờ hoặc đang chạy quá 10 phút: nếu bị treo, review lại. Nếu review vẫn đang chạy, hệ thống báo và không chạy trùng."
+                              onClick={() => void rerunStuck(r)}
+                            >
+                              {rerunning === r.id ? "Đang gửi…" : "↻ Review lại"}
+                            </button>
+                          </div>
+                        )}
                       </td>
                       <td className="nowrap">{r.changed_at ? dateTime(r.changed_at) : <span className="muted">—</span>}</td>
                       <td className="muted nowrap">{dateTime(r.finished_at)}</td>

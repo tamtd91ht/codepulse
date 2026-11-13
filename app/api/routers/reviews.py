@@ -69,6 +69,7 @@ from app.review.rubric import RUBRIC_VERSION
 from app.review.service import TOO_LARGE
 from app.scoring.criteria_store import review_scores
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
+from app.workers.orphan_jobs import STUCK_AFTER, job_alive, looks_stuck
 from app.workers.queues import review_queue
 
 log = logging.getLogger(__name__)
@@ -482,7 +483,12 @@ def _can_rerun(session: Session, review: Review, project: Project | None) -> boo
     review is turned off: the worker skips those."""
     if project is None or not (project.tracked and project.review_enabled):
         return False
-    if review.status not in ("done", "failed", "skipped"):
+    # Queued or running past STUCK_AFTER: may be run again by hand (user 2026-11-13); the run
+    # itself checks that no job is behind it (`_queue_rerun`).
+    if review.status in ("queued", "running"):
+        if not looks_stuck(review):
+            return False
+    elif review.status not in ("done", "failed", "skipped"):
         return False
     if review.superseded_by is not None or review.rubric_version != RUBRIC_VERSION:
         return False
@@ -548,6 +554,32 @@ def rerun_reviews(
     return {"queued": queued, "failed": failed}
 
 
+def _check_stuck(session: Session, queue: Enqueuer, review: Review) -> None:
+    """A queued or running review is run again only when it waited past STUCK_AFTER AND no job
+    is behind it any more (a worker killed mid-review, a Redis restart): never a second run of
+    a review that is only slow (two paid runs at once). HTTPException otherwise."""
+    if not looks_stuck(review):
+        raise HTTPException(
+            409,
+            f"review is {review.status} for less than {int(STUCK_AFTER.total_seconds() // 60)} "
+            "minutes; wait for it",
+        )
+    redis = getattr(queue, "connection", None)
+    if redis is None:  # a test's fake queue: no Redis to ask, nothing runs
+        return
+    try:
+        alive = job_alive(session, redis, review)
+    except Exception:
+        log.warning("rerun: review queues not readable", extra={"review_id": review.id})
+        raise HTTPException(503, "không kiểm được hàng đợi review; thử lại sau") from None
+    if alive:
+        raise HTTPException(
+            409,
+            "review vẫn còn trong hàng đợi hoặc đang chạy (không bị treo): đợi kết quả, xem "
+            "tiến trình ở góc phải màn hình",
+        )
+
+
 def _queue_rerun(
     session: Session,
     principal: Principal,
@@ -562,7 +594,10 @@ def _queue_rerun(
     repo = review_repo(session, review)
     if not _reruns(principal, review, repo):
         raise HTTPException(403, "only a manager of this dự án or an admin can do this")
-    if review.status not in ("failed", "skipped") and not (force and review.status == "done"):
+    stuck = review.status in ("queued", "running")
+    if stuck:
+        _check_stuck(session, queue, review)
+    elif review.status not in ("failed", "skipped") and not (force and review.status == "done"):
         raise HTTPException(
             409, f"review is {review.status}; only failed or skipped can be re-run (force for done)"
         )

@@ -107,6 +107,17 @@ class Review(TimestampMixin, Base):
 
     # Failed because the LLM was down, waiting to be reviewed again once it works (app/review/
     # llm_recovery.py); cleared when the resume job claims it.
+    @property
+    def waiting_since(self) -> datetime | None:
+        """Since when the row has waited (`queued`: when it was last queued) or run (`running`:
+        when the worker started it); None for any other status. Past ten minutes the list and
+        the detail page offer "Review lại" (app/workers/orphan_jobs.py STUCK_AFTER)."""
+        if self.status == "queued":
+            return self.updated_at
+        if self.status == "running":
+            return self.started_at or self.updated_at
+        return None
+
     llm_retry: Mapped[bool] = mapped_column(server_default="false", default=False)
     # docs/specs/17: merge verdict (approve|fix_required|block) and risk score from the
     # findings; the model's design & intent notes; what asked for the review and who.

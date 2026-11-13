@@ -233,6 +233,8 @@ export interface Review {
   cost_usd: Num;
   error: string | null;
   finished_at: string | null;
+  /** Queued: since when it waits; running: since when it runs; else null. */
+  waiting_since?: string | null;
   verdict: Verdict | null;
   risk_score: number | null;
   intent: Intent | null;

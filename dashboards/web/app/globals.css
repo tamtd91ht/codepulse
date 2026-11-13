@@ -13973,3 +13973,13 @@ textarea.bdd-input[aria-invalid="true"] {
   flex-wrap: wrap;
   max-width: 100%;
 }
+
+/* "Review lại" on a list row queued/running past 10 minutes (components/ReviewResults.tsx). */
+.stuck-rerun {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  white-space: nowrap;
+}
