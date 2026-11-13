@@ -13995,12 +13995,23 @@ textarea.bdd-input[aria-invalid="true"] {
   max-width: 100%;
 }
 
-/* "Review lại" on a list row queued/running past 10 minutes (components/ReviewResults.tsx). */
+/* The status of a list row queued/running past 10 minutes, with a "Review lại" icon on its
+   right (components/ReviewResults.tsx). */
 .stuck-rerun {
-  display: flex;
-  justify-content: flex-end;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 4px;
+  gap: 2px;
   white-space: nowrap;
+}
+.stuck-rerun .icon-btn {
+  width: 26px;
+  height: 26px;
+}
+.stuck-rerun .icon-btn.spinning svg {
+  animation: spin 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .stuck-rerun .icon-btn.spinning svg {
+    animation: none;
+  }
 }

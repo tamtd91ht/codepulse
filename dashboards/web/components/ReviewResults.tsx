@@ -6,6 +6,7 @@ import useSWRInfinite from "swr/infinite";
 
 import { RangePicker, type SharedRange, useCardRange } from "@/components/Evaluation";
 import { LinkReviewAuthor, authorLabel } from "@/components/LinkReviewAuthor";
+import { IconButton } from "@/components/icons";
 import { announceReviewQueued } from "@/components/ReviewActivity";
 import { Alert, Avatar, Card, EmptyState, ExternalLink, Loading, Pill } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
@@ -15,11 +16,6 @@ import type { Page, Person, RerunManyOut, RerunnableOut, ReviewListItem, Verdict
 const PAGE = 25;
 // POST /reviews/rerun takes this many ids at a time.
 const BATCH = 100;
-
-/** Whole minutes from an ISO time to now. */
-function minutesSince(iso: string): number {
-  return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60_000));
-}
 
 const STATUS: Record<string, { label: string; tone?: "good" | "bad" | "warn" | "info" }> = {
   failed: { label: "Lỗi", tone: "bad" },
@@ -520,22 +516,25 @@ export function ReviewResults({
                       {repo === undefined && <td className="muted">{r.project ?? "—"}</td>}
                       <td>{r.verdict ? <span className={`verdict ${r.verdict}`}>{VERDICT_LABEL[r.verdict]}</span> : <span className="muted">—</span>}</td>
                       <td className="num">
-                        {r.status === "done" ? <strong>{num(r.score, 0)}</strong> : <Pill tone={st?.tone}>{st?.label ?? r.status}</Pill>}
-                        {/* Queued or running past 10 minutes (the API's can_rerun says so): it may
-                            be stuck; the server re-runs it only when no job is behind it. */}
-                        {r.can_rerun && (r.status === "queued" || r.status === "running") && (
-                          <div className="stuck-rerun">
-                            {r.waiting_since && <span className="muted small">{minutesSince(r.waiting_since)} phút</span>}
-                            <button
-                              type="button"
-                              className="sm"
+                        {r.status === "done" ? (
+                          <strong>{num(r.score, 0)}</strong>
+                        ) : r.can_rerun && (r.status === "queued" || r.status === "running") ? (
+                          // Queued or running past 10 minutes (the API's can_rerun says so): an
+                          // icon beside the status queues it again; the server re-runs it only
+                          // when no job is behind it (user 2026-11-13).
+                          <span className="stuck-rerun">
+                            <Pill tone={st?.tone}>{st?.label ?? r.status}</Pill>
+                            <IconButton
+                              icon="sync"
+                              size={14}
+                              label="Review lại"
+                              className={rerunning === r.id ? "spinning" : undefined}
                               disabled={rerunning === r.id}
-                              title="Đang chờ hoặc đang chạy quá 10 phút: nếu bị treo, review lại. Nếu review vẫn đang chạy, hệ thống báo và không chạy trùng."
                               onClick={() => void rerunStuck(r)}
-                            >
-                              {rerunning === r.id ? "Đang gửi…" : "↻ Review lại"}
-                            </button>
-                          </div>
+                            />
+                          </span>
+                        ) : (
+                          <Pill tone={st?.tone}>{st?.label ?? r.status}</Pill>
                         )}
                       </td>
                       <td className="nowrap">{r.changed_at ? dateTime(r.changed_at) : <span className="muted">—</span>}</td>
