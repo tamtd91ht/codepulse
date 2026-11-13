@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { useSWRConfig } from "swr";
 
+import { REVIEW_MENU, ReviewTabs } from "@/components/ReviewTabs";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { Icon } from "@/components/icons";
 import { LinkAuthor } from "@/components/LinkAuthor";
@@ -302,10 +303,11 @@ export default function RequestReviewPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Review"
+        eyebrow={REVIEW_MENU}
         title="Yêu cầu review"
         subtitle="Chọn repo (bao nhiêu cũng được, hoặc tất cả), một branch, người và khoảng thời gian; review chạy trong nền và lưu vào dashboard như review tự động. Chỉ repo thuộc dự án bạn được cấp quyền; trong đó bạn review được việc của mình; người quản lý dự án và admin review được mọi người."
       />
+      <ReviewTabs current="/reviews/request" />
 
       <Card title="Phạm vi">
         {!repos.data || !people.data ? (

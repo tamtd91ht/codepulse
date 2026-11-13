@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 import useSWRInfinite from "swr/infinite";
 
+import { REVIEW_MENU, ReviewTabs } from "@/components/ReviewTabs";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { ClosureMcpMeta, ViaMcpBadge } from "@/components/ClosureMeta";
 import { CommitList, SubmissionButton, hasSubmission } from "@/components/ClosureSubmission";
@@ -155,7 +156,7 @@ export default function ClosuresPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Findings"
+        eyebrow={REVIEW_MENU}
         title="Đóng finding"
         subtitle="Critical/high đã được sửa ở commit sau: thành viên gửi yêu cầu kèm commit, lead hoặc manager của họ (hoặc admin) chạy review để kiểm, ngay tại đây hoặc trên trang review; đạt thì đóng. Đóng nhờ commit thì giữ mức và giữ điểm; đóng nhờ phản biện (chấp nhận rủi ro) thì hạ xuống medium/low và tính lại điểm. Không đạt thì ghi lý do."
         actions={
@@ -175,6 +176,7 @@ export default function ClosuresPage() {
           ) : undefined
         }
       />
+      <ReviewTabs current="/closures" />
       <Message text={message} onClose={() => setMessage(null)} />
 
       <ol className="closure-flow small muted" aria-label="Các bước">

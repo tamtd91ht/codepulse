@@ -9,6 +9,7 @@ import { InboxProvider, NotificationBell } from "@/components/Inbox";
 import { ReviewActivity } from "@/components/ReviewActivity";
 import { Stetho } from "@/components/Stetho";
 import { stethoHome } from "@/components/StethoTabs";
+import { REVIEW_MENU, underReviewMenu } from "@/components/ReviewTabs";
 import { RAIL_KEY, ThemeToggle } from "@/components/theme";
 import { UserMenu } from "@/components/UserMenu";
 import { can, managesAnyProject, useApi } from "@/lib/api";
@@ -68,7 +69,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (onLogin) return <>{children}</>;
 
   const isAdmin = !!me?.is_admin;
-  const isLead = !!me && (isAdmin || me.lead_teams.length > 0);
   // Stetho, the AI assistant: admins and managers only (app/api/routers/assistant.py).
   const assistant = !!me && (isAdmin || me.managed_teams.length > 0);
   const managesProject = managesAnyProject(me);
@@ -98,17 +98,15 @@ export function AppShell({ children }: { children: ReactNode }) {
         // Tích hợp MCP (docs/specs/26 §13.2): whoever holds report.mcp (a member: their own).
         ...(can(me, "report.mcp") ? [{ href: "/mcp-report", label: "Tích hợp MCP", icon: "terminal" } as Item] : []),
         { href: `/members/${me.id}`, label: "Của tôi", icon: "user" },
-        { href: "/reviews", label: "Kết quả review", icon: "inbox" },
-        { href: "/reviews/request", label: "Yêu cầu review", icon: "review" },
+        // One menu, tabs Kết quả review | Yêu cầu review | Critical Board | Đóng finding | Khiếu nại
+        // (components/ReviewTabs); the link opens the first tab.
+        { href: "/reviews", label: REVIEW_MENU, icon: "review" },
         // Task Jira (docs/specs/27 §18): once Jira is connected.
         ...(me.jira_tasks ? [{ href: "/jira", label: "Task Jira", icon: "flag" } as Item] : []),
         // Tài liệu dự án (docs/specs/29): everyone holding docs.view (every member by default).
         ...(can(me, "docs.view") ? [{ href: "/docs", label: "Tài liệu dự án", icon: "file" } as Item] : []),
         // docs/specs/30: the test cases use the documents' permissions.
         ...(can(me, "tests.view") ? [{ href: "/testcases", label: "Testcase", icon: "clipboardCheck" } as Item] : []),
-        { href: "/critical", label: "Critical Board", icon: "alert" },
-        { href: "/closures", label: "Đóng finding", icon: "checkCircle" },
-        { href: "/disputes", label: isLead ? "Duyệt khiếu nại" : "Khiếu nại", icon: "scale" },
         // DPI hàng tháng (docs/specs/25): everyone with a scorecard, the managers' distribution, HR.
         ...(can(me, "dpi.view") || can(me, "dpi.distribution") || can(me, "dpi.final_view") || can(me, "jira.admin")
           ? [{ href: "/dpi", label: "DPI hàng tháng", icon: "trendUp" } as Item]
@@ -137,9 +135,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const navLink = (item: Item) => {
     const under = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
-    // Stetho is one menu for both of its tabs.
-    if (item.label === "Stetho") {
-      const on = under("/stetho");
+    // Stetho and Review & Finding are each one menu for all of their tabs.
+    if (item.label === "Stetho" || item.label === REVIEW_MENU) {
+      const on = item.label === "Stetho" ? under("/stetho") : underReviewMenu(pathname);
       return (
         <Link
           key={item.href}
@@ -153,7 +151,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </Link>
       );
     }
-    // The most specific item wins: /reviews/request is "Yêu cầu review", not "Kết quả review".
+    // The most specific item wins: /members/report is "Báo cáo thành viên", not "Thành viên".
     const active =
       pathname === item.href ||
       (item.href !== "/members" &&

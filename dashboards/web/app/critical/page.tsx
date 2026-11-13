@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { type DayRange, DateRangePicker } from "@/components/DateRangePicker";
+import { REVIEW_MENU, ReviewTabs } from "@/components/ReviewTabs";
 import { Card, EmptyState, ExternalLink, IdChip, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { api, qs, useApi } from "@/lib/api";
 import { date, localDay, shiftDays } from "@/lib/format";
@@ -196,7 +197,7 @@ export default function CriticalBoard() {
   return (
     <>
       <PageHeader
-        eyebrow="Critical board"
+        eyebrow={REVIEW_MENU}
         title={found ? `Finding ${level} mới${scope?.period ? ` · ${scope.period}` : ""}` : `Finding ${level} đang mở`}
         subtitle={[
           scope?.bpName ? `Dự án ${scope.bpName}${project ? ` · repo ${project}` : ""}.` : null,
@@ -221,6 +222,7 @@ export default function CriticalBoard() {
           )
         }
       />
+      <ReviewTabs current="/critical" />
       <div className="toolbar">
         <select value={scope?.severity ?? ""} onChange={(e) => setLevel(e.target.value as Level)} aria-label="Lọc theo mức">
           <option value="">Critical và high</option>

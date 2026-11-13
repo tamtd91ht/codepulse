@@ -1,5 +1,6 @@
 "use client";
 
+import { REVIEW_MENU, ReviewTabs } from "@/components/ReviewTabs";
 import { ReviewResults } from "@/components/ReviewResults";
 import { Alert, Loading, PageHeader } from "@/components/ui";
 import { useApi } from "@/lib/api";
@@ -23,10 +24,11 @@ export default function ReviewsPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Review"
+        eyebrow={REVIEW_MENU}
         title="Kết quả review"
         subtitle="Mọi review bạn được xem, lọc theo dự án, repo, thành viên, trạng thái và kiểu review; chọn nhiều để review lại."
       />
+      <ReviewTabs current="/reviews" />
       {repos.error && <Alert tone="error">Không tải được danh sách repo: {repos.error.message}</Alert>}
       {!repos.data && !repos.error ? (
         <Loading rows={4} />

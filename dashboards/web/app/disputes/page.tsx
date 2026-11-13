@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import { REVIEW_MENU, ReviewTabs } from "@/components/ReviewTabs";
 import { Card, EmptyState, Loading, Message, PageHeader, Pill, Segmented, SeverityBadge } from "@/components/ui";
 import { mutate as mutateAll } from "swr";
 
@@ -53,7 +54,7 @@ export default function DisputesPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Disputes"
+        eyebrow={REVIEW_MENU}
         title={isLead ? "Duyệt khiếu nại" : managesAnyProject(me) ? "Khiếu nại trong dự án" : "Khiếu nại của tôi"}
         subtitle={
           isLead
@@ -72,6 +73,7 @@ export default function DisputesPage() {
           />
         }
       />
+      <ReviewTabs current="/disputes" />
       <Message text={message} onClose={() => setMessage(null)} />
 
       {!data ? (
