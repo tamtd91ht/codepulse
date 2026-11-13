@@ -437,7 +437,7 @@ export function CasesTab({
             )}
             {suiteList.map((s) => (
               <li key={s.id}>
-                <button className={s.id === suiteId ? "active" : undefined} aria-current={s.id === suiteId ? "true" : undefined} onClick={() => onSuite(s.id)} title={s.description ?? undefined}>
+                <button className={s.id === suiteId ? "active" : undefined} aria-current={s.id === suiteId ? "true" : undefined} onClick={() => onSuite(s.id)} title={s.description ? `${s.name}\n${s.description}` : s.name}>
                   <span className="tc-suite-name">{s.name}</span>
                   {s.shared && <Icon name="link" size={12} />}
                   <span className="small muted">{s.total - s.obsolete}</span>
