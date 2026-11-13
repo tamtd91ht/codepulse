@@ -13995,23 +13995,32 @@ textarea.bdd-input[aria-invalid="true"] {
   max-width: 100%;
 }
 
-/* The status of a list row queued/running past 10 minutes, with a "Review lại" icon on its
-   right (components/ReviewResults.tsx). */
-.stuck-rerun {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
+/* The last column of the review list: the "Review lại" icon of a row queued/running past 10
+   minutes (components/ReviewResults.tsx), just as wide as the icon. */
+.rerun-col {
+  width: 1%;
+  padding-left: 4px;
+  padding-right: 8px;
+  text-align: center;
   white-space: nowrap;
 }
-.stuck-rerun .icon-btn {
-  width: 26px;
-  height: 26px;
+.rerun-col .icon-btn {
+  width: 28px;
+  height: 28px;
+  vertical-align: middle;
 }
-.stuck-rerun .icon-btn.spinning svg {
+/* At the table's right edge: the tooltip opens to the left, inside the scrolling frame. */
+.rerun-col .icon-btn[data-tip]:hover::after,
+.rerun-col .icon-btn[data-tip]:focus-visible::after {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+.rerun-col .icon-btn.spinning svg {
   animation: spin 0.8s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-  .stuck-rerun .icon-btn.spinning svg {
+  .rerun-col .icon-btn.spinning svg {
     animation: none;
   }
 }
