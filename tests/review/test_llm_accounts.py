@@ -495,10 +495,14 @@ def test_only_a_members_requests_go_to_the_queue_served_first() -> None:
 
     from app.workers.queues import ASKED_TRIGGERS, review_queue, worker_queues
 
-    assert worker_queues(["reviews"]) == ["reviews_asked", "reviews"]
-    assert worker_queues(["default", "reviews"]) == ["default", "reviews_asked", "reviews"]
+    # Every lane of the asked tier before any lane of the rest (lanes: user 2026-11-13).
+    served = worker_queues(["reviews"])
+    tiers = [name.split(":")[0] for name in served]
+    assert tiers == sorted(tiers, key=lambda t: t != "reviews_asked")
+    assert served[0] == "reviews_asked:0" and served[-1] == "reviews"
+    assert worker_queues(["default", "reviews"])[0] == "default"
     assert worker_queues(["commands"]) == ["commands"]
     base = Queue("default", connection=Redis())  # never connects: names only
-    assert getattr(review_queue(base, asked=True), "name", None) == "reviews_asked"
-    assert getattr(review_queue(base), "name", None) == "reviews"
+    assert getattr(review_queue(base, asked=True), "name", "").startswith("reviews_asked:")
+    assert getattr(review_queue(base), "name", "").startswith("reviews:")
     assert {"telegram", "rerun", "mcp"} == ASKED_TRIGGERS and "dashboard" not in ASKED_TRIGGERS

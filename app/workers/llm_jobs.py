@@ -13,7 +13,7 @@ from app.db import get_redis, get_sessionmaker
 from app.models import LlmHealth
 from app.review import llm_recovery
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
-from app.workers.queues import ASKED_REVIEW_QUEUE, REVIEW_QUEUE
+from app.workers.queues import bp_of_repo, review_queue
 
 log = logging.getLogger(__name__)
 
@@ -86,12 +86,12 @@ def llm_resume_job() -> dict[str, int]:
         row.recovered_at = datetime.now(UTC)
         session.commit()
         redis = get_redis()
-        queue = Queue(REVIEW_QUEUE, connection=redis)
-        asked = Queue(ASKED_REVIEW_QUEUE, connection=redis)
+        base = Queue("default", connection=redis)
         timeout = review_job_timeout(settings)
 
         def enqueue(func: str, *args: Any, first: bool = False, **kwargs: Any) -> None:
-            target = asked if first else queue
+            # args[0] is the repo (review_commit_job / review_mr_job): its dự án's lane.
+            target = review_queue(base, asked=first, bp_id=bp_of_repo(session, args[0]))
             target.enqueue(func, *args, job_timeout=timeout, retry=REVIEW_RETRY, **kwargs)
 
         result = llm_recovery.requeue_waiting(session, enqueue)

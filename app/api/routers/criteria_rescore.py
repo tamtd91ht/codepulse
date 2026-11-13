@@ -31,7 +31,7 @@ from app.workers.criteria_jobs import (
     rescore_job_id,
 )
 from app.workers.knowledge_jobs import job_active
-from app.workers.queues import review_queue
+from app.workers.queues import review_queue, review_queues
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["criteria"])
@@ -150,7 +150,7 @@ def start(
     job_id = rescore_job_id(bp_id)
     redis = getattr(queue, "connection", None)
     # One run per dự án: a lock taken here (two confirms at once) and released by the job.
-    if job_active(review_queue(queue), job_id) or (
+    if job_active(_job_queue(queue, bp_id, job_id), job_id) or (
         redis is not None and not acquire_rescore_lock(redis, bp_id)
     ):
         raise HTTPException(409, "dự án đang được chấm lại; đợi lượt trước xong")
@@ -177,7 +177,7 @@ def start(
     session.commit()
     try:
         # LLM work: on the review workers' queue, never in front of syncs on "default".
-        review_queue(queue).enqueue(
+        review_queue(queue, bp_id=bp_id).enqueue(
             RESCORE_JOB,
             params,
             job_id=job_id,
@@ -193,6 +193,21 @@ def start(
     return {"status": "queued", "job_id": job_id}
 
 
+def _job_queue(queue: Any, bp_id: int, job_id: str) -> Any:
+    """The queue the dự án's rescore job is on (RQ's fetch_job only answers for the job's own
+    queue): its lane, else any other review queue holding it (queued before the lanes, or under
+    another REVIEW_LANES); the lane when none does."""
+    lane = review_queue(queue, bp_id=bp_id)
+    for candidate in [lane, *review_queues(queue, asked=False)]:
+        fetch = getattr(candidate, "fetch_job", None)
+        try:
+            if fetch is not None and fetch(job_id) is not None:
+                return candidate
+        except Exception as exc:  # the status is a bonus: try the next queue
+            log.warning("rescore job lookup failed", extra={"error": exc.__class__.__name__})
+    return lane
+
+
 @router.get("/business-projects/{bp_id}/criteria-rescore")
 def status(
     bp_id: int, principal: AssignPrincipal, session: SessionDep, queue: QueueDep
@@ -200,7 +215,7 @@ def status(
     """The dự án's latest run: queued / started / finished / failed, its progress and result."""
     _business(session, principal, bp_id)
     _may_assign(principal, bp_id)
-    fetch = getattr(review_queue(queue), "fetch_job", None)
+    fetch = getattr(_job_queue(queue, bp_id, rescore_job_id(bp_id)), "fetch_job", None)
     job = None
     if fetch is not None:
         try:

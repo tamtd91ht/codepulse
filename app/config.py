@@ -183,6 +183,10 @@ class Settings(BaseSettings):
     # Dashboard "Yêu cầu review": commits listed per request, and queued per request.
     review_commits_list_max: int = Field(default=200, ge=20, le=2000)
     review_batch_max: int = Field(default=50, ge=1, le=200)
+    # Review lanes per tier (app/workers/queues.py): one per dự án while there are no more dự án
+    # than this; workers take the lanes in turn so one dự án's bulk run never holds up another.
+    # The API and every worker must use the same value.
+    review_lanes: int = Field(default=16, ge=1, le=256)
 
     # Avatars uploaded in Admin > Người & Team: one file per person in this folder (a volume in
     # Docker), at most this many KB, PNG / JPEG / WebP only.

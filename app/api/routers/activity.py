@@ -24,7 +24,7 @@ from app.api.security import Principal, require
 from app.db import get_redis
 from app.models import Account, Commit, Connection, MergeRequest, Project, Review, User
 from app.review.progress import ProgressReader, RedisProgress, queued_reviews
-from app.workers.queues import review_queue
+from app.workers.queues import review_queues
 
 router = APIRouter(tags=["reviews"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -49,11 +49,42 @@ def get_progress() -> ProgressReader:
 
 
 def get_backlog() -> Backlog:
-    """Reviews wait in the asked-for queue (served first), the automatic one, and knowledge
-    builds on `default` (app/workers/queues.py): in the order workers take them."""
+    """Reviews wait in the asked-for lanes (served first), the automatic ones, and knowledge
+    builds on `default` (app/workers/queues.py), tier by tier."""
     queue = get_queue()
-    queues = [review_queue(queue, asked=True), review_queue(queue), queue]
-    return lambda: [item for q in queues for item in queued_reviews(q)]
+
+    def read() -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for tier_queues in (review_queues(queue, asked=True), review_queues(queue, asked=False)):
+            busy = nonempty(tier_queues)
+            out += interleave([queued_reviews(q) for q in busy])
+        return out + queued_reviews(queue)
+
+    return read
+
+
+def nonempty(queues: list[Any]) -> list[Any]:
+    """The queues with a job waiting, retrying or taken: one pipelined round trip for all of
+    them (LLEN + two ZCARD each) instead of three reads per empty lane. All of them when Redis
+    cannot say."""
+    try:
+        pipe = queues[0].connection.pipeline(transaction=False)
+        for q in queues:
+            pipe.llen(q.key)
+            pipe.zcard(q.scheduled_job_registry.key)
+            pipe.zcard(q.started_job_registry.key)
+        counts = pipe.execute()
+    except Exception:
+        return queues
+    return [q for i, q in enumerate(queues) if any(counts[3 * i : 3 * i + 3])]
+
+
+def interleave(lanes: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """One item of each lane in turn, the order workers take them (app/workers/queues.py)."""
+    out: list[dict[str, Any]] = []
+    for depth in range(max((len(lane) for lane in lanes), default=0)):
+        out += [lane[depth] for lane in lanes if depth < len(lane)]
+    return out
 
 
 @router.get("/activity/reviews", response_model=ActivityOut)

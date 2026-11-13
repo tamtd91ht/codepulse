@@ -287,7 +287,7 @@ def ai_check(
     session.commit()
     try:
         # A member's request: served before automatic reviews (app/workers/queues.py).
-        review_queue(queue, asked=True).enqueue(
+        review_queue(queue, asked=True, bp_id=repo.business_project_id).enqueue(
             "app.workers.dispute_jobs.dispute_check_job",
             dispute.id,
             now.isoformat(),

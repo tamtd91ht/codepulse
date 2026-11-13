@@ -197,7 +197,7 @@ def _check_limits(
 
 def _enqueue(session: Session, queue: Queue, run: TestAiRun) -> None:
     try:
-        review_queue(queue, asked=True).enqueue(
+        review_queue(queue, asked=True, bp_id=run.business_project_id).enqueue(
             "app.testcases.ai.ai_job",
             run.id,
             run.requested_at.isoformat(),

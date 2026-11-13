@@ -122,7 +122,6 @@ def _rereview(session: Session, user_id: int | None, queue: Any) -> Callable[[Re
     from app.workers.queues import review_queue
     from app.workers.review_jobs import review_job_timeout
 
-    target = review_queue(queue)
     timeout = review_job_timeout(get_settings())
 
     def go(review: Review) -> bool:
@@ -147,7 +146,7 @@ def _rereview(session: Session, user_id: int | None, queue: Any) -> Callable[[Re
             project = session.get(Project, mr.project_id)
             if project is None or not (project.tracked and project.review_enabled):
                 return False
-            target.enqueue(
+            review_queue(queue, bp_id=project.business_project_id).enqueue(
                 "app.workers.review_jobs.review_mr_job",
                 project.id,
                 mr.iid,
@@ -160,7 +159,7 @@ def _rereview(session: Session, user_id: int | None, queue: Any) -> Callable[[Re
         project = session.get(Project, commit.project_id) if commit and commit.project_id else None
         if commit is None or project is None or not (project.tracked and project.review_enabled):
             return False
-        target.enqueue(
+        review_queue(queue, bp_id=project.business_project_id).enqueue(
             "app.workers.review_jobs.review_commit_job",
             project.id,
             commit.sha,

@@ -521,7 +521,9 @@ def queue_commit(
         )
     session.flush()
     try:
-        review_queue(queue, asked=trigger in ASKED_TRIGGERS).enqueue(
+        review_queue(
+            queue, asked=trigger in ASKED_TRIGGERS, bp_id=project.business_project_id
+        ).enqueue(
             "app.workers.review_jobs.review_commit_job",
             project.id,
             commit.sha,

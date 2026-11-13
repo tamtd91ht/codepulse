@@ -610,7 +610,7 @@ def _queue_rerun(
     # waits for it instead of being overwritten by this "queued".
     session.flush()
     try:
-        review_queue(queue, asked=True).enqueue(
+        review_queue(queue, asked=True, bp_id=project.business_project_id).enqueue(
             f"app.workers.review_jobs.{func}",
             *args,
             trigger="rerun",

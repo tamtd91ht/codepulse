@@ -54,7 +54,8 @@ services:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
 
-  # Reviews only (queues "reviews_asked" then "reviews", app/workers/queues.py): REVIEW_WORKERS
+  # Reviews only (every lane of "reviews_asked", then of "reviews": one lane per dự án, taken
+  # in turn, REVIEW_LANES; app/workers/queues.py): REVIEW_WORKERS
   # of them run reviews in parallel; a member's own requests first, then first come first served. Each review is one LLM session (and up
   # to a few hundred MB of RAM for a checkout); raise it while the provider's rate limit
   # and the machine allow.

@@ -1114,7 +1114,7 @@ def backfill_reviews(
     for mr in mrs:
         if mr.head_sha is None:
             continue
-        review_queue(queue).enqueue(
+        review_queue(queue, bp_id=project.business_project_id).enqueue(
             "app.workers.review_jobs.review_mr_job",
             project.id,
             mr.iid,

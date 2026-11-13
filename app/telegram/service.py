@@ -78,7 +78,7 @@ from app.telegram.picker import (
 from app.telegram.report import Period, parse_period, parse_report
 from app.telegram.resolve import NoResolver, Resolver
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
-from app.workers.queues import backlog_note, review_backlog, review_queue
+from app.workers.queues import backlog_note, bp_of_repo, review_backlog, review_queue
 
 log = logging.getLogger(__name__)
 
@@ -853,7 +853,7 @@ class BotService:
             *notes,
             f"Đã đưa <b>{len(queued)}</b> review vào hàng đợi; tôi sẽ báo kết quả ở đây khi xong.",
         ]
-        if note := backlog_note(review_backlog(self._queue, asked=True), len(queued)):
+        if note := backlog_note(self._backlog(queued), len(queued)):
             lines.append(note)
         lines += [f"• {esc(t.label)}" for t in queued[:10]]
         if len(queued) > 10:
@@ -1235,13 +1235,19 @@ class BotService:
             return [replace(target, force=True, round=existing.round)], []
         return [], [self._already(existing, target)]
 
+    def _backlog(self, queued: list[Target]) -> tuple[int, int] | None:
+        """Reviews ahead in the lane of the (first) dự án just asked for."""
+        bp_id = bp_of_repo(self._s, queued[0].project_id) if queued else None
+        return review_backlog(self._queue, asked=True, bp_id=bp_id)
+
     def _enqueue(
         self, targets: list[Target], me: Principal, msg: Incoming, raw: str
     ) -> list[Target]:
         queued: list[Target] = []
         for t in targets:
+            lane = review_queue(self._queue, asked=True, bp_id=bp_of_repo(self._s, t.project_id))
             if t.kind == "mr":
-                review_queue(self._queue, asked=True).enqueue(
+                lane.enqueue(
                     "app.workers.review_jobs.review_mr_job",
                     t.project_id,
                     int(t.ref),
@@ -1256,7 +1262,7 @@ class BotService:
                     retry=REVIEW_RETRY,
                 )
             else:
-                review_queue(self._queue, asked=True).enqueue(
+                lane.enqueue(
                     "app.workers.review_jobs.review_commit_job",
                     t.project_id,
                     t.sha,
@@ -2068,7 +2074,7 @@ class BotService:
         ]
         if len(queued) > 10:
             lines.append(f"… và {len(queued) - 10} mục nữa")
-        if note := backlog_note(review_backlog(self._queue, asked=True), len(queued)):
+        if note := backlog_note(self._backlog(queued), len(queued)):
             lines.append(note)
         return CallbackOutcome(answer=f"Đã xếp hàng {len(queued)} review.", text="\n".join(lines))
 

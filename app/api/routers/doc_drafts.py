@@ -253,7 +253,7 @@ def _check_limits(
 def _enqueue(session: Session, queue: Queue, draft: ProjectDocumentDraft) -> None:
     try:
         # Someone waits on the screen: served before automatic reviews (app/workers/queues.py).
-        review_queue(queue, asked=True).enqueue(
+        review_queue(queue, asked=True, bp_id=draft.business_project_id).enqueue(
             "app.docs.synthesis.synthesize_job",
             draft.id,
             draft.requested_at.isoformat(),

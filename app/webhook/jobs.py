@@ -107,9 +107,10 @@ def knowledge_job_active(queue: Any, job_id: str) -> bool:
     return str(getattr(status, "value", status)) in ("queued", "started", "deferred", "scheduled")
 
 
-def _enqueue_review(queue: Enqueuer, func: str, *args: Any, job_id: str) -> None:
-    # Reviews have a queue of their own (app/workers/queues.py): never behind a sync, in order.
-    review_queue(queue).enqueue(
+def _enqueue_review(queue: Enqueuer, func: str, *args: Any, job_id: str, bp_id: int | None) -> None:
+    # Reviews have queues of their own, one lane per dự án (app/workers/queues.py): never behind
+    # a sync, in order within the dự án.
+    review_queue(queue, bp_id=bp_id).enqueue(
         f"app.workers.review_jobs.{func}",
         *args,
         job_id=job_id,
@@ -158,6 +159,7 @@ def handle_event(
                     iid,
                     head,
                     job_id=f"review-mr-{project.id}-{iid}-{head[:12]}",
+                    bp_id=project.business_project_id,
                 )
         elif event == "Push Hook":
             branch = (payload.get("ref") or "").removeprefix("refs/heads/")
@@ -177,7 +179,12 @@ def handle_event(
                 if not sha or (commit_in_mr and commit_in_mr(project, sha)):
                     continue
                 _enqueue_review(
-                    queue, "review_commit_job", project.id, sha, job_id=f"review-commit-{sha[:12]}"
+                    queue,
+                    "review_commit_job",
+                    project.id,
+                    sha,
+                    job_id=f"review-commit-{sha[:12]}",
+                    bp_id=project.business_project_id,
                 )
 
 

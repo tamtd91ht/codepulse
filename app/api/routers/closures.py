@@ -655,7 +655,7 @@ def start_check(
     session.commit()
     try:
         # A member's request: served before automatic reviews (app/workers/queues.py).
-        review_queue(queue, asked=True).enqueue(
+        review_queue(queue, asked=True, bp_id=_owner(session, closure)[1]).enqueue(
             "app.workers.closure_jobs.close_request_job",
             closure.id,
             token,

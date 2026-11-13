@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app import health
 from app.models import Review
+from app.workers.queues import ASKED_REVIEW_QUEUE, REVIEW_QUEUE, lane_names
 
 QUEUES = ("default", "reviews_asked", "reviews")
 WINDOW = timedelta(hours=1)
@@ -41,7 +42,11 @@ class CodePulseCollector(Collector):
         )
         try:
             for name in QUEUES:
-                queue.add_metric([name], len(Queue(name, connection=redis)))
+                # A review tier is split into lanes by dự án (app/workers/queues.py): the metric
+                # keeps one series per tier, the sum of its lanes.
+                tiered = name in (ASKED_REVIEW_QUEUE, REVIEW_QUEUE)
+                names = lane_names(name, connection=redis) if tiered else [name]
+                queue.add_metric([name], sum(len(Queue(n, connection=redis)) for n in names))
             workers = len(health.live_workers(redis, now))
         except Exception:  # Redis down: report what we can, the up metric shows the rest
             workers = 0

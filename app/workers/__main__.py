@@ -10,10 +10,11 @@ from rq.job import Job
 
 from app.db import get_redis
 from app.logging import configure_logging, job_id_var
-from app.workers.queues import worker_queues
+from app.workers.queues import rotate, worker_queues
 
 # The default worker also takes reviews when it has nothing else (app/workers/queues.py); a
-# worker of "reviews" serves the asked-for ones ("reviews_asked") first.
+# worker of "reviews" serves every lane of the asked-for tier ("reviews_asked:*") first, then
+# every lane of "reviews:*", taking the lanes (one per dự án) in turn.
 QUEUES = ["default", "reviews"]
 
 
@@ -27,11 +28,16 @@ class JobContextWorker(Worker):
         finally:
             job_id_var.reset(token)
 
+    def reorder_queues(self, reference_queue: Queue) -> None:
+        """Round-robin over the dự án lanes of a tier (app/workers/queues.py `rotate`): after a
+        job of one dự án, the other dự án's lanes come first. The tiers keep their order."""
+        self._ordered_queues = rotate(self._ordered_queues, reference_queue)
+
 
 def main(argv: list[str] | None = None) -> None:
     configure_logging()
     redis = get_redis()
-    names = worker_queues((sys.argv[1:] if argv is None else argv) or QUEUES)
+    names = worker_queues((sys.argv[1:] if argv is None else argv) or QUEUES, connection=redis)
     worker = JobContextWorker([Queue(name, connection=redis) for name in names], connection=redis)
     # with_scheduler: delayed retries (REVIEW_RETRY waits 60/120/300 s) live in RQ's scheduled
     # registry and only run when a worker also acts as scheduler; without it they never run.
