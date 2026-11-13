@@ -5,11 +5,13 @@ import { use, useEffect, useRef, useState } from "react";
 
 import { ReviewCriteriaCard } from "@/components/CriteriaScores";
 import { CloseActions, ClosureNote } from "@/components/FindingClose";
+import { Icon } from "@/components/icons";
+import { authorLabel } from "@/components/LinkReviewAuthor";
 import { BasisCard, basisSummary, changedRules, previousRun } from "@/components/ReviewBasis";
 import { announceReviewQueued } from "@/components/ReviewActivity";
 import { StaticFindingsCard } from "@/components/StaticFindings";
 import { MrImpactCard } from "@/components/TestcaseImpact";
-import { Alert, Card, EmptyState, ExternalLink, IdChip, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
+import { Alert, Avatar, Card, EmptyState, ExternalLink, IdChip, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { ApiError, api, can, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, TRIGGER_LABEL, VERDICT_LABEL, date, num } from "@/lib/format";
 import type { Finding, FindingClosure, Me, MrJira, Repo, ReviewDetail, StaticBasis } from "@/lib/types";
@@ -200,6 +202,27 @@ function RerunBar({
       )}
       </div>
     </>
+  );
+}
+
+/** Whose change it is, small beside the commit id (user 2026-11-13): the person, else the git /
+ * GitLab identity of the commit or MR; the email in the tooltip. */
+function ReviewAuthor({ review }: { review: ReviewDetail }) {
+  const person = review.author;
+  const account = review.author_account;
+  const name = person ? person.full_name || person.primary_email : account ? authorLabel(account) : null;
+  if (!name) return null;
+  const email = person ? person.primary_email : account?.email;
+  return (
+    <span className="review-author" title={email && email !== name ? `${name} · ${email}` : name}>
+      {person ? (
+        <Avatar name={person.full_name} email={person.primary_email} size="sm" src={person.avatar_url} />
+      ) : (
+        <Icon name="user" size={13} />
+      )}
+      <span>{name}</span>
+      {!person && <span className="muted">(chưa gắn người)</span>}
+    </span>
   );
 }
 
@@ -424,6 +447,7 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
         title={
           <>
             Review <code>{review.reviewed_sha.slice(0, 8)}</code>
+            <ReviewAuthor review={review} />
           </>
         }
         subtitle={

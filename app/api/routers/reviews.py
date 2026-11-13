@@ -415,8 +415,17 @@ def get_review(
     if review.author_user_id not in (None, principal.user_id):
         audit(session, principal.user_id, "review.read", f"review:{review.id}")
         session.commit()
+    author = session.get(User, review.author_user_id) if review.author_user_id else None
+    author_account = None
+    if author is None and (account_id := _author_account_ids(session, [review]).get(review.id)):
+        account = session.get(Account, account_id)
+        if account is not None:
+            linked = session.get(User, account.user_id) if account.user_id else None
+            author_account = _account_out(account, linked, can_link=False)
     return {
         **ReviewOut.model_validate(review).model_dump(),
+        "author": UserOut.model_validate(author) if author else None,
+        "author_account": author_account,
         "findings": findings,
         "static_findings": list(
             session.scalars(

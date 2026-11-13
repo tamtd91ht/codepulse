@@ -464,6 +464,9 @@ export interface RerunnableOut {
 }
 
 export interface ReviewDetail extends Review {
+  /** Whose change it is: the person, or with none yet the git / GitLab identity. */
+  author?: Person | null;
+  author_account?: ReviewAuthorAccount | null;
   findings: Finding[];
   project: string | null;
   web_url: string | null;

@@ -14024,3 +14024,28 @@ textarea.bdd-input[aria-invalid="true"] {
     animation: none;
   }
 }
+
+/* The author of the change, small beside the commit id in a review's title
+   (app/reviews/[id]/page.tsx, user 2026-11-13). */
+.review-author {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  vertical-align: middle;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  max-width: 100%;
+}
+.review-author > span:not(.muted) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 28ch;
+}
+.review-author .avatar {
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+}

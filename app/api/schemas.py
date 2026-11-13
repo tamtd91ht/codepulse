@@ -668,6 +668,10 @@ class StaticFindingOut(BaseModel):
 
 
 class ReviewDetail(ReviewOut):
+    # Whose change it is (user 2026-11-13: shown small beside the commit id): the person, or
+    # with none yet the git / GitLab identity of the commit or MR, as in the list.
+    author: "UserOut | None" = None
+    author_account: ReviewAuthorAccount | None = None
     findings: list[FindingOut]
     static_findings: list[StaticFindingOut] = []
     project: str | None
