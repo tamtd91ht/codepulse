@@ -92,8 +92,9 @@ export function ReviewResults({
   const [sent, setSent] = useState<{ tone: "success" | "warning" | "error"; text: string } | null>(null);
   const [rerunning, setRerunning] = useState<number | null>(null);
 
-  // One review queued/running past 10 minutes: run it again if nothing is behind it any more.
-  async function rerunStuck(r: ReviewListItem): Promise<void> {
+  // One failed review, or one queued/running past 10 minutes (run again only if nothing is
+  // behind it any more).
+  async function rerunOne(r: ReviewListItem): Promise<void> {
     setRerunning(r.id);
     try {
       await api.post(`/reviews/${r.id}/rerun`, { force: false });
@@ -153,10 +154,12 @@ export function ReviewResults({
   // #4: ask for exactly one more page than loaded, also after a failed one.
   const loadMore = () => void pages.setSize((pages.data?.length ?? 0) + 1);
   const selectable = items.filter((r) => r.can_rerun);
-  // Rows queued/running past 10 minutes: a narrow last column holds their "Review lại" icon,
-  // shown only while some row needs it (user 2026-11-13).
-  const isStuck = (r: ReviewListItem) => r.can_rerun && (r.status === "queued" || r.status === "running");
-  const anyStuck = items.some(isStuck);
+  // Rows that failed, or queued/running past 10 minutes (the API's can_rerun says which): a
+  // narrow last column holds their "Review lại" icon, shown only while some row needs it
+  // (user 2026-11-13).
+  const rerunsHere = (r: ReviewListItem) =>
+    r.can_rerun && (r.status === "failed" || r.status === "queued" || r.status === "running");
+  const anyRerun = items.some(rerunsHere);
   // Rows that left the list (filter changed) are no longer chosen.
   const selected = selectable.filter((r) => chosen.has(r.id));
   const allSelected = selectable.length > 0 && selected.length === selectable.length;
@@ -435,7 +438,7 @@ export function ReviewResults({
                   <th>
                     <span className="visually-hidden">Mở trên GitLab</span>
                   </th>
-                  {anyStuck && (
+                  {anyRerun && (
                     <th className="rerun-col">
                       <span className="visually-hidden">Review lại</span>
                     </th>
@@ -530,18 +533,18 @@ export function ReviewResults({
                       <td className="nowrap">{r.changed_at ? dateTime(r.changed_at) : <span className="muted">—</span>}</td>
                       <td className="muted nowrap">{dateTime(r.finished_at)}</td>
                       <td>{r.web_url && <ExternalLink href={r.web_url}>GitLab</ExternalLink>}</td>
-                      {anyStuck && (
+                      {anyRerun && (
                         <td className="rerun-col">
-                          {/* Queued or running past 10 minutes (the API's can_rerun says so): queue
-                              it again; the server re-runs it only when no job is behind it. */}
-                          {isStuck(r) && (
+                          {/* Failed, or queued/running past 10 minutes (the API's can_rerun says
+                              so): queue it again; a queued/running one only when no job is behind it. */}
+                          {rerunsHere(r) && (
                             <IconButton
                               icon="sync"
                               size={14}
                               label="Review lại"
                               className={rerunning === r.id ? "spinning" : undefined}
                               disabled={rerunning === r.id}
-                              onClick={() => void rerunStuck(r)}
+                              onClick={() => void rerunOne(r)}
                             />
                           )}
                         </td>

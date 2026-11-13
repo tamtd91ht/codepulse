@@ -13995,7 +13995,7 @@ textarea.bdd-input[aria-invalid="true"] {
   max-width: 100%;
 }
 
-/* The last column of the review list: the "Review lại" icon of a row queued/running past 10
+/* The last column of the review list: the "Review lại" icon of a failed row, or one queued/running past 10
    minutes (components/ReviewResults.tsx), just as wide as the icon. */
 .rerun-col {
   width: 1%;
