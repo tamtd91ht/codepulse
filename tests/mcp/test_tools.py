@@ -5,9 +5,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+import pytest
 import respx
 from sqlalchemy import select
 
+from app.mcp import server as mcp_server
 from app.mcp.server import RATE_PER_MINUTE, rate_wait
 from app.mcp.tokens import SCOPE_READ
 from app.models import AuditLog, FindingClosure
@@ -53,7 +55,12 @@ def test_request_with_pushed_commit(env: Env, world: Any) -> None:
     assert not result.is_error, result
     assert route.called
     [closure] = _requests(env)
-    assert closure.status == "pending" and closure.via == "mcp"
+    # Checked by the system at once (user 2026-11-13): no decider, the job queued.
+    assert closure.status == "checking" and closure.via == "mcp"
+    assert closure.decided_by is None and closure.run_token
+    [(job, args, _kwargs)] = env.queue.jobs
+    assert job == "app.workers.closure_jobs.close_request_job"
+    assert args == (closure.id, closure.run_token)
     assert closure.shas == [FIX]  # as GitLab knows it
     assert closure.note == NOTE
     assert closure.meta == {
@@ -63,7 +70,8 @@ def test_request_with_pushed_commit(env: Env, world: Any) -> None:
         "token_name": "laptop",
     }
     data = result.structured_content
-    assert data["id"] == closure.id and data["status"] == "pending"
+    assert data["id"] == closure.id and data["status"] == "checking"
+    assert "tự chạy review" in result.content[0].text
     assert data["closures_page"] == "https://dash.example.com/closures"
     actions = list(
         env.session.scalars(select(AuditLog.action).where(AuditLog.actor_user_id == world.an.id))
@@ -211,7 +219,7 @@ def test_cancel_and_list(env: Env, world: Any) -> None:
         an, "request_closure", {"finding_id": world.an_finding.id, "argument": ARGUMENT}
     )
     closure_id = created.structured_content["id"]
-    listed = invoke(an, "list_close_requests", {"status": "pending"})
+    listed = invoke(an, "list_close_requests", {"status": "checking"})
     assert [r["id"] for r in listed.structured_content["requests"]] == [closure_id]
     assert listed.structured_content["requests"][0]["finding"]["repo"] == "demo/p"
     assert invoke(an, "list_close_requests", {"status": "closed"}).structured_content["count"] == 0
@@ -237,8 +245,101 @@ def test_get_finding_shows_the_close_history(env: Env, world: Any) -> None:
     invoke(an, "request_closure", {"finding_id": world.an_finding.id, "argument": ARGUMENT})
     result = invoke(an, "get_finding", {"id": world.an_finding.id})
     [closure] = result.structured_content["closures"]
-    assert closure["status"] == "pending" and closure["via"] == "mcp"
+    assert closure["status"] == "checking" and closure["via"] == "mcp"
     assert "Lịch sử đóng (1)" in result.content[0].text
+
+
+class _DownQueue:
+    def enqueue(self, *args: Any, **kwargs: Any) -> None:
+        raise ConnectionError("redis down")
+
+
+def test_auto_check_not_queued_leaves_the_request_pending(
+    env: Env, world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The request is saved even when its check cannot be queued: a decider runs it by hand.
+    monkeypatch.setattr(mcp_server.deps, "queue", lambda: _DownQueue())
+    an = caller_for(env.session, env.settings, world.an)
+    result = invoke(
+        an, "request_closure", {"finding_id": world.an_finding.id, "argument": ARGUMENT}
+    )
+    assert not result.is_error, result
+    [closure] = _requests(env)
+    env.session.refresh(closure)
+    assert closure.status == "pending" and closure.run_token is None
+    assert result.structured_content["status"] == "pending"
+    assert "Manager/admin sẽ duyệt" in result.content[0].text
+
+
+def test_auto_check_is_audited_without_an_actor(env: Env, world: Any) -> None:
+    an = caller_for(env.session, env.settings, world.an)
+    invoke(an, "request_closure", {"finding_id": world.an_finding.id, "argument": ARGUMENT})
+    [closure] = _requests(env)
+    run = env.session.scalars(
+        select(AuditLog).where(AuditLog.action == "finding.close_request.run")
+    ).one()
+    assert run.actor_user_id is None
+    assert run.details == {"closure_id": closure.id, "auto": True, "via": "mcp"}
+
+
+def test_any_auto_start_failure_still_returns_the_saved_request(
+    env: Env, world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken() -> Any:
+        raise RuntimeError("no redis url")
+
+    monkeypatch.setattr(mcp_server.deps, "queue", broken)
+    an = caller_for(env.session, env.settings, world.an)
+    result = invoke(
+        an, "request_closure", {"finding_id": world.an_finding.id, "argument": ARGUMENT}
+    )
+    assert not result.is_error, result
+    assert result.structured_content["status"] == "pending"
+    assert env.session.scalars(
+        select(AuditLog).where(AuditLog.action == "mcp.request_closure")
+    ).one()
+
+
+def test_no_auto_check_once_the_month_budget_is_spent(
+    env: Env, world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.workers import knowledge_jobs
+
+    monkeypatch.setattr(mcp_server, "monthly_budget_usd", lambda session, settings: 10.0)
+    monkeypatch.setattr(knowledge_jobs, "month_spend_usd", lambda session, now: 10.0)
+    an = caller_for(env.session, env.settings, world.an)
+    result = invoke(
+        an, "request_closure", {"finding_id": world.an_finding.id, "argument": ARGUMENT}
+    )
+    assert not result.is_error, result
+    assert result.structured_content["status"] == "pending"
+    assert env.queue.jobs == []
+
+
+def test_sender_may_not_withdraw_a_run_a_decider_started(env: Env, world: Any) -> None:
+    an = caller_for(env.session, env.settings, world.an)
+    created = invoke(
+        an, "request_closure", {"finding_id": world.an_finding.id, "argument": ARGUMENT}
+    )
+    closure = env.session.get(FindingClosure, created.structured_content["id"])
+    assert closure is not None
+    closure.decided_by = world.lead.id  # a decider ran it again meanwhile
+    env.session.commit()
+    code, _ = _error(invoke(an, "cancel_close_request", {"id": closure.id}))
+    assert code == "conflict"
+    env.session.refresh(closure)
+    assert closure.status == "checking"
+
+
+def test_sender_may_withdraw_a_check_the_system_started(env: Env, world: Any) -> None:
+    an = caller_for(env.session, env.settings, world.an)
+    created = invoke(
+        an, "request_closure", {"finding_id": world.an_finding.id, "argument": ARGUMENT}
+    )
+    assert created.structured_content["status"] == "checking"
+    result = invoke(an, "cancel_close_request", {"id": created.structured_content["id"]})
+    assert not result.is_error, result
+    assert result.structured_content["status"] == "cancelled"
 
 
 def test_rate_limit_per_token_per_minute(env: Env, world: Any) -> None:

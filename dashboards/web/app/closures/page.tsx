@@ -522,7 +522,12 @@ function Detail({
                       ? `${c.decided_by_name ?? "Người duyệt"} chạy review, chưa đạt, rồi từ chối`
                       : refusedByPerson
                         ? `${c.decided_by_name ?? "Người duyệt"} từ chối, không chạy review`
-                      : `${c.decided_by_name ?? "Người duyệt"} chạy review ${[c.shas.length ? "các commit" : "", c.argument ? "phản biện" : ""].filter(Boolean).join(" và ")}`}
+                      : `${
+                          c.decided_by_name ??
+                          // An MCP request is checked by the system as soon as it is saved
+                          // (no decider pressed "Chạy review").
+                          (c.via === "mcp" && c.decided_by === null ? "Hệ thống tự động" : "Người duyệt")
+                        } chạy review ${[c.shas.length ? "các commit" : "", c.argument ? "phản biện" : ""].filter(Boolean).join(" và ")}`}
               </div>
               {c.decided_at && c.status !== "pending" && <div className="muted small">{dateTimeMin(c.decided_at)}</div>}
             </div>

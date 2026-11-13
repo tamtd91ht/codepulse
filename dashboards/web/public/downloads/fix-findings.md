@@ -71,6 +71,6 @@ Bạn đang giúp tôi sửa các finding **critical/high** CodePulse tìm thấ
    - `tests`: `[{command, result, summary}]` từ bước 5 (≤10).
    - Lỗi `commit_not_pushed`: commit chưa có trên GitLab, kiểm tra lại `git push` rồi gọi lại. Lỗi khác: đọc thông báo tiếng Việt trong lỗi, làm theo cách sửa nó nêu; không thử lại vô hạn.
 
-8. **Báo cáo** cho tôi: finding đã xử lý, commit, kết quả test và **link yêu cầu đóng** tool trả về. Nhắc rằng yêu cầu sẽ được lead/manager/admin duyệt ở trang "Đóng finding" như yêu cầu gửi trên web. Hỏi có muốn tiếp tục finding kế tiếp không (quay lại bước 2).
+8. **Báo cáo** cho tôi: finding đã xử lý, commit, kết quả test và **link yêu cầu đóng** tool trả về. Nhắc rằng CodePulse tự chạy review yêu cầu ngay (vài phút): đạt thì finding tự đóng, còn lại lead/manager/admin quyết ở trang "Đóng finding"; xem kết quả bằng `list_close_requests`. Hỏi có muốn tiếp tục finding kế tiếp không (quay lại bước 2).
 
 Xem trạng thái các yêu cầu đã gửi: `list_close_requests`. Rút một yêu cầu còn chờ: `cancel_close_request` (chỉ khi tôi yêu cầu).

@@ -553,9 +553,26 @@ def cancel_close_request(
     closure = _request(session, closure_id)
     if closure.requested_by != principal.user_id:
         raise HTTPException(403, "chỉ người gửi mới rút được yêu cầu")
-    if not _move(
-        session, closure, ("pending", "unmet"), status="cancelled", decided_at=datetime.now(UTC)
-    ):
+    now = datetime.now(UTC)
+    moved = _move(session, closure, ("pending", "unmet"), status="cancelled", decided_at=now)
+    if not moved:
+        # A check the system started on its own (an MCP request, no decider) may be withdrawn
+        # too; "no decider" is in the UPDATE, so a run a decider started meanwhile is kept. The
+        # worker's writes all require "still checking", so it then changes nothing.
+        result = session.execute(
+            update(FindingClosure)
+            .where(
+                FindingClosure.id == closure.id,
+                FindingClosure.status == "checking",
+                FindingClosure.decided_by.is_(None),
+            )
+            .values(status="cancelled", decided_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        moved = bool(getattr(result, "rowcount", 0))
+        if moved:
+            session.refresh(closure)
+    if not moved:
         raise HTTPException(409, "yêu cầu đã được duyệt hoặc đang được kiểm; tải lại trang")
     audit(
         session,
@@ -580,6 +597,19 @@ def run_request(
     """ "Chạy review": check the commits now (a failed or unmet check may be run again)."""
     closure = _request(session, closure_id)
     _decider(session, principal, closure)
+    start_check(session, closure, queue, principal.user_id)
+    return closure
+
+
+def start_check(
+    session: Session, closure: FindingClosure, queue: Any, actor_id: int | None
+) -> None:
+    """Move a request to `checking` and queue its check (closure_jobs.close_request_job).
+
+    `actor_id` is the decider who pressed "Chạy review", or None when the system starts it on
+    its own: every close request sent over MCP is checked as soon as it is saved (user
+    2026-11-13), so no one has to open it and press the button. Commits; HTTPException (409,
+    503) when it cannot start, the request then left as it was."""
     _sweep(session, closure.finding_id)  # a lost check may be run again
     session.refresh(closure)
     finding = session.get(ReviewFinding, closure.finding_id)
@@ -601,7 +631,7 @@ def run_request(
             status="checking",
             run_token=token,
             started_at=None,
-            decided_by=principal.user_id,
+            decided_by=actor_id,
             decided_at=None,
             reason=None,
             evidence=None,
@@ -610,7 +640,18 @@ def run_request(
         raise HTTPException(409, "finding này đang có yêu cầu khác") from None
     if not moved:
         raise HTTPException(409, "yêu cầu vừa được người khác duyệt; tải lại trang")
-    audit(session, principal.user_id, "finding.close_request.run", f"finding:{closure.finding_id}")
+    if actor_id is None:
+        audit(
+            session,
+            None,
+            "finding.close_request.run",
+            f"finding:{closure.finding_id}",
+            closure_id=closure.id,
+            auto=True,
+            via=closure.via,
+        )
+    else:
+        audit(session, actor_id, "finding.close_request.run", f"finding:{closure.finding_id}")
     session.commit()
     try:
         # A member's request: served before automatic reviews (app/workers/queues.py).
@@ -626,12 +667,15 @@ def run_request(
         # that never comes.
         session.execute(
             update(FindingClosure)
-            .where(FindingClosure.id == closure.id, FindingClosure.run_token == token)
+            .where(
+                FindingClosure.id == closure.id,
+                FindingClosure.run_token == token,
+                FindingClosure.status == "checking",
+            )
             .values(**before, run_token=None)
         )
         session.commit()
         raise HTTPException(503, "không đưa được vào hàng đợi kiểm; thử lại") from None
-    return closure
 
 
 @router.post("/close-requests/{closure_id}/reject", response_model=ClosureOut)

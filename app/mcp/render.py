@@ -773,8 +773,15 @@ def request_result(
         [
             f"{verb} yêu cầu đóng #{closure.id} cho finding #{closure.finding_id}: "
             f"trạng thái **{closure.status}**.",
-            "Manager/admin sẽ duyệt trên trang Đóng finding "
-            f"({closures_link(base)}); xem lại bằng `list_close_requests`.",
+            (
+                "CodePulse đang tự chạy review để kiểm (thường vài phút): đạt thì finding tự "
+                "đóng, phản biện hợp lý thì chờ manager/admin xác nhận, chưa đạt thì ghi lý do "
+                f"trên trang Đóng finding ({closures_link(base)}); xem kết quả bằng "
+                "`list_close_requests`."
+                if closure.status == "checking"
+                else "Manager/admin sẽ duyệt trên trang Đóng finding "
+                f"({closures_link(base)}); xem lại bằng `list_close_requests`."
+            ),
             "",
             _closure_md(closure, review_id, base, tag),
         ]

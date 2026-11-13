@@ -50,7 +50,7 @@ critical trước high → `verified = confirmed` trước các giá trị khác
 | `get_finding` | read | `id` | Chi tiết đầy đủ một finding + lịch sử yêu cầu đóng của nó. |
 | `request_closure` | close_request | §8 | Yêu cầu vừa tạo (id, trạng thái, link). |
 | `list_close_requests` | read | `status?`, `limit` (mặc định 20) | Yêu cầu đóng **của tôi**: trạng thái, lý do của bước kiểm, ghi chú của manager, link. |
-| `cancel_close_request` | close_request | `id` | Rút yêu cầu còn `pending` của chính mình (giống nút "Rút" trên web). |
+| `cancel_close_request` | close_request | `id` | Rút yêu cầu còn `pending` / `unmet` của chính mình (giống nút "Rút" trên web), kể cả khi đang `checking` do hệ thống tự chạy (§8). |
 
 Lỗi trả về dạng tool error có mã + câu tiếng Việt chỉ rõ cách sửa (ví dụ "commit abc1234 chưa có trên GitLab: chạy `git push` rồi gọi lại").
 
@@ -85,7 +85,7 @@ Lưu trữ (migration trên `finding_closures`):
 - `via` TEXT `web|mcp` (mặc định `web`);
 - `meta` JSONB: `{files_changed, tests, token_id, token_name, client}` (`client` = tên/phiên bản client MCP gửi trong `initialize`, nếu có).
 
-Sau khi tạo: trạng thái `pending`, manager/admin duyệt **giống hệt thủ công** (chạy kiểm bằng LLM hoặc từ chối); không tự chạy kiểm. Khi chạy kiểm, `note`, `files_changed`, `tests` được đưa vào prompt của `app/review/resolve.py` như **dữ liệu không tin cậy** (bọc tag, `redact`), không thay đổi quy tắc ra kết luận. Trang "Đóng finding" hiện nhãn "Claude Code (MCP)", tên token, file đã sửa và kết quả test.
+Sau khi tạo: **hệ thống tự chạy kiểm ngay** (**[Đã chốt]** user 2026-11-13: "thay vì tôi phải vào từng yêu cầu đóng, nhấn chạy AI review thì giờ hệ thống sẽ tự động làm luôn … chỉ áp dụng qua kênh MCP"): yêu cầu được lưu (`pending`) rồi chuyển `checking` và vào hàng đợi kiểm như khi bấm "Chạy review" (`closures.start_check`, `decided_by = null` = hệ thống, audit `finding.close_request.run` với `auto: true`). Kết quả chuyển trạng thái như cũ: đạt → `closed` (finding đóng), phản biện hợp lý → `proposed` (manager/admin xác nhận), chưa đạt → `unmet` (người duyệt vẫn đóng / chạy lại / từ chối), lỗi → `failed` (chạy lại). Không đưa được vào hàng đợi thì yêu cầu ở lại `pending` để người duyệt chạy tay. Người gửi vẫn rút được khi hệ thống đang kiểm (lần kiểm do người duyệt bấm thì không). Yêu cầu gửi trên web giữ nguyên: chờ người duyệt bấm "Chạy review". Trang Đóng finding ghi "Hệ thống tự động chạy review". Khi chạy kiểm, `note`, `files_changed`, `tests` được đưa vào prompt của `app/review/resolve.py` như **dữ liệu không tin cậy** (bọc tag, `redact`), không thay đổi quy tắc ra kết luận. Trang "Đóng finding" hiện nhãn "Claude Code (MCP)", tên token, file đã sửa và kết quả test.
 
 ## 9. Giới hạn và bảo mật **[Đã chốt]**
 - **60 lần gọi tool/phút mỗi token** (Redis, cửa sổ phút; vượt → lỗi `rate_limited` kèm số giây chờ). **[Quyết định]** (review 2026-11-05) Thêm **120 lần/phút mỗi người** cộng mọi token của họ (cùng cơ chế Redis; nhiều token không nhân giới hạn). Giới hạn yêu cầu đóng trong 24 giờ (§21) vẫn áp dụng.

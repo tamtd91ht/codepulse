@@ -87,7 +87,7 @@ const ERRORS: [code: string, meaning: string, fix: ReactNode][] = [
 ];
 
 const STATUSES: [status: string, meaning: string][] = [
-  ["pending", "Chờ lead, manager hoặc admin duyệt."],
+  ["pending", "Đã lưu, chưa kiểm (hiếm: hệ thống không đưa được vào hàng đợi); lead, manager hoặc admin sẽ chạy tay."],
   ["checking", "Đang chạy kiểm bằng AI trên các commit (hoặc trên code hiện tại với phản biện)."],
   ["proposed", "Bước kiểm đề xuất hạ mức finding (yêu cầu chỉ có phản biện), chờ người duyệt xác nhận."],
   ["unmet", "Bước kiểm thấy chưa đạt, kèm lý do; người duyệt có thể vẫn đóng, chạy lại hoặc xác nhận từ chối."],
@@ -155,12 +155,14 @@ export default function McpGuidePage() {
                 <a href="#review">mục 8</a>.
               </li>
               <li>
-                <strong>Duyệt</strong>: lead, manager hoặc admin duyệt ở trang <Link href="/closures">Đóng finding</Link>, đúng
-                như yêu cầu gửi trên web.
+                <strong>Tự kiểm</strong>: CodePulse tự chạy review ngay khi nhận yêu cầu, không cần ai bấm “Chạy review”.
+                Đạt thì finding tự đóng; phản biện hợp lý hoặc chưa đạt thì lead, manager hoặc admin quyết ở trang{" "}
+                <Link href="/closures">Đóng finding</Link>.
               </li>
             </ol>
             <p className="muted small">
-              Claude Code chỉ <em>gửi yêu cầu</em>; nó không tự đóng finding, không tự chạy bước kiểm và không đổi điểm của ai.
+              Claude Code chỉ <em>gửi yêu cầu</em>; bước kiểm do CodePulse chạy trên diff thật, Claude không tự đóng finding và
+              không đổi điểm của ai.
             </p>
           </section>
 
@@ -434,7 +436,7 @@ export default function McpGuidePage() {
             </Tool>
 
             <Tool name="cancel_close_request" scope="ghi">
-              <p>Rút một yêu cầu đóng của bạn khi nó còn chờ duyệt (giống nút Rút trên web).</p>
+              <p>Rút một yêu cầu đóng của bạn khi nó còn chờ duyệt hoặc đang được hệ thống tự kiểm (giống nút Rút trên web).</p>
               <Params rows={[["id", "số", "Id yêu cầu đóng (có trong kết quả request_closure và list_close_requests)."]]} />
             </Tool>
           </section>
@@ -458,11 +460,13 @@ export default function McpGuidePage() {
               </li>
             </ul>
             <p>
-              Sau khi gửi, yêu cầu ở trạng thái <code>pending</code>. Lead, manager của team bạn hoặc admin bấm “Chạy review” để
-              AI kiểm commit (ghi chú, file đã sửa và kết quả test chỉ là lời khai của bạn, bước kiểm đối chiếu với diff thật và
+              Sau khi gửi, CodePulse <strong>tự chạy review ngay</strong> (trạng thái <code>checking</code>, thường vài phút; chỉ
+              yêu cầu gửi qua MCP, yêu cầu gửi trên web vẫn chờ người duyệt bấm “Chạy review”) để AI kiểm commit (ghi chú, file đã sửa và kết quả test chỉ là lời khai của bạn, bước kiểm đối chiếu với diff thật và
               với code hiện tại của file chứa finding trên nhánh mặc định: dòng lỗi đã bị xoá ở commit khác hay code đã viết lại
               thì code hiện tại đủ chứng minh, không cần đúng commit sửa),
-              hoặc từ chối. Trang <Link href="/closures">Đóng finding</Link> hiện nhãn <em>Claude Code (MCP)</em>, tên token,
+              rồi tự chuyển trạng thái: đạt thì <code>closed</code>, phản biện hợp lý thì <code>proposed</code> chờ xác nhận,
+              chưa đạt thì <code>unmet</code> kèm lý do để lead, manager hoặc admin vẫn đóng, chạy lại hoặc từ chối. Trang{" "}
+              <Link href="/closures">Đóng finding</Link> hiện nhãn <em>Claude Code (MCP)</em>, tên token,
               file đã sửa và kết quả test. Bạn nhận thông báo ở chuông khi có kết quả.
             </p>
             <div className="table-wrap">
@@ -708,7 +712,10 @@ export default function McpGuidePage() {
           <section id="faq" className="card">
             <h2>15. Câu hỏi thường gặp</h2>
             <h3>Claude Code có tự đóng finding không?</h3>
-            <p>Không. Nó chỉ gửi yêu cầu; người duyệt quyết định, giống yêu cầu gửi trên web.</p>
+            <p>
+              Không. Nó chỉ gửi yêu cầu; CodePulse tự chạy review trên diff thật và chỉ đóng khi đạt. Trường hợp còn lại do người
+              duyệt quyết.
+            </p>
             <h3>Vì sao không thấy finding medium/low?</h3>
             <p>MCP chỉ phục vụ critical/high, những lỗi cần sửa và cần duyệt đóng. Medium/low xem trên trang review.</p>
             <h3>Finding đã sửa ở commit trước đó rồi thì sao?</h3>
