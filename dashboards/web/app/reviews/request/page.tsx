@@ -1,46 +1,61 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import { useSWRConfig } from "swr";
 
 import { REVIEW_MENU, ReviewTabs } from "@/components/ReviewTabs";
-import { DateRangePicker } from "@/components/DateRangePicker";
+import { type DayRange, DateRangePicker } from "@/components/DateRangePicker";
 import { Icon } from "@/components/icons";
 import { LinkAuthor } from "@/components/LinkAuthor";
+import { MultiSelect } from "@/components/MultiSelect";
 import { announceReviewQueued } from "@/components/ReviewActivity";
-import { Alert, Card, EmptyState, Loading, PageHeader, Pill, Segmented } from "@/components/ui";
+import { Alert, Avatar, Card, EmptyState, Loading, PageHeader, Pill } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
-import { VERDICT_LABEL, dateTime, localDay, relative } from "@/lib/format";
+import { VERDICT_LABEL, dateTime, localDay, relative, shiftDays, thisMonth } from "@/lib/format";
 import type { Branch, CommitList, CommitRow, Person, Repo, ReviewCommitsResult } from "@/lib/types";
 
-type Window = "1" | "3" | "7" | "14" | "30" | "custom";
-const WINDOWS: { value: Window; label: string }[] = [
-  { value: "1", label: "Hôm nay" },
-  { value: "3", label: "3 ngày" },
-  { value: "7", label: "7 ngày" },
-  { value: "14", label: "14 ngày" },
-  { value: "30", label: "30 ngày" },
-  { value: "custom", label: "Tuỳ chọn" },
-];
+/** Quick picks of the commit-day range, all ending today (they replace the old window chips). */
+function quickPicks(today: string): { label: string; range: DayRange }[] {
+  const back = (days: number) => ({ from: shiftDays(today, -(days - 1)), to: today });
+  return [
+    { label: "Hôm nay", range: back(1) },
+    { label: "3 ngày", range: back(3) },
+    { label: "7 ngày", range: back(7) },
+    { label: "14 ngày", range: back(14) },
+    { label: "30 ngày", range: back(30) },
+    { label: "Tháng này", range: { from: thisMonth(), to: today } },
+  ];
+}
 const ALL = "all";
 const POLL_MS = 10_000;
 const POLL_HIDDEN_MS = 60_000; // a tab not shown asks GitLab less often
 // Commit lists fetched at once (each asks GitLab): the next repo starts when one is in.
 const LOAD_AT_ONCE = 4;
 
-function sinceOf(window: Window, from: string, to: string): { since?: string; until?: string } {
-  if (window === "custom") {
-    return {
-      since: from ? new Date(`${from}T00:00:00`).toISOString() : undefined,
-      until: to ? new Date(`${to}T23:59:59`).toISOString() : undefined,
-    };
-  }
-  const days = Number(window);
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  start.setDate(start.getDate() - (days - 1));
-  return { since: start.toISOString() };
+/** Local days to the API's window: from the start of `from`; up to now when `to` is today. */
+function sinceOf(range: DayRange): { since?: string; until?: string } {
+  return {
+    since: range.from ? new Date(`${range.from}T00:00:00`).toISOString() : undefined,
+    until: range.to && range.to !== localDay() ? new Date(`${range.to}T23:59:59`).toISOString() : undefined,
+  };
+}
+
+/** One labelled field of the scope form. */
+function Field({ label, htmlFor, hint, children }: { label: string; htmlFor?: string; hint?: string; children: ReactNode }) {
+  return (
+    <div className="rq-field">
+      {htmlFor ? (
+        <label className="rq-label" htmlFor={htmlFor}>
+          {label}
+        </label>
+      ) : (
+        <span className="rq-label">{label}</span>
+      )}
+      {children}
+      {hint && <span className="muted small">{hint}</span>}
+    </div>
+  );
 }
 
 function StatusCell({ c }: { c: CommitRow }) {
@@ -106,14 +121,11 @@ export default function RequestReviewPage() {
   const { mutate } = useSWRConfig();
   const [bp, setBp] = useState(ALL);
   const [repoIds, setRepoIds] = useState<number[]>([]);
-  const [repoSearch, setRepoSearch] = useState("");
   const [branch, setBranch] = useState("");
   const [branchSearch, setBranchSearch] = useState("");
-  const [who, setWho] = useState<Set<number>>(new Set()); // empty = everyone I may review
-  const [window_, setWindow] = useState<Window>("7");
+  const [who, setWho] = useState<number[]>([]); // empty = everyone I may review
+  const [range, setRange] = useState<DayRange>(() => ({ from: shiftDays(localDay(), -6), to: localDay() }));
   const [excludeReviewed, setExcludeReviewed] = useState(false);
-  const [from, setFrom] = useState(localDay(new Date(Date.now() - 6 * 86400000)));
-  const [to, setTo] = useState(localDay(new Date()));
   const [scope, setScope] = useState<Scope | null>(null);
   const [tab, setTab] = useState<number | null>(null);
   const [lists, setLists] = useState<Record<number, CommitList | undefined>>({});
@@ -146,30 +158,17 @@ export default function RequestReviewPage() {
       setBranch(wanted.review_branch ?? wanted.default_branch ?? "");
     }
   }, [arrived, repos.data]);
-  const needle = repoSearch.trim().toLowerCase();
-  const visibleRepos = (repos.data ?? []).filter(
-    (r) =>
-      (bp === ALL || String(r.business_project_id ?? "none") === bp) &&
-      (!needle || r.path_with_namespace.toLowerCase().includes(needle)),
+  // The dự án filter narrows the repo box; repos picked under another dự án stay listed.
+  const repoOptions = (repos.data ?? []).filter(
+    (r) => bp === ALL || String(r.business_project_id ?? "none") === bp || repoIds.includes(r.id),
   );
   const picked = repoIds.map((id) => byId.get(id)).filter((r): r is Repo => !!r);
   const first = picked[0] ?? null;
-  const toggleRepo = (r: Repo, on: boolean) => {
-    if (on && repoIds.length === 0 && !branch.trim()) setBranch(r.review_branch ?? r.default_branch ?? "");
-    setRepoIds((prev) => (on ? (prev.includes(r.id) ? prev : [...prev, r.id]) : prev.filter((id) => id !== r.id)));
-    setBranchSearch("");
-  };
-  // "Chọn tất cả": every reviewable repo the dự án filter and the search show.
-  const selectable = visibleRepos.filter((r) => r.review_enabled);
-  const allShown = selectable.length > 0 && selectable.every((r) => repoIds.includes(r.id));
-  const selectShown = (on: boolean) => {
-    const ids = new Set(selectable.map((r) => r.id));
-    if (on) {
-      if (repoIds.length === 0 && !branch.trim() && selectable[0]) {
-        setBranch(selectable[0].review_branch ?? selectable[0].default_branch ?? "");
-      }
-      setRepoIds((prev) => [...prev, ...selectable.map((r) => r.id).filter((id) => !prev.includes(id))]);
-    } else setRepoIds((prev) => prev.filter((id) => !ids.has(id)));
+  const pickRepos = (next: number[]) => {
+    // The first repo picked fills the branch with its review branch.
+    const firstNew = repoIds.length === 0 ? byId.get(next[0]) : undefined;
+    if (firstNew && !branch.trim()) setBranch(firstNew.review_branch ?? firstNew.default_branch ?? "");
+    setRepoIds(next);
     setBranchSearch("");
   };
   // Repos whose own review branch differs from the one typed: they are listed on it anyway.
@@ -189,7 +188,7 @@ export default function RequestReviewPage() {
     setOutcomes(null);
     const params = new URLSearchParams();
     params.set("ref", branch.trim());
-    const { since, until } = sinceOf(window_, from, to);
+    const { since, until } = sinceOf(range);
     if (since) params.set("since", since);
     if (until) params.set("until", until);
     for (const id of who) params.append("user_id", String(id));
@@ -317,14 +316,10 @@ export default function RequestReviewPage() {
             Chỉ repo thuộc dự án bạn được cấp quyền mới hiện ở đây; liên hệ admin nếu thiếu.
           </EmptyState>
         ) : (
-          <form onSubmit={submit} className="request-form" style={{ display: "grid", gap: 14 }}>
-            <div style={{ display: "grid", gap: 6 }}>
-              <span className="muted small">
-                Repo đã chọn: {repoIds.length}
-                {repoIds.length > LOAD_AT_ONCE ? ` · danh sách commit tải lần lượt ${LOAD_AT_ONCE} repo một lúc` : ""}
-              </span>
-              <div className="toolbar" style={{ margin: 0 }}>
-                <select value={bp} onChange={(e) => setBp(e.target.value)} aria-label="Dự án">
+          <form onSubmit={submit} className="request-form">
+            <div className="rq-grid">
+              <Field label="Dự án" htmlFor="rq-project">
+                <select id="rq-project" value={bp} onChange={(e) => setBp(e.target.value)}>
                   <option value={ALL}>Mọi dự án</option>
                   {projects.map(([id, name]) => (
                     <option key={id} value={id}>
@@ -332,71 +327,41 @@ export default function RequestReviewPage() {
                     </option>
                   ))}
                 </select>
-                <input
-                  type="search"
-                  value={repoSearch}
-                  onChange={(e) => setRepoSearch(e.target.value)}
+              </Field>
+              <Field
+                label="Repo"
+                hint={repoIds.length > LOAD_AT_ONCE ? `Danh sách commit tải lần lượt ${LOAD_AT_ONCE} repo một lúc.` : undefined}
+              >
+                <MultiSelect
+                  label="Repo"
+                  empty="Chọn repo…"
+                  unit="repo"
                   placeholder="Tìm repo…"
-                  aria-label="Tìm repo"
-                  style={{ flex: "1 1 260px" }}
+                  value={repoIds}
+                  onChange={pickRepos}
+                  options={repoOptions.map((r) => ({
+                    value: r.id,
+                    label: r.path_with_namespace,
+                    hint: bp === ALL ? (r.business_project ?? undefined) : undefined,
+                    disabled: !r.review_enabled,
+                    note: r.review_enabled ? undefined : "Đã tắt review",
+                  }))}
                 />
-                <button type="button" className="sm" disabled={selectable.length === 0 || allShown} onClick={() => selectShown(true)}>
-                  Chọn tất cả{needle || bp !== ALL ? " đang hiện" : ""} ({selectable.length})
-                </button>
-                {repoIds.length > 0 && (
-                  <button type="button" className="sm ghost" onClick={() => (allShown && (needle || bp !== ALL) ? selectShown(false) : setRepoIds([]))}>
-                    Bỏ chọn{allShown && (needle || bp !== ALL) ? " đang hiện" : " tất cả"}
-                  </button>
-                )}
-              </div>
-              <div className="repo-pick" role="group" aria-label="Repo">
-                {visibleRepos.length === 0 ? (
-                  <span className="muted small">Không có repo nào khớp.</span>
-                ) : (
-                  visibleRepos.map((r) => {
-                    const on = repoIds.includes(r.id);
-                    const disabled = !r.review_enabled;
-                    return (
-                      <label key={r.id} className={disabled ? "muted" : undefined}>
-                        <input type="checkbox" checked={on} disabled={disabled} onChange={(e) => toggleRepo(r, e.target.checked)} />
-                        <span className="name">{r.path_with_namespace}</span>
-                        {!r.review_enabled && <span className="small"> (đã tắt review)</span>}
-                      </label>
-                    );
-                  })
-                )}
-              </div>
-              {picked.length > 0 && (
-                <div className="chips" style={{ margin: 0 }}>
-                  {picked.map((r) => (
-                    <label key={r.id} className="chip choice on">
-                      <input type="checkbox" checked onChange={() => toggleRepo(r, false)} aria-label={`Bỏ ${r.path_with_namespace}`} />
-                      {r.path_with_namespace}
-                    </label>
-                  ))}
-                  <button type="button" className="link" onClick={() => setRepoIds([])}>
-                    Bỏ chọn
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: "grid", gap: 6 }}>
-              <div className="toolbar" style={{ margin: 0 }}>
+              </Field>
+              <Field label="Branch" htmlFor="rq-branch">
                 <input
+                  id="rq-branch"
                   list="branch-options"
                   value={branch}
                   onChange={(e) => {
                     setBranch(e.target.value);
                     setBranchSearch(e.target.value === "*" ? "" : e.target.value);
                   }}
-                  placeholder={first ? "Branch…" : "Chọn repo trước"}
-                  aria-label="Branch"
+                  placeholder={first ? "Tên branch, * = mọi nhánh" : "Chọn repo trước"}
                   disabled={!first}
                   required
                   autoComplete="off"
                   spellCheck={false}
-                  style={{ flex: "1 1 220px" }}
                 />
                 <datalist id="branch-options">
                   <option value="*">mọi nhánh</option>
@@ -406,83 +371,60 @@ export default function RequestReviewPage() {
                     </option>
                   ))}
                 </datalist>
-              </div>
-              {branches.error && (
-                <span className="error small" role="status">
-                  Không lấy được danh sách branch: {branches.error.message}
-                </span>
-              )}
-              {picked.length > 1 && branch.trim() && (
-                <Alert tone="warning">
-                  Cả {picked.length} repo sẽ lấy commit trên cùng branch <code>{branch.trim()}</code>
-                  {branch.trim() === "*" ? " (mọi nhánh)" : ""}. Repo không có branch này sẽ báo lỗi trong tab của nó.
-                  {otherBranch.length > 0 &&
-                    ` Branch review của ${otherBranch.map((r) => r.path_with_namespace).join(", ")} khác với branch này.`}
-                </Alert>
-              )}
+              </Field>
+              <Field label="Thành viên">
+                <MultiSelect
+                  label="Thành viên"
+                  empty="Mọi người bạn được review"
+                  placeholder="Tìm tên hoặc email…"
+                  value={who}
+                  onChange={setWho}
+                  options={people.data.map((p) => ({
+                    value: p.id,
+                    label: p.full_name ?? p.primary_email ?? `#${p.id}`,
+                    hint: p.full_name ? (p.primary_email ?? undefined) : undefined,
+                    lead: <Avatar name={p.full_name} email={p.primary_email} size="sm" src={p.avatar_url} />,
+                  }))}
+                />
+              </Field>
+              <Field label="Ngày commit">
+                <DateRangePicker
+                  label="Ngày commit"
+                  showLabel={false}
+                  value={range}
+                  max={localDay()}
+                  onChange={setRange}
+                  quickPicks={quickPicks(localDay())}
+                />
+              </Field>
+              <Field label="Lọc thêm">
+                <label className="rq-check" title="Bỏ commit đã có review xong hoặc đang chờ / đang review">
+                  <input type="checkbox" checked={excludeReviewed} onChange={(e) => setExcludeReviewed(e.target.checked)} />
+                  Ẩn commit đã review
+                </label>
+              </Field>
             </div>
 
-            <div className="toolbar" style={{ margin: 0, alignItems: "flex-start" }}>
-              <div style={{ display: "grid", gap: 6 }}>
-                <span className="muted small">Người (bỏ trống = mọi người bạn được review)</span>
-                <div className="chips" style={{ margin: 0 }}>
-                  {people.data.map((p) => {
-                    const on = who.has(p.id);
-                    return (
-                      <label key={p.id} className={`chip choice${on ? " on" : ""}`}>
-                        <input
-                          type="checkbox"
-                          checked={on}
-                          onChange={(e) =>
-                            setWho((prev) => {
-                              const next = new Set(prev);
-                              if (e.target.checked) next.add(p.id);
-                              else next.delete(p.id);
-                              return next;
-                            })
-                          }
-                        />
-                        {p.full_name ?? p.primary_email}
-                      </label>
-                    );
-                  })}
-                  {who.size > 0 && (
-                    <button type="button" className="link" onClick={() => setWho(new Set())}>
-                      Bỏ chọn
-                    </button>
-                  )}
-                </div>
-              </div>
-              <span className="spacer" />
-              <div style={{ display: "grid", gap: 6 }}>
-                <span className="muted small">Khoảng thời gian (theo ngày commit)</span>
-                <div className="toolbar" style={{ margin: 0 }}>
-                  <Segmented label="Khoảng thời gian" value={window_} onChange={setWindow} options={WINDOWS} />
-                  <label className="small" title="Bỏ commit đã có review xong hoặc đang chờ / đang review">
-                    <input type="checkbox" checked={excludeReviewed} onChange={(e) => setExcludeReviewed(e.target.checked)} /> Bỏ commit đã review
-                  </label>
-                  {window_ === "custom" && (
-                    <DateRangePicker
-                      label="Ngày commit"
-                      value={{ from, to }}
-                      max={localDay()}
-                      onChange={(r) => {
-                        setFrom(r.from);
-                        setTo(r.to);
-                      }}
-                    />
-                  )}
-                </div>
-              </div>
-            </div>
+            {branches.error && (
+              <span className="error small" role="status">
+                Không lấy được danh sách branch: {branches.error.message}
+              </span>
+            )}
+            {picked.length > 1 && branch.trim() && (
+              <Alert tone="warning">
+                Cả {picked.length} repo sẽ lấy commit trên cùng branch <code>{branch.trim()}</code>
+                {branch.trim() === "*" ? " (mọi nhánh)" : ""}. Repo không có branch này sẽ báo lỗi trong tab của nó.
+                {otherBranch.length > 0 && ` Branch review của ${otherBranch.map((r) => r.path_with_namespace).join(", ")} khác với branch này.`}
+              </Alert>
+            )}
 
-            <div className="toolbar" style={{ margin: 0 }}>
-              <button className={scope ? undefined : "primary ink"} type="submit" disabled={busy || picked.length === 0 || !branch.trim()}>
-                Xem commit
-              </button>
+            <div className="rq-foot">
               <span className="muted small">
                 Danh sách lấy thẳng từ GitLab, {listLimit ? `tối đa ${listLimit}` : "số"} commit mỗi repo theo cấu hình (Admin › Cấu hình review).
               </span>
+              <button className={scope ? undefined : "primary ink"} type="submit" disabled={busy || picked.length === 0 || !branch.trim()}>
+                <Icon name="search" size={14} /> Xem commit
+              </button>
             </div>
           </form>
         )}

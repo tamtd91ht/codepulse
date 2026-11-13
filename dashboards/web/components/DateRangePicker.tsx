@@ -66,6 +66,7 @@ export function DateRangePicker({
   showLabel = true,
   maxSpan,
   clearable = false,
+  quickPicks,
 }: {
   value: DayRange;
   /** Earliest day allowed; none: any day from 2000 on. */
@@ -78,6 +79,9 @@ export function DateRangePicker({
   /** Longest range allowed, in days (both ends included). */
   maxSpan?: number;
   clearable?: boolean;
+  /** Quick picks in place of the default ones (clipped like them); the trigger names the one
+   * the value matches ("7 ngày · 07/11 – 13/11"). */
+  quickPicks?: { label: string; range: DayRange }[];
 }) {
   const lowest = min ?? FLOOR;
   const [open, setOpen] = useState(false);
@@ -197,7 +201,12 @@ export function DateRangePicker({
   const hi = end ?? draft.from;
   const prevDisabled = firstShown <= monthOf(lowest);
   const nextDisabled = view >= monthOf(max);
-  const quick = presets(lowest, max, min !== undefined, maxSpan);
+  const quick = quickPicks
+    ? quickPicks
+        .filter((p) => p.range.to >= lowest && p.range.from <= max)
+        .map((p) => ({ label: p.label, range: { from: clamp(p.range.from, lowest, max), to: clamp(p.range.to, lowest, max) } }))
+    : presets(lowest, max, min !== undefined, maxSpan);
+  const named = quickPicks?.find((p) => p.range.from === value.from && p.range.to === value.to)?.label;
   const activePreset = quick.find((p) => draft.to !== null && p.range.from === draft.from && p.range.to === draft.to)?.label;
   const focusTarget = focusDay ?? (active === "to" ? (draft.to ?? draft.from) : draft.from) ?? "";
   const ready = draft.from !== "" && draft.to !== null && draft.to !== "";
@@ -271,6 +280,7 @@ export function DateRangePicker({
         <Icon name="calendar" size={16} />
         <span className="drp-trigger-label">
           {showLabel && <span className="muted">{label}: </span>}
+          {named && <strong>{named} · </strong>}
           {hasValue ? rangeLabel(value.from, value.to) : clearable ? <span className="muted">Mọi thời gian</span> : "Chọn"}
         </span>
         {!showLabel && <span className="visually-hidden">({label})</span>}
