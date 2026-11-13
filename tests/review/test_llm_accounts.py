@@ -77,6 +77,32 @@ E = "claude reported an error: success"
         (f"{E}: model: claude-opus-5-5 is not available on your plan", "model"),
         (f"{E} (HTTP 404): not_found_error: model: claude-x", "model"),
         (f"{E} (HTTP 529): Overloaded", None),
+        # Claude CLI 2.1 wording, no HTTP status (2026-11-13: these failed the review instead of
+        # moving it to the backup account).
+        (f"{E}: You've hit your Fable limit · resets 3pm (Asia/Ho_Chi_Minh)", "quota"),
+        (f"{E}: You've hit your Fable limit", "quota"),
+        (f"{E}: You've hit your usage credit limit", "quota"),
+        (f"{E}: You've hit your monthly spend limit. See Usage in Settings", "quota"),
+        (f"{E}: You've hit your team's shared budget. Switch to another model", "quota"),
+        (f"{E}: Opus 5 requires usage credits. /model to switch models.", "quota"),
+        (f"{E}: You're out of usage credits. See Usage in Settings", "quota"),
+        (f"{E}: Your org is out of usage · contact your admin", "quota"),
+        (f"{E}: Your seat type doesn't include usage credits", "quota"),
+        (f"{E}: Your usage allocation has been disabled by your admin", "quota"),
+        # The CLI's own name for the error decides, whatever the wording.
+        (f"{E} [api_error=usage_limit_reached]: Something new", "quota"),
+        (
+            "claude reported an error: error_during_execution [api_error=usage_limit_reached]",
+            "quota",
+        ),
+        (f"{E} [api_error=model_requires_usage_credits]", "quota"),
+        (f"{E} [api_error=stored_login_refused]: whatever", "auth"),
+        (f"{E} [api_error_code=weekly_usage_limit_exceeded]", "quota"),
+        (f"{E} [api_error_code=oauth_token_revoked]", "auth"),
+        # Not the account's: another account would fail the same way.
+        (f"{E} [api_error=max_output_tokens]", None),
+        (f"{E} [api_error=connection_failed]", None),
+        (f"{E} (HTTP 529) [api_error_code=overloaded]: Overloaded", None),
         # The causes of a wrapped error are read too.
         (f"claude failed after 1 attempts | {E} (HTTP 401): bad token", "auth"),
         # A crashed CLI's stderr may echo the diff: never read as the account's fault.
@@ -202,6 +228,60 @@ def test_an_account_failure_moves_to_the_backup_at_once(failure: str, kind: str)
     assert tokens(runner) == ["sk-ant-oat01-default", "sk-ant-oat01-backup"]
     assert rec.failures == [(1, kind)] and rec.successes == [2]
     assert result.raw["llm_account"] == "Dự phòng" and result.raw["llm_account_id"] == 2
+
+
+FABLE_LIMIT = json.dumps(
+    {
+        "type": "result",
+        "subtype": "success",
+        "is_error": True,
+        "api_error": "usage_limit_reached",
+        "result": "You've hit your Fable limit · resets 3pm (Asia/Ho_Chi_Minh)",
+    }
+)
+NO_TEXT = json.dumps(
+    {"type": "result", "subtype": "error_during_execution", "is_error": True, "errors": []}
+)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        FABLE_LIMIT,
+        # The new wording alone, without the CLI's name for it.
+        json.dumps({**json.loads(FABLE_LIMIT), "api_error": None}),
+        # Only the name: an error result with no text.
+        json.dumps({**json.loads(NO_TEXT), "api_error": "usage_limit_reached"}),
+    ],
+)
+def test_the_new_cli_usage_limit_moves_to_the_backup(failure: str) -> None:
+    runner = FakeRunner((1, failure, ""), (0, json.dumps(SUCCESS), ""))
+    rec = Recorder()
+    result = failover(runner, [DEFAULT, BACKUP], rec).review(PROMPT)
+    assert tokens(runner) == ["sk-ant-oat01-default", "sk-ant-oat01-backup"]
+    assert rec.failures == [(1, "quota")] and result.raw["llm_account"] == "Dự phòng"
+
+
+def test_the_error_names_reach_the_message_but_not_unsafe_text() -> None:
+    runner = FakeRunner(
+        (
+            1,
+            json.dumps(
+                {
+                    **json.loads(NO_TEXT),
+                    "api_error": "usage_limit_reached",
+                    "api_error_code": "Not An Identifier; rm -rf",
+                }
+            ),
+            "",
+        )
+    )
+    provider = ClaudeCodeProvider(runner=runner, sleep=lambda s: None, max_per_minute=1e6)
+    with pytest.raises(LLMError) as failed:
+        provider.review(PROMPT)
+    text = str(failed.value.__cause__)
+    assert "[api_error=usage_limit_reached]" in text and "rm -rf" not in text
+    assert len(runner.calls) == 1  # a usage limit is not retried on the same account
 
 
 def test_an_error_that_is_not_the_accounts_never_switches() -> None:

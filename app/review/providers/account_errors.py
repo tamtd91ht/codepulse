@@ -23,6 +23,32 @@ AccountFailure = Literal["auth", "quota", "rate", "model"]
 
 STRUCTURED = "claude reported an error"
 
+# The CLI's `api_error` / the server's `api_error_code` (claude_code._error_message adds them as
+# "[api_error=…]"): a name says more than the wording, which changes between CLI versions
+# (2026-11-13: "You've hit your Fable limit", "Opus 5 requires usage credits" were not read as
+# the usage limit, so reviews failed instead of moving to the backup account).
+_CODE = re.compile(r"\[(api_error|api_error_code)=([a-z0-9_]+)\]")
+_CODE_KIND: dict[str, AccountFailure] = {
+    "usage_limit_reached": "quota",
+    "model_requires_usage_credits": "quota",
+    "long_context_credits_required": "quota",
+    "credit_balance_low": "quota",
+    "stored_login_refused": "auth",
+    "api_key_auth_disabled": "auth",
+    "org_disabled_credential": "auth",
+    "invalid_credential_header": "auth",
+    "provider_credentials": "auth",
+    "gateway_signin_required": "auth",
+    "gateway_session_expired": "auth",
+}
+# A server code (`api_error_code`) this build has no entry for, named like a usage limit or a
+# login. Not the CLI's `api_error`: that list is known, and its other names (max_output_tokens,
+# unattended_start_limit…) are not the account's.
+_CODE_QUOTA = re.compile(
+    r"usage_limit|quota|credits?_|_credits?\b|budget|spend_limit|billing|overage"
+)
+_CODE_AUTH = re.compile(r"oauth|login|credential|unauthori[sz]ed|auth_")
+
 _MODEL = re.compile(
     r"not_found_error[^\n]{0,120}model|model[^\n]{0,80}(?:not (?:found|available|supported)"
     r"|does not exist|not have access|no access)|\(HTTP 404\)[^\n]{0,120}model",
@@ -39,7 +65,13 @@ _AUTH = re.compile(
 _USAGE = re.compile(
     r"usage.?limit|limit reached|limit exceeded for|hit your limit|reached your (?:\S+ )?limit"
     r"|out of (?:extra )?usage|(?:5|five).?hour|session limit|weekly|opus limit|sonnet limit"
-    r"|subscription|your plan|credit balance|quota|\|\s*\d{10}\b|\bresets?\b",
+    r"|subscription|your plan|credit balance|quota|\|\s*\d{10}\b|\bresets?\b"
+    # Claude CLI 2.1 wording: "You've hit your Fable limit / monthly spend limit / team's shared
+    # budget", "Opus 5 requires usage credits", "You're out of usage credits", "Your seat type
+    # doesn't include usage", "Your usage allocation has been disabled", "This service is
+    # disabled for your org".
+    r"|hit your [^\n]{0,40}?(?:limit|budget)|usage credits?|spend limit|shared budget"
+    r"|out of usage|seat type|usage allocation|disabled for your org",
     re.IGNORECASE,
 )
 # A burst limit that clears in seconds: requests or tokens per minute, concurrency.
@@ -64,6 +96,17 @@ def account_error(message: str) -> tuple[AccountFailure, str] | None:
     part = structured_part(message)
     if part is None:
         return None
+    codes = _CODE.findall(part)
+    for _, code in codes:
+        if kind := _CODE_KIND.get(code):
+            return kind, part
+    for key, code in codes:
+        if key != "api_error_code":
+            continue
+        if _CODE_AUTH.search(code):
+            return "auth", part
+        if _CODE_QUOTA.search(code):
+            return "quota", part
     if _MODEL.search(part):
         return "model", part
     if _AUTH.search(part):

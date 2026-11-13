@@ -410,6 +410,9 @@ class ClaudeCodeProvider:
         )
 
 
+_IDENTIFIER = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
 def _error_message(data: Mapping[str, Any]) -> str:
     """Why the CLI gave up, e.g. `(HTTP 401): Failed to authenticate...`, kept short.
 
@@ -420,6 +423,13 @@ def _error_message(data: Mapping[str, Any]) -> str:
     message = f"claude reported an error: {data.get('subtype')}"
     if status := data.get("api_error_status"):
         message += f" (HTTP {status})"
+    # The CLI's own name for the error (`api_error`, e.g. usage_limit_reached) and the server's
+    # code (`api_error_code`): identifiers, never model text; read before the wording, which
+    # changes between CLI versions (app/review/providers/account_errors.py).
+    for key in ("api_error", "api_error_code"):
+        value = data.get(key)
+        if isinstance(value, str) and _IDENTIFIER.fullmatch(value):
+            message += f" [{key}={value}]"
     if data.get("is_error") and (detail := str(data.get("result") or "").strip()):
         message += f": {detail[:200]}"
     return message
