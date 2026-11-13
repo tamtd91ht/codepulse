@@ -161,7 +161,7 @@
 
 ## 4. Chọn dự án Jira
 
-- **[Đã chốt]** Admin chọn dự án Jira (theo key) trong Admin › DPI › Jira và gán nó cho
+- **[Đã chốt]** Admin chọn dự án Jira (theo key) ở tab **DPI hàng tháng › Jira** (quyền `jira.admin`) và gán nó cho
   **dự án CodePulse** (`business_projects`) để lọc báo cáo và phân quyền. **[Quyết định]**
   (user 2026-11-06) một dự án Jira có thể tính cho **nhiều** dự án CodePulse, xem §15.
 - Dự án Jira không gán dự án CodePulse nào thì chỉ admin thấy trong báo cáo cấp team.
@@ -252,7 +252,7 @@ Cấu hình lưu ở `app_settings["jira_mapping"]` (JSON), xem `app/jira/settin
 
 - **[Quyết định]** `app_settings["dpi_task_source"]` = `gitlab` | `jira`.
   - Mặc định là `jira` khi Jira đã cấu hình (kết nối đang hiệu lực, §2), còn lại `gitlab`.
-  - Admin đổi trong Admin › DPI › Jira.
+  - Admin đổi ở tab DPI hàng tháng › Jira.
 - DPI chỉ đọc issue của nguồn đang chọn (`issues.source`), nên không tính trùng.
 - Khi nguồn là `jira`, collector GitLab **ngừng lấy issue**. Dữ liệu cũ vẫn giữ, chuyển lại
   `gitlab` thì lấy tiếp.
