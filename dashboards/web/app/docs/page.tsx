@@ -140,7 +140,7 @@ export default function DocsPage() {
   if (me && !can(me, "docs.view"))
     return (
       <>
-        <PageHeader title="Tài liệu dự án" foldable={false} />
+        <PageHeader title="Tài liệu dự án" />
         <EmptyState icon="file" title="Bạn chưa có quyền xem tài liệu dự án">
           Nhờ admin cấp quyền “Xem tài liệu dự án” (Admin › Phân quyền).
         </EmptyState>
@@ -152,7 +152,6 @@ export default function DocsPage() {
       <PageHeader
         title="Tài liệu dự án"
         subtitle="Tài liệu hệ thống của từng dự án: tổng quan, kiến trúc, cài đặt, API, triển khai, vận hành, quy ước."
-        foldable={false}
         actions={
           canEdit && projectId ? (
             <>

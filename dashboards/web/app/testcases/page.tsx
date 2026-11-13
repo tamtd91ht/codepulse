@@ -103,7 +103,7 @@ export default function TestcasesPage() {
   if (me && !allowed)
     return (
       <>
-        <PageHeader title="Testcase" foldable={false} />
+        <PageHeader title="Testcase" />
         <EmptyState icon="alert" title="Bạn chưa có quyền xem testcase">
           Nhờ admin cấp quyền “Testcase › Xem testcase” trong bộ quyền.
         </EmptyState>
@@ -116,7 +116,6 @@ export default function TestcasesPage() {
       <PageHeader
         title="Testcase"
         subtitle="Bộ testcase của dự án, test run và test plan, milestone, AI sinh và rà soát testcase, gợi ý testcase cần test lại theo merge request"
-        foldable={false}
         actions={
           <label className="adm-field tc-project">
             <span className="small muted">Dự án</span>

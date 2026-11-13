@@ -116,7 +116,7 @@ export default function AdminPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Admin" title="Quản trị" subtitle="Mọi thay đổi ở đây được ghi audit log." foldable={false} />
+      <PageHeader eyebrow="Admin" title="Quản trị" subtitle="Mọi thay đổi ở đây được ghi audit log." />
       <div className="tabs admin-tabs" role="tablist" aria-label="Khu vực cấu hình" onKeyDown={onKey}>
         {tabs.map((t) => (
           <button

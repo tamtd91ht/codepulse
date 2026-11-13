@@ -10,10 +10,9 @@ import type { Num, Severity } from "@/lib/types";
 
 /* ---------- Page & card chrome ---------- */
 
-/* Every card with a title folds with a chevron; the page header folds or opens them all at
-   once. A card remembers its own state per browser (localStorage), so a long page stays the way
-   the reader left it. */
-const CARDS_EVENT = "cp:cards";
+/* Every card with a title folds with its own chevron. A card remembers its state per browser
+   (localStorage), so a long page stays the way the reader left it. The page-wide fold-all /
+   open-all pair was removed (user 2026-11-13: ugly and confusing). */
 const CARD_STORE = "cp:card:";
 
 function readFold(key: string | null): boolean | null {
@@ -35,25 +34,18 @@ function writeFold(key: string | null, collapsed: boolean) {
   }
 }
 
-function foldAll(collapsed: boolean) {
-  window.dispatchEvent(new CustomEvent(CARDS_EVENT, { detail: { collapsed } }));
-}
-
 export function PageHeader({
   title,
   eyebrow,
   subtitle,
   avatar,
   actions,
-  foldable = true,
 }: {
   title: ReactNode;
   eyebrow?: ReactNode;
   subtitle?: ReactNode;
   avatar?: ReactNode;
   actions?: ReactNode;
-  /** Show the fold-all / open-all chevrons (off on pages without cards). */
-  foldable?: boolean;
 }) {
   return (
     <div className="page-head">
@@ -65,17 +57,7 @@ export function PageHeader({
           {subtitle && <div className="sub">{subtitle}</div>}
         </div>
       </div>
-      {(actions || foldable) && (
-        <div className="actions">
-          {actions}
-          {foldable && (
-            <span className="fold-all">
-              <IconButton icon="chevronsUp" label="Thu gọn tất cả" onClick={() => foldAll(true)} />
-              <IconButton icon="chevronsDown" label="Mở rộng tất cả" onClick={() => foldAll(false)} />
-            </span>
-          )}
-        </div>
-      )}
+      {actions && <div className="actions">{actions}</div>}
     </div>
   );
 }
@@ -110,16 +92,6 @@ export function Card({
     if (!canFold) return;
     const stored = readFold(key);
     if (stored !== null) setCollapsed(stored);
-  }, [key, canFold]);
-  useEffect(() => {
-    if (!canFold) return;
-    const onAll = (e: Event) => {
-      const next = Boolean((e as CustomEvent<{ collapsed: boolean }>).detail?.collapsed);
-      setCollapsed(next);
-      writeFold(key, next);
-    };
-    window.addEventListener(CARDS_EVENT, onAll);
-    return () => window.removeEventListener(CARDS_EVENT, onAll);
   }, [key, canFold]);
   const toggle = () => {
     const next = !collapsed;

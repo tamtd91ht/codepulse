@@ -1603,13 +1603,6 @@ button.drp-field.active:hover:not(:disabled) {
 .card.flush.collapsed > .card-head {
   padding-bottom: 12px;
 }
-.page-head .fold-all {
-  display: inline-flex;
-  gap: 2px;
-  margin-left: 4px;
-  padding-left: 8px;
-  border-left: 1px solid var(--border);
-}
 .card > p.muted:first-of-type {
   margin-top: -6px;
 }
@@ -6658,8 +6651,7 @@ label.fsel:focus-within,
   .sidebar,
   .topbar,
   .no-print,
-  .skip-link,
-  .fold-all {
+  .skip-link {
     display: none !important;
   }
   body {

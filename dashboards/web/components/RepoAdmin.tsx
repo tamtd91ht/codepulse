@@ -303,12 +303,6 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
       else next.add(key);
       return next;
     });
-  const setAll = (expanded: boolean) =>
-    setOpen((prev) => {
-      const next = new Set([...prev].filter((k) => !k.startsWith(`${groupBy}:`)));
-      if (expanded) for (const section of sectionKeys) next.add(keyOf(section));
-      return next;
-    });
 
   // Selection survives filtering and collapsing; repos that disappear are simply ignored.
   const chosen = [...selected].map((id) => byId.get(id)).filter((p): p is Project => !!p);
@@ -488,8 +482,6 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
                 options={GROUP_BY_TABS.map((t) => ({ value: t.key, label: t.label }))}
                 label="Nhóm repo"
               />
-              <IconButton icon="chevronsUp" label="Thu gọn mọi nhóm" onClick={() => setAll(false)} disabled={filtering} />
-              <IconButton icon="chevronsDown" label="Mở rộng mọi nhóm" onClick={() => setAll(true)} disabled={filtering} />
             </div>
 
             {chosen.length > 0 && (

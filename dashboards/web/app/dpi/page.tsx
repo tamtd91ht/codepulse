@@ -1398,7 +1398,6 @@ export default function DpiPage() {
         eyebrow="DPI"
         title="Đánh giá hiệu suất hàng tháng"
         subtitle="70 điểm chỉ số kỹ thuật tự động + 30 điểm đánh giá của lead, theo level. Không có bảng xếp hạng toàn công ty."
-        foldable={false}
         actions={<MonthPicker value={month} onChange={setMonth} />}
       />
       <SubTabs id="dpi" label="DPI" tabs={tabs} value={current} onChange={setTab} variant="bar" />

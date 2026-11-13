@@ -181,7 +181,7 @@ export default function MemberReportPage() {
   if (me.data && !scope) {
     return (
       <>
-        <PageHeader title="Báo cáo thành viên" foldable={false} />
+        <PageHeader title="Báo cáo thành viên" />
         <Card collapsible={false}>
           <EmptyState icon="alert" title="Bạn chưa có quyền xem báo cáo thành viên">
             Quyền &ldquo;Xem báo cáo thành viên&rdquo; (report.member) do admin cấp ở Admin › Phân quyền.
@@ -196,7 +196,6 @@ export default function MemberReportPage() {
       <PageHeader
         eyebrow={<Link href="/members">Thành viên</Link>}
         title={view === "detail" && data ? `Báo cáo: ${name}` : "Báo cáo thành viên"}
-        foldable={false}
         actions={
           <span className="no-print report-actions">
             <button type="button" onClick={() => window.print()} disabled={view === "overview" ? !overview.data : !data}>

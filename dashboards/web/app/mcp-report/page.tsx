@@ -386,7 +386,6 @@ export default function McpReportPage() {
       <>
         <PageHeader
           title="Tích hợp MCP"
-          foldable={false}
           actions={<span className="no-print report-actions">{manageTokens}</span>}
         />
         <Card collapsible={false}>
@@ -403,7 +402,6 @@ export default function McpReportPage() {
       <PageHeader
         title="Tích hợp MCP"
         subtitle="Báo cáo: ai dùng Claude Code qua MCP để sửa finding, và yêu cầu đóng gửi qua đó đạt đến đâu."
-        foldable={false}
         actions={
           <span className="no-print report-actions">
             {manageTokens}

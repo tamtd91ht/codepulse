@@ -824,7 +824,6 @@ export default function JiraTasksPage() {
       eyebrow="Jira"
       title="Task Jira"
       subtitle="Issue Jira của các dự án bạn xem được, cùng MR và kết quả review của từng việc."
-      foldable={false}
       actions={
         o?.can_admin ? (
           <Link className="button" href="/admin#jira">

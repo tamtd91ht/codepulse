@@ -192,7 +192,6 @@ export default function DpiScorecard({ params }: { params: Promise<{ userId: str
         eyebrow={<Link href="/dpi">DPI hàng tháng</Link>}
         title={data.user.name ?? `#${userId}`}
         subtitle={`${monthLabel(month)} · profile ${c.profile_label}${c.profile_assigned === false ? " (chưa gán level, tạm dùng Middle)" : ""} · rubric ${c.rubric_version}`}
-        foldable={false}
         actions={<MonthPicker value={month} onChange={setMonth} />}
       />
       <ShadowBanner on={data.shadow} />

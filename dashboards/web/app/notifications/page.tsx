@@ -90,7 +90,6 @@ export default function NotificationsPage() {
         eyebrow="Thông báo"
         title="Thông báo"
         subtitle="Review xong, finding được đóng, khiếu nại mới và khiếu nại đã xử lý. Lịch sử giữ 180 ngày."
-        foldable={false}
         actions={
           unread > 0 && (
             <button type="button" onClick={() => void markAll()}>
