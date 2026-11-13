@@ -18,6 +18,7 @@ from app.review.llm_recovery import TICK_MIN
 from app.scoring.aggregate import aggregate_job
 from app.telegram.poller import telegram_tick_job
 from app.workers.llm_jobs import llm_watch_job
+from app.workers.orphan_jobs import SWEEP_MIN, requeue_orphans_job
 
 
 def enqueue_dpi_month_job() -> None:
@@ -157,6 +158,17 @@ def build_scheduler(
         "interval",
         minutes=10,
         id="stetho-tag",
+        max_instances=1,
+        coalesce=True,
+    )
+    # Reviews left queued/running with no job in Redis (a worker killed mid-review, a Redis
+    # restart): queued again in their dự án's lane, or failed after a few losses (user
+    # 2026-11-13). Cheap: one indexed query and a read of the review queues.
+    scheduler.add_job(
+        requeue_orphans_job,
+        "interval",
+        minutes=SWEEP_MIN,
+        id="review-orphans",
         max_instances=1,
         coalesce=True,
     )

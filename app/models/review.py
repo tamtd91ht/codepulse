@@ -45,6 +45,13 @@ class Review(TimestampMixin, Base):
         Index("ix_reviews_llm_retry", "id", postgresql_where=text("llm_retry")),
         # Read backwards for "newest change first" and its (changed_at, id) cursor.
         Index("ix_reviews_changed_at_id", "changed_at", "id"),
+        # Reviews in flight, for the orphan sweep (app/workers/orphan_jobs.py).
+        Index(
+            "ix_reviews_in_flight",
+            "status",
+            "updated_at",
+            postgresql_where=text("status IN ('queued', 'running')"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)

@@ -33,11 +33,13 @@ def test_scheduler_enqueues_syncs_on_the_configured_interval() -> None:
         "jira-tick",
         "stetho-tag",
         "testcase-reports",
+        "review-orphans",
     }
     assert str(jobs["evidence-drafts"].trigger.timezone) == "Asia/Ho_Chi_Minh"
     assert jobs["command-cleanup"].trigger.interval.total_seconds() == 3600
     assert jobs["enqueue-syncs"].trigger.interval.total_seconds() == 30 * 60
     assert jobs["telegram-tick"].trigger.interval.total_seconds() == 7
+    assert jobs["review-orphans"].trigger.interval.total_seconds() == 5 * 60
     assert str(jobs["aggregate-week"].trigger.timezone) == "Asia/Ho_Chi_Minh"
     assert jobs["aggregate-month"].args == ("month",)
 
