@@ -10,7 +10,7 @@ from statistics import median
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import exists, func, select, tuple_
 from sqlalchemy.orm import Session
 
 from app.api.security import Principal
@@ -22,6 +22,7 @@ from app.models import (
     TaskGitLink,
     TaskHistory,
     TaskLink,
+    TaskPriority,
     TaskSpace,
     TaskStatus,
     TaskVersion,
@@ -387,16 +388,39 @@ def overview_row(
     fc: dict[str, Any] | None = None
     if sprint is not None:
         fc = forecast(session, sprint, reports.sprint_tasks(session, sprint.id), done, tz)
-    open_tasks = list(
-        session.scalars(
-            select(Task).where(
+    # Counted in SQL (review: no loading every open task of every dự án): the open bugs at the
+    # "highest" level, and critical findings only over open tasks that have code linked.
+    still_open = Task.status_id.not_in(done) if done else Task.id.is_not(None)
+    highest = int(
+        session.scalar(
+            select(func.count())
+            .select_from(Task)
+            .join(
+                TaskPriority,
+                (TaskPriority.business_project_id == Task.business_project_id)
+                & (TaskPriority.key == Task.priority),
+            )
+            .where(
                 Task.business_project_id == bp.id,
-                Task.status_id.not_in(done) if done else Task.id.is_not(None),
+                still_open,
+                Task.type == "bug",
+                TaskPriority.level == "highest",
+            )
+        )
+        or 0
+    )
+    coded = list(
+        session.scalars(
+            select(Task.id)
+            .where(Task.business_project_id == bp.id, still_open)
+            .where(
+                exists().where(
+                    TaskGitLink.task_id == Task.id, TaskGitLink.kind.in_(("commit", "mr"))
+                )
             )
         )
     )
-    highest = _highest_bugs(session, bp.id, open_tasks)
-    summaries = service.git_summaries(session, [t.id for t in open_tasks])
+    summaries = service.git_summaries(session, coded)
     critical = sum(int(s["open_critical"]) for s in summaries.values())
     projected = fc["projected_pct"] if fc else None
     return {
