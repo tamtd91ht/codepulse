@@ -284,3 +284,17 @@ export function ReleaseModal({ version, onClose, onDone }: { version: TaskVersio
     </Modal>
   );
 }
+
+/** On the versions list: ready to release, or what holds it back (§20.0). */
+export function ReadinessPill({ versionId }: { versionId: number }) {
+  const got = useApi<Readiness>(`/tasks/versions/${versionId}/readiness`);
+  const r = got.data;
+  if (!r) return null;
+  if (r.ready) return <Pill tone="good">Sẵn sàng</Pill>;
+  const missing = r.checks.filter((c) => !c.ok);
+  return (
+    <Pill tone="warn">
+      <span title={missing.map((c) => `${c.label}: ${c.count}`).join(" · ")}>Chưa sẵn sàng ({missing.length} mục)</span>
+    </Pill>
+  );
+}

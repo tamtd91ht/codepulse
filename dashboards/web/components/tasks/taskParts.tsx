@@ -80,8 +80,9 @@ export const RESOLUTION_LABEL: Record<TaskResolution, string> = {
   wont_do: "Không làm",
   duplicate: "Trùng",
   cannot_reproduce: "Không tái hiện được",
+  obsolete: "Lỗi thời",
 };
-export const RESOLUTIONS: TaskResolution[] = ["done", "wont_do", "duplicate", "cannot_reproduce"];
+export const RESOLUTIONS: TaskResolution[] = ["done", "wont_do", "duplicate", "cannot_reproduce", "obsolete"];
 
 export const CATEGORY_LABEL: Record<TaskCategory, string> = { todo: "Cần làm", doing: "Đang làm", done: "Xong" };
 

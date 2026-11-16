@@ -383,4 +383,12 @@ def may_record(principal: Principal, bp_id: int, assignees: Iterable[int | None]
 
     if tc.may_run(principal, bp_id):
         return True
-    return tc.may_view(principal, bp_id) and principal.user_id in {a for a in assignees if a}
+    people = {a for a in assignees if a}
+    if not tc.may_view(principal, bp_id):
+        return False
+    if principal.user_id in people:
+        return True
+    # "team" (docs/specs/31 §20.0): tests assigned to the people one leads or manages.
+    return principal.scope("tests.run") == "team" and bool(
+        people & principal.team_people("tests.run")
+    )

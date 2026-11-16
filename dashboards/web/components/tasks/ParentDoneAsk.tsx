@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Modal } from "@/components/CriteriaParts";
 import { Message } from "@/components/ui";
 import { api } from "@/lib/api";
+import type { TaskResolution } from "@/lib/types";
 
 import { errorText, refreshTasks } from "./taskParts";
 
@@ -28,7 +29,7 @@ export function ParentDoneAsk({
 }: {
   taskKey: string;
   items: OpenSubtasks["items"];
-  resolution?: "done" | "wont_do" | "duplicate" | "cannot_reproduce";
+  resolution?: TaskResolution;
   onClose: () => void;
 }) {
   const [busy, setBusy] = useState(false);

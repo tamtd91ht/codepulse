@@ -31,6 +31,17 @@ import { TaskAutomation } from "./TaskAutomation";
 
 /* Cài đặt (§13, tasks.manage): key, types, statuses and their transitions, priorities (§18), git rules, custom fields. */
 
+/** Default English status names → the Vietnamese ones new spaces get (docs/specs/31 §20.0). */
+const VI_NAME: Record<string, string> = {
+  "to do": "Cần làm",
+  todo: "Cần làm",
+  "in progress": "Đang làm",
+  "in review": "Đang review",
+  review: "Đang review",
+  done: "Xong",
+  "won't do": "Không làm",
+};
+
 export const KEY_RE = /^[A-Z][A-Z0-9]{1,9}$/;
 
 const DEFAULT_RULES: TaskRules = {
@@ -399,6 +410,16 @@ function StatusesCard({ space }: { space: TaskSpace }) {
         >
           Thêm trạng thái
         </button>
+        {items.some((s) => VI_NAME[s.name.trim().toLowerCase()]) && (
+          <button
+            type="button"
+            className="ghost"
+            title="Đổi To Do / In Progress / In Review / Done sang tiếng Việt; smart commit #done, #in-progress vẫn dùng được"
+            onClick={() => setItems((list) => list.map((s) => ({ ...s, name: VI_NAME[s.name.trim().toLowerCase()] ?? s.name })))}
+          >
+            Đổi tên sang tiếng Việt
+          </button>
+        )}
         <button type="button" className="ghost" disabled={!dirty || busy} onClick={() => (setItems(initial), setMove({}))}>
           Hoàn tác
         </button>

@@ -13,6 +13,8 @@ import type { Me, TaskFilter, TaskPage, TaskSpace } from "@/lib/types";
 import {
   GitBadge,
   priorityList,
+  RESOLUTION_LABEL,
+  RESOLUTIONS,
   PersonAvatar,
   RowPriority,
   StatusPill,
@@ -34,10 +36,10 @@ import { SmartFilter } from "./SmartFilter";
 /* Danh sách (§13): every field as a filter, saved filters, sortable columns, bulk changes, paging. */
 
 // category and updated_from have no control of their own: only "Lọc nhanh" (§19.8) sets them.
-const FILTER_KEYS = ["q", "status", "type", "assignee", "priority", "sprint", "version", "label", "due", "category", "updated_from"] as const;
+const FILTER_KEYS = ["q", "status", "type", "assignee", "priority", "sprint", "version", "label", "due", "category", "updated_from", "resolution"] as const;
 type FilterKey = (typeof FILTER_KEYS)[number];
 type Filters = Record<FilterKey, string>;
-const NO_FILTERS: Filters = { q: "", status: "", type: "", assignee: "", priority: "", sprint: "", version: "", label: "", due: "", category: "", updated_from: "" };
+const NO_FILTERS: Filters = { q: "", status: "", type: "", assignee: "", priority: "", sprint: "", version: "", label: "", due: "", category: "", updated_from: "", resolution: "" };
 
 export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | undefined; onOpen: (key: string) => void }) {
   const bp = space.business_project_id;
@@ -194,6 +196,17 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
               {priorityList(space).map((p) => (
                 <option key={p.key} value={p.key}>
                   {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="rq-field">
+            <span className="rq-label">Lý do đóng</span>
+            <select value={filters.resolution} onChange={(e) => set("resolution", e.target.value)}>
+              <option value="">Mọi lý do</option>
+              {RESOLUTIONS.map((r) => (
+                <option key={r} value={r}>
+                  {RESOLUTION_LABEL[r]}
                 </option>
               ))}
             </select>

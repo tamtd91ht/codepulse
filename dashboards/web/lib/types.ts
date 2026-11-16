@@ -2711,6 +2711,8 @@ export interface TaskReports {
   cycle_time: { median_h: number | null; p85_h: number | null; count: number; skipped?: number };
   by_status: { status: TaskStatusRef | string; count: number }[];
   /** docs/specs/31 §18.3: per priority, in the dự án's order. */
+  /** §20.0: tasks closed in the range, per resolution. */
+  by_resolution?: Partial<Record<TaskResolution, number>>;
   by_priority?: { priority: TaskPriorityDef; open: number; overdue: number; created: number; resolved: number; open_points: number }[];
   by_assignee: { user: TaskPerson | null; open: number; done: number; points: number }[];
   worklog: { user: TaskPerson | null; minutes: number }[];
@@ -2727,7 +2729,7 @@ export interface TaskEpic {
   points_open: number;
 }
 
-export type TaskResolution = "done" | "wont_do" | "duplicate" | "cannot_reproduce";
+export type TaskResolution = "done" | "wont_do" | "duplicate" | "cannot_reproduce" | "obsolete";
 
 export interface TaskVersion {
   id: number;

@@ -54,6 +54,7 @@ RESOLUTION_LABELS = {
     "wont_do": "Không làm",
     "duplicate": "Trùng",
     "cannot_reproduce": "Không tái hiện được",
+    "obsolete": "Lỗi thời",
 }
 # Types whose story points count for a sprint (epics hold their children's; sub-tasks are part
 # of their parent's), docs/specs/31 §19.1.
@@ -126,9 +127,20 @@ def may(p: Principal, right: str, task: Task) -> bool:
         return True
     if scope == "project" and p.can_manage_project(bp_id):
         return True
+    # "team" (§20.0): tasks reported by or assigned to the people one leads or manages, in a
+    # dự án one sees (checked above); it also covers one's own.
+    if scope == "team":
+        people = p.team_people(f"tasks.{right}")
+        mine_team = (
+            (task.reporter_id,) if right == "delete" else (task.reporter_id, task.assignee_id)
+        )
+        if any(u is not None and u in people for u in mine_team):
+            return True
     # "project" also covers one's own tasks elsewhere, as tasks.edit always did; not for delete
     # and moderate, which needed managing the dự án before they were split out.
-    if scope != "own" and not (scope == "project" and right not in ("delete", "moderate")):
+    if scope not in ("own", "team") and not (
+        scope == "project" and right not in ("delete", "moderate")
+    ):
         return False
     mine = (task.reporter_id,) if right == "delete" else (task.reporter_id, task.assignee_id)
     return p.user_id is not None and p.user_id in mine

@@ -290,3 +290,64 @@ def test_completing_a_sprint_keeps_sub_tasks_with_their_parent(
 
     assert sprint_of(open_parent["key"]) == s2 and sprint_of(done_child["key"]) == s2
     assert sprint_of(done_parent["key"]) == s1 and sprint_of(open_child["key"]) == s1
+
+
+def test_round2_trust_move_resolution_velocity_and_team_scope(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    """docs/specs/31 §20.0: the Board's move validates the resolution, "obsolete" closes without
+    output, velocity counts delivered work only, the Lead's "team" scope reaches their people."""
+    from datetime import date, timedelta
+
+    space = enable(client, world, as_user)
+    admin = as_user(world.admin)
+    done = status_of(space, "done")
+    task = create(client, admin, world)
+    bad = client.post(
+        f"{API}/tasks/{task['key']}/move",
+        headers=admin,
+        json={"status_id": done, "resolution": "xyz"},
+    )
+    assert bad.status_code == 422
+    res = client.post(
+        f"{API}/tasks/{task['key']}/move",
+        headers=admin,
+        json={"status_id": done, "resolution": "obsolete"},
+    )
+    assert res.status_code == 200, res.text
+    assert (
+        client.get(f"{API}/tasks/{task['key']}", headers=admin).json()["resolution"] == "obsolete"
+    )
+    listed = client.get(
+        f"{API}/tasks", headers=admin, params={"space": bp_of(world), "resolution": "obsolete"}
+    ).json()
+    assert [t["key"] for t in listed["items"]] == [task["key"]]
+    report = client.get(f"{API}/tasks/spaces/{bp_of(world)}/reports", headers=admin).json()
+    assert report["by_resolution"]["obsolete"] == 1
+    # Velocity: a sprint with one delivered (3 SP) and one won't-do (5 SP) task completes 3.
+    sid = sprint(client, admin, world, "S1")
+    kept = create(client, admin, world, sprint_id=sid, story_points=3)
+    dropped = create(client, admin, world, sprint_id=sid, story_points=5)
+    client.post(f"{API}/tasks/{kept['key']}/transition", headers=admin, json={"status_id": done})
+    client.post(
+        f"{API}/tasks/{dropped['key']}/transition",
+        headers=admin,
+        json={"status_id": done, "resolution": "wont_do"},
+    )
+    window = {
+        "start_date": date.today().isoformat(),
+        "end_date": (date.today() + timedelta(days=7)).isoformat(),
+    }
+    client.post(f"{API}/tasks/sprints/{sid}/start", headers=admin, json=window)
+    closed = client.post(f"{API}/tasks/sprints/{sid}/complete", headers=admin, json={}).json()
+    assert closed["done_points"] == 3
+    report = client.get(f"{API}/tasks/spaces/{bp_of(world)}/reports", headers=admin).json()
+    assert report["velocity"][-1]["completed"] == 3
+    # Team scope: the Lead edits a task assigned to a member of the team they lead (an), not
+    # one of the outsider's.
+    lead = as_user(world.lead)
+    theirs = create(client, admin, world, assignee_id=world.an.id)
+    other = create(client, admin, world, assignee_id=world.outsider.id)
+    assert client.get(f"{API}/tasks/{theirs['key']}", headers=lead).json()["can"]["edit"] is True
+    got = client.get(f"{API}/tasks/{other['key']}", headers=lead).json()
+    assert got["can"]["edit"] is False

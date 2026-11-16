@@ -78,7 +78,7 @@ TaskType = Literal["epic", "story", "task", "bug", "subtask"]
 # A priority key of the dự án (docs/specs/31 §18); checked against its priorities.
 Priority = Annotated[str, Field(min_length=1, max_length=30)]
 Relation = Literal["fixes", "refs"]
-Resolution = Literal["done", "wont_do", "duplicate", "cannot_reproduce"]
+Resolution = Literal["done", "wont_do", "duplicate", "cannot_reproduce", "obsolete"]
 
 
 def viewer(principal: CurrentPrincipal) -> Principal:
@@ -173,6 +173,8 @@ class TransitionIn(BaseModel):
 class MoveIn(BaseModel):
     status_id: int | None = None
     sprint_id: int | None = None
+    # Into a "done" status (docs/specs/31 §20.0, R3): why; any other value is a 422.
+    resolution: Resolution | None = None
     before_key: str | None = None
     after_key: str | None = None
     # Distinguishes "to the backlog" (null) from "sprint untouched" (absent).
@@ -445,6 +447,7 @@ def _list_query(
     priority: list[str],
     label: list[str],
     component: list[str],
+    resolution: list[str],
     sprint: str | None,
     version: int | None,
     parent: str | None,
@@ -492,6 +495,8 @@ def _list_query(
         query = query.where(Task.labels.contains([one]))
     for one in component:
         query = query.where(Task.components.contains([one]))
+    if resolution:  # §20.0: closed tasks by why they were closed
+        query = query.where(Task.resolution.in_(resolution))
     if sprint == "backlog":
         query = query.where(Task.sprint_id.is_(None))
     elif sprint == "active":
@@ -541,6 +546,7 @@ def list_tasks(
     priority: Annotated[list[str], Query()] = [],  # noqa: B006
     label: Annotated[list[str], Query()] = [],  # noqa: B006
     component: Annotated[list[str], Query()] = [],  # noqa: B006
+    resolution: Annotated[list[str], Query()] = [],  # noqa: B006
     sprint: str | None = None,
     version: int | None = None,
     parent: str | None = None,
@@ -564,6 +570,7 @@ def list_tasks(
         priority=priority,
         label=label,
         component=component,
+        resolution=resolution,
         sprint=sprint,
         version=version,
         parent=parent,
@@ -905,7 +912,13 @@ def _sprint_out(
         "task_count": len(held),
         "done_tasks": sum(1 for t in held if t.status_id in done_ids),
         "points": round(points, 1),
-        "done_points": round(sum(reports.points(t) for t in held if t.status_id in done_ids), 1),
+        # Delivered only (§20.0): a task closed as won't do / duplicate / … is not velocity.
+        "done_points": round(
+            sum(
+                reports.points(t) for t in held if t.status_id in done_ids and reports.delivered(t)
+            ),
+            1,
+        ),
     }
 
 
@@ -1537,7 +1550,7 @@ def move_task(key: str, body: MoveIn, principal: Viewer, session: SessionDep) ->
         status = session.get(TaskStatus, body.status_id)
         if status is None or status.business_project_id != task.business_project_id:
             raise HTTPException(422, "trạng thái không thuộc dự án")
-        ts.set_status(session, task, status, principal.user_id)
+        ts.set_status(session, task, status, principal.user_id, resolution=body.resolution)
 
     def near(k: str | None) -> Task | None:
         if not k:

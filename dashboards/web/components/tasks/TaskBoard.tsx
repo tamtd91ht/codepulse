@@ -6,7 +6,7 @@ import { type MultiOption, MultiSelect } from "@/components/MultiSelect";
 import { Alert, Avatar, EmptyState, Loading } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
-import type { Me, TaskPage, TaskPerson, TaskRow, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
+import type { Me, TaskPage, TaskPerson, TaskResolution, TaskRow, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
 
 import { DensityToggle } from "./DensityToggle";
 import {
@@ -23,6 +23,8 @@ import {
   confirmDone,
   errorText,
   personName,
+  RESOLUTION_LABEL,
+  RESOLUTIONS,
   priorityList,
   refreshTasks,
   sortedStatuses,
@@ -188,6 +190,17 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
   const [quick, setQuick] = useState<Record<number, string>>({});
   const [quickBusy, setQuickBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The task just dropped into Done: closed as "Đã xong", another reason one click away.
+  const [closed, setClosed] = useState<string | null>(null);
+  async function reclose(key: string, resolution: TaskResolution) {
+    try {
+      await api.patch(`/tasks/${encodeURIComponent(key)}`, { resolution });
+      await refreshTasks();
+    } catch (e) {
+      setError(`Lỗi: ${errorText(e)}`);
+    }
+    setClosed(null);
+  }
   const [confirmEl, ask] = useConfirm();
 
   const labels = useMemo(() => [...new Set((rows ?? []).flatMap((r) => r.labels ?? []))].sort(), [rows]);
@@ -298,6 +311,7 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
     setError(null);
     try {
       await api.post(`/tasks/${encodeURIComponent(key)}/move`, { status_id: statusId, before_key, after_key });
+      if (target.category === "done" && task.status.category !== "done") setClosed(key);
     } catch (e) {
       setError(`Lỗi: ${errorText(e)}`);
       setLocal(null);
@@ -386,6 +400,16 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
           "Chưa có sprint đang chạy: board hiện mọi task chưa xong và task xong trong 14 ngày qua."
         )}
       </p>
+      {closed && (
+        <Alert tone="success" onClose={() => setClosed(null)}>
+          {closed} đã đóng với lý do “Đã xong”. Lý do khác:{" "}
+          {RESOLUTIONS.filter((r) => r !== "done").map((r) => (
+            <button key={r} type="button" className="link sm" onClick={() => void reclose(closed, r)}>
+              {RESOLUTION_LABEL[r]}
+            </button>
+          ))}
+        </Alert>
+      )}
       {error && (
         <Alert tone="error" onClose={() => setError(null)}>
           {error}

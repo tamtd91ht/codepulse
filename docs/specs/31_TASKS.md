@@ -659,3 +659,23 @@ sprint đóng, tuỳ chọn thông báo ở trang Thông báo): đợt 2 sửa c
 | 2.4 Nhân rộng | Mẫu lưu được, mẫu Mobile, Tình trạng bật Task, hướng dẫn bật đủ bước | 20.4 |
 | 2.5 Thông báo & quy tắc | Kênh theo sự kiện, Bug Cao nhất bỏ qua giờ yên lặng, gom 10 phút, tóm tắt 17:30 Telegram, tạm ẩn, nhật ký + chạy thử, 5 quy tắc mới | 20.5 |
 | 2.6 Đánh giá sprint | Tóm tắt khi đóng sprint + trang retro, thay đổi phạm vi, dự báo có khoảng, xu hướng 4 sprint, trạng thái rỗng | 20.6 |
+
+### 20.0 Tin cậy & thấy được (migration `a1c3e5f7b9d1`)
+- **R3:** `POST /tasks/{key}/move` nhận `resolution` và kiểm tra như `transition` (giá trị lạ → 422; trước
+  đây bị bỏ qua và lưu `done`). Board: kéo vào nhóm Xong đóng với "Đã xong" ngay, kèm thanh "Lý do khác:
+  Không làm · Trùng · …" đổi bằng một bấm (không hỏi trước).
+- **`obsolete` (Lỗi thời)** thêm vào lý do đóng; như các lý do khác `done`, không phải đầu ra (DPI bỏ qua).
+- **Velocity, sức chứa, SP xong của sprint chỉ tính lý do `done`** (task đóng không làm không còn đẩy velocity).
+  Danh sách lọc `resolution=`; Báo cáo có thẻ "Đóng theo lý do".
+- **R1 – phạm vi Team:** `tasks.edit/assign/transition/delete/worklog/link` (own · team · project · all),
+  `tasks.moderate` (team · project · all) và `tests.run` (team · project · all). Team = task do người mình
+  lead hoặc manage tạo / được giao (delete: tạo), trong dự án mình xem được; với `tests.run` là ghi kết quả
+  cho test giao cho người trong team. Bộ quyền Lead có sẵn nhận các quyền này ở mức team (migration chỉ
+  thêm, không ghi đè chỉnh sửa của admin). Quyết định: **không** thêm team cho `tests.edit/approve/manage/
+  delete` (testcase là tài sản chung của dự án, quyền kiểm theo dự án ở mọi nơi) và `tasks.sprint` (sprint
+  thuộc dự án).
+- **R2:** vai trò tester = bộ quyền "Tester" gán cho team (21 §11, đợt 1) + đồng bộ team từ nhóm GitLab (§20.7).
+- **Thấy được:** nút "Đổi tên sang tiếng Việt" ở Cài đặt › Trạng thái (To Do → Cần làm, In Progress → Đang làm,
+  In Review → Đang review, Done → Xong; smart commit vẫn nhận `#done`, `#in-progress`); danh sách Phiên bản
+  hiện "Sẵn sàng / Chưa sẵn sàng (n mục)". Nút Ctrl+K và `?` trên thanh trên cùng: §20.2; áp mẫu cho dự án đã
+  bật: §20.4.

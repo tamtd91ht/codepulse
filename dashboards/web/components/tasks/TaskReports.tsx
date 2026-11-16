@@ -9,7 +9,7 @@ import { qs, useApi } from "@/lib/api";
 import { dayLabel, localDay, shiftDays } from "@/lib/format";
 import type { TaskBurndown, TaskReports as Reports, TaskSpace } from "@/lib/types";
 
-import { PersonAvatar, PriorityIcon, fmtMinutes, personName, useSprints } from "./taskParts";
+import { PersonAvatar, PriorityIcon, RESOLUTION_LABEL, RESOLUTIONS, fmtMinutes, personName, useSprints } from "./taskParts";
 
 /** Báo cáo (§13): burndown of a sprint, velocity, created vs resolved, cycle time, by status / person, worklog. */
 export function TaskReports({ space }: { space: TaskSpace }) {
@@ -194,6 +194,26 @@ export function TaskReports({ space }: { space: TaskSpace }) {
           )}
         </Card>
       </div>
+
+      {r && r.by_resolution && (
+        <Card title="Đóng theo lý do" id="tk-by-resolution" subtitle="Task đóng trong khoảng đã chọn. Chỉ “Đã xong” tính vào velocity và cycle time.">
+          <ul className="tk-bars">
+            {RESOLUTIONS.map((k) => {
+              const n = r.by_resolution?.[k] ?? 0;
+              const max = Math.max(...RESOLUTIONS.map((x) => r.by_resolution?.[x] ?? 0), 1);
+              return (
+                <li key={k}>
+                  <span className="tk-bar-label">{RESOLUTION_LABEL[k]}</span>
+                  <span className="tk-bar-track">
+                    <span className="tk-bar-fill" style={{ width: `${(n / max) * 100}%` }} />
+                  </span>
+                  <span className="num">{n}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </Card>
+      )}
 
       <Card title="Theo ưu tiên" id="tk-by-priority" subtitle="Task đang mở theo mức ưu tiên của dự án; tạo / xong trong khoảng đã chọn" flush>
         {!r ? (

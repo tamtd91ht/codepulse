@@ -32,7 +32,7 @@ PRIORITY_COLORS = ("red", "orange", "amber", "green", "blue", "purple", "gray")
 CATEGORIES = ("todo", "doing", "done")
 # Why a task left work (docs/specs/31 §19.1): set on entering a "done" status, cleared on leaving.
 # Only "done" counts as delivered (DPI, cycle time); the others close it without output.
-RESOLUTIONS = ("done", "wont_do", "duplicate", "cannot_reproduce")
+RESOLUTIONS = ("done", "wont_do", "duplicate", "cannot_reproduce", "obsolete")
 LINK_KINDS = ("blocks", "relates", "duplicates", "clones")
 GIT_KINDS = ("branch", "commit", "mr")
 RELATIONS = ("fixes", "refs")

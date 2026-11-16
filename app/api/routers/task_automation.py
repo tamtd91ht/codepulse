@@ -79,7 +79,7 @@ def get_open_subtasks(key: str, principal: Viewer, session: SessionDep) -> dict[
 
 
 class CloseSubtasksIn(BaseModel):
-    resolution: Literal["done", "wont_do", "duplicate", "cannot_reproduce"] = "done"
+    resolution: Literal["done", "wont_do", "duplicate", "cannot_reproduce", "obsolete"] = "done"
 
 
 @router.post("/tasks/{key}/close-subtasks")

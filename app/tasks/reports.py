@@ -20,6 +20,7 @@ from app.models import (
     TaskWorklog,
     User,
 )
+from app.models.tasks import RESOLUTIONS
 from app.tasks import service
 
 TYPE_TITLES = {
@@ -40,6 +41,12 @@ def points(task: Task) -> float:
 
 
 _points = points
+
+
+def delivered(task: Task) -> bool:
+    """Closed as delivered (resolution "done"; none on old rows), docs/specs/31 §20.0: what
+    velocity, capacity and done points count."""
+    return (task.resolution or "done") == "done"
 
 
 def _day(at: datetime | None, tz: ZoneInfo) -> date | None:
@@ -106,7 +113,7 @@ def report(session: Session, bp_id: int, first: date, last: date, tz: ZoneInfo) 
     velocity = []
     for sprint in reversed(sprints):
         held = [t for t in tasks if t.sprint_id == sprint.id]
-        completed = sum(_points(t) for t in held if t.status_id in done)
+        completed = sum(_points(t) for t in held if t.status_id in done and delivered(t))
         velocity.append(
             {
                 "sprint_id": sprint.id,
@@ -232,6 +239,15 @@ def report(session: Session, bp_id: int, first: date, last: date, tz: ZoneInfo) 
         },
         "by_status": by_status,
         "by_priority": by_priority,
+        # §20.0: tasks closed in the range by why (only "done" is delivery).
+        "by_resolution": {
+            r: sum(
+                1
+                for t in tasks
+                if t.resolved_at and lo <= t.resolved_at < hi and (t.resolution or "done") == r
+            )
+            for r in RESOLUTIONS
+        },
         "by_assignee": by_assignee,
         "worklog": worklog,
     }
@@ -366,5 +382,9 @@ def capacity(session: Session, bp_id: int) -> float | None:
     done = _done_ids(session, bp_id)
     total = 0.0
     for sprint in closed:
-        total += sum(points(t) for t in sprint_tasks(session, sprint.id) if t.status_id in done)
+        total += sum(
+            points(t)
+            for t in sprint_tasks(session, sprint.id)
+            if t.status_id in done and delivered(t)
+        )
     return round(total / len(closed), 1)

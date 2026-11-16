@@ -11,7 +11,7 @@ import { date } from "@/lib/format";
 import type { TaskSpace, TaskVersion } from "@/lib/types";
 
 import { errorText, refreshTasks, useConfirm, useVersions } from "./taskParts";
-import { ReleaseModal } from "./TaskQuality";
+import { ReadinessPill, ReleaseModal } from "./TaskQuality";
 
 /** Phiên bản (§13): versions of the dự án, release, release notes. */
 export function TaskVersions({ space }: { space: TaskSpace }) {
@@ -91,7 +91,15 @@ export function TaskVersions({ space }: { space: TaskSpace }) {
                       <strong>{v.name}</strong>
                       {v.description && <div className="small muted">{v.description}</div>}
                     </td>
-                    <td>{v.released_at ? <Pill tone="good">Đã phát hành {date(v.released_at)}</Pill> : <Pill>Chưa phát hành</Pill>}</td>
+                    <td>
+                      {v.released_at ? (
+                        <Pill tone="good">Đã phát hành {date(v.released_at)}</Pill>
+                      ) : (
+                        <>
+                          <Pill>Chưa phát hành</Pill> <ReadinessPill versionId={v.id} />
+                        </>
+                      )}
+                    </td>
                     <td className="nowrap">{v.release_date ? date(v.release_date) : "—"}</td>
                     <td className="num">{v.tasks === undefined ? "—" : `${v.done ?? 0}/${v.tasks}`}</td>
                     <td className="tk-actions-col">
