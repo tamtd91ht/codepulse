@@ -52,3 +52,18 @@ class UserPermissionSet(TimestampMixin, Base):
         ForeignKey("permission_sets.id", ondelete="CASCADE"), primary_key=True, index=True
     )
     granted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class TeamPermissionSet(TimestampMixin, Base):
+    """A custom set given to everyone currently in a team (docs/specs/21 §11, e.g. the QA team
+    holds "Tester"): one rule instead of assigning each person."""
+
+    __tablename__ = "team_permission_sets"
+
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    set_id: Mapped[int] = mapped_column(
+        ForeignKey("permission_sets.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    granted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

@@ -27,7 +27,9 @@ from app.models import (
     PermissionSet,
     PermissionSetItem,
     ProjectGrant,
+    Team,
     TeamMember,
+    TeamPermissionSet,
     User,
     UserPermissionSet,
 )
@@ -101,6 +103,20 @@ class SetUsersIn(BaseModel):
     confirm_sensitive: bool = False
 
 
+class SetTeamsIn(BaseModel):
+    """The teams given a custom set: everyone currently in them holds it (§11)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    team_ids: list[int]
+    confirm_sensitive: bool = False
+
+
+class TeamRefOut(BaseModel):
+    id: int
+    name: str
+
+
 class UserSetsIn(BaseModel):
     """The custom sets given to one person (Admin, Người & Team, Phân quyền)."""
 
@@ -150,6 +166,8 @@ class SetOut(BaseModel):
     member_count: int
     # The people given a custom set (a built-in one follows its role: empty).
     members: list[PersonOut]
+    # The teams given a custom set (docs/specs/21 §11).
+    teams: list[TeamRefOut] = []
 
 
 class SourceOut(BaseModel):
@@ -168,7 +186,7 @@ class HeldSetOut(BaseModel):
     id: int
     name: str
     auto_role: str | None
-    via: str  # "role" | "given" | "personal"
+    via: str  # "role" | "given" | "personal" | "team"
 
 
 class UserPermissionsOut(BaseModel):
@@ -265,6 +283,18 @@ def _given(session: Session, set_id: int) -> set[int]:
     )
 
 
+def _teams_of(session: Session, set_id: int) -> list[TeamRefOut]:
+    return [
+        TeamRefOut(id=t.id, name=t.name)
+        for t in session.scalars(
+            select(Team)
+            .join(TeamPermissionSet, TeamPermissionSet.team_id == Team.id)
+            .where(TeamPermissionSet.set_id == set_id)
+            .order_by(Team.name)
+        )
+    ]
+
+
 def _get_set(session: Session, set_id: int) -> PermissionSet:
     row = session.get(PermissionSet, set_id)
     # A person's own set is edited on their profile only (§9): not a set for these endpoints.
@@ -324,7 +354,17 @@ def _within_own(principal: Principal, granted: dict[str, str]) -> None:
 def _holds(principal: Principal, row: PermissionSet, session: Session) -> bool:
     if row.auto_role is not None:
         return row.auto_role in _auto_roles(principal)
-    return principal.user_id in _given(session, row.id)
+    if principal.user_id in _given(session, row.id):
+        return True
+    # Through a team they are in (§11).
+    return bool(
+        session.scalar(
+            select(TeamPermissionSet.team_id).where(
+                TeamPermissionSet.set_id == row.id,
+                TeamPermissionSet.team_id.in_(sorted(principal.own_teams)),
+            )
+        )
+    )
 
 
 def _set_out(
@@ -346,6 +386,7 @@ def _set_out(
         items=[ItemIO(permission=k, scope=v) for k, v in items.items()],
         member_count=count,
         members=members,
+        teams=_teams_of(session, row.id) if row.auto_role is None else [],
     )
 
 
@@ -581,6 +622,63 @@ def set_permission_set_users(
     return _one_out(session, settings, row)
 
 
+@router.put("/admin/permission-sets/{set_id}/teams")
+def set_permission_set_teams(
+    set_id: int,
+    body: SetTeamsIn,
+    principal: PermissionsAdmin,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> SetOut:
+    """Replace the teams given a custom set (docs/specs/21 §11): whoever is in such a team now
+    holds it, joiners get it, leavers lose it. Same rules as giving it to people."""
+    row = _get_set(session, set_id)
+    if row.builtin or row.auto_role is not None:
+        raise HTTPException(409, "bộ có sẵn tự gán theo vai trò, không gán cho team")
+    wanted = set(body.team_ids)
+    known = set(session.scalars(select(Team.id).where(Team.id.in_(wanted)))) if wanted else set()
+    if missing := sorted(wanted - known):
+        raise HTTPException(422, f"không có team: {', '.join(map(str, missing))}")
+    current = set(
+        session.scalars(select(TeamPermissionSet.team_id).where(TeamPermissionSet.set_id == row.id))
+    )
+    added, removed = wanted - current, current - wanted
+    items = _items(session, row.id)
+    if (added or removed) and not principal.is_admin:
+        mine = set(
+            session.scalars(
+                select(TeamMember.team_id).where(TeamMember.user_id == principal.user_id)
+            )
+        )  # any membership, past or scheduled: no handing oneself rights through a team
+        if added & mine:
+            raise HTTPException(403, "không gán bộ quyền cho team của chính mình")
+        _within_own(principal, items)
+    if added:
+        _confirm_sensitive(items, body.confirm_sensitive)
+    if removed:
+        session.execute(
+            delete(TeamPermissionSet).where(
+                TeamPermissionSet.set_id == row.id, TeamPermissionSet.team_id.in_(removed)
+            )
+        )
+    session.add_all(
+        TeamPermissionSet(team_id=tid, set_id=row.id, granted_by=principal.user_id)
+        for tid in sorted(added)
+    )
+    if added or removed:
+        audit(
+            session,
+            principal.user_id,
+            "permission_set.assign_team",
+            f"permission_set:{row.id}",
+            name=row.name,
+            added=sorted(added),
+            removed=sorted(removed),
+        )
+    session.commit()
+    return _one_out(session, settings, row)
+
+
 @router.get("/admin/users/{user_id}/permissions")
 def user_permissions(
     user_id: int, principal: PermissionsAdmin, session: SessionDep, settings: SettingsDep
@@ -611,11 +709,21 @@ def user_permissions(
     held = load_principal(session, user.id, settings)
     roles = _auto_roles(held)
     given = select(UserPermissionSet.set_id).where(UserPermissionSet.user_id == user.id)
+    via_team = set(
+        session.scalars(
+            select(TeamPermissionSet.set_id).where(
+                TeamPermissionSet.team_id.in_(sorted(held.own_teams))
+            )
+        )
+    )
+    given_ids = set(session.scalars(given))
     by_role: dict[str, int] = {r: i for i, r in enumerate(AUTO_ROLES)}
     sets = sorted(
         session.scalars(
             select(PermissionSet).where(
-                PermissionSet.auto_role.in_(roles) | PermissionSet.id.in_(given)
+                PermissionSet.auto_role.in_(roles)
+                | PermissionSet.id.in_(given)
+                | PermissionSet.id.in_(sorted(via_team))
             )
         ),
         key=lambda s: (s.auto_role is None, by_role.get(s.auto_role or "", 99), s.name.lower()),
@@ -640,6 +748,8 @@ def user_permissions(
                 if s.auto_role is not None
                 else "personal"
                 if s.personal_user_id is not None
+                else "team"
+                if s.id in via_team and s.id not in given_ids
                 else "given",
             )
             for s in sets

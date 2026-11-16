@@ -223,10 +223,9 @@ def smart_commit(
     if commands.comment and service.may(principal, "comment", task):
         session.add(TaskComment(task_id=task.id, author_id=author_id, body=commands.comment))
         service.log(session, task, author_id, "comment", None, "(smart commit)", "smart_commit")
-    by_slug = {tk.slug(s.name): s for s in service.statuses_of(session, space.business_project_id)}
     may_move = service.may(principal, "transition", task)
     for word in commands.statuses if may_move else ():
-        status = by_slug.get(word)
+        status = service.status_by_word(session, space, word)
         if status is not None:
             try:
                 service.set_status(session, task, status, author_id, "smart_commit")

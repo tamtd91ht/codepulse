@@ -16,6 +16,7 @@ import type {
   TaskPriorityColor,
   TaskPriorityDef,
   TaskPriorityLevel,
+  TaskResolution,
   TaskRow,
   TaskSpace,
   TaskStatus,
@@ -72,6 +73,15 @@ export function defaultPriority(space: Pick<TaskSpace, "priorities"> | null | un
   const list = priorityList(space);
   return (list.find((p) => p.is_default) ?? list[Math.floor(list.length / 2)]).key;
 }
+
+/** Why a task was closed (docs/specs/31 §19.1); only "done" counts as delivered. */
+export const RESOLUTION_LABEL: Record<TaskResolution, string> = {
+  done: "Đã xong",
+  wont_do: "Không làm",
+  duplicate: "Trùng",
+  cannot_reproduce: "Không tái hiện được",
+};
+export const RESOLUTIONS: TaskResolution[] = ["done", "wont_do", "duplicate", "cannot_reproduce"];
 
 export const CATEGORY_LABEL: Record<TaskCategory, string> = { todo: "Cần làm", doing: "Đang làm", done: "Xong" };
 
@@ -179,8 +189,12 @@ export function RowPriority({ row, withLabel }: { row: Pick<TaskRow, "priority" 
   );
 }
 
-export function StatusPill({ status }: { status: TaskStatusRef | null | undefined }) {
+export function StatusPill({ status, resolution }: { status: TaskStatusRef | null | undefined; resolution?: TaskResolution | null }) {
   if (!status) return <span className="faint">—</span>;
+  // Closed without output (§19.1): say why, not as a success.
+  if (status.category === "done" && resolution && resolution !== "done") {
+    return <Pill>{`${status.name} · ${RESOLUTION_LABEL[resolution]}`}</Pill>;
+  }
   return <Pill tone={status.category === "done" ? "good" : status.category === "doing" ? "info" : undefined}>{status.name}</Pill>;
 }
 

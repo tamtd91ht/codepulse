@@ -15,7 +15,6 @@ from app.models import (
     Sprint,
     Task,
     TaskGitLink,
-    TaskHistory,
     TaskStatus,
     TaskVersion,
     TaskWorklog,
@@ -32,8 +31,15 @@ TYPE_TITLES = {
 }
 
 
-def _points(task: Task) -> float:
+def points(task: Task) -> float:
+    """Story points that count for a sprint: Story, Task and Bug only; an epic's are its
+    children's, a sub-task's are part of its parent's (docs/specs/31 §19.1)."""
+    if task.type not in service.POINTED_TYPES:
+        return 0.0
     return float(task.story_points or 0)
+
+
+_points = points
 
 
 def _day(at: datetime | None, tz: ZoneInfo) -> date | None:
@@ -128,24 +134,19 @@ def report(session: Session, bp_id: int, first: date, last: date, tz: ZoneInfo) 
         flow.append({"day": day.isoformat(), "created": created[day], "resolved": resolved[day]})
         day += timedelta(days=1)
 
-    finished = [t for t in tasks if t.resolved_at and lo <= t.resolved_at < hi]
-    started: dict[int, datetime] = {}
-    if finished:
-        for task_id, at in session.execute(
-            select(TaskHistory.task_id, func.min(TaskHistory.at))
-            .where(TaskHistory.task_id.in_([t.id for t in finished]), TaskHistory.field == "status")
-            .group_by(TaskHistory.task_id)
-        ).all():
-            started[int(task_id)] = at
+    # Cycle time (docs/specs/31 §19.1): delivered tasks ("done" resolution) that went through a
+    # "doing" status, from that first start to done. Straight to Done: counted apart, not as 0.
+    finished = [
+        t
+        for t in tasks
+        if t.resolved_at and lo <= t.resolved_at < hi and (t.resolution or "done") == "done"
+    ]
+    timed = [t for t in finished if t.started_at is not None and t.resolved_at is not None]
     hours = sorted(
-        max(
-            ((t.resolved_at or t.created_at) - (started.get(t.id) or t.created_at)).total_seconds(),
-            0,
-        )
-        / 3600
-        for t in finished
-        if t.created_at
+        max(((t.resolved_at or t.started_at) - t.started_at).total_seconds(), 0) / 3600  # type: ignore[operator]
+        for t in timed
     )
+    skipped = len(finished) - len(timed)
 
     def pct(q: float) -> float | None:
         if not hours:
@@ -223,7 +224,12 @@ def report(session: Session, bp_id: int, first: date, last: date, tz: ZoneInfo) 
     return {
         "velocity": velocity,
         "flow": flow,
-        "cycle_time": {"median_h": pct(0.5), "p85_h": pct(0.85), "count": len(hours)},
+        "cycle_time": {
+            "median_h": pct(0.5),
+            "p85_h": pct(0.85),
+            "count": len(hours),
+            "skipped": skipped,
+        },
         "by_status": by_status,
         "by_priority": by_priority,
         "by_assignee": by_assignee,
@@ -300,3 +306,41 @@ def names(session: Session, ids: set[int]) -> dict[int, str]:
         u.id: u.full_name or u.primary_email or f"#{u.id}"
         for u in session.scalars(select(User).where(User.id.in_(ids)))
     }
+
+
+def epics(session: Session, bp_id: int) -> list[dict[str, Any]]:
+    """Each epic of the dự án with its children (Story / Task / Bug under it): how many are done,
+    story points in all and still open. Rank order, open epics first."""
+    rows = list(
+        session.scalars(
+            select(Task)
+            .where(Task.business_project_id == bp_id, Task.type == "epic")
+            .order_by(Task.rank, Task.id)
+        )
+    )
+    if not rows:
+        return []
+    done = _done_ids(session, bp_id)
+    children: dict[int, list[Task]] = defaultdict(list)
+    for child in session.scalars(
+        select(Task).where(Task.parent_id.in_([e.id for e in rows]), Task.type != "subtask")
+    ):
+        if child.parent_id is not None:
+            children[child.parent_id].append(child)
+    out = []
+    for epic in rows:
+        held = children.get(epic.id, [])
+        finished = [t for t in held if t.status_id in done]
+        out.append(
+            {
+                "key": epic.key,
+                "title": epic.title,
+                "closed": epic.status_id in done,
+                "total": len(held),
+                "done": len(finished),
+                "points": round(sum(points(t) for t in held), 1),
+                "points_open": round(sum(points(t) for t in held if t.status_id not in done), 1),
+            }
+        )
+    out.sort(key=lambda e: bool(e["closed"]))
+    return out

@@ -225,6 +225,7 @@ function SetEditor({
   const [group, setGroup] = useState<string>(catalog.groups[0]?.name ?? "");
   const [confirming, setConfirming] = useState<{ keys: string[]; go: () => void } | null>(null);
   const [assigning, setAssigning] = useState(false);
+  const [assigningTeams, setAssigningTeams] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const dirty =
@@ -312,12 +313,31 @@ function SetEditor({
           }}
         />
       )}
+      {assigningTeams && (
+        <TeamAssignDrawer
+          set={set}
+          busy={busy}
+          onClose={() => setAssigningTeams(false)}
+          onSave={(ids) => {
+            const before = new Set((set.teams ?? []).map((t) => t.id));
+            const added = ids.some((id) => !before.has(id));
+            withConfirm(added ? set.items.map((i) => i.permission) : [], (confirmed) => {
+              setConfirming(null);
+              void act(async () => {
+                await api.put(`/admin/permission-sets/${set.id}/teams`, { team_ids: ids, confirm_sensitive: confirmed });
+                await onSaved();
+                setAssigningTeams(false);
+              }, `Đã cập nhật team được gán "${set.name}".`);
+            });
+          }}
+        />
+      )}
       <Card
         title={set.name}
         subtitle={
           set.auto_role
             ? `Tự gán theo vai trò: ${ROLE_LABEL[set.auto_role] ?? set.auto_role} · ${set.member_count.toLocaleString("vi-VN")} người. Sửa bộ này thì mọi người có vai trò đó đổi theo.`
-            : `Gán tay · ${set.member_count.toLocaleString("vi-VN")} người`
+            : `Gán tay · ${set.member_count.toLocaleString("vi-VN")} người${set.teams?.length ? ` · ${set.teams.length} team` : ""}`
         }
         collapsible={false}
         flush
@@ -332,6 +352,10 @@ function SetEditor({
                 <button type="button" className="sm ghost" onClick={() => setAssigning(true)} disabled={busy}>
                   <Icon name="members" size={14} />
                   Gán người
+                </button>
+                <button type="button" className="sm ghost" onClick={() => setAssigningTeams(true)} disabled={busy}>
+                  <Icon name="members" size={14} />
+                  Gán cho team
                 </button>
                 <IconButton
                   icon="remove"
@@ -366,6 +390,15 @@ function SetEditor({
               <input value={description} onChange={(e) => setDescription(e.target.value)} maxLength={500} />
             </label>
           </div>
+          {!set.builtin && (set.teams?.length ?? 0) > 0 && (
+            <div className="chips" style={{ marginBottom: 0 }}>
+              {(set.teams ?? []).map((t) => (
+                <span key={t.id} className="pill" title="Mọi người đang ở team này có bộ quyền">
+                  Team {t.name}
+                </span>
+              ))}
+            </div>
+          )}
           {!set.builtin && set.members.length > 0 && (
             <div className="chips" style={{ marginBottom: 0 }}>
               {set.members.slice(0, 12).map((m) => (
@@ -692,6 +725,61 @@ function AssignDrawer({
               </label>
             ))}
             {shown.length === 0 && <p className="muted small">Không có ai khớp.</p>}
+          </div>
+        </div>
+      )}
+    </Drawer>
+  );
+}
+
+/** Give a custom set to teams (docs/specs/21 §11): whoever is in them now holds it. */
+function TeamAssignDrawer({
+  set,
+  busy,
+  onClose,
+  onSave,
+}: {
+  set: PermissionSetRow;
+  busy: boolean;
+  onClose: () => void;
+  onSave: (ids: number[]) => void;
+}) {
+  const teams = useApi<{ id: number; name: string; parent_id?: number | null }[]>("/teams");
+  const [chosen, setChosen] = useState<Set<number>>(() => new Set((set.teams ?? []).map((t) => t.id)));
+  const toggle = (id: number) => {
+    const next = new Set(chosen);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setChosen(next);
+  };
+  return (
+    <Drawer
+      title={`Gán "${set.name}" cho team`}
+      width={420}
+      onClose={onClose}
+      actions={
+        <button type="button" className="primary sm" disabled={busy || !teams.data} onClick={() => onSave([...chosen])}>
+          Lưu ({chosen.size})
+        </button>
+      }
+    >
+      {!teams.data ? (
+        <Loading error={teams.error} />
+      ) : (
+        <div style={{ display: "grid", gap: 8 }}>
+          <p className="muted small" style={{ margin: 0 }}>
+            Mọi người đang ở team được chọn có bộ quyền này; ai vào team sau tự có, ai rời team thì mất. Ví dụ: gán “Tester” cho team QA.
+          </p>
+          <div style={{ display: "grid", gap: 2 }}>
+            {[...teams.data]
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((t) => (
+                <label key={t.id} className="inline-check" style={{ padding: "6px 4px" }}>
+                  <input type="checkbox" checked={chosen.has(t.id)} onChange={() => toggle(t.id)} />
+                  <span>{t.name}</span>
+                </label>
+              ))}
+            {teams.data.length === 0 && <p className="muted small">Chưa có team nào.</p>}
           </div>
         </div>
       )}

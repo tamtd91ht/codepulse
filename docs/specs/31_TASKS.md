@@ -379,3 +379,42 @@ Người làm không tự nhận thông báo.
   resolved}]` theo thứ tự mức của dự án: đang mở, quá hạn (đang mở, hạn < hôm nay), story point đang
   mở; tạo mới / xong trong khoảng ngày đã chọn. Tab Báo cáo có bảng **Theo ưu tiên** với thanh tỉ lệ
   theo màu của mức.
+
+## 19. Lộ trình nâng cấp Task (người dùng 2026-11-16: "làm toàn bộ theo đề xuất đi")
+
+Nguồn: tài liệu "CodePulse Task — Định hướng nâng cấp sản phẩm" (16/11/2026) cùng bản phản biện đã
+chốt. Đã bỏ B4 (`/watch` là `PUT`, nút Theo dõi vẫn chạy đúng). Đã sắp lại thứ tự theo phụ thuộc:
+P0 Nền tảng → P1 Thoát Jira → P2 Hằng ngày → P3 Khép vòng chất lượng → P4 Tổng quan & tự động →
+P5 Mở rộng. Mỗi giai đoạn là một mục con bên dưới, ghi cả quyết định đã chốt (người dùng giao toàn quyền quyết).
+
+### 19.1 P0 – Nền tảng (migration `a7c9e1b3d5f8`)
+- **Lý do đóng (resolution)** `done | wont_do | duplicate | cannot_reproduce` trên `tasks`: gán khi vào
+  một trạng thái nhóm Xong (mặc định `done`), xoá khi rời nhóm. Chuyển trạng thái nhận `resolution`
+  (`POST /tasks/{key}/transition`, `PATCH` khi đã đóng; mở thì 409). Giao diện: chọn trạng thái nhóm
+  Xong ở chi tiết task sẽ mở hộp "Lý do đóng" (kèm ghi chú thành bình luận). Kéo thả trên Board dùng
+  `done`. Ô trạng thái hiện "Xong · Không làm". Lịch sử ghi tên lý do.
+- **Bỏ trạng thái "Won't Do":** dự án mới không có trạng thái này. Dự án cũ: task ở trạng thái huỷ
+  ("Won't Do", "Huỷ", "Không làm"… nhóm Xong) sang trạng thái Xong của luật git với `wont_do`;
+  trạng thái huỷ bị xoá, chuyển tiếp trỏ tới nó được gỡ. Dự án không còn trạng thái Xong nào khác thì
+  giữ nguyên.
+- **DPI:** task có lý do ≠ `done` không phải đầu ra (bỏ khỏi `issues`); tên trạng thái huỷ vẫn được
+  nhận cho dữ liệu cũ.
+- **Cycle time:** từ `started_at` (lần đầu vào nhóm Đang làm) tới lúc xong, chỉ task lý do `done`.
+  Task nhảy thẳng vào Xong không tính, đếm riêng (`cycle_time.skipped`). `started_at` và
+  `status_changed_at` (tuổi trong cột, dùng ở P2) được dựng lại từ lịch sử.
+- **Phân cấp:** Epic không lên Board, không là dòng Backlog. Backlog có **thanh Epic** bên trái
+  (`GET /tasks/spaces/{bp}/epics`: số con xong / tổng, SP còn lại; bấm để lọc theo epic). Sub-task **theo
+  sprint và phiên bản của cha**: kế thừa khi tạo, đổi theo khi cha đổi; tự đổi riêng → 422; sửa hàng
+  loạt bỏ qua sub-task cho hai trường này. Migration đồng bộ sub-task hiện có. Sub-task không là dòng
+  Backlog (vẫn là card trên Board; swimlane theo task cha ở P2).
+- **Story point của sprint** (cam kết, burndown, velocity, Backlog) chỉ tính Story / Task / Bug.
+- **Thành phần (components):** hiện và sửa ở chi tiết task, lọc `component=` ở danh sách.
+- **Một ngôn ngữ:** trạng thái mặc định dự án mới là "Cần làm, Đang làm, Đang review, Xong". Dự án cũ
+  giữ tên. Từ smart commit / MCP so với tên đã bỏ dấu (`#dang-lam`), và nhận bí danh của trạng thái theo
+  luật git bất kể tên: `#in-progress #start #doing` → bắt đầu, `#review #in-review` → review,
+  `#done #xong` → xong, `#todo` → nhóm Cần làm.
+- **Phân quyền theo team** (spec 21 §11): bảng `team_permission_sets`; bộ quyền tự tạo gán được cho
+  team (`PUT /admin/permission-sets/{id}/teams`, màn Phân quyền › "Gán cho team"); ai đang ở team có bộ
+  quyền, vào sau tự có, rời thì mất; "Quyền hiệu lực" ghi nguồn `team`. Migration tạo bộ **"Tester"**
+  (viết / chạy testcase mọi dự án xem được, tạo và xử lý task của mình) để gán cho team QA. Thay cho B6
+  (phạm vi Team) và B7 (vai trò tester): Lead quản lý task cả dự án đã có qua Lead/Manager dự án (21 §10).

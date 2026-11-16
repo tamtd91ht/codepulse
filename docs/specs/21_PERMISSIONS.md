@@ -272,3 +272,16 @@ trước và sau đều là **Xem** hoặc **Lead dự án**. Người chọn l�
   quyền `admin.*` (luật §8.8).
 - Token cá nhân gắn một dự án (`token_project`) chỉ quản trị đúng dự án đó.
 - Mọi thay đổi ghi audit như trước; `business_project.grants` ghi thêm `lead` và `manager`.
+
+## 11. Bộ quyền gán cho team (người dùng 2026-11-16, docs/specs/31 §19.1)
+
+- Bảng `team_permission_sets (team_id, set_id, granted_by)`: một bộ quyền tự tạo (không phải bộ có sẵn
+  theo vai trò) gán được cho một hoặc nhiều team. Người **đang** ở team (theo `team_members`, ngày vào /
+  rời) có bộ quyền đó; vào team sau tự có, rời thì mất; không lan sang team con.
+- `PUT /admin/permission-sets/{id}/teams {team_ids, confirm_sensitive}`: thay danh sách team. Cùng luật
+  với gán người: bộ có sẵn → 409; người không phải admin chỉ gán / gỡ trong phạm vi quyền mình có và không
+  gán cho team của chính mình; quyền nhạy cảm cần xác nhận; audit `permission_set.assign_team`.
+- `SetOut.teams` liệt kê team được gán; "Quyền hiệu lực" ghi nguồn `via: "team"`.
+- Bộ **"Tester"** (migration `a7c9e1b3d5f8`, tự tạo, sửa được): xem tổng quan, tài liệu; viết và chạy
+  testcase mọi dự án xem được (`tests.edit`, `tests.run` = all, không xoá / duyệt); Task: xem, tạo, bình
+  luận, đính kèm, sửa / giao / chuyển / ghi giờ / liên kết task của mình. Gán cho team QA ở màn Phân quyền.

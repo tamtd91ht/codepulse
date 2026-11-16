@@ -36,7 +36,7 @@ export function TaskStrip({ review }: { review: ReviewDetail }) {
               <TypeIcon type={t.type} />
               <span className="tk-key">{t.key}</span>
               <span className="tk-strip-title">{t.title}</span>
-              <StatusPill status={t.status} />
+              <StatusPill status={t.status} resolution={t.resolution} />
             </Link>
           </li>
         ))}

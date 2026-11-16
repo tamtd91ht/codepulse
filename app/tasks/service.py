@@ -36,16 +36,27 @@ from app.models import (
     TaskWatcher,
     User,
 )
-from app.models.tasks import PRIORITIES, TASK_TYPES
+from app.models.tasks import PRIORITIES, RESOLUTIONS, TASK_TYPES
 from app.notifications.inbox import notify
 
+# One language (docs/specs/31 §19.1): new spaces get Vietnamese names; "won't do" is a
+# resolution now, not a status. Smart commits keep their English words as aliases (git.py).
 DEFAULT_STATUSES: tuple[tuple[str, str], ...] = (
-    ("To Do", "todo"),
-    ("In Progress", "doing"),
-    ("In Review", "doing"),
-    ("Done", "done"),
-    ("Won't Do", "done"),
+    ("Cần làm", "todo"),
+    ("Đang làm", "doing"),
+    ("Đang review", "doing"),
+    ("Xong", "done"),
 )
+START_STATUS, REVIEW_STATUS, DONE_STATUS = "Đang làm", "Đang review", "Xong"
+RESOLUTION_LABELS = {
+    "done": "Đã xong",
+    "wont_do": "Không làm",
+    "duplicate": "Trùng",
+    "cannot_reproduce": "Không tái hiện được",
+}
+# Types whose story points count for a sprint (epics hold their children's; sub-tasks are part
+# of their parent's), docs/specs/31 §19.1.
+POINTED_TYPES = ("story", "task", "bug")
 RULE_FLAGS = (
     "start_on_commit",
     "review_on_mr",
@@ -259,9 +270,9 @@ def enable_space(
         seed_priorities(session, bp_id)
         space.rules = {
             **DEFAULT_FLAGS,
-            "start": ids["In Progress"],
-            "review": ids["In Review"],
-            "done": ids["Done"],
+            "start": ids[START_STATUS],
+            "review": ids[REVIEW_STATUS],
+            "done": ids[DONE_STATUS],
         }
     else:
         if key != space.key:
@@ -342,7 +353,11 @@ def set_statuses(
                     409,
                     f"trạng thái {names_before[old]} còn {used} task: chọn nơi chuyển",
                 )
-            session.execute(update(Task).where(Task.status_id == old).values(status_id=target))
+            session.execute(
+                update(Task)
+                .where(Task.status_id == old)
+                .values(status_id=target, status_changed_at=datetime.now(UTC))
+            )
         session.delete(current[old])
     # A task's resolved time follows its status's category, whatever moved it.
     done_ids = [st.id for st in out if st.category == "done"]
@@ -355,6 +370,24 @@ def set_statuses(
             Task.resolved_at.is_(None),
         )
         .values(resolved_at=now)
+    )
+    session.execute(
+        update(Task)
+        .where(
+            Task.business_project_id == bp_id,
+            Task.status_id.in_(done_ids),
+            Task.resolution.is_(None),
+        )
+        .values(resolution="done")
+    )
+    session.execute(
+        update(Task)
+        .where(
+            Task.business_project_id == bp_id,
+            Task.status_id.not_in(done_ids),
+            Task.resolution.is_not(None),
+        )
+        .values(resolution=None)
     )
     session.execute(
         update(Task)
@@ -763,6 +796,9 @@ def create_task(
     parent = _parent(session, bp_id, data.get("parent_key"), task_type)
     if task_type == "subtask" and parent is None:
         raise HTTPException(422, "sub-task cần task cha")
+    if task_type == "subtask" and parent is not None:
+        # A sub-task is part of its parent's work: same sprint, same version (§19.1).
+        data = {**data, "sprint_id": parent.sprint_id, "version_id": parent.version_id}
     priority = data.get("priority") or default_priority(session, bp_id)
     check_priority(session, bp_id, priority)
     statuses = statuses_of(session, bp_id)
@@ -798,6 +834,9 @@ def create_task(
         custom=data.get("custom") or {},
         rank=_next_rank(session, bp_id),
         resolved_at=datetime.now(UTC) if status.category == "done" else None,
+        resolution=(data.get("resolution") or "done") if status.category == "done" else None,
+        started_at=datetime.now(UTC) if status.category == "doing" else None,
+        status_changed_at=datetime.now(UTC),
     )
     session.add(task)
     session.flush()
@@ -839,9 +878,15 @@ def set_status(
     via: str = "web",
     *,
     check_transition: bool = True,
+    resolution: str | None = None,
 ) -> bool:
-    """Move a task; False when the dự án's critical gate kept it out of Done."""
+    """Move a task; False when the dự án's critical gate kept it out of Done. Entering a "done"
+    status sets the resolution (default "done"); within "done" a given one replaces it."""
+    if resolution is not None and resolution not in RESOLUTIONS:
+        raise HTTPException(422, f"lý do đóng không hợp lệ: {resolution}")
     if status.id == task.status_id:
+        if resolution is not None and status.category == "done":
+            set_resolution(session, task, resolution, actor_id, via)
         return True
     current = session.get(TaskStatus, task.status_id)
     if (
@@ -872,12 +917,30 @@ def set_status(
             )
             return False
     old_name = current.name if current else None
+    now = datetime.now(UTC)
     task.status_id = status.id
+    task.status_changed_at = now
+    if status.category == "doing" and task.started_at is None:
+        task.started_at = now
     if status.category == "done":
-        task.resolved_at = task.resolved_at or datetime.now(UTC)
+        task.resolved_at = task.resolved_at or now
+        new_resolution = resolution or task.resolution or "done"
+        if new_resolution != task.resolution:
+            if task.resolution is not None:
+                log(
+                    session,
+                    task,
+                    actor_id,
+                    "resolution",
+                    RESOLUTION_LABELS.get(task.resolution),
+                    RESOLUTION_LABELS[new_resolution],
+                    via,
+                )
+            task.resolution = new_resolution
     else:
         task.resolved_at = None
-    task.updated_at = datetime.now(UTC)
+        task.resolution = None
+    task.updated_at = now
     log(session, task, actor_id, "status", old_name, status.name, via)
     recipients = watchers(session, task) | {task.reporter_id or 0}
     if via in ("git", "smart_commit"):
@@ -894,6 +957,47 @@ def set_status(
     )
     session.flush()
     return True
+
+
+def status_by_word(session: Session, space: TaskSpace, word: str) -> TaskStatus | None:
+    """A status named by a smart-commit / MCP word: the dự án's own name ("dang-lam"), else an
+    alias of a rule's status (#done → its "done", #in-progress → "start"), docs/specs/31 §19.1."""
+    from app.tasks import keys as tk
+
+    wanted = tk.slug(word)
+    statuses = statuses_of(session, space.business_project_id)
+    found = next((s for s in statuses if tk.slug(s.name) == wanted), None)
+    if found is None and wanted in tk.STATUS_ALIASES:
+        rule = rules_of(space).get(tk.STATUS_ALIASES[wanted])
+        found = next((s for s in statuses if s.id == rule), None)
+    if found is None and wanted in ("todo", "to-do", "can-lam"):
+        found = next((s for s in statuses if s.category == "todo"), None)
+    return found
+
+
+def set_resolution(
+    session: Session, task: Task, resolution: str, actor_id: int | None, via: str = "web"
+) -> None:
+    """Change why a closed task was closed (only while it sits in a "done" status)."""
+    if resolution not in RESOLUTIONS:
+        raise HTTPException(422, f"lý do đóng không hợp lệ: {resolution}")
+    status = session.get(TaskStatus, task.status_id)
+    if status is None or status.category != "done":
+        raise HTTPException(409, "chỉ task đã đóng (nhóm Xong) mới có lý do đóng")
+    if task.resolution == resolution:
+        return
+    log(
+        session,
+        task,
+        actor_id,
+        "resolution",
+        RESOLUTION_LABELS.get(task.resolution or ""),
+        RESOLUTION_LABELS[resolution],
+        via,
+    )
+    task.resolution = resolution
+    task.updated_at = datetime.now(UTC)
+    session.flush()
 
 
 EDITABLE = (
@@ -928,6 +1032,16 @@ def update_task(
     _check_refs(session, bp_id, changes, actor_id)
     if "type" in changes and changes["type"] not in space.types:
         raise HTTPException(422, f"dự án không dùng loại {changes['type']}")
+    if task.type == "subtask" or changes.get("type") == "subtask":
+        for field in ("sprint_id", "version_id"):
+            if field in changes and changes[field] != getattr(task, field):
+                parent_now = session.get(Task, task.parent_id) if task.parent_id else None
+                if parent_now is None or changes[field] != getattr(parent_now, field):
+                    raise HTTPException(
+                        422, "sub-task theo sprint và phiên bản của task cha: đổi ở task cha"
+                    )
+    if changes.get("resolution") is not None and changes.get("status_id") is None:
+        set_resolution(session, task, changes["resolution"], actor_id, via)
     if "priority" in changes:
         if not changes["priority"]:
             raise HTTPException(422, "ưu tiên trống")
@@ -950,6 +1064,12 @@ def update_task(
                 via,
             )
             task.parent_id = parent.id if parent else None
+            if task.type == "subtask" and parent is not None:
+                changes = {
+                    **changes,
+                    "sprint_id": parent.sprint_id,
+                    "version_id": parent.version_id,
+                }
     for field in EDITABLE:
         if field not in changes:
             continue
@@ -997,8 +1117,21 @@ def update_task(
             shown_old = meta[(bp_id, old)].name if (bp_id, old) in meta else old
             shown_new = meta[(bp_id, value)].name if (bp_id, value) in meta else value
         log(session, task, actor_id, field.removesuffix("_id"), shown_old, shown_new, via)
+    if task.type != "subtask" and ({"sprint_id", "version_id"} & set(changes)):
+        # Its sub-tasks move with it (as objects: the DPI projection sees each change).
+        for child in session.scalars(
+            select(Task).where(Task.parent_id == task.id, Task.type == "subtask")
+        ):
+            child.sprint_id, child.version_id = task.sprint_id, task.version_id
     if changes.get("status_id") is not None:
-        set_status(session, task, _status(session, bp_id, changes["status_id"]), actor_id, via)
+        set_status(
+            session,
+            task,
+            _status(session, bp_id, changes["status_id"]),
+            actor_id,
+            via,
+            resolution=changes.get("resolution"),
+        )
     task.updated_at = datetime.now(UTC)
     session.flush()
 
@@ -1230,6 +1363,11 @@ def rows(session: Session, tasks: list[Task]) -> list[dict[str, Any]]:
                 "created_at": t.created_at.isoformat() if t.created_at else None,
                 "updated_at": t.updated_at.isoformat() if t.updated_at else None,
                 "resolved_at": t.resolved_at.isoformat() if t.resolved_at else None,
+                "resolution": t.resolution,
+                "started_at": t.started_at.isoformat() if t.started_at else None,
+                "status_changed_at": (
+                    t.status_changed_at.isoformat() if t.status_changed_at else None
+                ),
             }
         )
     return out

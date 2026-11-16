@@ -71,6 +71,8 @@ export interface PermissionSetRow {
   member_count: number;
   /** Custom sets: the people given it. */
   members: { id: number; full_name: string | null; email: string | null }[];
+  /** Custom sets: the teams given it, everyone in them holds it (docs/specs/21 §11). */
+  teams?: { id: number; name: string }[];
 }
 
 export interface UserPermissions {
@@ -2484,6 +2486,11 @@ export interface TaskRow {
   priority_name?: string;
   priority_level?: TaskPriorityLevel;
   priority_color?: TaskPriorityColor;
+  /** Why a closed task was closed (docs/specs/31 §19.1); null while open. */
+  resolution?: TaskResolution | null;
+  started_at?: string | null;
+  /** When it entered its current status (age in the Board column). */
+  status_changed_at?: string | null;
   assignee: TaskPerson | null;
   reporter: TaskPerson | null;
   labels: string[];
@@ -2678,13 +2685,26 @@ export interface TaskBurndown {
 export interface TaskReports {
   velocity: { sprint_id: number; name: string; committed: number; completed: number }[];
   flow: { day: string; created: number; resolved: number }[];
-  cycle_time: { median_h: number | null; p85_h: number | null; count: number };
+  cycle_time: { median_h: number | null; p85_h: number | null; count: number; skipped?: number };
   by_status: { status: TaskStatusRef | string; count: number }[];
   /** docs/specs/31 §18.3: per priority, in the dự án's order. */
   by_priority?: { priority: TaskPriorityDef; open: number; overdue: number; created: number; resolved: number; open_points: number }[];
   by_assignee: { user: TaskPerson | null; open: number; done: number; points: number }[];
   worklog: { user: TaskPerson | null; minutes: number }[];
 }
+
+/** GET /tasks/spaces/{bp}/epics (docs/specs/31 §19.1). */
+export interface TaskEpic {
+  key: string;
+  title: string;
+  closed: boolean;
+  total: number;
+  done: number;
+  points: number;
+  points_open: number;
+}
+
+export type TaskResolution = "done" | "wont_do" | "duplicate" | "cannot_reproduce";
 
 export interface TaskVersion {
   id: number;

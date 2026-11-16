@@ -108,8 +108,28 @@ def smart_commands(message: str | None) -> SmartCommands:
 
 
 def slug(name: str) -> str:
-    """A status name as a smart-commit word: "In Progress" → "in-progress"."""
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    """A status name as a smart-commit word: "In Progress" → "in-progress", "Đang làm" →
+    "dang-lam" (accents dropped)."""
+    import unicodedata
+
+    plain = unicodedata.normalize("NFD", name.replace("đ", "d").replace("Đ", "D"))
+    plain = "".join(c for c in plain if unicodedata.category(c) != "Mn").lower()
+    return re.sub(r"[^a-z0-9]+", "-", plain).strip("-")
+
+
+# Smart-commit words that mean a rule's status whatever the dự án calls it (docs/specs/31
+# §19.1): English words keep working after the default names became Vietnamese.
+STATUS_ALIASES: dict[str, str] = {
+    "start": "start",
+    "in-progress": "start",
+    "dang-lam": "start",
+    "doing": "start",
+    "review": "review",
+    "in-review": "review",
+    "dang-review": "review",
+    "done": "done",
+    "xong": "done",
+}
 
 
 def branch_name(key: str, title: str, task_type: str) -> str:

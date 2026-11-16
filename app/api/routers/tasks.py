@@ -75,6 +75,7 @@ TaskType = Literal["epic", "story", "task", "bug", "subtask"]
 # A priority key of the dự án (docs/specs/31 §18); checked against its priorities.
 Priority = Annotated[str, Field(min_length=1, max_length=30)]
 Relation = Literal["fixes", "refs"]
+Resolution = Literal["done", "wont_do", "duplicate", "cannot_reproduce"]
 
 
 def viewer(principal: CurrentPrincipal) -> Principal:
@@ -120,6 +121,8 @@ class TaskFieldsIn(BaseModel):
     priority: Priority | None = None
     assignee_id: int | None = None
     parent_key: str | None = None
+    # Why it was closed (only while in a "done" status), docs/specs/31 §19.1.
+    resolution: Resolution | None = None
     labels: list[str] | None = None
     components: list[str] | None = None
     story_points: Decimal | None = Field(default=None, ge=0, le=999)
@@ -154,6 +157,8 @@ class BatchIn(BaseModel):
 class TransitionIn(BaseModel):
     status_id: int
     comment: str | None = Field(default=None, max_length=20_000)
+    # Into a "done" status: why (default "done"), docs/specs/31 §19.1.
+    resolution: Resolution | None = None
 
 
 class MoveIn(BaseModel):
@@ -421,6 +426,7 @@ def _list_query(
     reporter: list[str],
     priority: list[str],
     label: list[str],
+    component: list[str],
     sprint: str | None,
     version: int | None,
     parent: str | None,
@@ -466,6 +472,8 @@ def _list_query(
         query = query.where(Task.priority.in_(priority))
     for one in label:
         query = query.where(Task.labels.contains([one]))
+    for one in component:
+        query = query.where(Task.components.contains([one]))
     if sprint == "backlog":
         query = query.where(Task.sprint_id.is_(None))
     elif sprint == "active":
@@ -514,6 +522,7 @@ def list_tasks(
     reporter: Annotated[list[str], Query()] = [],  # noqa: B006
     priority: Annotated[list[str], Query()] = [],  # noqa: B006
     label: Annotated[list[str], Query()] = [],  # noqa: B006
+    component: Annotated[list[str], Query()] = [],  # noqa: B006
     sprint: str | None = None,
     version: int | None = None,
     parent: str | None = None,
@@ -536,6 +545,7 @@ def list_tasks(
         reporter=reporter,
         priority=priority,
         label=label,
+        component=component,
         sprint=sprint,
         version=version,
         parent=parent,
@@ -660,6 +670,8 @@ def bulk(body: BulkIn, principal: Viewer, session: SessionDep) -> dict[str, Any]
             k: v
             for k, v in wanted.items()
             if k in ("assignee_id", "priority", "sprint_id", "version_id")
+            # A sub-task follows its parent's sprint and version (§19.1): skipped here.
+            and not (task.type == "subtask" and k in ("sprint_id", "version_id"))
         }
         if "labels_add" in wanted or "labels_remove" in wanted:
             labels = [x for x in task.labels or [] if x not in (wanted.get("labels_remove") or [])]
@@ -820,7 +832,7 @@ def _sprint_out(session: Session, sprint: Sprint) -> dict[str, Any]:
         )
     )
     held = sorted(reports.sprint_tasks(session, sprint.id), key=lambda t: (t.rank, t.id))
-    points = sum(float(t.story_points or 0) for t in held)
+    points = sum(reports.points(t) for t in held)
     return {
         "id": sprint.id,
         "space": sprint.business_project_id,
@@ -838,9 +850,7 @@ def _sprint_out(session: Session, sprint: Sprint) -> dict[str, Any]:
         "task_count": len(held),
         "done_tasks": sum(1 for t in held if t.status_id in done_ids),
         "points": round(points, 1),
-        "done_points": round(
-            sum(float(t.story_points or 0) for t in held if t.status_id in done_ids), 1
-        ),
+        "done_points": round(sum(reports.points(t) for t in held if t.status_id in done_ids), 1),
     }
 
 
@@ -953,14 +963,39 @@ def complete_sprint(
         TaskStatus.business_project_id == sprint.business_project_id,
         TaskStatus.category != "done",
     )
+    # A sub-task goes where its parent goes (docs/specs/31 §19.1), whatever its own status: an
+    # unfinished parent takes its done sub-tasks along, a done parent keeps its open ones.
     unfinished = list(
         session.scalars(
-            select(Task).where(Task.sprint_id == sprint.id, Task.status_id.in_(not_done))
+            select(Task).where(
+                Task.sprint_id == sprint.id,
+                Task.status_id.in_(not_done),
+                Task.type != "subtask",
+            )
         )
     )
-    for task in unfinished:
+    orphans = list(
+        session.scalars(
+            select(Task).where(
+                Task.sprint_id == sprint.id,
+                Task.status_id.in_(not_done),
+                Task.type == "subtask",
+                Task.parent_id.is_(None),
+            )
+        )
+    )
+    moving = unfinished + orphans
+    if unfinished:
+        moving += list(
+            session.scalars(
+                select(Task).where(
+                    Task.parent_id.in_([t.id for t in unfinished]), Task.type == "subtask"
+                )
+            )
+        )
+    for task in moving:
         task.sprint_id = body.move_to
-    moved = len(unfinished)
+    moved = len(unfinished) + len(orphans)
     sprint.state, sprint.closed_at = "closed", datetime.now(UTC)
     audit(session, principal.user_id, "task.sprint.complete", f"sprint:{sprint.id}", moved=moved)
     session.commit()
@@ -1024,6 +1059,13 @@ def _version_out(session: Session, v: TaskVersion) -> dict[str, Any]:
         "done": int(finished or 0),
         "done_tasks": int(finished or 0),
     }
+
+
+@router.get("/tasks/spaces/{bp_id}/epics")
+def list_epics(bp_id: int, principal: Viewer, session: SessionDep) -> list[dict[str, Any]]:
+    """The dự án's epics with their children's progress (the Backlog's Epic bar, §19.1)."""
+    ts.space_or_404(session, principal, bp_id)
+    return reports.epics(session, bp_id)
 
 
 @router.get("/tasks/spaces/{bp_id}/versions")
@@ -1324,7 +1366,7 @@ def transition(
     status = session.get(TaskStatus, body.status_id)
     if status is None or status.business_project_id != task.business_project_id:
         raise HTTPException(422, "trạng thái không thuộc dự án")
-    ts.set_status(session, task, status, principal.user_id)
+    ts.set_status(session, task, status, principal.user_id, resolution=body.resolution)
     if body.comment and body.comment.strip():
         _add_comment(session, principal, task, body.comment)
     session.commit()

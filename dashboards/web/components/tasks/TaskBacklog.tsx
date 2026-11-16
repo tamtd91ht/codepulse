@@ -7,7 +7,7 @@ import { IconButton } from "@/components/icons";
 import { Alert, EmptyState, Loading, Message, Pill } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
-import type { Sprint, TaskPage, TaskRow, TaskSpace } from "@/lib/types";
+import type { Sprint, TaskEpic, TaskPage, TaskRow, TaskSpace } from "@/lib/types";
 
 import { byRank, neighbours } from "./TaskBoard";
 import {
@@ -40,6 +40,11 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
   const [dialog, setDialog] = useState<{ kind: "edit" | "start" | "complete"; sprint: Sprint | null } | null>(null);
   const [confirmEl, ask] = useConfirm();
   const canManage = space.can_sprint;
+  const epics = useApi<TaskEpic[]>(`/tasks/spaces/${bp}/epics`);
+  // The Epic bar's pick (§19.1): only that epic's children; null = all.
+  const [epic, setEpic] = useState<string | null>(null);
+  // Epics live in the Epic bar, sub-tasks inside their parent: neither is a Backlog row.
+  const shows = (t: TaskRow) => t.type !== "epic" && t.type !== "subtask" && (!epic || t.parent_key === epic);
 
   const open = useMemo(
     () =>
@@ -48,11 +53,15 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
         .sort((a, b) => (a.state === "active" ? -1 : b.state === "active" ? 1 : a.id - b.id)),
     [sprints.data],
   );
-  const backlogRows = useMemo(() => (backlog.data?.items ?? []).filter((t) => t.status.category !== "done").sort(byRank), [backlog.data]);
+  const backlogRows = useMemo(
+    () => (backlog.data?.items ?? []).filter((t) => t.status.category !== "done" && shows(t)).sort(byRank),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [backlog.data, epic],
+  );
   const hasActive = open.some((s) => s.state === "active");
 
   function rowsOf(box: Box): TaskRow[] {
-    return box === "backlog" ? backlogRows : [...(open.find((s) => s.id === box)?.tasks ?? [])].sort(byRank);
+    return box === "backlog" ? backlogRows : [...(open.find((s) => s.id === box)?.tasks ?? [])].filter(shows).sort(byRank);
   }
 
   async function move(key: string, box: Box, beforeKey: string | null) {
@@ -135,7 +144,7 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
           </button>
           <span className="tk-brow-meta">
             <GitBadge row={t} />
-            <StatusPill status={t.status} />
+            <StatusPill status={t.status} resolution={t.resolution} />
             <PointsChip points={t.story_points} />
             <RowPriority row={t} />
             <PersonAvatar person={t.assignee} />
@@ -148,6 +157,8 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
   );
 
   return (
+    <div className="tk-backlog-wrap">
+      <EpicBar epics={epics.data} error={epics.error} value={epic} onChange={setEpic} onOpen={onOpen} />
     <div className="tk-backlog">
       {confirmEl}
       {message && <Message text={message} onClose={() => setMessage(null)} />}
@@ -164,8 +175,8 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
       ) : (
         open.map((s) => {
           const tasks = rowsOf(s.id);
-          const points = s.points ?? tasks.reduce((n, t) => n + (t.story_points ?? 0), 0);
-          const donePoints = s.done_points ?? tasks.filter((t) => t.status.category === "done").reduce((n, t) => n + (t.story_points ?? 0), 0);
+          const points = epic ? sumPoints(tasks) : (s.points ?? sumPoints(tasks));
+          const donePoints = epic ? sumPoints(tasks.filter((t) => t.status.category === "done")) : (s.done_points ?? sumPoints(tasks.filter((t) => t.status.category === "done")));
           return (
             <section key={s.id} className="card tk-sprint">
               <header className="tk-sprint-head">
@@ -204,7 +215,7 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
           <div className="tk-sprint-title">
             <strong>Backlog</strong>
             <span className="small muted">
-              {backlogRows.length} task · {backlogRows.reduce((n, t) => n + (t.story_points ?? 0), 0)} SP
+              {backlogRows.length} task · {sumPoints(backlogRows)} SP
             </span>
           </div>
         </header>
@@ -217,6 +228,70 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
         <CompleteModal sprint={dialog.sprint} others={open.filter((s) => s.id !== dialog.sprint?.id)} onClose={() => setDialog(null)} />
       )}
     </div>
+    </div>
+  );
+}
+
+/** Story points of a sprint's work: Story / Task / Bug only (docs/specs/31 §19.1). */
+function sumPoints(rows: TaskRow[]): number {
+  return Math.round(rows.filter((t) => t.type === "story" || t.type === "task" || t.type === "bug").reduce((n, t) => n + (t.story_points ?? 0), 0) * 10) / 10;
+}
+
+/** The Epic bar beside the Backlog (§19.1): each epic's progress; picking one filters the lists. */
+function EpicBar({
+  epics,
+  error,
+  value,
+  onChange,
+  onOpen,
+}: {
+  epics: TaskEpic[] | undefined;
+  error: unknown;
+  value: string | null;
+  onChange: (key: string | null) => void;
+  onOpen: (key: string) => void;
+}) {
+  return (
+    <aside className="card tk-epicbar" aria-label="Epic">
+      <h3 className="tk-epicbar-title">Epic</h3>
+      {!epics ? (
+        <Loading error={error as never} rows={3} />
+      ) : (
+        <ul className="tk-epicbar-list">
+          <li>
+            <button type="button" className={`tk-epic-pick${value === null ? " active" : ""}`} aria-pressed={value === null} onClick={() => onChange(null)}>
+              Mọi task
+            </button>
+          </li>
+          {epics.map((e) => {
+            const pct = e.total ? Math.round((e.done / e.total) * 100) : 0;
+            return (
+              <li key={e.key}>
+                <button
+                  type="button"
+                  className={`tk-epic-pick${value === e.key ? " active" : ""}${e.closed ? " closed" : ""}`}
+                  aria-pressed={value === e.key}
+                  onClick={() => onChange(value === e.key ? null : e.key)}
+                  title={`${e.done}/${e.total} task xong · còn ${e.points_open} SP`}
+                >
+                  <span className="tk-epic-name">{e.title}</span>
+                  <span className="tk-progress" aria-hidden="true">
+                    <span style={{ width: `${pct}%` }} />
+                  </span>
+                  <span className="small muted">
+                    {pct}% · còn {e.points_open} SP
+                  </span>
+                </button>
+                <button type="button" className="link sm tk-epic-open" onClick={() => onOpen(e.key)}>
+                  {e.key}
+                </button>
+              </li>
+            );
+          })}
+          {!epics.length && <li className="small faint">Chưa có epic. Tạo task loại Epic rồi đặt nó làm task cha.</li>}
+        </ul>
+      )}
+    </aside>
   );
 }
 

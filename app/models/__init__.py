@@ -48,7 +48,12 @@ from app.models.knowledge import ReviewKnowledge, ReviewKnowledgeEdit
 from app.models.mcp import McpCall
 from app.models.metrics import MetricsTeamPeriod, MetricsUserPeriod
 from app.models.notifications import NotificationWebhook, UserNotification, WebhookDelivery
-from app.models.permissions import PermissionSet, PermissionSetItem, UserPermissionSet
+from app.models.permissions import (
+    PermissionSet,
+    PermissionSetItem,
+    TeamPermissionSet,
+    UserPermissionSet,
+)
 from app.models.project_docs import (
     ProjectDocument,
     ProjectDocumentAsset,
@@ -206,6 +211,7 @@ __all__ = [
     "TaskWorklog",
     "Team",
     "TeamMember",
+    "TeamPermissionSet",
     "TelegramBot",
     "TelegramRequest",
     "TestAiRun",

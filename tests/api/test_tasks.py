@@ -76,13 +76,12 @@ def test_enable_a_space_and_number_tasks(client: TestClient, world: World, as_us
     assert bad.status_code == 422
     space = enable(client, world, as_user)
     assert [s["name"] for s in space["statuses"]] == [
-        "To Do",
-        "In Progress",
-        "In Review",
-        "Done",
-        "Won't Do",
+        "Cần làm",
+        "Đang làm",
+        "Đang review",
+        "Xong",
     ]
-    assert space["rules"]["start"] == status_id(space, "In Progress")
+    assert space["rules"]["start"] == status_id(space, "Đang làm")
     # A member sees it and creates tasks; numbers follow on.
     spaces = client.get(f"{API}/tasks/spaces", headers=an).json()
     assert [(s["key"], s["can_create"], s["can_manage"]) for s in spaces] == [("CRM", True, False)]
@@ -90,7 +89,7 @@ def test_enable_a_space_and_number_tasks(client: TestClient, world: World, as_us
     second = create(client, an, world, title="Màn hình", parent_key=first["key"], type="subtask")
     assert (first["key"], second["key"]) == ("CRM-1", "CRM-2")
     assert second["parent_key"] == "CRM-1"
-    assert first["status"]["name"] == "To Do"
+    assert first["status"]["name"] == "Cần làm"
     assert first["reporter"]["id"] == world.an.id
     # A sub-task needs a parent; the key cannot change once tasks exist.
     res = client.post(
@@ -144,11 +143,11 @@ def test_member_edits_own_tasks_only(
         client.patch(f"{API}/tasks/CRM-1", headers=lead, json={"title": "Đổi"}).status_code == 200
     )
     assert client.delete(f"{API}/tasks/CRM-1", headers=an).status_code == 403
-    done = status_id(space, "Done")
+    done = status_id(space, "Xong")
     res = client.post(f"{API}/tasks/CRM-1/transition", headers=binh, json={"status_id": done})
     assert res.status_code == 200
     body = res.json()
-    assert body["status"]["name"] == "Done" and body["resolved_at"]
+    assert body["status"]["name"] == "Xong" and body["resolved_at"]
     fields = [h["field"] for h in body["history"]]
     assert "status" in fields and "assignee" in fields
     assert task["key"] == "CRM-1"
@@ -160,17 +159,17 @@ def test_workflow_transitions_and_status_replacement(
     space = enable(client, world, as_user)
     admin = as_user(world.admin)
     create(client, admin, world)
-    todo, doing, review, done, wont = (s["id"] for s in space["statuses"])
+    todo, doing, review, done = (s["id"] for s in space["statuses"])
     statuses = [
-        {"id": todo, "name": "To Do", "category": "todo", "transitions": [doing]},
+        {"id": todo, "name": "Cần làm", "category": "todo", "transitions": [doing]},
         {"id": doing, "name": "Đang làm", "category": "doing", "transitions": None},
-        {"id": done, "name": "Done", "category": "done", "transitions": None},
+        {"id": done, "name": "Xong", "category": "done", "transitions": None},
     ]
     url = f"{API}/tasks/spaces/{bp_of(world)}/statuses"
-    # Dropping In Review / Won't Do is fine (no task there); renaming keeps ids.
+    # Dropping Đang review is fine (no task there); renaming keeps ids.
     res = client.put(url, headers=admin, json={"statuses": statuses})
     assert res.status_code == 200, res.text
-    assert [s["name"] for s in res.json()] == ["To Do", "Đang làm", "Done"]
+    assert [s["name"] for s in res.json()] == ["Cần làm", "Đang làm", "Xong"]
     # To Do may only go to Đang làm.
     res = client.post(f"{API}/tasks/CRM-1/transition", headers=admin, json={"status_id": done})
     assert res.status_code == 409
@@ -189,8 +188,8 @@ def test_workflow_transitions_and_status_replacement(
         json={"statuses": [statuses[0], statuses[2]], "move": {str(doing): done}},
     )
     assert res.status_code == 200, res.text
-    assert client.get(f"{API}/tasks/CRM-1", headers=admin).json()["status"]["name"] == "Done"
-    assert review and wont
+    assert client.get(f"{API}/tasks/CRM-1", headers=admin).json()["status"]["name"] == "Xong"
+    assert review
 
 
 def test_git_drives_the_task(
@@ -205,7 +204,7 @@ def test_git_drives_the_task(
     # A branch for the task starts it.
     task_git.on_push(db_session, project, "feature/crm-1-otp", "main", [])
     task = db_session.scalars(select(Task).where(Task.key == "CRM-1")).one()
-    assert db_session.get(TaskStatus, task.status_id).name == "In Progress"  # type: ignore[union-attr]
+    assert db_session.get(TaskStatus, task.status_id).name == "Đang làm"  # type: ignore[union-attr]
     # A commit on it: linked once, with its smart commands (by its author, who may edit).
     commit = {
         "id": "c" * 40,
@@ -239,11 +238,11 @@ def test_git_drives_the_task(
     data = SimpleNamespace(default_branch="main", merge_requests={7: mr}, commits={})
     task_git.on_sync(db_session, project, data)
     db_session.refresh(task)
-    assert db_session.get(TaskStatus, task.status_id).name == "In Review"  # type: ignore[union-attr]
+    assert db_session.get(TaskStatus, task.status_id).name == "Đang review"  # type: ignore[union-attr]
     mr.state = "merged"
     task_git.on_sync(db_session, project, data)
     db_session.refresh(task)
-    assert db_session.get(TaskStatus, task.status_id).name == "Done"  # type: ignore[union-attr]
+    assert db_session.get(TaskStatus, task.status_id).name == "Xong"  # type: ignore[union-attr]
     assert task.resolved_at is not None
     # The detail shows the code.
     git = client.get(f"{API}/tasks/CRM-1", headers=an).json()["git"]
@@ -276,12 +275,12 @@ def test_a_closed_mr_reopens_and_fixes_on_main_finish(
     mr.state = "closed"
     task_git.on_sync(db_session, project, data)
     first = client.get(f"{API}/tasks/CRM-1", headers=admin).json()
-    assert first["status"]["name"] == "In Progress"
+    assert first["status"]["name"] == "Đang làm"
     # A fixing commit pushed straight to main finishes CRM-2.
     task_git.on_push(
         db_session, project, "main", "main", [{"id": "e" * 40, "message": "fix: lỗi [CRM-2]"}]
     )
-    assert client.get(f"{API}/tasks/CRM-2", headers=admin).json()["status"]["name"] == "Done"
+    assert client.get(f"{API}/tasks/CRM-2", headers=admin).json()["status"]["name"] == "Xong"
 
 
 def test_critical_findings_gate(
@@ -319,7 +318,7 @@ def test_critical_findings_gate(
     assert res.status_code == 201, res.text
     row = client.get(f"{API}/tasks?space={bp_of(world)}", headers=admin).json()["items"][0]
     assert row["git"]["open_critical"] == 1
-    done = status_id(space, "Done")
+    done = status_id(space, "Xong")
     res = client.post(f"{API}/tasks/CRM-1/transition", headers=admin, json={"status_id": done})
     assert res.status_code == 409
     detail = client.get(f"{API}/tasks/CRM-1", headers=admin).json()
@@ -369,7 +368,7 @@ def test_board_sprints_reports_versions(client: TestClient, world: World, as_use
     client.post(
         f"{API}/tasks/CRM-1/transition",
         headers=admin,
-        json={"status_id": status_id(space, "Done")},
+        json={"status_id": status_id(space, "Xong")},
     )
     burn = client.get(f"{API}/tasks/sprints/{sprint['id']}/burndown", headers=admin).json()
     assert burn["committed_points"] == 8.0
@@ -465,7 +464,7 @@ def test_git_rules_resist_forgery_old_history_and_branches(
     # Pushed by someone else with An's email: linked, but #done is not run as An.
     task_git.on_push(db_session, project, "feature/x", "main", [fix], pusher_email="binh@x.vn")
     first = client.get(f"{API}/tasks/CRM-1", headers=admin).json()
-    assert first["status"]["name"] == "In Progress"
+    assert first["status"]["name"] == "Đang làm"
     # The collector lists commits of every branch: a fix there does not finish CRM-2.
     gl = SimpleNamespace(
         sha="2" * 40,
@@ -479,10 +478,10 @@ def test_git_rules_resist_forgery_old_history_and_branches(
         project,
         SimpleNamespace(default_branch="main", merge_requests={}, commits={gl.sha: gl}),
     )
-    assert client.get(f"{API}/tasks/CRM-2", headers=admin).json()["status"]["name"] == "In Progress"
+    assert client.get(f"{API}/tasks/CRM-2", headers=admin).json()["status"]["name"] == "Đang làm"
     # The same fix pushed to main later finishes it.
     task_git.on_push(db_session, project, "main", "main", [{"id": gl.sha, "message": gl.message}])
-    assert client.get(f"{API}/tasks/CRM-2", headers=admin).json()["status"]["name"] == "Done"
+    assert client.get(f"{API}/tasks/CRM-2", headers=admin).json()["status"]["name"] == "Xong"
     # A commit from long before Task was turned on (a reused key) is not linked.
     old = {
         "id": "3" * 40,

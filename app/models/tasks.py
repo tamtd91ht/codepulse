@@ -30,6 +30,9 @@ TASK_TYPES = ("epic", "story", "task", "bug", "subtask")
 PRIORITIES = ("highest", "high", "medium", "low", "lowest")
 PRIORITY_COLORS = ("red", "orange", "amber", "green", "blue", "purple", "gray")
 CATEGORIES = ("todo", "doing", "done")
+# Why a task left work (docs/specs/31 §19.1): set on entering a "done" status, cleared on leaving.
+# Only "done" counts as delivered (DPI, cycle time); the others close it without output.
+RESOLUTIONS = ("done", "wont_do", "duplicate", "cannot_reproduce")
 LINK_KINDS = ("blocks", "relates", "duplicates", "clones")
 GIT_KINDS = ("branch", "commit", "mr")
 RELATIONS = ("fixes", "refs")
@@ -144,6 +147,9 @@ class Task(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("business_project_id", "number"),
         CheckConstraint(_in("type", TASK_TYPES), name="type"),
+        CheckConstraint(
+            "resolution IS NULL OR " + _in("resolution", RESOLUTIONS), name="resolution"
+        ),
         Index("ix_tasks_space_status", "business_project_id", "status_id"),
         Index("ix_tasks_space_rank", "business_project_id", "rank"),
         Index("ix_tasks_labels", "labels", postgresql_using="gin"),
@@ -181,6 +187,11 @@ class Task(TimestampMixin, Base):
     )
     rank: Mapped[float] = mapped_column(Float, server_default="0", default=0.0)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution: Mapped[str | None] = mapped_column(String(20))
+    # First time the task entered a "doing" status: cycle time runs from here (§19.1).
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When it entered its current status: the age in its Board column (§19.3).
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     custom: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
 
 

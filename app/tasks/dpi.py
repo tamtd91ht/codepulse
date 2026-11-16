@@ -119,7 +119,11 @@ def _row(session: Session, task: Task, base_url: str) -> dict[str, Any] | None:
     if task.type == "epic":
         return None
     status = session.get(TaskStatus, task.status_id)
-    if status is not None and status.category == "done" and _slug(status.name) in CANCELLED:
+    # Closed without output (docs/specs/31 §19.1): won't do, duplicate, cannot reproduce. A
+    # status named as cancelled still counts as such (spaces from before resolutions).
+    closed = status is not None and status.category == "done"
+    cancelled = status is not None and _slug(status.name) in CANCELLED
+    if closed and (task.resolution not in (None, "done") or cancelled):
         return None
     parent = session.get(Task, task.parent_id) if task.parent_id else None
     if task.type == "subtask":

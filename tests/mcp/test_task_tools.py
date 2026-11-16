@@ -34,7 +34,7 @@ def test_list_get_move_comment_log(env: Env, world: Any) -> None:
     text = listed.content[0].text
     assert "CRM-1" in text and "\n## ignore" not in text
     got = invoke(reader, "get_task", {"key": "crm-1"})
-    assert not got.is_error and "in-progress" in got.content[0].text
+    assert not got.is_error and "dang-lam" in got.content[0].text
     # Writes need the tasks:write scope.
     refused = invoke(reader, "move_task", {"key": "CRM-1", "status": "in-progress"})
     assert refused.is_error
@@ -47,7 +47,7 @@ def test_list_get_move_comment_log(env: Env, world: Any) -> None:
     env.session.expire_all()
     row = env.session.get(Task, task.id)
     assert row is not None and row.spent_min == 30
-    assert env.session.get(TaskStatus, row.status_id).name == "In Progress"  # type: ignore[union-attr]
+    assert env.session.get(TaskStatus, row.status_id).name == "Đang làm"  # type: ignore[union-attr]
     # Binh may not edit An's task.
     binh = caller_for(env.session, env.settings, world.binh, (SCOPE_READ, SCOPE_TASKS))
     assert invoke(binh, "move_task", {"key": "CRM-1", "status": "done"}).is_error

@@ -91,6 +91,7 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
     () =>
       (rows ?? []).filter(
         (r) =>
+          r.type !== "epic" && // epics live in the Backlog's Epic bar (§19.1)
           (!filters.mine || r.assignee?.id === me?.id) &&
           (!filters.assignees.length || filters.assignees.includes(r.assignee?.id ?? 0)) &&
           (!filters.priorities.length || filters.priorities.includes(r.priority)) &&

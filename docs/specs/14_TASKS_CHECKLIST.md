@@ -120,6 +120,7 @@
 - [x] 10.15 Testcase nâng cấp giai đoạn 3 (30a, 30 §15.8–§15.11): G5 trường tuỳ biến, G7 vai trò + quy trình duyệt, G10 thao tác hàng loạt + tìm & thay + hoàn tác + AI tìm trùng
 - [x] 10.16 Testcase nâng cấp giai đoạn 4 (30a, 30 §15.12–§15.16): G8 BDD + Exploratory, G9 baseline, G12 audit log, G13 tham số hoá
 - [x] 10.18 Task: quản lý task gắn git và code review, độc lập với Jira — không gian, workflow, Board, Backlog + sprint, báo cáo, phiên bản, trường tuỳ biến, git sync + luật tự chuyển, smart commit, MCP, AI (31)
+- [x] 10.21 Task roadmap P0 – Nền tảng: resolution, cycle time, Epic bar, sub-task theo cha, SP, Thành phần, bộ quyền theo team (31 §19.1, 21 §11)
 - [x] 10.20 Task: mức ưu tiên riêng của dự án (như Jira), lọc ưu tiên trên Board, báo cáo theo ưu tiên (31 §18)
 - [x] 10.19 Task: phân quyền như Jira (13 quyền, 31 §4.1) và đính kèm file, ảnh — dán ảnh chụp, kéo thả, ảnh trong mô tả / bình luận (31 §17)
 - [x] 10.17 Lead / Manager dự án tự quản trị dự án: dự án tạo trước chưa có repo, vai trò Lead/Manager dự án, thêm repo, cấu hình repo, repo .claude, file quy tắc, màn Quản trị dự án (21 §10)

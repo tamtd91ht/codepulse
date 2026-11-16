@@ -48,7 +48,10 @@ def test_every_set_with_edit_or_manage_holds_delete_or_approve(migrated_engine: 
                 "CASE old.permission WHEN 'tests.edit' THEN 'tests.delete' "
                 "ELSE 'tests.approve' END AND new.scope = old.scope "
                 "WHERE new.set_id IS NULL AND s.name NOT IN :samples"
-            ).bindparams(bindparam("samples", value=list(SAMPLES), expanding=True))
+            ).bindparams(
+                # "Tester" (migration a7c9e1b3d5f8, docs/specs/31 §19.1) edits, never deletes.
+                bindparam("samples", value=[*SAMPLES, "Tester"], expanding=True)
+            )
         ).all()
         holders = conn.execute(
             text("SELECT count(*) FROM permission_set_items WHERE permission = 'tests.edit'")

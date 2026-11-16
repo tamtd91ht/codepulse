@@ -27,6 +27,7 @@ from app.models import (
     ProjectGrant,
     Team,
     TeamMember,
+    TeamPermissionSet,
     User,
     UserPermissionSet,
 )
@@ -342,19 +343,33 @@ def load_principal(
         lead_members=lead_members,
         project_roles=roles,
         manages_all=manages_all,
-        perms=everything() if is_admin else _permissions(session, user.id, auto_roles),
+        perms=everything()
+        if is_admin
+        else _permissions(session, user.id, auto_roles, {m.team_id for m in memberships}),
         managed_members=managed_members,
         project_admin=project_admin,
     )
 
 
-def _permissions(session: Session, user_id: int, auto_roles: list[str]) -> dict[str, str]:
-    """The union of the sets of these roles and the sets given to the person (docs/specs/21)."""
+def _permissions(
+    session: Session, user_id: int, auto_roles: list[str], team_ids: set[int] | None = None
+) -> dict[str, str]:
+    """The union of the sets of these roles, the sets given to the person and the sets given to
+    the teams they are in now (docs/specs/21, §11)."""
     given = select(UserPermissionSet.set_id).where(UserPermissionSet.user_id == user_id)
+    by_team = select(TeamPermissionSet.set_id).where(
+        TeamPermissionSet.team_id.in_(sorted(team_ids or set()))
+    )
     rows = session.execute(
         select(PermissionSetItem.permission, PermissionSetItem.scope)
         .join(PermissionSet, PermissionSet.id == PermissionSetItem.set_id)
-        .where(or_(PermissionSet.auto_role.in_(auto_roles), PermissionSet.id.in_(given)))
+        .where(
+            or_(
+                PermissionSet.auto_role.in_(auto_roles),
+                PermissionSet.id.in_(given),
+                PermissionSet.id.in_(by_team),
+            )
+        )
     ).tuples()
     return merge([(str(k), str(v)) for k, v in rows])
 

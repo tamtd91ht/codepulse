@@ -147,14 +147,22 @@ def _privileged(session: Session, settings: Settings, user: User) -> bool:
     a delegated admin right (docs/specs/21 §3) must not act on such a person."""
     if _is_admin_email(user.primary_email, settings) or user.manage_all:
         return True
-    from app.models import PermissionSetItem, UserPermissionSet
+    from sqlalchemy import or_
 
+    from app.models import PermissionSetItem, TeamMember, TeamPermissionSet, UserPermissionSet
+
+    # Given to them, or to a team they are (or will be) in (docs/specs/21 §11).
+    given = select(UserPermissionSet.set_id).where(UserPermissionSet.user_id == user.id)
+    by_team = select(TeamPermissionSet.set_id).where(
+        TeamPermissionSet.team_id.in_(
+            select(TeamMember.team_id).where(TeamMember.user_id == user.id)
+        )
+    )
     return bool(
         session.scalar(
             select(PermissionSetItem.permission)
-            .join(UserPermissionSet, UserPermissionSet.set_id == PermissionSetItem.set_id)
             .where(
-                UserPermissionSet.user_id == user.id,
+                or_(PermissionSetItem.set_id.in_(given), PermissionSetItem.set_id.in_(by_team)),
                 PermissionSetItem.permission.like("admin.%"),
             )
             .limit(1)

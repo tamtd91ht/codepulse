@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.mcp import queries, render
-from app.models import Task, TaskComment, TaskStatus, TaskWorklog
+from app.models import Task, TaskComment, TaskSpace, TaskStatus, TaskWorklog
 from app.tasks import keys as tk
 from app.tasks import service as ts
 
@@ -110,11 +110,8 @@ def move_task_work(
     task = _task(session, caller, key)
     if not ts.may(caller.principal, "transition", task):
         raise queries.McpError("forbidden", "bạn không chuyển trạng thái được task này")
-    wanted = tk.slug(status)
-    target = next(
-        (s for s in ts.statuses_of(session, task.business_project_id) if tk.slug(s.name) == wanted),
-        None,
-    )
+    space = session.get(TaskSpace, task.business_project_id)
+    target = ts.status_by_word(session, space, status) if space is not None else None
     if target is None:
         raise queries.McpError("invalid", f"dự án không có trạng thái {status}")
     ts.set_status(session, task, target, caller.user_id, "mcp")

@@ -93,7 +93,7 @@ def test_switching_projects_every_task_and_edits_follow(
     assert got["CRM-3"].parent_key == "CRM-2" and got["CRM-3"].type == "feature"
     assert row.state == "opened" and row.assignee_account_ids
     # Done: closed this month, and An is someone the DPI cycle scores.
-    done = next(s["id"] for s in space["statuses"] if s["name"] == "Done")
+    done = next(s["id"] for s in space["statuses"] if s["name"] == "Xong")
     res = client.post(f"{API}/tasks/CRM-2/transition", headers=admin, json={"status_id": done})
     assert res.status_code == 200
     row = rows(db_session)["CRM-2"]
@@ -101,9 +101,15 @@ def test_switching_projects_every_task_and_edits_follow(
     tz = ZoneInfo("Asia/Ho_Chi_Minh")
     month = datetime.now(tz).date().replace(day=1)
     assert world.an.id in active_people(db_session, month, tz, "codepulse")
-    # Won't Do is no output: its row goes.
-    wont = next(s["id"] for s in space["statuses"] if s["name"] == "Won't Do")
-    client.post(f"{API}/tasks/CRM-3/transition", headers=admin, json={"status_id": wont})
+    # Closed as "won't do" is no output: its row goes (docs/specs/31 §19.1).
+    done = next(s["id"] for s in space["statuses"] if s["category"] == "done")
+    res = client.post(
+        f"{API}/tasks/CRM-3/transition",
+        headers=admin,
+        json={"status_id": done, "resolution": "wont_do"},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["resolution"] == "wont_do"
     assert "CRM-3" not in rows(db_session)
 
 

@@ -397,7 +397,7 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
                           </span>
                         </td>
                         <td>
-                          <StatusPill status={t.status} />
+                          <StatusPill status={t.status} resolution={t.resolution} />
                         </td>
                         <td className="nowrap">
                           <RowPriority row={t} withLabel />

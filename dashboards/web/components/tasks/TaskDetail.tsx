@@ -2,12 +2,13 @@
 
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
+import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
 import { Markdown } from "@/components/Markdown";
 import { EmptyState, Loading, Message, Segmented } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { dateTimeMin, relative } from "@/lib/format";
-import type { TaskDetail as Detail, TaskLinkKind, TaskPriority, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
+import type { TaskDetail as Detail, TaskLinkKind, TaskPriority, TaskResolution, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
 
 import { TaskActivity, TaskAttachments } from "./TaskActivity";
 import { FileTextarea } from "./taskFiles";
@@ -15,6 +16,8 @@ import { TaskAiButtons } from "./TaskAi";
 import { TaskCode } from "./TaskCode";
 import {
   LINK_KIND_LABEL,
+  RESOLUTION_LABEL,
+  RESOLUTIONS,
   priorityList,
   PersonAvatar,
   StatusPill,
@@ -95,12 +98,19 @@ function Body({
     }
   }
 
-  async function transition(target: TaskStatusRef) {
+  const [closing, setClosing] = useState<TaskStatusRef | null>(null);
+
+  async function transition(target: TaskStatusRef, resolution?: TaskResolution, comment?: string) {
     if (target.id === task.status.id) return;
+    // Into "done": ask why first (§19.1).
+    if (target.category === "done" && !resolution) {
+      setClosing(target);
+      return;
+    }
     if (!(await confirmDone(ask, task.git?.summary.open_critical ?? 0, target))) return;
     setMessage(null);
     try {
-      await api.post(`${path}/transition`, { status_id: target.id });
+      await api.post(`${path}/transition`, { status_id: target.id, resolution, comment: comment || undefined });
       await refreshTasks();
     } catch (e) {
       setMessage(`Lỗi: ${errorText(e)}`);
@@ -151,7 +161,18 @@ function Body({
         <TaskAttachments task={task} />
       </div>
       <aside className="tk-detail-side" aria-label="Thông tin task">
-        <Fields task={task} bp={bp} space={space} onPatch={patch} onTransition={transition} />
+        <Fields task={task} bp={bp} space={space} onPatch={patch} onTransition={(s) => void transition(s)} />
+        {closing && (
+          <ResolutionModal
+            target={closing}
+            onClose={() => setClosing(null)}
+            onPick={(resolution, comment) => {
+              const target = closing;
+              setClosing(null);
+              void transition(target, resolution, comment);
+            }}
+          />
+        )}
         {canEdit && <TaskAiButtons task={task} bp={bp} types={space?.types ?? TASK_TYPES} />}
         <dl className="tk-meta small">
           <dt>Người tạo</dt>
@@ -324,7 +345,7 @@ function Subtasks({ task, bp, space, onOpenTask }: { task: Detail; bp: number | 
                   {s.title}
                 </button>
                 <span className="spacer" />
-                <StatusPill status={s.status} />
+                <StatusPill status={s.status} resolution={s.resolution} />
                 <PersonAvatar person={s.assignee} />
               </li>
             ))}
@@ -563,6 +584,22 @@ function Fields({
           ))}
         </select>
       </Row>
+      {task.status.category === "done" && (
+        <Row label="Lý do đóng">
+          <select
+            value={task.resolution ?? "done"}
+            disabled={off}
+            aria-label="Lý do đóng"
+            onChange={(e) => void onPatch({ resolution: e.target.value as TaskResolution })}
+          >
+            {RESOLUTIONS.map((r) => (
+              <option key={r} value={r}>
+                {RESOLUTION_LABEL[r]}
+              </option>
+            ))}
+          </select>
+        </Row>
+      )}
       <Row label="Nhãn">
         <BlurInput
           label="Nhãn (cách nhau bằng dấu phẩy)"
@@ -572,6 +609,22 @@ function Fields({
           onCommit={(v) =>
             void onPatch({
               labels: v
+                .split(",")
+                .map((l) => l.trim())
+                .filter(Boolean),
+            })
+          }
+        />
+      </Row>
+      <Row label="Thành phần">
+        <BlurInput
+          label="Thành phần (cách nhau bằng dấu phẩy)"
+          value={(task.components ?? []).join(", ")}
+          disabled={off}
+          placeholder="api, web, mobile"
+          onCommit={(v) =>
+            void onPatch({
+              components: v
                 .split(",")
                 .map((l) => l.trim())
                 .filter(Boolean),
@@ -679,5 +732,45 @@ function Fields({
         </span>
       </Row>
     </div>
+  );
+}
+
+/** Closing a task (§19.1): why, and an optional note (a comment on the task). */
+function ResolutionModal({ target, onClose, onPick }: { target: TaskStatusRef; onClose: () => void; onPick: (r: TaskResolution, comment: string) => void }) {
+  const [value, setValue] = useState<TaskResolution>("done");
+  const [comment, setComment] = useState("");
+  return (
+    <Modal
+      title={`Chuyển sang “${target.name}”`}
+      onClose={onClose}
+      width={460}
+      footer={
+        <>
+          <button type="button" className="ghost" onClick={onClose}>
+            Huỷ
+          </button>
+          <button type="button" className="primary" onClick={() => onPick(value, comment.trim())}>
+            Đóng task
+          </button>
+        </>
+      }
+    >
+      <div className="adm-form tk-form">
+        <fieldset className="rq-field">
+          <legend className="rq-label">Lý do đóng</legend>
+          {RESOLUTIONS.map((r) => (
+            <label key={r} className="inline-check">
+              <input type="radio" name="tk-resolution" checked={value === r} onChange={() => setValue(r)} />
+              {RESOLUTION_LABEL[r]}
+            </label>
+          ))}
+        </fieldset>
+        <p className="small muted">Chỉ “Đã xong” được tính là việc hoàn thành (cycle time, DPI, velocity).</p>
+        <label className="rq-field">
+          <span className="rq-label">Ghi chú (tuỳ chọn)</span>
+          <textarea rows={2} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Ví dụ: trùng với CRM-12" />
+        </label>
+      </div>
+    </Modal>
   );
 }

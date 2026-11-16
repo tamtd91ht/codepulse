@@ -43,7 +43,8 @@ export function TaskReports({ space }: { space: TaskSpace }) {
         <StatStrip label="Cycle time">
           <StripStat label="Cycle time trung vị" value={r.cycle_time.median_h === null ? null : String(r.cycle_time.median_h)} digits={1} unit="giờ" title="Từ lúc bắt đầu làm đến khi xong, trung vị" />
           <StripStat label="Cycle time p85" value={r.cycle_time.p85_h === null ? null : String(r.cycle_time.p85_h)} digits={1} unit="giờ" title="85% task xong trong khoảng này" />
-          <StripStat label="Task xong" value={r.cycle_time.count} />
+          <StripStat label="Task xong (có bắt đầu)" value={r.cycle_time.count} title="Task Đã xong từng qua nhóm Đang làm: tính cycle time" />
+          <StripStat label="Xong không qua Đang làm" value={r.cycle_time.skipped ?? 0} title="Nhảy thẳng vào Xong: không tính vào cycle time (docs/specs/31 §19.1)" />
           <StripStat label="Task tạo" value={r.flow.reduce((n, d) => n + d.created, 0)} />
           <StripStat label="Giờ làm" value={String(Math.round(r.worklog.reduce((n, w) => n + w.minutes, 0) / 6) / 10)} digits={1} unit="giờ" />
         </StatStrip>
