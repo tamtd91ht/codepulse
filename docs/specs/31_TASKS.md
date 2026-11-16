@@ -634,3 +634,28 @@ Chỉ đọc, không migration. Mã: `app/tasks/health.py`, `app/api/routers/tas
 - Chưa làm: gắn `ParentDoneAsk` vào chi tiết task; nhãn / biểu tượng cho các loại `task.*` trong
   `KIND_LABEL` của chuông (đã thiếu từ trước, áp dụng cho mọi loại task); múi giờ riêng từng người (dùng
   REPORT_TZ).
+
+## 20. Lộ trình đợt 2 (người dùng 2026-11-16: "làm toàn bộ theo đề xuất đi")
+
+Nguồn: "CodePulse Task: Định hướng nâng cấp, đợt 2" và bản phản biện đã chốt. Nhiều mục "còn tồn" của tài
+liệu đã có từ đợt 1 nhưng khó thấy (Ctrl+K không có nút, mẫu chỉ hiện khi bật Task lần đầu, sức chứa cần ≥ 3
+sprint đóng, tuỳ chọn thông báo ở trang Thông báo): đợt 2 sửa cách thấy, không làm lại. Quyết định đã chốt:
+
+- R4: **không** gom sub-task vào card cha làm mặc định (người làm sub-task sẽ mất việc của mình trên Board);
+  có công tắc "Gom sub-task vào card cha", nhớ theo người.
+- Phím tắt: `N` tạo task (không dùng `C`, đang là bình luận trong chi tiết), `/` tìm, `G B`, `G M`, `?`.
+- Tạo nhanh lưu ngay; chỉ hiện chip để sửa khi có chỗ mơ hồ.
+- Không thêm loại task "Test" (dùng testcase + liên kết covers); mẫu QA dùng Bug / Task.
+- Hoàn tác cho sửa hàng loạt / đổi trạng thái; xoá giữ hộp xác nhận (không xoá mềm).
+- Đo sử dụng giao diện chỉ đếm gộp theo ngày và dự án, không theo người.
+- `obsolete` (Lỗi thời) được thêm như lý do đóng không có đầu ra; velocity chỉ tính lý do `done`.
+
+| Giai đoạn | Nội dung | Mục |
+|---|---|---|
+| 2.0 Tin cậy & thấy được | R3, velocity, `obsolete`, phạm vi Team (R1), đồng bộ team từ nhóm GitLab (R2), nút Ctrl+K / `?`, áp mẫu cho dự án đã bật, sẵn sàng phát hành trên danh sách phiên bản, đổi tên trạng thái sang tiếng Việt | 20.0, 20.7 |
+| 2.1 Một màn hình | Sức khoẻ gộp, dòng thời gian gộp, ô bình luận cố định `@` / `#`, ẩn trường trống, huy hiệu bị chặn / MR đóng | 20.1 |
+| 2.2 Nhanh tay | Lệnh trên task trong Ctrl+K, phím tắt, `^OCX-1`, công tắc gom sub-task | 20.2 |
+| 2.3 QA | Bug từ từng bước test, giao mặc định, retest vào Việc của tôi, tiêu chí chấp nhận có mã nối testcase | 20.3 |
+| 2.4 Nhân rộng | Mẫu lưu được, mẫu Mobile, Tình trạng bật Task, hướng dẫn bật đủ bước | 20.4 |
+| 2.5 Thông báo & quy tắc | Kênh theo sự kiện, Bug Cao nhất bỏ qua giờ yên lặng, gom 10 phút, tóm tắt 17:30 Telegram, tạm ẩn, nhật ký + chạy thử, 5 quy tắc mới | 20.5 |
+| 2.6 Đánh giá sprint | Tóm tắt khi đóng sprint + trang retro, thay đổi phạm vi, dự báo có khoảng, xu hướng 4 sprint, trạng thái rỗng | 20.6 |
