@@ -2441,6 +2441,10 @@ export interface TaskSpace {
   statuses: TaskStatus[];
   can_manage: boolean;
   can_create: boolean;
+  /** tasks.sprint: plan, start, complete sprints. */
+  can_sprint: boolean;
+  /** tasks.assign: may name someone else as the assignee. */
+  can_assign: boolean;
 }
 
 export interface TaskGitCounts {
@@ -2512,6 +2516,8 @@ export interface TaskAttachment {
   content_type: string | null;
   uploaded_by: TaskPerson | null;
   created_at: string;
+  url: string;
+  can_delete: boolean;
 }
 
 export interface TaskWorklog {
@@ -2601,7 +2607,19 @@ export interface TaskDetail extends Omit<TaskRow, "git" | "subtasks"> {
   worklogs: TaskWorklog[];
   git: TaskGit | null;
   transitions: TaskStatusRef[];
-  can: { edit: boolean; delete: boolean; comment: boolean; manage: boolean };
+  /** docs/specs/31 §4.1: the task rights, split as Jira's permission scheme. */
+  can: {
+    edit: boolean;
+    assign: boolean;
+    transition: boolean;
+    delete: boolean;
+    comment: boolean;
+    attach: boolean;
+    worklog: boolean;
+    link: boolean;
+    moderate: boolean;
+    manage: boolean;
+  };
 }
 
 export interface TaskCommitCandidate {

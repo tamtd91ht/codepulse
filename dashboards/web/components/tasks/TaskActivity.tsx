@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { SubPanel, SubTabs } from "@/components/AdminTabs";
 import { Icon, IconButton } from "@/components/icons";
@@ -10,6 +10,7 @@ import { api } from "@/lib/api";
 import { date, dateTimeMin, relative } from "@/lib/format";
 import type { TaskAttachment, TaskComment, TaskDetail } from "@/lib/types";
 
+import { FileTextarea, ImageViewer, MAX_FILE_MB, clipboardFiles, inlineUrl, isInlineImage, uploadTaskFile } from "./taskFiles";
 import { VIA_LABEL, errorText, fileSize, fmtMinutes, parseDuration, personName, refreshTasks, today, useConfirm } from "./taskParts";
 
 type Tab = "comments" | "history" | "worklog";
@@ -42,6 +43,8 @@ export function TaskActivity({ task }: { task: TaskDetail }) {
 function Comments({ task, path }: { task: TaskDetail; path: string }) {
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(0);
+  const [editUploading, setEditUploading] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ id: number; body: string } | null>(null);
   const [confirmEl, ask] = useConfirm();
@@ -84,11 +87,20 @@ function Comments({ task, path }: { task: TaskDetail; path: string }) {
                 </span>
                 <span className="spacer" />
                 {c.can_edit && <IconButton icon="edit" label="Sửa" onClick={() => setEditing({ id: c.id, body: c.body })} />}
-                {(c.can_edit || task.can.manage) && <IconButton icon="remove" tone="danger" label="Xoá" onClick={() => void remove(c)} />}
+                {c.can_edit && <IconButton icon="remove" tone="danger" label="Xoá" onClick={() => void remove(c)} />}
               </div>
               {editing?.id === c.id ? (
                 <div className="tk-editor">
-                  <textarea rows={3} value={editing.body} onChange={(e) => setEditing({ id: c.id, body: e.target.value })} aria-label="Sửa bình luận" />
+                  <FileTextarea
+                    rows={3}
+                    value={editing.body}
+                    taskKey={task.key}
+                    canAttach={task.can.attach}
+                    onUploaded={() => void refreshTasks()}
+                    onPendingChange={setEditUploading}
+                    onChange={(next) => setEditing((cur) => (cur ? { id: cur.id, body: typeof next === "function" ? next(cur.body) : next } : cur))}
+                    aria-label="Sửa bình luận"
+                  />
                   <div className="adm-form-foot">
                     <button type="button" className="ghost sm" onClick={() => setEditing(null)}>
                       Huỷ
@@ -96,7 +108,7 @@ function Comments({ task, path }: { task: TaskDetail; path: string }) {
                     <button
                       type="button"
                       className="sm"
-                      disabled={busy || !editing.body.trim()}
+                      disabled={busy || editUploading > 0 || !editing.body.trim()}
                       onClick={() => void run(() => api.patch(`${path}/comments/${c.id}`, { body: editing.body.trim() })).then((ok) => ok && setEditing(null))}
                     >
                       Lưu
@@ -115,12 +127,22 @@ function Comments({ task, path }: { task: TaskDetail; path: string }) {
           className="tk-editor"
           onSubmit={(e) => {
             e.preventDefault();
-            if (body.trim()) void run(() => api.post(`${path}/comments`, { body: body.trim() })).then((ok) => ok && setBody(""));
+            if (body.trim() && !uploading) void run(() => api.post(`${path}/comments`, { body: body.trim() })).then((ok) => ok && setBody(""));
           }}
         >
-          <textarea rows={3} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Viết bình luận (markdown, @tên để nhắc)…" aria-label="Bình luận mới" />
+          <FileTextarea
+            rows={3}
+            value={body}
+            taskKey={task.key}
+            canAttach={task.can.attach}
+            onUploaded={() => void refreshTasks()}
+            onChange={setBody}
+            onPendingChange={setUploading}
+            placeholder="Viết bình luận (markdown, @tên để nhắc)…"
+            aria-label="Bình luận mới"
+          />
           <div className="adm-form-foot">
-            <button type="submit" className="sm" disabled={busy || !body.trim()}>
+            <button type="submit" className="sm" disabled={busy || uploading > 0 || !body.trim()}>
               Gửi bình luận
             </button>
           </div>
@@ -196,7 +218,7 @@ function Worklogs({ task, path }: { task: TaskDetail; path: string }) {
                 <th>Ngày</th>
                 <th className="num">Thời gian</th>
                 <th>Ghi chú</th>
-                {task.can.edit && <th className="tk-actions-col" aria-label="Thao tác" />}
+                {(task.can.worklog || task.can.moderate) && <th className="tk-actions-col" aria-label="Thao tác" />}
               </tr>
             </thead>
             <tbody>
@@ -214,7 +236,7 @@ function Worklogs({ task, path }: { task: TaskDetail; path: string }) {
                       </>
                     )}
                   </td>
-                  {task.can.edit && (
+                  {(task.can.worklog || task.can.moderate) && (
                     <td className="tk-actions-col">
                       <IconButton icon="remove" tone="danger" label="Xoá" disabled={busy} onClick={() => void run(() => api.delete(`${path}/worklogs/${w.id}`))} />
                     </td>
@@ -230,13 +252,13 @@ function Worklogs({ task, path }: { task: TaskDetail; path: string }) {
                 <td className="num">
                   <strong>{fmtMinutes(total)}</strong>
                 </td>
-                <td colSpan={task.can.edit ? 2 : 1} />
+                <td colSpan={task.can.worklog || task.can.moderate ? 2 : 1} />
               </tr>
             </tfoot>
           </table>
         </div>
       )}
-      {task.can.edit && (
+      {task.can.worklog && (
         <form
           className="tk-worklog-form"
           onSubmit={(e) => {
@@ -265,37 +287,58 @@ function Worklogs({ task, path }: { task: TaskDetail; path: string }) {
   );
 }
 
-const MAX_MB = 20;
-
-/** Files of a task (≤ 20 MB each): upload, download, delete. */
+/**
+ * Files of a task (≤ 20 MB each, docs/specs/31 §17): pick from disk, drop onto the section,
+ * or paste (Ctrl+V) a copied screenshot anywhere on the task outside a text field. Images show
+ * as thumbnails and open full size; other files download.
+ */
 export function TaskAttachments({ task }: { task: TaskDetail }) {
   const input = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(0);
+  const [over, setOver] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<TaskAttachment | null>(null);
   const [confirmEl, ask] = useConfirm();
-  const path = `/tasks/${encodeURIComponent(task.key)}`;
+  const canAttach = task.can.attach;
+  const images = task.attachments.filter((a) => isInlineImage(a.content_type));
+  const others = task.attachments.filter((a) => !isInlineImage(a.content_type));
 
-  async function upload(files: FileList | null) {
-    if (!files?.length) return;
-    setBusy(true);
+  async function upload(files: File[]) {
+    if (!files.length || !canAttach) return;
+    setBusy((n) => n + files.length);
     setMessage(null);
     const failed: string[] = [];
-    for (const f of [...files]) {
-      if (f.size > MAX_MB * 1024 * 1024) {
-        failed.push(`${f.name}: quá ${MAX_MB} MB`);
-        continue;
-      }
-      try {
-        await api.postRaw(`${path}/attachments?filename=${encodeURIComponent(f.name)}`, f);
-      } catch (e) {
-        failed.push(`${f.name}: ${errorText(e)}`);
-      }
-    }
+    await Promise.all(
+      files.map(async (f, i) => {
+        try {
+          await uploadTaskFile(task.key, f, i);
+        } catch (e) {
+          failed.push(`${f.name || "ảnh"}: ${errorText(e)}`);
+        } finally {
+          setBusy((n) => n - 1);
+        }
+      }),
+    );
     await refreshTasks();
-    setBusy(false);
-    if (input.current) input.current.value = "";
     if (failed.length) setMessage(`Lỗi: ${failed.join("; ")}`);
   }
+
+  // A screenshot pasted on the task (not inside a text field or a dialog) becomes an attachment.
+  const uploadRef = useRef(upload);
+  uploadRef.current = upload;
+  useEffect(() => {
+    if (!canAttach) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const t = e.target instanceof HTMLElement ? e.target : null;
+      if (t?.closest("input, textarea, select, [contenteditable='true'], .modal-backdrop")) return;
+      const files = clipboardFiles(e);
+      if (!files.length) return;
+      e.preventDefault();
+      void uploadRef.current(files);
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [canAttach]);
 
   async function remove(a: TaskAttachment) {
     if (!(await ask({ title: `Xoá “${a.name}”?`, body: <p>Không hoàn tác được.</p>, ok: "Xoá", danger: true }))) return;
@@ -308,43 +351,104 @@ export function TaskAttachments({ task }: { task: TaskDetail }) {
   }
 
   return (
-    <section className="tk-section" aria-labelledby="tk-files-title">
+    <section
+      className={`tk-section tk-files${over ? " is-over" : ""}`}
+      aria-labelledby="tk-files-title"
+      onDragOver={(e) => {
+        if (!canAttach || ![...e.dataTransfer.types].includes("Files")) return;
+        e.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false);
+      }}
+      onDrop={(e) => {
+        setOver(false);
+        if (!canAttach || !e.dataTransfer.files.length) return;
+        e.preventDefault();
+        void upload([...e.dataTransfer.files]);
+      }}
+    >
       {confirmEl}
+      {viewing && <ImageViewer file={viewing} onClose={() => setViewing(null)} />}
       <div className="tk-section-head">
         <h3 id="tk-files-title">
-          <Icon name="file" size={16} /> Đính kèm
+          <Icon name="file" size={16} /> Đính kèm{task.attachments.length ? ` (${task.attachments.length})` : ""}
         </h3>
-        {task.can.edit && (
+        {canAttach && (
           <span className="actions">
-            <input ref={input} type="file" multiple hidden onChange={(e) => void upload(e.target.files)} />
-            <button type="button" className="sm ghost" disabled={busy} onClick={() => input.current?.click()}>
-              <Icon name="upload" size={14} /> {busy ? "Đang tải lên…" : "Tải file lên"}
+            <input
+              ref={input}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                void upload([...(e.target.files ?? [])]);
+                e.target.value = "";
+              }}
+            />
+            <button type="button" className="sm ghost" disabled={busy > 0} onClick={() => input.current?.click()}>
+              <Icon name="upload" size={14} /> {busy ? `Đang tải ${busy} file…` : "Tải file lên"}
             </button>
           </span>
         )}
       </div>
       {message && <Message text={message} onClose={() => setMessage(null)} />}
+      {canAttach && (
+        <p className="small muted tk-files-hint">
+          Kéo thả file vào đây, hoặc chụp màn hình rồi dán (Ctrl+V) khi đang xem task. Mỗi file tối đa {MAX_FILE_MB} MB. Ảnh dán vào mô tả, bình luận cũng nằm ở đây.
+        </p>
+      )}
       {!task.attachments.length ? (
         <p className="small faint">Chưa có file.</p>
       ) : (
-        <ul className="tk-git-list">
-          {task.attachments.map((a) => (
-            <li key={a.id}>
-              <Icon name="file" size={14} />
-              <a href={`/api/v1/tasks/attachments/${a.id}`} className="tk-ellipsis" download={a.name}>
-                {a.name}
-              </a>
-              <span className="small muted">
-                {fileSize(a.size)} · {personName(a.uploaded_by)} · {date(a.created_at)}
-              </span>
-              <span className="spacer" />
-              <a href={`/api/v1/tasks/attachments/${a.id}`} className="icon-btn" download={a.name} aria-label={`Tải ${a.name}`} data-tip="Tải về">
-                <Icon name="download" size={16} />
-              </a>
-              {(task.can.edit || task.can.manage) && <IconButton icon="remove" tone="danger" label="Xoá file" onClick={() => void remove(a)} />}
-            </li>
-          ))}
-        </ul>
+        <>
+          {images.length > 0 && (
+            <ul className="tk-thumbs">
+              {images.map((a) => (
+                <li key={a.id} className="tk-thumb">
+                  <button type="button" className="tk-thumb-img" onClick={() => setViewing(a)} aria-label={`Xem ảnh ${a.name}`}>
+                    <img src={inlineUrl(a.id)} alt={a.name} loading="lazy" />
+                  </button>
+                  <div className="tk-thumb-meta">
+                    <span className="tk-ellipsis small" title={a.name}>
+                      {a.name}
+                    </span>
+                    <span className="tk-thumb-actions">
+                      <a href={a.url} className="icon-btn" download={a.name} aria-label={`Tải ${a.name}`} data-tip="Tải về">
+                        <Icon name="download" size={14} />
+                      </a>
+                      {a.can_delete && <IconButton icon="remove" tone="danger" label="Xoá ảnh" onClick={() => void remove(a)} />}
+                    </span>
+                  </div>
+                  <span className="tk-thumb-sub small muted">
+                    {fileSize(a.size)} · {personName(a.uploaded_by)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {others.length > 0 && (
+            <ul className="tk-git-list">
+              {others.map((a) => (
+                <li key={a.id}>
+                  <Icon name="file" size={14} />
+                  <a href={a.url} className="tk-ellipsis" download={a.name}>
+                    {a.name}
+                  </a>
+                  <span className="small muted">
+                    {fileSize(a.size)} · {personName(a.uploaded_by)} · {date(a.created_at)}
+                  </span>
+                  <span className="spacer" />
+                  <a href={a.url} className="icon-btn" download={a.name} aria-label={`Tải ${a.name}`} data-tip="Tải về">
+                    <Icon name="download" size={16} />
+                  </a>
+                  {a.can_delete && <IconButton icon="remove" tone="danger" label="Xoá file" onClick={() => void remove(a)} />}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </section>
   );

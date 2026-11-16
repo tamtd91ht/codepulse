@@ -58,15 +58,36 @@ Vào nhóm `done` thì đặt `resolved_at`; ra khỏi thì xoá.
 
 ## 4. Quyền (bộ quyền spec 21)
 
-| Quyền | Phạm vi | Nghĩa | Mặc định |
-|---|---|---|---|
-| `tasks.view` | flag | xem task của dự án mình được xem; bình luận, theo dõi | Thành viên |
-| `tasks.edit` | own/project/all | tạo task; sửa, chuyển trạng thái, ghi giờ, liên kết git. `own` = task mình tạo hoặc được giao | Thành viên own; Quản lý dự án project; Quản lý tổng all |
-| `tasks.manage` | project/all | bật Task, mã, trạng thái, luật, sprint, phiên bản, trường tuỳ biến, xoá task | Quản lý dự án project; Quản lý tổng all |
+### 4.1 Chia như permission scheme của Jira (người dùng 2026-11-16: "phân quyền cho menu này, giống phân quyền jira", migration `e1a3c5e7b9d2`)
 
-- `project` = dự án mình có quyền `manage`; `all` = mọi dự án mình xem được.
-- Tạo task cần `tasks.edit` (bất kỳ phạm vi) trên dự án xem được.
-- Bình luận: sửa/xoá bình luận của mình; `tasks.manage` xoá được mọi bình luận.
+| Quyền | Jira | Phạm vi | Nghĩa | Thành viên | Quản lý dự án / tổng |
+|---|---|---|---|---|---|
+| `tasks.view` | Browse projects | flag | thấy menu Task; xem task, bảng, backlog, báo cáo; theo dõi | ✓ | ✓ |
+| `tasks.create` | Create issues | flag | tạo task (cả sub-task, AI tách task) ở dự án xem được | ✓ | ✓ |
+| `tasks.edit` | Edit issues | own/project/all | sửa tiêu đề, mô tả, trường, sprint, phiên bản; AI soạn | own | project / all |
+| `tasks.assign` | Assign issues | own/project/all | đổi người làm; tạo task giao cho người khác (không có: chỉ nhận về mình) | own | project / all |
+| `tasks.transition` | Transition issues | own/project/all | chuyển trạng thái, kéo thả cột trên bảng | own | project / all |
+| `tasks.delete` | Delete issues | own/project/all | xoá task (`own`: task mình tạo) | — | project / all |
+| `tasks.comment` | Add comments | flag | bình luận; sửa / xoá bình luận của mình | ✓ | ✓ |
+| `tasks.attach` | Create attachments | flag | đính kèm file, ảnh, dán ảnh chụp màn hình; xoá file mình tải | ✓ | ✓ |
+| `tasks.worklog` | Work on issues | own/project/all | ghi giờ; xoá giờ mình ghi | own | project / all |
+| `tasks.link` | Link issues | own/project/all | liên kết task–task, nối / gỡ commit, MR tay, tạo branch | own | project / all |
+| `tasks.moderate` | Edit/Delete all comments, attachments, worklogs | project/all | sửa / xoá bình luận, file, giờ làm của người khác | — | project / all |
+| `tasks.sprint` | Manage sprints | project/all | lập, sửa, bắt đầu, đóng, xoá sprint | — | project / all |
+| `tasks.manage` | Administer projects | project/all | bật Task, mã, loại, trạng thái + chuyển tiếp, luật git, phiên bản, trường tuỳ biến; **giữ mọi quyền Task ở dự án đó** | — | project / all |
+
+- `own` = task mình tạo (reporter) hoặc được giao (assignee); riêng `tasks.delete` own = task mình
+  tạo. `project` = mọi task của dự án mình có quyền `manage` (ngoài ra vẫn gồm `own`); `all` = mọi
+  task của dự án mình xem được. Quyền flag áp cho mọi task mình xem được.
+- Mọi quyền đều cần xem được task (`tasks.view` + được xem dự án): không quyền nào mở task dự án khác.
+- Bộ quyền cũ giữ nguyên hành vi: migration chép vào **mọi** bộ quyền (có sẵn và admin tự tạo)
+  `tasks.view` → `comment`, `attach`; `tasks.edit`@X → `create`, `assign`/`transition`/`worklog`/`link`@X;
+  `tasks.manage`@X → `delete`/`moderate`/`sprint`@X. Chỉ thêm mục mới, không sửa mục admin đã chỉnh.
+- Smart commit (§5): `#time` cần `tasks.worklog`, `#comment` cần `tasks.comment`, `#<trạng thái>` cần
+  `tasks.transition` của người commit; lệnh thiếu quyền bị bỏ qua, commit vẫn được nối.
+- MCP: `move_task` cần `tasks.transition`, `comment_task` cần `tasks.comment`, `log_work` cần `tasks.worklog`.
+- API trả quyền cho giao diện: `GET /tasks/{key}` → `can:{edit,assign,transition,delete,comment,attach,
+  worklog,link,moderate,manage}`, mỗi file `can_delete`; `GET /tasks/spaces` → thêm `can_sprint`, `can_assign`.
 
 ## 5. Đọc mã từ git (`app/tasks/keys.py`)
 
@@ -81,7 +102,7 @@ Vào nhóm `done` thì đặt `resolved_at`; ra khỏi thì xoá.
   của task); "Closes/Fixes KEY" trong mô tả → `fixes`; mã chỉ nhắc trong mô tả → `refs`.
 - **Nhánh:** `<loại>/<KEY>-<mô-tả>` hoặc tên chứa mã → link `branch`.
 - **Smart commit** (chỉ lần đầu một commit được nối với task; tác giả commit phải gắn với một người
-  có `tasks.edit` trên task): `#time 1h30m` (ghi giờ), `#comment nội dung` (bình luận), `#<trạng thái>`
+  có quyền tương ứng trên task, §4.1): `#time 1h30m` (ghi giờ), `#comment nội dung` (bình luận), `#<trạng thái>`
   (`#done`, `#in-progress`, `#in-review`, … = tên trạng thái viết thường, khoảng trắng → `-`).
 
 ## 6. Đồng bộ với git (`app/tasks/git.py`)
@@ -132,9 +153,9 @@ Kiểu chung:
 | `GET /tasks` | lọc: `space` (lặp), `q` (mã / tiêu đề / mô tả), `status`, `category`, `type`, `assignee` (`me`/`none`/id), `reporter`, `priority`, `label`, `sprint` (id/`backlog`/`active`), `version`, `parent`, `due` (`overdue`/`week`), `updated_from`, `sort` (`rank`/`updated`/`created`/`priority`/`due`/`key`), `order`, `limit` ≤ 500, `offset` → `{items:TaskRow[], total}` |
 | `POST /tasks` | tạo `{space, type, title, description?, priority?, assignee_id?, parent_key?, labels?, components?, story_points?, estimate_min?, due_date?, sprint_id?, version_id?, custom?}` → chi tiết |
 | `POST /tasks/batch` | tạo nhiều `{space, parent_key?, items:[{type,title,description?,story_points?}]}` (dùng cho AI tách task) |
-| `GET /tasks/{key}` | chi tiết: TaskRow + `description, components, estimate_min, spent_min, custom, watchers, watching, links:[{id,kind,direction(out/in),task:TaskRow}], subtasks:TaskRow[], comments:[{id,author,body,created_at,edited_at,can_edit}], history:[{user,field,old,new,via,at}], attachments:[{id,name,size,content_type,uploaded_by,created_at}], worklogs:[{id,user,minutes,day,note,via}], git (§7), transitions:[status], can:{edit,delete,comment,manage}` |
+| `GET /tasks/{key}` | chi tiết: TaskRow + `description, components, estimate_min, spent_min, custom, watchers, watching, links:[{id,kind,direction(out/in),task:TaskRow}], subtasks:TaskRow[], comments:[{id,author,body,created_at,edited_at,can_edit}], history:[{user,field,old,new,via,at}], attachments:[{id,name,size,content_type,uploaded_by,created_at,url,can_delete}], worklogs:[{id,user,minutes,day,note,via}], git (§7), transitions:[status], can:{edit,assign,transition,delete,comment,attach,worklog,link,moderate,manage}` (§4.1) |
 | `PATCH /tasks/{key}` | sửa trường bất kỳ của POST, `status_id` (theo `transitions`), `parent_key` |
-| `DELETE /tasks/{key}` | `tasks.manage`; sub-task xoá theo |
+| `DELETE /tasks/{key}` | `tasks.delete`; sub-task xoá theo |
 | `POST /tasks/{key}/transition` | `{status_id, comment?}` |
 | `POST /tasks/{key}/move` | board / backlog: `{status_id?, sprint_id? (null = backlog), before_key?, after_key?}` |
 | `POST /tasks/bulk` | `{keys, set:{status_id?, assignee_id?, priority?, sprint_id?, version_id?, labels_add?, labels_remove?}, delete?}` |
@@ -293,3 +314,28 @@ Người làm không tự nhận thông báo.
     mới kèm ghi chú hệ quả, nút "Chuyển nguồn". Jira chưa kết nối thì hiện "(chưa kết nối)" và
     không chọn được.
   - Tab Jira chỉ còn hiện nguồn đang dùng, kèm ghi chú "đổi ở DPI › Cấu hình".
+
+## 17. Đính kèm file, ảnh (người dùng 2026-11-16)
+
+> "task chưa hỗ trợ liên kết files, images hãy bổ sung, cho phép load files, images từ disk hoặc paste
+> 1 hình ảnh đã copy trước đó (ảnh chụp screen shot)"
+
+- **Ba cách thêm** (cần `tasks.attach`): nút *Tải file lên* (chọn nhiều file từ máy); kéo thả file
+  vào khung *Đính kèm*; **dán ảnh** (Ctrl+V) — đang xem task (con trỏ không ở ô nhập) thì ảnh thành
+  file đính kèm. Ảnh dán không tên (`image.png`) được đặt `anh-chup-YYYYMMDD-HHmmss.png`.
+- **Trong mô tả và bình luận:** dán ảnh, kéo thả hoặc bấm *Đính file* ở ô soạn → file được tải lên
+  task và chèn vào chỗ con trỏ: ảnh thành `![tên](/api/v1/tasks/attachments/<id>?inline=1)` (hiện
+  ngay trong nội dung), file khác thành link `[tên](/api/v1/tasks/attachments/<id>)`. Trong lúc tải
+  ô soạn hiện `[Đang tải …]`; lỗi thì dòng đó bị gỡ và báo lỗi dưới ô.
+- **Hiển thị:** ảnh (PNG, JPEG, GIF, WebP, BMP) là lưới ảnh thu nhỏ, bấm để xem cỡ lớn, mở tab mới
+  hoặc tải về; file khác là danh sách tải về. Markdown chỉ hiện ảnh đính kèm của task — ảnh từ
+  site khác không tải (lộ người đọc cho site đó).
+- **An toàn:** `GET /tasks/attachments/{id}?inline=1` chỉ trả `inline` cho 5 loại ảnh trên; mọi
+  loại khác (kể cả SVG, HTML) luôn là `application/octet-stream` + `attachment`. Mọi file kèm
+  `X-Content-Type-Options: nosniff` và `Content-Security-Policy: default-src 'none'; sandbox`.
+  Loại file: header trình duyệt gửi, nếu trống / `octet-stream` thì đoán theo tên.
+- **Upload trả** `{id, name, size, content_type, url}`. Giới hạn giữ nguyên: ≤ 20 MB/file,
+  ≤ 2 GB/dự án.
+- **Xoá:** người tải lên (còn `tasks.attach`) hoặc người có `tasks.moderate`; giao diện chỉ hiện
+  nút xoá theo `can_delete` của từng file. Xoá file không sửa mô tả / bình luận đã chèn nó (ảnh
+  hiện thành ảnh hỏng, như Jira).

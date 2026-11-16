@@ -4,8 +4,8 @@ import { useState } from "react";
 
 import { Modal } from "@/components/CriteriaParts";
 import { Message } from "@/components/ui";
-import { api } from "@/lib/api";
-import type { TaskDetail, TaskPriority, TaskSpace, TaskType } from "@/lib/types";
+import { api, useApi } from "@/lib/api";
+import type { Me, TaskDetail, TaskPriority, TaskSpace, TaskType } from "@/lib/types";
 
 import {
   PRIORITIES,
@@ -33,6 +33,9 @@ export function TaskCreate({
 }) {
   const bp = space.business_project_id;
   const people = useTaskPeople(bp);
+  const { data: me } = useApi<Me>("/auth/me");
+  // Without tasks.assign one may only take the task oneself (docs/specs/31 §4.1).
+  const assignable = (people.data ?? []).filter((p) => space.can_assign || p.id === me?.id);
   const sprints = useSprints(bp);
   const types = TASK_TYPES.filter((t) => space.types.includes(t));
   const [type, setType] = useState<TaskType>(parentKey && types.includes("subtask") ? "subtask" : types.includes("task") ? "task" : (types[0] ?? "task"));
@@ -140,7 +143,7 @@ export function TaskCreate({
             <span className="rq-label">Người làm</span>
             <select value={assignee} onChange={(e) => setAssignee(e.target.value)} disabled={!people.data}>
               <option value="">Chưa giao</option>
-              {(people.data ?? []).map((p) => (
+              {assignable.map((p) => (
                 <option key={p.id} value={p.id}>
                   {personName(p)}
                 </option>

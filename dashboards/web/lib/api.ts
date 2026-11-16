@@ -59,8 +59,8 @@ export const api = {
   putRaw: <T>(path: string, body: Blob) =>
     request<T>(path, { method: "PUT", body, headers: { "Content-Type": body.type || "application/octet-stream" } }),
   /** POST a file's raw bytes as the body (rule files, project documents). */
-  postRaw: <T>(path: string, body: Blob) =>
-    request<T>(path, { method: "POST", body, headers: { "Content-Type": "application/octet-stream" } }),
+  postRaw: <T>(path: string, body: Blob, contentType = "application/octet-stream") =>
+    request<T>(path, { method: "POST", body, headers: { "Content-Type": contentType } }),
   /** POST a multipart form (a file with its fields). */
   postForm: <T>(path: string, body: FormData) => request<T>(path, { method: "POST", body }),
 };

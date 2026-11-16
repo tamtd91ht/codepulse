@@ -57,6 +57,19 @@ QueueDep = Annotated[Queue, Depends(get_queue)]
 
 MAX_FILE_BYTES = 20 * 1024 * 1024
 SPACE_FILES_BYTES = 2 * 1024 * 1024 * 1024
+# Images the browser may show in place (a preview, an image in a description or comment).
+# SVG is left out: it can carry script.
+INLINE_IMAGES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"})
+
+
+def _content_type(declared: str | None, name: str) -> str | None:
+    """The header the browser sent, else a guess from the file name (a generic one is no help)."""
+    value = (declared or "").split(";", 1)[0].strip().lower()
+    if not value or value == "application/octet-stream":
+        value = (mimetypes.guess_type(name)[0] or "").lower()
+    return value[:120] or None
+
+
 TaskType = Literal["epic", "story", "task", "bug", "subtask"]
 Priority = Literal["highest", "high", "medium", "low", "lowest"]
 Relation = Literal["fixes", "refs"]
@@ -540,10 +553,17 @@ def create(body: TaskIn, principal: Viewer, session: SessionDep) -> dict[str, An
     space = ts.space_or_404(session, principal, body.space)
     if not ts.can_create(principal, body.space):
         raise HTTPException(403, "bạn không tạo được task ở dự án này")
+    _check_new_assignee(principal, body.space, body.assignee_id)
     task = ts.create_task(session, space, body.model_dump(exclude_unset=True), principal.user_id)
     audit(session, principal.user_id, "task.create", f"task:{task.key}")
     session.commit()
     return detail(session, principal, task)
+
+
+def _check_new_assignee(principal: Principal, bp_id: int, assignee_id: int | None) -> None:
+    other = assignee_id is not None and assignee_id != principal.user_id
+    if other and not ts.can_assign_new(principal, bp_id):
+        raise HTTPException(403, "bạn không có quyền giao task cho người khác (tasks.assign)")
 
 
 @router.post("/tasks/batch", status_code=201)
@@ -551,6 +571,8 @@ def create_batch(body: BatchIn, principal: Viewer, session: SessionDep) -> list[
     space = ts.space_or_404(session, principal, body.space)
     if not ts.can_create(principal, body.space):
         raise HTTPException(403, "bạn không tạo được task ở dự án này")
+    for item in body.items:
+        _check_new_assignee(principal, body.space, getattr(item, "assignee_id", None))
     made = [
         ts.create_task(
             session,
@@ -572,7 +594,7 @@ def bulk(body: BulkIn, principal: Viewer, session: SessionDep) -> dict[str, Any]
     tasks = [ts.task_or_404(session, principal, k) for k in dict.fromkeys(body.keys)]
     if body.delete:
         for task in tasks:
-            ts.require_manage(principal, task.business_project_id)
+            ts.require(principal, "delete", task)
         files = _files_of(session, [t.id for t in tasks])
         for task in tasks:
             session.delete(task)
@@ -580,9 +602,14 @@ def bulk(body: BulkIn, principal: Viewer, session: SessionDep) -> dict[str, Any]
         session.commit()
         _remove_files(files)
         return {"updated": 0, "deleted": len(tasks)}
-    for task in tasks:
-        ts.require_edit(principal, task)
     wanted = body.set.model_dump(exclude_unset=True)
+    needs = {
+        "assign" if k == "assignee_id" else "transition" if k == "status_id" else "edit"
+        for k in wanted
+    }
+    for task in tasks:
+        for right in sorted(needs):
+            ts.require(principal, right, task)
     for task in tasks:
         changes = {
             k: v
@@ -680,7 +707,9 @@ def delete_filter(filter_id: int, principal: Viewer, session: SessionDep) -> Non
 
 
 @router.get("/tasks/attachments/{attachment_id}")
-def download(attachment_id: int, principal: Viewer, session: SessionDep) -> FileResponse:
+def download(
+    attachment_id: int, principal: Viewer, session: SessionDep, inline: bool = False
+) -> FileResponse:
     row = session.get(TaskAttachment, attachment_id)
     task = session.get(Task, row.task_id) if row else None
     if row is None or task is None or not ts.can_view_space(principal, task.business_project_id):
@@ -688,9 +717,25 @@ def download(attachment_id: int, principal: Viewer, session: SessionDep) -> File
     path = files_dir() / row.path
     if not path.is_file():
         raise HTTPException(404, "file không còn trên máy chủ")
+    # Only plain images open in the page; anything else downloads, sniffing off, so an
+    # uploaded HTML or SVG never runs as the dashboard.
+    show = inline and row.content_type in INLINE_IMAGES
     return FileResponse(
-        path, media_type=row.content_type or "application/octet-stream", filename=row.name
+        path,
+        media_type=(row.content_type or "") if show else "application/octet-stream",
+        filename=row.name,
+        content_disposition_type="inline" if show else "attachment",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "private, max-age=86400",
+        },
     )
+
+
+def _may_drop_file(principal: Principal, task: Task, row: TaskAttachment) -> bool:
+    own = row.uploaded_by is not None and row.uploaded_by == principal.user_id
+    return (own and ts.may(principal, "attach", task)) or ts.may(principal, "moderate", task)
 
 
 @router.delete("/tasks/attachments/{attachment_id}", status_code=204)
@@ -699,8 +744,8 @@ def delete_attachment(attachment_id: int, principal: Viewer, session: SessionDep
     task = session.get(Task, row.task_id) if row else None
     if row is None or task is None or not ts.can_view_space(principal, task.business_project_id):
         raise HTTPException(404, "không thấy file")
-    if row.uploaded_by != principal.user_id:
-        ts.require_edit(principal, task)
+    if not _may_drop_file(principal, task, row):
+        raise HTTPException(403, "chỉ người tải lên (hoặc người có quyền kiểm duyệt) xoá được")
     ts.log(session, task, principal.user_id, "attachment", row.name, None)
     path = files_dir() / row.path
     session.delete(row)
@@ -716,7 +761,7 @@ def _sprint(session: Session, principal: Principal, sprint_id: int, manage: bool
     if sprint is None or not ts.can_view_space(principal, sprint.business_project_id):
         raise HTTPException(404, "không thấy sprint")
     if manage:
-        ts.require_manage(principal, sprint.business_project_id)
+        ts.require_sprint(principal, sprint.business_project_id)
     return sprint
 
 
@@ -775,7 +820,7 @@ def create_sprint(
     bp_id: int, body: SprintIn, principal: Viewer, session: SessionDep
 ) -> dict[str, Any]:
     space = ts.space_or_404(session, principal, bp_id)
-    ts.require_manage(principal, bp_id)
+    ts.require_sprint(principal, bp_id)
     count = session.scalar(
         select(func.count()).select_from(Sprint).where(Sprint.business_project_id == bp_id)
     )
@@ -1113,7 +1158,7 @@ def detail(session: Session, principal: Principal, task: Task) -> dict[str, Any]
         or s.id in current.transitions
         or s.id == current.id
     ]
-    editable = ts.can_edit(principal, task)
+    can = ts.rights(principal, task)
     manage = ts.can_manage_space(principal, task.business_project_id)
     return {
         **row,
@@ -1144,7 +1189,7 @@ def detail(session: Session, principal: Principal, task: Task) -> dict[str, Any]
                 "body": c.body,
                 "created_at": c.created_at.isoformat() if c.created_at else None,
                 "edited_at": c.edited_at.isoformat() if c.edited_at else None,
-                "can_edit": c.author_id == principal.user_id or manage,
+                "can_edit": c.author_id == principal.user_id or can["moderate"],
             }
             for c in comments
         ],
@@ -1169,6 +1214,7 @@ def detail(session: Session, principal: Principal, task: Task) -> dict[str, Any]
                 "uploaded_by": ts.person(people.get(a.uploaded_by)) if a.uploaded_by else None,
                 "created_at": a.created_at.isoformat() if a.created_at else None,
                 "url": f"/api/v1/tasks/attachments/{a.id}",
+                "can_delete": _may_drop_file(principal, task, a),
             }
             for a in attachments
         ],
@@ -1185,12 +1231,7 @@ def detail(session: Session, principal: Principal, task: Task) -> dict[str, Any]
         ],
         "git": ts.git_detail(session, task),
         "transitions": allowed,
-        "can": {
-            "edit": editable,
-            "delete": manage,
-            "comment": True,
-            "manage": manage,
-        },
+        "can": {**can, "manage": manage},
     }
 
 
@@ -1204,8 +1245,14 @@ def patch_task(
     key: str, body: TaskFieldsIn, principal: Viewer, session: SessionDep
 ) -> dict[str, Any]:
     task = ts.task_or_404(session, principal, key)
-    ts.require_edit(principal, task)
-    ts.update_task(session, task, body.model_dump(exclude_unset=True), principal.user_id)
+    changes = body.model_dump(exclude_unset=True)
+    if "assignee_id" in changes and changes["assignee_id"] != task.assignee_id:
+        ts.require(principal, "assign", task)
+    if changes.get("status_id") is not None and changes["status_id"] != task.status_id:
+        ts.require(principal, "transition", task)
+    if any(k not in ("assignee_id", "status_id") for k in changes):
+        ts.require_edit(principal, task)
+    ts.update_task(session, task, changes, principal.user_id)
     session.commit()
     return detail(session, principal, task)
 
@@ -1213,7 +1260,7 @@ def patch_task(
 @router.delete("/tasks/{key}", status_code=204)
 def delete_task(key: str, principal: Viewer, session: SessionDep) -> None:
     task = ts.task_or_404(session, principal, key)
-    ts.require_manage(principal, task.business_project_id)
+    ts.require(principal, "delete", task)
     audit(session, principal.user_id, "task.delete", f"task:{task.key}", title=task.title)
     files = _files_of(session, [task.id])
     session.delete(task)
@@ -1226,7 +1273,9 @@ def transition(
     key: str, body: TransitionIn, principal: Viewer, session: SessionDep
 ) -> dict[str, Any]:
     task = ts.task_or_404(session, principal, key)
-    ts.require_edit(principal, task)
+    ts.require(principal, "transition", task)
+    if body.comment and body.comment.strip():
+        ts.require(principal, "comment", task)
     status = session.get(TaskStatus, body.status_id)
     if status is None or status.business_project_id != task.business_project_id:
         raise HTTPException(422, "trạng thái không thuộc dự án")
@@ -1240,8 +1289,13 @@ def transition(
 @router.post("/tasks/{key}/move")
 def move_task(key: str, body: MoveIn, principal: Viewer, session: SessionDep) -> dict[str, Any]:
     task = ts.task_or_404(session, principal, key)
-    ts.require_edit(principal, task)
     sent = body.model_fields_set
+    if "sprint_id" in sent and body.sprint_id != task.sprint_id:
+        ts.require_edit(principal, task)
+    if body.status_id is not None and body.status_id != task.status_id:
+        ts.require(principal, "transition", task)
+    if not (ts.may(principal, "edit", task) or ts.may(principal, "transition", task)):
+        raise HTTPException(403, "bạn không sắp xếp được task này")
     if "sprint_id" in sent and body.sprint_id != task.sprint_id:
         ts.update_task(session, task, {"sprint_id": body.sprint_id}, principal.user_id)
     if body.status_id is not None and body.status_id != task.status_id:
@@ -1305,6 +1359,7 @@ def add_comment(
     key: str, body: CommentIn, principal: Viewer, session: SessionDep
 ) -> dict[str, Any]:
     task = ts.task_or_404(session, principal, key)
+    ts.require(principal, "comment", task)
     comment = _add_comment(session, principal, task, body.body)
     session.commit()
     return {"id": comment.id}
@@ -1317,10 +1372,8 @@ def _comment(
     comment = session.get(TaskComment, comment_id)
     if comment is None or comment.task_id != task.id:
         raise HTTPException(404, "không thấy bình luận")
-    if comment.author_id != principal.user_id and not ts.can_manage_space(
-        principal, task.business_project_id
-    ):
-        raise HTTPException(403, "chỉ người viết sửa / xoá được bình luận")
+    if comment.author_id != principal.user_id and not ts.may(principal, "moderate", task):
+        raise HTTPException(403, "chỉ người viết (hoặc người có quyền kiểm duyệt) sửa / xoá được")
     return task, comment
 
 
@@ -1344,7 +1397,7 @@ def delete_comment(key: str, comment_id: int, principal: Viewer, session: Sessio
 @router.post("/tasks/{key}/links", status_code=201)
 def add_link(key: str, body: LinkIn, principal: Viewer, session: SessionDep) -> dict[str, Any]:
     task = ts.task_or_404(session, principal, key)
-    ts.require_edit(principal, task)
+    ts.require(principal, "link", task)
     other = ts.task_or_404(session, principal, body.key)
     if other.id == task.id:
         raise HTTPException(422, "không liên kết task với chính nó")
@@ -1370,7 +1423,7 @@ def add_link(key: str, body: LinkIn, principal: Viewer, session: SessionDep) -> 
 @router.delete("/tasks/{key}/links/{link_id}", status_code=204)
 def delete_link(key: str, link_id: int, principal: Viewer, session: SessionDep) -> None:
     task = ts.task_or_404(session, principal, key)
-    ts.require_edit(principal, task)
+    ts.require(principal, "link", task)
     row = session.get(TaskLink, link_id)
     if row is None or task.id not in (row.from_task_id, row.to_task_id):
         raise HTTPException(404, "không thấy liên kết")
@@ -1396,7 +1449,7 @@ def add_worklog(
     key: str, body: WorklogIn, principal: Viewer, session: SessionDep
 ) -> dict[str, Any]:
     task = ts.task_or_404(session, principal, key)
-    ts.require_edit(principal, task)
+    ts.require(principal, "worklog", task)
     row = TaskWorklog(
         task_id=task.id,
         user_id=principal.user_id,
@@ -1417,10 +1470,8 @@ def delete_worklog(key: str, worklog_id: int, principal: Viewer, session: Sessio
     row = session.get(TaskWorklog, worklog_id)
     if row is None or row.task_id != task.id:
         raise HTTPException(404, "không thấy giờ làm")
-    if row.user_id != principal.user_id and not ts.can_manage_space(
-        principal, task.business_project_id
-    ):
-        raise HTTPException(403, "chỉ người ghi xoá được")
+    if row.user_id != principal.user_id and not ts.may(principal, "moderate", task):
+        raise HTTPException(403, "chỉ người ghi (hoặc người có quyền kiểm duyệt) xoá được")
     task.spent_min = max((task.spent_min or 0) - row.minutes, 0)
     session.delete(row)
     session.commit()
@@ -1445,7 +1496,7 @@ async def upload(
 
     def store() -> dict[str, Any]:
         task = ts.task_or_404(session, principal, key)
-        ts.require_edit(principal, task)
+        ts.require(principal, "attach", task)
         used = session.scalar(
             select(func.coalesce(func.sum(TaskAttachment.size), 0))
             .join(Task, Task.id == TaskAttachment.task_id)
@@ -1461,7 +1512,7 @@ async def upload(
         row = TaskAttachment(
             task_id=task.id,
             name=name,
-            content_type=request.headers.get("content-type") or mimetypes.guess_type(name)[0],
+            content_type=_content_type(request.headers.get("content-type"), name),
             size=len(data),
             path=rel,
             uploaded_by=principal.user_id,
@@ -1469,7 +1520,13 @@ async def upload(
         session.add(row)
         ts.log(session, task, principal.user_id, "attachment", None, name)
         session.commit()
-        return {"id": row.id, "name": row.name, "size": row.size}
+        return {
+            "id": row.id,
+            "name": row.name,
+            "size": row.size,
+            "content_type": row.content_type,
+            "url": f"/api/v1/tasks/attachments/{row.id}",
+        }
 
     return await run_in_threadpool(store)
 
@@ -1479,14 +1536,14 @@ def commit_candidates(
     key: str, principal: Viewer, session: SessionDep, q: str | None = None
 ) -> list[dict[str, Any]]:
     task = ts.task_or_404(session, principal, key)
-    ts.require_edit(principal, task)
+    ts.require(principal, "link", task)
     return task_git.candidates(session, task, q)
 
 
 @router.post("/tasks/{key}/git", status_code=201)
 def add_git(key: str, body: GitIn, principal: Viewer, session: SessionDep) -> dict[str, Any]:
     task = ts.task_or_404(session, principal, key)
-    ts.require_edit(principal, task)
+    ts.require(principal, "link", task)
     if body.kind == "commit":
         if not body.sha:
             raise HTTPException(422, "cần sha")
@@ -1511,7 +1568,7 @@ def delete_git(key: str, link_id: int, principal: Viewer, session: SessionDep) -
     if row is None or row.task_id != task.id:
         raise HTTPException(404, "không thấy liên kết")
     manage = ts.can_manage_space(principal, task.business_project_id)
-    if not manage and not (row.manual and ts.can_edit(principal, task)):
+    if not manage and not (row.manual and ts.may(principal, "link", task)):
         raise HTTPException(403, "chỉ gỡ được liên kết tay (hoặc cần quyền quản lý Task)")
     ts.log(
         session, task, principal.user_id, row.kind, row.sha or row.branch or f"!{row.mr_iid}", None
@@ -1525,7 +1582,7 @@ def create_branch(
     key: str, body: BranchIn, principal: Viewer, session: SessionDep
 ) -> dict[str, Any]:
     task = ts.task_or_404(session, principal, key)
-    ts.require_edit(principal, task)
+    ts.require(principal, "link", task)
     project = session.get(Project, body.project_id)
     if project is None:
         raise HTTPException(404, "không thấy repo")

@@ -10,6 +10,7 @@ import { dateTimeMin, relative } from "@/lib/format";
 import type { TaskDetail as Detail, TaskLinkKind, TaskPriority, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
 
 import { TaskActivity, TaskAttachments } from "./TaskActivity";
+import { FileTextarea } from "./taskFiles";
 import { TaskAiButtons } from "./TaskAi";
 import { TaskCode } from "./TaskCode";
 import {
@@ -222,6 +223,7 @@ function DescriptionEdit({ task, canEdit, onSave }: { task: Detail; canEdit: boo
   const [draft, setDraft] = useState<string | null>(null);
   const [mode, setMode] = useState<"write" | "preview">("write");
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(0);
   return (
     <section className="tk-section" aria-labelledby="tk-desc-title">
       <div className="tk-section-head">
@@ -238,7 +240,17 @@ function DescriptionEdit({ task, canEdit, onSave }: { task: Detail; canEdit: boo
       ) : (
         <div className="tk-editor">
           {mode === "write" ? (
-            <textarea rows={10} value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="Mô tả (markdown)" autoFocus />
+            <FileTextarea
+              rows={10}
+              value={draft}
+              taskKey={task.key}
+              canAttach={task.can.attach}
+              onUploaded={() => void refreshTasks()}
+              onChange={(next) => setDraft((cur) => (typeof next === "function" ? next(cur ?? "") : next))}
+              onPendingChange={setUploading}
+              aria-label="Mô tả (markdown)"
+              autoFocus
+            />
           ) : (
             <div className="tk-preview">{draft.trim() ? <Markdown text={draft} /> : <p className="small faint">Trống.</p>}</div>
           )}
@@ -249,7 +261,7 @@ function DescriptionEdit({ task, canEdit, onSave }: { task: Detail; canEdit: boo
             <button
               type="button"
               className="sm primary"
-              disabled={busy}
+              disabled={busy || uploading > 0}
               onClick={async () => {
                 setBusy(true);
                 if (await onSave(draft)) setDraft(null);
@@ -376,13 +388,13 @@ function Links({ task, onOpenTask }: { task: Detail; onOpenTask: (k: string) => 
               </button>
               <span className="spacer" />
               <StatusPill status={l.task.status} />
-              {task.can.edit && <IconButton icon="close" label="Gỡ liên kết" disabled={busy} onClick={() => void run(() => api.delete(`${path}/${l.id}`))} />}
+              {task.can.link && <IconButton icon="close" label="Gỡ liên kết" disabled={busy} onClick={() => void run(() => api.delete(`${path}/${l.id}`))} />}
             </li>
           ))}
         </ul>
       )}
       {error && <Message text={`Lỗi: ${error}`} onClose={() => setError(null)} />}
-      {task.can.edit && (
+      {task.can.link && (
         <form
           className="tk-inline-form"
           onSubmit={(e) => {
@@ -507,7 +519,7 @@ function Fields({
       <Row label="Trạng thái">
         <select
           value={task.status.id}
-          disabled={off || statuses.length < 2}
+          disabled={!task.can.transition || statuses.length < 2}
           aria-label="Trạng thái"
           className={`tk-status-select tk-cat-${task.status.category}`}
           onChange={(e) => {
@@ -523,7 +535,7 @@ function Fields({
         </select>
       </Row>
       <Row label="Người làm">
-        <select value={task.assignee?.id ?? ""} disabled={off} aria-label="Người làm" onChange={(e) => void onPatch({ assignee_id: e.target.value ? Number(e.target.value) : null })}>
+        <select value={task.assignee?.id ?? ""} disabled={!task.can.assign} aria-label="Người làm" onChange={(e) => void onPatch({ assignee_id: e.target.value ? Number(e.target.value) : null })}>
           <option value="">Chưa giao</option>
           {task.assignee && !(people.data ?? []).some((p) => p.id === task.assignee?.id) && <option value={task.assignee.id}>{personName(task.assignee)}</option>}
           {(people.data ?? []).map((p) => (

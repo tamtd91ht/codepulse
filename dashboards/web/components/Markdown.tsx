@@ -91,10 +91,16 @@ function parseBlocks(src: string): Block[] {
   return out;
 }
 
-/** Inline: `code`, **bold**, *italic* / _italic_, [text](http…), line breaks. */
+/**
+ * Inline: `code`, **bold**, *italic* / _italic_, [text](http…), line breaks, and task
+ * attachments (docs/specs/31 §17): `![name](/api/v1/tasks/attachments/<id>?inline=1)` shows the
+ * image, `[name](/api/v1/tasks/attachments/<id>)` links the file. No other image loads (an image
+ * on another site would tell it who reads).
+ */
 function Inline({ text }: { text: string }) {
   const parts: ReactNode[] = [];
-  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*\s][^*]*\*|_[^_\s][^_]*_)|(\[[^\]]+\]\((https?:\/\/[^\s)]+)\))|(\n)/g;
+  const re =
+    /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*\s][^*]*\*|_[^_\s][^_]*_)|(\[[^\]]+\]\((https?:\/\/[^\s)]+|\/api\/v1\/tasks\/attachments\/\d+)\))|(\n)|(!\[([^\]]*)\]\((\/api\/v1\/tasks\/attachments\/\d+)(?:\?inline=1)?\))/g;
   let last = 0;
   let key = 0;
   for (let m = re.exec(text); m; m = re.exec(text)) {
@@ -103,6 +109,12 @@ function Inline({ text }: { text: string }) {
     if (m[1]) parts.push(<code key={key++}>{token.slice(1, -1)}</code>);
     else if (m[2]) parts.push(<strong key={key++}>{token.slice(2, -2)}</strong>);
     else if (m[3]) parts.push(<em key={key++}>{token.slice(1, -1)}</em>);
+    else if (m[7])
+      parts.push(
+        <a key={key++} href={`${m[9]}?inline=1`} target="_blank" rel="noopener noreferrer" className="md-img-link">
+          <img src={`${m[9]}?inline=1`} alt={m[8]} className="md-img" loading="lazy" />
+        </a>,
+      );
     else if (m[4])
       parts.push(
         <a key={key++} href={m[5]} target="_blank" rel="noopener noreferrer">

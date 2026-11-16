@@ -84,21 +84,89 @@ def can_manage_space(p: Principal, bp_id: int) -> bool:
     return scope == "project" and p.can_manage_project(bp_id)
 
 
+# The task rights, as Jira's permission scheme splits them (docs/specs/31 §4.1). Scoped ones
+# reach: own = tasks one reported or is assigned (delete: reported), project = every task of a
+# dự án one manages, all = every task one sees. tasks.manage over a dự án holds all of them there.
+TASK_RIGHTS = (
+    "edit",
+    "assign",
+    "transition",
+    "delete",
+    "comment",
+    "attach",
+    "worklog",
+    "link",
+    "moderate",
+)
+
+
+def may(p: Principal, right: str, task: Task) -> bool:
+    """Holds `tasks.<right>` over this task."""
+    bp_id = task.business_project_id
+    if not can_view_space(p, bp_id):
+        return False
+    if can_manage_space(p, bp_id):
+        return True
+    scope = p.scope(f"tasks.{right}")
+    if scope is None:
+        return False
+    if scope in ("all", "flag"):
+        return True
+    if scope == "project" and p.can_manage_project(bp_id):
+        return True
+    # "project" also covers one's own tasks elsewhere, as tasks.edit always did; not for delete
+    # and moderate, which needed managing the dự án before they were split out.
+    if scope != "own" and not (scope == "project" and right not in ("delete", "moderate")):
+        return False
+    mine = (task.reporter_id,) if right == "delete" else (task.reporter_id, task.assignee_id)
+    return p.user_id is not None and p.user_id in mine
+
+
+def require(p: Principal, right: str, task: Task) -> None:
+    if not may(p, right, task):
+        raise HTTPException(403, f"bạn không có quyền {RIGHT_LABELS[right]} task {task.key}")
+
+
+RIGHT_LABELS = {
+    "edit": "sửa",
+    "assign": "giao",
+    "transition": "chuyển trạng thái",
+    "delete": "xoá",
+    "comment": "bình luận ở",
+    "attach": "đính kèm file vào",
+    "worklog": "ghi giờ cho",
+    "link": "liên kết",
+    "moderate": "sửa / xoá nội dung của người khác ở",
+}
+
+
+def rights(p: Principal, task: Task) -> dict[str, bool]:
+    """What this person may do on this task (the detail's `can`)."""
+    return {r: may(p, r, task) for r in TASK_RIGHTS}
+
+
 def can_create(p: Principal, bp_id: int) -> bool:
-    return p.can("tasks.edit") and p.can_view_project(bp_id)
+    return can_view_space(p, bp_id) and (p.can("tasks.create") or can_manage_space(p, bp_id))
+
+
+def can_assign_new(p: Principal, bp_id: int) -> bool:
+    """May name someone else as the assignee of a task one creates (one is its reporter, so
+    any scope of tasks.assign reaches it)."""
+    return p.can("tasks.assign") or can_manage_space(p, bp_id)
+
+
+def can_sprint(p: Principal, bp_id: int) -> bool:
+    """tasks.sprint: plan, start, complete sprints of the dự án."""
+    if not can_view_space(p, bp_id):
+        return False
+    if can_manage_space(p, bp_id):
+        return True
+    scope = p.scope("tasks.sprint")
+    return scope == "all" or (scope == "project" and p.can_manage_project(bp_id))
 
 
 def can_edit(p: Principal, task: Task) -> bool:
-    if not p.can_view_project(task.business_project_id):
-        return False
-    scope = p.scope("tasks.edit")
-    if scope == "all":
-        return True
-    if scope == "project" and p.can_manage_project(task.business_project_id):
-        return True
-    if scope is not None and p.user_id in (task.reporter_id, task.assignee_id):
-        return True
-    return can_manage_space(p, task.business_project_id)
+    return may(p, "edit", task)
 
 
 def space_or_404(session: Session, p: Principal, bp_id: int) -> TaskSpace:
@@ -118,6 +186,11 @@ def task_or_404(session: Session, p: Principal, key: str) -> Task:
 def require_edit(p: Principal, task: Task) -> None:
     if not can_edit(p, task):
         raise HTTPException(403, "bạn không sửa được task này")
+
+
+def require_sprint(p: Principal, bp_id: int) -> None:
+    if not can_sprint(p, bp_id):
+        raise HTTPException(403, "cần quyền quản lý sprint của dự án (tasks.sprint)")
 
 
 def require_manage(p: Principal, bp_id: int) -> None:
@@ -325,6 +398,8 @@ def space_out(
         "statuses": [status_out(s) for s in statuses_of(session, bp.id)] if space else [],
         "can_manage": can_manage_space(p, bp.id),
         "can_create": space is not None and can_create(p, bp.id),
+        "can_sprint": space is not None and can_sprint(p, bp.id),
+        "can_assign": space is not None and can_assign_new(p, bp.id),
     }
 
 

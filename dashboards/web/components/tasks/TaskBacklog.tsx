@@ -39,7 +39,7 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
   const [message, setMessage] = useState<string | null>(null);
   const [dialog, setDialog] = useState<{ kind: "edit" | "start" | "complete"; sprint: Sprint | null } | null>(null);
   const [confirmEl, ask] = useConfirm();
-  const canManage = space.can_manage;
+  const canManage = space.can_sprint;
 
   const open = useMemo(
     () =>

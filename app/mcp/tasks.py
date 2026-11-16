@@ -108,8 +108,8 @@ def move_task_work(
     session: Session, caller: Any, settings: Settings, facts: Any, *, key: str, status: str
 ) -> Work:
     task = _task(session, caller, key)
-    if not ts.can_edit(caller.principal, task):
-        raise queries.McpError("forbidden", "bạn không sửa được task này")
+    if not ts.may(caller.principal, "transition", task):
+        raise queries.McpError("forbidden", "bạn không chuyển trạng thái được task này")
     wanted = tk.slug(status)
     target = next(
         (s for s in ts.statuses_of(session, task.business_project_id) if tk.slug(s.name) == wanted),
@@ -129,6 +129,8 @@ def comment_task_work(
     session: Session, caller: Any, settings: Settings, facts: Any, *, key: str, body: str
 ) -> Work:
     task = _task(session, caller, key)
+    if not ts.may(caller.principal, "comment", task):
+        raise queries.McpError("forbidden", "bạn không bình luận được ở task này")
     text = body.strip()
     if not text:
         raise queries.McpError("invalid", "bình luận trống")
@@ -171,8 +173,8 @@ def log_work_work(
     note: str | None,
 ) -> Work:
     task = _task(session, caller, key)
-    if not ts.can_edit(caller.principal, task):
-        raise queries.McpError("forbidden", "bạn không sửa được task này")
+    if not ts.may(caller.principal, "worklog", task):
+        raise queries.McpError("forbidden", "bạn không ghi giờ được cho task này")
     from datetime import UTC, datetime
 
     session.add(

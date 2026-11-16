@@ -192,7 +192,7 @@ def smart_commit(
     session: Session, space: TaskSpace, task: Task, message: str | None, author_id: int | None
 ) -> None:
     """#time / #comment / #<status> of a commit (docs/specs/31 §5): only for an author mapped to
-    a person who may edit the task."""
+    a person, each command as far as that person holds its right."""
     commands = tk.smart_commands(message)
     if author_id is None or not (commands.minutes or commands.comment or commands.statuses):
         return
@@ -203,9 +203,9 @@ def smart_commit(
         principal = load_principal(session, author_id, get_settings())
     except Exception:  # inactive or gone: the commit still links, the commands are ignored
         return
-    if not service.can_edit(principal, task):
-        return
-    if commands.minutes:
+    # Each command needs its own right (docs/specs/31 §4.1): #time tasks.worklog, #comment
+    # tasks.comment, #<status> tasks.transition.
+    if commands.minutes and service.may(principal, "worklog", task):
         session.add(
             TaskWorklog(
                 task_id=task.id,
@@ -220,11 +220,12 @@ def smart_commit(
         service.log(
             session, task, author_id, "worklog", None, f"{commands.minutes} phút", "smart_commit"
         )
-    if commands.comment:
+    if commands.comment and service.may(principal, "comment", task):
         session.add(TaskComment(task_id=task.id, author_id=author_id, body=commands.comment))
         service.log(session, task, author_id, "comment", None, "(smart commit)", "smart_commit")
     by_slug = {tk.slug(s.name): s for s in service.statuses_of(session, space.business_project_id)}
-    for word in commands.statuses:
+    may_move = service.may(principal, "transition", task)
+    for word in commands.statuses if may_move else ():
         status = by_slug.get(word)
         if status is not None:
             try:

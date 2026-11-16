@@ -43,7 +43,7 @@ export function TaskCode({ task, bp }: { task: TaskDetail; bp: number | null }) 
   const [dialog, setDialog] = useState<"commit" | "branch" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [confirmEl, ask] = useConfirm();
-  const canEdit = task.can.edit;
+  const canEdit = task.can.link;
   const canUnlink = (manual?: boolean) => task.can.manage || (canEdit && !!manual);
 
   async function unlink(id: number, what: string) {
