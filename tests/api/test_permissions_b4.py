@@ -40,7 +40,15 @@ def test_admin_projects_creates_a_du_an_but_not_users(
         headers=as_user(world.an),
     )
     assert res.status_code == 403
-    assert client.get(f"{API}/connections", headers=as_user(world.an)).status_code == 403
+    # docs/specs/21 §10: the connection list (names, URLs) is read to add a repo; changing a
+    # connection stays admin.connections.
+    assert client.get(f"{API}/connections", headers=as_user(world.an)).status_code == 200
+    res = client.post(
+        f"{API}/connections",
+        json={"name": "x", "base_url": "https://g.example.com", "token": "12345678"},
+        headers=as_user(world.an),
+    )
+    assert res.status_code == 403
 
 
 def test_admin_projects_cannot_change_its_own_grant(

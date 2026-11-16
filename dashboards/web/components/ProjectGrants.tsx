@@ -6,22 +6,52 @@ import { useSWRConfig } from "swr";
 import { IconButton } from "@/components/icons";
 import { Alert, Loading, Segmented } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
-import type { BusinessProject, Person, ProjectGrant, ProjectRole } from "@/lib/types";
+import type { BusinessProject, Me, Person, ProjectGrant } from "@/lib/types";
 
-const ROLES: { value: ProjectRole; label: string }[] = [
+/** A grant as one choice: its role plus, for "manage", the dự án's Lead / Manager (docs/specs/21 §10). */
+type Choice = "view" | "manage" | "lead" | "manager";
+const ROLES: { value: Choice; label: string }[] = [
   { value: "view", label: "Xem" },
   { value: "manage", label: "Quản lý" },
+  { value: "lead", label: "Lead dự án" },
+  { value: "manager", label: "Manager dự án" },
 ];
+/** What a dự án's Manager hands out; the other choices stay the admins'. */
+const STAFF_ROLES = ROLES.filter((r) => r.value === "view" || r.value === "lead");
+
+const choiceOf = (g: ProjectGrant): Choice => (g.role === "manage" && g.admin_role ? g.admin_role : g.role);
+function withChoice(g: ProjectGrant, c: Choice): ProjectGrant {
+  return c === "view" || c === "manage" ? { ...g, role: c, admin_role: null } : { ...g, role: "manage", admin_role: c };
+}
+const label = (c: Choice) => ROLES.find((x) => x.value === c)?.label ?? c;
 
 /**
  * Who may see a dự án (docs/specs/09 "Phân quyền theo dự án"). "Xem": its numbers, and the
  * reviews the team rules allow; "Quản lý": everyone's reviews there, plus requesting and
- * re-running reviews and editing the premises. Admins (ADMIN_EMAILS) need no grant.
+ * re-running reviews and editing the premises. "Lead dự án" / "Manager dự án" (docs/specs/21
+ * §10): "Quản lý" plus setting the dự án up (repos, .claude repo, rules); the Manager also
+ * decides who sees it. Admins (ADMIN_EMAILS) need no grant.
+ *
+ * `mode`: "admin" (admin.projects) edits every row; "staff" (the dự án's Manager) gives "Xem"
+ * and "Lead dự án" only, and leaves the other rows and their own as they are; "readonly" lists.
  */
-export function ProjectGrants({ project, busy }: { project: BusinessProject; busy: boolean }) {
+export function ProjectGrants({
+  project,
+  busy,
+  mode = "admin",
+}: {
+  project: BusinessProject;
+  busy: boolean;
+  mode?: "admin" | "staff" | "readonly";
+}) {
   const path = `/business-projects/${project.id}/grants`;
   const saved = useApi<ProjectGrant[]>(path);
-  const users = useApi<Person[]>("/users");
+  const { data: me } = useApi<Me>("/auth/me");
+  const users = useApi<Person[]>(
+    mode === "admin" ? "/users" : mode === "staff" ? `/business-projects/${project.id}/grant-candidates` : null,
+  );
+  const editable = (g: ProjectGrant) =>
+    mode === "admin" || (mode === "staff" && g.user_id !== me?.id && (choiceOf(g) === "view" || choiceOf(g) === "lead"));
   const { mutate } = useSWRConfig();
   const [draft, setDraft] = useState<ProjectGrant[] | null>(null);
   const [adding, setAdding] = useState("");
@@ -39,11 +69,15 @@ export function ProjectGrants({ project, busy }: { project: BusinessProject; bus
   const dirty =
     saved.data !== undefined &&
     (rows.length !== saved.data.length ||
-      rows.some((g) => saved.data?.find((s) => s.user_id === g.user_id)?.role !== g.role));
+      rows.some((g) => {
+        const was = saved.data?.find((s) => s.user_id === g.user_id);
+        return !was || choiceOf(was) !== choiceOf(g);
+      }));
   const managers = rows.filter((g) => g.role === "manage").length;
+  const admins = rows.filter((g) => g.admin_role).length;
 
-  function setRole(userId: number, role: ProjectRole) {
-    setDraft(rows.map((g) => (g.user_id === userId ? { ...g, role } : g)));
+  function setRole(userId: number, choice: Choice) {
+    setDraft(rows.map((g) => (g.user_id === userId ? withChoice(g, choice) : g)));
   }
   function add(id: string) {
     const user = users.data?.find((u) => String(u.id) === id);
@@ -51,7 +85,7 @@ export function ProjectGrants({ project, busy }: { project: BusinessProject; bus
     if (!user) return;
     setDraft([
       ...rows,
-      { user_id: user.id, full_name: user.full_name, email: user.primary_email, active: user.active !== false, role: "view" },
+      { user_id: user.id, full_name: user.full_name, email: user.primary_email, active: user.active !== false, role: "view", admin_role: null },
     ]);
   }
   /** What saving changes, for the confirmation. */
@@ -59,12 +93,11 @@ export function ProjectGrants({ project, busy }: { project: BusinessProject; bus
     const before = new Map((saved.data ?? []).map((g) => [g.user_id, g]));
     const after = new Map(rows.map((g) => [g.user_id, g]));
     const name = (g: ProjectGrant) => g.full_name ?? g.email ?? `#${g.user_id}`;
-    const role = (r: ProjectRole) => ROLES.find((x) => x.value === r)?.label ?? r;
     const out: string[] = [];
     for (const g of rows) {
       const was = before.get(g.user_id);
-      if (!was) out.push(`+ ${name(g)}: ${role(g.role)}`);
-      else if (was.role !== g.role) out.push(`~ ${name(g)}: ${role(was.role)} → ${role(g.role)}`);
+      if (!was) out.push(`+ ${name(g)}: ${label(choiceOf(g))}`);
+      else if (choiceOf(was) !== choiceOf(g)) out.push(`~ ${name(g)}: ${label(choiceOf(was))} → ${label(choiceOf(g))}`);
     }
     for (const g of saved.data ?? []) if (!after.has(g.user_id)) out.push(`- ${name(g)}: bỏ quyền`);
     return out;
@@ -77,7 +110,7 @@ export function ProjectGrants({ project, busy }: { project: BusinessProject; bus
     setResult(null);
     try {
       const next = await api.put<ProjectGrant[]>(path, {
-        grants: rows.map((g) => ({ user_id: g.user_id, role: g.role })),
+        grants: rows.map((g) => ({ user_id: g.user_id, role: g.role, admin_role: g.admin_role ?? null })),
       });
       await saved.mutate(next, { revalidate: false });
       await mutate("/business-projects");
@@ -96,13 +129,15 @@ export function ProjectGrants({ project, busy }: { project: BusinessProject; bus
           <h3 style={{ margin: 0 }}>
             Quyền truy cập{" "}
             <span className="muted small">
-              {draft !== null && `(${rows.length} người${managers ? `, ${managers} quản lý` : ""})`}
+              {draft !== null &&
+                `(${rows.length} người${managers ? `, ${managers} quản lý` : ""}${admins ? `, ${admins} lead/manager dự án` : ""})`}
             </span>
           </h3>
           <p className="muted small" style={{ margin: "4px 0 0" }}>
             Chỉ người được cấp mới thấy dự án này. <b>Xem</b>: số liệu, review của mình và của người trong team mình lead.{" "}
-            <b>Quản lý</b>: thêm review của mọi người trong dự án, yêu cầu và chạy lại review, sửa và duyệt Tiền đề review.
-            Admin luôn có toàn quyền.
+            <b>Quản lý</b>: thêm review của mọi người trong dự án, yêu cầu và chạy lại review, sửa và duyệt Tiền đề review.{" "}
+            <b>Lead dự án</b>: thêm quản lý dự án: thêm repo, cấu hình repo, repo .claude, file quy tắc và quy tắc review.{" "}
+            <b>Manager dự án</b>: như Lead dự án, thêm quyết định ai được xem dự án và giao Lead dự án. Admin luôn có toàn quyền.
           </p>
         </div>
       </div>
@@ -126,23 +161,32 @@ export function ProjectGrants({ project, busy }: { project: BusinessProject; bus
                 {g.email && g.full_name && <span className="muted small"> · {g.email}</span>}
                 {!g.active && <span className="muted small"> · đang tắt</span>}
               </span>
-              <Segmented
-                value={g.role}
-                onChange={(role) => setRole(g.user_id, role)}
-                options={ROLES}
-                label={`Quyền của ${g.full_name ?? g.email ?? g.user_id}`}
-              />
-              <IconButton
-                icon="close"
-                label={`Bỏ quyền của ${g.full_name ?? g.email ?? g.user_id}`}
-                onClick={() => setDraft(rows.filter((r) => r.user_id !== g.user_id))}
-                size={14}
-              />
+              {editable(g) ? (
+                <>
+                  <Segmented
+                    value={choiceOf(g)}
+                    onChange={(choice) => setRole(g.user_id, choice)}
+                    options={mode === "admin" ? ROLES : STAFF_ROLES}
+                    label={`Quyền của ${g.full_name ?? g.email ?? g.user_id}`}
+                  />
+                  <IconButton
+                    icon="close"
+                    label={`Bỏ quyền của ${g.full_name ?? g.email ?? g.user_id}`}
+                    onClick={() => setDraft(rows.filter((r) => r.user_id !== g.user_id))}
+                    size={14}
+                  />
+                </>
+              ) : (
+                <span className="pill" title={mode === "staff" ? "Chỉ admin đổi được quyền này" : undefined}>
+                  {label(choiceOf(g))}
+                </span>
+              )}
             </li>
           ))}
         </ul>
       )}
 
+      {mode !== "readonly" && (
       <div className="toolbar" style={{ margin: "8px 0 0" }}>
         <select
           value={adding}
@@ -170,6 +214,12 @@ export function ProjectGrants({ project, busy }: { project: BusinessProject; bus
           {working ? "Đang lưu…" : "Lưu quyền"}
         </button>
       </div>
+      )}
+      {mode === "readonly" && (
+        <p className="muted small" style={{ marginTop: 8 }}>
+          Chỉ Manager dự án hoặc admin đổi được quyền truy cập.
+        </p>
+      )}
     </>
   );
 }

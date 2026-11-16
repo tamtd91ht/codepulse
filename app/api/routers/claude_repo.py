@@ -12,7 +12,7 @@ from app.admin_settings import effective
 from app.api.audit import audit
 from app.api.deps import get_secret_box, get_session
 from app.api.schemas import ClaudeRepoIn, ClaudeRepoPreviewOut
-from app.api.security import Principal, require
+from app.api.security import CurrentPrincipal, Principal, guard_setup
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.sync import client_factory
 from app.config import Settings, get_settings
@@ -27,9 +27,15 @@ SessionDep = Annotated[Session, Depends(get_session)]
 BoxDep = Annotated[SecretBox, Depends(get_secret_box)]
 
 
-def _editor(principal: Annotated[Principal, require("knowledge.shared")]) -> Principal:
+def _editor(bp_id: int, principal: CurrentPrincipal) -> Principal:
     """`knowledge.shared` (docs/specs/21 §4): the dự án's shared .claude repo. No built-in set
-    holds it, so as before spec 21 only admins, unless a set gives it."""
+    holds it, so as before spec 21 only admins, unless a set gives it. The dự án's Lead /
+    Manager sets theirs up too (docs/specs/21 §10)."""
+    if principal.can("knowledge.shared"):
+        return principal
+    if not principal.can("project.setup"):
+        raise HTTPException(403, "thiếu quyền repo .claude dùng chung")
+    guard_setup(principal, bp_id)
     return principal
 
 

@@ -55,7 +55,7 @@ def test_admins_hold_everything_at_its_widest() -> None:
 def test_the_latest_migration_holds_the_builtin_sets_of_the_catalog() -> None:
     """The built-in sets are seeded by migrations (literal copies, never imports of the
     catalog): the newest one that carries them must equal the catalog."""
-    path = sorted(pathlib.Path("migrations/versions").glob("*_f9b1d3e5a7c0_testrail_phase3.py"))[-1]
+    path = sorted(pathlib.Path("migrations/versions").glob("*_b3d5f7a9c1e4_project_admin.py"))[-1]
     spec = importlib.util.spec_from_file_location("perm_defaults", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)

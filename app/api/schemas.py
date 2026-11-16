@@ -157,6 +157,14 @@ class BusinessProjectOut(ORM):
 class ProjectGrantIn(BaseModel):
     user_id: int
     role: Literal["view", "manage"]
+    # docs/specs/21 §10: the dự án's Lead or Manager; a "manage" grant only.
+    admin_role: Literal["lead", "manager"] | None = None
+
+    @model_validator(mode="after")
+    def _admin_manages(self) -> "ProjectGrantIn":
+        if self.admin_role is not None and self.role != "manage":
+            raise ValueError("Lead / Manager dự án cần quyền manage")
+        return self
 
 
 class ProjectGrantsIn(BaseModel):
@@ -171,6 +179,7 @@ class ProjectGrantOut(BaseModel):
     email: str | None
     active: bool
     role: Literal["view", "manage"]
+    admin_role: Literal["lead", "manager"] | None = None
 
 
 class RepoAssignment(BaseModel):

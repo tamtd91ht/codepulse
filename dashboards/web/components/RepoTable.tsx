@@ -64,6 +64,7 @@ export function RepoTable({
   onToggle,
   toggleDisabled,
   showProject = true,
+  limited = false,
 }: {
   sections: RepoSection[];
   actions: RepoActions;
@@ -76,6 +77,11 @@ export function RepoTable({
   onToggle?: (key: string) => void;
   toggleDisabled?: boolean;
   showProject?: boolean;
+  /**
+   * docs/specs/21 §10: the dự án's Lead / Manager, not admin: no "review MR in a date range"
+   * (LLM budget) and no hard removal; the external-LLM switch stays the admins'.
+   */
+  limited?: boolean;
 }) {
   const [reviewing, setReviewing] = useState<number | null>(null);
   const [branching, setBranching] = useState<number | null>(null);
@@ -200,9 +206,9 @@ export function RepoTable({
                             <input
                               type="checkbox"
                               checked={!!p[f.key]}
-                              disabled={!p.tracked}
+                              disabled={!p.tracked || (limited && f.key === "allow_external_llm")}
                               aria-label={f.hint}
-                              title={f.hint}
+                              title={limited && f.key === "allow_external_llm" ? `${f.hint} · chỉ admin đổi` : f.hint}
                               onChange={(e) => void actions.setFlag(p, f.key, e.target.checked)}
                             />
                           </td>
@@ -232,18 +238,22 @@ export function RepoTable({
                                   label="Đăng ký / làm mới webhook GitLab"
                                   onClick={() => void actions.webhook(p)}
                                 />
-                                <IconButton
-                                  icon="review"
-                                  label="Review MR trong khoảng ngày"
-                                  aria-expanded={reviewing === p.id}
-                                  onClick={() => setReviewing(reviewing === p.id ? null : p.id)}
-                                />
+                                {!limited && (
+                                  <IconButton
+                                    icon="review"
+                                    label="Review MR trong khoảng ngày"
+                                    aria-expanded={reviewing === p.id}
+                                    onClick={() => setReviewing(reviewing === p.id ? null : p.id)}
+                                  />
+                                )}
                                 <IconButton icon="untrack" label="Bỏ theo dõi" onClick={() => void actions.setTracking([p], false)} />
                               </>
                             ) : (
                               <IconButton icon="track" label="Theo dõi lại" onClick={() => void actions.setTracking([p], true)} />
                             )}
-                            <IconButton icon="remove" label="Gỡ hẳn" tone="danger" onClick={() => actions.remove([p])} />
+                            {!limited && (
+                              <IconButton icon="remove" label="Gỡ hẳn" tone="danger" onClick={() => actions.remove([p])} />
+                            )}
                           </div>
                         </td>
                       </tr>

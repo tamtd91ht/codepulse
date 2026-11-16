@@ -245,6 +245,10 @@ def me(
         "teams": sorted(principal.own_teams),
         # dự án id -> "view" | "manage" (empty for admins, who see and manage every dự án).
         "projects": {str(bp): role for bp, role in sorted(principal.project_roles.items())},
+        # docs/specs/21 §10: dự án id -> "lead" | "manager" of that dự án, and the dự án this
+        # person sets up (null: every one, admin.projects).
+        "project_admin": {str(bp): r for bp, r in sorted(principal.project_admin.items())},
+        "setup_projects": None if (mine := principal.setup_projects()) is None else sorted(mine),
         # Admin > Chạy command (COMMAND_RUNS_ENABLED); always false for everyone else.
         "command_runs": principal.is_admin and settings.command_runs_enabled,
         # Luồng làm việc: lead and above (app/api/security.require_insights).

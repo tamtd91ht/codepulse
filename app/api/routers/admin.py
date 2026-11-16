@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from rq import Retry
 from sqlalchemy import ColumnElement, and_, delete, func, or_, select, update
+from sqlalchemy import true as sa_true
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -51,9 +52,16 @@ from app.api.schemas import (
     TeamIn,
     TeamOut,
     UserIn,
+    UserOut,
     UserPatch,
 )
-from app.api.security import CurrentPrincipal, Principal, require
+from app.api.security import (
+    CurrentPrincipal,
+    Principal,
+    guard_setup,
+    require,
+    require_setup,
+)
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.gitlab.repo_ref import RepoRefError, parse_repo_ref, resolve_repo_ref
 from app.collector.removal import REMOVAL_JOB_TIMEOUT, confirmation_phrase, remove_projects
@@ -100,6 +108,18 @@ ProjectsAdmin = Annotated[Principal, require("admin.projects")]
 PeopleAdmin = Annotated[Principal, require("admin.people")]
 LlmAdmin = Annotated[Principal, require("admin.llm")]
 InsightsAdmin = Annotated[Principal, require("admin.insights")]
+# docs/specs/21 §10: admin.projects, or a dự án's Lead / Manager (project.setup) on that dự án.
+ProjectsSetup = Annotated[Principal, require_setup()]
+
+
+def _setup_repos(session: Session, principal: Principal, project_ids: list[int]) -> None:
+    """Every repo given lies in a dự án this person sets up (admin.projects: any repo)."""
+    if principal.can("admin.projects"):
+        return
+    for bp_id in set(
+        session.scalars(select(Project.business_project_id).where(Project.id.in_(project_ids)))
+    ):
+        guard_setup(principal, bp_id)
 
 
 def _is_admin_email(email: str | None, settings: Settings) -> bool:
@@ -189,7 +209,14 @@ def _require_reachable_base_url(settings: Settings) -> None:
 
 
 @router.get("/connections", response_model=list[ConnectionOut])
-def list_connections(principal: ConnectionsAdmin, session: SessionDep) -> list[ConnectionOut]:
+def list_connections(principal: CurrentPrincipal, session: SessionDep) -> list[ConnectionOut]:
+    # docs/specs/21 §10: a dự án's Lead / Manager picks the connection when adding a repo.
+    if not (
+        principal.can("admin.connections")
+        or principal.can("admin.projects")
+        or principal.can("project.setup")
+    ):
+        raise HTTPException(403, "thiếu quyền kết nối GitLab")
     repos = (
         select(Project.connection_id, func.count().label("n"))
         .group_by(Project.connection_id)
@@ -291,8 +318,10 @@ def delete_connection(connection_id: int, principal: ConnectionsAdmin, session: 
 
 @router.get("/business-projects", response_model=list[BusinessProjectOut])
 def list_business_projects(
-    principal: ProjectsAdmin, session: SessionDep
+    principal: ProjectsSetup, session: SessionDep
 ) -> list[BusinessProjectOut]:
+    """Every dự án for admin.projects; the ones they set up for a Lead / Manager of a dự án."""
+    mine = principal.setup_projects()
     repos = (
         select(Project.business_project_id, func.count().label("n"))
         .where(Project.tracked)
@@ -308,6 +337,7 @@ def list_business_projects(
         select(BusinessProject, func.coalesce(repos.c.n, 0), func.coalesce(grants.c.n, 0))
         .outerjoin(repos, repos.c.business_project_id == BusinessProject.id)
         .outerjoin(grants, grants.c.business_project_id == BusinessProject.id)
+        .where(BusinessProject.id.in_(mine) if mine is not None else sa_true())
         .order_by(BusinessProject.name)
     ).all()
     return [
@@ -321,6 +351,7 @@ def list_business_projects(
             claude_repo_path=bp.claude_repo_path,
             claude_repo_ref=bp.claude_repo_ref,
             claude_repo_include=bp.claude_repo_include,
+            review_rules=bp.review_rules,
         )
         for bp, n, g in rows
     ]
@@ -344,9 +375,16 @@ def create_business_project(
 
 @router.patch("/business-projects/{bp_id}", response_model=BusinessProjectOut)
 def update_business_project(
-    bp_id: int, body: BusinessProjectIn, principal: ProjectsAdmin, session: SessionDep
+    bp_id: int, body: BusinessProjectIn, principal: ProjectsSetup, session: SessionDep
 ) -> BusinessProject:
+    """Name and description: admin.projects. The dự án's review rules: also its Lead /
+    Manager (docs/specs/21 §10), who sends the name and description unchanged."""
     bp = _get(session, BusinessProject, bp_id, "dự án")
+    guard_setup(principal, bp.id)
+    if not principal.can("admin.projects") and (
+        body.name != bp.name or (body.description or None) != (bp.description or None)
+    ):
+        raise HTTPException(403, "chỉ admin đổi tên, mô tả dự án")
     old_name = bp.name
     bp.name, bp.description = body.name, body.description
     rules_changed = "review_rules" in body.model_fields_set
@@ -398,10 +436,12 @@ def delete_business_project(bp_id: int, principal: ProjectsAdmin, session: Sessi
 
 
 @router.get("/business-projects/{bp_id}/grants", response_model=list[ProjectGrantOut])
-def list_grants(bp_id: int, principal: ProjectsAdmin, session: SessionDep) -> list[ProjectGrantOut]:
-    """Who may see (view) or also act on (manage) this dự án; ADMIN_EMAILS admins need no
-    grant (docs/specs/09 "Phân quyền theo dự án")."""
+def list_grants(bp_id: int, principal: ProjectsSetup, session: SessionDep) -> list[ProjectGrantOut]:
+    """Who may see (view) or also act on (manage) this dự án, and its Lead / Manager
+    (`admin_role`, docs/specs/21 §10); ADMIN_EMAILS admins need no grant (docs/specs/09
+    "Phân quyền theo dự án")."""
     bp = _get(session, BusinessProject, bp_id, "dự án")
+    guard_setup(principal, bp.id)
     rows = session.execute(
         select(ProjectGrant, User)
         .join(User, User.id == ProjectGrant.user_id)
@@ -415,67 +455,99 @@ def list_grants(bp_id: int, principal: ProjectsAdmin, session: SessionDep) -> li
             email=user.primary_email,
             active=user.active is not False,
             role=grant.role,
+            admin_role=grant.admin_role,
         )
         for grant, user in rows
     ]
+
+
+@router.get("/business-projects/{bp_id}/grant-candidates", response_model=list[UserOut])
+def grant_candidates(bp_id: int, principal: ProjectsSetup, session: SessionDep) -> list[User]:
+    """The active people one who staffs this dự án may add to it (docs/specs/21 §10): its
+    Manager has no admin.people, so no GET /users."""
+    _get(session, BusinessProject, bp_id, "dự án")
+    guard_setup(principal, bp_id)
+    if not principal.can_staff_project(bp_id):
+        raise HTTPException(403, "chỉ Manager của dự án (hoặc admin) đổi được quyền truy cập")
+    return list(
+        session.scalars(
+            select(User).where(User.active.is_not(False)).order_by(User.full_name, User.id)
+        )
+    )
 
 
 @router.put("/business-projects/{bp_id}/grants", response_model=list[ProjectGrantOut])
 def set_grants(
     bp_id: int,
     body: ProjectGrantsIn,
-    principal: ProjectsAdmin,
+    principal: ProjectsSetup,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> list[ProjectGrantOut]:
-    """Replace the whole list: people left out lose access, the rest get the role given."""
+    """Replace the whole list: people left out lose access, the rest get the role given.
+
+    admin.projects edits any row. A dự án's Manager (docs/specs/21 §10) edits only the rows
+    that are, before and after, a "view" grant or a Lead of the dự án: who sees it and who
+    sets it up with them; the other managers and Managers stay the admins' to name."""
     # The row lock serialises two admins saving the same dự án (no duplicate-key 500).
     bp = session.get(BusinessProject, bp_id, with_for_update=True)
     if bp is None:
         raise HTTPException(404, "dự án not found")
-    wanted = {g.user_id: g.role for g in body.grants}
+    guard_setup(principal, bp.id)
+    projects_admin = principal.can("admin.projects")
+    if not projects_admin and not principal.can_staff_project(bp.id):
+        raise HTTPException(403, "chỉ Manager của dự án (hoặc admin) đổi được quyền truy cập")
+    wanted: dict[int, tuple[str, str | None]] = {
+        g.user_id: (g.role, g.admin_role) for g in body.grants
+    }
     if len(wanted) != len(body.grants):
         raise HTTPException(422, "a person is listed twice")
-    if not principal.is_admin:
-        # A grant decides the Quản lý dự án set: a delegated admin.projects must not grow (or
-        # drop) its own holder's grant on this dự án (docs/specs/21 §3).
-        own = session.get(ProjectGrant, (bp.id, principal.user_id))
-        if wanted.get(principal.user_id) != (own.role if own else None):
-            _guard_self(principal, principal.user_id, "dự án grant")
-    if wanted:
-        known = set(session.scalars(select(User.id).where(User.id.in_(wanted))))
-        if missing := sorted(set(wanted) - known):
-            raise HTTPException(422, f"unknown user ids: {missing[:20]}")
-    current_roles = {
-        g.user_id: g.role
-        for g in session.scalars(
-            select(ProjectGrant).where(ProjectGrant.business_project_id == bp.id)
-        )
-    }
-    if not principal.is_admin:
-        touched = {
-            uid
-            for uid in set(wanted) | set(current_roles)
-            if wanted.get(uid) != current_roles.get(uid)
-        }
-        # "manage" gives the Quản lý dự án set: only one who manages this dự án hands it out.
-        if any(wanted.get(uid) == "manage" for uid in touched) and not principal.can_manage_project(
-            bp.id
-        ):
-            raise HTTPException(403, "chỉ người quản lý dự án này cấp được quyền manage")
-        for uid in sorted(touched):
-            person = session.get(User, uid)
-            if person is not None:
-                _guard_delegated(session, principal, settings, person, "quyền dự án")
     current = {
         g.user_id: g
         for g in session.scalars(
             select(ProjectGrant).where(ProjectGrant.business_project_id == bp.id)
         )
     }
+    current_roles = {uid: (g.role, g.admin_role) for uid, g in current.items()}
+    # A grant decides the Quản lý dự án set: a delegated admin.projects (or the dự án's
+    # Manager) must not grow (or drop) its own holder's grant here (docs/specs/21 §3).
+    if not principal.is_admin and wanted.get(principal.user_id) != current_roles.get(
+        principal.user_id
+    ):
+        _guard_self(principal, principal.user_id, "dự án grant")
+    if wanted:
+        known = set(session.scalars(select(User.id).where(User.id.in_(wanted))))
+        if missing := sorted(set(wanted) - known):
+            raise HTTPException(422, f"unknown user ids: {missing[:20]}")
+    if not principal.is_admin:
+        touched = {
+            uid
+            for uid in set(wanted) | set(current_roles)
+            if wanted.get(uid) != current_roles.get(uid)
+        }
+        if projects_admin:
+            # "manage" gives the Quản lý dự án set: only one who manages this dự án hands it out.
+            if any(
+                wanted.get(uid, ("view", None))[0] == "manage" for uid in touched
+            ) and not principal.can_manage_project(bp.id):
+                raise HTTPException(403, "chỉ người quản lý dự án này cấp được quyền manage")
+        else:
+            staffed = {None, ("view", None), ("manage", "lead")}
+            if any(
+                wanted.get(uid) not in staffed or current_roles.get(uid) not in staffed
+                for uid in touched
+            ):
+                raise HTTPException(
+                    403, "Manager dự án chỉ cấp quyền xem và Lead dự án; quyền khác do admin cấp"
+                )
+        for uid in sorted(touched):
+            person = session.get(User, uid)
+            if person is not None:
+                _guard_delegated(session, principal, settings, person, "quyền dự án")
     added = 0
     changed: dict[int, list[str]] = {}
-    for user_id, role in wanted.items():
+    admin_changed: dict[int, list[str | None]] = {}
+    for user_id, (role, admin_role) in wanted.items():
         grant = current.get(user_id)
         if grant is None:
             session.add(
@@ -483,13 +555,18 @@ def set_grants(
                     business_project_id=bp.id,
                     user_id=user_id,
                     role=role,
+                    admin_role=admin_role,
                     granted_by_user_id=principal.user_id,
                 )
             )
             added += 1
-        elif grant.role != role:
-            changed[user_id] = [grant.role, role]
-            grant.role, grant.granted_by_user_id = role, principal.user_id
+        elif (grant.role, grant.admin_role) != (role, admin_role):
+            if grant.role != role:
+                changed[user_id] = [grant.role, role]
+            if grant.admin_role != admin_role:
+                admin_changed[user_id] = [grant.admin_role, admin_role]
+            grant.role, grant.admin_role = role, admin_role
+            grant.granted_by_user_id = principal.user_id
     removed = [user_id for user_id in current if user_id not in wanted]
     if removed:
         session.execute(
@@ -505,8 +582,18 @@ def set_grants(
         added=added,
         changed={str(u): roles for u, roles in sorted(changed.items())},
         removed=sorted(removed),
-        manage=sorted(u for u, r in wanted.items() if r == "manage"),
-        view=sorted(u for u, r in wanted.items() if r == "view"),
+        manage=sorted(u for u, (r, _) in wanted.items() if r == "manage"),
+        view=sorted(u for u, (r, _) in wanted.items() if r == "view"),
+        # docs/specs/21 §10: the dự án's Lead / Manager, only when there are any.
+        **(
+            {
+                "lead": sorted(u for u, (_, a) in wanted.items() if a == "lead"),
+                "manager": sorted(u for u, (_, a) in wanted.items() if a == "manager"),
+                "admin_changed": {str(u): r for u, r in sorted(admin_changed.items())},
+            }
+            if admin_changed or any(a for _, a in wanted.values())
+            else {}
+        ),
     )
     session.commit()
     return list_grants(bp.id, principal, session)
@@ -514,8 +601,9 @@ def set_grants(
 
 def _guard_repo_move(principal: Principal, target: int | None, sources: set[int | None]) -> None:
     """A repo's dự án decides who sees its work: a delegated admin.projects must not move
-    repos into, or out of, a dự án they hold a grant on (docs/specs/21 §3)."""
-    if principal.is_admin:
+    repos into, or out of, a dự án they hold a grant on (docs/specs/21 §3). Without
+    admin.projects, the dự án's Lead / Manager was checked with guard_setup instead (§10)."""
+    if principal.is_admin or not principal.can("admin.projects"):
         return
     mine = set(principal.project_roles)
     if target in mine or any(bp in mine for bp in sources):
@@ -523,11 +611,17 @@ def _guard_repo_move(principal: Principal, target: int | None, sources: set[int 
 
 
 @router.put("/projects/business-project", status_code=204)
-def assign_repos(body: RepoAssignment, principal: ProjectsAdmin, session: SessionDep) -> None:
-    """Put repos into a dự án (or take them out with business_project_id=null)."""
+def assign_repos(body: RepoAssignment, principal: ProjectsSetup, session: SessionDep) -> None:
+    """Put repos into a dự án (or take them out with business_project_id=null). A dự án's
+    Lead / Manager (docs/specs/21 §10) moves only repos of the dự án they set up, between them
+    or out of them."""
     if body.business_project_id is not None:
         _get(session, BusinessProject, body.business_project_id, "dự án")
-    if not principal.is_admin:
+    if not principal.can("admin.projects"):
+        if body.business_project_id is not None:
+            guard_setup(principal, body.business_project_id)
+        _setup_repos(session, principal, body.project_ids)
+    elif not principal.is_admin:
         sources = set(
             session.scalars(
                 select(Project.business_project_id).where(Project.id.in_(body.project_ids))
@@ -558,7 +652,7 @@ BRANCH_CHECK_BUDGET_S = 10.0
 @router.put("/projects/review-branch", response_model=BranchBulkOut)
 def set_review_branch(
     body: BranchBulkIn,
-    principal: ProjectsAdmin,
+    principal: ProjectsSetup,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
 ) -> BranchBulkOut:
@@ -572,6 +666,7 @@ def set_review_branch(
     )
     if len(projects) != len(set(body.project_ids)):
         raise HTTPException(404, "some repos were not found")
+    _setup_repos(session, principal, body.project_ids)
     value = body.review_branch or None
     for project in projects:
         project.review_branch = value
@@ -641,14 +736,20 @@ def _without_branch(
 
 
 @router.get("/projects", response_model=list[ProjectOut])
-def list_projects(principal: ProjectsAdmin, session: SessionDep) -> list[Project]:
-    return list(session.scalars(select(Project).order_by(Project.id)))
+def list_projects(principal: ProjectsSetup, session: SessionDep) -> list[Project]:
+    """Every repo for admin.projects; for a dự án's Lead / Manager the repos of the dự án they
+    set up (docs/specs/21 §10)."""
+    mine = principal.setup_projects()
+    query = select(Project).order_by(Project.id)
+    if mine is not None:
+        query = query.where(Project.business_project_id.in_(mine))
+    return list(session.scalars(query))
 
 
 @router.post("/projects", response_model=ProjectAddOut, status_code=201)
 def create_project(
     body: ProjectIn,
-    principal: ProjectsAdmin,
+    principal: ProjectsSetup,
     session: SessionDep,
     response: Response,
     box: Annotated[SecretBox, Depends(get_secret_box)],
@@ -662,6 +763,11 @@ def create_project(
     """
     if body.business_project_id is not None:
         _get(session, BusinessProject, body.business_project_id, "dự án")
+    if not principal.can("admin.projects"):
+        # docs/specs/21 §10: a Lead / Manager adds repos straight into a dự án they set up.
+        if body.business_project_id is None:
+            raise HTTPException(422, "chọn dự án để thêm repo vào")
+        guard_setup(principal, body.business_project_id)
     chosen = (
         _get(session, Connection, body.connection_id, "connection")
         if body.connection_id is not None
@@ -720,6 +826,16 @@ def create_project(
         resync = True
     else:
         changes: dict[str, Any] = {}
+        if (
+            not principal.can("admin.projects")
+            and project.business_project_id != body.business_project_id
+            and not principal.can_setup_project(project.business_project_id)
+        ):
+            # Its dự án decides who sees its history: only an admin moves it out of another
+            # dự án, or out of "no dự án" (the admins' repos), as PUT /projects/business-project.
+            raise HTTPException(
+                409, "repo đã được đăng ký ở dự án khác hoặc chưa gán dự án; nhờ admin chuyển sang"
+            )
         if (
             body.business_project_id is not None
             and project.business_project_id != body.business_project_id
@@ -858,12 +974,16 @@ def import_group(
 def update_project(
     project_id: int,
     body: ProjectPatch,
-    principal: ProjectsAdmin,
+    principal: ProjectsSetup,
     session: SessionDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> Project:
     project = _get(session, Project, project_id, "project")
+    guard_setup(principal, project.business_project_id)
     changes = body.model_dump(exclude_unset=True)
+    if "allow_external_llm" in changes and not principal.can("admin.projects"):
+        # docs/specs/21 §3 rule 4: whether code may leave for an external LLM stays an admin's.
+        raise HTTPException(403, "chỉ admin đổi được việc gửi code ra LLM bên ngoài")
     production_before = project.production_environment
     if not changes:
         raise HTTPException(422, "nothing to update")
@@ -900,9 +1020,10 @@ def update_project(
 
 
 @router.post("/projects/{project_id}/untrack", response_model=ProjectOut)
-def untrack_project(project_id: int, principal: ProjectsAdmin, session: SessionDep) -> Project:
+def untrack_project(project_id: int, principal: ProjectsSetup, session: SessionDep) -> Project:
     """Stop syncing and reviewing a repo; its reviews, scores and history are kept."""
     project = _get(session, Project, project_id, "project")
+    guard_setup(principal, project.business_project_id)
     if project.tracked:
         project.tracked, project.untracked_at = False, datetime.now(UTC)
         audit(session, principal.user_id, "project.untrack", f"project:{project.id}")
@@ -913,12 +1034,13 @@ def untrack_project(project_id: int, principal: ProjectsAdmin, session: SessionD
 @router.post("/projects/{project_id}/track", response_model=ProjectOut)
 def track_project(
     project_id: int,
-    principal: ProjectsAdmin,
+    principal: ProjectsSetup,
     session: SessionDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> Project:
     """Resume a repo; a sync is queued to catch up on what happened meanwhile."""
     project = _get(session, Project, project_id, "project")
+    guard_setup(principal, project.business_project_id)
     if not project.tracked:
         project.tracked, project.untracked_at = True, None
         audit(session, principal.user_id, "project.track", f"project:{project.id}")
@@ -1023,12 +1145,13 @@ def _tracked(session: Session, project_id: int) -> Project:
 @router.post("/projects/{project_id}/webhook")
 def register_project_webhook(
     project_id: int,
-    principal: ProjectsAdmin,
+    principal: ProjectsSetup,
     session: SessionDep,
     box: Annotated[SecretBox, Depends(get_secret_box)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict[str, Any]:
     """Add the CodePulse hook (APP_BASE_URL + webhook path) to the GitLab project."""
+    guard_setup(principal, _get(session, Project, project_id, "project").business_project_id)
     project = _tracked(session, project_id)
     if project.connection_id is None:
         raise HTTPException(409, "project has no GitLab connection")
@@ -1053,9 +1176,10 @@ def sync_project_now(
     # dự án they are granted: one they cannot see is "not found", one they see but no longer
     # tracked still says so (409).
     projects_admin = principal.can("admin.projects")
-    if not (projects_admin or principal.is_lead):
-        raise HTTPException(403, "lead only")
     project = _get(session, Project, project_id, "project")
+    setup = principal.can_setup_project(project.business_project_id)  # docs/specs/21 §10
+    if not (projects_admin or principal.is_lead or setup):
+        raise HTTPException(403, "lead only")
     if not projects_admin and not principal.can_view_project(project.business_project_id):
         raise HTTPException(404, "project not found")
     _tracked(session, project_id)

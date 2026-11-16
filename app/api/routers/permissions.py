@@ -59,6 +59,7 @@ ROLE_LABELS: dict[str, str] = {
     "manager": "Manager",
     "project_manager": "Quản lý dự án",
     "manage_all": "Quản lý tổng",
+    "project_admin": "Lead / Manager dự án",
 }
 META = "admin.permissions"  # who may hand out permissions: only admins grant it
 
@@ -218,12 +219,16 @@ def _role_holders(session: Session, settings: Settings, today: date) -> dict[str
         elif role == "manager":
             manager.add(m.user_id)
     pm = set(session.scalars(select(ProjectGrant.user_id).where(ProjectGrant.role == "manage")))
+    project_admin = set(
+        session.scalars(select(ProjectGrant.user_id).where(ProjectGrant.admin_role.is_not(None)))
+    )
     return {
         "member": active,
         "lead": lead & active,
         "manager": manager & active,
         "project_manager": (pm & active) - manage_all,
         "manage_all": manage_all,
+        "project_admin": project_admin & active,
     }
 
 
@@ -238,6 +243,8 @@ def _auto_roles(principal: Principal) -> list[str]:
         roles.append("project_manager")
     if principal.manages_all:
         roles.append("manage_all")
+    if principal.project_admin:
+        roles.append("project_admin")
     return roles
 
 

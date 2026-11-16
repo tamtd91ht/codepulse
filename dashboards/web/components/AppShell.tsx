@@ -12,7 +12,7 @@ import { stethoHome } from "@/components/StethoTabs";
 import { REVIEW_MENU, underReviewMenu } from "@/components/ReviewTabs";
 import { RAIL_KEY, ThemeToggle } from "@/components/theme";
 import { UserMenu } from "@/components/UserMenu";
-import { can, managesAnyProject, useApi } from "@/lib/api";
+import { can, managesAnyProject, setupProjects, useApi } from "@/lib/api";
 import type { Me } from "@/lib/types";
 
 const NARROW = "(max-width: 1023px)";
@@ -115,6 +115,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     : [];
   const secondary: Item[] = [
     ...(isAdmin ? [{ href: "/admin", label: "Admin", icon: "settings" } as Item]
+      : []),
+    // docs/specs/21 §10: the Lead / Manager of a dự án sets it up here (admins use Admin).
+    ...(me && !isAdmin && (setupProjects(me)?.length ?? 0) > 0
+      ? [{ href: "/project-admin", label: "Quản trị dự án", icon: "folder" } as Item]
       : []),
     // Stetho (docs/specs/28): one menu, tabs Tri thức | Lịch sử inside (components/StethoTabs);
     // the link opens the first tab one may see.

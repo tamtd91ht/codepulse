@@ -6,6 +6,7 @@ import { AddRepoFields, addRepos, repoFieldsOf } from "@/components/AddRepoField
 import { ConfirmRemove } from "@/components/ConfirmRemove";
 import { Icon, IconButton } from "@/components/icons";
 import { ProjectDrawer, ProjectTiles, type TileKey } from "@/components/ProjectTiles";
+import { makeRepoActions } from "@/components/repoActions";
 import { BulkBranch, type Flag, groupOf, type RepoActions, repoName, type RepoSection, RepoTable, UNASSIGNED } from "@/components/RepoTable";
 import { Drawer, Loading, Message, Segmented } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
@@ -139,32 +140,6 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
     return run(() => addReposOrThrow(f, b.id));
   }
 
-  async function registerWebhook(p: Project): Promise<string> {
-    const hook = await api.post<{ url: string; created: boolean }>(`/projects/${p.id}/webhook`);
-    return hook.created ? `Đã đăng ký webhook ${hook.url}.` : `Webhook đã có sẵn: ${hook.url}.`;
-  }
-
-  async function assign(ids: number[], value: string, label: string): Promise<boolean> {
-    return run(async () => {
-      await api.put("/projects/business-project", {
-        project_ids: ids,
-        business_project_id: value === UNASSIGNED ? null : Number(value),
-      });
-      await refresh();
-    }, label);
-  }
-
-  async function setTracking(items: Project[], track: boolean) {
-    const targets = items.filter((p) => p.tracked !== track);
-    if (!targets.length) return;
-    if (!track && !window.confirm(`Bỏ theo dõi ${targets.length} repo? Lịch sử review vẫn giữ.`)) return;
-    await run(async () => {
-      await Promise.all(targets.map((p) => api.post(`/projects/${p.id}/${track ? "track" : "untrack"}`)));
-      setSelected(new Set());
-      await refresh();
-    }, `${track ? "Đã theo dõi lại" : "Đã bỏ theo dõi"} ${targets.length} repo.`);
-  }
-
   async function remove(items: Project[], typed: string) {
     setBusy(true);
     try {
@@ -215,61 +190,15 @@ export function RepoAdmin({ connections }: { connections: Connection[] }) {
     }, "Đã lưu quy tắc review của dự án; áp dụng cho review tiếp theo.");
   }
 
-  const actions: RepoActions = {
-    assign,
-    setTracking,
-    remove: (items) => setRemoving(items),
-    refreshProfile: (p) =>
-      run(
-        () => api.post(`/projects/${p.id}/profile/refresh`),
-        `Đã đưa việc dựng lại hồ sơ của ${repoName(p)} vào hàng đợi; xem ở trang dự án sau vài phút.`,
-      ),
-    setRules: (p, rules, paths) =>
-      run(async () => {
-        await api.patch(`/projects/${p.id}`, { review_rules: rules, review_rules_paths: paths });
-        await repos.mutate();
-      }, `Đã lưu quy tắc review của ${repoName(p)}.`),
-    setBranchMany: (items, branch) =>
-      run(async () => {
-        const result = await api.put<{ updated: number; missing: string[]; checked: boolean }>(
-          "/projects/review-branch",
-          { project_ids: items.map((p) => p.id), review_branch: branch },
-        );
-        await repos.mutate();
-        const what = branch === "" ? "nhánh mặc định" : branch === "*" ? "mọi nhánh" : `nhánh ${branch}`;
-        const missing = result.missing.length
-          ? ` Không thấy nhánh này trên GitLab ở: ${result.missing.join(", ")} (vẫn lưu; tạo nhánh hoặc chọn lại cho các repo đó).`
-          : "";
-        return `Đã đặt ${what} cho ${result.updated} repo.${missing}`;
-      }),
-    setBranch: (p, branch) =>
-      run(async () => {
-        await api.patch(`/projects/${p.id}`, { review_branch: branch });
-        await repos.mutate();
-      }, `Đã đổi nhánh review của ${repoName(p)}.`),
-    setFlag: (p: Project, flag: Flag, value: boolean) =>
-      run(async () => {
-        await api.patch(`/projects/${p.id}`, { [flag]: value });
-        await repos.mutate();
-      }, `Đã cập nhật ${repoName(p)}.`),
-    sync: (p) => run(() => api.post(`/projects/${p.id}/sync`), "Đã đưa vào hàng đợi sync."),
-    webhook: (p) => run(() => registerWebhook(p)),
-    backfill: async (p, f) => {
-      const params = new URLSearchParams({
-        from: String(f.get("from")),
-        to: String(f.get("to")),
-        include_open: f.get("include_open") ? "true" : "false",
-      });
-      const text = await (async () => {
-        const result = await api.post<{ queued: number }>(`/projects/${p.id}/backfill-reviews?${params}`);
-        return result.queued
-          ? `Đã đưa ${result.queued} MR của ${repoName(p)} vào hàng đợi review; kết quả hiện ở trang review sau vài phút.`
-          : "Không có MR nào chưa được review trong khoảng này (cần Sync trước nếu repo mới thêm).";
-      })().catch((e: unknown) => `Lỗi: ${e instanceof ApiError ? e.message : String(e)}`);
-      setMessage(text);
-      return text;
-    },
-  };
+  const actions: RepoActions = makeRepoActions({
+    run,
+    refreshRepos: () => repos.mutate(),
+    refreshAll: refresh,
+    setMessage,
+    onRemove: (items) => setRemoving(items),
+    onTracked: () => setSelected(new Set()),
+  });
+  const { assign, setTracking } = actions;
 
   const byId = useMemo(() => new Map((repos.data ?? []).map((p) => [p.id, p])), [repos.data]);
   const allGroups = useMemo(() => [...new Set((repos.data ?? []).map(groupOf))].sort(), [repos.data]);

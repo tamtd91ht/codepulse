@@ -39,7 +39,7 @@ from app.api.schemas import (
     ReviewCommitsOut,
     UserOut,
 )
-from app.api.security import CurrentPrincipal, Principal, require
+from app.api.security import CurrentPrincipal, Principal, guard_setup, require
 from app.collector.gitlab.client import GitLabClient, GitLabError
 from app.collector.gitlab.convert import Converter
 from app.collector.gitlab.extract import _commit as gl_commit
@@ -169,14 +169,18 @@ def repo_profiles(
 @router.post("/projects/{project_id}/profile/refresh", status_code=202)
 def refresh_profile(
     project_id: int,
-    principal: Annotated[Principal, require("knowledge.shared")],
+    principal: CurrentPrincipal,
     session: SessionDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> dict[str, str]:
     """Rebuild the profile from the default branch (one LLM call, runs in the worker).
     `knowledge.shared` (docs/specs/21 §4): no built-in set holds it, so as before spec 21 only
-    admins, unless a set gives it."""
+    admins, unless a set gives it; the dự án's Lead / Manager for its repos (§10)."""
+    if not (principal.can("knowledge.shared") or principal.can("project.setup")):
+        raise HTTPException(403, "thiếu quyền repo .claude dùng chung và làm mới hồ sơ dự án")
     project = _tracked_project(session, project_id)
+    if not principal.can("knowledge.shared"):
+        guard_setup(principal, project.business_project_id)
     if project.allow_external_llm is False:
         raise HTTPException(409, "this repo does not allow sending code to an external LLM")
     queue.enqueue(

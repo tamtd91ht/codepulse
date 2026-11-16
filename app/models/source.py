@@ -51,7 +51,13 @@ class ProjectGrant(TimestampMixin, Base):
     reviews and edit its review premises. ADMIN_EMAILS admins need no grant."""
 
     __tablename__ = "project_grants"
-    __table_args__ = (CheckConstraint("role IN ('view','manage')", name="role"),)
+    __table_args__ = (
+        CheckConstraint("role IN ('view','manage')", name="role"),
+        CheckConstraint(
+            "admin_role IS NULL OR (admin_role IN ('lead','manager') AND role = 'manage')",
+            name="admin_role",
+        ),
+    )
 
     business_project_id: Mapped[int] = mapped_column(
         ForeignKey("business_projects.id", ondelete="CASCADE"), primary_key=True
@@ -60,6 +66,10 @@ class ProjectGrant(TimestampMixin, Base):
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
     )
     role: Mapped[str]
+    # docs/specs/21 §10: the dự án's Lead or Manager (a "manage" grant only). Either one sets the
+    # dự án up (repos, .claude repo, rule files, review rules); the Manager also decides who
+    # sees it and names its Leads.
+    admin_role: Mapped[str | None]
     granted_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )

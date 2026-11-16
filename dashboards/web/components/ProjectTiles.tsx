@@ -153,6 +153,8 @@ export function ProjectDrawer({
   busy,
   notice,
   startEditing = false,
+  limited = false,
+  staff = false,
 }: {
   tile: TileKey;
   projects: BusinessProject[];
@@ -172,6 +174,14 @@ export function ProjectDrawer({
   notice?: ReactNode;
   /** Open with the rename form showing (the list view's edit button). */
   startEditing?: boolean;
+  /**
+   * docs/specs/21 §10: opened by the dự án's Lead / Manager, not admin.projects: no rename or
+   * delete, no Telegram bot / webhook stats (Admin screens), the repo table without the
+   * admin-only actions.
+   */
+  limited?: boolean;
+  /** With `limited`: the dự án's Manager, who decides who sees it (else the access list is read-only). */
+  staff?: boolean;
 }) {
   const project = tile === UNASSIGNED ? null : (projects.find((b) => b.id === tile) ?? null);
   const items = repos
@@ -200,8 +210,8 @@ export function ProjectDrawer({
     const t = setTimeout(() => nameInput.current?.focus(), 0);
     return () => clearTimeout(t);
   }, [editing]);
-  const bots = useApi<TelegramBot[]>(project ? "/telegram/bots" : null);
-  const hooks = useApi<NotificationWebhook[]>(project ? "/webhooks" : null);
+  const bots = useApi<TelegramBot[]>(project && !limited ? "/telegram/bots" : null);
+  const hooks = useApi<NotificationWebhook[]>(project && !limited ? "/webhooks" : null);
   const bot = (bots.data ?? []).find((b) => b.business_project_id === project?.id && b.project_id === null);
   const projectHooks = (hooks.data ?? []).filter(
     (h) => h.business_project_id === project?.id || items.some((p) => p.id === h.project_id),
@@ -244,6 +254,8 @@ export function ProjectDrawer({
       <Link className="button" href={`/projects/${project.id}`}>
         <Icon name="activity" size={14} /> Dashboard
       </Link>
+      {!limited && (
+      <>
       <IconButton icon="edit" label="Đổi tên / mô tả dự án" aria-pressed={editing} onClick={() => setEditing(!editing)} />
       <IconButton
         icon="remove"
@@ -255,6 +267,8 @@ export function ProjectDrawer({
             void onDelete(project).then((ok) => ok && onClose());
         }}
       />
+      </>
+      )}
     </>
   ) : null;
 
@@ -311,7 +325,7 @@ export function ProjectDrawer({
           <Stat label="Repo" value={stats.repos} hint={stats.tracked < stats.repos ? `${stats.repos - stats.tracked} đã bỏ theo dõi` : "đang theo dõi hết"} />
           <Stat label="Bật review" value={stats.review} hint={`trên ${stats.tracked} repo đang theo dõi`} />
           <Stat label="Sync gần nhất" value={date(stats.lastSync)} />
-          {project && (
+          {project && !limited && (
             <>
               <Stat
                 label="Bot Telegram"
@@ -445,6 +459,7 @@ export function ProjectDrawer({
               projectOptions={projectOptions}
               fullPath
               showProject={!project}
+              limited={limited}
               selectable
               selected={picked}
               onSelect={pick}
@@ -461,7 +476,12 @@ export function ProjectDrawer({
 
       {project && current === "access" && (
         <SubPanel id="bp-tabs" tab="access">
-          <ProjectGrants key={project.id} project={project} busy={busy} />
+          <ProjectGrants
+            key={project.id}
+            project={project}
+            busy={busy}
+            mode={!limited ? "admin" : staff ? "staff" : "readonly"}
+          />
         </SubPanel>
       )}
       {project && current === "criteria" && (

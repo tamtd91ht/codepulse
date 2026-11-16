@@ -88,6 +88,9 @@ class Principal:
     token_id: int | None = None
     token_scopes: tuple[str, ...] | None = None
     token_project: int | None = None
+    # docs/specs/21 §10: dự án id -> "lead" | "manager" (project_grants.admin_role), the dự án
+    # this person sets up (repos, .claude repo, rules) without being admin.
+    project_admin: dict[int, str] = field(default_factory=dict)
 
     def _bound_out(self, bp_id: int | None) -> bool:
         """A dự án outside the one the token is bound to."""
@@ -190,6 +193,43 @@ class Principal:
             return False
         return self.is_admin or (bp_id is not None and self.project_roles.get(bp_id) == "manage")
 
+    # -- setting a dự án up (docs/specs/21 §10) ------------------------------------------------
+
+    def can_setup_project(self, bp_id: int | None) -> bool:
+        """Add repos to dự án `bp_id`, configure them, its .claude repo, rule files and review
+        rules: `admin.projects` (every dự án), else `project.setup` at "project" on the dự án
+        one is Lead / Manager of, or at "all" on every dự án one manages."""
+        if bp_id is None or self._bound_out(bp_id):
+            return False
+        if self.can("admin.projects"):
+            return True
+        held = self.perms.get("project.setup")
+        if held == "all":
+            return self.can_manage_project(bp_id)
+        return held == "project" and bp_id in self.project_admin
+
+    def setup_projects(self) -> set[int] | None:
+        """The dự án this person sets up; None: every one (admin.projects)."""
+        if self.token_project is None and self.can("admin.projects"):
+            return None
+        ids = (
+            set(self.project_roles) | set(self.project_admin)
+            if self.token_project is None
+            else {self.token_project}
+        )
+        return {bp for bp in ids if self.can_setup_project(bp)}
+
+    def can_staff_project(self, bp_id: int | None) -> bool:
+        """Change who sees dự án `bp_id` and name its Leads: `admin.projects`, or its Manager
+        (project_grants.admin_role = "manager") who may set it up."""
+        if self.can("admin.projects"):
+            return not self._bound_out(bp_id)
+        return (
+            bp_id is not None
+            and self.project_admin.get(bp_id) == "manager"
+            and self.can_setup_project(bp_id)
+        )
+
     def can_see_work(self, author_user_id: int | None, bp_id: int | None) -> bool:
         """A review, its findings or a commit, in a repo of dự án `bp_id`."""
         if self._bound_out(bp_id):
@@ -258,20 +298,22 @@ def load_principal(
     admins = {e.lower() for e in settings.admin_emails}
     is_admin = bool(user.primary_email and user.primary_email.lower() in admins)
     roles: dict[int, str] = {}
+    project_admin: dict[int, str] = {}
     manages_all = not is_admin and bool(user.manage_all)
     if manages_all:
         # Every dự án as its manager: every rule on project_roles then holds as for a granted
         # manager. Repos outside every dự án stay the admins'.
         roles = {int(bp): "manage" for bp in session.scalars(select(BusinessProject.id))}
-    elif not is_admin:
-        roles = {
-            int(bp): str(role)
-            for bp, role in session.execute(
-                select(ProjectGrant.business_project_id, ProjectGrant.role).where(
-                    ProjectGrant.user_id == user_id
-                )
-            ).tuples()
-        }
+    if not is_admin:
+        for bp, role, admin_role in session.execute(
+            select(
+                ProjectGrant.business_project_id, ProjectGrant.role, ProjectGrant.admin_role
+            ).where(ProjectGrant.user_id == user_id)
+        ).tuples():
+            if not manages_all:
+                roles[int(bp)] = str(role)
+            if admin_role:
+                project_admin[int(bp)] = str(admin_role)
     managed_members: set[int] = set()
     if managed:
         managed_members = {
@@ -288,6 +330,8 @@ def load_principal(
         auto_roles.append("project_manager")
     if manages_all:
         auto_roles.append("manage_all")
+    if project_admin:
+        auto_roles.append("project_admin")
     return Principal(
         user_id=user.id,
         email=user.primary_email,
@@ -300,6 +344,7 @@ def load_principal(
         manages_all=manages_all,
         perms=everything() if is_admin else _permissions(session, user.id, auto_roles),
         managed_members=managed_members,
+        project_admin=project_admin,
     )
 
 
@@ -326,6 +371,29 @@ def require(key: str) -> Any:
         return principal
 
     return Depends(dependency)
+
+
+def require_setup() -> Any:
+    """FastAPI dependency (docs/specs/21 §10): one who sets up some dự án, i.e. holds
+    `admin.projects` or `project.setup`; each endpoint then checks the dự án with
+    `guard_setup`."""
+
+    def dependency(principal: CurrentPrincipal) -> Principal:
+        if not (principal.can("admin.projects") or principal.can("project.setup")):
+            raise HTTPException(403, "thiếu quyền quản trị dự án")
+        return principal
+
+    return Depends(dependency)
+
+
+def guard_setup(principal: Principal, bp_id: int | None) -> None:
+    """403 unless `principal` sets up dự án `bp_id` (404 when they cannot even see it; a repo
+    outside every dự án is the admins')."""
+    if principal.can_setup_project(bp_id):
+        return
+    if bp_id is not None and not principal.can_view_project(bp_id):
+        raise HTTPException(404, "dự án not found")
+    raise HTTPException(403, "chỉ Lead / Manager của dự án này (hoặc admin) làm được việc này")
 
 
 def current_principal(

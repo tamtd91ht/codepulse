@@ -20,7 +20,7 @@ import { ProjectRepos } from "@/components/ProjectRepos";
 import { ReviewResults } from "@/components/ReviewResults";
 import { Card, ChartTip, Drawer, EmptyState, Loading, PageHeader, Pager, Segmented, SplitBar, StatStrip, StripStat } from "@/components/ui";
 import { scoreTone } from "@/components/Evaluation";
-import { type BoardScope, boardLink, can, qs, useApi } from "@/lib/api";
+import { type BoardScope, boardLink, can, canSetupProject, qs, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, periodLabel, shiftDays, weekLabel } from "@/lib/format";
 import { scopeNote, useCycleScope } from "@/lib/timeScope";
 import type { Me, ProjectDetail } from "@/lib/types";
@@ -54,6 +54,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       subtitle={data?.project.description ?? undefined}
       actions={
         <>
+          {/* docs/specs/21 §10: the dự án's Lead / Manager (admins: Admin › Dự án & Repo). */}
+          {me && !me.is_admin && data && canSetupProject(me, data.project.id) && (
+            <Link className="button" href={`/project-admin?open=${data.project.id}`}>
+              Cấu hình dự án
+            </Link>
+          )}
           <Segmented<Period>
             label="Chu kỳ"
             value={period}

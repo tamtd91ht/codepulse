@@ -26,7 +26,14 @@ export interface Me {
   jira_tasks?: boolean;
   /** docs/specs/21: permission key -> scope ("own" | "team" | "project" | "all") or "flag"; read with can(). */
   permissions?: Record<string, string>;
+  /** docs/specs/21 §10: dự án id -> this person's Lead / Manager role there. */
+  project_admin?: Record<string, ProjectAdminRole>;
+  /** docs/specs/21 §10: the dự án this person sets up (repos, .claude, rules); null = every one. */
+  setup_projects?: number[] | null;
 }
+
+/** docs/specs/21 §10: the Lead or Manager of a dự án sets it up; the Manager also staffs it. */
+export type ProjectAdminRole = "lead" | "manager";
 
 /* ---- permission sets (docs/specs/21, Admin › Phân quyền) ---- */
 
@@ -84,6 +91,7 @@ export interface ProjectGrant {
   email: string | null;
   active: boolean;
   role: ProjectRole;
+  admin_role?: ProjectAdminRole | null;
 }
 
 export interface Team {

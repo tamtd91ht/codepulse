@@ -60,6 +60,12 @@ tính vào điểm và mọi chỉ số liên quan được tính lại ngay.
 - Trang một thành viên có thẻ **Khiếu nại**: mọi khiếu nại họ đã gửi (finding nào, lý do, chấp nhận/từ chối, ai duyệt, khi nào).
 - Admin: **Admin › Người & Team** → bút ở dòng một người để xem, sửa hồ sơ: tên, email (email dùng để đăng nhập khi chưa gắn GitLab và để gắn commit), ảnh đại diện (PNG/JPEG/WebP ≤ 1 MB, mỗi người một ảnh).
 - Chạy lại review bị lỗi/bị bỏ qua từ trang review.
+- **Lead dự án / Manager dự án**: admin tạo dự án (chưa cần repo) rồi giao bạn ở *Admin › Dự án & Repo › (dự án) › Quyền truy cập*. Bạn thấy menu **Quản trị dự án** (và nút *Cấu hình dự án* trên dashboard dự án):
+  - tab **Repo**: *Thêm repo từ GitLab* (dán link, path hoặc project ID), bật/tắt review, deep review, static analysis, comment MR, đổi nhánh review, sync, webhook, bỏ theo dõi; gỡ repo ra khỏi dự án;
+  - tab **Quy tắc review**: quy tắc của dự án, file quy tắc, quy tắc riêng từng repo;
+  - tab **Repo .claude**: repo `.claude` dùng chung (skills, agents, rules, CLAUDE.md) cho command và deep review;
+  - tab **Quyền truy cập**: Manager dự án thêm người xem và giao Lead dự án; Lead dự án chỉ xem danh sách.
+  - Chỉ admin: đổi tên/xoá dự án, nhập cả group, gỡ hẳn repo, review MR theo khoảng ngày, cho phép gửi code ra LLM bên ngoài, giao Manager dự án. Repo đang thuộc dự án khác thì nhờ admin chuyển.
 - Báo cáo tuần (thứ Hai 08:00) và tháng (ngày 1) qua email; kênh chat của team nhận bản không có điểm từng người.
 
 ## 3b. Yêu cầu review và kết luận merge

@@ -23,14 +23,22 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.audit import audit
 from app.api.deps import get_session
-from app.api.security import Principal, require
+from app.api.security import Principal, guard_setup, require_setup
 from app.assistant import importers
 from app.models import BusinessProject, ReviewRuleFile
 from app.review.rules import MAX_FILE_CHARS, MAX_RULES_CHARS
 
 router = APIRouter(tags=["rule-files"])
 SessionDep = Annotated[Session, Depends(get_session)]
-ProjectsAdmin = Annotated[Principal, require("admin.projects")]
+
+
+def _setup(bp_id: int, principal: Annotated[Principal, require_setup()]) -> Principal:
+    """admin.projects, or the Lead / Manager of dự án `bp_id` (docs/specs/21 §10)."""
+    guard_setup(principal, bp_id)
+    return principal
+
+
+ProjectsAdmin = Annotated[Principal, Depends(_setup)]
 
 MAX_FILES = 20
 MAX_BYTES = importers.MAX_FILE_BYTES

@@ -44,6 +44,7 @@ Trước spec này, quyền được **ngầm suy** từ dữ liệu: admin, vai
 | Manager | người có vai trò `manager` trong một team |
 | Quản lý dự án | người có quyền `manage` ở ít nhất một dự án |
 | Quản lý tổng | `users.manage_all` |
+| Quản trị dự án | người là Lead hoặc Manager của ít nhất một dự án (§10) |
 
 - **Admin** luôn có mọi quyền với phạm vi `all`, không qua bộ quyền.
 
@@ -89,6 +90,7 @@ Trong cột Mặc định: **TV** = Thành viên, **L** = Lead, **M** = Manager,
 | `gitlab_members.import` | Tra cứu, nhập người từ GitLab | flag | — |
 | `telegram.self` | Liên kết Telegram của mình | flag | TV |
 | `assistant.use` | Trợ lý Stetho | flag | M |
+| `project.setup` | Quản trị dự án: thêm repo, cấu hình repo, repo .claude, file quy tắc, quy tắc review (§10) | project/all | **Quản trị dự án** project |
 | `admin.connections` | Kết nối GitLab | flag | — |
 | `admin.projects` | Dự án và repo: tạo, gom, theo dõi, sync, webhook, cấp quyền dự án | flag | — |
 | `admin.people` | Người, team, tài khoản Git | flag | — |
@@ -203,3 +205,70 @@ Gán bộ quyền trước đây chỉ làm được bên trong một bộ tự 
   - Bên phải là các quyền của nhóm, kèm nút "Chọn hết nhóm" và "Bỏ hết nhóm".
   - Ô tìm kiếm tìm trên mọi nhóm và hiện tên nhóm cạnh từng kết quả.
   - Quyền vừa đổi được tô viền.
+
+## 10. Lead / Manager dự án: tự quản trị dự án (người dùng 2026-11-16)
+
+> Yêu cầu: "cho phép admin tạo project nhưng chưa cần add repo, sau đó admin gán project này cho
+> 1 user bất kỳ, thêm role quản trị (lead hoặc manager) cho user đó, thì user đó được phép thêm
+> repo vào cho project đó cũng như cấu hình các skills, agents hoặc thêm .claude cho dự án đó".
+> Các quyết định dưới đây do người dùng giao chọn (xem memory "decisions-delegated").
+
+**Luồng:**
+1. Admin (hoặc người giữ `admin.projects`) tạo dự án ở Admin › Dự án & Repo, **không cần repo**.
+2. Tab "Quyền truy cập" của dự án có thêm hai vai trò: **Lead dự án** và **Manager dự án**.
+3. Người được giao thấy menu **Quản trị dự án** (`/project-admin`) và nút "Cấu hình dự án" trên
+   dashboard dự án. Họ mở cùng drawer như admin, chỉ với dự án của mình.
+
+**Mô hình** (migration `b3d5f7a9c1e4`):
+- `project_grants.admin_role` ∈ {`lead`, `manager`} hoặc NULL; chỉ đi với `role = manage`
+  (CHECK). Lead/Manager dự án vì vậy có luôn bộ **Quản lý dự án** của dự án đó.
+- Quyền mới `project.setup` (phạm vi `project`/`all`). Bộ có sẵn mới **Quản trị dự án**
+  (`auto_role = project_admin`) giữ `project.setup` ở `project`, tự gán cho người có `admin_role`.
+  - `project` = các dự án mình là Lead/Manager; `all` = mọi dự án mình có quyền `manage`.
+  - Admin có thể sửa bộ này hoặc cấp `project.setup` qua bộ tự tạo như mọi quyền khác.
+- `Principal.project_admin`, `can_setup_project`, `setup_projects`, `can_staff_project`;
+  `/auth/me` trả `project_admin` và `setup_projects` (null = mọi dự án, tức `admin.projects`).
+
+**Lead dự án và Manager dự án làm được, trên dự án của mình:**
+
+| Việc | Endpoint |
+|---|---|
+| Xem dự án và repo của mình | `GET /business-projects`, `GET /projects` (lọc theo dự án mình quản trị) |
+| Thêm repo bằng link / path / ID | `POST /projects` (bắt buộc `business_project_id`) |
+| Đọc danh sách kết nối GitLab (tên, URL) | `GET /connections` |
+| Cấu hình repo: bật review, deep review, static analysis, comment MR, tự làm mới tiền đề, nhánh, quy tắc repo | `PATCH /projects/{id}`, `PUT /projects/review-branch` |
+| Theo dõi / bỏ theo dõi, webhook, sync | `POST /projects/{id}/track|untrack|webhook|sync` |
+| Chuyển repo giữa các dự án mình quản trị hoặc gỡ ra khỏi dự án | `PUT /projects/business-project` |
+| Quy tắc review của dự án | `PATCH /business-projects/{id}` (tên, mô tả gửi nguyên) |
+| File quy tắc | `/business-projects/{id}/rule-files*` |
+| Repo `.claude` dùng chung (skills, agents, rules, CLAUDE.md) | `/business-projects/{id}/claude-repo*` |
+| Làm mới hồ sơ dự án của repo | `POST /projects/{id}/profile/refresh` |
+| Bộ tiêu chí | như trước, qua `criteria.assign` của bộ Quản lý dự án |
+
+**Chỉ Manager dự án** (`can_staff_project`): sửa danh sách quyền truy cập, nhưng chỉ những dòng
+trước và sau đều là **Xem** hoặc **Lead dự án**. Người chọn lấy từ
+`GET /business-projects/{id}/grant-candidates` (người đang hoạt động), vì Manager dự án không có
+`admin.people`.
+
+**Vẫn chỉ admin (`admin.projects`):**
+- tạo, đổi tên, xoá dự án;
+- nhập cả group GitLab, gỡ hẳn repo (xoá lịch sử);
+- review MR theo khoảng ngày (`backfill-reviews`, tốn ngân sách LLM);
+- bật/tắt **gửi code ra LLM bên ngoài** (`allow_external_llm`, §3 luật 4);
+- cấp quyền `manage` thường và vai trò **Manager dự án**.
+
+**Chặn leo quyền:**
+- Repo đã đăng ký mà thuộc dự án khác (mình không quản trị) **hoặc chưa gán dự án** (repo của
+  admin) không kéo về được bằng link: 409, nhờ admin. Cũng không chuyển được bằng
+  `PUT /projects/business-project`.
+- Chấp nhận có chủ đích (người dùng giao quyết định):
+  - Repo **chưa đăng ký** thì Lead/Manager đăng ký được mọi repo mà token bot của kết nối thấy,
+    như admin. Mỗi lần thêm ghi audit `project.create`. Giới hạn theo group GitLab cho từng dự
+    án: ghi ở IDEAS.md.
+  - Repo mới nhận mặc định của tổ chức như khi admin thêm (`allow_external_llm` = bật); chỉ admin
+    đổi được cờ này sau đó.
+  - Manager dự án thấy tên và email của người đang hoạt động (`grant-candidates`) để chọn người.
+- Manager dự án không tự sửa dòng của mình; không đụng tới admin, Quản lý tổng, người giữ
+  quyền `admin.*` (luật §8.8).
+- Token cá nhân gắn một dự án (`token_project`) chỉ quản trị đúng dự án đó.
+- Mọi thay đổi ghi audit như trước; `business_project.grants` ghi thêm `lead` và `manager`.

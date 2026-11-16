@@ -127,6 +127,19 @@ export function can(me: Me | undefined, key: string): boolean {
   return me.is_admin || Boolean(me.permissions && key in me.permissions);
 }
 
+/** docs/specs/21 §10: the dự án `me` sets up (null: every one, admin.projects). */
+export function setupProjects(me: Me | undefined): number[] | null {
+  if (!me) return [];
+  if (me.is_admin || can(me, "admin.projects")) return null;
+  return me.setup_projects ?? [];
+}
+
+/** May set up dự án `id`: add repos, configure them, the .claude repo, rule files, review rules. */
+export function canSetupProject(me: Me | undefined, id: number): boolean {
+  const mine = setupProjects(me);
+  return mine === null ? !!me : mine.includes(id);
+}
+
 /** Manager ("manage" grant) of at least one dự án: sees everyone in it (people, reviews, closings, disputes). */
 export function managesAnyProject(me: Me | undefined): boolean {
   return !!me && (me.is_admin || Object.values(me.projects ?? {}).includes("manage"));

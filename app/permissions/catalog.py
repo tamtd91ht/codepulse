@@ -13,8 +13,15 @@ SCOPES: tuple[Scope, ...] = ("own", "team", "project", "all")
 FLAG = "flag"  # the "scope" of a flag permission when held
 RANK: dict[str, int] = {"own": 1, "team": 2, "project": 3, "all": 4, FLAG: 4}
 
-AutoRole = Literal["member", "lead", "manager", "project_manager", "manage_all"]
-AUTO_ROLES: tuple[AutoRole, ...] = ("member", "lead", "manager", "project_manager", "manage_all")
+AutoRole = Literal["member", "lead", "manager", "project_manager", "manage_all", "project_admin"]
+AUTO_ROLES: tuple[AutoRole, ...] = (
+    "member",
+    "lead",
+    "manager",
+    "project_manager",
+    "manage_all",
+    "project_admin",
+)
 
 
 @dataclass(frozen=True)
@@ -191,6 +198,14 @@ CATALOG: tuple[Permission, ...] = (
         "Trợ lý",
         "Dạy Stetho: nhập tài liệu (file, link), lưu câu trả lời làm tri thức, bật tra web",
     ),
+    # docs/specs/21 §10: setting a dự án up without being admin. "project" = the dự án one is
+    # Lead / Manager of (project_grants.admin_role); "all" = every dự án one manages.
+    _p(
+        "project.setup",
+        "Quản trị dự án",
+        "Thêm repo, cấu hình repo, repo .claude, file quy tắc, quy tắc review của dự án",
+        "project all",
+    ),
     _p("admin.connections", "Quản trị", "Kết nối GitLab"),
     _p(
         "admin.projects",
@@ -343,6 +358,14 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "tests.run": "all",
             "tests.manage": "all",
         },
+    ),
+    # docs/specs/21 §10: the Lead / Manager of a dự án (project_grants.admin_role) sets it up.
+    BuiltinSet(
+        "project_admin",
+        "Quản trị dự án",
+        "Lead / Manager của một dự án: thêm repo, cấu hình repo, repo .claude, file quy tắc và "
+        "quy tắc review của dự án đó.",
+        {"project.setup": "project"},
     ),
 )
 
