@@ -2837,3 +2837,60 @@ export interface TaskCriterion {
   cases: TaskCoverCase[];
   status: "passed" | "failed" | "untested" | "none" | null;
 }
+
+/* -- Nhân rộng Task (docs/specs/31 §20.4) ---------------------------------------------------- */
+
+/** GET /tasks/templates: a built-in template (id null) or one saved from a dự án. */
+export interface TaskSpaceTemplate {
+  id: number | null;
+  key: string;
+  name: string;
+  description: string | null;
+  builtin: boolean;
+  types: TaskType[];
+  board_mode: "scrum" | "kanban";
+  statuses: { name: string; category: TaskCategory }[];
+  priorities: string[];
+  fields: string[];
+  has_dod: boolean;
+  has_automation: boolean;
+  created_by: number | null;
+  created_at: string | null;
+  can_delete: boolean;
+}
+
+/** POST /tasks/spaces/{bp}/apply-template. */
+export interface TaskTemplateApplied {
+  mode: "full" | "partial";
+  applied: string[];
+  skipped: string[];
+  space: TaskSpace & { template_key?: string | null };
+}
+
+/** GET /tasks/spaces/{bp}/members: the enable wizard's members step. */
+export interface TaskSpaceMembers {
+  members: { user_id: number; full_name: string | null; email: string | null; role: "view" | "manage"; admin_role: "lead" | "manager" | null }[];
+  suggestions: { user_id: number; full_name: string | null; email: string | null; commits: number; last_commit_at: string | null }[];
+  can_grant: boolean;
+}
+
+/** GET /tasks/adoption: Tình trạng bật Task. */
+export interface TaskAdoptionRow {
+  business_project_id: number;
+  name: string;
+  enabled: boolean;
+  key: string | null;
+  template_key: string | null;
+  template_name: string | null;
+  board_mode: "scrum" | "kanban" | null;
+  tasks: number;
+  open: number;
+  last_activity: string | null;
+  viewers: number;
+  can_manage: boolean;
+}
+
+export interface TaskAdoption {
+  rows: TaskAdoptionRow[];
+  all_projects: boolean;
+}

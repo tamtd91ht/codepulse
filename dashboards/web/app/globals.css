@@ -16603,6 +16603,78 @@ a.icon-btn {
   border-color: var(--border-strong);
 }
 .qk-sub-title {
+
+/* -- Nhân rộng Task (docs/specs/31 §20.4): templates, members step, adoption table ------------ */
+.tp-group {
+  margin: 12px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.tp-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tp-note {
+  margin: 0 0 8px;
+}
+.tp-current {
+  margin: 0;
+}
+.tp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tp-saved {
+  position: relative;
+  display: grid;
+}
+.tp-saved .tp-delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+.tp-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+.tp-list li + li {
+  margin-top: 2px;
+}
+.tp-skipped {
+  color: var(--warn);
+}
+.tp-wizard {
+  display: grid;
+  gap: 16px;
+}
+.tp-members {
+  display: grid;
+  gap: 4px;
+}
+.tp-people {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-height: 260px;
+  overflow: auto;
+}
+.tp-people li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+}
+.tp-people li + li {
+  border-top: 1px solid var(--border);
+}
+.tp-person {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -16879,5 +16951,62 @@ a.icon-btn {
   }
   .qa-crit-actions {
     opacity: 1;
+
+  color: var(--text);
+}
+.tp-error {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 16px;
+}
+.tp-table td.num,
+.tp-table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.tp-row-link {
+  color: var(--text);
+  font-weight: 600;
+}
+.tp-row-link:focus-visible,
+.tp-enable:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.tp-muted {
+  color: var(--muted);
+}
+.tp-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--muted);
+  background: var(--primary-soft);
+}
+.tp-badge-on {
+  color: var(--good);
+  background: var(--good-soft);
+}
+.tp-off {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tp-enable {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--link);
+}
+@media (max-width: 640px) {
+  .tp-people li {
+    flex-wrap: wrap;
+    gap: 4px 12px;
   }
 }

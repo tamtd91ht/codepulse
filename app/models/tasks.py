@@ -63,6 +63,8 @@ class TaskSpace(TimestampMixin, Base):
     # Scrum: the Board shows the active sprint; Kanban: every open task, no sprint (§19.6).
     board_mode: Mapped[str] = mapped_column(String(10), server_default="scrum", default="scrum")
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # The template last applied (a built-in key or a saved template's key, §20.4); NULL: unknown.
+    template_key: Mapped[str | None] = mapped_column(String(40))
 
 
 class TaskStatus(TimestampMixin, Base):
@@ -444,3 +446,20 @@ class TaskImport(TimestampMixin, Base):
     external_key: Mapped[str] = mapped_column(String(30))
     task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
     imported_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class TaskSpaceTemplate(TimestampMixin, Base):
+    """A dự án's Task setup saved to reuse on another dự án (docs/specs/31 §20.4): types,
+    workflow, priorities, rules (git, DoD, automation), custom fields and board mode, as JSON
+    that names statuses instead of holding their ids. The built-in templates live in code
+    (app/tasks/templates.py) and are listed with these."""
+
+    __tablename__ = "task_space_templates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(40), unique=True)
+    name: Mapped[str] = mapped_column(String(80))
+    description: Mapped[str | None]
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    builtin: Mapped[bool] = mapped_column(server_default="false", default=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

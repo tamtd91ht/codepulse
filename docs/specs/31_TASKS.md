@@ -832,3 +832,56 @@ QA và có bộ quyền, ai rời nhóm thì rời team và mất quyền. Migra
   và tên GitLab chưa gắn người. Dòng thành viên do đồng bộ thêm có nhãn "GitLab".
 - Admin rút tay ("Rời team") một người do đồng bộ thêm mà người đó vẫn ở nhóm GitLab: lần đồng bộ sau thêm lại.
   Muốn loại hẳn thì bỏ họ khỏi nhóm GitLab hoặc bỏ gắn nhóm.
+
+### 20.4 Nhân rộng (migration `c3e5a7b9d1f4`)
+- **Mẫu là một payload JSON** (`app/tasks/templates.py`): `types`, `board_mode`, `statuses` (tên, nhóm,
+  `wip_limit`, `age_warning_hours`, `transitions` theo **tên**), `priorities` (tên, mức, màu, mặc định),
+  `rules` (cờ luật git, `start` / `review` / `done` theo tên trạng thái, `dod`, `automation`), `fields`
+  (định nghĩa `TaskField`: tên, loại, lựa chọn, bắt buộc). Không theo id nên chuyển được giữa dự án.
+- **Mẫu có sẵn** vẫn nằm trong code: Scrum, Kanban, QA (giữ nguyên §19.6) và **Mobile** mới = Scrum + trường
+  chọn một "Nền tảng" (iOS / Android / Cả hai). Bảng gợi ý của tài liệu đợt 2 (Scrum có DoD đủ 6 mục,
+  Kanban WIP 3 / 5, QA dạng Kanban có loại Test) **không** áp: đổi mẫu có sẵn làm dự án mới khác hẳn dự án
+  bật trước đó, và đợt 2 đã chốt không thêm loại "Test". Ai muốn cấu hình đó thì lưu thành mẫu riêng.
+- **Mẫu đã lưu** (bảng `task_space_templates`: `key` duy nhất, `name`, `description`, `payload` JSONB,
+  `builtin` (luôn false khi lưu từ dự án; để dành cho mẫu do admin nạp), `created_by`):
+  - `POST /tasks/spaces/{bp}/save-template {name, description}` (`tasks.manage` của dự án) chụp cấu hình
+    hiện tại (bỏ trường đã lưu trữ). Tên trùng (không phân biệt hoa thường, kể cả tên mẫu có sẵn) → 409.
+    `key` = tên bỏ dấu dạng `cau-hinh-crm`, thêm `-2`… khi trùng. Audit `task.template.save`.
+  - `GET /tasks/templates` (`tasks.view`): mẫu có sẵn trước rồi mẫu đã lưu, mỗi mẫu có chuỗi trạng thái,
+    loại, chế độ bảng, tên ưu tiên, tên trường, `has_dod`, `has_automation`, `can_delete`.
+  - `DELETE /tasks/templates/{id}`: chỉ mẫu đã lưu; người tạo hoặc admin (403 với người khác). Dự án đã áp
+    mẫu giữ nguyên cấu hình (chỉ còn `template_key` cũ). Audit `task.template.delete`.
+- **Áp mẫu cho dự án đã bật** (`POST /tasks/spaces/{bp}/apply-template {key, types?, board_mode?}`,
+  `tasks.manage`; khoá hàng `task_spaces` trong lúc áp). Trả `{mode, applied, skipped, space}`:
+  - **Chưa có task** (`full`): thay toàn bộ: loại, chế độ bảng, trạng thái (trạng thái cùng tên giữ id),
+    luồng chuyển, WIP / tuổi, ưu tiên (cùng tên giữ key), luật git, DoD, quy tắc tự động (mẫu không có thì
+    về mặc định), trường tuỳ chỉnh (trường không có trong mẫu được lưu trữ).
+  - **Đã có task** (`partial`): chỉ phần không mất dữ liệu: thêm loại task còn thiếu, chế độ bảng, thêm mức
+    ưu tiên còn thiếu theo tên (tối đa 12, phần thừa vào `skipped`), cờ luật git, DoD, quy tắc tự động,
+    thêm trường còn thiếu theo tên (trường lưu trữ cùng tên cùng loại thì hiện lại; khác loại thì bỏ qua).
+    Trạng thái và luồng chuyển **giữ nguyên**; `start` / `review` / `done` chỉ đổi khi dự án có trạng thái
+    cùng tên, không thì giữ như cũ và ghi vào `skipped`.
+  - Ghi `task_spaces.template_key` (có trong `GET /tasks/spaces`). Bật Task bằng `PUT` cũng ghi mẫu đã dùng.
+    Audit `task.template.apply`.
+- **Task › Cài đặt › Mã, loại task và chế độ bảng**: dòng "Mẫu đang dùng", nút **Áp mẫu** (hộp chọn mẫu, xoá
+  mẫu đã lưu của mình, kết quả "Đã áp / Bỏ qua"; đóng hộp thì tải lại trang để mọi thẻ cài đặt lấy cấu hình
+  mới) và **Lưu cấu hình thành mẫu**.
+- **Hướng dẫn bật Task** (EnableSpace): (1) mã + loại, (2) mẫu (có sẵn + đã lưu), (3) **thành viên**,
+  (4) xác nhận, rồi (5) **Nhập từ Jira** chỉ khi dự án có issue Jira đã đồng bộ (`GET /tasks/spaces/{bp}/import/jira`
+  trả `sources` không rỗng; dùng lại thẻ Nhập từ Jira). Scrum / Kanban / QA bật bằng `PUT` như cũ; Mobile và
+  mẫu đã lưu: `PUT` (Scrum) rồi `apply-template` ngay (dự án chưa có task nên áp toàn bộ).
+  - Bước thành viên: `GET /tasks/spaces/{bp}/members` (`tasks.manage` của dự án): người có quyền vào dự án
+    (`project_grants`, đang hoạt động) và **gợi ý** = người dùng có tài khoản liên kết là tác giả commit trong
+    các repo của dự án 90 ngày qua mà chưa có quyền (tối đa 50, nhiều commit trước), `can_grant` =
+    `can_staff_project`. "Cấp quyền xem" dùng lại `GET` + `PUT /business-projects/{id}/grants` (đọc danh
+    sách hiện tại, thêm `view`; mọi luật chặn leo quyền của spec 21 §10 giữ nguyên). Không có quyền cấp thì
+    chỉ xem và được nhắc nhờ Manager dự án / admin.
+- **Tình trạng bật Task** (`GET /tasks/adoption`, trang `/tasks/adoption`, nút ở đầu trang Task cho người có
+  `tasks.manage` hoặc `admin.projects`): mỗi dự án: đã bật chưa, mã, mẫu (`template_key` + tên), số task, số
+  task chưa ở nhóm Xong, hoạt động gần nhất (max `tasks.updated_at` / bình luận), số người xem được Task
+  (người đang hoạt động có grant dự án hoặc `manage_all` mà bộ quyền có `tasks.view`; admin theo
+  ADMIN_EMAILS không có grant thì không đếm). Admin / `admin.projects` thấy mọi dự án kể cả chưa bật (link
+  "Bật Task" → `/tasks?space=<id>`, mở hướng dẫn bật); người chỉ có `tasks.manage` thấy dự án mình xem được
+  đã bật. Thiếu cả hai quyền → 403.
+- Chưa làm: mẫu do admin nạp sẵn (`builtin = true`) chưa có màn quản lý; số người xem được tính bằng nạp bộ
+  quyền từng người (chậm dần khi có hàng trăm người, đủ cho trang quản trị).
