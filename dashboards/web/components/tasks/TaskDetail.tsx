@@ -14,6 +14,7 @@ import { TaskActivity, TaskAttachments } from "./TaskActivity";
 import { FileTextarea } from "./taskFiles";
 import { TaskAiButtons } from "./TaskAi";
 import { TaskCode } from "./TaskCode";
+import { ShortcutHelp } from "./ShortcutHelp";
 import {
   LINK_KIND_LABEL,
   RESOLUTION_LABEL,
@@ -138,6 +139,7 @@ function Body({
   return (
     <div className="tk-detail">
       {confirmEl}
+      <ShortcutHelp />
       <div className="tk-detail-main">
         <div className="tk-detail-crumbs small muted">
           <TypeIcon type={task.type} withLabel />
@@ -249,7 +251,7 @@ function DescriptionEdit({ task, canEdit, onSave }: { task: Detail; canEdit: boo
     <section className="tk-section" aria-labelledby="tk-desc-title">
       <div className="tk-section-head">
         <h3 id="tk-desc-title">Mô tả</h3>
-        {canEdit && draft === null && <IconButton icon="edit" label="Sửa mô tả" onClick={() => (setDraft(task.description ?? ""), setMode("write"))} />}
+        {canEdit && draft === null && <IconButton icon="edit" label="Sửa mô tả" data-shortcut="edit-description" onClick={() => (setDraft(task.description ?? ""), setMode("write"))} />}
         {draft !== null && <Segmented<"write" | "preview"> label="Chế độ" value={mode} onChange={setMode} options={[{ value: "write", label: "Viết" }, { value: "preview", label: "Xem trước" }]} />}
       </div>
       {draft === null ? (
@@ -542,6 +544,7 @@ function Fields({
           value={task.status.id}
           disabled={!task.can.transition || statuses.length < 2}
           aria-label="Trạng thái"
+          data-shortcut="status"
           className={`tk-status-select tk-cat-${task.status.category}`}
           onChange={(e) => {
             const s = statuses.find((x) => x.id === Number(e.target.value));
@@ -556,7 +559,7 @@ function Fields({
         </select>
       </Row>
       <Row label="Người làm">
-        <select value={task.assignee?.id ?? ""} disabled={!task.can.assign} aria-label="Người làm" onChange={(e) => void onPatch({ assignee_id: e.target.value ? Number(e.target.value) : null })}>
+        <select value={task.assignee?.id ?? ""} disabled={!task.can.assign} aria-label="Người làm" data-shortcut="assignee" onChange={(e) => void onPatch({ assignee_id: e.target.value ? Number(e.target.value) : null })}>
           <option value="">Chưa giao</option>
           {task.assignee && !(people.data ?? []).some((p) => p.id === task.assignee?.id) && <option value={task.assignee.id}>{personName(task.assignee)}</option>}
           {(people.data ?? []).map((p) => (

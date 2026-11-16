@@ -140,6 +140,7 @@ function Comments({ task, path }: { task: TaskDetail; path: string }) {
             onPendingChange={setUploading}
             placeholder="Viết bình luận (markdown, @tên để nhắc)…"
             aria-label="Bình luận mới"
+            data-shortcut="comment"
           />
           <div className="adm-form-foot">
             <button type="submit" className="sm" disabled={busy || uploading > 0 || !body.trim()}>

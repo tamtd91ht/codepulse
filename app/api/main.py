@@ -54,6 +54,7 @@ from app.api.routers import (
     rule_files,
     settings,
     stetho_history,
+    task_nlfilter,
     tasks,
     team_report,
     telegram,
@@ -170,6 +171,7 @@ for api_router in (
     test_bdd.router,
     test_runs.router,
     testcases.router,
+    task_nlfilter.router,  # §19.8 POST /tasks/nl-filter, before tasks
     tasks.router,  # docs/specs/31; its static paths come before /tasks/{key} inside
 ):
     app.include_router(api_router, prefix="/api/v1")

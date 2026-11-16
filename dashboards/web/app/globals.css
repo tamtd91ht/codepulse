@@ -15797,3 +15797,209 @@ a.icon-btn {
 .tk-health-muted {
   color: var(--muted);
 }
+
+/* Lọc nhanh bằng câu (docs/specs/31 §19.8, components/tasks/SmartFilter.tsx). */
+.nl-filter {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.nl-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.nl-filter-input {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+}
+.nl-filter-input > svg {
+  position: absolute;
+  left: 10px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.nl-filter-input input {
+  width: 100%;
+  padding-left: 32px;
+}
+.nl-filter-error {
+  margin: 0;
+  color: var(--bad-text);
+}
+.nl-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.nl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 2px 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13px;
+}
+.nl-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nl-chip .icon-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+}
+
+/* Phím tắt (components/tasks/ShortcutHelp.tsx). */
+.nl-help-note {
+  margin: 0 0 12px;
+}
+.nl-keys {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.nl-keys-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.nl-keys-row dt {
+  flex: none;
+  width: 56px;
+}
+.nl-keys-row dd {
+  margin: 0;
+}
+.nl-kbd {
+  display: inline-block;
+  min-width: 26px;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font: 600 12px var(--font-mono);
+  text-align: center;
+}
+
+/* Mật độ Thoáng / Gọn (components/tasks/DensityToggle.tsx): `tk-dense` on the List / Board. */
+.nl-density .segmented {
+  align-self: start;
+}
+.tk-dense .tk-table th,
+.tk-dense .tk-table td {
+  padding: 6px 10px;
+}
+.tk-dense .tk-table .tk-row-badges {
+  display: none;
+}
+.tk-dense .tk-board {
+  grid-auto-columns: minmax(220px, 1fr);
+  gap: 8px;
+}
+.tk-dense .tk-col-body {
+  gap: 4px;
+  padding: 6px;
+}
+.tk-dense .tk-card {
+  gap: 4px;
+  padding: 6px 10px;
+}
+.tk-dense .tk-card-title {
+  font-size: 13px;
+  line-height: 1.3;
+}
+.tk-dense .tk-card-labels {
+  display: none;
+}
+
+/* Điện thoại (≤ 640px): List, chi tiết task, Việc của tôi không cuộn ngang cả trang. */
+@media (max-width: 640px) {
+  .nl-filter-bar {
+    flex-wrap: wrap;
+  }
+  .nl-filter-bar > button {
+    flex: 1;
+  }
+  /* List: SP and "Cập nhật" give way; the table still scrolls inside its own box. */
+  .tk-list .tk-table th:nth-child(7),
+  .tk-list .tk-table td:nth-child(7),
+  .tk-list .tk-table th:nth-child(9),
+  .tk-list .tk-table td:nth-child(9) {
+    display: none;
+  }
+  .tk-list .tk-table td .tk-row-title {
+    min-width: 160px;
+  }
+  .tk-saved select {
+    min-width: 0;
+    width: 100%;
+  }
+  .tk-list .bulk-bar select,
+  .tk-list .bulk-bar .tk-inline {
+    flex: 1 1 140px;
+  }
+  /* Detail: one column, the side panel under the main one. */
+  .tk-detail {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .tk-detail-side {
+    position: static;
+    order: 0;
+    padding: 12px;
+  }
+  .tk-field {
+    grid-template-columns: 84px minmax(0, 1fr);
+  }
+  .tk-field-value select,
+  .tk-field-value input {
+    width: 100%;
+    min-width: 0;
+  }
+  .tk-detail-main pre,
+  .tk-detail-main table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .tk-detail-main img {
+    max-width: 100%;
+    height: auto;
+  }
+  .tk-detail-crumbs {
+    flex-wrap: wrap;
+  }
+  /* Việc của tôi. */
+  .mw-h {
+    flex-wrap: wrap;
+  }
+  .mw-row {
+    gap: 10px;
+  }
+  .mw-row.mw-task {
+    flex-wrap: wrap;
+  }
+  .mw-row.mw-task .mw-main {
+    flex-basis: calc(100% - 40px);
+  }
+  .mw-row.mw-task .mw-action {
+    padding-left: 40px;
+  }
+  .mw-meta {
+    gap: 4px 8px;
+  }
+}
