@@ -1,6 +1,6 @@
-from datetime import date
+from datetime import date, datetime
 
-from sqlalchemy import CheckConstraint, ForeignKey, UniqueConstraint, false
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -12,6 +12,11 @@ class Team(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(unique=True)
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"))
+    # docs/specs/31 §20.7 (R2): the GitLab group (full path, e.g. "omicx/qa") whose direct
+    # members the team follows (app/teams/gitlab_sync.py); NULL: the team is kept by hand.
+    gitlab_group_path: Mapped[str | None] = mapped_column(String(255))
+    gitlab_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    gitlab_sync_error: Mapped[str | None]
 
 
 class User(TimestampMixin, Base):
@@ -38,12 +43,16 @@ class User(TimestampMixin, Base):
 
 class TeamMember(TimestampMixin, Base):
     __tablename__ = "team_members"
+    __table_args__ = (CheckConstraint("source IN ('manual', 'gitlab')", name="source"),)
 
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
     joined_at: Mapped[date] = mapped_column(primary_key=True)
     role: Mapped[str | None]
     left_at: Mapped[date | None]
+    # Who added the row: "manual" (Admin, CSV) or "gitlab" (the team's GitLab group sync,
+    # docs/specs/31 §20.7). The sync only ends rows it added itself.
+    source: Mapped[str] = mapped_column(String(10), server_default="manual", default="manual")
 
 
 class Account(TimestampMixin, Base):

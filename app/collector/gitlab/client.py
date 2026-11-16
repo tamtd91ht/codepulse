@@ -477,6 +477,11 @@ class GitLabClient:
         params = {"include_subgroups": "true", "archived": "false", "with_shared": "false"}
         return self.paginate(f"/groups/{quote(group, safe='')}/projects", params)
 
+    def group_members(self, group: str) -> Iterator[Any]:
+        """Direct members of a group (numeric id or full path): not those inherited from its
+        parent groups, nor those of its subgroups (docs/specs/31 §20.7)."""
+        return self.paginate(f"/groups/{quote(group, safe='')}/members", {"per_page": 100})
+
     def project_hooks(self, project_id: int) -> list[Any]:
         return list(self.paginate(f"/projects/{project_id}/hooks"))
 

@@ -100,6 +100,20 @@ export interface Team {
   id: number;
   name: string;
   parent_id: number | null;
+  /** docs/specs/31 §20.7: the GitLab group the team follows (direct members); null: by hand. */
+  gitlab_group_path?: string | null;
+  gitlab_sync_at?: string | null;
+  gitlab_sync_error?: string | null;
+}
+
+/** POST /teams/{id}/gitlab/sync (docs/specs/31 §20.7). */
+export interface TeamGitlabSync {
+  team: Team;
+  added: { user_id: number; full_name: string | null }[];
+  ended: { user_id: number; full_name: string | null }[];
+  unmapped: { gitlab_id: number; username: string; name: string | null }[];
+  skipped: number;
+  error: string | null;
 }
 
 export interface Member {
@@ -109,6 +123,8 @@ export interface Member {
   role: string | null;
   joined_at: string;
   left_at: string | null;
+  /** "gitlab": added by the team's GitLab group sync; "manual": by hand. */
+  source?: "manual" | "gitlab";
 }
 
 export interface Person {
