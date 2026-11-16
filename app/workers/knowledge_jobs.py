@@ -225,6 +225,12 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
             AuditLog.action == "doc.synthesize.cost", AuditLog.at >= month_start
         )
     )
+    # Task AI runs (docs/specs/31 §11), one audit row per call.
+    task_ai = session.scalar(
+        select(func.coalesce(func.sum(AuditLog.details["cost_usd"].as_float()), 0)).where(
+            AuditLog.action == "task.ai.cost", AuditLog.at >= month_start
+        )
+    )
     # Testcase AI runs (docs/specs/30 §3.3), one audit row per call.
     test_ai = session.scalar(
         select(func.coalesce(func.sum(AuditLog.details["cost_usd"].as_float()), 0)).where(
@@ -253,6 +259,7 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
         "dpi_labels_usd": round(float(dpi_labels or 0), 4),
         "doc_drafts_usd": round(float(doc_drafts or 0), 4),
         "test_ai_usd": round(float(test_ai or 0), 4),
+        "task_ai_usd": round(float(task_ai or 0), 4),
         "total_usd": round(
             float(reviews or 0)
             + float(commands or 0)
@@ -265,7 +272,8 @@ def month_spend_breakdown(session: Session, now: datetime | None = None) -> dict
             + float(rescores or 0)
             + float(dpi_labels or 0)
             + float(doc_drafts or 0)
-            + float(test_ai or 0),
+            + float(test_ai or 0)
+            + float(task_ai or 0),
             4,
         ),
     }

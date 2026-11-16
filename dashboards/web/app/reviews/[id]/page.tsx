@@ -10,6 +10,7 @@ import { authorLabel } from "@/components/LinkReviewAuthor";
 import { BasisCard, basisSummary, changedRules, previousRun } from "@/components/ReviewBasis";
 import { announceReviewQueued } from "@/components/ReviewActivity";
 import { StaticFindingsCard } from "@/components/StaticFindings";
+import { TaskStrip } from "@/components/tasks/TaskStrip";
 import { MrImpactCard } from "@/components/TestcaseImpact";
 import { Alert, Avatar, Card, EmptyState, ExternalLink, IdChip, Loading, PageHeader, Pill, SeverityBadge } from "@/components/ui";
 import { ApiError, api, can, useApi } from "@/lib/api";
@@ -500,6 +501,9 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
       {(review.can_rerun || rerun) && <RerunBar review={review} state={rerun} onRun={startRerun} />}
 
       {review.jira && <MrJiraCard jira={review.jira} />}
+
+      {/* docs/specs/31 §7: the tasks linked to this commit / MR (nothing when none or not allowed). */}
+      {can(me, "tasks.view") && <TaskStrip review={review} />}
 
       <div className="grid kpis">
         {review.status === "done" && (

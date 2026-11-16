@@ -31,6 +31,7 @@ services:
     volumes:
       - command-runs:/tmp/codepulse-runs  # shared with command-worker (app/commands)
       - avatars:/srv/data/avatars  # AVATAR_DIR (app/avatars.py)
+      - task-files:/srv/data/task-files  # TASK_FILES_DIR (docs/specs/31): task attachments
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"]
       interval: 15s
@@ -148,5 +149,6 @@ services:
 volumes:
   pgdata:
   avatars:
+  task-files:
   command-runs:
   command-gate:

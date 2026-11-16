@@ -164,6 +164,7 @@ def handle_event(
         elif event == "Push Hook":
             branch = (payload.get("ref") or "").removeprefix("refs/heads/")
             default = (payload.get("project") or {}).get("default_branch") or project.default_branch
+            _link_tasks(session, project, branch, default, payload)
             if branch != default or payload.get("after") == NULL_SHA:
                 continue
             maybe_refresh_knowledge(project, payload, queue, redis)
@@ -186,6 +187,29 @@ def handle_event(
                     job_id=f"review-commit-{sha[:12]}",
                     bp_id=project.business_project_id,
                 )
+
+
+def _link_tasks(
+    session: Session, project: Project, branch: str, default: str | None, payload: dict[str, Any]
+) -> None:
+    """docs/specs/31 §6: a push on any branch links its branch and commits to the tasks they
+    name. Never stops the review part of the event."""
+    from app.tasks.git import on_push
+
+    commits = payload.get("commits")
+    try:
+        with session.begin_nested():
+            on_push(
+                session,
+                project,
+                branch,
+                default,
+                commits if isinstance(commits, list) else [],
+                deleted=payload.get("after") == NULL_SHA,
+                pusher_email=payload.get("user_email"),
+            )
+    except Exception:
+        log.exception("task links of a push failed", extra={"project_id": project.id})
 
 
 def gitlab_commit_in_mr(session: Session) -> CommitInMr:

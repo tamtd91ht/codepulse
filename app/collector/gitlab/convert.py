@@ -1,6 +1,7 @@
 """Convert step: GitLab records -> source-independent domain tables. Upserts only, so re-runs
 never duplicate rows."""
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
@@ -43,6 +44,9 @@ from app.models import (
 )
 
 LINK_RANK = {"mention": 1, "branch": 2, "closes": 3}
+
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -283,6 +287,14 @@ class Converter:
             c.sha for mr in data.merge_requests.values() for c in mr.commits
         }
         counts["jira_commit_links"] = link_commits(self._session, shas)
+        # docs/specs/31 §6: CodePulse tasks named by these MRs and commits (independent of Jira).
+        from app.tasks.git import on_sync
+
+        try:
+            with self._session.begin_nested():
+                counts["task_links"] = on_sync(self._session, self._project, data)
+        except Exception:  # task links never stop a repo's sync
+            log.exception("task links failed", extra={"project_id": self._project.id})
         self._session.flush()
         return result
 

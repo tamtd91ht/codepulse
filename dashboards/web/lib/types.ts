@@ -749,6 +749,8 @@ export type ApiTokenScope =
   | "findings:read"
   | "findings:close_request"
   | "reviews:request"
+  // docs/specs/31 §10: move / comment / log work on tasks over MCP.
+  | "tasks:write"
   // docs/specs/30 §15 (G11): the public testcase API.
   | "testcases:read"
   | "testcases:write"
@@ -2384,4 +2386,311 @@ export interface JiraTaskOptions {
   configured: boolean;
   task_source: "jira" | "gitlab";
   can_admin: boolean;
+}
+
+/* ---- Task (docs/specs/31) ---- */
+
+export type TaskType = "epic" | "story" | "task" | "bug" | "subtask";
+export type TaskPriority = "highest" | "high" | "medium" | "low" | "lowest";
+export type TaskCategory = "todo" | "doing" | "done";
+export type TaskLinkKind = "blocks" | "relates" | "duplicates" | "clones";
+export type TaskRelation = "fixes" | "refs";
+export type TaskVia = "web" | "git" | "smart_commit" | "mcp" | "ai" | string;
+
+/** §8 `Person`. */
+export interface TaskPerson {
+  id: number;
+  full_name: string | null;
+  primary_email: string | null;
+  avatar_url?: string | null;
+}
+
+export interface TaskStatusRef {
+  id: number;
+  name: string;
+  category: TaskCategory;
+}
+
+/** One status of a space; `transitions`: the ids it may move to (null: any). */
+export interface TaskStatus extends TaskStatusRef {
+  position: number;
+  transitions: number[] | null;
+}
+
+/** §2 `rules`. */
+export interface TaskRules {
+  start_on_commit: boolean;
+  review_on_mr: boolean;
+  done_on_merge: boolean;
+  reopen_on_mr_close: boolean;
+  block_done_on_critical: boolean;
+  mr_comment: boolean;
+  start: number | null;
+  review: number | null;
+  done: number | null;
+}
+
+/** GET /tasks/spaces: a dự án and its Task setup (not enabled: shown to its managers only). */
+export interface TaskSpace {
+  business_project_id: number;
+  name: string;
+  enabled: boolean;
+  key: string | null;
+  types: TaskType[];
+  rules: Partial<TaskRules> | null;
+  statuses: TaskStatus[];
+  can_manage: boolean;
+  can_create: boolean;
+}
+
+export interface TaskGitCounts {
+  commits: number;
+  mrs: number;
+  open_critical: number;
+  open_high: number;
+}
+
+/** §8 `TaskRow`. `space`: the dự án id (an object with it is read too, see components/tasks/taskParts). */
+export interface TaskRow {
+  id: number;
+  key: string;
+  space: number | { business_project_id?: number; id?: number; key?: string; name?: string };
+  type: TaskType;
+  title: string;
+  status: TaskStatusRef;
+  priority: TaskPriority;
+  assignee: TaskPerson | null;
+  reporter: TaskPerson | null;
+  labels: string[];
+  story_points: number | null;
+  due_date: string | null;
+  sprint_id: number | null;
+  version_id: number | null;
+  parent_key: string | null;
+  subtasks: { done: number; total: number } | null;
+  rank: number | null;
+  git: TaskGitCounts | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+}
+
+export interface TaskPage {
+  items: TaskRow[];
+  total: number;
+}
+
+export interface TaskLinkItem {
+  id: number;
+  kind: TaskLinkKind;
+  direction: "out" | "in";
+  task: TaskRow;
+}
+
+export interface TaskComment {
+  id: number;
+  author: TaskPerson | null;
+  body: string;
+  created_at: string;
+  edited_at: string | null;
+  can_edit: boolean;
+}
+
+export interface TaskHistoryItem {
+  user: TaskPerson | null;
+  field: string;
+  old: string | null;
+  new: string | null;
+  via: TaskVia;
+  at: string;
+}
+
+export interface TaskAttachment {
+  id: number;
+  name: string;
+  size: number;
+  content_type: string | null;
+  uploaded_by: TaskPerson | null;
+  created_at: string;
+}
+
+export interface TaskWorklog {
+  id: number;
+  user: TaskPerson | null;
+  minutes: number;
+  day: string | null;
+  note: string | null;
+  via: TaskVia;
+}
+
+/** The latest review of a linked commit / MR (§7). */
+export interface TaskReviewRef {
+  id: number;
+  score: Num | number;
+  verdict: Verdict | null;
+  open_critical: number;
+  open_high: number;
+}
+
+export interface TaskGitBranch {
+  id: number;
+  project_id: number;
+  repo: string | null;
+  branch: string;
+  manual?: boolean;
+  web_url?: string | null;
+}
+
+export interface TaskGitCommit {
+  id: number;
+  project_id: number;
+  repo: string | null;
+  sha: string;
+  title: string | null;
+  relation: TaskRelation;
+  manual?: boolean;
+  web_url?: string | null;
+  review: TaskReviewRef | null;
+}
+
+export interface TaskGitMr {
+  id: number;
+  project_id: number;
+  repo: string | null;
+  mr_iid: number;
+  title: string | null;
+  state: "opened" | "merged" | "closed" | string | null;
+  web_url: string | null;
+  relation: TaskRelation;
+  manual?: boolean;
+  review: TaskReviewRef | null;
+  pipeline: { status: string; web_url?: string | null } | null;
+}
+
+export interface TaskGitSummary {
+  commits: number;
+  mrs: number;
+  open_critical: number;
+  open_high: number;
+  avg_score: Num | number;
+  pipelines_failed: number;
+  deployed: { environment: string; at: string } | null;
+}
+
+export interface TaskGit {
+  branches: TaskGitBranch[];
+  commits: TaskGitCommit[];
+  mrs: TaskGitMr[];
+  summary: TaskGitSummary;
+}
+
+/** GET /tasks/{key}. */
+export interface TaskDetail extends Omit<TaskRow, "git" | "subtasks"> {
+  description: string | null;
+  components: string[];
+  estimate_min: number | null;
+  spent_min: number | null;
+  custom: Record<string, unknown> | null;
+  watchers: TaskPerson[];
+  watching: boolean;
+  links: TaskLinkItem[];
+  subtasks: TaskRow[];
+  comments: TaskComment[];
+  history: TaskHistoryItem[];
+  attachments: TaskAttachment[];
+  worklogs: TaskWorklog[];
+  git: TaskGit | null;
+  transitions: TaskStatusRef[];
+  can: { edit: boolean; delete: boolean; comment: boolean; manage: boolean };
+}
+
+export interface TaskCommitCandidate {
+  sha: string;
+  title: string | null;
+  project_id: number;
+  repo?: string | null;
+  authored_at?: string | null;
+  author?: string | null;
+  linked?: boolean;
+}
+
+export type SprintState = "planned" | "active" | "closed";
+
+export interface Sprint {
+  id: number;
+  business_project_id?: number;
+  name: string;
+  goal: string | null;
+  state: SprintState;
+  start_date: string | null;
+  end_date: string | null;
+  closed_at: string | null;
+  committed_points: number | null;
+  tasks?: TaskRow[];
+  points?: number;
+  done_points?: number;
+}
+
+export interface TaskBurndown {
+  days: { day: string; remaining_points: number; remaining_tasks: number; ideal_points: number }[];
+  committed_points: number | null;
+}
+
+export interface TaskReports {
+  velocity: { sprint_id: number; name: string; committed: number; completed: number }[];
+  flow: { day: string; created: number; resolved: number }[];
+  cycle_time: { median_h: number | null; p85_h: number | null; count: number };
+  by_status: { status: TaskStatusRef | string; count: number }[];
+  by_assignee: { user: TaskPerson | null; open: number; done: number; points: number }[];
+  worklog: { user: TaskPerson | null; minutes: number }[];
+}
+
+export interface TaskVersion {
+  id: number;
+  business_project_id?: number;
+  name: string;
+  description: string | null;
+  release_date: string | null;
+  released_at: string | null;
+  /** Counts when the API gives them. */
+  tasks?: number;
+  done?: number;
+}
+
+/** A saved filter (GET /tasks/filters); `query` holds the GET /tasks parameters. */
+export interface TaskFilter {
+  id: number;
+  name: string;
+  space: number | null;
+  query: Record<string, string>;
+  shared: boolean;
+  user_id?: number;
+  owner?: TaskPerson | null;
+  can_delete?: boolean;
+}
+
+export type TaskFieldKind = "text" | "number" | "date" | "select" | "user";
+
+export interface TaskField {
+  id?: number;
+  name: string;
+  kind: TaskFieldKind;
+  options: string[] | null;
+  required: boolean;
+  position: number;
+  archived: boolean;
+}
+
+export interface TaskAiItem {
+  type: TaskType;
+  title: string;
+  description: string | null;
+  story_points: number | null;
+}
+
+/** GET /tasks/ai/{run_id}. */
+export interface TaskAiRun {
+  status: "queued" | "running" | "done" | "failed" | string;
+  output: { items?: TaskAiItem[]; markdown?: string } | null;
+  error: string | null;
 }

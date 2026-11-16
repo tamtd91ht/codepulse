@@ -2,6 +2,14 @@ import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
 
 /** Stroke icons (24×24, currentColor), drawn inline so the dashboard needs no icon package. */
 const PATHS = {
+  /* Three columns of cards: the Task board (docs/specs/31). */
+  board: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M9 3v18M15 3v18" />
+      <path d="M5.5 7h1M11.5 7h1M17.5 7h1M11.5 11h1" />
+    </>
+  ),
   sync: (
     <>
       <path d="M21 12a9 9 0 0 1-15.5 6.2L3 16" />

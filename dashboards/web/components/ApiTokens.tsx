@@ -23,6 +23,7 @@ const SCOPE_LABEL: Record<ApiTokenScope, { label: string; hint: string }> = {
   "findings:read": { label: "Đọc finding", hint: "Đọc finding critical/high và yêu cầu đóng của bạn" },
   "findings:close_request": { label: "Gửi yêu cầu đóng", hint: "Gửi và rút yêu cầu đóng finding (vẫn qua manager duyệt)" },
   "reviews:request": { label: "Yêu cầu review", hint: "Yêu cầu review commit đã push và xem tiến độ (tốn lượt review)" },
+  "tasks:write": { label: "Cập nhật task", hint: "Chuyển trạng thái, bình luận, ghi giờ task (docs/specs/31 §10)" },
   "testcases:read": { label: "Đọc testcase", hint: "API testcase: đọc bộ testcase, case, test run, kết quả" },
   "testcases:write": { label: "Sửa testcase", hint: "API testcase: tạo, sửa testcase, test run, plan (gồm cả đọc và ghi kết quả)" },
   "results:write": { label: "Ghi kết quả test", hint: "API testcase: chỉ ghi kết quả test (CI), không sửa testcase" },
@@ -260,6 +261,8 @@ function CreateTokenModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const [name, setName] = useState("");
   const [closeScope, setCloseScope] = useState(true);
   const [reviewScope, setReviewScope] = useState(true);
+  // docs/specs/31 §10: move_task / comment_task / log_work.
+  const [taskScope, setTaskScope] = useState(false);
   const [mcp, setMcp] = useState(true);
   const [tcScopes, setTcScopes] = useState<ApiTokenScope[]>([]);
   const [projectId, setProjectId] = useState<number | null>(null);
@@ -283,6 +286,7 @@ function CreateTokenModal({ onClose, onCreated }: { onClose: () => void; onCreat
         scopes.push("findings:read");
         if (closeScope) scopes.push("findings:close_request");
         if (reviewScope) scopes.push("reviews:request");
+        if (taskScope) scopes.push("tasks:write");
       }
       scopes.push(...tcScopes);
       onCreated(
@@ -362,6 +366,13 @@ function CreateTokenModal({ onClose, onCreated }: { onClose: () => void; onCreat
               <span>
                 Cho phép yêu cầu review commit đã push
                 <span className="muted small"> Claude Code gọi review ngay sau khi push; mỗi review tốn một lượt, có giới hạn mỗi ngày.</span>
+              </span>
+            </label>
+            <label className="inline-check token-scope">
+              <input type="checkbox" checked={taskScope} onChange={(e) => setTaskScope(e.target.checked)} />
+              <span>
+                Cập nhật task
+                <span className="muted small"> Claude Code chuyển trạng thái, bình luận và ghi giờ task bạn được sửa.</span>
               </span>
             </label>
           </>

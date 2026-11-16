@@ -46,6 +46,7 @@ services:
     volumes:
       - command-runs:/tmp/codepulse-runs
       - avatars:/srv/data/avatars  # AVATAR_DIR (app/avatars.py): kept across rebuilds
+      - task-files:/srv/data/task-files  # TASK_FILES_DIR (docs/specs/31): task attachments
 
   worker:
     <<: *app
@@ -151,5 +152,6 @@ services:
 
 volumes:
   avatars:
+  task-files:
   command-runs:
   command-gate:

@@ -177,6 +177,20 @@ CATALOG: tuple[Permission, ...] = (
         "Tạo, sửa, đóng, xoá test run / test plan, milestone, cấu hình; phân tích MR bằng AI",
         "project all",
     ),
+    # docs/specs/31: CodePulse's own task tracker (Task), tied to git and code review.
+    _p("tasks.view", "Task", "Xem task, bình luận, theo dõi"),
+    _p(
+        "tasks.edit",
+        "Task",
+        "Tạo task; sửa, chuyển trạng thái, ghi giờ, liên kết git (own: task mình tạo / được giao)",
+        "own project all",
+    ),
+    _p(
+        "tasks.manage",
+        "Task",
+        "Bật Task cho dự án, trạng thái, luật git, sprint, phiên bản, trường tuỳ biến, xoá task",
+        "project all",
+    ),
     _p("knowledge.view", "Tiền đề review", "Xem Tiền đề review của repo"),
     _p(
         "knowledge.edit",
@@ -259,6 +273,8 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "telegram.self": FLAG,
             "docs.view": FLAG,
             "tests.view": FLAG,
+            "tasks.view": FLAG,
+            "tasks.edit": "own",
         },
     ),
     BuiltinSet(
@@ -326,6 +342,9 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "tests.approve": "project",
             "tests.run": "project",
             "tests.manage": "project",
+            "tasks.view": FLAG,
+            "tasks.edit": "project",
+            "tasks.manage": "project",
         },
     ),
     BuiltinSet(
@@ -357,6 +376,9 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "tests.approve": "all",
             "tests.run": "all",
             "tests.manage": "all",
+            "tasks.view": FLAG,
+            "tasks.edit": "all",
+            "tasks.manage": "all",
         },
     ),
     # docs/specs/21 §10: the Lead / Manager of a dự án (project_grants.admin_role) sets it up.

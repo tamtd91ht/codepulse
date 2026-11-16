@@ -120,6 +120,8 @@ class GlMergeRequest:
     commits: list[GlCommit] = field(default_factory=list)
     notes: list[GlNote] = field(default_factory=list)
     files: list[GlFileStat] | None = None
+    # Read for task keys (docs/specs/31 §5) only; never stored (spec 25 §4.1).
+    description: str | None = None
 
 
 @dataclass
@@ -276,6 +278,7 @@ def extract(rows: Iterable[RawGitlab]) -> Extracted:
                     jira_keys=extract_keys(
                         payload.get("title"), description, branch=payload.get("source_branch")
                     ),
+                    description=description,
                 )
             case ep.EP_MR_COMMITS | ep.EP_MR_NOTES | ep.EP_MR_DIFFS:
                 mr_parts.setdefault(int(params["iid"]), {})[row.endpoint] = payload

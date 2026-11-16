@@ -77,6 +77,12 @@ def test_answers_at_exactly_mcp(env: Env, world: Any, http: TestClient) -> None:
         "cancel_close_request",
         "request_review",
         "get_review_status",
+        # docs/specs/31 §10
+        "list_my_tasks",
+        "get_task",
+        "move_task",
+        "comment_task",
+        "log_work",
     }
 
 

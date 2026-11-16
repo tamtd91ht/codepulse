@@ -25,7 +25,9 @@ SCOPE_READ = "findings:read"
 SCOPE_CLOSE = "findings:close_request"
 # docs/specs/26 §22 (user 2026-11-11): ask for a review of pushed commits from Claude Code.
 SCOPE_REVIEW = "reviews:request"
-MCP_SCOPES = (SCOPE_READ, SCOPE_CLOSE, SCOPE_REVIEW)
+# docs/specs/31 §10: move, comment on and log time to CodePulse tasks from Claude Code.
+SCOPE_TASKS = "tasks:write"
+MCP_SCOPES = (SCOPE_READ, SCOPE_CLOSE, SCOPE_REVIEW, SCOPE_TASKS)
 # docs/specs/30 §15 (G11): the public testcase API (/api/v1/testcases/*, app/api/security.py).
 SCOPE_TC_READ = "testcases:read"
 SCOPE_TC_WRITE = "testcases:write"

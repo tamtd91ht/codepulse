@@ -15,6 +15,7 @@ from app.mcp.tokens import (
     SCOPE_CLOSE,
     SCOPE_READ,
     SCOPE_REVIEW,
+    SCOPE_TASKS,
     TOKEN_PREFIX,
     TokenError,
     authenticate,
@@ -58,7 +59,7 @@ def test_create_defaults_to_both_scopes_and_90_days(
     assert set(body) == FIELDS | {"token"}
     assert body["token"].startswith(TOKEN_PREFIX)
     assert body["prefix"] == body["token"][len(TOKEN_PREFIX) :][:8]
-    assert body["scopes"] == [SCOPE_READ, SCOPE_CLOSE, SCOPE_REVIEW]
+    assert body["scopes"] == [SCOPE_READ, SCOPE_CLOSE, SCOPE_REVIEW, SCOPE_TASKS]
     assert body["active"] is True and body["revoked_at"] is None
     expires = datetime.fromisoformat(body["expires_at"])
     assert timedelta(days=89) < expires - datetime.now(UTC) <= timedelta(days=90)

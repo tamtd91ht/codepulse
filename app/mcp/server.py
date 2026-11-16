@@ -61,7 +61,15 @@ from app.crypto import secret_box
 from app.db import get_redis, get_sessionmaker
 from app.jira.links import mr_issues
 from app.mcp import queries, render, reviews
-from app.mcp.tokens import SCOPE_CLOSE, SCOPE_READ, SCOPE_REVIEW, TokenError, authenticate
+from app.mcp import tasks as task_tools
+from app.mcp.tokens import (
+    SCOPE_CLOSE,
+    SCOPE_READ,
+    SCOPE_REVIEW,
+    SCOPE_TASKS,
+    TokenError,
+    authenticate,
+)
 from app.models import Connection, McpCall, MergeRequest, Project, Review, ReviewFinding, User
 
 log = logging.getLogger("codepulse.mcp")
@@ -333,7 +341,11 @@ def _call(
 
 
 # The token-creation checkbox of each optional scope (ApiTokens.tsx), named in refusals.
-SCOPE_LABEL = {SCOPE_CLOSE: "Gửi yêu cầu đóng", SCOPE_REVIEW: "Yêu cầu review"}
+SCOPE_LABEL = {
+    SCOPE_CLOSE: "Gửi yêu cầu đóng",
+    SCOPE_REVIEW: "Yêu cầu review",
+    SCOPE_TASKS: "Cập nhật task",
+}
 
 
 def _local_llm(settings: Settings) -> bool:
@@ -1245,6 +1257,120 @@ def build_server() -> MCPServer:
             SCOPE_READ,
             lambda s, c, st, f: review_status_work(
                 s, c, st, f, review_ids=review_ids, commits=commits, repo=repo
+            ),
+            client=_client_info(ctx),
+        )
+
+    # -- CodePulse tasks (docs/specs/31 §10) ----------------------------------------------------
+
+    @server.tool(
+        name="list_my_tasks",
+        annotations=READ_ONLY,
+        description=(
+            "The CodePulse tasks assigned to you (not done by default), newest change first: key, "
+            "status, title, priority, and a warning when the task's code still has open critical "
+            "findings. `status`: todo | doing | done. `space`: a task key prefix such as CRM. "
+            "Name the key in branches (feature/CRM-12-...) and commits ([CRM-12], `Fixes: CRM-12`) "
+            "so CodePulse links the code to the task." + UNTRUSTED
+        ),
+    )
+    def list_my_tasks(
+        status: Annotated[
+            Literal["todo", "doing", "done"] | None, Field(description="Nhóm trạng thái.")
+        ] = None,
+        space: Annotated[str | None, Field(description="Mã dự án, ví dụ CRM.")] = None,
+        limit: LimitArg = queries.DEFAULT_LIMIT,
+        ctx: Context | None = None,
+    ) -> CallToolResult:
+        return run_tool(
+            "list_my_tasks",
+            SCOPE_READ,
+            lambda s, c, st, f: task_tools.my_tasks_work(
+                s, c, st, f, status=status, space=space, limit=limit
+            ),
+            client=_client_info(ctx),
+        )
+
+    @server.tool(
+        name="get_task",
+        annotations=READ_ONLY,
+        description=(
+            "One CodePulse task by key (CRM-12): description, status, and its code: linked "
+            "commits and MRs with their review scores and open critical/high findings, plus the "
+            "status names move_task accepts." + UNTRUSTED
+        ),
+    )
+    def get_task(
+        key: Annotated[str, Field(description="Mã task, ví dụ CRM-12.")],
+        ctx: Context | None = None,
+    ) -> CallToolResult:
+        return run_tool(
+            "get_task",
+            SCOPE_READ,
+            lambda s, c, st, f: task_tools.get_task_work(s, c, st, f, key=key),
+            client=_client_info(ctx),
+        )
+
+    @server.tool(
+        name="move_task",
+        annotations=WRITES,
+        description=(
+            "Move a CodePulse task to another status (a name from get_task, e.g. in-progress, "
+            "in-review, done), as on the board; the workflow and the dự án's critical-findings "
+            "gate apply. Needs a token with 'Cập nhật task'." + UNTRUSTED
+        ),
+    )
+    def move_task(
+        key: Annotated[str, Field(description="Mã task.")],
+        status: Annotated[str, Field(description="Tên trạng thái, ví dụ in-review.")],
+        ctx: Context | None = None,
+    ) -> CallToolResult:
+        return run_tool(
+            "move_task",
+            SCOPE_TASKS,
+            lambda s, c, st, f: task_tools.move_task_work(s, c, st, f, key=key, status=status),
+            client=_client_info(ctx),
+        )
+
+    @server.tool(
+        name="comment_task",
+        annotations=WRITES,
+        description=(
+            "Add a comment to a CodePulse task (Markdown; @name mentions notify). Needs a token "
+            "with 'Cập nhật task'." + UNTRUSTED
+        ),
+    )
+    def comment_task(
+        key: Annotated[str, Field(description="Mã task.")],
+        body: Annotated[str, Field(description="Nội dung bình luận.", max_length=20_000)],
+        ctx: Context | None = None,
+    ) -> CallToolResult:
+        return run_tool(
+            "comment_task",
+            SCOPE_TASKS,
+            lambda s, c, st, f: task_tools.comment_task_work(s, c, st, f, key=key, body=body),
+            client=_client_info(ctx),
+        )
+
+    @server.tool(
+        name="log_work",
+        annotations=WRITES,
+        description=(
+            "Log time spent on a CodePulse task (minutes, today). Needs a token with 'Cập nhật "
+            "task'." + UNTRUSTED
+        ),
+    )
+    def log_work(
+        key: Annotated[str, Field(description="Mã task.")],
+        minutes: Annotated[int, Field(ge=1, le=24 * 60, description="Số phút.")],
+        note: Annotated[str | None, Field(description="Ghi chú.", max_length=500)] = None,
+        ctx: Context | None = None,
+    ) -> CallToolResult:
+        return run_tool(
+            "log_work",
+            SCOPE_TASKS,
+            lambda s, c, st, f: task_tools.log_work_work(
+                s, c, st, f, key=key, minutes=minutes, note=note
             ),
             client=_client_info(ctx),
         )

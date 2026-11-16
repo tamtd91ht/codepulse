@@ -69,6 +69,23 @@ from app.models.review import (
 from app.models.rule_files import ReviewRuleFile
 from app.models.secrets import AppSetting, LlmAccount, StoredSecret
 from app.models.source import BusinessProject, Connection, Project, ProjectGrant, RawGitlab
+from app.models.tasks import (
+    Sprint,
+    Task,
+    TaskAiRun,
+    TaskAttachment,
+    TaskComment,
+    TaskField,
+    TaskFilter,
+    TaskGitLink,
+    TaskHistory,
+    TaskLink,
+    TaskSpace,
+    TaskStatus,
+    TaskVersion,
+    TaskWatcher,
+    TaskWorklog,
+)
 from app.models.telegram import TelegramBot, TelegramRequest
 from app.models.testcases import (
     TestAiRun,
@@ -169,7 +186,22 @@ __all__ = [
     "ReviewKnowledgeEdit",
     "ReviewRuleFile",
     "ReviewStaticFinding",
+    "Sprint",
     "StoredSecret",
+    "Task",
+    "TaskAiRun",
+    "TaskAttachment",
+    "TaskComment",
+    "TaskField",
+    "TaskFilter",
+    "TaskGitLink",
+    "TaskHistory",
+    "TaskLink",
+    "TaskSpace",
+    "TaskStatus",
+    "TaskVersion",
+    "TaskWatcher",
+    "TaskWorklog",
     "Team",
     "TeamMember",
     "TelegramBot",

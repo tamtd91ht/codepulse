@@ -54,6 +54,7 @@ from app.api.routers import (
     rule_files,
     settings,
     stetho_history,
+    tasks,
     team_report,
     telegram,
     test_ai,
@@ -169,6 +170,7 @@ for api_router in (
     test_bdd.router,
     test_runs.router,
     testcases.router,
+    tasks.router,  # docs/specs/31; its static paths come before /tasks/{key} inside
 ):
     app.include_router(api_router, prefix="/api/v1")
 # docs/specs/11: CORS for the dashboard origin only; cookies need credentials.

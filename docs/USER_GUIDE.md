@@ -68,6 +68,25 @@ tính vào điểm và mọi chỉ số liên quan được tính lại ngay.
   - Chỉ admin: đổi tên/xoá dự án, nhập cả group, gỡ hẳn repo, review MR theo khoảng ngày, cho phép gửi code ra LLM bên ngoài, giao Manager dự án. Repo đang thuộc dự án khác thì nhờ admin chuyển.
 - Báo cáo tuần (thứ Hai 08:00) và tháng (ngày 1) qua email; kênh chat của team nhận bản không có điểm từng người.
 
+## 3a. Task: quản lý việc gắn với git
+
+Menu **Task** (docs/specs/31). Người quản lý dự án bật Task ở tab *Cài đặt* với một **mã** (ví dụ `CRM`); task được đánh số `CRM-1`, `CRM-2`…
+
+- **Board** kéo thả giữa các trạng thái; **Backlog** xếp task vào sprint, bắt đầu / kết thúc sprint; **Danh sách** lọc, lưu bộ lọc, sửa hàng loạt; **Báo cáo** burndown, velocity, tạo / xong, cycle time, giờ làm; **Phiên bản** sinh release notes.
+- Thành viên tạo task, sửa task mình tạo hoặc được giao, bình luận mọi task (`@tamtd` để nhắc người có email `tamtd@…`).
+- **Gắn code với task:** ghi mã vào nhánh, commit, MR — CodePulse tự nối và tự chuyển trạng thái:
+
+  | Bạn làm | Task |
+  |---|---|
+  | tạo nhánh `feature/CRM-12-dang-nhap` (hoặc bấm *Tạo nhánh* trên task) | sang In Progress |
+  | commit `feat(auth): gửi OTP [CRM-12]` | nối commit, kèm điểm review |
+  | mở MR có `CRM-12` ở tiêu đề / nhánh | sang In Review |
+  | MR merge vào nhánh chính, hoặc commit `Fixes: CRM-12` vào nhánh chính | sang Done |
+
+- **Smart commit** (bạn tự push): `#time 1h30m` ghi giờ, `#comment …` thêm bình luận, `#done` / `#in-review` chuyển trạng thái.
+- Phần **Code** của task: commit, MR, điểm review, finding critical/high còn mở, pipeline, đã lên production chưa. Dự án có thể bật *chặn Done khi còn critical*.
+- Trong Claude Code (MCP): `list_my_tasks`, `get_task`, và với token có ô *Cập nhật task*: `move_task`, `comment_task`, `log_work`.
+
 ## 3b. Yêu cầu review và kết luận merge
 
 - Menu **Yêu cầu review**: chọn repo, branch, người (bỏ trống = mọi người bạn được review) và khoảng thời gian, bấm *Xem commit* rồi *Review N commit*. Kết quả hiện ngay trên bảng khi xong và lưu như review tự động. Bạn review được việc của mình; lead thêm người mình lead; admin mọi người.
