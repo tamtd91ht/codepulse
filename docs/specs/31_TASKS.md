@@ -515,3 +515,24 @@ Chỉ đọc, không migration. Mã: `app/tasks/health.py`, `app/api/routers/tas
   Kẹt, Tải, Chất lượng (mỗi khối có skeleton / trống / lỗi + Thử lại); trang `/tasks/overview` là bảng các
   dự án, mỗi dòng mở tab Sức khoẻ sprint của dự án đó.
 - Chưa làm: lịch sử sức khoẻ theo thời gian, thông báo tự động khi chuyển đỏ (phần "tự động" của P4).
+
+### 19.6 P5 – Mẫu dự án, chế độ Kanban (migration `e2b4d6f8a0c3`)
+- **Mẫu khi bật Task** (`PUT /tasks/spaces/{bp}` với `template`: `scrum` mặc định | `kanban` | `qa`;
+  `app/tasks/templates.py`). Chỉ áp dụng khi dự án **chưa** bật Task; gửi `template` cho dự án đã bật →
+  422 (không âm thầm bỏ qua, vì mẫu không đổi được workflow đang có task). Không gửi mẫu = Scrum, giống
+  hệt cách bật cũ.
+  - **Scrum:** Cần làm / Đang làm / Đang review / Xong, mọi loại, luật git như trước, bảng Scrum.
+  - **Kanban:** Cần làm / Đang làm / Xong; loại Task, Bug, Sub-task; bảng Kanban. Không có trạng thái
+    review nên `review_on_mr` tắt (mở MR giữ task ở Đang làm).
+  - **QA:** Mới (Cần làm) / Đang xác minh / Đã sửa (Đang làm) / Đã đóng (Xong); loại Bug, Task,
+    Sub-task; bảng Scrum. Luật git: bắt đầu → Đang xác minh, `review_on_mr` bật (MR sửa → Đã sửa),
+    `done_on_merge` **tắt** (tester đóng sau khi kiểm lại, đúng luồng retest). Ưu tiên mặc định.
+  - `types` gửi kèm thắng loại của mẫu; `board_mode` gửi kèm thắng chế độ của mẫu. Mọi thứ sửa được sau
+    trong Cài đặt như dự án thường.
+- **Chế độ bảng** `task_spaces.board_mode` (`scrum` | `kanban`, mặc định `scrum`, CHECK `board_mode`):
+  có trong `GET /tasks/spaces`, đổi qua `PUT /tasks/spaces/{bp}` (`board_mode`, cần `tasks.manage`),
+  Task › Cài đặt › "Mã, loại task và chế độ bảng". Kanban: Board không theo sprint (luôn hiện mọi task
+  chưa xong + task xong 14 ngày qua), ẩn tab Backlog (link `?tab=backlog` về Board). API sprint vẫn chạy
+  bình thường; đổi về Scrum là thấy lại sprint cũ. Đổi chế độ không đổi workflow.
+- **Hộp bật Task** thành 3 bước: (1) mã dự án + loại task, (2) chọn mẫu (thẻ có mô tả và chuỗi trạng
+  thái), (3) xác nhận. Loại task theo mẫu cho tới khi người quản lý tự chọn ở bước 1.

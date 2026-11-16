@@ -23,6 +23,7 @@ import {
   sortedStatuses,
   useTaskFields,
 } from "./taskParts";
+import { BOARD_MODE_TEXT, type BoardMode, BoardModeField, StatusFlow, type TemplateKey, TemplatePicker, WizardSteps, templateOf } from "./TaskTemplates";
 
 /* Cài đặt (§13, tasks.manage): key, types, statuses and their transitions, priorities (§18), git rules, custom fields. */
 
@@ -49,19 +50,30 @@ const RULE_TEXT: { key: keyof TaskRules; label: string; hint: string }[] = [
   { key: "mr_comment", label: "Bình luận vào MR", hint: "Ghi link task vào MR khi MR được nối lần đầu (ghi lên GitLab)" },
 ];
 
-/** First setup of a dự án's Task (shown to its managers while it is off). */
+/** First setup of a dự án's Task (shown to its managers while it is off): a 3-step wizard,
+ * mã + loại task → mẫu dự án → xác nhận (§19.6). */
 export function EnableSpace({ space, onDone }: { space: TaskSpace; onDone: () => void }) {
+  const [step, setStep] = useState(0);
   const [key, setKey] = useState(space.key ?? "");
   const [types, setTypes] = useState<TaskType[]>(space.types?.length ? space.types : TASK_TYPES);
+  // Types follow the chosen template until the manager picks them by hand.
+  const [typesTouched, setTypesTouched] = useState(false);
+  const [template, setTemplate] = useState<TemplateKey>("scrum");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const valid = KEY_RE.test(key);
+  const tpl = templateOf(template);
+  const stepOk = step !== 0 || (valid && types.length > 0);
+  function pickTemplate(next: TemplateKey) {
+    setTemplate(next);
+    if (!typesTouched) setTypes(templateOf(next).types);
+  }
   async function enable() {
     if (!valid || !types.length) return;
     setBusy(true);
     setError(null);
     try {
-      await api.put(`/tasks/spaces/${space.business_project_id}`, { key, types });
+      await api.put(`/tasks/spaces/${space.business_project_id}`, { key, types, template });
       await refreshTasks();
       onDone();
     } catch (e) {
@@ -75,23 +87,67 @@ export function EnableSpace({ space, onDone }: { space: TaskSpace; onDone: () =>
         className="adm-form tk-form"
         onSubmit={(e) => {
           e.preventDefault();
-          void enable();
+          if (step < 2) {
+            if (stepOk) setStep(step + 1);
+          } else void enable();
         }}
       >
-        <p className="muted small">
-          Mỗi dự án có một mã (ví dụ <code>CRM</code>): task đánh số <code>CRM-1</code>, <code>CRM-2</code>… và commit, nhánh, MR có mã này tự nối vào task.
-        </p>
+        <WizardSteps step={step} labels={["Mã và loại task", "Chọn mẫu", "Xác nhận"]} />
         {error && <Message text={`Lỗi: ${error}`} onClose={() => setError(null)} />}
-        <label className="rq-field tk-key-field">
-          <span className="rq-label">Mã dự án</span>
-          <input value={key} onChange={(e) => setKey(e.target.value.toUpperCase())} maxLength={10} placeholder="CRM" autoFocus aria-invalid={!!key && !valid} />
-          {key && !valid && <span className="small error">2–10 ký tự, chữ hoa và số, bắt đầu bằng chữ.</span>}
-        </label>
-        <TypeChecks value={types} onChange={setTypes} />
+        {step === 0 && (
+          <>
+            <p className="muted small">
+              Mỗi dự án có một mã (ví dụ <code>CRM</code>): task đánh số <code>CRM-1</code>, <code>CRM-2</code>… và commit, nhánh, MR có mã này tự nối vào task.
+            </p>
+            <label className="rq-field tk-key-field">
+              <span className="rq-label">Mã dự án</span>
+              <input value={key} onChange={(e) => setKey(e.target.value.toUpperCase())} maxLength={10} placeholder="CRM" autoFocus aria-invalid={!!key && !valid} />
+              {key && !valid && <span className="small error">2–10 ký tự, chữ hoa và số, bắt đầu bằng chữ.</span>}
+            </label>
+            <TypeChecks
+              value={types}
+              onChange={(v) => {
+                setTypes(v);
+                setTypesTouched(true);
+              }}
+            />
+          </>
+        )}
+        {step === 1 && <TemplatePicker value={template} onChange={pickTemplate} />}
+        {step === 2 && (
+          <dl className="tt-summary">
+            <dt>Mã dự án</dt>
+            <dd>
+              <code>{key}</code> (task đầu tiên: <code>{key}-1</code>)
+            </dd>
+            <dt>Mẫu</dt>
+            <dd>{tpl.name}</dd>
+            <dt>Trạng thái</dt>
+            <dd>
+              <StatusFlow statuses={tpl.statuses} />
+            </dd>
+            <dt>Loại task</dt>
+            <dd>{types.map((t) => TYPE_LABEL[t]).join(", ")}</dd>
+            <dt>Chế độ bảng</dt>
+            <dd>{BOARD_MODE_TEXT[tpl.board_mode].label}</dd>
+            <dd className="small muted tt-summary-note">Trạng thái, loại, luật git và chế độ bảng đều sửa được sau trong Cài đặt.</dd>
+          </dl>
+        )}
         <div className="adm-form-foot">
-          <button type="submit" className="primary" disabled={busy || !valid || !types.length}>
-            {busy ? "Đang bật…" : "Bật Task"}
-          </button>
+          {step > 0 && (
+            <button type="button" disabled={busy} onClick={() => setStep(step - 1)}>
+              Quay lại
+            </button>
+          )}
+          {step < 2 ? (
+            <button type="submit" className="primary" disabled={!stepOk}>
+              Tiếp
+            </button>
+          ) : (
+            <button type="submit" className="primary" disabled={busy || !valid || !types.length}>
+              {busy ? "Đang bật…" : "Bật Task"}
+            </button>
+          )}
         </div>
       </form>
     </Card>
@@ -134,15 +190,16 @@ export function TaskSettings({ space }: { space: TaskSpace }) {
 function GeneralCard({ space }: { space: TaskSpace }) {
   const [key, setKey] = useState(space.key ?? "");
   const [types, setTypes] = useState<TaskType[]>(space.types);
+  const [mode, setMode] = useState<BoardMode>(space.board_mode ?? "scrum");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const valid = KEY_RE.test(key);
-  const dirty = key !== space.key || types.join() !== space.types.join();
+  const dirty = key !== space.key || types.join() !== space.types.join() || mode !== (space.board_mode ?? "scrum");
   async function save() {
     setBusy(true);
     setMessage(null);
     try {
-      await api.put(`/tasks/spaces/${space.business_project_id}`, { key, types });
+      await api.put(`/tasks/spaces/${space.business_project_id}`, { key, types, board_mode: mode });
       await refreshTasks();
       setMessage("Đã lưu.");
     } catch (e) {
@@ -151,7 +208,7 @@ function GeneralCard({ space }: { space: TaskSpace }) {
     setBusy(false);
   }
   return (
-    <Card title="Mã và loại task" id="tk-set-general">
+    <Card title="Mã, loại task và chế độ bảng" id="tk-set-general">
       <div className="adm-form tk-form">
         {message && <Message text={message} onClose={() => setMessage(null)} />}
         <label className="rq-field tk-key-field">
@@ -160,6 +217,7 @@ function GeneralCard({ space }: { space: TaskSpace }) {
           <span className="small muted">Chỉ đổi được khi dự án chưa có task nào.</span>
         </label>
         <TypeChecks value={types} onChange={setTypes} />
+        <BoardModeField value={mode} onChange={setMode} />
         <div className="adm-form-foot">
           <button type="button" disabled={busy || !dirty || !valid || !types.length} onClick={() => void save()}>
             Lưu

@@ -2468,6 +2468,7 @@ export interface TaskSpace {
   can_assign: boolean;
   /** tasks.attach: may attach files (also in the create form). */
   can_attach?: boolean;
+  board_mode?: "scrum" | "kanban";
 }
 
 export interface TaskGitCounts {
