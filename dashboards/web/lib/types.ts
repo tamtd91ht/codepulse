@@ -2209,7 +2209,21 @@ export interface BackfillProgress {
 }
 
 /** An in-app notification (docs/specs/24): GET /inbox, and live on /inbox/stream. */
-export type NotificationKind = "review_done" | "review_failed" | "finding_closed" | "dispute_new" | "dispute_decided";
+export type NotificationKind =
+  | "review_done"
+  | "review_failed"
+  | "finding_closed"
+  | "dispute_new"
+  | "dispute_decided"
+  // Task (docs/specs/31 §9, §19.4, §19.7)
+  | "task.assigned"
+  | "task.mentioned"
+  | "task.commented"
+  | "task.status"
+  | "task.retest"
+  | "task.remind"
+  | "task.alert"
+  | "task.digest";
 export interface InboxNote {
   id: number;
   user_id: number;

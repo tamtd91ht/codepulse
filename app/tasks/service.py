@@ -310,6 +310,8 @@ def enable_space(
         valid = {s.id for s in statuses_of(session, bp_id)}
         merged = dict(space.rules or {})
         for name, value in rules.items():
+            if name == "automation":  # its own endpoint (§19.7); the git rules form sends it back
+                continue
             if name in RULE_FLAGS:
                 merged[name] = bool(value)
             elif name in ("start", "review", "done"):
@@ -885,6 +887,9 @@ def create_task(
         )
     if who := mentioned(session, bp_id, task.description):
         tell(session, who, task, "task.mentioned", f"Bạn được nhắc ở {task.key}", actor_id=actor_id)
+    from app.tasks import automation  # docs/specs/31 §19.7; imported here: no import cycle
+
+    automation.on_create(session, task, actor_id)
     return task
 
 
@@ -1009,6 +1014,12 @@ def set_status(
     )
     if entering_done and task.type == "bug" and task.resolution == "done":
         _ask_retest(session, task, actor_id)
+
+    from app.tasks import automation  # docs/specs/31 §19.7; imported here: no import cycle
+
+    automation.on_status(
+        session, task, current.category if current else None, status, actor_id, via
+    )
     session.flush()
     return True
 

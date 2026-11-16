@@ -40,6 +40,14 @@ export const KIND_LABEL: Record<NotificationKind, string> = {
   finding_closed: "Đóng finding",
   dispute_new: "Khiếu nại mới",
   dispute_decided: "Khiếu nại đã xử lý",
+  "task.assigned": "Được giao task",
+  "task.mentioned": "Được nhắc trong task",
+  "task.commented": "Bình luận task",
+  "task.status": "Task đổi trạng thái",
+  "task.retest": "Cần chạy lại test",
+  "task.remind": "Nhắc việc",
+  "task.alert": "Cảnh báo task",
+  "task.digest": "Tóm tắt task",
 };
 
 const KIND_ICON: Record<NotificationKind, IconName> = {
@@ -48,6 +56,14 @@ const KIND_ICON: Record<NotificationKind, IconName> = {
   finding_closed: "checkCircle",
   dispute_new: "scale",
   dispute_decided: "scale",
+  "task.assigned": "user",
+  "task.mentioned": "bell",
+  "task.commented": "edit",
+  "task.status": "flag",
+  "task.retest": "history",
+  "task.remind": "calendar",
+  "task.alert": "alert",
+  "task.digest": "inbox",
 };
 
 /** Lists that change with an event, re-read when it arrives (SWR keys are API paths). */
@@ -57,6 +73,14 @@ const REFRESH: Record<NotificationKind, string[]> = {
   finding_closed: ["/close-requests", "/reviews"],
   dispute_new: ["/disputes"],
   dispute_decided: ["/disputes", "/reviews"],
+  "task.assigned": ["/tasks"],
+  "task.mentioned": ["/tasks"],
+  "task.commented": ["/tasks"],
+  "task.status": ["/tasks"],
+  "task.retest": ["/tasks"],
+  "task.remind": ["/tasks"],
+  "task.alert": ["/tasks"],
+  "task.digest": ["/tasks"],
 };
 
 type Toast = InboxNote & { key: number };

@@ -14,6 +14,7 @@ import { TaskActivity, TaskAttachments } from "./TaskActivity";
 import { FileTextarea } from "./taskFiles";
 import { TaskAiButtons } from "./TaskAi";
 import { TaskCode } from "./TaskCode";
+import { type OpenSubtasks, ParentDoneAsk } from "./ParentDoneAsk";
 import { TaskDod, TaskTests } from "./TaskQuality";
 
 import { ShortcutHelp } from "./ShortcutHelp";
@@ -102,6 +103,7 @@ function Body({
   }
 
   const [closing, setClosing] = useState<TaskStatusRef | null>(null);
+  const [closingSubs, setClosingSubs] = useState<{ items: OpenSubtasks["items"]; resolution: TaskResolution } | null>(null);
 
   async function transition(target: TaskStatusRef, resolution?: TaskResolution, comment?: string) {
     if (target.id === task.status.id) return;
@@ -115,6 +117,10 @@ function Body({
     try {
       await api.post(`${path}/transition`, { status_id: target.id, resolution, comment: comment || undefined });
       await refreshTasks();
+      if (target.category === "done" && task.subtasks.some((s) => s.status.category !== "done")) {
+        const open = await api.get<OpenSubtasks>(`${path}/open-subtasks`).catch(() => null);
+        if (open?.ask && open.items.length) setClosingSubs({ items: open.items, resolution: resolution ?? "done" });
+      }
     } catch (e) {
       setMessage(`Lỗi: ${errorText(e)}`);
     }
@@ -169,6 +175,17 @@ function Body({
       </div>
       <aside className="tk-detail-side" aria-label="Thông tin task">
         <Fields task={task} bp={bp} space={space} onPatch={patch} onTransition={(s) => void transition(s)} />
+        {closingSubs && (
+          <ParentDoneAsk
+            taskKey={task.key}
+            items={closingSubs.items}
+            resolution={closingSubs.resolution}
+            onClose={() => {
+              setClosingSubs(null);
+              void refreshTasks();
+            }}
+          />
+        )}
         {closing && (
           <ResolutionModal
             target={closing}

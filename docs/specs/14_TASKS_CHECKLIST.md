@@ -121,6 +121,7 @@
 - [x] 10.16 Testcase nâng cấp giai đoạn 4 (30a, 30 §15.12–§15.16): G8 BDD + Exploratory, G9 baseline, G12 audit log, G13 tham số hoá
 - [x] 10.18 Task: quản lý task gắn git và code review, độc lập với Jira — không gian, workflow, Board, Backlog + sprint, báo cáo, phiên bản, trường tuỳ biến, git sync + luật tự chuyển, smart commit, MCP, AI (31)
 - [x] 10.24 Task roadmap P3 – testcase phủ task, DoD, sẵn sàng phát hành, retest (31 §19.4)
+- [x] 10.26 Task roadmap: quy tắc tự động, thông báo task (31 §19.7); lọc bằng câu, phím tắt, mật độ, điện thoại (31 §19.8)
 - [x] 10.25 Task roadmap P4 (Sprint Health, tổng quan đa dự án) và P5 (mẫu dự án, Kanban) (31 §19.5-19.6)
 - [x] 10.23 Task roadmap P2 – Hằng ngày: Việc của tôi, Board swimlane/WIP/tuổi/tạo nhanh, Ctrl+K, sức chứa, Sức khoẻ task (31 §19.3)
 - [x] 10.22 Task roadmap P1 – Thoát Jira: bug từ testcase thành task, nhập từ Jira, mã Jira cũ vẫn nối (31 §19.2)

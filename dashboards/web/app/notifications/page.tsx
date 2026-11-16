@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { KIND_LABEL, NoteRow, useInbox } from "@/components/Inbox";
+import { TaskNotifyPrefs } from "@/components/tasks/TaskNotifyPrefs";
 import { Alert, Card, EmptyState, Loading, PageHeader, Segmented } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import type { InboxNote, InboxPage, NotificationKind } from "@/lib/types";
@@ -151,6 +152,7 @@ export default function NotificationsPage() {
           </div>
         )}
       </Card>
+      <TaskNotifyPrefs />
     </>
   );
 }

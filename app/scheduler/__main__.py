@@ -19,6 +19,8 @@ from app.scoring.aggregate import aggregate_job
 from app.telegram.poller import telegram_tick_job
 from app.workers.llm_jobs import llm_watch_job
 from app.workers.orphan_jobs import SWEEP_MIN, requeue_orphans_job
+from app.workers.task_automation_jobs import TICK_MIN as TASK_TICK_MIN
+from app.workers.task_automation_jobs import task_automation_tick_job
 
 
 def enqueue_dpi_month_job() -> None:
@@ -210,6 +212,15 @@ def build_scheduler(
         "interval",
         minutes=5,
         id="testcase-reports",
+        max_instances=1,
+        coalesce=True,
+    )
+    # docs/specs/31 §19.7: scheduled task rules (reminders once a day) and task digests.
+    scheduler.add_job(
+        task_automation_tick_job,
+        "interval",
+        minutes=TASK_TICK_MIN,
+        id="task-automation",
         max_instances=1,
         coalesce=True,
     )
