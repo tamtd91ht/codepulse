@@ -3,7 +3,7 @@
 import { use } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { DateRangePicker } from "@/components/DateRangePicker";
+import { PeriodPicker } from "@/components/PeriodPicker";
 import { Score, scoreTone } from "@/components/Evaluation";
 import {
   Card,
@@ -12,9 +12,7 @@ import {
   EmptyState,
   Loading,
   PageHeader,
-  Pager,
   PersonLink,
-  Segmented,
   SortTh,
   Sparkline,
   StatStrip,
@@ -171,11 +169,7 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
   const start = time && time.period !== "range" ? time.start : null;
   const range = time?.range ?? { from: "", to: "" };
   const today = time?.today ?? "";
-  const latest = time?.latest ?? "";
   const rangeOk = time !== null && range.from !== "" && range.from <= range.to && range.to <= today;
-  const changePeriod = (p: Period) => time?.changePeriod(p);
-  const step = (by: number) => time?.step(by);
-  const setRange = (r: { from: string; to: string }) => time?.setRange(r);
   const { data: teams } = useApi<Team[]>("/teams/visible");
   const team = teams?.find((t) => String(t.id) === id);
   const keep = { keepPreviousData: true };
@@ -194,27 +188,7 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
       title={team?.name ?? "Team"}
       actions={
         <>
-          <Segmented<Period>
-            label="Chu kỳ"
-            value={period}
-            onChange={changePeriod}
-            options={[
-              { value: "week", label: "Tuần" },
-              { value: "month", label: "Tháng" },
-              { value: "range", label: "Khoảng ngày" },
-            ]}
-          />
-          {period === "range" ? (
-            <DateRangePicker label="Thời gian" value={range} max={today} maxSpan={RANGE_MAX_DAYS} onChange={setRange} />
-          ) : (
-            <Pager
-              label={periodLabel(period, start)}
-              onPrev={() => step(-1)}
-              onNext={() => step(1)}
-              nextDisabled={start === null || start >= latest}
-              prevDisabled={start === null}
-            />
-          )}
+          <PeriodPicker time={time} rangeMaxDays={RANGE_MAX_DAYS} />
         </>
       }
     />

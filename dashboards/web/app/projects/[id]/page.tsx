@@ -14,12 +14,12 @@ import {
   YAxis,
 } from "recharts";
 
+import { PeriodPicker } from "@/components/PeriodPicker";
 import { CriteriaSummaryBlock } from "@/components/CriteriaScores";
-import { DateRangePicker } from "@/components/DateRangePicker";
 import { ProjectCriteria } from "@/components/ProjectCriteria";
 import { ProjectRepos } from "@/components/ProjectRepos";
 import { ReviewResults } from "@/components/ReviewResults";
-import { Card, ChartTip, Drawer, EmptyState, Loading, PageHeader, Pager, Segmented, SplitBar, StatStrip, StripStat } from "@/components/ui";
+import { Card, ChartTip, Drawer, EmptyState, Loading, PageHeader, SplitBar, StatStrip, StripStat } from "@/components/ui";
 import { scoreTone } from "@/components/Evaluation";
 import { type BoardScope, boardLink, can, canSetupProject, qs, useApi } from "@/lib/api";
 import { CATEGORY_LABEL, periodLabel, rangeLabel, shiftDays, weekLabel } from "@/lib/format";
@@ -38,11 +38,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const start = time && time.period !== "range" ? time.start : null;
   const range = time?.range ?? { from: "", to: "" };
   const today = time?.today ?? "";
-  const latest = time?.latest ?? "";
   const rangeOk = time !== null && range.from >= RANGE_MIN && range.from <= range.to && range.to <= today;
-  const changePeriod = (p: Period) => time?.changePeriod(p);
-  const step = (by: number) => time?.step(by);
-  const setRange = (r: { from: string; to: string }) => time?.setRange(r);
   const [criteriaOpen, setCriteriaOpen] = useState(false);
   const { data: me } = useApi<Me>("/auth/me");
   const url =
@@ -70,27 +66,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               Cấu hình dự án
             </Link>
           )}
-          <Segmented<Period>
-            label="Chu kỳ"
-            value={period}
-            onChange={changePeriod}
-            options={[
-              { value: "week", label: "Tuần" },
-              { value: "month", label: "Tháng" },
-              { value: "range", label: "Khoảng ngày" },
-            ]}
-          />
-          {period === "range" ? (
-            <DateRangePicker label="Thời gian" value={range} min={RANGE_MIN} max={today} onChange={setRange} />
-          ) : (
-            <Pager
-              label={periodLabel(period, start)}
-              onPrev={() => step(-1)}
-              onNext={() => step(1)}
-              nextDisabled={start === null || start >= latest}
-              prevDisabled={start === null}
-            />
-          )}
+          <PeriodPicker time={time} rangeMin={RANGE_MIN} />
         </>
       }
     />

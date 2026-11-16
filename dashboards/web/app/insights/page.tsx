@@ -8,9 +8,9 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { PeriodPicker } from "@/components/PeriodPicker";
 import { type SubNav, SubPanel, type SubTab, SubTabs, pickSub } from "@/components/AdminTabs";
-import { DateRangePicker } from "@/components/DateRangePicker";
-import { Alert, Card, ChartTip, EmptyState, ExternalLink, Loading, Pager, Pill, Segmented, SplitBar, StatStrip, StripStat } from "@/components/ui";
+import { Alert, Card, ChartTip, EmptyState, ExternalLink, Loading, Pill, Segmented, SplitBar, StatStrip, StripStat } from "@/components/ui";
 import { ApiError, api, qs, useApi } from "@/lib/api";
 import { date, dateTime, localDay, num, periodLabel, rangeLabel, weekLabel } from "@/lib/format";
 import { useCycleScope } from "@/lib/timeScope";
@@ -286,12 +286,8 @@ function InsightsBody() {
   const start = time && time.period !== "range" ? time.start : null;
   const range = time?.range ?? { from: "", to: "" };
   const today = time?.today ?? localDay();
-  const latest = time?.latest ?? "";
   const rangeOk =
     time !== null && range.from >= RANGE_MIN && range.from <= range.to && range.to <= today && daysBetween(range.from, range.to) <= RANGE_MAX_DAYS;
-  const changePeriod = (p: Period) => time?.changePeriod(p);
-  const step = (by: number) => time?.step(by);
-  const setRange = (r: { from: string; to: string }) => time?.setRange(r);
   const periodQuery: Query | null =
     period === "range" ? (rangeOk ? { period, start: range.from, end: range.to } : null) : start ? { period, start } : null;
 
@@ -338,27 +334,7 @@ function InsightsBody() {
           </select>
           {current !== "knowledge" && (
             <>
-              <Segmented<Period>
-                label="Chu kỳ"
-                value={period}
-                onChange={changePeriod}
-                options={[
-                  { value: "week", label: "Tuần" },
-                  { value: "month", label: "Tháng" },
-                  { value: "range", label: "Khoảng ngày" },
-                ]}
-              />
-              {period === "range" ? (
-                <DateRangePicker label="Thời gian" value={range} min={RANGE_MIN} max={today} onChange={setRange} />
-              ) : (
-                <Pager
-                  label={periodLabel(period, start)}
-                  onPrev={() => step(-1)}
-                  onNext={() => step(1)}
-                  nextDisabled={start === null || start >= latest}
-                  prevDisabled={start === null}
-                />
-              )}
+              <PeriodPicker time={time} rangeMin={RANGE_MIN} rangeMaxDays={RANGE_MAX_DAYS} />
             </>
           )}
         </div>

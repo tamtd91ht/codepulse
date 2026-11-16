@@ -15,10 +15,10 @@ import {
   YAxis,
 } from "recharts";
 
-import { DateRangePicker } from "@/components/DateRangePicker";
+import { PeriodPicker } from "@/components/PeriodPicker";
 import { Score, scoreTone } from "@/components/Evaluation";
 import { Icon } from "@/components/icons";
-import { Card, ChartTip, CountLink, EmptyState, Loading, PageHeader, Pager, Segmented, Sparkline, SplitBar, StatStrip, StripStat } from "@/components/ui";
+import { Card, ChartTip, CountLink, EmptyState, Loading, PageHeader, Segmented, Sparkline, SplitBar, StatStrip, StripStat } from "@/components/ui";
 import { type BoardScope, boardLink, qs, useApi } from "@/lib/api";
 import { delta, localDay, num, periodLabel, rangeLabel, weekLabel, weekOf } from "@/lib/format";
 import { useCycleScope } from "@/lib/timeScope";
@@ -179,11 +179,7 @@ export default function OverviewPage() {
   const start = time && time.period !== "range" ? time.start : null;
   const range = time?.range ?? { from: "", to: "" };
   const today = time?.today ?? "";
-  const latest = time?.latest ?? "";
   const rangeOk = time !== null && range.from >= RANGE_MIN && range.from <= range.to && range.to <= today;
-  const changePeriod = (p: Period) => time?.changePeriod(p);
-  const step = (by: number) => time?.step(by);
-  const setRange = (r: { from: string; to: string }) => time?.setRange(r);
   // From a range, "latest review" hints point at weeks; a jump opens that week.
   const cycle: Cycle = period === "range" ? "week" : period;
   const jump = (s: string) => time?.goTo(cycle, s);
@@ -219,27 +215,7 @@ export default function OverviewPage() {
         title="Chất lượng code theo dự án"
         actions={
           <>
-            <Segmented<Period>
-              label="Chu kỳ"
-              value={period}
-              onChange={changePeriod}
-              options={[
-                { value: "week", label: "Tuần" },
-                { value: "month", label: "Tháng" },
-                { value: "range", label: "Khoảng ngày" },
-              ]}
-            />
-            {period === "range" ? (
-              <DateRangePicker label="Thời gian" value={range} min={RANGE_MIN} max={today} onChange={setRange} />
-            ) : (
-              <Pager
-                label={periodLabel(period, start)}
-                onPrev={() => step(-1)}
-                onNext={() => step(1)}
-                nextDisabled={start === null || start >= latest}
-                prevDisabled={start === null}
-              />
-            )}
+            <PeriodPicker time={time} rangeMin={RANGE_MIN} />
           </>
         }
       />
