@@ -26,6 +26,7 @@ from app.models import (
     Task,
     TaskImport,
     TaskStatus,
+    TaskTestLink,
     TestProjectSettings,
     TestResult,
     TestRun,
@@ -132,8 +133,9 @@ def description(
     *,
     dashboard_url: str,
     extra: str | None = None,
+    upto: int | None = None,
 ) -> str:
-    """The bug's body in Jira wiki markup."""
+    """The bug's body in Jira wiki markup; `upto`: only the steps up to that one (0-based)."""
     parts: list[str] = []
     if extra and extra.strip():
         parts += [_wiki(extra), ""]
@@ -142,6 +144,8 @@ def description(
     if (shown.get("test_data") or "").strip():
         parts += ["h3. Dữ liệu test", _wiki(shown["test_data"]), ""]
     steps = list(shown.get("steps_list") or []) if shown.get("template") == "steps" else []
+    if upto is not None:  # a bug from one failed step (§20.3): the steps up to it
+        steps = steps[: upto + 1]
     step_results = list(result.step_results or []) if result is not None else []
     if steps:
         parts += ["h3. Các bước", "||#||Bước||Kết quả mong đợi||Trạng thái||Thực tế||"]
@@ -214,6 +218,7 @@ def description_md(
     *,
     dashboard_url: str,
     extra: str | None = None,
+    upto: int | None = None,
 ) -> str:
     """The bug's body for a CodePulse task (docs/specs/31 §19.2), in the task's Markdown: the
     same parts as the Jira one (steps expected vs actual, environment, log, attachments, link)."""
@@ -225,6 +230,8 @@ def description_md(
     if (shown.get("test_data") or "").strip():
         parts += ["### Dữ liệu test", _md(shown["test_data"]), ""]
     steps = list(shown.get("steps_list") or []) if shown.get("template") == "steps" else []
+    if upto is not None:  # a bug from one failed step (§20.3): the steps up to it
+        steps = steps[: upto + 1]
     step_results = list(result.step_results or []) if result is not None else []
     if steps:
         parts.append("### Các bước")
@@ -289,6 +296,41 @@ def effective_target(session: Session, prefs: TestProjectSettings) -> str:
     if session.get(TaskSpace, prefs.business_project_id) is not None:
         return "codepulse"
     return "jira" if prefs.jira_project_key else "codepulse"
+
+
+def failed_step(shown: dict[str, Any], result: TestResult, step: int) -> str | None:
+    """The text of step `step` (0-based) when it failed in `result` (docs/specs/31 §20.3);
+    None when the case has no such step or it did not fail."""
+    if shown.get("template") != "steps":
+        return None
+    steps = list(shown.get("steps_list") or [])
+    got = list(result.step_results or [])
+    if not 0 <= step < len(steps) or step >= len(got):
+        return None
+    if (got[step] or {}).get("status") != "failed":
+        return None
+    return rs.line(str(steps[step].get("content") or ""), SUMMARY_MAX) or f"Bước {step + 1}"
+
+
+def default_assignee(session: Session, case_id: int | None, bp_id: int) -> tuple[int, str] | None:
+    """(assignee id, task key) of the task the case covers (docs/specs/31 §20.3): a bug found
+    by the case goes to whoever built it. Open tasks first, then the latest link."""
+    if case_id is None:
+        return None
+    rows = session.execute(
+        select(Task.assignee_id, Task.key, TaskStatus.category)
+        .join(TaskTestLink, TaskTestLink.task_id == Task.id)
+        .join(TaskStatus, TaskStatus.id == Task.status_id)
+        .where(
+            TaskTestLink.case_id == case_id,
+            TaskTestLink.kind == "covers",
+            Task.business_project_id == bp_id,
+            Task.assignee_id.is_not(None),
+        )
+        .order_by(TaskTestLink.id.desc())
+    ).all()
+    best = next((r for r in rows if r[2] != "done"), rows[0] if rows else None)
+    return (int(best[0] or 0), str(best[1])) if best is not None else None
 
 
 def task_states(

@@ -3,6 +3,8 @@
 - POST /testcases/tests/{id}/bug: a Jira issue from a failed result (steps, expected vs actual,
   environment, link back); its key goes into the result's defects. Needs Jira writes switched on
   (JIRA_WRITE_ENABLED or Admin > Jira > Kết nối) and a Jira project in the dự án's settings.
+  With `step`, a bug from that failed step (docs/specs/31 §20.3).
+- GET /testcases/tests/{id}/bug/defaults: the covered task's assignee as the default (§20.3).
 - POST /testcases/tests/{id}/bug/link: an existing issue as a defect.
 - GET /testcases/bugs/status?business_project_id=: open or closed, from the dự án's synced
   issues, else Jira (cached, capped, rate-limited; only keys in the dự án's defects).
@@ -105,6 +107,17 @@ class BugIn(BaseModel):
     labels: list[str] | None = Field(default=None, max_length=20)
     assignee: str | None = Field(default=None, max_length=200)  # Jira username
     result_id: int | None = None
+    # A bug from one failed step (0-based, docs/specs/31 §20.3): its title names the step and
+    # the description keeps the steps up to it.
+    step: int | None = Field(default=None, ge=0, le=500)
+
+
+class BugDefaults(BaseModel):
+    """What the "Tạo bug" form starts with (docs/specs/31 §20.3): the assignee of the task the
+    case covers, when the person may hand the bug to them."""
+
+    assignee_id: int | None = None
+    task_key: str | None = None
 
 
 class LinkIn(BaseModel):
@@ -265,10 +278,10 @@ def create_bug(
         raise HTTPException(409, ALREADY.format(key=(made_before.details or {}).get("key") or ""))
     shown = rs.views(session, run, [test])[test.id]
     case_key = shown.get("case_key") or content.key("case", test.case_id)
+    title = _step_title(shown, result, body.step) or str(shown.get("title") or test.title)
     fields: dict[str, Any] = {
         "project": {"key": prefs.jira_project_key},
-        "summary": rs.line(body.summary, bugs.SUMMARY_MAX)
-        or bugs.summary(case_key, str(shown.get("title") or test.title)),
+        "summary": rs.line(body.summary, bugs.SUMMARY_MAX) or bugs.summary(case_key, title),
         "issuetype": {"name": rs.line(body.issue_type, 100) or prefs.jira_issue_type or "Bug"},
         "description": bugs.description(
             shown,
@@ -277,6 +290,7 @@ def create_bug(
             test,
             dashboard_url=settings.dashboard_url,
             extra=rs.text(body.description),
+            upto=body.step,
         ),
     }
     components = bugs.clean_list(
@@ -313,6 +327,43 @@ def create_bug(
     )
     session.commit()
     return BugOut(key=key, web_url=url, test=_detail(session, principal, test, run))
+
+
+def _step_title(shown: dict[str, Any], result: TestResult, step: int | None) -> str | None:
+    """The failed step's text a step bug is titled with; 422 when that step did not fail."""
+    if step is None:
+        return None
+    text = bugs.failed_step(shown, result, step)
+    if text is None:
+        raise HTTPException(422, f"bước {step + 1} không Failed trong kết quả này")
+    return text
+
+
+def _default_assignee(
+    session: Session, principal: Principal, test: TestRunTest, run: TestRun
+) -> tuple[int, str] | None:
+    """The covered task's assignee (docs/specs/31 §20.3) when this person may give them the
+    bug: themselves, or anyone with tasks.assign."""
+    found = bugs.default_assignee(session, test.case_id, run.business_project_id)
+    if found is None:
+        return None
+    if found[0] == principal.user_id:
+        return found
+    if not ts.can_assign_new(principal, run.business_project_id):
+        return None
+    # Someone who left the dự án is no default (creating the bug would refuse them).
+    members = {u.id for u in ts.people(session, run.business_project_id)}
+    return found if found[0] in members else None
+
+
+@router.get("/testcases/tests/{test_id:int}/bug/defaults", response_model=BugDefaults)
+def bug_defaults(test_id: int, principal: CurrentPrincipal, session: SessionDep) -> BugDefaults:
+    test, run = _test_for(session, principal, test_id)
+    space = session.get(TaskSpace, run.business_project_id)
+    if space is None or not ts.can_view_space(principal, space.business_project_id):
+        return BugDefaults()
+    found = _default_assignee(session, principal, test, run)
+    return BugDefaults(assignee_id=found[0], task_key=found[1]) if found else BugDefaults()
 
 
 def _locked_result(
@@ -367,9 +418,15 @@ def _create_task_bug(
     if other and not ts.can_assign_new(principal, space.business_project_id):
         raise HTTPException(403, "bạn không có quyền giao task cho người khác (tasks.assign)")
     test, run, result = _locked_result(session, principal, test_id, body.result_id)
+    assignee_id = body.assignee_id
+    if "assignee_id" not in body.model_fields_set:
+        # Not chosen (an explicit null means "Chưa giao"): the covered task's assignee.
+        found = _default_assignee(session, principal, test, run)
+        assignee_id = found[0] if found is not None else None
     prefs = bugs.project_settings(session, run.business_project_id)
     shown = rs.views(session, run, [test])[test.id]
     case_key = shown.get("case_key") or content.key("case", test.case_id)
+    title = _step_title(shown, result, body.step) or str(shown.get("title") or test.title)
     labels = bugs.clean_list(
         body.labels if body.labels is not None else prefs.jira_labels or [], labels=True
     )
@@ -381,12 +438,11 @@ def _create_task_bug(
         space,
         {
             "type": "bug" if "bug" in space.types else "task",
-            "title": rs.line(body.summary, bugs.SUMMARY_MAX)
-            or bugs.summary(case_key, str(shown.get("title") or test.title)),
+            "title": rs.line(body.summary, bugs.SUMMARY_MAX) or bugs.summary(case_key, title),
             # Set below: test logs and steps are not @mentions of anyone.
             "description": None,
             "priority": (body.priority or "").strip() or None,
-            "assignee_id": body.assignee_id,
+            "assignee_id": assignee_id,
             "labels": labels,
             "components": components,
         },
@@ -399,6 +455,7 @@ def _create_task_bug(
         test,
         dashboard_url=settings.dashboard_url,
         extra=rs.text(body.description),
+        upto=body.step,
     )
     if test.case_id is not None:
         session.add(

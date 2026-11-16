@@ -9,6 +9,7 @@ import { api, useApi } from "@/lib/api";
 import type { TaskPerson, TaskSpace } from "@/lib/types";
 import {
   BUG_STATE_LABEL,
+  type BugDefaults,
   type BugIn,
   type BugOut,
   type BugState,
@@ -165,18 +166,45 @@ export function RetestPill({ test, spaced }: { test: Pick<TestOut, "id"> & { nee
 
 /* ---------------- The test drawer: create / link a bug ---------------- */
 
-/** A bug as a CodePulse task (docs/specs/31 §19.2): title, note, priority, who fixes it. */
-function CreateTaskBugModal({ detail, bp, prefs, onClose, onDone }: { detail: TestDetail; bp: number; prefs: TestProjectSettings; onClose: () => void; onDone: (key: string) => void }) {
+/** A step's text for a bug title: the step bug's "[C12] <step> – Failed" (docs/specs/31 §20.3). */
+function stepText(detail: TestDetail, step: number): string {
+  const s = (detail.content.steps_list ?? [])[step];
+  return (s?.content ?? "").replace(/\s+/g, " ").trim() || `Bước ${step + 1}`;
+}
+
+/** A bug as a CodePulse task (docs/specs/31 §19.2): title, note, priority, who fixes it. With
+ * `step`, a bug from that failed step of result `fromResult` (§20.3). */
+function CreateTaskBugModal({
+  detail,
+  bp,
+  prefs,
+  onClose,
+  onDone,
+  step,
+  fromResult,
+}: {
+  detail: TestDetail;
+  bp: number;
+  prefs: TestProjectSettings;
+  onClose: () => void;
+  onDone: (key: string) => void;
+  step?: number;
+  fromResult?: number;
+}) {
   const failed = detail.results.filter((r) => r.status === "failed");
-  const [resultId, setResultId] = useState<number | null>(failed[0]?.id ?? null);
+  const [resultId, setResultId] = useState<number | null>(fromResult ?? failed[0]?.id ?? null);
   const caseKey = detail.content.case_key ?? detail.case_key;
-  const [summary, setSummary] = useState(`${caseKey ? `[${caseKey}] ` : ""}${detail.content.title || detail.title} – Failed`);
+  const [summary, setSummary] = useState(`${caseKey ? `[${caseKey}] ` : ""}${step !== undefined ? stepText(detail, step) : detail.content.title || detail.title} – Failed`);
   const [extra, setExtra] = useState("");
   const spaces = useApi<TaskSpace[]>("/tasks/spaces");
   const space = spaces.data?.find((s) => s.business_project_id === bp) ?? null;
   const people = useApi<TaskPerson[]>(`/tasks/people?space=${bp}`);
+  const defaults = useApi<BugDefaults>(`/testcases/tests/${detail.id}/bug/defaults`);
   const [priority, setPriority] = useState<string>("");
-  const [assignee, setAssignee] = useState<string>("");
+  // null: not chosen yet, so the covered task's assignee (§20.3) is preselected.
+  const [picked, setPicked] = useState<string | null>(null);
+  const preset = defaults.data?.assignee_id ? String(defaults.data.assignee_id) : "";
+  const assignee = picked ?? preset;
   const [labels, setLabels] = useState(prefs.jira_labels.join(", "));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -189,8 +217,10 @@ function CreateTaskBugModal({ detail, bp, prefs, onClose, onDone }: { detail: Te
       description: extra.trim() || undefined,
       labels: splitNames(labels),
       priority: priority || undefined,
-      assignee_id: assignee ? Number(assignee) : undefined,
+      // Untouched before the default loaded: left out, so the server picks the same default.
+      ...(picked === null && !defaults.data ? {} : { assignee_id: assignee ? Number(assignee) : null }),
       result_id: resultId ?? undefined,
+      step,
     };
     try {
       const out = await api.post<BugOut>(`/testcases/tests/${detail.id}/bug`, body);
@@ -202,7 +232,7 @@ function CreateTaskBugModal({ detail, bp, prefs, onClose, onDone }: { detail: Te
   };
   return (
     <Modal
-      title={`Tạo bug từ ${detail.key}`}
+      title={step !== undefined ? `Tạo bug từ bước ${step + 1} của ${detail.key}` : `Tạo bug từ ${detail.key}`}
       onClose={onClose}
       busy={busy}
       width={600}
@@ -223,7 +253,8 @@ function CreateTaskBugModal({ detail, bp, prefs, onClose, onDone }: { detail: Te
         <p className="small muted">
           Bug thành task <strong>{prefs.task_space_key ?? ""}</strong> trong mục Task. Mô tả tự gồm các bước (mong đợi / thực tế), môi trường, log, đính kèm và link về testcase; bug đóng thì test được gợi ý chạy lại.
         </p>
-        {failed.length > 1 && (
+        {step !== undefined && <p className="small muted qa-step-note">Mô tả gồm các bước 1–{step + 1} (mong đợi / thực tế), dừng ở bước lỗi.</p>}
+        {failed.length > 1 && step === undefined && (
           <label className="adm-field">
             <span className="small muted">Kết quả Failed</span>
             <select value={resultId ?? ""} onChange={(e) => setResultId(Number(e.target.value))}>
@@ -258,7 +289,7 @@ function CreateTaskBugModal({ detail, bp, prefs, onClose, onDone }: { detail: Te
           </label>
           <label className="adm-field">
             <span className="small muted">Người xử lý</span>
-            <select value={assignee} onChange={(e) => setAssignee(e.target.value)} disabled={!people.data}>
+            <select value={assignee} onChange={(e) => setPicked(e.target.value)} disabled={!people.data}>
               <option value="">Chưa giao</option>
               {(people.data ?? []).map((u) => (
                 <option key={u.id} value={u.id}>
@@ -266,6 +297,7 @@ function CreateTaskBugModal({ detail, bp, prefs, onClose, onDone }: { detail: Te
                 </option>
               ))}
             </select>
+            {defaults.data?.task_key && preset && assignee === preset && <span className="small muted">Người làm {defaults.data.task_key} (task testcase phủ)</span>}
           </label>
         </div>
         <label className="adm-field">
@@ -428,6 +460,41 @@ function LinkBugModal({ detail, onClose, onDone }: { detail: TestDetail; onClose
         <p className="small muted">Mã được thêm vào ô Bug của kết quả gần nhất. Task CodePulse được kiểm tra ngay; issue Jira được kiểm tra khi kết nối được.</p>
       </div>
     </Modal>
+  );
+}
+
+/** "Tạo bug" next to a failed step of a result in the test drawer (docs/specs/31 §20.3): only when
+ * bugs go to CodePulse tasks, the person may record and the result has no bug yet. */
+export function StepBugButton({ detail, resultId, step, onChanged }: { detail: TestDetail; resultId: number; step: number; onChanged: () => void }) {
+  const run = useApi<RunOut>(`/testcases/runs/${detail.run_id}`);
+  const bpId = run.data?.business_project_id;
+  const prefs = useApi<TestProjectSettings>(bpId ? `/testcases/project-settings?business_project_id=${bpId}` : null);
+  const [open, setOpen] = useState(false);
+  const p = prefs.data;
+  const result = detail.results.find((r) => r.id === resultId);
+  if (!p || !bpId || p.bug_target_effective !== "codepulse" || !p.task_space_key) return null;
+  if (!detail.can_record || detail.run.completed || result?.status !== "failed" || result.defects.length) return null;
+  return (
+    <>
+      <button type="button" className="sm ghost qa-step-bug" onClick={() => setOpen(true)} title={`Tạo task Bug từ bước ${step + 1}`}>
+        <Icon name="plus" size={12} /> Tạo bug
+      </button>
+      {open && (
+        <CreateTaskBugModal
+          detail={detail}
+          bp={bpId}
+          prefs={p}
+          step={step}
+          fromResult={resultId}
+          onClose={() => setOpen(false)}
+          onDone={(key) => {
+            forgetBugStates([key]);
+            setOpen(false);
+            onChanged();
+          }}
+        />
+      )}
+    </>
   );
 }
 

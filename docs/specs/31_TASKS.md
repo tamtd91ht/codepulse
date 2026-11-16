@@ -659,3 +659,36 @@ sprint đóng, tuỳ chọn thông báo ở trang Thông báo): đợt 2 sửa c
 | 2.4 Nhân rộng | Mẫu lưu được, mẫu Mobile, Tình trạng bật Task, hướng dẫn bật đủ bước | 20.4 |
 | 2.5 Thông báo & quy tắc | Kênh theo sự kiện, Bug Cao nhất bỏ qua giờ yên lặng, gom 10 phút, tóm tắt 17:30 Telegram, tạm ẩn, nhật ký + chạy thử, 5 quy tắc mới | 20.5 |
 | 2.6 Đánh giá sprint | Tóm tắt khi đóng sprint + trang retro, thay đổi phạm vi, dự báo có khoảng, xu hướng 4 sprint, trạng thái rỗng | 20.6 |
+
+### 20.3 QA (migration `b2d4f6a8c0e2`)
+- **Bug từ một bước Failed** (`POST /testcases/tests/{id}/bug` nhận `step`, đếm từ 0): bước đó phải
+  Failed trong kết quả được chọn (không thì 422). Tiêu đề "[C123] <nội dung bước> – Failed"; mô tả chỉ
+  gồm các bước tới bước lỗi (mong đợi / thực tế), phần còn lại (tiền điều kiện, môi trường, log, đính
+  kèm, link) như cũ. Vẫn một bug cho mỗi kết quả Failed (409 lần hai, kể cả tạo từ bước khác). Áp
+  cho cả đích Jira ở API; giao diện chỉ thêm nút "Tạo bug" cạnh từng bước Failed trong lịch sử kết quả
+  của ngăn test khi đích là task CodePulse, kết quả chưa có bug và người xem ghi được kết quả.
+- **Giao mặc định:** testcase có liên kết `covers` tới task → người xử lý mặc định của bug là người làm
+  task đó (task còn mở trước, rồi liên kết mới nhất; người đã rời dự án thì bỏ). API dùng khi không
+  gửi `assignee_id` (gửi `null` = "Chưa giao") và người tạo được giao (chính mình, hoặc có
+  `tasks.assign`). `GET /testcases/tests/{id}/bug/defaults` → `{assignee_id, task_key}` để hộp tạo bug
+  chọn sẵn.
+- **Retest trong Việc của tôi:** mục *Cần xử lý ngay* loại `retest` cho test của run đang mở cần chạy
+  lại (logic `bugs.retest_ids`: Failed, mọi bug đã xong) mà test giao cho tôi hoặc kết quả Failed gần
+  nhất do tôi ghi; chỉ dự án tôi có `tests.view`; tối đa 20. Chữ "Cần chạy lại test Txx (bug KEY đã
+  xong)", nút Mở tới `/testcases?project=..&tab=runs&run=..&test=..` (trường `link`; không gắn
+  `task_key` để nút mở đúng run).
+- **Tiêu chí chấp nhận có mã** (bảng `task_criteria`: task, vị trí, nội dung ≤ 500, đạt, người tạo;
+  `task_test_links.criterion_id` SET NULL): `GET/POST /tasks/{key}/criteria`,
+  `PATCH/DELETE /tasks/{key}/criteria/{id}` (`{text?, done?, position?}`; sửa / thêm / xoá / đổi chỗ cần
+  `tasks.edit`, tối đa 50 tiêu chí, ghi lịch sử trường `criterion`). Gắn testcase:
+  `POST /tasks/{key}/tests {case, criterion_id?}`; gửi lại cùng testcase với `criterion_id` khác (hoặc
+  `null`) thì chuyển tiêu chí — một testcase chỉ nối một tiêu chí của task (ràng buộc duy nhất cũ).
+  `quality.coverage` (và `GET /tasks/{key}/tests`) thêm `criteria: [{id, position, text, done, cases,
+  status}]`, `status`: `none` (chưa có testcase) | `failed` (có case Failed) | `passed` (mọi case
+  Passed) | `untested`; mỗi case có `criterion_id`. Người không có `tests.view` thấy tiêu chí, không
+  thấy testcase (`status: null`). Xoá tiêu chí: testcase vẫn phủ task.
+- Giao diện chi tiết task: mục "Tiêu chí chấp nhận" (AC1, AC2… theo thứ tự; tích đạt, sửa, lên / xuống,
+  xoá, thêm), mỗi tiêu chí kèm testcase và trạng thái, không có thì "chưa có testcase"; mục Testcase có
+  ô chọn tiêu chí khi gắn và trên từng dòng. Story tạo từ mẫu mô tả không tự sinh tiêu chí.
+- Chưa làm: biểu tượng riêng cho loại `retest` ở trang Việc của tôi (đang dùng biểu tượng mặc định,
+  `MyWork.tsx` ngoài phạm vi đợt này); tạo bug từ bước cho đích Jira trên giao diện.

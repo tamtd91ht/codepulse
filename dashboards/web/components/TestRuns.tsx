@@ -3,7 +3,7 @@
 import { type MutableRefObject, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 import { CiBadge, CiImportModal, CiResult, FlakyPill } from "@/components/CiImport";
-import { BugCount, BugPills, JiraBugPanel, RetestPill } from "@/components/JiraBug";
+import { BugCount, BugPills, JiraBugPanel, RetestPill, StepBugButton } from "@/components/JiraBug";
 import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
 import { MoreMenu } from "@/components/MoreMenu";
@@ -1169,7 +1169,7 @@ export function TestDrawer({
             if (goNext && next !== null) onNavigate(next);
           }} hasNext={next !== null} />
           <JiraBugPanel detail={d} onChanged={() => (void detail.mutate(), onChanged())} />
-          <History detail={d} statuses={statuses} fields={resultFields.data} people={people} />
+          <History detail={d} statuses={statuses} fields={resultFields.data} people={people} onChanged={() => (void detail.mutate(), onChanged())} />
         </div>
       )}
     </Drawer>
@@ -1543,11 +1543,14 @@ function History({
   statuses,
   fields,
   people,
+  onChanged,
 }: {
   detail: TestDetail;
   statuses?: StatusDef[];
   fields?: TestField[];
   people?: { id: number; name: string }[];
+  /** After a bug was made from a failed step (docs/specs/31 §20.3). */
+  onChanged?: () => void;
 }) {
   const results = [...detail.results].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
   return (
@@ -1581,6 +1584,7 @@ function History({
                       s.status !== "untested" || s.actual ? (
                         <li key={i}>
                           Bước {i + 1}: <StatusPill status={s.status} /> {s.actual}
+                          {s.status === "failed" && onChanged && <StepBugButton detail={detail} resultId={x.id} step={i} onChanged={onChanged} />}
                         </li>
                       ) : null,
                     )}

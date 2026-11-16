@@ -2778,3 +2778,25 @@ export interface TaskAiRun {
   output: { items?: TaskAiItem[]; markdown?: string } | null;
   error: string | null;
 }
+
+/** A testcase covering a task, with its latest status (docs/specs/31 §19.4, §20.3). */
+export interface TaskCoverCase {
+  case_id: number;
+  key: string;
+  title: string;
+  status: string;
+  run_id: number | null;
+  test_id: number | null;
+  criterion_id?: number | null;
+}
+
+/** An acceptance criterion of a task with a stable id (docs/specs/31 §20.3): GET /tasks/{key}/criteria.
+ * `status`: none (no testcase) | passed | failed | untested; null when testcases are hidden. */
+export interface TaskCriterion {
+  id: number;
+  position: number;
+  text: string;
+  done: boolean;
+  cases: TaskCoverCase[];
+  status: "passed" | "failed" | "untested" | "none" | null;
+}

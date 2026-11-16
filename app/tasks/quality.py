@@ -1,12 +1,16 @@
-"""Task ↔ test quality (docs/specs/31 §19.3-§19.4): failed tests on the cases that cover a task,
-a task's test coverage, its Definition of Done, a version's release readiness."""
+"""Task ↔ test quality (docs/specs/31 §19.3-§19.4, §20.3): failed tests on the cases that cover
+a task, a task's test coverage (per acceptance criterion), its Definition of Done, a version's
+release readiness, the tests a person should run again."""
 
 from collections import defaultdict
 from typing import Any
+from urllib.parse import urlencode
 
-from sqlalchemy import select, tuple_
+from sqlalchemy import or_, select, tuple_
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.orm import Session
 
+from app.api.security import Principal
 from app.models import (
     MergeRequest,
     Task,
@@ -16,9 +20,11 @@ from app.models import (
     TaskTestLink,
     TaskVersion,
     TestCase,
+    TestResult,
     TestRun,
     TestRunTest,
 )
+from app.models.tasks import TaskCriterion
 from app.testcases import content
 
 
@@ -67,9 +73,40 @@ def failing_for(session: Session, task_ids: list[int]) -> list[dict[str, Any]]:
     return out
 
 
+def criterion_status(statuses: list[str]) -> str:
+    """A criterion's coverage from its cases' latest statuses (docs/specs/31 §20.3): `none`
+    without a case, `failed` when one fails, `passed` when all pass, else `untested`."""
+    if not statuses:
+        return "none"
+    if "failed" in statuses:
+        return "failed"
+    if all(s == "passed" for s in statuses):
+        return "passed"
+    return "untested"
+
+
+def criteria_of(session: Session, task_id: int) -> list[TaskCriterion]:
+    return list(
+        session.scalars(
+            select(TaskCriterion)
+            .where(TaskCriterion.task_id == task_id)
+            .order_by(TaskCriterion.position, TaskCriterion.id)
+        )
+    )
+
+
 def coverage(session: Session, task_id: int) -> dict[str, Any]:
-    """The cases covering a task with their latest status (the Story's Testcase tab)."""
-    cases = covering(session, [task_id]).get(task_id, [])
+    """The cases covering a task with their latest status (the Story's Testcase tab), and its
+    acceptance criteria with the cases linked to each (§20.3)."""
+    links = {
+        int(case_id): (int(crit) if crit is not None else None)
+        for case_id, crit in session.execute(
+            select(TaskTestLink.case_id, TaskTestLink.criterion_id).where(
+                TaskTestLink.task_id == task_id, TaskTestLink.kind == "covers"
+            )
+        ).all()
+    }
+    cases = sorted(links)
     tests = latest_tests(session, cases)
     rows = []
     by_status: dict[str, int] = defaultdict(int)
@@ -87,6 +124,20 @@ def coverage(session: Session, task_id: int) -> dict[str, Any]:
                 "status": status,
                 "run_id": test.run_id if test is not None else None,
                 "test_id": test.id if test is not None else None,
+                "criterion_id": links.get(case.id),
+            }
+        )
+    criteria = []
+    for crit in criteria_of(session, task_id):
+        mine = [r for r in rows if r["criterion_id"] == crit.id]
+        criteria.append(
+            {
+                "id": crit.id,
+                "position": crit.position,
+                "text": crit.text,
+                "done": bool(crit.done),
+                "cases": mine,
+                "status": criterion_status([str(r["status"]) for r in mine]),
             }
         )
     return {
@@ -95,6 +146,7 @@ def coverage(session: Session, task_id: int) -> dict[str, Any]:
         "failed": by_status.get("failed", 0),
         "untested": by_status.get("untested", 0),
         "cases": rows,
+        "criteria": criteria,
     }
 
 
@@ -279,3 +331,86 @@ def readiness(session: Session, version: TaskVersion) -> dict[str, Any]:
         },
     ]
     return {"ready": all(c["ok"] for c in checks), "checks": checks, "tasks": len(tasks)}
+
+
+# -- retest in "Việc của tôi" (§20.3) ----------------------------------------------------------
+
+RETEST_MAX = 20
+RETEST_SCAN = 200
+
+
+def retests_for(session: Session, p: Principal) -> list[dict[str, Any]]:
+    """Failed tests of open runs to run again (every bug of them done, `bugs.retest_ids`) whose
+    test is assigned to me or whose latest failed result I recorded; only dự án where I see
+    testcases."""
+    from app.testcases import bugs as tc_bugs
+    from app.testcases import runs as rs
+    from app.testcases import service as tc
+
+    me = p.user_id
+    if me is None or not p.can("tests.view"):
+        return []
+    mine_failed = select(TestResult.test_id).where(
+        TestResult.created_by == me, TestResult.status == "failed"
+    )
+    rows = [
+        (test, run)
+        for test, run in session.execute(
+            select(TestRunTest, TestRun)
+            .join(TestRun, TestRun.id == TestRunTest.run_id)
+            .where(
+                TestRun.completed_at.is_(None),
+                TestRunTest.status == "failed",
+                or_(TestRunTest.assigned_to == me, TestRunTest.id.in_(mine_failed)),
+            )
+            .order_by(TestRun.id.desc(), TestRunTest.id)
+            .limit(RETEST_SCAN)
+        ).all()
+        if tc.may_view(p, run.business_project_id)
+    ]
+    if not rows:
+        return []
+    latest_by = {
+        int(test_id): created_by
+        for test_id, created_by in session.execute(
+            select(TestResult.test_id, TestResult.created_by)
+            .where(TestResult.test_id.in_([t.id for t, _ in rows]), TestResult.status == "failed")
+            .ext(distinct_on(TestResult.test_id))
+            .order_by(TestResult.test_id, TestResult.created_at.desc(), TestResult.id.desc())
+        ).all()
+    }
+    rows = [(t, r) for t, r in rows if t.assigned_to == me or latest_by.get(t.id) == me]
+    defects, _comments = rs.result_extras(session, [t.id for t, _ in rows])
+    by_run: dict[int, tuple[TestRun, list[TestRunTest]]] = {}
+    for test, run in rows:
+        by_run.setdefault(run.id, (run, []))[1].append(test)
+    out: list[dict[str, Any]] = []
+    for run, tests in by_run.values():
+        again = tc_bugs.retest_ids(session, run, tests, defects)
+        for test in tests:
+            if test.id not in again:
+                continue
+            keys = ", ".join(defects.get(test.id, [])[:3])
+            test_key = content.key("test", test.id)
+            query = urlencode(
+                {"project": run.business_project_id, "tab": "runs", "run": run.id, "test": test.id}
+            )
+            out.append(
+                {
+                    "kind": "retest",
+                    "text": f"Cần chạy lại test {test_key} (bug {keys} đã xong)",
+                    "action": "open",
+                    "link": f"/testcases?{query}",
+                    "test": {
+                        "id": test.id,
+                        "key": test_key,
+                        "title": test.title,
+                        "run_id": run.id,
+                        "run": run.name,
+                        "business_project_id": run.business_project_id,
+                    },
+                }
+            )
+            if len(out) >= RETEST_MAX:
+                return out
+    return out
