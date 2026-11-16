@@ -236,9 +236,17 @@ def enable_space(
     types: list[str] | None,
     rules: dict[str, Any] | None,
     user_id: int,
+    template: str | None = None,
+    board_mode: str | None = None,
 ) -> TaskSpace:
-    """Turn Task on for a dự án (with the default workflow), or change its settings."""
+    """Turn Task on for a dự án (with a template's workflow, §19.6), or change its settings.
+    `template` applies only when turning Task on; given for an existing space it is a 422."""
+    from app.tasks.templates import check_board_mode, template_or_422
+
     key = key.strip().upper()
+    tpl = template_or_422(template)
+    if board_mode is not None:
+        check_board_mode(board_mode)
     if not KEY_RE.match(key):
         raise HTTPException(422, "mã gồm 2-10 chữ in hoa / số, bắt đầu bằng chữ (ví dụ CRM)")
     if types is not None:
@@ -263,14 +271,15 @@ def enable_space(
             business_project_id=bp_id,
             key=key,
             next_number=1,
-            types=list(types or TASK_TYPES),
+            types=list(types or tpl.types),
             rules=dict(DEFAULT_FLAGS),
+            board_mode=board_mode or tpl.board_mode,
             created_by=user_id,
         )
         session.add(space)
         session.flush()
         ids: dict[str, int] = {}
-        for i, (name, category) in enumerate(DEFAULT_STATUSES):
+        for i, (name, category) in enumerate(tpl.statuses):
             status = TaskStatus(business_project_id=bp_id, name=name, category=category, position=i)
             session.add(status)
             session.flush()
@@ -278,11 +287,16 @@ def enable_space(
         seed_priorities(session, bp_id)
         space.rules = {
             **DEFAULT_FLAGS,
-            "start": ids[START_STATUS],
-            "review": ids[REVIEW_STATUS],
-            "done": ids[DONE_STATUS],
+            **tpl.flags,
+            "start": ids[tpl.start] if tpl.start else None,
+            "review": ids[tpl.review] if tpl.review else None,
+            "done": ids[tpl.done],
         }
     else:
+        if template is not None:
+            raise HTTPException(422, "mẫu chỉ áp dụng khi bật Task lần đầu")
+        if board_mode is not None:
+            space.board_mode = board_mode
         if key != space.key:
             used = session.scalar(
                 select(func.count()).select_from(Task).where(Task.business_project_id == bp_id)
@@ -600,6 +614,7 @@ def space_out(
         "key": space.key if space else None,
         "types": list(space.types) if space else list(TASK_TYPES),
         "rules": rules_of(space) if space else dict(DEFAULT_FLAGS),
+        "board_mode": space.board_mode if space else "scrum",
         "statuses": [status_out(s) for s in statuses_of(session, bp.id)] if space else [],
         "priorities": [priority_out(x) for x in priorities_of(session, bp.id)] if space else [],
         "can_manage": can_manage_space(p, bp.id),

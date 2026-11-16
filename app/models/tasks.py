@@ -38,6 +38,7 @@ GIT_KINDS = ("branch", "commit", "mr")
 RELATIONS = ("fixes", "refs")
 VIA = ("web", "git", "smart_commit", "mcp", "ai")
 FIELD_KINDS = ("text", "number", "date", "select", "user")
+BOARD_MODES = ("scrum", "kanban")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -49,6 +50,7 @@ class TaskSpace(TimestampMixin, Base):
     # A regex check: PostgreSQL only (some unit tests build the tables on SQLite).
     __table_args__ = (
         CheckConstraint("key ~ '^[A-Z][A-Z0-9]{1,9}$'", name="key").ddl_if(dialect="postgresql"),
+        CheckConstraint(_in("board_mode", BOARD_MODES), name="board_mode"),
     )
 
     business_project_id: Mapped[int] = mapped_column(
@@ -58,6 +60,8 @@ class TaskSpace(TimestampMixin, Base):
     next_number: Mapped[int] = mapped_column(server_default="1", default=1)
     types: Mapped[list[str]] = mapped_column(JSONB)
     rules: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    # Scrum: the Board shows the active sprint; Kanban: every open task, no sprint (§19.6).
+    board_mode: Mapped[str] = mapped_column(String(10), server_default="scrum", default="scrum")
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
 
 

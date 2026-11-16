@@ -108,7 +108,10 @@ function Tasks() {
       </>
     );
 
-  const tabs = TABS.filter((t) => t.key !== "settings" || !!space?.can_manage);
+  // Kanban (§19.6) has no Backlog tab: the Board already shows every open task.
+  const tabs = TABS.filter(
+    (t) => (t.key !== "settings" || !!space?.can_manage) && (t.key !== "backlog" || space?.board_mode !== "kanban"),
+  );
   const tab = tabs.some((t) => t.key === where.tab) ? where.tab : "board";
   const openTask = (key: string) => go({ task: key });
 

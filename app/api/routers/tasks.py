@@ -100,6 +100,9 @@ class SpaceIn(BaseModel):
     key: str = Field(min_length=2, max_length=10)
     types: list[TaskType] | None = None
     rules: dict[str, Any] | None = None
+    # §19.6: a template only when Task is first turned on (422 otherwise); board_mode any time.
+    template: Literal["scrum", "kanban", "qa"] | None = None
+    board_mode: Literal["scrum", "kanban"] | None = None
 
 
 class StatusIn(BaseModel):
@@ -281,7 +284,16 @@ def put_space(bp_id: int, body: SpaceIn, principal: Viewer, session: SessionDep)
     ts.require_manage(principal, bp_id)
     types: list[str] | None = list(body.types) if body.types is not None else None
     try:
-        space = ts.enable_space(session, bp_id, body.key, types, body.rules, principal.user_id)
+        space = ts.enable_space(
+            session,
+            bp_id,
+            body.key,
+            types,
+            body.rules,
+            principal.user_id,
+            template=body.template,
+            board_mode=body.board_mode,
+        )
         audit(session, principal.user_id, "task.space", f"business_project:{bp_id}", key=space.key)
         session.commit()
     except IntegrityError:

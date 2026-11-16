@@ -53,10 +53,12 @@ type BoardFilters = { assignees: number[]; priorities: string[]; type: TaskType 
 export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | undefined; onOpen: (key: string) => void }) {
   const bp = space.business_project_id;
   const statuses = useMemo(() => sortedStatuses(space), [space]);
-  const sprints = useSprints(bp);
+  // Kanban (§19.6): no sprint, the board is always every open task plus what was done lately.
+  const kanban = space.board_mode === "kanban";
+  const sprints = useSprints(kanban ? null : bp);
   const people = useTaskPeople(bp);
-  const active = sprints.data?.find((s) => s.state === "active") ?? null;
-  const ready = !!sprints.data || !!sprints.error;
+  const active = kanban ? null : (sprints.data?.find((s) => s.state === "active") ?? null);
+  const ready = kanban || !!sprints.data || !!sprints.error;
   // With a running sprint the board is that sprint; otherwise every open task plus what was done lately.
   const sprintQ = useApi<TaskPage>(ready && active ? `/tasks?space=${bp}&sprint=active&sort=rank&limit=500` : null);
   const todoQ = useApi<TaskPage>(ready && !active ? `/tasks?space=${bp}&category=todo&sort=rank&limit=500` : null);
@@ -204,6 +206,8 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
             Sprint đang chạy: <strong>{active.name}</strong>
             {active.end_date && <> · kết thúc {date(active.end_date)}</>}
           </>
+        ) : kanban ? (
+          "Kanban: board hiện mọi task chưa xong và task xong trong 14 ngày qua."
         ) : (
           "Chưa có sprint đang chạy: board hiện mọi task chưa xong và task xong trong 14 ngày qua."
         )}
