@@ -27,7 +27,7 @@ from app.models import (
     TaskStatus,
     TaskVersion,
 )
-from app.tasks import reports, service
+from app.tasks import reports, service, sprint_review
 
 # Hours a task may sit in a "doing" status before it counts as stuck, when the status has no
 # `age_warning_hours` of its own. "todo" statuses have no default: waiting there is normal.
@@ -36,6 +36,8 @@ DOING_WARNING_H = 72
 MR_REVIEW_H = 24
 # A projection needs some pace to go on.
 MIN_ELAPSED_DAYS = 2
+# A range (§20.6) needs this many elapsed days (or 3 closed sprints); else one value, "ít dữ liệu".
+RANGE_MIN_DAYS = 4
 LEAD_TIME_DAYS = 30
 # Health thresholds (§19.5): red below 70 % projected, or any highest bug / open critical
 # finding; amber below 90 % projected; green otherwise.
@@ -79,6 +81,24 @@ def forecast(
         projected_done = min(done_points / elapsed * span, scope) if scope else done_points
         projected_pct = round(projected_done / scope * 100, 1) if scope else 100.0
         projected_done = round(projected_done, 1)
+    # docs/specs/31 §20.6: a band around the projection, from the spread of the daily pace (each
+    # elapsed day's done points; today's and earlier ones fall in the nearest day) and of the
+    # closed sprints' velocity.
+    daily = [0.0] * max(elapsed, 0)
+    if daily:
+        for t in tasks:
+            if t.status_id not in done:
+                continue
+            day = t.resolved_at.astimezone(tz).date() if t.resolved_at else start
+            daily[min(max((day - start).days, 0), len(daily) - 1)] += reports.points(t)
+    band = sprint_review.forecast_range(
+        done_points=done_points,
+        scope=scope,
+        daily=daily,
+        remaining_days=span - max(elapsed, 0),
+        velocities=sprint_review.closed_velocities(session, sprint.business_project_id),
+        min_days=RANGE_MIN_DAYS,
+    )
     return {
         "days": burn["days"],
         "committed_points": burn["committed_points"],
@@ -90,6 +110,8 @@ def forecast(
         "total_days": span,
         "projected_done_points": projected_done,
         "projected_pct": projected_pct,
+        "range": band,
+        "few_data": band is None,
     }
 
 
@@ -320,6 +342,7 @@ def sprint_health(session: Session, bp_id: int, tz: ZoneInfo) -> dict[str, Any]:
         "stuck": st,
         "load": load(session, tasks, done),
         "quality": qa,
+        "scope_change": sprint_review.scope_change(session, sprint, tz),
         "health": health_color(
             fc["projected_pct"], int(qa["highest_bugs"]), int(qa["open_critical"])
         ),
@@ -449,8 +472,13 @@ def overview(session: Session, p: Principal, tz: ZoneInfo) -> list[dict[str, Any
     if visible is not None:
         query = query.where(BusinessProject.id.in_(visible))
     now = datetime.now(UTC)
-    return [
+    rows = [
         overview_row(session, bp, space, tz, now)
         for bp, space in session.execute(query).all()
         if service.can_view_space(p, bp.id)
     ]
+    # docs/specs/31 §20.6: 4-sprint trends, grouped SQL over every row at once.
+    trend = sprint_review.trends(session, [int(r["business_project_id"]) for r in rows], tz)
+    for r in rows:
+        r["trends"] = trend.get(int(r["business_project_id"]))
+    return rows

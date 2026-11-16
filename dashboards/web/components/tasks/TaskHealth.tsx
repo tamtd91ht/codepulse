@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { Card, ChartTip, EmptyState, Loading, StatStrip, StripStat } from "@/components/ui";
-import { useApi } from "@/lib/api";
+import { Alert, Card, ChartTip, EmptyState, Expander, Loading, StatStrip, StripStat } from "@/components/ui";
+import { ApiError, api, useApi } from "@/lib/api";
 import { dayLabel } from "@/lib/format";
-import type { TaskPerson, TaskSpace } from "@/lib/types";
+import type { ForecastRange, LatestSprintReview, SprintReview, SprintScopeChange, SprintTaskGroup, TaskPerson, TaskSpace } from "@/lib/types";
 
 import { PersonAvatar } from "./taskParts";
 
@@ -33,7 +33,11 @@ export interface SprintHealth {
     total_days: number;
     projected_done_points: number | null;
     projected_pct: number | null;
+    /** §20.6: a band from the daily pace / velocity spread; null with too little data. */
+    range?: ForecastRange | null;
+    few_data?: boolean;
   };
+  scope_change?: SprintScopeChange;
   stuck?: {
     aged: (Brief & { assignee: TaskPerson | null; status: string; hours: number; limit_hours: number })[];
     mrs_waiting: { task: Brief; project_id: number; iid: number; title: string | null; hours: number }[];
@@ -96,18 +100,7 @@ export function TaskHealth({ space }: { space: TaskSpace }) {
     }));
   }, [h]);
 
-  if (h && !h.sprint) {
-    return (
-      <div className="th-health">
-        <EmptyState icon="calendar" title="Dự án chưa có sprint đang chạy">
-          Bắt đầu một sprint ở tab Backlog để xem dự báo, việc kẹt, tải và chất lượng.
-        </EmptyState>
-        <p className="th-foot">
-          <Link href="/tasks/overview">Xem tổng quan mọi dự án</Link>
-        </p>
-      </div>
-    );
-  }
+  if (h && !h.sprint) return <NoActiveSprint space={space} />;
 
   const fc = h?.forecast;
   const st = h?.stuck;
@@ -153,8 +146,8 @@ export function TaskHealth({ space }: { space: TaskSpace }) {
                 digits={1}
                 unit="%"
                 tone={fc.projected_pct === null ? undefined : fc.projected_pct < 70 ? "bad" : fc.projected_pct < 90 ? "warn" : "good"}
-                title="Theo tốc độ trung bình từ đầu sprint; cần ít nhất 2 ngày"
-                sub={fc.projected_done_points === null ? "Cần ≥ 2 ngày dữ liệu" : `${fc.projected_done_points}/${fc.scope_points} point`}
+                title="Theo tốc độ trung bình từ đầu sprint; cần ít nhất 2 ngày. Khoảng: độ dao động của tốc độ từng ngày (từ 4 ngày) và velocity các sprint đã đóng (từ 3 sprint)"
+                sub={<ForecastSub fc={fc} />}
               />
             </StatStrip>
             {!fc.days.length ? (
@@ -276,6 +269,235 @@ export function TaskHealth({ space }: { space: TaskSpace }) {
             <StripStat label="Task mở lại" value={qa.reopened} tone={qa.reopened ? "warn" : undefined} title="Task trong sprint rời trạng thái Xong về trạng thái mở trong thời gian sprint" />
           </StatStrip>
         ))}
+      </Card>
+
+      <Card title="Thay đổi phạm vi" id="th-scope" subtitle="Task thêm vào hoặc bỏ ra sau khi sprint bắt đầu">
+        {errorBox ?? (!h ? (
+          <Loading rows={2} />
+        ) : !h.scope_change || (!h.scope_change.added_after_start.count && !h.scope_change.removed_after_start.count) ? (
+          <EmptyState icon="checkCircle" tone="good" title="Phạm vi giữ nguyên từ lúc bắt đầu" />
+        ) : (
+          <div className="sr-scope">
+            <ScopeList title="Thêm sau khi bắt đầu" sign="+" group={h.scope_change.added_after_start} />
+            <ScopeList title="Bỏ ra sau khi bắt đầu" sign="−" group={h.scope_change.removed_after_start} />
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+}
+
+/* -- §20.6: forecast range, scope change, sprint review, empty state ------------------------------ */
+
+function ForecastSub({ fc }: { fc: NonNullable<SprintHealth["forecast"]> }) {
+  if (fc.range) {
+    const r = fc.range;
+    const basis = r.basis.map((b) => (b === "daily" ? "tốc độ từng ngày" : "velocity sprint trước")).join(" + ");
+    return (
+      <span title={`${r.low_points}–${r.high_points}/${fc.scope_points} point, theo ${basis}`}>
+        Dự kiến xong {Math.round(r.low_pct)}–{Math.round(r.high_pct)}% SP
+      </span>
+    );
+  }
+  if (fc.projected_done_points === null) return <>Cần ≥ 2 ngày dữ liệu</>;
+  return (
+    <>
+      {fc.projected_done_points}/{fc.scope_points} point · <span className="sr-few">ít dữ liệu</span>
+    </>
+  );
+}
+
+function ScopeList({ title, sign, group }: { title: string; sign: string; group: SprintTaskGroup }) {
+  if (!group.count) return null;
+  return (
+    <section aria-label={title}>
+      <h4 className="th-sub">
+        {title}: {sign}
+        {group.count} task · {group.points ?? 0} SP
+      </h4>
+      <ul className="th-list">
+        {group.tasks.map((t) => (
+          <li key={t.key}>
+            <TaskRef k={t.key} title={t.title} />
+            <span className="th-meta">{t.points} SP</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** A duration in hours as a stat: days from 48 hours on. */
+function cycleStat(h: number | null): { value: number | undefined; unit: string; digits: number } {
+  if (h === null) return { value: undefined, unit: "", digits: 1 };
+  return h >= 48 ? { value: Math.round(h / 2.4) / 10, unit: " ngày", digits: 1 } : { value: h, unit: " giờ", digits: 1 };
+}
+
+/** The sprint review (§20.6): done, carried over, added mid-sprint, bugs, findings, cycle time. */
+export function SprintReviewView({ review }: { review: SprintReview }) {
+  const r = review;
+  const carried = r.carried_over;
+  return (
+    <div className="sr-review">
+      <StatStrip label={`Đánh giá ${r.sprint.name}`} inline>
+        <StripStat
+          label="Đã xong"
+          value={r.done.points ?? 0}
+          digits={1}
+          unit=" SP"
+          sub={`${r.done.count ?? 0} task${r.committed_points !== null ? ` · cam kết ${r.committed_points} SP` : ""}`}
+          title="Task lý do Xong (không tính Lỗi thời / Không làm)"
+        />
+        <StripStat
+          label="Chuyển sang sau"
+          value={carried.count ?? undefined}
+          sub={carried.points !== null ? `${carried.points} SP` : carried.count === null ? "không rõ" : "đã chuyển khi đóng"}
+          tone={carried.count ? "warn" : undefined}
+          title="Task chưa xong của sprint"
+        />
+        <StripStat
+          label="Thêm sau khi bắt đầu"
+          value={r.added_after_start.count ?? 0}
+          sub={`${r.added_after_start.points ?? 0} SP`}
+          tone={r.added_after_start.count ? "warn" : undefined}
+        />
+        <StripStat label="Bug tạo trong sprint" value={r.bugs_created.count} sub={`mức cao nhất: ${r.bugs_created.highest}`} tone={r.bugs_created.highest ? "bad" : undefined} />
+        <StripStat
+          label="Finding mới"
+          value={r.findings.critical}
+          sub={`critical · ${r.findings.high} high`}
+          tone={r.findings.critical ? "bad" : undefined}
+          title="Finding critical / high mở ra trên code nối với task của sprint, trong thời gian sprint"
+        />
+        <StripStat label="Cycle time trung vị" {...cycleStat(r.cycle_time_h)} title="Từ lúc bắt đầu làm tới lúc xong, các task đã xong của sprint" />
+      </StatStrip>
+      {(carried.tasks.length > 0 || (r.added_after_start.count ?? 0) > 0) && (
+        <Expander summary="Xem danh sách task">
+          <div className="sr-scope">
+            <ScopeList title="Chuyển sang sau" sign="" group={carried} />
+            <ScopeList title="Thêm sau khi bắt đầu" sign="+" group={r.added_after_start} />
+          </div>
+        </Expander>
+      )}
+    </div>
+  );
+}
+
+/** "Tạo trang retro": the review as a document of Tài liệu dự án, through POST /docs (docs.edit). */
+export function RetroButton({ review }: { review: SprintReview }) {
+  const [busy, setBusy] = useState(false);
+  const [doc, setDoc] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  if (!review.can_create_retro) return null;
+  const bp = review.sprint.business_project_id;
+  async function go() {
+    setBusy(true);
+    setError(null);
+    try {
+      const made = await api.post<{ id: number }>("/docs", {
+        business_project_id: bp,
+        title: `Retro ${review.sprint.name}`.slice(0, 200),
+        category: "other",
+        summary: `Đánh giá sprint ${review.sprint.name}`.slice(0, 300),
+        body: review.markdown,
+        note: "Tạo từ đánh giá sprint",
+      });
+      setDoc(made.id);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  if (doc !== null)
+    return (
+      <Link href={`/docs?project=${bp}&doc=${doc}`} className="button sm">
+        Mở trang retro
+      </Link>
+    );
+  return (
+    <span className="sr-retro">
+      <button type="button" className="sm" onClick={() => void go()} disabled={busy}>
+        {busy ? "Đang tạo…" : "Tạo trang retro"}
+      </button>
+      {error && <Alert tone="error">{error}</Alert>}
+    </span>
+  );
+}
+
+/** The Backlog sprint header's note (§20.6): "+3 task sau khi bắt đầu"; nothing while unchanged. */
+export function ScopeNote({ sprintId }: { sprintId: number }) {
+  const res = useApi<SprintScopeChange>(`/tasks/sprints/${sprintId}/scope-change`);
+  const added = res.data?.added_after_start;
+  const removed = res.data?.removed_after_start;
+  if (!added?.count && !removed?.count) return null;
+  const parts = [added?.count ? `+${added.count} task` : null, removed?.count ? `−${removed.count} task` : null].filter(Boolean).join(", ");
+  const tip = [
+    added?.count ? `Thêm: ${added.keys.join(", ")} (${added.points ?? 0} SP)` : null,
+    removed?.count ? `Bỏ ra: ${removed.keys.join(", ")} (${removed.points ?? 0} SP)` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <span className="small sr-scope-note" title={tip}>
+      · {parts} sau khi bắt đầu
+    </span>
+  );
+}
+
+/** No sprint running: the last closed sprint's review, or the Kanban flow of 14 days. */
+function NoActiveSprint({ space }: { space: TaskSpace }) {
+  const bp = space.business_project_id;
+  const res = useApi<LatestSprintReview>(`/tasks/spaces/${bp}/review/latest`);
+  const kanban = space.board_mode === "kanban";
+  const startLink = kanban ? null : (
+    <Link href={`/tasks?space=${bp}&tab=backlog`} className="button sm">
+      Bắt đầu sprint
+    </Link>
+  );
+  const data = res.data;
+  return (
+    <div className="th-health">
+      <div className="th-head">
+        <div>
+          <strong>{kanban ? "Dòng chảy 14 ngày qua" : "Chưa có sprint đang chạy"}</strong>
+          {data?.review && <span className="th-muted"> · sprint gần nhất: {data.review.sprint.name}</span>}
+        </div>
+        <div className="th-head-right">
+          {startLink}
+          <Link href="/tasks/overview" className="button sm">
+            Tổng quan mọi dự án
+          </Link>
+        </div>
+      </div>
+      <Card
+        title={data?.flow ? "Kanban: 14 ngày qua" : "Sprint gần nhất"}
+        id="sr-latest"
+        subtitle={data?.flow ? "Số task xong, cycle time và task mới, không theo sprint" : "Đánh giá của sprint đã đóng gần nhất"}
+        actions={data?.review ? <RetroButton review={data.review} /> : undefined}
+      >
+        {res.error ? (
+          <div className="th-error">
+            <Loading error={res.error} />
+            <button type="button" className="ghost sm" onClick={() => void res.mutate()}>
+              Thử lại
+            </button>
+          </div>
+        ) : !data ? (
+          <Loading rows={3} />
+        ) : data.flow ? (
+          <StatStrip label="Kanban 14 ngày" inline>
+            <StripStat label="Task xong" value={data.flow.throughput} sub={`${data.flow.throughput_points} SP · ${data.flow.per_week}/tuần`} />
+            <StripStat label="Cycle time trung vị" {...cycleStat(data.flow.cycle_time_h)} />
+            <StripStat label="Task mới" value={data.flow.created} />
+          </StatStrip>
+        ) : data.review ? (
+          <SprintReviewView review={data.review} />
+        ) : (
+          <EmptyState icon="calendar" title="Dự án chưa có sprint nào đã đóng">
+            Bắt đầu một sprint ở tab Backlog để xem dự báo, việc kẹt, tải và chất lượng.
+          </EmptyState>
+        )}
       </Card>
     </div>
   );

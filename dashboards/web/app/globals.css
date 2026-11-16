@@ -16413,3 +16413,53 @@ a.icon-btn {
   flex-direction: column;
   gap: 4px;
 }
+
+/* Sprint review (docs/specs/31 §20.6): review strip, scope change, retro, 4-sprint trends. */
+.sr-review {
+  display: grid;
+  gap: 10px;
+}
+.sr-scope {
+  display: grid;
+  gap: 12px;
+}
+.sr-scope-note {
+  color: var(--warn);
+}
+.sr-few {
+  color: var(--warn);
+}
+.sr-retro {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.sr-modal-review {
+  min-width: 0;
+}
+.sr-trends {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  white-space: nowrap;
+}
+.sr-trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.sr-trend-label {
+  color: var(--muted);
+}
+.sr-trend-up {
+  color: var(--bad-text);
+}
+.sr-trend-down {
+  color: var(--good);
+}
+.sr-trend-flat {
+  color: var(--muted);
+}

@@ -659,3 +659,61 @@ sprint đóng, tuỳ chọn thông báo ở trang Thông báo): đợt 2 sửa c
 | 2.4 Nhân rộng | Mẫu lưu được, mẫu Mobile, Tình trạng bật Task, hướng dẫn bật đủ bước | 20.4 |
 | 2.5 Thông báo & quy tắc | Kênh theo sự kiện, Bug Cao nhất bỏ qua giờ yên lặng, gom 10 phút, tóm tắt 17:30 Telegram, tạm ẩn, nhật ký + chạy thử, 5 quy tắc mới | 20.5 |
 | 2.6 Đánh giá sprint | Tóm tắt khi đóng sprint + trang retro, thay đổi phạm vi, dự báo có khoảng, xu hướng 4 sprint, trạng thái rỗng | 20.6 |
+
+### 20.6 Đánh giá sprint
+
+Chỉ đọc, không migration. Mã: `app/tasks/sprint_review.py` (mới), `app/tasks/health.py`,
+`app/api/routers/task_health.py`; giao diện ở tab Sức khoẻ sprint, hộp "Hoàn tất sprint" của Backlog và
+trang `/tasks/overview`.
+
+- **Lúc sprint bắt đầu** là thời điểm của dòng audit `task.sprint.start` (ngày bắt đầu chỉ là ngày và có thể
+  lùi về trước); không có dòng audit thì lấy 0 giờ của ngày bắt đầu theo múi giờ báo cáo. Cửa sổ của sprint là
+  lúc bắt đầu → lúc đóng (`closed_at`), sprint đang chạy thì tới hiện tại.
+- **Thay đổi phạm vi** (`scope_change` trong `GET /tasks/spaces/{bp}/health`, và
+  `GET /tasks/sprints/{id}/scope-change` nhẹ cho Backlog; cần `tasks.view`): `added_after_start` /
+  `removed_after_start`, mỗi cái có `count`, `points`, `keys`, `tasks` (tối đa 50). *Thêm*: lịch sử trường
+  `sprint` có giá trị mới là **tên** sprint (lịch sử lưu tên, `service._named`) sau lúc bắt đầu, hoặc task tạo
+  sau lúc bắt đầu thẳng vào sprint (tạo nhanh trên Board) — sprint đầu tiên của nó là sprint này. *Bỏ ra*:
+  lịch sử có giá trị cũ là tên sprint, sau lúc bắt đầu và trước lúc đóng. Chỉ Story / Task / Bug (epic và
+  sub-task không tính). Khớp theo tên trong cùng dự án: hai sprint trùng tên sẽ lẫn nhau. Giao diện: khối
+  "Thay đổi phạm vi" ở tab Sức khoẻ, và dòng tiêu đề sprint đang chạy ở Backlog ghi "· +3 task sau khi bắt
+  đầu" (rê chuột thấy mã và SP).
+- **Đánh giá sprint** `GET /tasks/sprints/{id}/review` (`tasks.view`, 404 khi không thấy): `done` (lý do
+  `done`, kèm SP; `done_pct` so với point cam kết), `closed_without_done` (Lỗi thời / Không làm),
+  `carried_over` (task chưa xong, không tính sub-task, như lúc đóng), `added_after_start` /
+  `removed_after_start`, `bugs_created` (bug của dự án tạo trong cửa sổ, kèm số ở mức ưu tiên cao nhất),
+  `findings` (critical / high **mở ra** trong cửa sổ trên mọi review đã xong của commit / MR nối với task của
+  sprint; mỗi `fingerprint` tính một lần, vào cửa sổ chứa lần thấy **đầu tiên** của nó, nên review lại lặp
+  finding cũ không tính là mới), `cycle_time_h` (trung vị bắt đầu làm → xong của task đã xong),
+  `can_create_retro` (`docs.view` + `docs.edit` trên dự án), `markdown` (trang retro).
+  - **Giới hạn đã chấp nhận:** hoàn tất sprint chuyển task chưa xong đi mà không ghi lịch sử (không sửa
+    `tasks.py` ở đợt này), nên với sprint **đã đóng** chỉ biết *số* task chuyển đi (từ `moved` của dòng audit
+    `task.sprint.complete`), không biết mã và SP; task tạo thẳng vào sprint sau lúc bắt đầu rồi bị chuyển đi khi
+    đóng cũng không còn nhận ra là "thêm sau". Vì vậy hộp "Hoàn tất sprint" **giữ đánh giá đọc trước khi xác
+    nhận** để hiện sau khi đóng và để tạo trang retro.
+- **Hộp "Hoàn tất sprint"**: hiện đánh giá trước nút xác nhận; sau khi đóng hộp đổi tiêu đề "Đã hoàn tất",
+  vẫn hiện đánh giá đó, có nút **"Tạo trang retro"** (ẩn khi thiếu quyền tài liệu) và "Đóng".
+- **Trang retro**: giao diện gửi `markdown` qua `POST /docs` có sẵn của Tài liệu dự án (spec 29; loại "Khác",
+  tiêu đề "Retro {tên sprint}", ghi chú phiên bản "Tạo từ đánh giá sprint"), rồi hiện link "Mở trang retro"
+  (`/docs?project={bp}&doc={id}`). Nội dung: bảng tóm tắt, danh sách đã xong / chuyển sang sau / thêm sau khi
+  bắt đầu, và ba mục trống **Điều tốt / Cần cải thiện / Hành động**.
+- **Dự báo có khoảng** (`forecast.range`, `forecast.few_data` trong API sức khoẻ): ngoài dự phóng tuyến tính,
+  (1) theo tốc độ từng ngày: điểm xong mỗi ngày đã qua (task xong trước lúc bắt đầu tính vào ngày đầu, xong hôm
+  nay tính vào ngày cuối), trung bình ± 1 độ lệch chuẩn nhân số ngày còn lại cộng điểm đã xong, khi đã qua
+  **≥ 4 ngày**; (2) theo velocity: điểm xong (lý do `done`) của tối đa 6 sprint đã đóng gần nhất, trung bình
+  ± 1 độ lệch chuẩn, khi có **≥ 3 sprint đóng**. Có cả hai thì lấy trung bình hai cận. Kẹp trong [điểm đã
+  xong, phạm vi]. Số ngày còn lại là `tổng − đã qua`, đúng như dự phóng tuyến tính (tâm của khoảng theo ngày
+  trùng với dự phóng tuyến tính). Không đủ dữ liệu → `range: null`, giao diện ghi một giá trị kèm "ít dữ liệu"; có khoảng thì
+  "Dự kiến xong 85–95% SP".
+- **Xu hướng 4 sprint** (`trends` trên mỗi dòng của `GET /tasks/overview`, null khi chưa có sprint đóng): 4
+  sprint đóng gần nhất (cũ → mới; cửa sổ từ 0 giờ ngày bắt đầu tới `closed_at`): lead time trung vị (tạo → xong)
+  của task lý do `done` thuộc sprint, số bug mức ưu tiên cao nhất tạo trong cửa sổ, số finding critical mở ra
+  trong cửa sổ trên code nối với task của dự án. Ba truy vấn gộp (`percentile_cont`, `VALUES` cửa sổ, union
+  review theo commit / MR) cho mọi dự án cùng lúc, không vòng theo task. Hướng: giá trị mới nhất so với trung
+  bình các giá trị trước, lệch ≤ 10 % (hoặc ≤ 0,5) là đứng yên; cần ≥ 2 giá trị. Cả ba chỉ số càng thấp càng
+  tốt: mũi tên lên màu đỏ, xuống màu xanh; tooltip liệt kê 4 giá trị.
+- **Trạng thái rỗng** `GET /tasks/spaces/{bp}/review/latest` (`tasks.view`): `{mode, review, flow}`. Chế độ
+  Scrum: đánh giá của sprint đóng gần nhất (hoặc null); Kanban: dòng chảy 14 ngày (`throughput`, SP,
+  `per_week`, `created`, `cycle_time_h`). Tab Sức khoẻ không có sprint đang chạy hiện khối này kèm link "Bắt
+  đầu sprint" tới Backlog (Scrum) và nút "Tạo trang retro" cho sprint gần nhất. `GET .../health` vẫn trả
+  `{"sprint": null}` như §19.5.
