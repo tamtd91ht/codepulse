@@ -13,6 +13,7 @@ import { TaskHealth } from "@/components/tasks/TaskHealth";
 import { TaskList } from "@/components/tasks/TaskList";
 import { TaskReports } from "@/components/tasks/TaskReports";
 import { EnableSpace, TaskSettings } from "@/components/tasks/TaskSettings";
+import { AdoptionLink } from "@/components/tasks/TaskTemplates";
 import { TaskVersions } from "@/components/tasks/TaskVersions";
 import { useTaskSpaces } from "@/components/tasks/taskParts";
 import { Drawer, EmptyState, Loading, PageHeader } from "@/components/ui";
@@ -134,6 +135,7 @@ function Tasks() {
             <Link href="/tasks/me" className="button">
               <Icon name="user" size={16} /> Việc của tôi
             </Link>
+            <AdoptionLink me={me} />
             <label className="adm-field tc-project">
               <span className="small muted">Dự án</span>
               <select value={spaceId ?? ""} onChange={(e) => go({ space: Number(e.target.value), task: null })} disabled={!spaces.data}>

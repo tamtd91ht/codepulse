@@ -241,6 +241,7 @@ def enable_space(
 ) -> TaskSpace:
     """Turn Task on for a dự án (with a template's workflow, §19.6), or change its settings.
     `template` applies only when turning Task on; given for an existing space it is a 422."""
+    from app.models import TaskField
     from app.tasks.templates import check_board_mode, template_or_422
 
     key = key.strip().upper()
@@ -275,6 +276,7 @@ def enable_space(
             rules=dict(DEFAULT_FLAGS),
             board_mode=board_mode or tpl.board_mode,
             created_by=user_id,
+            template_key=tpl.key,
         )
         session.add(space)
         session.flush()
@@ -285,6 +287,18 @@ def enable_space(
             session.flush()
             ids[name] = status.id
         seed_priorities(session, bp_id)
+        # Custom fields of the template (the Mobile one's Nền tảng, §20.4).
+        for i, spec in enumerate(tpl.fields):
+            session.add(
+                TaskField(
+                    business_project_id=bp_id,
+                    name=spec["name"],
+                    kind=spec["kind"],
+                    options=list(spec.get("options") or []),
+                    required=bool(spec.get("required")),
+                    position=i,
+                )
+            )
         space.rules = {
             **DEFAULT_FLAGS,
             **tpl.flags,
@@ -625,6 +639,8 @@ def space_out(
         "types": list(space.types) if space else list(TASK_TYPES),
         "rules": rules_of(space) if space else dict(DEFAULT_FLAGS),
         "board_mode": space.board_mode if space else "scrum",
+        # The template last applied (§20.4): built-in or saved key; null when unknown.
+        "template_key": space.template_key if space else None,
         "statuses": [status_out(s) for s in statuses_of(session, bp.id)] if space else [],
         "priorities": [priority_out(x) for x in priorities_of(session, bp.id)] if space else [],
         "can_manage": can_manage_space(p, bp.id),

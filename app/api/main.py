@@ -57,6 +57,7 @@ from app.api.routers import (
     task_automation,
     task_health,
     task_nlfilter,
+    task_templates,
     tasks,
     team_report,
     telegram,
@@ -174,6 +175,7 @@ for api_router in (
     test_runs.router,
     testcases.router,
     task_health.router,  # docs/specs/31 §19.5, before tasks: /tasks/overview is not a key
+    task_templates.router,  # §20.4 /tasks/templates, /tasks/adoption, before tasks
     task_nlfilter.router,  # §19.8 POST /tasks/nl-filter, before tasks
     task_automation.router,  # docs/specs/31 §19.7, before tasks: not a task key
     tasks.router,  # docs/specs/31; its static paths come before /tasks/{key} inside

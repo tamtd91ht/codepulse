@@ -25,7 +25,19 @@ import {
   useTaskFields,
 } from "./taskParts";
 import { DodCard } from "./TaskQuality";
-import { BOARD_MODE_TEXT, type BoardMode, BoardModeField, StatusFlow, type TemplateKey, TemplatePicker, WizardSteps, templateOf } from "./TaskTemplates";
+import {
+  ApplyTemplateModal,
+  BOARD_MODE_TEXT,
+  type BoardMode,
+  BoardModeField,
+  DIRECT_TEMPLATES,
+  MembersStep,
+  SaveTemplateModal,
+  StatusFlow,
+  TemplatePicker,
+  WizardSteps,
+  useTaskTemplates,
+} from "./TaskTemplates";
 
 import { TaskAutomation } from "./TaskAutomation";
 
@@ -54,49 +66,94 @@ const RULE_TEXT: { key: keyof TaskRules; label: string; hint: string }[] = [
   { key: "mr_comment", label: "Bình luận vào MR", hint: "Ghi link task vào MR khi MR được nối lần đầu (ghi lên GitLab)" },
 ];
 
-/** First setup of a dự án's Task (shown to its managers while it is off): a 3-step wizard,
- * mã + loại task → mẫu dự án → xác nhận (§19.6). */
+/** First setup of a dự án's Task (shown to its managers while it is off): a wizard,
+ * mã + loại task → mẫu (built-in or saved) → thành viên → xác nhận, then optionally Nhập từ Jira
+ * when the dự án has synced Jira issues (§19.6, §20.4). */
 export function EnableSpace({ space, onDone }: { space: TaskSpace; onDone: () => void }) {
+  const bp = space.business_project_id;
+  const templates = useTaskTemplates();
   const [step, setStep] = useState(0);
   const [key, setKey] = useState(space.key ?? "");
   const [types, setTypes] = useState<TaskType[]>(space.types?.length ? space.types : TASK_TYPES);
   // Types follow the chosen template until the manager picks them by hand.
   const [typesTouched, setTypesTouched] = useState(false);
-  const [template, setTemplate] = useState<TemplateKey>("scrum");
+  const [template, setTemplate] = useState("scrum");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [enabled, setEnabled] = useState<string | null>(null);
   const valid = KEY_RE.test(key);
-  const tpl = templateOf(template);
-  const stepOk = step !== 0 || (valid && types.length > 0);
-  function pickTemplate(next: TemplateKey) {
+  const tpl = templates.data?.find((t) => t.key === template) ?? null;
+  const stepOk = step === 0 ? valid && types.length > 0 : step === 1 ? !!tpl : true;
+  const LAST = 3;
+  function pickTemplate(next: string) {
     setTemplate(next);
-    if (!typesTouched) setTypes(templateOf(next).types);
+    const chosen = templates.data?.find((t) => t.key === next);
+    if (!typesTouched && chosen) setTypes(TASK_TYPES.filter((t) => chosen.types.includes(t)));
+  }
+  async function finish() {
+    await refreshTasks();
+    onDone();
   }
   async function enable() {
-    if (!valid || !types.length) return;
+    if (!valid || !types.length || !tpl) return;
     setBusy(true);
     setError(null);
     try {
-      await api.put(`/tasks/spaces/${space.business_project_id}`, { key, types, template });
-      await refreshTasks();
-      onDone();
+      if (DIRECT_TEMPLATES.includes(tpl.key)) {
+        await api.put(`/tasks/spaces/${bp}`, { key, types, template: tpl.key });
+      } else {
+        // Mobile and saved templates: turn Task on, then apply the template while there is no task.
+        await api.put(`/tasks/spaces/${bp}`, { key, types });
+        await api.post(`/tasks/spaces/${bp}/apply-template`, { key: tpl.key, types, board_mode: tpl.board_mode });
+      }
     } catch (e) {
       setError(errorText(e));
       setBusy(false);
+      return;
     }
+    setEnabled(key);
+    // Optional last step: only when the dự án has Jira issues synced to import.
+    let jira = false;
+    try {
+      const got = await api.get<{ sources: unknown[] }>(`/tasks/spaces/${bp}/import/jira`);
+      jira = got.sources.length > 0;
+    } catch {
+      jira = false;
+    }
+    setBusy(false);
+    if (jira) setStep(LAST + 1);
+    else await finish();
   }
+  const labels = ["Mã và loại task", "Chọn mẫu", "Thành viên", "Xác nhận", "Nhập từ Jira (tuỳ chọn)"];
+  if (enabled && step > LAST)
+    return (
+      <div className="tp-wizard">
+        <Card title={`Đã bật Task cho ${space.name}`} collapsible={false}>
+          <WizardSteps step={step} labels={labels} />
+          <p className="small muted tp-note">
+            Dự án có issue Jira đã đồng bộ. Có thể nhập chúng thành task <code>{enabled}-…</code> ngay bây giờ, hoặc để sau trong Cài đặt › Nhập từ Jira.
+          </p>
+          <div className="adm-form-foot">
+            <button type="button" className="primary" onClick={() => void finish()}>
+              Xong, mở Board
+            </button>
+          </div>
+        </Card>
+        <JiraImportCard space={{ ...space, enabled: true, key: enabled }} />
+      </div>
+    );
   return (
     <Card title={`Bật Task cho ${space.name}`} collapsible={false}>
       <form
         className="adm-form tk-form"
         onSubmit={(e) => {
           e.preventDefault();
-          if (step < 2) {
+          if (step < LAST) {
             if (stepOk) setStep(step + 1);
           } else void enable();
         }}
       >
-        <WizardSteps step={step} labels={["Mã và loại task", "Chọn mẫu", "Xác nhận"]} />
+        <WizardSteps step={step} labels={labels} />
         {error && <Message text={`Lỗi: ${error}`} onClose={() => setError(null)} />}
         {step === 0 && (
           <>
@@ -117,8 +174,21 @@ export function EnableSpace({ space, onDone }: { space: TaskSpace; onDone: () =>
             />
           </>
         )}
-        {step === 1 && <TemplatePicker value={template} onChange={pickTemplate} />}
-        {step === 2 && (
+        {step === 1 &&
+          (templates.data ? (
+            <TemplatePicker templates={templates.data} value={template} onChange={pickTemplate} />
+          ) : (
+            <div>
+              <Loading error={templates.error} rows={3} />
+              {templates.error && (
+                <button type="button" className="ghost sm" onClick={() => void templates.mutate()}>
+                  Thử lại
+                </button>
+              )}
+            </div>
+          ))}
+        {step === 2 && <MembersStep bpId={bp} />}
+        {step === 3 && tpl && (
           <dl className="tt-summary">
             <dt>Mã dự án</dt>
             <dd>
@@ -134,7 +204,13 @@ export function EnableSpace({ space, onDone }: { space: TaskSpace; onDone: () =>
             <dd>{types.map((t) => TYPE_LABEL[t]).join(", ")}</dd>
             <dt>Chế độ bảng</dt>
             <dd>{BOARD_MODE_TEXT[tpl.board_mode].label}</dd>
-            <dd className="small muted tt-summary-note">Trạng thái, loại, luật git và chế độ bảng đều sửa được sau trong Cài đặt.</dd>
+            {tpl.fields.length > 0 && (
+              <>
+                <dt>Trường tuỳ chỉnh</dt>
+                <dd>{tpl.fields.join(", ")}</dd>
+              </>
+            )}
+            <dd className="small muted tt-summary-note">Trạng thái, loại, luật git, trường và chế độ bảng đều sửa được sau trong Cài đặt.</dd>
           </dl>
         )}
         <div className="adm-form-foot">
@@ -143,12 +219,12 @@ export function EnableSpace({ space, onDone }: { space: TaskSpace; onDone: () =>
               Quay lại
             </button>
           )}
-          {step < 2 ? (
+          {step < LAST ? (
             <button type="submit" className="primary" disabled={!stepOk}>
               Tiếp
             </button>
           ) : (
-            <button type="submit" className="primary" disabled={busy || !valid || !types.length}>
+            <button type="submit" className="primary" disabled={busy || !valid || !types.length || !tpl}>
               {busy ? "Đang bật…" : "Bật Task"}
             </button>
           )}
@@ -199,6 +275,11 @@ function GeneralCard({ space }: { space: TaskSpace }) {
   const [mode, setMode] = useState<BoardMode>(space.board_mode ?? "scrum");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // §20.4: apply a template to this dự án, or save its setup as one.
+  const [dialog, setDialog] = useState<"apply" | "save" | null>(null);
+  const templates = useTaskTemplates();
+  const templateKey = (space as TaskSpace & { template_key?: string | null }).template_key ?? null;
+  const templateName = templateKey ? (templates.data?.find((t) => t.key === templateKey)?.name ?? templateKey) : null;
   const valid = KEY_RE.test(key);
   const dirty = key !== space.key || types.join() !== space.types.join() || mode !== (space.board_mode ?? "scrum");
   async function save() {
@@ -214,9 +295,32 @@ function GeneralCard({ space }: { space: TaskSpace }) {
     setBusy(false);
   }
   return (
-    <Card title="Mã, loại task và chế độ bảng" id="tk-set-general">
+    <Card
+      title="Mã, loại task và chế độ bảng"
+      id="tk-set-general"
+      actions={
+        <div className="tp-actions">
+          <button type="button" className="ghost sm" onClick={() => setDialog("apply")}>
+            Áp mẫu
+          </button>
+          <button type="button" className="ghost sm" onClick={() => setDialog("save")}>
+            Lưu cấu hình thành mẫu
+          </button>
+        </div>
+      }
+    >
+      {dialog === "apply" && (
+        <ApplyTemplateModal
+          space={space}
+          onClose={() => setDialog(null)}
+          // The other cards keep drafts of the old setup: start them again from the new one.
+          onApplied={() => window.location.reload()}
+        />
+      )}
+      {dialog === "save" && <SaveTemplateModal space={space} onClose={() => setDialog(null)} />}
       <div className="adm-form tk-form">
         {message && <Message text={message} onClose={() => setMessage(null)} />}
+        <p className="small muted tp-current">Mẫu đang dùng: {templateName ?? "không rõ (bật trước khi có mẫu)"}</p>
         <label className="rq-field tk-key-field">
           <span className="rq-label">Mã dự án</span>
           <input value={key} onChange={(e) => setKey(e.target.value.toUpperCase())} maxLength={10} aria-invalid={!valid} />
