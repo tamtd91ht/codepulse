@@ -340,6 +340,17 @@ Người làm không tự nhận thông báo.
   nút xoá theo `can_delete` của từng file. Xoá file không sửa mô tả / bình luận đã chèn nó (ảnh
   hiện thành ảnh hỏng, như Jira).
 
+### 17.1 Ngay trong form tạo task (người dùng 2026-11-16: "chưa thấy nút liên kết ảnh, file ở màn hình tạo task, bug")
+- Form *Tạo task* (mọi loại: Task, Bug, Story…) có mục **Đính kèm**: *Chọn file, ảnh*, kéo thả vào form,
+  dán ảnh (Ctrl+V) vào ô mô tả. Ảnh dán / thả vào mô tả chèn tạm `![tên](pending:…)` và hiện thu nhỏ
+  trong danh sách; bỏ một file thì gỡ luôn chỗ chèn của nó.
+- Bấm *Tạo task*: tạo task, tải từng file lên (`POST /tasks/{key}/attachments`), rồi `PATCH` mô tả để
+  thay chỗ chèn tạm bằng ảnh thật. Lỗi một phần (file quá lớn, thiếu quyền sửa mô tả): task vẫn được
+  tạo, form báo phần lỗi và nút chính thành *Mở {KEY}*.
+- Mục chỉ hiện khi có `tasks.attach` (`GET /tasks/spaces` trả `can_attach`).
+- Sửa kèm: CSS chung `[hidden] { display: none !important }` — nút submit ẩn của form (Enter để tạo)
+  bị quy tắc `button` hiện thành một nút trống không tên ngay trên Huỷ / Tạo task.
+
 ## 18. Mức ưu tiên riêng của dự án (người dùng 2026-11-16: "làm cả 3 luôn đi", migration `f3b5d7e9a1c4`)
 
 ### 18.1 Như priority scheme của Jira

@@ -2461,6 +2461,8 @@ export interface TaskSpace {
   can_sprint: boolean;
   /** tasks.assign: may name someone else as the assignee. */
   can_assign: boolean;
+  /** tasks.attach: may attach files (also in the create form). */
+  can_attach?: boolean;
 }
 
 export interface TaskGitCounts {

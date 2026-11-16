@@ -565,6 +565,10 @@ def space_out(
         "can_create": space is not None and can_create(p, bp.id),
         "can_sprint": space is not None and can_sprint(p, bp.id),
         "can_assign": space is not None and can_assign_new(p, bp.id),
+        # tasks.attach: files and pasted images, also in the create form (§17).
+        "can_attach": space is not None
+        and can_view_space(p, bp.id)
+        and (p.can("tasks.attach") or can_manage_space(p, bp.id)),
     }
 
 

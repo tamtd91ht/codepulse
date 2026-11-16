@@ -251,6 +251,12 @@
   box-sizing: border-box;
 }
 
+/* `hidden` always hides: the button rules (display: inline-flex) would otherwise show a hidden
+   submit button as an empty box (the create-task form's Enter-to-submit button). */
+[hidden] {
+  display: none !important;
+}
+
 html {
   -webkit-text-size-adjust: 100%;
 }
@@ -15401,4 +15407,36 @@ a.icon-btn {
 }
 .tk-prio-fill {
   background: var(--tk-prio);
+}
+
+/* The create form's held files (docs/specs/31 §17.1). */
+.tk-form-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: 4px;
+  border-radius: var(--radius);
+}
+.tk-draft-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.tk-draft-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.tk-draft-file img {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
 }

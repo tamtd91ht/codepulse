@@ -215,3 +215,93 @@ export function ImageViewer({ file, onClose }: { file: { id: number; name: strin
     </Modal>
   );
 }
+
+/* -- files chosen before the task exists (the create form, docs/specs/31 §17.1) ------------------ */
+
+export interface DraftFile {
+  tmp: string;
+  file: File;
+  name: string;
+  image: boolean;
+  /** An object URL for the thumbnail (images only). */
+  preview: string | null;
+}
+
+/** The placeholder a pasted image takes in a draft description until it is uploaded. */
+export function draftMark(f: DraftFile): string {
+  return `![${f.name.replace(/[[\]]/g, "")}](pending:${f.tmp})`;
+}
+
+/** Files held by a form until the task is created, then uploaded to it. */
+export function useDraftFiles() {
+  const [files, setFiles] = useState<DraftFile[]>([]);
+  const seq = useRef(0);
+  const filesRef = useRef(files);
+  filesRef.current = files;
+  // Object URLs live as long as the form.
+  useEffect(() => () => filesRef.current.forEach((f) => f.preview && URL.revokeObjectURL(f.preview)), []);
+
+  /** Hold these files; returns the held ones (too-large files are refused with a reason). */
+  function hold(list: File[]): { held: DraftFile[]; refused: string[] } {
+    const held: DraftFile[] = [];
+    const refused: string[] = [];
+    list.forEach((file, i) => {
+      if (file.size > MAX_FILE_MB * 1024 * 1024) {
+        refused.push(`${file.name || "ảnh"}: lớn hơn ${MAX_FILE_MB} MB`);
+        return;
+      }
+      const image = isInlineImage(file.type);
+      held.push({ tmp: `d${++seq.current}`, file, name: fileName(file, i), image, preview: image ? URL.createObjectURL(file) : null });
+    });
+    if (held.length) setFiles((cur) => [...cur, ...held]);
+    return { held, refused };
+  }
+
+  function drop(tmp: string) {
+    setFiles((cur) => {
+      const gone = cur.find((f) => f.tmp === tmp);
+      if (gone?.preview) URL.revokeObjectURL(gone.preview);
+      return cur.filter((f) => f.tmp !== tmp);
+    });
+  }
+
+  /** Upload every held file to the new task; the description's placeholders become the files'
+   * Markdown (or go, for a file that failed). */
+  async function uploadTo(taskKey: string, description: string): Promise<{ description: string; failed: string[] }> {
+    let text = description;
+    const failed: string[] = [];
+    for (const f of filesRef.current) {
+      try {
+        const got = await uploadTaskFile(taskKey, new File([f.file], f.name, { type: f.file.type }));
+        text = text.split(draftMark(f)).join(fileMarkdown(got));
+      } catch (e) {
+        failed.push(`${f.name}: ${errorText(e)}`);
+        text = text.split(`${draftMark(f)}\n`).join("").split(draftMark(f)).join("");
+      }
+    }
+    return { description: text, failed };
+  }
+
+  return { files, hold, drop, uploadTo };
+}
+
+/** The held files of a form: thumbnails for images, chips for the rest, each removable. */
+export function DraftFileList({ files, onRemove }: { files: DraftFile[]; onRemove: (f: DraftFile) => void }) {
+  if (!files.length) return null;
+  return (
+    <ul className="tk-draft-files">
+      {files.map((f) => (
+        <li key={f.tmp} className="tk-draft-file">
+          {f.preview ? <img src={f.preview} alt={f.name} /> : <Icon name="file" size={16} />}
+          <span className="tk-ellipsis small" title={f.name}>
+            {f.name}
+          </span>
+          <span className="small muted">{fileSize(f.file.size)}</span>
+          <button type="button" className="icon-btn" aria-label={`Bỏ ${f.name}`} data-tip="Bỏ file" onClick={() => onRemove(f)}>
+            <Icon name="close" size={14} />
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}

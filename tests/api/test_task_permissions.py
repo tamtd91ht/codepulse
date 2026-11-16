@@ -149,6 +149,7 @@ def test_each_right_guards_its_action(
         s for s in client.get(f"{API}/tasks/spaces", headers=an).json() if s["key"] == "CRM"
     )
     assert space["can_assign"] is False and space["can_sprint"] is False
+    assert space["can_attach"] is True
 
     # Without tasks.transition: no status change; the rest of editing stays.
     drop(db_session, "tasks.transition")
