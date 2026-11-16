@@ -424,9 +424,18 @@ export interface BugIn {
   labels?: string[];
   assignee?: string;
   result_id?: number;
-  /** A CodePulse task bug: who fixes it, how urgent (a priority key of the dự án). */
-  assignee_id?: number;
+  /** A CodePulse task bug: who fixes it (null: unassigned; left out: the covered task's
+   * assignee, docs/specs/31 §20.3), how urgent (a priority key of the dự án). */
+  assignee_id?: number | null;
   priority?: string;
+  /** A bug from one failed step (0-based, docs/specs/31 §20.3). */
+  step?: number;
+}
+
+/** GET /testcases/tests/{id}/bug/defaults: the covered task's assignee (docs/specs/31 §20.3). */
+export interface BugDefaults {
+  assignee_id: number | null;
+  task_key: string | null;
 }
 
 export interface BugOut {

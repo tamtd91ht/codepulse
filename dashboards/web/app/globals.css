@@ -16800,4 +16800,84 @@ a.icon-btn {
   margin: 6px 0 0;
   padding: 0;
   list-style: none;
+
+/* docs/specs/31 §20.3 QA: acceptance criteria on a task, "Tạo bug" next to a failed step. */
+.qa-crit-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.qa-crit {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+}
+.qa-crit + .qa-crit {
+  border-top: 1px solid var(--border);
+}
+.qa-crit > input[type="checkbox"] {
+  margin-top: 3px;
+  flex: none;
+}
+.qa-crit-main {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.qa-crit-text {
+  overflow-wrap: anywhere;
+}
+.qa-crit.done .qa-crit-text {
+  color: var(--muted);
+}
+.qa-crit-no {
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  color: var(--muted);
+}
+.qa-crit-cases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.qa-crit-case {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.qa-crit-actions {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  opacity: 0.6;
+}
+.qa-crit:hover .qa-crit-actions,
+.qa-crit:focus-within .qa-crit-actions {
+  opacity: 1;
+}
+.qa-case-crit {
+  flex: none;
+  width: auto;
+  max-width: 220px;
+}
+.qa-step-bug {
+  margin-left: 6px;
+}
+.qa-step-note {
+  margin: 0;
+}
+@media (max-width: 640px) {
+  .qa-crit {
+    flex-wrap: wrap;
+  }
+  .qa-crit-actions {
+    opacity: 1;
+  }
 }

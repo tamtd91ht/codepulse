@@ -412,6 +412,24 @@ class TaskTestLink(TimestampMixin, Base):
         BigInteger, ForeignKey("test_results.id", ondelete="SET NULL")
     )
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # The acceptance criterion a `covers` case tests (docs/specs/31 §20.3); None: the whole task.
+    criterion_id: Mapped[int | None] = mapped_column(
+        ForeignKey("task_criteria.id", ondelete="SET NULL"), index=True
+    )
+
+
+class TaskCriterion(TimestampMixin, Base):
+    """An acceptance criterion of a task (docs/specs/31 §20.3): a stable id that testcases link
+    to, so a Story shows its coverage per criterion."""
+
+    __tablename__ = "task_criteria"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
+    position: Mapped[int] = mapped_column(server_default="0", default=0)
+    text: Mapped[str] = mapped_column(String(500))
+    done: Mapped[bool] = mapped_column(server_default="false", default=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
 
 
 class TaskImport(TimestampMixin, Base):

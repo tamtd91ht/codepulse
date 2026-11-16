@@ -1791,6 +1791,8 @@ async def upload(
 class CoverIn(BaseModel):
     # A testcase id, or its key as shown in Testcase ("C123").
     case: str = Field(min_length=1, max_length=20)
+    # The acceptance criterion the case tests (§20.3); sent as null to unlink it.
+    criterion_id: int | None = None
 
 
 def _case_for(session: Session, principal: Principal, task: Task, ref: str) -> TestCase:
@@ -1829,20 +1831,31 @@ def cover_task(key: str, body: CoverIn, principal: Viewer, session: SessionDep) 
     task = ts.task_or_404(session, principal, key)
     ts.require(principal, "link", task)
     case = _case_for(session, principal, task, body.case)
-    exists = session.scalar(
-        select(TaskTestLink.id).where(
+    from app.api.routers.task_criteria import checked_criterion
+
+    criterion = checked_criterion(session, task, body.criterion_id)
+    exists = session.scalars(
+        select(TaskTestLink).where(
             TaskTestLink.task_id == task.id,
             TaskTestLink.case_id == case.id,
             TaskTestLink.kind == "covers",
         )
-    )
+    ).first()
     if exists is None:
         session.add(
             TaskTestLink(
-                task_id=task.id, case_id=case.id, kind="covers", created_by=principal.user_id
+                task_id=task.id,
+                case_id=case.id,
+                kind="covers",
+                created_by=principal.user_id,
+                criterion_id=criterion,
             )
         )
         ts.log(session, task, principal.user_id, "testcase", None, f"C{case.id}")
+        session.commit()
+    elif "criterion_id" in body.model_fields_set and exists.criterion_id != criterion:
+        ts.log(session, task, principal.user_id, "testcase", f"C{case.id}", f"C{case.id}")
+        exists.criterion_id = criterion
         session.commit()
     return quality.coverage(session, task.id)
 

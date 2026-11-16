@@ -6,7 +6,7 @@ import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
 import { Card, Loading, Message, Pill } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
-import type { TaskDetail, TaskSpace, TaskVersion } from "@/lib/types";
+import type { TaskCoverCase, TaskCriterion, TaskDetail, TaskSpace, TaskVersion } from "@/lib/types";
 
 import { errorText, refreshTasks } from "./taskParts";
 
@@ -19,29 +19,176 @@ interface Coverage {
   failed: number;
   untested: number;
   hidden?: boolean;
-  cases: { case_id: number; key: string; title: string; status: string; run_id: number | null; test_id: number | null }[];
+  cases: TaskCoverCase[];
+  criteria?: TaskCriterion[];
 }
 
 const STATUS_TONE: Record<string, "good" | "bad" | "warn" | undefined> = { passed: "good", failed: "bad", blocked: "warn", retest: "warn" };
 const STATUS_LABEL: Record<string, string> = { passed: "Passed", failed: "Failed", blocked: "Blocked", retest: "Retest", untested: "Chưa chạy" };
 
-/** The testcases that cover this task (a Story's acceptance), with their latest result. */
+/** Acceptance criteria with stable ids (docs/specs/31 §20.3): add, edit, tick, move, delete; each
+ * with the testcases linked to it and their combined status. */
+function TaskCriteria({ task, onChanged }: { task: TaskDetail; onChanged: () => void }) {
+  const path = `/tasks/${encodeURIComponent(task.key)}/criteria`;
+  const got = useApi<TaskCriterion[]>(path);
+  const [text, setText] = useState("");
+  const [editing, setEditing] = useState<{ id: number; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const items = got.data;
+  const canEdit = task.can.edit;
+
+  async function run(work: () => Promise<TaskCriterion[] | void>): Promise<boolean> {
+    setBusy(true);
+    setMessage(null);
+    let ok = false;
+    try {
+      const out = await work();
+      if (out) await got.mutate(out, { revalidate: false });
+      else await got.mutate();
+      onChanged();
+      ok = true;
+    } catch (e) {
+      setMessage(`Lỗi: ${errorText(e)}`);
+    }
+    setBusy(false);
+    return ok;
+  }
+
+  const add = () =>
+    run(async () => {
+      const out = await api.post<TaskCriterion[]>(path, { text: text.trim() });
+      setText("");
+      return out;
+    });
+  const patch = (id: number, body: Partial<Pick<TaskCriterion, "text" | "done" | "position">>) => run(() => api.patch<TaskCriterion[]>(`${path}/${id}`, body));
+  const remove = (c: TaskCriterion) => {
+    if (!window.confirm(`Xoá tiêu chí “${c.text}”? Testcase gắn với nó vẫn phủ task.`)) return;
+    void run(async () => {
+      await api.delete(`${path}/${c.id}`);
+    });
+  };
+
+  const done = items?.filter((c) => c.done).length ?? 0;
+  return (
+    <section className="tk-section qa-criteria" aria-labelledby="qa-criteria-title">
+      <div className="tk-section-head">
+        <h3 id="qa-criteria-title">
+          <Icon name="clipboardCheck" size={16} /> Tiêu chí chấp nhận
+          {items && items.length > 0 && (
+            <span className="small muted">
+              {" "}
+              · {done}/{items.length} đạt
+            </span>
+          )}
+        </h3>
+      </div>
+      {message && <Message text={message} onClose={() => setMessage(null)} />}
+      {!items ? (
+        <Loading error={got.error} rows={2} />
+      ) : !items.length ? (
+        <p className="small faint">Chưa có tiêu chí chấp nhận. Mỗi tiêu chí có mã riêng để gắn testcase và xem độ phủ theo từng tiêu chí.</p>
+      ) : (
+        <ol className="qa-crit-list">
+          {items.map((c, i) => (
+            <li key={c.id} className={c.done ? "qa-crit done" : "qa-crit"}>
+              <input type="checkbox" checked={c.done} disabled={!canEdit || busy} onChange={(e) => void patch(c.id, { done: e.target.checked })} aria-label={`Đạt: ${c.text}`} />
+              <div className="qa-crit-main">
+                {editing?.id === c.id ? (
+                  <form
+                    className="tk-inline-form"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!editing.text.trim()) return;
+                      void patch(c.id, { text: editing.text.trim() }).then((ok) => ok && setEditing(null));
+                    }}
+                  >
+                    <input value={editing.text} maxLength={500} autoFocus onChange={(e) => setEditing({ id: c.id, text: e.target.value })} aria-label="Nội dung tiêu chí" />
+                    <button type="submit" className="sm" disabled={busy || !editing.text.trim()}>
+                      Lưu
+                    </button>
+                    <button type="button" className="sm ghost" onClick={() => setEditing(null)}>
+                      Huỷ
+                    </button>
+                  </form>
+                ) : (
+                  <span className="qa-crit-text">
+                    <span className="qa-crit-no">AC{i + 1}</span> {c.text}
+                  </span>
+                )}
+                {c.status !== null && (
+                  <div className="qa-crit-cases small">
+                    {c.cases.length ? (
+                      c.cases.map((tc) => (
+                        <span key={tc.case_id} className="qa-crit-case" title={tc.title}>
+                          <span className="tk-key">{tc.key}</span>
+                          <Pill tone={STATUS_TONE[tc.status]}>{STATUS_LABEL[tc.status] ?? tc.status}</Pill>
+                        </span>
+                      ))
+                    ) : (
+                      <span className="faint">chưa có testcase</span>
+                    )}
+                  </div>
+                )}
+              </div>
+              {c.status && c.status !== "none" && <Pill tone={STATUS_TONE[c.status]}>{STATUS_LABEL[c.status] ?? c.status}</Pill>}
+              {canEdit && editing?.id !== c.id && (
+                <span className="qa-crit-actions">
+                  <IconButton icon="chevronUp" label="Lên trên" disabled={busy || i === 0} onClick={() => void patch(c.id, { position: i - 1 })} />
+                  <IconButton icon="chevronDown" label="Xuống dưới" disabled={busy || i === items.length - 1} onClick={() => void patch(c.id, { position: i + 1 })} />
+                  <IconButton icon="edit" label="Sửa tiêu chí" disabled={busy} onClick={() => setEditing({ id: c.id, text: c.text })} />
+                  <IconButton icon="remove" label="Xoá tiêu chí" tone="danger" disabled={busy} onClick={() => remove(c)} />
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+      {canEdit && (
+        <form
+          className="tk-inline-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (text.trim()) void add();
+          }}
+        >
+          <input value={text} maxLength={500} onChange={(e) => setText(e.target.value)} placeholder="Ví dụ: Lưu được khách hàng khi đủ trường bắt buộc" aria-label="Tiêu chí mới" />
+          <button type="submit" className="sm" disabled={busy || !text.trim()}>
+            Thêm tiêu chí
+          </button>
+        </form>
+      )}
+    </section>
+  );
+}
+
+/** The task's acceptance criteria, then the testcases that cover it (a Story's acceptance), with
+ * their latest result; a testcase can be linked to one criterion. */
 export function TaskTests({ task }: { task: TaskDetail }) {
   const path = `/tasks/${encodeURIComponent(task.key)}/tests`;
   const got = useApi<Coverage>(path);
+  const criteria = useApi<TaskCriterion[]>(`/tasks/${encodeURIComponent(task.key)}/criteria`);
   const [ref, setRef] = useState("");
+  const [criterion, setCriterion] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const c = got.data;
-  if (c?.hidden) return null;
+  const crit = criteria.data ?? [];
+  const label = (id: number | null | undefined) => {
+    const i = crit.findIndex((x) => x.id === id);
+    return i >= 0 ? `AC${i + 1}` : null;
+  };
+  const criteriaSection = <TaskCriteria task={task} onChanged={() => void got.mutate()} />;
+  if (c?.hidden) return criteriaSection;
 
   async function add() {
     if (!ref.trim()) return;
     setBusy(true);
     setMessage(null);
     try {
-      await got.mutate(await api.post<Coverage>(path, { case: ref.trim() }), { revalidate: false });
+      await got.mutate(await api.post<Coverage>(path, { case: ref.trim(), ...(criterion ? { criterion_id: Number(criterion) } : {}) }), { revalidate: false });
       setRef("");
+      await criteria.mutate();
       await refreshTasks();
     } catch (e) {
       setMessage(`Lỗi: ${errorText(e)}`);
@@ -49,10 +196,20 @@ export function TaskTests({ task }: { task: TaskDetail }) {
     setBusy(false);
   }
 
+  async function relink(tc: TaskCoverCase, to: string) {
+    try {
+      await got.mutate(await api.post<Coverage>(path, { case: String(tc.case_id), criterion_id: to ? Number(to) : null }), { revalidate: false });
+      await criteria.mutate();
+    } catch (e) {
+      setMessage(`Lỗi: ${errorText(e)}`);
+    }
+  }
+
   async function remove(caseId: number) {
     try {
       await api.delete(`${path}/${caseId}`);
       await got.mutate();
+      await criteria.mutate();
       await refreshTasks();
     } catch (e) {
       setMessage(`Lỗi: ${errorText(e)}`);
@@ -60,6 +217,8 @@ export function TaskTests({ task }: { task: TaskDetail }) {
   }
 
   return (
+    <>
+    {criteriaSection}
     <section className="tk-section" aria-labelledby="tk-tests-title">
       <div className="tk-section-head">
         <h3 id="tk-tests-title">
@@ -84,6 +243,18 @@ export function TaskTests({ task }: { task: TaskDetail }) {
               <span className="tk-key">{tc.key}</span>
               <span className="tk-ellipsis">{tc.title}</span>
               <span className="spacer" />
+              {task.can.link && crit.length > 0 ? (
+                <select className="qa-case-crit" value={tc.criterion_id ?? ""} onChange={(e) => void relink(tc, e.target.value)} aria-label={`Tiêu chí của ${tc.key}`}>
+                  <option value="">Cả task</option>
+                  {crit.map((x, i) => (
+                    <option key={x.id} value={x.id}>
+                      AC{i + 1}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                label(tc.criterion_id) && <span className="pill">{label(tc.criterion_id)}</span>
+              )}
               <Pill tone={STATUS_TONE[tc.status]}>{STATUS_LABEL[tc.status] ?? tc.status}</Pill>
               {task.can.link && <IconButton icon="close" label={`Bỏ ${tc.key}`} onClick={() => void remove(tc.case_id)} />}
             </li>
@@ -99,12 +270,23 @@ export function TaskTests({ task }: { task: TaskDetail }) {
           }}
         >
           <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Mã testcase, ví dụ C123" aria-label="Mã testcase" />
+          {crit.length > 0 && (
+            <select className="qa-case-crit" value={criterion} onChange={(e) => setCriterion(e.target.value)} aria-label="Gắn vào tiêu chí">
+              <option value="">Cả task</option>
+              {crit.map((x, i) => (
+                <option key={x.id} value={x.id}>
+                  AC{i + 1}: {x.text.length > 40 ? `${x.text.slice(0, 40)}…` : x.text}
+                </option>
+              ))}
+            </select>
+          )}
           <button type="submit" className="sm" disabled={busy || !ref.trim()}>
             Gắn testcase
           </button>
         </form>
       )}
     </section>
+    </>
   );
 }
 

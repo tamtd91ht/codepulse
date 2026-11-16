@@ -196,6 +196,8 @@ def my_work(session: Session, p: Principal, tz: ZoneInfo) -> dict[str, Any]:
         task = next((t for t in open_ if t.id == item["task_id"]), None)
         if task is not None:
             flag(task, "test_failed", item["text"], "open")
+    # Tests to run again now their bugs are done (§20.3): mine, or failed by me.
+    attention += quality.retests_for(session, p)
 
     # Blocked: an open task "blocks" mine.
     blocked: dict[int, list[str]] = defaultdict(list)
