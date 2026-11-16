@@ -37,13 +37,14 @@ from app.models import (
     TaskGitLink,
     TaskHistory,
     TaskLink,
+    TaskPriority,
     TaskSpace,
     TaskStatus,
     TaskVersion,
     TaskWatcher,
     TaskWorklog,
 )
-from app.models.tasks import FIELD_KINDS, LINK_KINDS, PRIORITIES
+from app.models.tasks import FIELD_KINDS, LINK_KINDS, PRIORITY_COLORS
 from app.tasks import ai as task_ai
 from app.tasks import git as task_git
 from app.tasks import reports
@@ -71,7 +72,8 @@ def _content_type(declared: str | None, name: str) -> str | None:
 
 
 TaskType = Literal["epic", "story", "task", "bug", "subtask"]
-Priority = Literal["highest", "high", "medium", "low", "lowest"]
+# A priority key of the dự án (docs/specs/31 §18); checked against its priorities.
+Priority = Annotated[str, Field(min_length=1, max_length=30)]
 Relation = Literal["fixes", "refs"]
 
 
@@ -296,6 +298,43 @@ def put_statuses(
     return [ts.status_out(s) for s in ts.statuses_of(session, bp_id)]
 
 
+class PriorityIn(BaseModel):
+    id: int | None = None
+    name: str = Field(min_length=1, max_length=40)
+    level: Literal["highest", "high", "medium", "low", "lowest"]
+    color: str
+    is_default: bool = False
+
+
+class PrioritiesIn(BaseModel):
+    priorities: list[PriorityIn] = Field(min_length=1, max_length=12)
+    move: dict[int, int] = Field(default_factory=dict)
+
+
+@router.get("/tasks/spaces/{bp_id}/priorities")
+def get_priorities(bp_id: int, principal: Viewer, session: SessionDep) -> list[dict[str, Any]]:
+    ts.space_or_404(session, principal, bp_id)
+    return [ts.priority_out(x) for x in ts.priorities_of(session, bp_id)]
+
+
+@router.put("/tasks/spaces/{bp_id}/priorities")
+def put_priorities(
+    bp_id: int, body: PrioritiesIn, principal: Viewer, session: SessionDep
+) -> list[dict[str, Any]]:
+    """The dự án's priorities, as Jira's priority scheme (docs/specs/31 §18)."""
+    ts.space_or_404(session, principal, bp_id)
+    ts.require_manage(principal, bp_id)
+    if bad := [x.color for x in body.priorities if x.color not in PRIORITY_COLORS]:
+        raise HTTPException(422, f"màu không hợp lệ: {bad}")
+    out = ts.set_priorities(
+        session, bp_id, [x.model_dump() for x in body.priorities], dict(body.move)
+    )
+    audit(session, principal.user_id, "task.priorities", f"business_project:{bp_id}", n=len(out))
+    _reproject(session, select(Task.id).where(Task.business_project_id == bp_id))
+    session.commit()
+    return [ts.priority_out(x) for x in ts.priorities_of(session, bp_id)]
+
+
 @router.get("/tasks/spaces/{bp_id}/fields")
 def get_fields(bp_id: int, principal: Viewer, session: SessionDep) -> list[dict[str, Any]]:
     ts.space_or_404(session, principal, bp_id)
@@ -504,10 +543,16 @@ def list_tasks(
         updated_from=updated_from,
     )
     total = session.scalar(select(func.count()).select_from(query.subquery())) or 0
-    if sort == "priority":
-        from sqlalchemy import case
-
-        column: Any = case({p: i for i, p in enumerate(PRIORITIES)}, value=Task.priority)
+    if sort == "priority":  # the dự án's own order: first = most urgent
+        column: Any = (
+            select(TaskPriority.position)
+            .where(
+                TaskPriority.business_project_id == Task.business_project_id,
+                TaskPriority.key == Task.priority,
+            )
+            .correlate(Task)
+            .scalar_subquery()
+        )
     else:
         column = SORTS[sort]
     ordered = column.desc().nulls_last() if order == "desc" else column.asc().nulls_last()

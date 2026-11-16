@@ -75,6 +75,7 @@ Menu **Task** (docs/specs/31). Người quản lý dự án bật Task ở tab *
 - **Board** kéo thả giữa các trạng thái; **Backlog** xếp task vào sprint, bắt đầu / kết thúc sprint; **Danh sách** lọc, lưu bộ lọc, sửa hàng loạt; **Báo cáo** burndown, velocity, tạo / xong, cycle time, giờ làm; **Phiên bản** sinh release notes.
 - Thành viên tạo task, sửa task mình tạo hoặc được giao, bình luận mọi task (`@tamtd` để nhắc người có email `tamtd@…`).
 - **Phân quyền như Jira** (Quản trị › Phân quyền, nhóm *Task*): Xem, Tạo, Sửa, Giao việc, Chuyển trạng thái, Xoá, Bình luận, Đính kèm, Ghi giờ, Liên kết, Kiểm duyệt (sửa / xoá nội dung người khác), Sprint, Quản trị. Phạm vi *own* = task mình tạo hoặc được giao, *project* = dự án mình quản lý, *all* = mọi dự án mình xem được. Mặc định thành viên không xoá task và không lập sprint; quản lý dự án có đủ quyền ở dự án mình.
+- **Mức ưu tiên riêng của dự án** (như Jira): *Cài đặt › Mức ưu tiên* đặt tên, màu, mũi tên, thứ tự và mức mặc định; xoá một mức thì chọn mức nhận task của nó. Board lọc được theo ưu tiên; tab *Báo cáo* có bảng *Theo ưu tiên* (đang mở, quá hạn, point, tạo / xong).
 - **Đính kèm file, ảnh:** bấm *Tải file lên*, kéo thả file vào khung *Đính kèm*, hoặc chụp màn hình rồi **Ctrl+V** khi đang xem task. Khi viết mô tả / bình luận, dán ảnh (Ctrl+V) hoặc kéo thả file vào ô soạn: ảnh hiện ngay trong nội dung. Bấm ảnh thu nhỏ để xem cỡ lớn.
 - **Gắn code với task:** ghi mã vào nhánh, commit, MR — CodePulse tự nối và tự chuyển trạng thái:
 

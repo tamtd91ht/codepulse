@@ -13,6 +13,7 @@ import {
   PersonAvatar,
   PointsChip,
   PriorityIcon,
+  RowPriority,
   TASK_TYPES,
   TYPE_LABEL,
   TypeIcon,
@@ -21,6 +22,7 @@ import {
   confirmDone,
   errorText,
   personName,
+  priorityList,
   refreshTasks,
   sortedStatuses,
   today,
@@ -45,7 +47,7 @@ export function neighbours(list: TaskRow[], key: string, beforeKey: string | nul
 
 const DRAG_TYPE = "text/x-task-key";
 
-type BoardFilters = { assignees: number[]; type: TaskType | ""; label: string; mine: boolean };
+type BoardFilters = { assignees: number[]; priorities: string[]; type: TaskType | ""; label: string; mine: boolean };
 
 /** Board (§13): one column per status, drag a card to change its status or order. */
 export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | undefined; onOpen: (key: string) => void }) {
@@ -78,7 +80,7 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
   useEffect(() => setLocal(null), [loaded]);
   const rows = local ?? loaded;
 
-  const [filters, setFilters] = useState<BoardFilters>({ assignees: [], type: "", label: "", mine: false });
+  const [filters, setFilters] = useState<BoardFilters>({ assignees: [], priorities: [], type: "", label: "", mine: false });
   const [drag, setDrag] = useState<{ key: string; from: number } | null>(null);
   const [over, setOver] = useState<{ status: number; before: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +93,7 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
         (r) =>
           (!filters.mine || r.assignee?.id === me?.id) &&
           (!filters.assignees.length || filters.assignees.includes(r.assignee?.id ?? 0)) &&
+          (!filters.priorities.length || filters.priorities.includes(r.priority)) &&
           (!filters.type || r.type === filters.type) &&
           (!filters.label || (r.labels ?? []).includes(filters.label)),
       ),
@@ -101,6 +104,11 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
     [statuses, shown],
   );
 
+  const priorityOptions: MultiOption<string>[] = priorityList(space).map((p) => ({
+    value: p.key,
+    label: p.name,
+    lead: <PriorityIcon name={p.name} level={p.level} color={p.color} />,
+  }));
   const assigneeOptions: MultiOption<number>[] = [
     { value: 0, label: "Chưa giao" },
     ...(people.data ?? []).map((p) => ({
@@ -155,6 +163,10 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
         <label className="rq-field">
           <span className="rq-label">Người làm</span>
           <MultiSelect label="Người làm" options={assigneeOptions} value={filters.assignees} onChange={(v) => setFilters({ ...filters, assignees: v })} empty="Mọi người" />
+        </label>
+        <label className="rq-field">
+          <span className="rq-label">Ưu tiên</span>
+          <MultiSelect label="Ưu tiên" options={priorityOptions} value={filters.priorities} onChange={(v) => setFilters({ ...filters, priorities: v })} empty="Mọi mức" />
         </label>
         <label className="rq-field">
           <span className="rq-label">Loại</span>
@@ -319,7 +331,7 @@ export function TaskCard({
           </span>
         )}
         <PointsChip points={task.story_points} />
-        <PriorityIcon priority={task.priority} />
+        <RowPriority row={task} />
         <PersonAvatar person={task.assignee} />
       </div>
     </article>

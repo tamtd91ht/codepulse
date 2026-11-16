@@ -14278,24 +14278,48 @@ textarea.bdd-input[aria-invalid="true"] {
   flex: none;
   color: var(--muted);
 }
-.tk-prio-highest {
-  color: var(--bad-text);
+/* A priority's colour (chosen per dự án, docs/specs/31 §18) and its level's arrow. */
+.tk-prio-c-red {
+  --tk-prio: var(--bad-text);
 }
-.tk-prio-high {
-  color: var(--sev-high-text);
+.tk-prio-c-orange {
+  --tk-prio: var(--sev-high-text);
 }
-.tk-prio-medium {
-  color: var(--warn);
+.tk-prio-c-amber {
+  --tk-prio: var(--warn);
 }
-.tk-prio-low {
-  color: var(--info);
+.tk-prio-c-green {
+  --tk-prio: var(--good);
 }
-.tk-prio-lowest {
-  color: var(--faint);
+.tk-prio-c-blue {
+  --tk-prio: var(--info);
 }
-.tk-prio-low svg,
-.tk-prio-lowest svg {
+.tk-prio-c-purple {
+  --tk-prio: var(--indigo);
+}
+.tk-prio-c-gray {
+  --tk-prio: var(--sev-info-text);
+}
+.tk-prio[class*="tk-prio-c-"] {
+  color: var(--tk-prio);
+}
+.tk-prio-l-highest svg {
+  stroke-width: 3;
+}
+.tk-prio-l-low svg,
+.tk-prio-l-lowest svg {
   transform: rotate(180deg);
+}
+.tk-prio-l-lowest svg {
+  stroke-width: 3;
+}
+.tk-prio-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--tk-prio);
 }
 .tk-key {
   font-family: var(--font-mono);
@@ -15365,4 +15389,16 @@ a.icon-btn {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   cursor: zoom-in;
+}
+
+/* Task report: open tasks per priority (docs/specs/31 §18.3). */
+.tk-prio-bar-col {
+  width: 30%;
+  min-width: 80px;
+}
+.tk-prio-bar-col .tk-bar-track {
+  display: block;
+}
+.tk-prio-fill {
+  background: var(--tk-prio);
 }

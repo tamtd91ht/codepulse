@@ -9,7 +9,7 @@ import { qs, useApi } from "@/lib/api";
 import { dayLabel, localDay, shiftDays } from "@/lib/format";
 import type { TaskBurndown, TaskReports as Reports, TaskSpace } from "@/lib/types";
 
-import { PersonAvatar, fmtMinutes, personName, useSprints } from "./taskParts";
+import { PersonAvatar, PriorityIcon, fmtMinutes, personName, useSprints } from "./taskParts";
 
 /** Báo cáo (§13): burndown of a sprint, velocity, created vs resolved, cycle time, by status / person, worklog. */
 export function TaskReports({ space }: { space: TaskSpace }) {
@@ -193,6 +193,53 @@ export function TaskReports({ space }: { space: TaskSpace }) {
           )}
         </Card>
       </div>
+
+      <Card title="Theo ưu tiên" id="tk-by-priority" subtitle="Task đang mở theo mức ưu tiên của dự án; tạo / xong trong khoảng đã chọn" flush>
+        {!r ? (
+          <Loading error={data.error} rows={4} />
+        ) : !r.by_priority?.length ? (
+          <EmptyState title="Dự án chưa có mức ưu tiên" />
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ưu tiên</th>
+                  <th className="tk-prio-bar-col" aria-label="Tỉ lệ đang mở" />
+                  <th className="num">Đang mở</th>
+                  <th className="num">Quá hạn</th>
+                  <th className="num">Point đang mở</th>
+                  <th className="num">Tạo mới</th>
+                  <th className="num">Đã xong</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  const rows = r.by_priority ?? [];
+                  const max = Math.max(...rows.map((x) => x.open), 1);
+                  return rows.map((x) => (
+                    <tr key={x.priority.key}>
+                      <td>
+                        <PriorityIcon name={x.priority.name} level={x.priority.level} color={x.priority.color} withLabel />
+                      </td>
+                      <td className="tk-prio-bar-col">
+                        <span className={`tk-bar-track tk-prio-c-${x.priority.color}`}>
+                          <span className="tk-bar-fill tk-prio-fill" style={{ width: `${(x.open / max) * 100}%` }} />
+                        </span>
+                      </td>
+                      <td className="num">{x.open}</td>
+                      <td className={`num${x.overdue ? " tk-overdue" : ""}`}>{x.overdue}</td>
+                      <td className="num">{x.open_points}</td>
+                      <td className="num">{x.created}</td>
+                      <td className="num">{x.resolved}</td>
+                    </tr>
+                  ));
+                })()}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
       <Card title="Theo người làm" id="tk-by-assignee" flush>
         {!r ? (

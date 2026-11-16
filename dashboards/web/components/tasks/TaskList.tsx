@@ -12,10 +12,9 @@ import type { Me, TaskFilter, TaskPage, TaskSpace } from "@/lib/types";
 
 import {
   GitBadge,
-  PRIORITIES,
-  PRIORITY_LABEL,
+  priorityList,
   PersonAvatar,
-  PriorityIcon,
+  RowPriority,
   StatusPill,
   TASK_TYPES,
   TYPE_LABEL,
@@ -174,9 +173,9 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
             <span className="rq-label">Ưu tiên</span>
             <select value={filters.priority} onChange={(e) => set("priority", e.target.value)}>
               <option value="">Mọi mức</option>
-              {PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  {PRIORITY_LABEL[p]}
+              {priorityList(space).map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.name}
                 </option>
               ))}
             </select>
@@ -273,9 +272,9 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
             ))}
           </BulkSelect>
           <BulkSelect label="Ưu tiên" disabled={busy} onPick={(v) => void bulk({ set: { priority: v } }, "đổi ưu tiên")}>
-            {PRIORITIES.map((p) => (
-              <option key={p} value={p}>
-                {PRIORITY_LABEL[p]}
+            {priorityList(space).map((p) => (
+              <option key={p.key} value={p.key}>
+                {p.name}
               </option>
             ))}
           </BulkSelect>
@@ -401,7 +400,7 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
                           <StatusPill status={t.status} />
                         </td>
                         <td className="nowrap">
-                          <PriorityIcon priority={t.priority} withLabel />
+                          <RowPriority row={t} withLabel />
                         </td>
                         <td className="nowrap">
                           <span className="tk-person">

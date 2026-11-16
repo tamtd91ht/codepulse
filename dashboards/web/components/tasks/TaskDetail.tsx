@@ -15,8 +15,7 @@ import { TaskAiButtons } from "./TaskAi";
 import { TaskCode } from "./TaskCode";
 import {
   LINK_KIND_LABEL,
-  PRIORITIES,
-  PRIORITY_LABEL,
+  priorityList,
   PersonAvatar,
   StatusPill,
   TASK_TYPES,
@@ -547,11 +546,12 @@ function Fields({
       </Row>
       <Row label="Ưu tiên">
         <select value={task.priority} disabled={off} aria-label="Ưu tiên" onChange={(e) => void onPatch({ priority: e.target.value as TaskPriority })}>
-          {PRIORITIES.map((p) => (
-            <option key={p} value={p}>
-              {PRIORITY_LABEL[p]}
+          {priorityList(space).map((p) => (
+            <option key={p.key} value={p.key}>
+              {p.name}
             </option>
           ))}
+          {!priorityList(space).some((p) => p.key === task.priority) && <option value={task.priority}>{task.priority_name ?? task.priority}</option>}
         </select>
       </Row>
       <Row label="Loại">

@@ -29,6 +29,7 @@ from app.models import (
     Task,
     TaskGitLink,
     TaskHistory,
+    TaskPriority,
     TaskSpace,
     TaskStatus,
     TaskVersion,
@@ -63,7 +64,6 @@ DEFAULT_FLAGS = {
 }
 SEVERE = ("critical", "high")
 RANK_STEP = 1024.0
-PRIORITY_ORDER = {p: i for i, p in enumerate(PRIORITIES)}
 
 
 def link_of(key: str) -> str:
@@ -256,6 +256,7 @@ def enable_space(
             session.add(status)
             session.flush()
             ids[name] = status.id
+        seed_priorities(session, bp_id)
         space.rules = {
             **DEFAULT_FLAGS,
             "start": ids["In Progress"],
@@ -375,6 +376,169 @@ def set_statuses(
     return out
 
 
+# -- priorities (docs/specs/31 §18) ----------------------------------------------------------------
+
+# key, name, level, colour: what a new task space starts with (the five fixed ones from before).
+DEFAULT_PRIORITIES: tuple[tuple[str, str, str, str], ...] = (
+    ("highest", "Cao nhất", "highest", "red"),
+    ("high", "Cao", "high", "orange"),
+    ("medium", "Trung bình", "medium", "amber"),
+    ("low", "Thấp", "low", "blue"),
+    ("lowest", "Thấp nhất", "lowest", "gray"),
+)
+DEFAULT_PRIORITY = "medium"
+MAX_PRIORITIES = 12
+
+
+def seed_priorities(session: Session, bp_id: int) -> None:
+    for i, (key, name, level, color) in enumerate(DEFAULT_PRIORITIES):
+        session.add(
+            TaskPriority(
+                business_project_id=bp_id,
+                key=key,
+                name=name,
+                level=level,
+                color=color,
+                position=i,
+                is_default=key == DEFAULT_PRIORITY,
+            )
+        )
+    session.flush()
+
+
+def priorities_of(session: Session, bp_id: int) -> list[TaskPriority]:
+    return list(
+        session.scalars(
+            select(TaskPriority)
+            .where(TaskPriority.business_project_id == bp_id)
+            .order_by(TaskPriority.position, TaskPriority.id)
+        )
+    )
+
+
+def default_priority(session: Session, bp_id: int) -> str:
+    held = priorities_of(session, bp_id)
+    chosen = next((x for x in held if x.is_default), None) or next(
+        (x for x in held if x.key == DEFAULT_PRIORITY), None
+    )
+    if chosen is None and held:
+        chosen = held[len(held) // 2]
+    return chosen.key if chosen else DEFAULT_PRIORITY
+
+
+def check_priority(session: Session, bp_id: int, key: str) -> None:
+    found = session.scalars(
+        select(TaskPriority.id).where(
+            TaskPriority.business_project_id == bp_id, TaskPriority.key == key
+        )
+    ).first()
+    if found is None:
+        raise HTTPException(422, f"dự án không có mức ưu tiên {key}")
+
+
+def _priority_key(name: str, taken: set[str]) -> str:
+    """ "Khẩn cấp" -> "khan-cap": ASCII, stable after renames, unique in the dự án."""
+    import unicodedata
+
+    folded = unicodedata.normalize("NFKD", name.replace("đ", "d").replace("Đ", "D"))
+    ascii_name = folded.encode("ascii", "ignore").decode()
+    base = (re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-") or "p")[:24]
+    key, n = base, 2
+    while key in taken:
+        key, n = f"{base}-{n}", n + 1
+    return key
+
+
+def set_priorities(
+    session: Session, bp_id: int, wanted: list[dict[str, Any]], move: dict[int, int]
+) -> list[TaskPriority]:
+    """Replace the dự án's priorities, in order. One with tasks may go only with `move` (old id
+    -> new id); exactly one is the default (the first one marked, else the middle one)."""
+    if not wanted:
+        raise HTTPException(422, "cần ít nhất một mức ưu tiên")
+    if len(wanted) > MAX_PRIORITIES:
+        raise HTTPException(422, f"tối đa {MAX_PRIORITIES} mức ưu tiên")
+    # The space row lock: creating a task takes it too, so none lands on a priority being removed.
+    session.get(TaskSpace, bp_id, with_for_update=True)
+    names = [str(x["name"]).strip() for x in wanted]
+    if any(not n for n in names) or len({n.lower() for n in names}) != len(names):
+        raise HTTPException(422, "tên mức ưu tiên trống hoặc trùng")
+    current = {x.id: x for x in priorities_of(session, bp_id)}
+    keep = {int(x["id"]) for x in wanted if x.get("id") is not None}
+    if unknown := keep - set(current):
+        raise HTTPException(422, f"mức ưu tiên không thuộc dự án: {sorted(unknown)}")
+    # Everything is checked before anything is written.
+    gone = set(current) - keep
+    used_by: dict[int, int] = {}
+    for old_id in gone:
+        used = session.scalar(
+            select(func.count())
+            .select_from(Task)
+            .where(Task.business_project_id == bp_id, Task.priority == current[old_id].key)
+        )
+        if used:
+            if move.get(old_id) not in keep:
+                raise HTTPException(
+                    409, f"mức ưu tiên {current[old_id].name} còn {used} task: chọn mức chuyển sang"
+                )
+            used_by[old_id] = int(used)
+    taken = {x.key for x in current.values()}
+    out: list[TaskPriority] = []
+    for i, (item, name) in enumerate(zip(wanted, names, strict=True)):
+        row = current.get(int(item["id"])) if item.get("id") is not None else None
+        if row is None:
+            key = _priority_key(name, taken)
+            taken.add(key)
+            row = TaskPriority(business_project_id=bp_id, key=key)
+            session.add(row)
+        row.name = name[:40]
+        row.level = item["level"]
+        row.color = item["color"]
+        row.position = i
+        row.is_default = False
+        out.append(row)
+    marked = next((r for r, item in zip(out, wanted, strict=True) if item.get("is_default")), None)
+    (marked or out[len(out) // 2]).is_default = True
+    session.flush()
+    valid = {r.id: r for r in out}
+    for old_id in gone:
+        old = current[old_id]
+        if old_id in used_by:
+            target = valid[move[old_id]]
+            session.execute(
+                update(Task)
+                .where(Task.business_project_id == bp_id, Task.priority == old.key)
+                .values(priority=target.key)
+            )
+        session.delete(old)
+    session.flush()
+    return out
+
+
+def priority_out(x: TaskPriority) -> dict[str, Any]:
+    return {
+        "id": x.id,
+        "key": x.key,
+        "name": x.name,
+        "level": x.level,
+        "color": x.color,
+        "position": x.position,
+        "is_default": x.is_default,
+    }
+
+
+def priority_meta(session: Session, bp_ids: Iterable[int]) -> dict[tuple[int, str], TaskPriority]:
+    ids = set(bp_ids)
+    if not ids:
+        return {}
+    return {
+        (x.business_project_id, x.key): x
+        for x in session.scalars(
+            select(TaskPriority).where(TaskPriority.business_project_id.in_(ids))
+        )
+    }
+
+
 def status_out(s: TaskStatus) -> dict[str, Any]:
     return {
         "id": s.id,
@@ -396,6 +560,7 @@ def space_out(
         "types": list(space.types) if space else list(TASK_TYPES),
         "rules": rules_of(space) if space else dict(DEFAULT_FLAGS),
         "statuses": [status_out(s) for s in statuses_of(session, bp.id)] if space else [],
+        "priorities": [priority_out(x) for x in priorities_of(session, bp.id)] if space else [],
         "can_manage": can_manage_space(p, bp.id),
         "can_create": space is not None and can_create(p, bp.id),
         "can_sprint": space is not None and can_sprint(p, bp.id),
@@ -594,6 +759,8 @@ def create_task(
     parent = _parent(session, bp_id, data.get("parent_key"), task_type)
     if task_type == "subtask" and parent is None:
         raise HTTPException(422, "sub-task cần task cha")
+    priority = data.get("priority") or default_priority(session, bp_id)
+    check_priority(session, bp_id, priority)
     statuses = statuses_of(session, bp_id)
     if data.get("status_id") is not None:
         status = _status(session, bp_id, data["status_id"])
@@ -613,7 +780,7 @@ def create_task(
         title=title[:300],
         description=data.get("description"),
         status_id=status.id,
-        priority=data.get("priority") or "medium",
+        priority=priority,
         assignee_id=data.get("assignee_id"),
         reporter_id=actor_id,
         parent_id=parent.id if parent else None,
@@ -757,8 +924,10 @@ def update_task(
     _check_refs(session, bp_id, changes, actor_id)
     if "type" in changes and changes["type"] not in space.types:
         raise HTTPException(422, f"dự án không dùng loại {changes['type']}")
-    if "priority" in changes and changes["priority"] not in PRIORITIES:
-        raise HTTPException(422, "ưu tiên không hợp lệ")
+    if "priority" in changes:
+        if not changes["priority"]:
+            raise HTTPException(422, "ưu tiên trống")
+        check_priority(session, bp_id, changes["priority"])
     if "title" in changes and not (changes["title"] or "").strip():
         raise HTTPException(422, "tiêu đề trống")
     if "parent_key" in changes:
@@ -819,6 +988,10 @@ def update_task(
                 )
         elif field in ("sprint_id", "version_id"):
             shown_old, shown_new = _named(session, field, old), _named(session, field, value)
+        elif field == "priority":
+            meta = priority_meta(session, [bp_id])
+            shown_old = meta[(bp_id, old)].name if (bp_id, old) in meta else old
+            shown_new = meta[(bp_id, value)].name if (bp_id, value) in meta else value
         log(session, task, actor_id, field.removesuffix("_id"), shown_old, shown_new, via)
     if changes.get("status_id") is not None:
         set_status(session, task, _status(session, bp_id, changes["status_id"]), actor_id, via)
@@ -974,6 +1147,10 @@ def _open_findings(session: Session, review_ids: set[int]) -> dict[int, dict[str
     return out
 
 
+def _level_of(key: str) -> str:
+    return key if key in PRIORITIES else "medium"
+
+
 def _num(value: Decimal | None) -> float | None:
     return None if value is None else float(value)
 
@@ -1014,9 +1191,11 @@ def rows(session: Session, tasks: list[Task]) -> list[dict[str, Any]]:
         if category == "done":
             subtasks[int(parent_id)]["done"] += int(n)
     git = git_summaries(session, ids)
+    prio = priority_meta(session, {t.business_project_id for t in tasks})
     out = []
     for t in tasks:
         status = statuses.get(t.status_id)
+        level = prio.get((t.business_project_id, t.priority))
         out.append(
             {
                 "id": t.id,
@@ -1030,6 +1209,9 @@ def rows(session: Session, tasks: list[Task]) -> list[dict[str, Any]]:
                     else None
                 ),
                 "priority": t.priority,
+                "priority_name": level.name if level else t.priority,
+                "priority_level": level.level if level else _level_of(t.priority),
+                "priority_color": level.color if level else "gray",
                 "assignee": person(users.get(t.assignee_id)) if t.assignee_id else None,
                 "reporter": person(users.get(t.reporter_id)) if t.reporter_id else None,
                 "labels": list(t.labels or []),

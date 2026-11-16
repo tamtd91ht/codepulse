@@ -76,7 +76,7 @@ def get_task_work(
     lines = [
         f"## {task.key}: {render.inline(task.title)}",
         f"Loại {task.type} · trạng thái {render.inline(row['status']['name'])}"
-        f" · ưu tiên {task.priority}",
+        f" · ưu tiên {render.inline(row['priority_name'])}",
         "",
         "Mô tả: " + render.inline((task.description or "")[:6000]),
         "",

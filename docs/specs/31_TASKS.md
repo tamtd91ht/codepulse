@@ -339,3 +339,32 @@ Người làm không tự nhận thông báo.
 - **Xoá:** người tải lên (còn `tasks.attach`) hoặc người có `tasks.moderate`; giao diện chỉ hiện
   nút xoá theo `can_delete` của từng file. Xoá file không sửa mô tả / bình luận đã chèn nó (ảnh
   hiện thành ảnh hỏng, như Jira).
+
+## 18. Mức ưu tiên riêng của dự án (người dùng 2026-11-16: "làm cả 3 luôn đi", migration `f3b5d7e9a1c4`)
+
+### 18.1 Như priority scheme của Jira
+- Bảng `task_priorities` (`business_project_id`, `key`, `name`, `level`, `color`, `position`, `is_default`):
+  mỗi dự án tự đặt **tên**, **màu** (đỏ, cam, vàng, xanh lá, xanh dương, tím, xám — token của design
+  system), **thứ tự** (trên cùng = gấp nhất) và **mức mặc định** khi tạo task; tối đa 12 mức.
+- `level` là một trong 5 mức cũ (`highest`…`lowest`): quyết định **mũi tên** hiển thị và **nghĩa**
+  (DPI: Bug production có mức `highest` → P1, `high` → P2, còn lại P3).
+- `tasks.priority` giữ `key` của mức (bỏ CHECK cố định). Key sinh từ tên lúc tạo (ASCII:
+  "Khẩn cấp" → `khan-cap`), không đổi khi đổi tên — lọc đã lưu, MCP, smart commit vẫn đúng.
+- Dự án bật Task mới và mọi dự án có sẵn nhận 5 mức cũ với đúng key cũ (task không đổi gì).
+- `PUT /tasks/spaces/{bp}/priorities` (`tasks.manage`): `{priorities:[{id?, name, level, color,
+  is_default}], move:{id_cũ: id_mới}}`. Xoá mức còn task mà không có `move` → 409; kiểm tra xong mới
+  ghi. Tên trống / trùng (không phân biệt hoa thường) hoặc màu lạ → 422. `GET` cùng đường dẫn đọc.
+- `GET /tasks/spaces` trả `priorities`; mỗi TaskRow thêm `priority_name`, `priority_level`,
+  `priority_color`. Sắp xếp theo ưu tiên dùng thứ tự của dự án. Lịch sử ghi tên mức, không ghi key.
+- Giao diện: *Cài đặt › Mức ưu tiên* (sửa tên, mũi tên, màu, mặc định, lên / xuống, thêm, xoá kèm chọn
+  mức chuyển task); mọi ô chọn ưu tiên (tạo task, chi tiết, lọc danh sách, sửa hàng loạt) dùng danh
+  sách của dự án.
+
+### 18.2 Board lọc theo ưu tiên
+- Bộ lọc Board thêm **Ưu tiên** (chọn nhiều, kèm biểu tượng), cạnh Người làm / Loại / Nhãn.
+
+### 18.3 Báo cáo theo ưu tiên
+- `GET /tasks/spaces/{bp}/reports` thêm `by_priority:[{priority, open, overdue, open_points, created,
+  resolved}]` theo thứ tự mức của dự án: đang mở, quá hạn (đang mở, hạn < hôm nay), story point đang
+  mở; tạo mới / xong trong khoảng ngày đã chọn. Tab Báo cáo có bảng **Theo ưu tiên** với thanh tỉ lệ
+  theo màu của mức.

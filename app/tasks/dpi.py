@@ -28,6 +28,7 @@ from app.models import (
     Sprint,
     Task,
     TaskGitLink,
+    TaskPriority,
     TaskSpace,
     TaskStatus,
     TaskVersion,
@@ -99,11 +100,18 @@ def _account(session: Session, user_id: int | None) -> list[int]:
     return [int(found)] if found is not None else []
 
 
-def _severity(task: Task, dpi_type: str | None) -> str | None:
-    """A Bug labelled production (prod, prod-bug): P1 / P2 by priority, else P3."""
+def _severity(session: Session, task: Task, dpi_type: str | None) -> str | None:
+    """A Bug labelled production (prod, prod-bug): P1 / P2 by its priority's level (the dự án
+    names its priorities, docs/specs/31 §18; the level says how urgent), else P3."""
     if dpi_type != "bug" or not {x.lower() for x in task.labels or []} & PROD_LABELS:
         return None
-    return {"highest": "P1", "high": "P2"}.get(task.priority, "P3")
+    level = session.scalar(
+        select(TaskPriority.level).where(
+            TaskPriority.business_project_id == task.business_project_id,
+            TaskPriority.key == task.priority,
+        )
+    )
+    return {"highest": "P1", "high": "P2"}.get(level or task.priority, "P3")
 
 
 def _row(session: Session, task: Task, base_url: str) -> dict[str, Any] | None:
@@ -149,7 +157,7 @@ def _row(session: Session, task: Task, base_url: str) -> dict[str, Any] | None:
         "type": dpi_type,
         "complexity": size,
         "complexity_points": size_points,
-        "prod_severity": _severity(task, dpi_type),
+        "prod_severity": _severity(session, task, dpi_type),
         "milestone": milestone,
         "due_date": due,
         "web_url": f"{base_url.rstrip('/')}/tasks?task={task.key}",

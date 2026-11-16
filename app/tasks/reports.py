@@ -161,6 +161,23 @@ def report(session: Session, bp_id: int, first: date, last: date, tz: ZoneInfo) 
         for s in statuses
     ]
 
+    # docs/specs/31 §18.3: tasks by priority in the dự án's order (Jira's "Issues by priority").
+    today = datetime.now(tz).date()
+    by_priority = []
+    for prio in service.priorities_of(session, bp_id):
+        held = [t for t in tasks if t.priority == prio.key]
+        open_ = [t for t in held if t.status_id not in done]
+        by_priority.append(
+            {
+                "priority": service.priority_out(prio),
+                "open": len(open_),
+                "overdue": sum(1 for t in open_ if t.due_date and t.due_date < today),
+                "created": len([t for t in held if t.created_at and lo <= t.created_at < hi]),
+                "resolved": len([t for t in held if t.resolved_at and lo <= t.resolved_at < hi]),
+                "open_points": round(sum(_points(t) for t in open_), 1),
+            }
+        )
+
     users = service.users_by_id(session, {t.assignee_id for t in tasks})
     per: dict[int, dict[str, float]] = defaultdict(lambda: {"open": 0, "done": 0, "points": 0.0})
     for t in tasks:
@@ -208,6 +225,7 @@ def report(session: Session, bp_id: int, first: date, last: date, tz: ZoneInfo) 
         "flow": flow,
         "cycle_time": {"median_h": pct(0.5), "p85_h": pct(0.85), "count": len(hours)},
         "by_status": by_status,
+        "by_priority": by_priority,
         "by_assignee": by_assignee,
         "worklog": worklog,
     }

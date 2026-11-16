@@ -8,8 +8,8 @@ import { api, useApi } from "@/lib/api";
 import type { Me, TaskDetail, TaskPriority, TaskSpace, TaskType } from "@/lib/types";
 
 import {
-  PRIORITIES,
-  PRIORITY_LABEL,
+  defaultPriority,
+  priorityList,
   TASK_TYPES,
   TYPE_LABEL,
   errorText,
@@ -41,7 +41,7 @@ export function TaskCreate({
   const [type, setType] = useState<TaskType>(parentKey && types.includes("subtask") ? "subtask" : types.includes("task") ? "task" : (types[0] ?? "task"));
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState<TaskPriority>("medium");
+  const [priority, setPriority] = useState<TaskPriority>(() => defaultPriority(space));
   const [assignee, setAssignee] = useState("");
   const [parent, setParent] = useState(parentKey ?? "");
   const [sprint, setSprint] = useState("");
@@ -120,9 +120,9 @@ export function TaskCreate({
           <label className="rq-field">
             <span className="rq-label">Ưu tiên</span>
             <select value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority)}>
-              {PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  {PRIORITY_LABEL[p]}
+              {priorityList(space).map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.name}
                 </option>
               ))}
             </select>

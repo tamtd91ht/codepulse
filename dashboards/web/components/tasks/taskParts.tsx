@@ -13,7 +13,9 @@ import type {
   TaskCategory,
   TaskField,
   TaskPerson,
-  TaskPriority,
+  TaskPriorityColor,
+  TaskPriorityDef,
+  TaskPriorityLevel,
   TaskRow,
   TaskSpace,
   TaskStatus,
@@ -40,14 +42,36 @@ const TYPE_ICON: Record<TaskType, IconName> = {
   subtask: "link",
 };
 
-export const PRIORITIES: TaskPriority[] = ["highest", "high", "medium", "low", "lowest"];
-export const PRIORITY_LABEL: Record<TaskPriority, string> = {
+/* Priorities (docs/specs/31 §18): each dự án names its own; the level gives the arrow. */
+export const PRIORITY_LEVELS: TaskPriorityLevel[] = ["highest", "high", "medium", "low", "lowest"];
+export const LEVEL_LABEL: Record<TaskPriorityLevel, string> = {
   highest: "Cao nhất",
   high: "Cao",
   medium: "Trung bình",
   low: "Thấp",
   lowest: "Thấp nhất",
 };
+export const PRIORITY_COLORS: { value: TaskPriorityColor; label: string }[] = [
+  { value: "red", label: "Đỏ" },
+  { value: "orange", label: "Cam" },
+  { value: "amber", label: "Vàng" },
+  { value: "green", label: "Xanh lá" },
+  { value: "blue", label: "Xanh dương" },
+  { value: "purple", label: "Tím" },
+  { value: "gray", label: "Xám" },
+];
+const LEVEL_COLOR: Record<TaskPriorityLevel, TaskPriorityColor> = { highest: "red", high: "orange", medium: "amber", low: "blue", lowest: "gray" };
+
+/** The dự án's priorities, most urgent first; the five defaults when the API sends none. */
+export function priorityList(space: Pick<TaskSpace, "priorities"> | null | undefined): TaskPriorityDef[] {
+  if (space?.priorities?.length) return [...space.priorities].sort((a, b) => a.position - b.position);
+  return PRIORITY_LEVELS.map((level, i) => ({ id: -i - 1, key: level, name: LEVEL_LABEL[level], level, color: LEVEL_COLOR[level], position: i, is_default: level === "medium" }));
+}
+
+export function defaultPriority(space: Pick<TaskSpace, "priorities"> | null | undefined): string {
+  const list = priorityList(space);
+  return (list.find((p) => p.is_default) ?? list[Math.floor(list.length / 2)]).key;
+}
 
 export const CATEGORY_LABEL: Record<TaskCategory, string> = { todo: "Cần làm", doing: "Đang làm", done: "Xong" };
 
@@ -132,13 +156,26 @@ export function TypeIcon({ type, withLabel }: { type: TaskType; withLabel?: bool
   );
 }
 
-export function PriorityIcon({ priority, withLabel }: { priority: TaskPriority; withLabel?: boolean }) {
-  const icon: IconName = priority === "medium" ? "minus" : "arrowUp";
+export function PriorityIcon({ name, level, color, withLabel }: { name: string; level: TaskPriorityLevel; color: TaskPriorityColor; withLabel?: boolean }) {
+  const icon: IconName = level === "medium" ? "minus" : "arrowUp";
   return (
-    <span className={`tk-prio tk-prio-${priority}`} title={`Ưu tiên: ${PRIORITY_LABEL[priority] ?? priority}`}>
+    <span className={`tk-prio tk-prio-c-${color} tk-prio-l-${level}`} title={`Ưu tiên: ${name}`}>
       <Icon name={icon} size={14} />
-      {withLabel ? <span>{PRIORITY_LABEL[priority] ?? priority}</span> : <span className="visually-hidden">{PRIORITY_LABEL[priority]}</span>}
+      {withLabel ? <span>{name}</span> : <span className="visually-hidden">{name}</span>}
     </span>
+  );
+}
+
+/** A task row's priority, as its dự án names it (the row carries name, level, colour). */
+export function RowPriority({ row, withLabel }: { row: Pick<TaskRow, "priority" | "priority_name" | "priority_level" | "priority_color">; withLabel?: boolean }) {
+  const level = row.priority_level ?? (PRIORITY_LEVELS.includes(row.priority as TaskPriorityLevel) ? (row.priority as TaskPriorityLevel) : "medium");
+  return (
+    <PriorityIcon
+      name={row.priority_name ?? LEVEL_LABEL[row.priority as TaskPriorityLevel] ?? row.priority}
+      level={level}
+      color={row.priority_color ?? LEVEL_COLOR[level]}
+      withLabel={withLabel}
+    />
   );
 }
 

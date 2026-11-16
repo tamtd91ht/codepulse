@@ -25,7 +25,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base, TimestampMixin
 
 TASK_TYPES = ("epic", "story", "task", "bug", "subtask")
+# The five priority levels: the arrow a priority shows and what it means elsewhere (DPI's P1/P2
+# for production bugs). Each dự án names its own priorities on top (TaskPriority, §4 of 31).
 PRIORITIES = ("highest", "high", "medium", "low", "lowest")
+PRIORITY_COLORS = ("red", "orange", "amber", "green", "blue", "purple", "gray")
 CATEGORIES = ("todo", "doing", "done")
 LINK_KINDS = ("blocks", "relates", "duplicates", "clones")
 GIT_KINDS = ("branch", "commit", "mr")
@@ -73,6 +76,29 @@ class TaskStatus(TimestampMixin, Base):
     transitions: Mapped[list[int] | None] = mapped_column(JSONB)
 
 
+class TaskPriority(TimestampMixin, Base):
+    """A priority of a dự án's tasks (docs/specs/31 §18), as Jira's priority scheme: its own
+    name, colour and order; `level` gives the arrow and the meaning. Tasks hold its `key`."""
+
+    __tablename__ = "task_priorities"
+    __table_args__ = (
+        UniqueConstraint("business_project_id", "key"),
+        CheckConstraint(_in("level", PRIORITIES), name="level"),
+        CheckConstraint(_in("color", PRIORITY_COLORS), name="color"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("task_spaces.business_project_id", ondelete="CASCADE"), index=True
+    )
+    key: Mapped[str] = mapped_column(String(30))
+    name: Mapped[str] = mapped_column(String(40))
+    level: Mapped[str] = mapped_column(String(10))
+    color: Mapped[str] = mapped_column(String(12))
+    position: Mapped[int] = mapped_column(server_default="0", default=0)
+    is_default: Mapped[bool] = mapped_column(server_default="false", default=False)
+
+
 class Sprint(TimestampMixin, Base):
     __tablename__ = "sprints"
     __table_args__ = (
@@ -118,7 +144,6 @@ class Task(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("business_project_id", "number"),
         CheckConstraint(_in("type", TASK_TYPES), name="type"),
-        CheckConstraint(_in("priority", PRIORITIES), name="priority"),
         Index("ix_tasks_space_status", "business_project_id", "status_id"),
         Index("ix_tasks_space_rank", "business_project_id", "rank"),
         Index("ix_tasks_labels", "labels", postgresql_using="gin"),
@@ -134,7 +159,7 @@ class Task(TimestampMixin, Base):
     title: Mapped[str] = mapped_column(String(300))
     description: Mapped[str | None]
     status_id: Mapped[int] = mapped_column(ForeignKey("task_statuses.id"), index=True)
-    priority: Mapped[str] = mapped_column(server_default="medium", default="medium")
+    priority: Mapped[str] = mapped_column(String(30), server_default="medium", default="medium")
     assignee_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )

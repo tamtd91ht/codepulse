@@ -2391,7 +2391,21 @@ export interface JiraTaskOptions {
 /* ---- Task (docs/specs/31) ---- */
 
 export type TaskType = "epic" | "story" | "task" | "bug" | "subtask";
-export type TaskPriority = "highest" | "high" | "medium" | "low" | "lowest";
+/** The five levels: a priority's arrow and meaning (docs/specs/31 §18). */
+export type TaskPriorityLevel = "highest" | "high" | "medium" | "low" | "lowest";
+export type TaskPriorityColor = "red" | "orange" | "amber" | "green" | "blue" | "purple" | "gray";
+/** A priority key of the task's dự án (each dự án names its own, docs/specs/31 §18). */
+export type TaskPriority = string;
+
+export interface TaskPriorityDef {
+  id: number;
+  key: string;
+  name: string;
+  level: TaskPriorityLevel;
+  color: TaskPriorityColor;
+  position: number;
+  is_default: boolean;
+}
 export type TaskCategory = "todo" | "doing" | "done";
 export type TaskLinkKind = "blocks" | "relates" | "duplicates" | "clones";
 export type TaskRelation = "fixes" | "refs";
@@ -2439,6 +2453,8 @@ export interface TaskSpace {
   types: TaskType[];
   rules: Partial<TaskRules> | null;
   statuses: TaskStatus[];
+  /** The dự án's priorities, most urgent first (docs/specs/31 §18). */
+  priorities?: TaskPriorityDef[];
   can_manage: boolean;
   can_create: boolean;
   /** tasks.sprint: plan, start, complete sprints. */
@@ -2463,6 +2479,9 @@ export interface TaskRow {
   title: string;
   status: TaskStatusRef;
   priority: TaskPriority;
+  priority_name?: string;
+  priority_level?: TaskPriorityLevel;
+  priority_color?: TaskPriorityColor;
   assignee: TaskPerson | null;
   reporter: TaskPerson | null;
   labels: string[];
@@ -2659,6 +2678,8 @@ export interface TaskReports {
   flow: { day: string; created: number; resolved: number }[];
   cycle_time: { median_h: number | null; p85_h: number | null; count: number };
   by_status: { status: TaskStatusRef | string; count: number }[];
+  /** docs/specs/31 §18.3: per priority, in the dự án's order. */
+  by_priority?: { priority: TaskPriorityDef; open: number; overdue: number; created: number; resolved: number; open_points: number }[];
   by_assignee: { user: TaskPerson | null; open: number; done: number; points: number }[];
   worklog: { user: TaskPerson | null; minutes: number }[];
 }

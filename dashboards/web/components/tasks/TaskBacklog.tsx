@@ -14,7 +14,7 @@ import {
   GitBadge,
   PersonAvatar,
   PointsChip,
-  PriorityIcon,
+  RowPriority,
   StatusPill,
   TypeIcon,
   addDays,
@@ -137,7 +137,7 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
             <GitBadge row={t} />
             <StatusPill status={t.status} />
             <PointsChip points={t.story_points} />
-            <PriorityIcon priority={t.priority} />
+            <RowPriority row={t} />
             <PersonAvatar person={t.assignee} />
           </span>
         </li>

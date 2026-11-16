@@ -7,11 +7,24 @@ import { IconButton } from "@/components/icons";
 import { MultiSelect } from "@/components/MultiSelect";
 import { Card, Loading, Message } from "@/components/ui";
 import { api } from "@/lib/api";
-import type { TaskCategory, TaskField, TaskFieldKind, TaskRules, TaskSpace, TaskType } from "@/lib/types";
+import type { TaskCategory, TaskField, TaskFieldKind, TaskPriorityColor, TaskPriorityLevel, TaskRules, TaskSpace, TaskType } from "@/lib/types";
 
-import { CATEGORY_LABEL, TASK_TYPES, TYPE_LABEL, errorText, refreshTasks, sortedStatuses, useTaskFields } from "./taskParts";
+import {
+  CATEGORY_LABEL,
+  LEVEL_LABEL,
+  PRIORITY_COLORS,
+  PRIORITY_LEVELS,
+  PriorityIcon,
+  TASK_TYPES,
+  TYPE_LABEL,
+  errorText,
+  priorityList,
+  refreshTasks,
+  sortedStatuses,
+  useTaskFields,
+} from "./taskParts";
 
-/* Cài đặt (§13, tasks.manage): key, types, statuses and their transitions, git rules, custom fields. */
+/* Cài đặt (§13, tasks.manage): key, types, statuses and their transitions, priorities (§18), git rules, custom fields. */
 
 export const KEY_RE = /^[A-Z][A-Z0-9]{1,9}$/;
 
@@ -110,6 +123,7 @@ export function TaskSettings({ space }: { space: TaskSpace }) {
     <div className="tk-settings">
       <GeneralCard key={`g${space.business_project_id}`} space={space} />
       <StatusesCard key={`s${space.business_project_id}`} space={space} />
+      <PrioritiesCard key={`p${space.business_project_id}`} space={space} />
       <RulesCard key={`r${space.business_project_id}`} space={space} />
       <FieldsCard key={`f${space.business_project_id}`} space={space} />
     </div>
@@ -303,6 +317,205 @@ function StatusesCard({ space }: { space: TaskSpace }) {
         />
       )}
     </Card>
+  );
+}
+
+type PriorityDraft = { id?: number; tmp: string; name: string; level: TaskPriorityLevel; color: TaskPriorityColor; is_default: boolean };
+
+/** The dự án's priorities, as Jira's priority scheme (docs/specs/31 §18). */
+function PrioritiesCard({ space }: { space: TaskSpace }) {
+  const initial = useMemo<PriorityDraft[]>(
+    () => priorityList(space).map((p) => ({ id: p.id > 0 ? p.id : undefined, tmp: `p${p.id}`, name: p.name, level: p.level, color: p.color, is_default: p.is_default })),
+    [space],
+  );
+  const [items, setItems] = useState<PriorityDraft[]>(initial);
+  const [move, setMove] = useState<Record<string, number>>({});
+  const [removing, setRemoving] = useState<PriorityDraft | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  useEffect(() => {
+    setItems(initial);
+    setMove({});
+  }, [initial]);
+  const named = new Map(initial.map((p) => [p.id, p.name]));
+  const dirty = JSON.stringify(items) !== JSON.stringify(initial);
+  const names = items.map((p) => p.name.trim().toLowerCase());
+  const invalid = names.some((n) => !n) || new Set(names).size !== names.length;
+
+  const update = (tmp: string, patch: Partial<PriorityDraft>) => setItems((list) => list.map((p) => (p.tmp === tmp ? { ...p, ...patch } : p)));
+  const shift = (i: number, by: number) =>
+    setItems((list) => {
+      const next = [...list];
+      const [x] = next.splice(i, 1);
+      next.splice(i + by, 0, x);
+      return next;
+    });
+
+  async function save() {
+    setBusy(true);
+    setMessage(null);
+    try {
+      await api.put(`/tasks/spaces/${space.business_project_id}/priorities`, {
+        priorities: items.map((p) => ({ ...(p.id ? { id: p.id } : {}), name: p.name.trim(), level: p.level, color: p.color, is_default: p.is_default })),
+        ...(Object.keys(move).length ? { move } : {}),
+      });
+      await refreshTasks();
+      setMove({});
+      setMessage("Đã lưu mức ưu tiên.");
+    } catch (e) {
+      setMessage(`Lỗi: ${errorText(e)}`);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <Card
+      title="Mức ưu tiên"
+      id="tk-set-priorities"
+      subtitle="Như priority scheme của Jira: tên, màu và thứ tự riêng của dự án (trên cùng = gấp nhất). Mũi tên cho biết mức độ; Bug production mức Cao nhất / Cao tính P1 / P2 trong DPI."
+    >
+      {message && <Message text={message} onClose={() => setMessage(null)} />}
+      <div className="table-wrap">
+        <table className="tk-edit-table">
+          <thead>
+            <tr>
+              <th>Hiển thị</th>
+              <th>Tên</th>
+              <th>Mũi tên (mức độ)</th>
+              <th>Màu</th>
+              <th>Mặc định</th>
+              <th className="tk-actions-col" aria-label="Thao tác" />
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((p, i) => (
+              <tr key={p.tmp}>
+                <td>
+                  <PriorityIcon name={p.name || "…"} level={p.level} color={p.color} withLabel />
+                </td>
+                <td>
+                  <input value={p.name} onChange={(e) => update(p.tmp, { name: e.target.value })} aria-label="Tên mức ưu tiên" maxLength={40} />
+                </td>
+                <td>
+                  <select value={p.level} onChange={(e) => update(p.tmp, { level: e.target.value as TaskPriorityLevel })} aria-label="Mũi tên">
+                    {PRIORITY_LEVELS.map((l) => (
+                      <option key={l} value={l}>
+                        {LEVEL_LABEL[l]}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <select value={p.color} onChange={(e) => update(p.tmp, { color: e.target.value as TaskPriorityColor })} aria-label="Màu">
+                    {PRIORITY_COLORS.map((c) => (
+                      <option key={c.value} value={c.value}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <label className="inline-check">
+                    <input type="radio" name={`prio-default-${space.business_project_id}`} checked={p.is_default} onChange={() => setItems((list) => list.map((x) => ({ ...x, is_default: x.tmp === p.tmp })))} />
+                    <span className="visually-hidden">Mặc định khi tạo task</span>
+                  </label>
+                </td>
+                <td className="tk-actions-col">
+                  <span className="actions">
+                    <IconButton icon="chevronUp" label="Lên" disabled={i === 0} onClick={() => shift(i, -1)} />
+                    <IconButton icon="chevronDown" label="Xuống" disabled={i === items.length - 1} onClick={() => shift(i, 1)} />
+                    <IconButton
+                      icon="remove"
+                      tone="danger"
+                      label="Xoá mức ưu tiên"
+                      disabled={items.length <= 1}
+                      onClick={() => (p.id ? setRemoving(p) : setItems((list) => list.filter((x) => x.tmp !== p.tmp)))}
+                    />
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {Object.keys(move).length > 0 && (
+        <p className="small muted">
+          Khi lưu:{" "}
+          {Object.entries(move)
+            .map(([from, to]) => `task “${named.get(Number(from)) ?? from}” chuyển sang “${named.get(to) ?? to}”`)
+            .join("; ")}
+          .
+        </p>
+      )}
+      {invalid && <p className="small error">Tên mức ưu tiên không được trống hay trùng nhau.</p>}
+      <div className="adm-form-foot">
+        <button
+          type="button"
+          className="ghost"
+          disabled={items.length >= 12}
+          onClick={() => setItems((list) => [...list, { tmp: `n${Date.now()}`, name: "", level: "medium", color: "blue", is_default: false }])}
+        >
+          Thêm mức
+        </button>
+        <button type="button" className="ghost" disabled={!dirty || busy} onClick={() => (setItems(initial), setMove({}))}>
+          Hoàn tác
+        </button>
+        <button type="button" disabled={!dirty || busy || invalid} onClick={() => void save()}>
+          Lưu mức ưu tiên
+        </button>
+      </div>
+      {removing && (
+        <Modal
+          title={`Xoá mức ưu tiên “${removing.name}”`}
+          onClose={() => setRemoving(null)}
+          width={440}
+          footer={
+            <>
+              <button type="button" className="ghost" onClick={() => setRemoving(null)}>
+                Huỷ
+              </button>
+              <RemovePriorityPick
+                targets={items.filter((x) => x.id && x.tmp !== removing.tmp) as (PriorityDraft & { id: number })[]}
+                onPick={(to) => {
+                  const from = removing.id as number;
+                  setMove((m) => {
+                    const next: Record<string, number> = {};
+                    for (const [k, v] of Object.entries(m)) next[k] = v === from ? to : v;
+                    next[String(from)] = to;
+                    return next;
+                  });
+                  setItems((list) => {
+                    const left = list.filter((x) => x.tmp !== removing.tmp);
+                    return removing.is_default ? left.map((x) => ({ ...x, is_default: x.id === to })) : left;
+                  });
+                  setRemoving(null);
+                }}
+              />
+            </>
+          }
+        >
+          <p className="small muted">Task đang ở mức này chuyển sang mức bạn chọn. Thay đổi chỉ áp dụng khi bấm “Lưu mức ưu tiên”.</p>
+        </Modal>
+      )}
+    </Card>
+  );
+}
+
+function RemovePriorityPick({ targets, onPick }: { targets: (PriorityDraft & { id: number })[]; onPick: (to: number) => void }) {
+  const [to, setTo] = useState<number | null>(targets[0]?.id ?? null);
+  return (
+    <>
+      <select value={to ?? ""} onChange={(e) => setTo(Number(e.target.value))} aria-label="Chuyển task sang">
+        {targets.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+      <button type="button" className="primary danger" disabled={to === null} onClick={() => to !== null && onPick(to)}>
+        Xoá
+      </button>
+    </>
   );
 }
 
