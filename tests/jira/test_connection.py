@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.crypto import SecretBox
+from app.dpi.task_source import task_source
 from app.jira.client import JiraClient
 from app.jira.settings import (
     TOKEN_SECRET,
@@ -30,7 +31,6 @@ from app.jira.settings import (
     parse_connection,
     save_connection,
     save_token,
-    task_source,
 )
 from app.jira.sync import DUE_KEY, JOB_ID, JOB_TIMEOUT, sync_all, tick
 from app.models import AppSetting, Issue, JiraProject, StoredSecret

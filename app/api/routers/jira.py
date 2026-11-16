@@ -21,9 +21,10 @@ from sqlalchemy.orm import Session
 from app.api.audit import audit
 from app.api.deps import get_queue, get_secret_box, get_session
 from app.api.security import CurrentPrincipal, Principal
-from app.collector.sync import SYNC_JOB_TIMEOUT, Enqueuer
+from app.collector.sync import Enqueuer
 from app.config import Settings, get_settings
 from app.crypto import SecretBox
+from app.dpi.task_source import task_source
 from app.jira import scopes as jira_scopes
 from app.jira.client import JiraAuthError, JiraClient, JiraError
 from app.jira.mapping import resolve_fields
@@ -48,10 +49,8 @@ from app.jira.settings import (
     save_connection,
     save_token,
     set_mapping,
-    set_task_source,
-    task_source,
 )
-from app.models import Account, BusinessProject, Issue, JiraProject, Project
+from app.models import Account, BusinessProject, Issue, JiraProject
 
 router = APIRouter(prefix="/dpi/jira", tags=["dpi"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -623,44 +622,15 @@ def put_source(
     settings: SettingsDep,
     queue: Annotated[Enqueuer, Depends(get_queue)],
 ) -> dict[str, Any]:
-    """Back from Jira to GitLab (§9): GitLab issues were not fetched meanwhile and the repos'
-    sync windows moved on, so a full sync of every tracked repo is queued."""
-    _admin(principal)
-    before = task_source(session, settings)
-    set_task_source(session, body.source, principal.user_id)
-    refetch: list[int] = []
-    if before != "gitlab" and body.source == "gitlab":
-        refetch = list(
-            session.scalars(select(Project.id).where(Project.tracked).order_by(Project.id))
-        )
-    audit(
-        session,
-        principal.user_id,
-        "dpi.jira.source",
-        "jira",
-        source=body.source,
-        full_syncs=refetch,
-    )
-    projected = 0
-    if body.source == "codepulse" and before != "codepulse":
-        # docs/specs/31 §15: every CodePulse task becomes a DPI task now; later edits follow.
-        from app.tasks.dpi import project_all
+    """Kept for older dashboards: the switch now lives on the DPI page (PUT /dpi/task-source,
+    app/dpi/task_source.py)."""
+    from app.dpi.task_source import queue_full_syncs, switch
 
-        projected = project_all(session)
+    _admin(principal)
+    out, refetch = switch(session, settings, body.source, principal.user_id)
     session.commit()
-    for project_id in refetch:
-        queue.enqueue(
-            "app.collector.sync.sync_project_job",
-            project_id,
-            full=True,
-            job_id=f"sync-project-{project_id}-full",
-            job_timeout=SYNC_JOB_TIMEOUT,
-        )
-    return {
-        "task_source": body.source,
-        "full_syncs_queued": len(refetch),
-        "tasks_projected": projected,
-    }
+    queue_full_syncs(queue, refetch)
+    return out
 
 
 def _enqueue_sync(queue: Enqueuer, keys: list[str] | None = None, full: bool = False) -> str:

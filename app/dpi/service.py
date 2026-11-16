@@ -22,7 +22,7 @@ from app.dpi.rubric import (
     as_rubric,
 )
 from app.dpi.score import Profile, inputs_hash, rolling, scorecard
-from app.jira.settings import task_source
+from app.dpi.task_source import task_source
 from app.models import (
     AppSetting,
     DpiAssessment,

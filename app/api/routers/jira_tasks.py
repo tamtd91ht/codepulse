@@ -15,9 +15,10 @@ from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.security import CurrentPrincipal
 from app.config import Settings, get_settings
+from app.dpi.task_source import task_source
 from app.jira import tasks
 from app.jira.client import JiraClient, JiraError
-from app.jira.settings import connection, effective_base_url, task_source
+from app.jira.settings import connection, effective_base_url
 from app.models import Commit, Issue, IssueCommitLink, Project, Review, User
 
 router = APIRouter(tags=["jira"])

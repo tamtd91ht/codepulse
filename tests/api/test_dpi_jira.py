@@ -15,7 +15,8 @@ from app.dpi.defects import suggest
 from app.dpi.facts import Loader
 from app.dpi.metrics import a1
 from app.dpi.readiness import repo_readiness
-from app.jira.settings import JIRA_ID_OFFSET, TASK_SOURCE_KEY
+from app.dpi.task_source import TASK_SOURCE_KEY
+from app.jira.settings import JIRA_ID_OFFSET
 from app.models import (
     Account,
     AppSetting,

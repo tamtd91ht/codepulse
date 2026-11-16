@@ -10,6 +10,7 @@ import { Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Too
 
 import { SubPanel, type SubTab, SubTabs } from "@/components/AdminTabs";
 import { ConfidencePill, MonthPicker, RatingPill, ShadowBanner, useMonth } from "@/components/DpiParts";
+import { DpiTaskSource } from "@/components/DpiTaskSource";
 import { JiraAdmin } from "@/components/JiraAdmin";
 import { Alert, Card, ChartTip, EmptyState, Loading, Message, PageHeader, Pill, StatStrip, StripStat } from "@/components/ui";
 import { ApiError, api, can, useApi } from "@/lib/api";
@@ -968,6 +969,7 @@ function SettingsTab() {
   return (
     <>
       <Message text={message} onClose={() => setMessage(null)} />
+      <DpiTaskSource />
       <Card title="Chạy thử (shadow)" collapsible={false} subtitle="Khi bật, mọi scorecard ghi “Chạy thử — không dùng cho lương thưởng”. Tắt là quyết định của quản lý.">
         <p>
           Đang <strong>{data.shadow ? "bật" : "tắt"}</strong>.{" "}

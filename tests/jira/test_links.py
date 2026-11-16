@@ -7,9 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.dpi.task_source import set_task_source
 from app.jira.links import MAX_KEYS, extract_keys, link_issues, link_merge_requests, mr_issues
 from app.jira.scopes import Rule, replace_scopes
-from app.jira.settings import JIRA_ID_OFFSET, set_task_source
+from app.jira.settings import JIRA_ID_OFFSET
 from app.models import BusinessProject, Issue, IssueMrLink, JiraProject, MergeRequest, Project
 
 

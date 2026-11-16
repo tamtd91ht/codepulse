@@ -336,7 +336,7 @@ Tiền tố `/dpi/jira`, quyền `jira.admin` (admin có mọi quyền).
 | GET | `/dpi/jira/projects/{key}/options` | Gợi ý cho quy tắc §15: component trên Jira (lỗi thì từ issue đã lưu), label của issue đã lưu |
 | POST | `/dpi/jira/projects/{key}/preview` | Issue đã lưu sẽ chia thế nào với `scopes` gửi lên (không lưu) |
 | PUT | `/dpi/jira/mapping` | Lưu bảng quy đổi |
-| PUT | `/dpi/jira/source` | `gitlab` \| `jira` |
+| PUT | `/dpi/jira/source` | `gitlab` \| `jira` \| `codepulse` (giữ cho giao diện cũ; nút đổi nguồn ở DPI › Cấu hình, `PUT /dpi/task-source`, spec 31 §16) |
 | POST | `/dpi/jira/sync` | Đưa job sync vào hàng đợi (202); body tuỳ chọn `{keys?, full?}` (§16) |
 
 Mỗi thay đổi đều ghi audit.

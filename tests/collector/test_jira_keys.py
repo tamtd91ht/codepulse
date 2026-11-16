@@ -15,7 +15,8 @@ from app.collector.gitlab.client import GitLabClient
 from app.collector.gitlab.convert import Converter, raw_rows_query
 from app.collector.gitlab.extract import extract
 from app.collector.sync import sync_project
-from app.jira.settings import JIRA_ID_OFFSET, TASK_SOURCE_KEY
+from app.dpi.task_source import TASK_SOURCE_KEY
+from app.jira.settings import JIRA_ID_OFFSET
 from app.models import AppSetting, Connection, Issue, IssueMrLink, JiraProject, MergeRequest
 from tests.collector.fake_gitlab import API, mount
 from tests.collector.test_collect import make_project

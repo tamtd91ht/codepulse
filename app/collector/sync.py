@@ -19,9 +19,9 @@ from app.collector.gitlab.extract import extract
 from app.config import get_settings
 from app.crypto import SecretBox, secret_box
 from app.db import get_redis, get_sessionmaker
+from app.dpi.task_source import task_source
 from app.identity.attribution import Attribution, attribute_reviews, rebuild_after_commit
 from app.identity.autolink import PublicEmailLookup, autolink
-from app.jira.settings import task_source
 from app.models import Connection, Deployment, Incident, Project
 
 log = logging.getLogger(__name__)

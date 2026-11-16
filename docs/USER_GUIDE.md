@@ -85,7 +85,7 @@ Menu **Task** (docs/specs/31). Người quản lý dự án bật Task ở tab *
 
 - **Smart commit** (bạn tự push): `#time 1h30m` ghi giờ, `#comment …` thêm bình luận, `#done` / `#in-review` chuyển trạng thái.
 - Phần **Code** của task: commit, MR, điểm review, finding critical/high còn mở, pipeline, đã lên production chưa. Dự án có thể bật *chặn Done khi còn critical*.
-- **DPI tính theo task CodePulse:** admin vào *DPI hàng tháng › Jira › Đổi nguồn* chọn **Task CodePulse**. Task xong (nhóm Done) là đầu ra của người được giao; story point quyết định độ phức tạp; Bug có nhãn `production` là lỗi production; Epic và task Won't Do không tính.
+- **DPI tính theo task CodePulse:** admin vào *DPI hàng tháng › Cấu hình › Nguồn task* chọn **Task CodePulse**. Task xong (nhóm Done) là đầu ra của người được giao; story point quyết định độ phức tạp; Bug có nhãn `production` là lỗi production; Epic và task Won't Do không tính.
 - Trong Claude Code (MCP): `list_my_tasks`, `get_task`, và với token có ô *Cập nhật task*: `move_task`, `comment_task`, `log_work`.
 
 ## 3b. Yêu cầu review và kết luận merge

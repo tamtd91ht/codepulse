@@ -1231,7 +1231,7 @@ def delivery_report(
     """R4 Delivery: WIP, backlog aging, blockers by reason, overdue issues (now). The issues
     are those of the task source (docs/specs/27 §9)."""
     from app.dpi.reports import delivery
-    from app.jira.settings import task_source
+    from app.dpi.task_source import task_source
 
     repos = _report_repos(session, principal, business_project_id)
     source = task_source(session, settings)
@@ -1278,7 +1278,7 @@ def defects(
     if not principal.can("dpi.defects"):
         raise HTTPException(403, "cần quyền xác nhận RCA")
     from app.dpi.defects import Authors, suggest
-    from app.jira.settings import task_source
+    from app.dpi.task_source import task_source
 
     source = task_source(session, settings)
     query = _defect_query().where(Issue.source == source)
@@ -1611,7 +1611,7 @@ def readiness(
     if not (principal.can("dpi.admin") or principal.can("admin.projects")):
         raise HTTPException(403, "chỉ admin")
     from app.dpi.readiness import repo_readiness
-    from app.jira.settings import task_source
+    from app.dpi.task_source import task_source
 
     since = datetime.now(UTC) - timedelta(days=days)
     return {
@@ -1686,3 +1686,46 @@ def create_labels(
 
 
 __all__ = ["MANAGER_METRICS", "router"]
+
+
+# -- the DPI task source (docs/specs/31 §16) ---------------------------------------------------
+
+
+class TaskSourceIn(BaseModel):
+    source: Literal["gitlab", "jira", "codepulse"]
+
+
+def _may_switch(principal: Principal) -> bool:
+    """dpi.admin configures DPI; jira.admin kept the switch before it moved here."""
+    return principal.can("dpi.admin") or principal.can("jira.admin")
+
+
+@router.get("/task-source")
+def get_task_source(
+    principal: CurrentPrincipal, session: SessionDep, settings: SettingsDep
+) -> dict[str, Any]:
+    from app.dpi.task_source import view
+
+    if not (_may_switch(principal) or principal.can("dpi.view")):
+        raise HTTPException(403, "thiếu quyền xem DPI")
+    return view(session, settings, _may_switch(principal))
+
+
+@router.put("/task-source")
+def put_task_source(
+    body: TaskSourceIn,
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: SettingsDep,
+    queue: Annotated[Enqueuer, Depends(get_queue)],
+) -> dict[str, Any]:
+    from app.dpi.task_source import jira_ready, queue_full_syncs, switch
+
+    if not _may_switch(principal):
+        raise HTTPException(403, "cần quyền cấu hình DPI (dpi.admin)")
+    if body.source == "jira" and not jira_ready(session, settings):
+        raise HTTPException(409, "chưa kết nối Jira: kết nối ở tab Jira trước")
+    out, refetch = switch(session, settings, body.source, principal.user_id)
+    session.commit()
+    queue_full_syncs(queue, refetch)
+    return out

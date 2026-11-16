@@ -15,13 +15,13 @@ from app.api.main import app
 from app.api.routers.jira import get_jira_factory
 from app.collector.sync import SYNC_JOB_TIMEOUT
 from app.config import Settings
+from app.dpi.task_source import task_source
 from app.jira.client import JiraAuthError, JiraError
 from app.jira.settings import (
     CONNECTION_KEY,
     TOKEN_SECRET,
     JiraConnection,
     mapping,
-    task_source,
 )
 from app.models import (
     Account,
@@ -332,7 +332,7 @@ def test_put_mapping_and_source(
     assert queue.jobs == []
     assert client.put(f"{API}/source", headers=admin, json={"source": "x"}).status_code == 422
     actions = set(db_session.scalars(select(AuditLog.action)))
-    assert {"dpi.jira.mapping", "dpi.jira.source"} <= actions
+    assert {"dpi.jira.mapping", "dpi.task_source"} <= actions
 
 
 def test_sync_now_queues_the_job(

@@ -18,8 +18,9 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.config import Settings
+from app.dpi.task_source import task_source
 from app.jira.scopes import jira_issue_in
-from app.jira.settings import JIRA_ID_OFFSET, task_source
+from app.jira.settings import JIRA_ID_OFFSET
 from app.models import Issue, IssueMrLink, JiraProject, MergeRequest
 
 # A key ends before a letter or digit; `_` may follow (`feature/ABC-123_login`).

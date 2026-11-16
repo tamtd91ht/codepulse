@@ -28,9 +28,9 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.config import Settings
+from app.dpi.task_source import task_source
 from app.jira.links import _registered, extract_keys
 from app.jira.scopes import jira_issue_in
-from app.jira.settings import task_source
 from app.models import AppSetting, Commit, Issue, IssueCommitLink
 
 log = logging.getLogger(__name__)

@@ -54,7 +54,7 @@ def issue_id(task_id: int) -> int:
 
 def enabled(session: Session) -> bool:
     from app.config import get_settings
-    from app.jira.settings import task_source  # the DPI setting lives there for now
+    from app.dpi.task_source import task_source
 
     return task_source(session, get_settings()) == SOURCE
 

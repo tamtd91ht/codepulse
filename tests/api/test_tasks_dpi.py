@@ -169,3 +169,31 @@ def test_back_to_gitlab_stops_projection(
     )
     assert res.status_code == 403
     assert datetime.now(UTC)
+
+
+def test_the_switch_lives_on_the_dpi_page(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    """docs/specs/31 §16: GET / PUT /dpi/task-source, for dpi.admin (admins)."""
+    setup_space(client, world, as_user)
+    admin = as_user(world.admin)
+    create(client, admin, world, title="Một việc")
+    view = client.get(f"{API}/dpi/task-source", headers=admin).json()
+    assert view["task_source"] == "gitlab" and view["can_change"] is True
+    options = {o["value"]: o["available"] for o in view["options"]}
+    assert options == {"gitlab": True, "jira": False, "codepulse": True}
+    # Jira is not connected: it cannot be chosen.
+    res = client.put(f"{API}/dpi/task-source", headers=admin, json={"source": "jira"})
+    assert res.status_code == 409
+    res = client.put(f"{API}/dpi/task-source", headers=admin, json={"source": "codepulse"})
+    assert res.status_code == 200, res.text
+    assert res.json()["tasks_projected"] == 1
+    assert set(rows(db_session)) == {"CRM-1"}
+    # A member reads it (dpi.view) but cannot switch.
+    an = as_user(world.an)
+    member_view = client.get(f"{API}/dpi/task-source", headers=an).json()
+    assert member_view["task_source"] == "codepulse" and member_view["can_change"] is False
+    assert (
+        client.put(f"{API}/dpi/task-source", headers=an, json={"source": "gitlab"}).status_code
+        == 403
+    )

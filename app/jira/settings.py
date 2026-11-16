@@ -28,7 +28,6 @@ log = logging.getLogger(__name__)
 
 # A Jira issue's row id in `issues`: this plus its Jira id (clear of GitLab's global issue ids).
 JIRA_ID_OFFSET = 10**15
-TASK_SOURCE_KEY = "dpi_task_source"
 MAPPING_KEY = "jira_mapping"
 CONNECTION_KEY = "jira_connection"
 TOKEN_SECRET = "jira_token"  # noqa: S105 - a stored_secrets row name, not a secret
@@ -52,9 +51,6 @@ BACKFILL_DAYS = (1, 3650)
 TIMEOUT_S = (1, 300)
 NUMBERS = {"interval_min": INTERVAL_MIN, "backfill_days": BACKFILL_DAYS, "timeout_s": TIMEOUT_S}
 
-# "codepulse": CodePulse's own tasks (docs/specs/31 §15).
-TaskSource = Literal["gitlab", "jira", "codepulse"]
-TASK_SOURCES: tuple[TaskSource, ...] = ("gitlab", "jira", "codepulse")
 DPI_TYPES = ("feature", "bug", "refactor", "chore", "docs", "incident", "automation")
 SEVERITIES = ("P1", "P2", "P3")
 
@@ -572,24 +568,6 @@ def clear_auth_failure(session: Session) -> bool:
     session.delete(row)
     session.flush()
     return True
-
-
-def task_source(session: Session, settings: Settings) -> TaskSource:
-    """The stored choice; none stored: Jira when Jira is configured, else GitLab."""
-    row = session.get(AppSetting, TASK_SOURCE_KEY)
-    if row is not None and row.value in TASK_SOURCES:
-        return {"jira": "jira", "codepulse": "codepulse"}.get(row.value, "gitlab")  # type: ignore[return-value]
-    return "jira" if jira_configured(session, settings) else "gitlab"
-
-
-def set_task_source(session: Session, source: TaskSource, user_id: int | None) -> None:
-    if source not in TASK_SOURCES:
-        raise ValueError(f"unknown task source {source!r}")
-    row = session.get(AppSetting, TASK_SOURCE_KEY)
-    if row is None:
-        session.add(AppSetting(key=TASK_SOURCE_KEY, value=source, set_by=user_id))
-    else:
-        row.value, row.set_by = source, user_id
 
 
 def _default_types() -> dict[str, str]:

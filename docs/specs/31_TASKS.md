@@ -243,8 +243,7 @@ Người làm không tự nhận thông báo.
 > "làm luôn phần DPI đọc task CodePulse đi" — chuẩn bị bỏ Jira.
 
 - Nguồn task của DPI (spec 27 §9, `app_settings["dpi_task_source"]`) có thêm **`codepulse`**.
-  - Admin đổi ở DPI hàng tháng › Jira › "Đổi nguồn", chọn một trong ba nguồn.
-  - Đổi được cả khi chưa kết nối Jira; khi đó lựa chọn Jira bị ẩn.
+  - Đổi ở DPI hàng tháng › Cấu hình › **Nguồn task** (§16).
 - **Cách đọc** (`app/tasks/dpi.py`): mỗi task được ghi **một chiều** thành một dòng `issues`, với
   `source = codepulse`, `id = 2·10^15 + task.id` và `key`, cùng liên kết và lỗi production của
   nó. Logic chấm DPI giữ nguyên; module Task vẫn không import gì của Jira.
@@ -274,3 +273,23 @@ Người làm không tự nhận thông báo.
 - **Gợi ý AI (DPI)** đọc tiêu đề task như với Jira.
 - **Sẵn sàng dữ liệu:** các cột issue theo repo ẩn đi (chỉ có nghĩa với GitLab Issues).
 - Chuyển từ `codepulse` hoặc Jira về `gitlab`: đồng bộ đầy đủ mọi repo, như §9 của spec 27.
+
+## 16. Nút đổi nguồn ở trang DPI (người dùng 2026-11-16)
+
+> "chuyển nút đổi nguồn sang trang DPI luôn".
+
+- Thiết lập nguồn task là của DPI, giữ lại cả khi bỏ Jira: chuyển từ `app/jira/settings.py` sang
+  `app/dpi/task_source.py`, gồm `task_source`, `set_task_source`, `switch`, `view`. Mọi nơi gọi
+  import từ đó.
+- **API:**
+  - `GET /dpi/task-source` → `{task_source, label, can_change, options:[{value, label, note,
+    available}]}`, cho người có `dpi.view`, `dpi.admin` hoặc `jira.admin`;
+  - `PUT /dpi/task-source {source}` cho `dpi.admin` (hoặc `jira.admin`, người giữ nút trước đây).
+    Chọn Jira khi chưa kết nối trả 409.
+  - Audit `dpi.task_source` (thay `dpi.jira.source`).
+  - `PUT /dpi/jira/source` vẫn chạy (gọi cùng hàm), để giao diện cũ không gãy.
+- **Giao diện:**
+  - DPI hàng tháng › **Cấu hình** có thẻ **Nguồn task** đứng đầu: nguồn hiện tại, ô chọn nguồn
+    mới kèm ghi chú hệ quả, nút "Chuyển nguồn". Jira chưa kết nối thì hiện "(chưa kết nối)" và
+    không chọn được.
+  - Tab Jira chỉ còn hiện nguồn đang dùng, kèm ghi chú "đổi ở DPI › Cấu hình".
