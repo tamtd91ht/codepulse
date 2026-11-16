@@ -3,10 +3,11 @@
 import Link from "next/link";
 
 import { HealthBadge, type HealthColor } from "@/components/tasks/TaskHealth";
+import { Icon, type IconName } from "@/components/icons";
 import { Card, EmptyState, Loading, PageHeader } from "@/components/ui";
 import { can, useApi } from "@/lib/api";
 import { dayLabel } from "@/lib/format";
-import type { Me } from "@/lib/types";
+import type { Me, OverviewTrends, TrendDirection } from "@/lib/types";
 
 /*
  * Tổng quan Task cho Lead / Manager (docs/specs/31 §19.5, roadmap P4): one row per dự án the person
@@ -26,6 +27,23 @@ interface OverviewRow {
   lead_time_h: number | null;
   next_version: { id: number; name: string; release_date: string | null; total: number; done: number; done_pct: number | null } | null;
   health: HealthColor;
+  /** §20.6: the last 4 closed sprints, oldest first; null with none closed. */
+  trends?: OverviewTrends | null;
+}
+
+const TREND_ARROW: Record<NonNullable<TrendDirection>, IconName> = { up: "trendUp", down: "trendDown", flat: "minus" };
+const TREND_WORD: Record<NonNullable<TrendDirection>, string> = { up: "tăng", down: "giảm", flat: "đứng yên" };
+
+/** One metric's arrow; every metric here is better lower, so up reads as worse. */
+function Trend({ label, values, direction, names, fmt }: { label: string; values: (number | null)[]; direction: TrendDirection; names: string[]; fmt: (v: number | null) => string }) {
+  const tip = `${label} 4 sprint gần nhất: ${values.map((v, i) => `${names[i] ?? ""} ${fmt(v)}`).join(" → ")}`;
+  return (
+    <span className={`sr-trend${direction ? ` sr-trend-${direction}` : ""}`} title={tip}>
+      <span className="sr-trend-label">{label}</span>
+      {direction ? <Icon name={TREND_ARROW[direction]} size={12} /> : <span className="th-muted">—</span>}
+      <span className="visually-hidden">{direction ? TREND_WORD[direction] : "chưa đủ dữ liệu"}. {tip}</span>
+    </span>
+  );
 }
 
 function pct(v: number | null): string {
@@ -85,6 +103,7 @@ export default function TaskOverviewPage() {
                   <th className="num">Lỗi critical</th>
                   <th className="num" title="Từ lúc tạo tới lúc xong, trung vị 30 ngày qua">Lead time</th>
                   <th>Phiên bản kế tiếp</th>
+                  <th title="4 sprint đã đóng gần nhất: lead time trung vị, bug mức cao nhất và finding critical mở ra trong sprint. Mũi tên lên là xấu đi">Xu hướng 4 sprint</th>
                 </tr>
               </thead>
               <tbody>
@@ -113,6 +132,19 @@ export default function TaskOverviewPage() {
                         </span>
                       ) : (
                         <span className="th-muted">—</span>
+                      )}
+                    </td>
+                    <td>
+                      {r.trends ? (
+                        <span className="sr-trends">
+                          <Trend label="Lead" {...r.trends.lead_time_h} names={r.trends.sprints} fmt={hours} />
+                          <Trend label="Bug" {...r.trends.highest_bugs} names={r.trends.sprints} fmt={(v) => String(v ?? 0)} />
+                          <Trend label="Critical" {...r.trends.critical_findings} names={r.trends.sprints} fmt={(v) => String(v ?? 0)} />
+                        </span>
+                      ) : (
+                        <span className="th-muted" title="Chưa có sprint nào đã đóng">
+                          —
+                        </span>
                       )}
                     </td>
                   </tr>

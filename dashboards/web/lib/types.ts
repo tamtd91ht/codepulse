@@ -2922,3 +2922,80 @@ export interface TaskAdoption {
   rows: TaskAdoptionRow[];
   all_projects: boolean;
 }
+
+/* -- Sprint review (docs/specs/31 §20.6, round 2 stage 2.6) -------------------------------------- */
+
+export interface SprintTaskGroup {
+  /** null: a closed sprint's carry-over count is not known (no audit row). */
+  count: number | null;
+  /** null: a closed sprint's carried-over points are not known. */
+  points: number | null;
+  keys: string[];
+  tasks: { key: string; title: string; type: string; points: number }[];
+}
+
+export interface SprintScopeChange {
+  since: string | null;
+  added_after_start: SprintTaskGroup;
+  removed_after_start: SprintTaskGroup;
+}
+
+export interface SprintReview {
+  sprint: {
+    id: number;
+    name: string;
+    goal: string | null;
+    state: "planned" | "active" | "closed";
+    start_date: string | null;
+    end_date: string | null;
+    closed_at: string | null;
+    business_project_id: number;
+  };
+  window: { from: string; to: string };
+  committed_points: number | null;
+  done: SprintTaskGroup;
+  done_pct: number | null;
+  closed_without_done: SprintTaskGroup;
+  carried_over: SprintTaskGroup;
+  added_after_start: SprintTaskGroup;
+  removed_after_start: SprintTaskGroup;
+  bugs_created: { count: number; highest: number; keys: string[] };
+  findings: { critical: number; high: number };
+  cycle_time_h: number | null;
+  can_create_retro: boolean;
+  markdown: string;
+}
+
+export interface KanbanFlow {
+  days: number;
+  throughput: number;
+  throughput_points: number;
+  per_week: number;
+  created: number;
+  cycle_time_h: number | null;
+}
+
+/** GET /tasks/spaces/{bp}/review/latest: what the Sức khoẻ tab shows with no sprint running. */
+export interface LatestSprintReview {
+  mode: string;
+  review: SprintReview | null;
+  flow: KanbanFlow | null;
+}
+
+export interface ForecastRange {
+  low_points: number;
+  high_points: number;
+  low_pct: number;
+  high_pct: number;
+  basis: ("daily" | "velocity")[];
+}
+
+export type TrendDirection = "up" | "down" | "flat" | null;
+
+export interface OverviewTrends {
+  /** Oldest first, as the values. */
+  sprints: string[];
+  lead_time_h: { values: (number | null)[]; direction: TrendDirection };
+  highest_bugs: { values: number[]; direction: TrendDirection };
+  critical_findings: { values: number[]; direction: TrendDirection };
+}

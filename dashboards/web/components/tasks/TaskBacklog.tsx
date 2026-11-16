@@ -7,9 +7,10 @@ import { IconButton } from "@/components/icons";
 import { Alert, EmptyState, Loading, Message, Pill } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
-import type { Sprint, TaskEpic, TaskPage, TaskRow, TaskSpace } from "@/lib/types";
+import type { Sprint, SprintReview, TaskEpic, TaskPage, TaskRow, TaskSpace } from "@/lib/types";
 
 import { byRank, neighbours } from "./TaskBoard";
+import { RetroButton, ScopeNote, SprintReviewView } from "./TaskHealth";
 import {
   GitBadge,
   PersonAvatar,
@@ -194,6 +195,7 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
                       · sức chứa ~{s.capacity} SP{points > s.capacity ? ": đang kéo vào nhiều hơn" : ""}
                     </span>
                   )}
+                  {s.state === "active" && <ScopeNote sprintId={s.id} />}
                 </div>
                 {s.goal && <p className="small muted tk-sprint-goal">{s.goal}</p>}
                 {canManage && (
@@ -423,13 +425,20 @@ function CompleteModal({ sprint, others, onClose }: { sprint: Sprint; others: Sp
   const [to, setTo] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // docs/specs/31 §20.6: the review before confirming; after closing, the same review is kept
+  // (the close moves unfinished tasks without history, so a re-read would lose their list).
+  const review = useApi<SprintReview>(`/tasks/sprints/${sprint.id}/review`);
+  const [closed, setClosed] = useState<SprintReview | null>(null);
+  const shown = closed ?? review.data;
   async function go() {
     setBusy(true);
     setError(null);
     try {
       await api.post(`/tasks/sprints/${sprint.id}/complete`, { move_to: to ? Number(to) : null });
+      if (review.data) setClosed({ ...review.data, sprint: { ...review.data.sprint, state: "closed" } });
       await refreshTasks();
-      onClose();
+      if (!review.data) onClose();
+      setBusy(false);
     } catch (e) {
       setError(errorText(e));
       setBusy(false);
@@ -437,23 +446,53 @@ function CompleteModal({ sprint, others, onClose }: { sprint: Sprint; others: Sp
   }
   return (
     <Modal
-      title={`Hoàn tất “${sprint.name}”`}
+      title={closed ? `Đã hoàn tất “${sprint.name}”` : `Hoàn tất “${sprint.name}”`}
       onClose={onClose}
       busy={busy}
-      width={460}
+      width={720}
       footer={
-        <>
-          <button type="button" className="ghost" onClick={onClose} disabled={busy}>
-            Huỷ
-          </button>
-          <button type="button" className="primary" onClick={() => void go()} disabled={busy}>
-            Hoàn tất sprint
-          </button>
-        </>
+        closed ? (
+          <>
+            <RetroButton review={closed} />
+            <button type="button" className="primary" onClick={onClose}>
+              Đóng
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" className="ghost" onClick={onClose} disabled={busy}>
+              Huỷ
+            </button>
+            <button type="button" className="primary" onClick={() => void go()} disabled={busy}>
+              Hoàn tất sprint
+            </button>
+          </>
+        )
       }
     >
       <div className="adm-form tk-form">
         {error && <Alert tone="error">{error}</Alert>}
+        <section className="sr-modal-review" aria-label="Đánh giá sprint">
+          {review.error && !shown ? (
+            <div className="th-error">
+              <Loading error={review.error} />
+              <button type="button" className="ghost sm" onClick={() => void review.mutate()}>
+                Thử lại
+              </button>
+            </div>
+          ) : !shown ? (
+            <Loading rows={2} />
+          ) : (
+            <SprintReviewView review={shown} />
+          )}
+        </section>
+        {closed ? (
+          <p className="small muted">
+            Sprint đã đóng. {closed.can_create_retro ? "Tạo trang retro để ghi điều tốt, cần cải thiện và hành động vào Tài liệu dự án." : ""}
+          </p>
+        ) : (
+          <>
+
         <p>
           {unfinished ? (
             <>
@@ -475,6 +514,8 @@ function CompleteModal({ sprint, others, onClose }: { sprint: Sprint; others: Sp
               ))}
             </select>
           </label>
+        )}
+          </>
         )}
       </div>
     </Modal>
