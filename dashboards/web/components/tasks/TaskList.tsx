@@ -28,13 +28,16 @@ import {
   useTaskPeople,
   useVersions,
 } from "./taskParts";
+import { DensityToggle } from "./DensityToggle";
+import { SmartFilter } from "./SmartFilter";
 
 /* Danh sách (§13): every field as a filter, saved filters, sortable columns, bulk changes, paging. */
 
-const FILTER_KEYS = ["q", "status", "type", "assignee", "priority", "sprint", "version", "label", "due"] as const;
+// category and updated_from have no control of their own: only "Lọc nhanh" (§19.8) sets them.
+const FILTER_KEYS = ["q", "status", "type", "assignee", "priority", "sprint", "version", "label", "due", "category", "updated_from"] as const;
 type FilterKey = (typeof FILTER_KEYS)[number];
 type Filters = Record<FilterKey, string>;
-const NO_FILTERS: Filters = { q: "", status: "", type: "", assignee: "", priority: "", sprint: "", version: "", label: "", due: "" };
+const NO_FILTERS: Filters = { q: "", status: "", type: "", assignee: "", priority: "", sprint: "", version: "", label: "", due: "", category: "", updated_from: "" };
 
 export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | undefined; onOpen: (key: string) => void }) {
   const bp = space.business_project_id;
@@ -129,6 +132,21 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
     <div className="tk-list">
       {confirmEl}
       <section className="card">
+        <SmartFilter
+          bp={bp}
+          active={filters}
+          onApply={(query) => {
+            const next = { ...NO_FILTERS };
+            for (const k of FILTER_KEYS) if (typeof query[k] === "string") next[k] = query[k];
+            setSavedId("");
+            setQ(next.q);
+            setFilters(next);
+          }}
+          onRemove={(k) => {
+            if (k === "q") setQ("");
+            else if ((FILTER_KEYS as readonly string[]).includes(k)) set(k as FilterKey, "");
+          }}
+        />
         <div className="rq-grid">
           <label className="rq-field">
             <span className="rq-label">Tìm</span>
@@ -216,6 +234,7 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
               <option value="week">Đến hạn trong 7 ngày</option>
             </select>
           </label>
+          <DensityToggle view="list" />
         </div>
         <div className="rq-foot tk-saved">
           <div className="tk-inline">

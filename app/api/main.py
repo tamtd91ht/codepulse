@@ -55,6 +55,7 @@ from app.api.routers import (
     settings,
     stetho_history,
     task_health,
+    task_nlfilter,
     tasks,
     team_report,
     telegram,
@@ -172,6 +173,7 @@ for api_router in (
     test_runs.router,
     testcases.router,
     task_health.router,  # docs/specs/31 §19.5, before tasks: /tasks/overview is not a key
+    task_nlfilter.router,  # §19.8 POST /tasks/nl-filter, before tasks
     tasks.router,  # docs/specs/31; its static paths come before /tasks/{key} inside
 ):
     app.include_router(api_router, prefix="/api/v1")

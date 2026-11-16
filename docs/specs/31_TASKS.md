@@ -556,3 +556,36 @@ Chỉ đọc, không migration. Mã: `app/tasks/health.py`, `app/api/routers/tas
   bình thường; đổi về Scrum là thấy lại sprint cũ. Đổi chế độ không đổi workflow.
 - **Hộp bật Task** thành 3 bước: (1) mã dự án + loại task, (2) chọn mẫu (thẻ có mô tả và chuỗi trạng
   thái), (3) xác nhận. Loại task theo mẫu cho tới khi người quản lý tự chọn ở bước 1.
+
+### 19.8 P5 – Lọc bằng câu, phím tắt, mật độ, điện thoại
+- **Lọc nhanh bằng câu** (`POST /tasks/nl-filter {space, text}` → `{chips: [{field, value, label}],
+  query, used_ai}`; cần `tasks.view` (403) và xem được dự án (404)). Bộ phân tích **cố định, không
+  AI** (`app/tasks/nlfilter.py`): bỏ dấu, khớp cụm dài nhất trước. Hiểu: loại (`bug`, `lỗi`, `story`,
+  `tính năng`, `epic`, `sub-task`, `loại task`; chỉ loại dự án dùng), ưu tiên theo **tên / mã của dự án**
+  (`cao`, `cao nhất`, `ưu tiên cao`) và từ mức (`khẩn`, `urgent`, `critical` → mức highest đầu tiên),
+  trạng thái theo **tên của dự án** (`đang làm` là trạng thái "Đang làm" nếu có, không thì nhóm Đang
+  làm qua `category`), nhóm (`chưa làm`, `in progress`, `đã xong`, `hoàn thành`…), người làm (`của tôi`,
+  `chưa giao`, `@email-name` hoặc `@một-chữ-trong-tên` khi chỉ khớp đúng một người), sprint (`sprint
+  này` = đang chạy, `backlog`, tên sprint như `sprint 12`), phiên bản (`phiên bản v2.1` hoặc tên), nhãn
+  (`nhãn X`, `label X`, `#X`), hạn (`quá hạn`; `đến hạn` / `hạn tuần này` = 7 ngày tới), cập nhật
+  (`tuần này` = từ thứ Hai, `hôm nay`, `7 ngày qua` → `updated_from`). Từ đệm (`các`, `task`, `việc`,
+  `của`…) bỏ qua; từ lạ thành `q`. Mỗi trường một giá trị (Danh sách giữ một giá trị mỗi bộ lọc), từ
+  sau thắng. `query` là đúng tham số của `GET /tasks`.
+- **Không dùng AI** (`used_ai` luôn `false`): gọi LLM của ứng dụng chạy trong worker (timeout phút),
+  không hợp với ô lọc cần trả lời ngay; từ vựng lọc ít nên bộ phân tích cố định đủ. Có thể thêm AI dự
+  phòng sau, chỉ gửi câu lọc và tên trạng thái / ưu tiên / loại, trong ngân sách tháng.
+- **Giao diện Danh sách:** ô "Lọc nhanh" trên lưới bộ lọc; Enter hoặc "Lọc" → thay toàn bộ bộ lọc bằng
+  `query`, hiện chip; bỏ chip là bỏ bộ lọc đó; chip tự ẩn khi bộ lọc đó bị đổi tay. Danh sách nhận thêm
+  `category`, `updated_from` (không có ô riêng; "Xoá lọc", "Lưu bộ lọc" vẫn tính).
+- **Phím tắt ở chi tiết task:** `E` sửa mô tả, `A` chọn người làm, `S` chọn trạng thái, `C` viết bình
+  luận, `.` mở bảng lệnh (như Ctrl+K), `?` hiện danh sách phím tắt. Không chạy khi đang gõ (input,
+  textarea, select, contenteditable), khi giữ Ctrl / Alt / Meta, hoặc khi đang mở hộp thoại. Phần tử
+  tìm theo `data-shortcut` (`edit-description`, `assignee`, `status`, `comment`).
+- **Mật độ "Thoáng / Gọn"** ở Danh sách và Board, nhớ riêng từng màn trong trình duyệt
+  (`tk-density-list`, `tk-density-board`); Gọn: ô bảng thấp hơn, ẩn nhãn / badge dưới tiêu đề, card và
+  cột Board hẹp hơn.
+- **Điện thoại (≤ 640px):** Danh sách ẩn cột SP và Cập nhật (bảng vẫn cuộn trong khung của nó); chi
+  tiết task một cột, khung thông tin nằm **dưới** nội dung chính; khối code, bảng, ảnh trong mô tả không
+  làm tràn trang; Việc của tôi xuống dòng hành động. Chỉ CSS, không đổi component.
+- Chưa làm: AI dự phòng cho câu lọc; một trường nhiều giá trị ("bug hoặc story"); phím tắt trên Board /
+  Danh sách (J/K di chuyển dòng).

@@ -8,6 +8,7 @@ import { api, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
 import type { Me, TaskPage, TaskPerson, TaskRow, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
 
+import { DensityToggle } from "./DensityToggle";
 import {
   GitBadge,
   PersonAvatar,
@@ -371,6 +372,7 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
             </label>
           </div>
         </div>
+        <DensityToggle view="board" />
       </div>
       <p className="small muted tk-board-scope">
         {active ? (
