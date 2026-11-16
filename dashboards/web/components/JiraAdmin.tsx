@@ -94,7 +94,7 @@ interface JiraView {
   configured: boolean;
   base_url: string | null;
   connection: JiraConnection;
-  task_source: "gitlab" | "jira";
+  task_source: TaskSourceName;
   mapping: JiraMapping;
   dpi_types: string[];
   projects: JiraProject[];
@@ -250,16 +250,12 @@ function StatusCard({ data, onDone }: { data: JiraView; onDone: (msg: string) =>
         <Fact
           label="Nguồn task của DPI"
           sub={
-            data.configured ? (
-              <button type="button" className="link sm" onClick={() => setSwitching(true)}>
-                Đổi nguồn
-              </button>
-            ) : (
-              "đổi được sau khi kết nối"
-            )
+            <button type="button" className="link sm" onClick={() => setSwitching(true)}>
+              Đổi nguồn
+            </button>
           }
         >
-          {data.task_source === "jira" ? "Jira" : "GitLab Issues"}
+          {SOURCE_LABEL[data.task_source] ?? data.task_source}
         </Fact>
       </dl>
       {data.auth_failure && (
@@ -274,19 +270,47 @@ function StatusCard({ data, onDone }: { data: JiraView; onDone: (msg: string) =>
           {c.env.token ? "; trong lúc đó dùng JIRA_TOKEN nếu cùng máy chủ" : ""}.
         </Alert>
       )}
-      {switching && <SourceSwitch current={data.task_source} onClose={() => setSwitching(false)} onDone={onDone} />}
+      {switching && (
+        <SourceSwitch current={data.task_source} jiraReady={data.configured} onClose={() => setSwitching(false)} onDone={onDone} />
+      )}
     </section>
   );
 }
 
-function SourceSwitch({ current, onClose, onDone }: { current: "gitlab" | "jira"; onClose: () => void; onDone: (msg: string) => void }) {
-  const next = current === "jira" ? "gitlab" : "jira";
+type TaskSourceName = "gitlab" | "jira" | "codepulse";
+/** The DPI task sources (docs/specs/27 §9; "codepulse": CodePulse's own tasks, docs/specs/31 §15). */
+const SOURCE_LABEL: Record<TaskSourceName, string> = {
+  codepulse: "Task CodePulse",
+  jira: "Jira",
+  gitlab: "GitLab Issues",
+};
+const SOURCE_NOTE: Record<TaskSourceName, string> = {
+  codepulse:
+    "Mọi task CodePulse (trừ Epic và task Won't Do) thành task của DPI ngay, sửa task là DPI cập nhật theo. Collector GitLab ngừng lấy issue; Jira vẫn đồng bộ nền nếu đang bật.",
+  jira: "Collector GitLab ngừng lấy issue; dữ liệu GitLab Issues cũ vẫn giữ.",
+  gitlab: "GitLab lấy lại issue của mọi repo (đồng bộ đầy đủ chạy nền).",
+};
+
+function SourceSwitch({
+  current,
+  jiraReady,
+  onClose,
+  onDone,
+}: {
+  current: TaskSourceName;
+  jiraReady: boolean;
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) {
+  const choices = (["codepulse", "jira", "gitlab"] as TaskSourceName[]).filter((x) => x !== current && (x !== "jira" || jiraReady));
+  const [next, setNext] = useState<TaskSourceName>(choices[0]);
   const [busy, setBusy] = useState(false);
   const apply = async () => {
     setBusy(true);
     try {
-      await api.put("/dpi/jira/source", { source: next });
-      onDone(next === "jira" ? "DPI đã chuyển sang đọc task từ Jira." : "DPI đã chuyển sang đọc task từ GitLab Issues.");
+      const res = await api.put<{ tasks_projected?: number }>("/dpi/jira/source", { source: next });
+      const extra = next === "codepulse" && res.tasks_projected !== undefined ? ` (${res.tasks_projected} task)` : "";
+      onDone(`DPI đã chuyển sang đọc task từ ${SOURCE_LABEL[next]}${extra}.`);
       onClose();
     } catch (e) {
       onDone(`Lỗi: ${errText(e)}`);
@@ -296,11 +320,17 @@ function SourceSwitch({ current, onClose, onDone }: { current: "gitlab" | "jira"
   };
   return (
     <Alert tone="warning">
-      Chuyển nguồn task của DPI sang <strong>{next === "jira" ? "Jira" : "GitLab Issues"}</strong>? DPI chỉ đọc issue của một nguồn nên không tính trùng.{" "}
-      {next === "jira"
-        ? "Collector GitLab ngừng lấy issue; dữ liệu GitLab Issues cũ vẫn giữ."
-        : "Jira vẫn đồng bộ nền để dữ liệu sẵn sàng khi chuyển lại; GitLab lấy lại issue của mọi repo."}{" "}
-      Scorecard các tháng đã tính không đổi cho tới khi chạy lại dữ liệu DPI.
+      <label className="jira-inline-field">
+        <span>Chuyển nguồn task của DPI sang</span>{" "}
+        <select value={next} onChange={(e) => setNext(e.target.value as TaskSourceName)} disabled={busy}>
+          {choices.map((x) => (
+            <option key={x} value={x}>
+              {SOURCE_LABEL[x]}
+            </option>
+          ))}
+        </select>
+      </label>{" "}
+      DPI chỉ đọc task của một nguồn nên không tính trùng. {SOURCE_NOTE[next]} Scorecard các tháng đã tính không đổi cho tới khi chạy lại dữ liệu DPI.
       <div className="jira-inline-actions">
         <button type="button" className="ghost sm" onClick={onClose} disabled={busy}>
           Huỷ

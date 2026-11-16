@@ -230,12 +230,22 @@ def delivery(
             from app.jira.scopes import jira_issue_in
 
             where.append(jira_issue_in(jira_bps))
+    elif source == "codepulse":
+        # docs/specs/31 §15: the tasks of the repos' dự án, one row "Task · <dự án>" each.
+        bps = sorted({r.business_project_id for r in repos if r.business_project_id})
+        from app.models import BusinessProject
+
+        names |= {
+            ("space", bp.id): f"Task · {bp.name}"
+            for bp in session.scalars(select(BusinessProject).where(BusinessProject.id.in_(bps)))
+        }
+        where = [Issue.source == "codepulse", Issue.business_project_ids.overlap(bps or [0])]
     else:
         where = [Issue.source == "gitlab", Issue.project_id.in_(ids)]
     open_issues = session.execute(
         select(
             Issue.source,
-            func.coalesce(Issue.project_id, Issue.jira_project_id),
+            func.coalesce(Issue.project_id, Issue.jira_project_id, Issue.business_project_ids[1]),
             Issue.created_at_src,
             Issue.labels,
             Issue.due_date,
@@ -246,7 +256,7 @@ def delivery(
     overdue = 0
     per_repo: dict[tuple[str, int], Counter[str]] = defaultdict(Counter)
     for src, owner, created, labels, due in open_issues:
-        pid = ("jira" if src == "jira" else "repo", int(owner))
+        pid = ({"jira": "jira", "codepulse": "space"}.get(src, "repo"), int(owner))
         if created is not None:
             age = (now - created).days
             label = next(text for limit, text in AGE_BUCKETS if limit is None or age <= limit)

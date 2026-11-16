@@ -250,7 +250,7 @@ Cấu hình lưu ở `app_settings["jira_mapping"]` (JSON), xem `app/jira/settin
 
 ## 9. Nguồn task
 
-- **[Quyết định]** `app_settings["dpi_task_source"]` = `gitlab` | `jira`.
+- **[Quyết định]** `app_settings["dpi_task_source"]` = `gitlab` | `jira` | `codepulse` (task CodePulse, spec 31 §15).
   - Mặc định là `jira` khi Jira đã cấu hình (kết nối đang hiệu lực, §2), còn lại `gitlab`.
   - Admin đổi ở tab DPI hàng tháng › Jira.
 - DPI chỉ đọc issue của nguồn đang chọn (`issues.source`), nên không tính trùng.

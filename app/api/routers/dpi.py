@@ -1355,6 +1355,8 @@ def _defect_in(bps: set[int]) -> Any:
     return or_(
         Project.business_project_id.in_(bps or {0}),
         and_(Issue.source == "jira", jira_issue_in(bps)),
+        # docs/specs/31 §15: a CodePulse task belongs to its own dự án.
+        and_(Issue.source == "codepulse", Issue.business_project_ids.overlap(sorted(bps) or [0])),
     )
 
 

@@ -612,7 +612,7 @@ def put_mapping(
 
 
 class SourceIn(BaseModel):
-    source: Literal["gitlab", "jira"]
+    source: Literal["gitlab", "jira", "codepulse"]
 
 
 @router.put("/source")
@@ -629,7 +629,7 @@ def put_source(
     before = task_source(session, settings)
     set_task_source(session, body.source, principal.user_id)
     refetch: list[int] = []
-    if before == "jira" and body.source == "gitlab":
+    if before != "gitlab" and body.source == "gitlab":
         refetch = list(
             session.scalars(select(Project.id).where(Project.tracked).order_by(Project.id))
         )
@@ -641,6 +641,12 @@ def put_source(
         source=body.source,
         full_syncs=refetch,
     )
+    projected = 0
+    if body.source == "codepulse" and before != "codepulse":
+        # docs/specs/31 §15: every CodePulse task becomes a DPI task now; later edits follow.
+        from app.tasks.dpi import project_all
+
+        projected = project_all(session)
     session.commit()
     for project_id in refetch:
         queue.enqueue(
@@ -650,7 +656,11 @@ def put_source(
             job_id=f"sync-project-{project_id}-full",
             job_timeout=SYNC_JOB_TIMEOUT,
         )
-    return {"task_source": body.source, "full_syncs_queued": len(refetch)}
+    return {
+        "task_source": body.source,
+        "full_syncs_queued": len(refetch),
+        "tasks_projected": projected,
+    }
 
 
 def _enqueue_sync(queue: Enqueuer, keys: list[str] | None = None, full: bool = False) -> str:

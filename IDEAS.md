@@ -23,5 +23,5 @@
 - Đăng nhập bằng mật khẩu cho người không có tài khoản GitLab: người dùng quyết định KHÔNG làm (2026-11-12) — bắt buộc đăng nhập qua GitLab.
 - Báo cáo testcase (spec 30 §15.7, G4): gửi lịch báo cáo qua email hoặc Slack native (OAuth app), qua bot Telegram riêng; xuất PDF dựng ở server (hiện dùng in của trình duyệt); link chia sẻ cho người ngoài không cần đăng nhập (token có hạn); epic Jira thật khi đồng bộ có epic link.
 - (2026-11-16, spec 21 §10) Giới hạn repo Lead/Manager dự án được thêm theo group GitLab cho từng dự án (allow-list), hoặc kiểm tra người đó là thành viên repo trên GitLab; hiện token bot thấy repo nào thì họ đăng ký được repo đó.
-- (2026-11-16, spec 31) DPI đọc task CodePulse làm nguồn task (A1, A2, C2, C3, R4) khi bỏ Jira; công cụ nhập một dự án từ Jira sang Task một lần trước khi bỏ Jira.
+- (2026-11-16, spec 31) (đã làm DPI đọc task: spec 31 §15) Công cụ nhập một dự án từ Jira sang Task một lần trước khi bỏ Jira.
 - (2026-11-16, spec 31) Thông báo task qua Telegram / webhook thông báo; kéo thả bằng bàn phím trên Board; gợi ý @tên khi gõ bình luận.

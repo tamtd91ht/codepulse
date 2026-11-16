@@ -303,6 +303,7 @@ def test_put_mapping_and_source(
     assert client.put(f"{API}/source", headers=admin, json={"source": "gitlab"}).json() == {
         "task_source": "gitlab",
         "full_syncs_queued": 1,
+        "tasks_projected": 0,  # docs/specs/31 §15: only switching to CodePulse writes tasks
     }
     assert task_source(db_session, settings) == "gitlab"
     assert queue.jobs == [
@@ -321,10 +322,12 @@ def test_put_mapping_and_source(
     assert client.put(f"{API}/source", headers=admin, json={"source": "gitlab"}).json() == {
         "task_source": "gitlab",
         "full_syncs_queued": 0,
+        "tasks_projected": 0,
     }
     assert client.put(f"{API}/source", headers=admin, json={"source": "jira"}).json() == {
         "task_source": "jira",
         "full_syncs_queued": 0,
+        "tasks_projected": 0,
     }
     assert queue.jobs == []
     assert client.put(f"{API}/source", headers=admin, json={"source": "x"}).status_code == 422

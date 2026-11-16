@@ -178,7 +178,7 @@ def gather(
                 # The repo gate is GitLab's; a Jira issue (title only, docs/specs/27 §11) has
                 # no repo.
                 or_(
-                    Issue.source == "jira",
+                    Issue.source.in_(("jira", "codepulse")),
                     and_(Issue.source == "gitlab", Issue.project_id.in_(allowed or {0})),
                 ),
             )

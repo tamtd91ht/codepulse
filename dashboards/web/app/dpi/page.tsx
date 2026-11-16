@@ -1134,7 +1134,7 @@ interface Readiness {
     issues_closed: number | null;
     complexity_pct: number | null;
   }[];
-  task_source?: "gitlab" | "jira";
+  task_source?: "gitlab" | "jira" | "codepulse";
   /** Present when the task source is Jira (docs/specs/27 §12). */
   jira?: {
     projects: {
@@ -1229,8 +1229,10 @@ function ReadinessTab({ me }: { me: Me }) {
   if (!data) return <Loading />;
   const a = data.acceptance;
   const jira = data.task_source === "jira";
-  // Per-repo issue columns only make sense for GitLab Issues; under Jira they come back null.
-  const repoIssues = !jira || data.repos.some((r) => r.issues_closed !== null || r.complexity_pct !== null);
+  // Per-repo issue columns only make sense for GitLab Issues; under Jira or CodePulse tasks
+  // (docs/specs/31 §15) they come back null.
+  const repoIssues =
+    data.task_source === "gitlab" || data.task_source === undefined || data.repos.some((r) => r.issues_closed !== null || r.complexity_pct !== null);
   const check = async (id: number) => setChecks({ ...checks, [id]: await api.get(`/dpi/readiness/${id}/gitlab`) });
   const labels = async (id: number) => setChecks({ ...checks, [id]: { ...checks[id], ...(await api.post<{ created: string[]; error?: string }>(`/dpi/readiness/${id}/labels`)) } });
   const act = async () => {

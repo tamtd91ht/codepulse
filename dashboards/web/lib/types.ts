@@ -2384,7 +2384,7 @@ export interface JiraTaskOptions {
   business_projects: { id: number; name: string }[];
   types: string[];
   configured: boolean;
-  task_source: "jira" | "gitlab";
+  task_source: "jira" | "gitlab" | "codepulse";
   can_admin: boolean;
 }
 

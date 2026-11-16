@@ -278,6 +278,7 @@ def put_statuses(
     ts.require_manage(principal, bp_id)
     out = ts.set_statuses(session, bp_id, [s.model_dump() for s in body.statuses], dict(body.move))
     audit(session, principal.user_id, "task.statuses", f"business_project:{bp_id}", n=len(out))
+    _reproject(session, select(Task.id).where(Task.business_project_id == bp_id))
     session.commit()
     return [ts.status_out(s) for s in ts.statuses_of(session, bp_id)]
 
@@ -316,6 +317,15 @@ def put_fields(
     audit(session, principal.user_id, "task.fields", f"business_project:{bp_id}")
     session.commit()
     return [_field_out(f) for f in _fields(session, bp_id)]
+
+
+def _reproject(session: Session, ids: Any) -> None:
+    """docs/specs/31 §15: bulk changes (statuses, sprint dates) bypass the per-task hook; the
+    DPI rows of these tasks are rebuilt when DPI reads CodePulse tasks."""
+    from app.tasks import dpi
+
+    if dpi.enabled(session):
+        dpi.project(session, list(session.scalars(ids)))
 
 
 def _fields(session: Session, bp_id: int, archived: bool = False) -> list[TaskField]:
@@ -791,6 +801,7 @@ def update_sprint(
         if field == "name" and not (value or "").strip():
             raise HTTPException(422, "tên sprint trống")
         setattr(sprint, field, value.strip() if field == "name" else value)
+    _reproject(session, select(Task.id).where(Task.sprint_id == sprint.id))
     session.commit()
     return _sprint_out(session, sprint)
 

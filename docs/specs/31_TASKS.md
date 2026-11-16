@@ -237,3 +237,40 @@ Người làm không tự nhận thông báo.
 - **Mã commit gõ tay** khớp nhiều commit → 409.
 - **MCP:** `comment_task` thông báo cả người được `@nhắc`.
 - Hai thao tác cùng lúc (bật Task, bắt đầu sprint) trả 409 thay vì 500.
+
+## 15. DPI đọc task CodePulse (người dùng 2026-11-16)
+
+> "làm luôn phần DPI đọc task CodePulse đi" — chuẩn bị bỏ Jira.
+
+- Nguồn task của DPI (spec 27 §9, `app_settings["dpi_task_source"]`) có thêm **`codepulse`**.
+  - Admin đổi ở DPI hàng tháng › Jira › "Đổi nguồn", chọn một trong ba nguồn.
+  - Đổi được cả khi chưa kết nối Jira; khi đó lựa chọn Jira bị ẩn.
+- **Cách đọc** (`app/tasks/dpi.py`): mỗi task được ghi **một chiều** thành một dòng `issues`, với
+  `source = codepulse`, `id = 2·10^15 + task.id` và `key`, cùng liên kết và lỗi production của
+  nó. Logic chấm DPI giữ nguyên; module Task vẫn không import gì của Jira.
+
+  | Trường DPI | Từ task |
+  |---|---|
+  | `type` | story → feature, task → chore, bug → bug; sub-task theo cha; **Epic không là task DPI** |
+  | `state`, `closed_at_src` | nhóm Done → closed, lúc `resolved_at`; trạng thái huỷ (Won't Do, Cancelled, Huỷ…) → không có dòng |
+  | `complexity` | story point như spec 27 §6 (≤1 XS, ≤2 S, ≤3 M, ≤5 L, còn lại XL) |
+  | `parent_key` | chỉ với sub-task (story dưới epic là task riêng) |
+  | `assignee_account_ids` | tài khoản `codepulse_user` của người được giao (tạo khi cần) |
+  | `due_date`, `milestone` | hạn của task, không có thì ngày kết thúc sprint / ngày phát hành phiên bản; tên sprint / phiên bản |
+  | `prod_severity` → `prod_defects` | Bug có nhãn `production` / `prod` / `prod-bug`: highest → P1, high → P2, còn lại P3 |
+  | `issue_mr_links` | MR `fixes` → closes, `refs` → mention, MR của nhánh đã nối → branch |
+  | `issue_commit_links` | commit đã nối (`fixes` / `refs`) có trong `commits` |
+  | `business_project_ids` | dự án của task (lọc R4, lỗi production theo dự án) |
+
+- **Giữ đồng bộ:**
+  - Một hook của session (`after_flush` + `before_commit`) chiếu lại mọi task vừa đổi, dù đổi
+    từ web, git, smart commit hay MCP; chỉ chạy khi nguồn là `codepulse`.
+  - Thay đổi hàng loạt (sửa workflow, đổi ngày sprint) chiếu lại các task liên quan.
+  - Chuyển sang `codepulse` chiếu toàn bộ task, đồng thời xoá dòng của task không còn.
+  - Xoá task xoá dòng của nó và của sub-task.
+- **Mã trùng:** `uq_issues_key` thành duy nhất theo (`source`, `key`) (migration `d9f1b3c5e7a2`),
+  để task `CRM-1` nằm cạnh issue Jira `CRM-1` cũ khi dùng lại mã.
+- **R4 Delivery** với nguồn `codepulse`: mỗi dự án là một dòng "Task · <dự án>".
+- **Gợi ý AI (DPI)** đọc tiêu đề task như với Jira.
+- **Sẵn sàng dữ liệu:** các cột issue theo repo ẩn đi (chỉ có nghĩa với GitLab Issues).
+- Chuyển từ `codepulse` hoặc Jira về `gitlab`: đồng bộ đầy đủ mọi repo, như §9 của spec 27.

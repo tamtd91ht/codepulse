@@ -52,8 +52,9 @@ BACKFILL_DAYS = (1, 3650)
 TIMEOUT_S = (1, 300)
 NUMBERS = {"interval_min": INTERVAL_MIN, "backfill_days": BACKFILL_DAYS, "timeout_s": TIMEOUT_S}
 
-TaskSource = Literal["gitlab", "jira"]
-TASK_SOURCES: tuple[TaskSource, ...] = ("gitlab", "jira")
+# "codepulse": CodePulse's own tasks (docs/specs/31 §15).
+TaskSource = Literal["gitlab", "jira", "codepulse"]
+TASK_SOURCES: tuple[TaskSource, ...] = ("gitlab", "jira", "codepulse")
 DPI_TYPES = ("feature", "bug", "refactor", "chore", "docs", "incident", "automation")
 SEVERITIES = ("P1", "P2", "P3")
 
@@ -577,7 +578,7 @@ def task_source(session: Session, settings: Settings) -> TaskSource:
     """The stored choice; none stored: Jira when Jira is configured, else GitLab."""
     row = session.get(AppSetting, TASK_SOURCE_KEY)
     if row is not None and row.value in TASK_SOURCES:
-        return "jira" if row.value == "jira" else "gitlab"
+        return {"jira": "jira", "codepulse": "codepulse"}.get(row.value, "gitlab")  # type: ignore[return-value]
     return "jira" if jira_configured(session, settings) else "gitlab"
 
 

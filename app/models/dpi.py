@@ -34,7 +34,8 @@ COMMENT_LABELS = (
 )
 
 
-ISSUE_SOURCES = ("gitlab", "jira")
+# docs/specs/31 §15: "codepulse" = CodePulse tasks, written by app/tasks/dpi.py.
+ISSUE_SOURCES = ("gitlab", "jira", "codepulse")
 
 
 class Issue(TimestampMixin, Base):
@@ -47,10 +48,12 @@ class Issue(TimestampMixin, Base):
         CheckConstraint(f"source IN {ISSUE_SOURCES}", name="source"),
         CheckConstraint(
             "(source = 'gitlab' AND project_id IS NOT NULL)"
-            " OR (source = 'jira' AND jira_project_id IS NOT NULL AND key IS NOT NULL)",
+            " OR (source = 'jira' AND jira_project_id IS NOT NULL AND key IS NOT NULL)"
+            " OR (source = 'codepulse' AND key IS NOT NULL)",
             name="origin",
         ),
-        Index("uq_issues_key", "key", unique=True, postgresql_where="key IS NOT NULL"),
+        # Per source (docs/specs/31 §15): a CodePulse task may reuse a Jira project's key.
+        Index("uq_issues_key", "source", "key", unique=True, postgresql_where="key IS NOT NULL"),
         Index("ix_issues_closed_at_src", "closed_at_src"),
         Index("ix_issues_due_date", "due_date"),
         # "Counts for one of these dự án" (docs/specs/27 §15).
