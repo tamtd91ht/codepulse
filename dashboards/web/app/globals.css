@@ -15796,4 +15796,180 @@ a.icon-btn {
 }
 .tk-health-muted {
   color: var(--muted);
+
+/* Sức khoẻ sprint và tổng quan Task (docs/specs/31 §19.5) */
+.th-health {
+  display: grid;
+  gap: 12px;
+}
+.th-health > .grid {
+  margin: 0;
+}
+.th-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.th-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.th-muted,
+.th-meta {
+  color: var(--muted);
+}
+.th-meta {
+  font-size: 12px;
+}
+.th-foot {
+  margin: 0;
+  font-size: 13px;
+}
+.th-chart {
+  margin-top: 12px;
+}
+.th-error {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+.th-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.th-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.th-badge.th-red {
+  color: var(--bad-text);
+  background: var(--bad-soft);
+}
+.th-badge.th-amber {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+.th-badge.th-green {
+  color: var(--good);
+  background: var(--good-soft);
+}
+.th-sub {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.th-stuck {
+  display: grid;
+  gap: 12px;
+}
+.th-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.th-list li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.th-task {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 13px;
+}
+.th-task:hover .th-task-title {
+  text-decoration: underline;
+}
+.th-task:focus-visible,
+.th-row-link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.th-load {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.th-load li {
+  display: grid;
+  grid-template-columns: minmax(100px, 180px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.th-load-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.th-load-bars {
+  display: grid;
+  gap: 3px;
+}
+.th-bar {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.th-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+.th-bar-points {
+  background: var(--chart-1);
+}
+.th-bar-tasks {
+  background: var(--chart-4);
+}
+.th-load-num {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.th-table td.num,
+.th-table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.th-table .th-bad {
+  color: var(--bad-text);
+  font-weight: 600;
+}
+.th-row-link {
+  color: var(--text);
+  font-weight: 600;
+}
+@media (max-width: 640px) {
+  .th-load li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .th-load-bars {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
 }

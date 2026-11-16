@@ -1,0 +1,127 @@
+"use client";
+
+import Link from "next/link";
+
+import { HealthBadge, type HealthColor } from "@/components/tasks/TaskHealth";
+import { Card, EmptyState, Loading, PageHeader } from "@/components/ui";
+import { can, useApi } from "@/lib/api";
+import { dayLabel } from "@/lib/format";
+import type { Me } from "@/lib/types";
+
+/*
+ * Tổng quan Task cho Lead / Manager (docs/specs/31 §19.5, roadmap P4): one row per dự án the person
+ * can see with Task on — active sprint, points done, projection, highest bugs, open critical
+ * findings, median lead time, next release — each with a health label. Read-only.
+ */
+
+interface OverviewRow {
+  business_project_id: number;
+  name: string;
+  key: string;
+  sprint: { id: number; name: string; start_date: string | null; end_date: string | null } | null;
+  done_pct: number | null;
+  projected_pct: number | null;
+  highest_bugs: number;
+  open_critical: number;
+  lead_time_h: number | null;
+  next_version: { id: number; name: string; release_date: string | null; total: number; done: number; done_pct: number | null } | null;
+  health: HealthColor;
+}
+
+function pct(v: number | null): string {
+  return v === null ? "—" : `${v}%`;
+}
+
+function hours(v: number | null): string {
+  if (v === null) return "—";
+  return v >= 48 ? `${Math.round(v / 2.4) / 10} ngày` : `${v} giờ`;
+}
+
+export default function TaskOverviewPage() {
+  const { data: me } = useApi<Me>("/auth/me");
+  const allowed = !me || can(me, "tasks.view");
+  const rows = useApi<OverviewRow[]>(allowed ? "/tasks/overview" : null);
+
+  if (!allowed)
+    return (
+      <>
+        <PageHeader title="Tổng quan Task" />
+        <EmptyState icon="alert" title="Bạn chưa có quyền xem task" />
+      </>
+    );
+
+  return (
+    <>
+      <PageHeader
+        eyebrow={<Link href="/tasks">Task</Link>}
+        title="Tổng quan dự án"
+        subtitle="Sprint đang chạy, dự phóng hoàn thành, bug và lỗi nghiêm trọng của mọi dự án bạn xem được. Bấm một dòng để xem sức khoẻ sprint."
+      />
+      <Card flush title="Dự án" subtitle="Rủi ro: dự phóng dưới 70%, hoặc có bug mức cao nhất / lỗi critical đang mở. Cần chú ý: dự phóng dưới 90%.">
+        {rows.error ? (
+          <div className="th-error">
+            <Loading error={rows.error} />
+            <button type="button" className="ghost sm" onClick={() => void rows.mutate()}>
+              Thử lại
+            </button>
+          </div>
+        ) : !rows.data ? (
+          <Loading rows={5} />
+        ) : !rows.data.length ? (
+          <EmptyState icon="inbox" title="Chưa có dự án nào dùng Task">
+            Dự án bật Task và bạn được xem sẽ hiện ở đây.
+          </EmptyState>
+        ) : (
+          <div className="table-wrap">
+            <table className="th-table">
+              <thead>
+                <tr>
+                  <th>Dự án</th>
+                  <th>Sức khoẻ</th>
+                  <th>Sprint đang chạy</th>
+                  <th className="num">Point xong</th>
+                  <th className="num">Dự phóng</th>
+                  <th className="num">Bug cao nhất</th>
+                  <th className="num">Lỗi critical</th>
+                  <th className="num" title="Từ lúc tạo tới lúc xong, trung vị 30 ngày qua">Lead time</th>
+                  <th>Phiên bản kế tiếp</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.data.map((r) => (
+                  <tr key={r.business_project_id}>
+                    <td>
+                      <Link href={`/tasks?space=${r.business_project_id}&tab=health`} className="th-row-link">
+                        {r.name} <span className="mono th-muted">{r.key}</span>
+                      </Link>
+                    </td>
+                    <td>
+                      <HealthBadge value={r.health} />
+                    </td>
+                    <td>{r.sprint ? r.sprint.name : <span className="th-muted">Không có</span>}</td>
+                    <td className="num">{pct(r.done_pct)}</td>
+                    <td className="num">{pct(r.projected_pct)}</td>
+                    <td className={`num${r.highest_bugs ? " th-bad" : ""}`}>{r.highest_bugs}</td>
+                    <td className={`num${r.open_critical ? " th-bad" : ""}`}>{r.open_critical}</td>
+                    <td className="num">{hours(r.lead_time_h)}</td>
+                    <td>
+                      {r.next_version ? (
+                        <span>
+                          {r.next_version.name}
+                          {r.next_version.release_date && <span className="th-muted"> · {dayLabel(r.next_version.release_date)}</span>}
+                          <span className="th-muted"> · {pct(r.next_version.done_pct)} xong</span>
+                        </span>
+                      ) : (
+                        <span className="th-muted">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </>
+  );
+}

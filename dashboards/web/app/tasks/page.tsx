@@ -9,6 +9,7 @@ import { TaskBacklog } from "@/components/tasks/TaskBacklog";
 import { TaskBoard } from "@/components/tasks/TaskBoard";
 import { TaskCreate } from "@/components/tasks/TaskCreate";
 import { TaskDetail } from "@/components/tasks/TaskDetail";
+import { TaskHealth } from "@/components/tasks/TaskHealth";
 import { TaskList } from "@/components/tasks/TaskList";
 import { TaskReports } from "@/components/tasks/TaskReports";
 import { EnableSpace, TaskSettings } from "@/components/tasks/TaskSettings";
@@ -24,12 +25,13 @@ import type { Me } from "@/lib/types";
  * (?space=&tab=&task=KEY), so every view can be linked; the last dự án is remembered per browser.
  */
 
-type Tab = "board" | "backlog" | "list" | "reports" | "versions" | "settings";
-const TABS: { key: Tab; label: string; icon: "board" | "inbox" | "file" | "pulse" | "flag" | "settings" }[] = [
+type Tab = "board" | "backlog" | "list" | "reports" | "health" | "versions" | "settings";
+const TABS: { key: Tab; label: string; icon: "board" | "inbox" | "file" | "pulse" | "stethoscope" | "flag" | "settings" }[] = [
   { key: "board", label: "Board", icon: "board" },
   { key: "backlog", label: "Backlog", icon: "inbox" },
   { key: "list", label: "Danh sách", icon: "file" },
   { key: "reports", label: "Báo cáo", icon: "pulse" },
+  { key: "health", label: "Sức khoẻ sprint", icon: "stethoscope" },
   { key: "versions", label: "Phiên bản", icon: "flag" },
   { key: "settings", label: "Cài đặt", icon: "settings" },
 ];
@@ -178,6 +180,8 @@ function Tasks() {
             <TaskList key={space.business_project_id} space={space} me={me} onOpen={openTask} />
           ) : tab === "reports" ? (
             <TaskReports key={space.business_project_id} space={space} />
+          ) : tab === "health" ? (
+            <TaskHealth key={space.business_project_id} space={space} />
           ) : tab === "versions" ? (
             <TaskVersions key={space.business_project_id} space={space} />
           ) : (
