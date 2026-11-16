@@ -482,6 +482,26 @@ P5 Mở rộng. Mỗi giai đoạn là một mục con bên dưới, ghi cả qu
 - Chưa làm ở P2: cập nhật lạc quan + "Hoàn tác 5 giây" cho mọi thao tác (Board đã cập nhật lạc quan khi
   kéo thả), phím tắt E/A/S/C (để P5).
 
+### 19.4 P3 – Khép vòng chất lượng (không có migration; dùng `task_test_links` của P1)
+- **Testcase phủ task** (`GET/POST /tasks/{key}/tests`, `DELETE /tasks/{key}/tests/{case_id}`; gắn / gỡ cần
+  `tasks.link`, xem cần `tests.view`; testcase phải thuộc dự án của task; nhập `C123` hoặc id): liên kết
+  `covers`. Chi tiết task có mục **Testcase**: mỗi case với kết quả lần chạy gần nhất, tổng Passed / Failed.
+  Testcase phủ task đang Failed hiện ở *Việc của tôi* của người được giao.
+- **Definition of Done** (`rules.dod = {checks, min_score, enforce}`, Task › Cài đặt): chọn từ *Có MR*, *MR
+  đã merge* (MR fixes, không có thì mọi MR), *Điểm review đạt* (≥ ngưỡng, mặc định 7), *Không còn
+  critical*, *Pipeline không lỗi*, *Testcase đều Passed*. Chi tiết task hiện danh sách tự tích. Bật
+  *Bắt buộc*: người chuyển sang Xong (lý do `done`) khi thiếu → 409 kèm mục thiếu; git tự chuyển thì ghi
+  lịch sử "chưa chuyển Done: thiếu DoD" và giữ nguyên (như cổng critical). Đóng với lý do khác `done`
+  không cần DoD.
+- **Sẵn sàng phát hành** (`GET /tasks/versions/{id}/readiness`): mọi task đã xong, không còn bug mức
+  Cao / Cao nhất mở, testcase phủ task đều Passed, MR của task đã merge (MR đóng không merge không chặn);
+  mỗi mục liệt kê tối đa 20 thứ đang chặn. `POST …/release` khi chưa sẵn sàng → 409; `{force: true,
+  reason}` để vẫn phát hành (lý do bắt buộc, ghi audit `task.version.release` kèm mục thiếu). Trang
+  Phiên bản mở hộp kiểm tra trước khi phát hành.
+- **Retest:** Bug có liên kết `bug` tới kết quả test (tạo từ testcase hoặc gắn tay) chuyển sang Xong với
+  lý do `done` → thông báo `task.retest` cho người ghi kết quả và người được giao test; ô Bug của test
+  tự hiện "Cần retest" (§19.2).
+
 ### 19.5 P4 – Tổng quan (Sprint Health, đa dự án)
 Chỉ đọc, không migration. Mã: `app/tasks/health.py`, `app/api/routers/task_health.py` (gắn trước router
 `tasks` để `/tasks/overview` không bị hiểu là mã task).

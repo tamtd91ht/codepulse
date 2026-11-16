@@ -40,9 +40,12 @@ from app.models import (
     TaskPriority,
     TaskSpace,
     TaskStatus,
+    TaskTestLink,
     TaskVersion,
     TaskWatcher,
     TaskWorklog,
+    TestCase,
+    TestSuite,
 )
 from app.models.tasks import FIELD_KINDS, LINK_KINDS, PRIORITY_COLORS
 from app.tasks import ai as task_ai
@@ -681,6 +684,7 @@ def bulk(body: BulkIn, principal: Viewer, session: SessionDep) -> dict[str, Any]
         _remove_files(files)
         return {"updated": 0, "deleted": len(tasks)}
     wanted = body.set.model_dump(exclude_unset=True)
+    skipped: list[dict[str, str]] = []
     needs = {
         "assign" if k == "assignee_id" else "transition" if k == "status_id" else "edit"
         for k in wanted
@@ -706,10 +710,16 @@ def bulk(body: BulkIn, principal: Viewer, session: SessionDep) -> dict[str, Any]
             status = session.get(TaskStatus, wanted["status_id"])
             if status is None or status.business_project_id != task.business_project_id:
                 raise HTTPException(422, f"trạng thái không thuộc dự án của {task.key}")
-            ts.set_status(session, task, status, principal.user_id)
+            # A task the workflow, the critical gate or the DoD keeps out is skipped and named,
+            # the rest of the batch goes on (§19.4).
+            try:
+                with session.begin_nested():
+                    ts.set_status(session, task, status, principal.user_id)
+            except HTTPException as exc:
+                skipped.append({"key": task.key, "reason": str(exc.detail)})
     audit(session, principal.user_id, "task.bulk", f"tasks:{len(tasks)}", set=list(wanted))
     session.commit()
-    return {"updated": len(tasks), "deleted": 0}
+    return {"updated": len(tasks) - len(skipped), "deleted": 0, "skipped": skipped}
 
 
 def _files_of(session: Session, task_ids: list[int]) -> list[str]:
@@ -811,6 +821,20 @@ def download(
             "Cache-Control": "private, max-age=86400",
         },
     )
+
+
+def _dod_of(session: Session, task: Task, git: dict[str, Any]) -> list[dict[str, Any]]:
+    from app.tasks import quality
+
+    space = session.get(TaskSpace, task.business_project_id)
+    return quality.dod(session, task, space, git) if space is not None else []
+
+
+def _dod_enforced(session: Session, task: Task) -> bool:
+    from app.tasks import quality
+
+    space = session.get(TaskSpace, task.business_project_id)
+    return bool(space is not None and quality.dod_settings(space)["enforce"])
 
 
 def _may_drop_file(principal: Principal, task: Task, row: TaskAttachment) -> bool:
@@ -1206,12 +1230,49 @@ def delete_version(version_id: int, principal: Viewer, session: SessionDep) -> N
     session.commit()
 
 
+class ReleaseIn(BaseModel):
+    # Release though readiness fails (§19.4): only with a reason, kept in the audit log.
+    force: bool = False
+    reason: str | None = Field(default=None, max_length=500)
+
+
+@router.get("/tasks/versions/{version_id}/readiness")
+def version_readiness(version_id: int, principal: Viewer, session: SessionDep) -> dict[str, Any]:
+    """Release readiness (docs/specs/31 §19.4)."""
+    from app.tasks import quality
+
+    v = _version(session, principal, version_id)
+    return quality.readiness(session, v)
+
+
 @router.post("/tasks/versions/{version_id}/release")
-def release_version(version_id: int, principal: Viewer, session: SessionDep) -> dict[str, Any]:
+def release_version(
+    version_id: int,
+    principal: Viewer,
+    session: SessionDep,
+    body: ReleaseIn | None = None,
+) -> dict[str, Any]:
+    from app.tasks import quality
+
     v = _version(session, principal, version_id)
     ts.require_manage(principal, v.business_project_id)
+    body = body or ReleaseIn()
+    details: dict[str, Any] = {}
+    if not v.released_at:
+        ready = quality.readiness(session, v)
+        if not ready["ready"]:
+            if not body.force:
+                missing = ", ".join(c["label"] for c in ready["checks"] if not c["ok"])
+                raise HTTPException(409, f"phiên bản chưa sẵn sàng: {missing}")
+            if not (body.reason or "").strip():
+                raise HTTPException(422, "phát hành khi chưa sẵn sàng cần ghi lý do")
+            details = {
+                "forced": True,
+                "reason": (body.reason or "").strip(),
+                "failing": [c["key"] for c in ready["checks"] if not c["ok"]],
+            }
     v.released_at = None if v.released_at else datetime.now(UTC)
-    audit(session, principal.user_id, "task.version.release", f"version:{v.id}")
+    audit(session, principal.user_id, "task.version.release", f"version:{v.id}", **details)
     session.commit()
     return _version_out(session, v)
 
@@ -1329,6 +1390,7 @@ def detail(session: Session, principal: Principal, task: Task) -> dict[str, Any]
         or s.id == current.id
     ]
     can = ts.rights(principal, task)
+    git_now = ts.git_detail(session, task)
     manage = ts.can_manage_space(principal, task.business_project_id)
     return {
         **row,
@@ -1399,9 +1461,12 @@ def detail(session: Session, principal: Principal, task: Task) -> dict[str, Any]
             }
             for w in worklogs
         ],
-        "git": ts.git_detail(session, task),
+        "git": git_now,
         "transitions": allowed,
         "can": {**can, "manage": manage},
+        # Definition of Done, ticked from real data (§19.4); [] when the dự án set none.
+        "dod": _dod_of(session, task, git_now),
+        "dod_enforced": _dod_enforced(session, task),
     }
 
 
@@ -1699,6 +1764,83 @@ async def upload(
         }
 
     return await run_in_threadpool(store)
+
+
+class CoverIn(BaseModel):
+    # A testcase id, or its key as shown in Testcase ("C123").
+    case: str = Field(min_length=1, max_length=20)
+
+
+def _case_for(session: Session, principal: Principal, task: Task, ref: str) -> TestCase:
+    from app.testcases import content
+
+    raw = ref.strip()
+    case_id = int(raw) if raw.isdigit() else content.case_id_of(raw)
+    case = session.get(TestCase, case_id) if case_id else None
+    if case is None:
+        raise HTTPException(404, "không thấy testcase")
+    suite = session.get(TestSuite, case.suite_id)
+    if (
+        suite is None
+        or suite.business_project_id != task.business_project_id
+        or not principal.can("tests.view")
+    ):
+        raise HTTPException(404, "không thấy testcase của dự án")
+    return case
+
+
+@router.get("/tasks/{key}/tests")
+def task_tests(key: str, principal: Viewer, session: SessionDep) -> dict[str, Any]:
+    """The testcases covering a task and their latest status (§19.4)."""
+    from app.tasks import quality
+
+    task = ts.task_or_404(session, principal, key)
+    if not principal.can("tests.view"):
+        return {"total": 0, "passed": 0, "failed": 0, "untested": 0, "cases": [], "hidden": True}
+    return quality.coverage(session, task.id)
+
+
+@router.post("/tasks/{key}/tests", status_code=201)
+def cover_task(key: str, body: CoverIn, principal: Viewer, session: SessionDep) -> dict[str, Any]:
+    from app.tasks import quality
+
+    task = ts.task_or_404(session, principal, key)
+    ts.require(principal, "link", task)
+    case = _case_for(session, principal, task, body.case)
+    exists = session.scalar(
+        select(TaskTestLink.id).where(
+            TaskTestLink.task_id == task.id,
+            TaskTestLink.case_id == case.id,
+            TaskTestLink.kind == "covers",
+        )
+    )
+    if exists is None:
+        session.add(
+            TaskTestLink(
+                task_id=task.id, case_id=case.id, kind="covers", created_by=principal.user_id
+            )
+        )
+        ts.log(session, task, principal.user_id, "testcase", None, f"C{case.id}")
+        session.commit()
+    return quality.coverage(session, task.id)
+
+
+@router.delete("/tasks/{key}/tests/{case_id}", status_code=204)
+def uncover_task(key: str, case_id: int, principal: Viewer, session: SessionDep) -> None:
+    task = ts.task_or_404(session, principal, key)
+    ts.require(principal, "link", task)
+    row = session.scalars(
+        select(TaskTestLink).where(
+            TaskTestLink.task_id == task.id,
+            TaskTestLink.case_id == case_id,
+            TaskTestLink.kind == "covers",
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(404, "không thấy liên kết testcase")
+    ts.log(session, task, principal.user_id, "testcase", f"C{case_id}", None)
+    session.delete(row)
+    session.commit()
 
 
 @router.get("/tasks/{key}/commit-candidates")

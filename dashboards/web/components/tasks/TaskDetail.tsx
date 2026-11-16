@@ -14,6 +14,7 @@ import { TaskActivity, TaskAttachments } from "./TaskActivity";
 import { FileTextarea } from "./taskFiles";
 import { TaskAiButtons } from "./TaskAi";
 import { TaskCode } from "./TaskCode";
+import { TaskDod, TaskTests } from "./TaskQuality";
 import {
   LINK_KIND_LABEL,
   RESOLUTION_LABEL,
@@ -158,6 +159,8 @@ function Body({
         <Subtasks task={task} bp={bp} space={space} onOpenTask={onOpenTask} />
         <Links task={task} onOpenTask={onOpenTask} />
         <TaskCode task={task} bp={bp} />
+        <TaskDod task={task} />
+        <TaskTests task={task} />
         <TaskActivity task={task} />
         <TaskAttachments task={task} />
       </div>

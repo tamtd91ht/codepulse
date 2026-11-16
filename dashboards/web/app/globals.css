@@ -16107,3 +16107,31 @@ a.icon-btn {
     grid-template-columns: 1fr;
   }
 }
+
+/* Definition of Done, release readiness (docs/specs/31 §19.4). */
+.tk-dod {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tk-dod li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tk-dod li.ok {
+  color: var(--good);
+}
+.tk-dod li.miss {
+  color: var(--bad-text);
+}
+.tk-dod li .muted {
+  color: var(--muted);
+}
+.tk-dod-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}

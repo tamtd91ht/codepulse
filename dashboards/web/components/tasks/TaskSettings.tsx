@@ -7,6 +7,7 @@ import { IconButton } from "@/components/icons";
 import { MultiSelect } from "@/components/MultiSelect";
 import { Card, Loading, Message } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
+
 import type { TaskCategory, TaskField, TaskFieldKind, TaskPriorityColor, TaskPriorityLevel, TaskRules, TaskSpace, TaskType } from "@/lib/types";
 
 import {
@@ -23,6 +24,7 @@ import {
   sortedStatuses,
   useTaskFields,
 } from "./taskParts";
+import { DodCard } from "./TaskQuality";
 import { BOARD_MODE_TEXT, type BoardMode, BoardModeField, StatusFlow, type TemplateKey, TemplatePicker, WizardSteps, templateOf } from "./TaskTemplates";
 
 /* Cài đặt (§13, tasks.manage): key, types, statuses and their transitions, priorities (§18), git rules, custom fields. */
@@ -182,6 +184,7 @@ export function TaskSettings({ space }: { space: TaskSpace }) {
       <PrioritiesCard key={`p${space.business_project_id}`} space={space} />
       <RulesCard key={`r${space.business_project_id}`} space={space} />
       <FieldsCard key={`f${space.business_project_id}`} space={space} />
+      <DodCard key={`d${space.business_project_id}`} space={space} />
       <JiraImportCard key={`j${space.business_project_id}`} space={space} />
     </div>
   );

@@ -2640,6 +2640,9 @@ export interface TaskDetail extends Omit<TaskRow, "git" | "subtasks"> {
   git: TaskGit | null;
   transitions: TaskStatusRef[];
   /** docs/specs/31 §4.1: the task rights, split as Jira's permission scheme. */
+  /** docs/specs/31 §19.4: the dự án's Definition of Done on this task. */
+  dod?: { key: string; label: string; ok: boolean; detail: string }[];
+  dod_enforced?: boolean;
   can: {
     edit: boolean;
     assign: boolean;

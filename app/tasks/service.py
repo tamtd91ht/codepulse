@@ -316,6 +316,10 @@ def enable_space(
                 if value is not None and value not in valid:
                     raise HTTPException(422, f"trạng thái {value} không thuộc dự án")
                 merged[name] = value
+            elif name == "dod":  # Definition of Done (docs/specs/31 §19.4)
+                from app.tasks import quality
+
+                merged[name] = quality.clean_dod(value)
             else:
                 raise HTTPException(422, f"luật không biết: {name}")
         space.rules = merged
@@ -943,6 +947,27 @@ def set_status(
                 tone="warn",
             )
             return False
+    entering_done = status.category == "done" and (current is None or current.category != "done")
+    effective = resolution or task.resolution or "done"
+    if entering_done and space is not None and effective == "done":
+        # The dự án's enforced Definition of Done (§19.4): a person gets a 409 with what is
+        # missing; git's automatic Done is held back and noted, like the critical gate.
+        from app.tasks import quality
+
+        unmet = quality.dod_unmet(session, task, space)
+        if unmet:
+            if via in ("web", "mcp"):
+                raise HTTPException(409, "chưa đạt Definition of Done: " + ", ".join(unmet))
+            log(session, task, None, "blocked", None, "chưa chuyển Done: thiếu DoD", via)
+            tell(
+                session,
+                [task.assignee_id],
+                task,
+                "task.status",
+                f"{task.key} chưa chuyển Done: thiếu " + ", ".join(unmet),
+                tone="warn",
+            )
+            return False
     old_name = current.name if current else None
     now = datetime.now(UTC)
     task.status_id = status.id
@@ -982,8 +1007,52 @@ def set_status(
         actor_id=actor_id,
         tone="good" if status.category == "done" else "info",
     )
+    if entering_done and task.type == "bug" and task.resolution == "done":
+        _ask_retest(session, task, actor_id)
     session.flush()
     return True
+
+
+def _ask_retest(session: Session, task: Task, actor_id: int | None) -> None:
+    """A bug raised from a failed test is fixed: ask who recorded that result (and whoever the
+    test is assigned to) to run it again (docs/specs/31 §19.4)."""
+    from app.models import TaskTestLink, TestResult, TestRun, TestRunTest
+
+    people: set[int | None] = set()
+    for result_id in session.scalars(
+        select(TaskTestLink.result_id).where(
+            TaskTestLink.task_id == task.id, TaskTestLink.kind == "bug"
+        )
+    ):
+        if result_id is None:
+            continue
+        result = session.get(TestResult, result_id)
+        if result is None:
+            continue
+        run = session.execute(
+            select(TestRun.business_project_id)
+            .join(TestRunTest, TestRunTest.run_id == TestRun.id)
+            .where(TestRunTest.id == result.test_id)
+        ).scalar()
+        if run != task.business_project_id:
+            # A run of another dự án (a shared suite): its people may not see this task.
+            continue
+        people.add(result.created_by)
+        test = session.get(TestRunTest, result.test_id)
+        if test is not None:
+            people.add(test.assigned_to)
+    people.discard(None)
+    if people:
+        tell(
+            session,
+            people,
+            task,
+            "task.retest",
+            f"{task.key} đã sửa xong: chạy lại test",
+            task.title,
+            actor_id=actor_id,
+            tone="info",
+        )
 
 
 def status_by_word(session: Session, space: TaskSpace, word: str) -> TaskStatus | None:

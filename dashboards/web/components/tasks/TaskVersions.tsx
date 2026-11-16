@@ -11,6 +11,7 @@ import { date } from "@/lib/format";
 import type { TaskSpace, TaskVersion } from "@/lib/types";
 
 import { errorText, refreshTasks, useConfirm, useVersions } from "./taskParts";
+import { ReleaseModal } from "./TaskQuality";
 
 /** Phiên bản (§13): versions of the dự án, release, release notes. */
 export function TaskVersions({ space }: { space: TaskSpace }) {
@@ -22,15 +23,10 @@ export function TaskVersions({ space }: { space: TaskSpace }) {
   const [confirmEl, ask] = useConfirm();
   const canManage = space.can_manage;
 
-  async function release(v: TaskVersion) {
-    if (!(await ask({ title: `Phát hành “${v.name}”?`, body: <p>Đánh dấu phiên bản đã phát hành hôm nay.</p>, ok: "Phát hành" }))) return;
-    try {
-      await api.post(`/tasks/versions/${v.id}/release`);
-      await refreshTasks();
-      setMessage(`Đã phát hành ${v.name}.`);
-    } catch (e) {
-      setMessage(`Lỗi: ${errorText(e)}`);
-    }
+  // Releasing goes through the readiness check (docs/specs/31 §19.4).
+  const [releasing, setReleasing] = useState<TaskVersion | null>(null);
+  function release(v: TaskVersion) {
+    setReleasing(v);
   }
 
   async function remove(v: TaskVersion) {
@@ -46,6 +42,16 @@ export function TaskVersions({ space }: { space: TaskSpace }) {
   return (
     <div className="tk-versions">
       {confirmEl}
+      {releasing && (
+        <ReleaseModal
+          version={releasing}
+          onClose={() => setReleasing(null)}
+          onDone={(m) => {
+            setReleasing(null);
+            setMessage(m);
+          }}
+        />
+      )}
       {message && <Message text={message} onClose={() => setMessage(null)} />}
       <section className="card flush">
         <div className="card-head tk-pad">
