@@ -150,6 +150,8 @@ export interface MetricsSeries {
   team_quality_index: number | null;
   /** [from, to) instants of the latest period (team series), for links to its findings. */
   period_range?: [string, string] | null;
+  /** docs/specs/10, period=range (e.g. "Hôm nay"): the team over those days, computed now. */
+  current?: Metrics | null;
 }
 
 export interface LeaderboardRow extends Metrics {
@@ -1111,8 +1113,13 @@ export interface ProjectRepoRow extends Omit<ProjectAgg, "delta"> {
 
 export interface ProjectDetail {
   project: { id: number; name: string; description: string | null };
-  period_type: "week" | "month";
+  /** "range": whole days period_start..period_end (docs/specs/10, e.g. "Hôm nay"). */
+  period_type: "week" | "month" | "range";
   period_start: string;
+  /** Last day, inclusive. */
+  period_end?: string;
+  /** What each `series` point is (a range trends by week, by month when long). */
+  series_period?: "week" | "month";
   period_range: [string, string];
   totals: ProjectAgg & { repos: number };
   repos: ProjectRepoRow[];

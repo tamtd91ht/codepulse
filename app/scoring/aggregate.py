@@ -6,7 +6,7 @@ a weight change gives the same result as a first run.
 
 import logging
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -97,8 +97,13 @@ class PeriodData:
     pipelines: dict[tuple[int | None, str | None], list[Pipeline]]  # (project, branch) -> runs
 
 
-def load_period(session: Session, start: datetime, end: datetime) -> PeriodData:
+def load_period(
+    session: Session, start: datetime, end: datetime, users: Collection[int] | None = None
+) -> PeriodData:
+    """Reviews and merged MRs in [start, end) of active people (only `users` when given)."""
     active = select(User.id).where(User.active.is_not(False))
+    if users is not None:
+        active = active.where(User.id.in_(users))
     reviews: dict[int, ReviewFacts] = {}
     for review in session.scalars(
         select(Review).where(
@@ -268,6 +273,75 @@ def compute(
         "fix_rate": _dec(fix_rate, 3),
         "quality_index": _dec(index),
     }
+
+
+@dataclass
+class LiveTeamWindow:
+    """One team's numbers over any whole days, computed now (docs/specs/10: a "Khoảng ngày" or
+    "Hôm nay" on the Team page): the same rows aggregate() stores for a week or month."""
+
+    team: dict[str, Any] | None
+    users: dict[int, dict[str, Any]]
+
+
+def compute_team_window(
+    session: Session,
+    team_id: int,
+    first_day: date,
+    last_day: date,
+    tz: ZoneInfo,
+    weights_override: Mapping[str, float] | None = None,
+    min_sample: int = 3,
+    min_confidence_unverified: float = MIN_CONFIDENCE_UNVERIFIED,
+) -> LiveTeamWindow:
+    """The team row (its members' work while in the team, as aggregate() counts it) and one row
+    per person who was in the team during [first_day, last_day] (all their work, as the stored
+    per-person rows are). Nothing is written."""
+    start = datetime.combine(first_day, time.min, tz)
+    end = datetime.combine(last_day + timedelta(days=1), time.min, tz)
+    memberships = list(session.scalars(select(TeamMember).where(TeamMember.team_id == team_id)))
+    members = {
+        m.user_id
+        for m in memberships
+        if m.joined_at <= last_day and (m.left_at is None or m.left_at > first_day)
+    }
+    data = load_period(session, start, end, members)
+
+    def pipelines_for(mrs: Iterable[MergeRequest]) -> list[Pipeline]:
+        return [p for mr in mrs for p in data.pipelines.get((mr.project_id, mr.source_branch), [])]
+
+    def row(reviews: list[ReviewFacts], mrs: list[MergeRequest]) -> dict[str, Any]:
+        return compute(
+            reviews,
+            mrs,
+            pipelines_for(mrs),
+            weights_override,
+            min_sample,
+            min_confidence_unverified,
+        )
+
+    by_user_reviews: dict[int, list[ReviewFacts]] = defaultdict(list)
+    by_user_mrs: dict[int, list[MergeRequest]] = defaultdict(list)
+    team_reviews: list[ReviewFacts] = []
+    team_mrs: list[MergeRequest] = []
+    for review in data.reviews:
+        by_user_reviews[review.user_id].append(review)
+        day = (review.counted_at or review.finished_at).astimezone(tz).date()
+        if team_id in _teams_at(memberships, review.user_id, day):
+            team_reviews.append(review)
+    for user_id, mr in data.merged:
+        by_user_mrs[user_id].append(mr)
+        if mr.merged_at is not None and team_id in _teams_at(
+            memberships, user_id, mr.merged_at.astimezone(tz).date()
+        ):
+            team_mrs.append(mr)
+    return LiveTeamWindow(
+        team=row(team_reviews, team_mrs) if team_reviews or team_mrs else None,
+        users={
+            user_id: row(by_user_reviews[user_id], by_user_mrs[user_id])
+            for user_id in set(by_user_reviews) | set(by_user_mrs)
+        },
+    )
 
 
 def _teams_at(memberships: list[TeamMember], user_id: int, day: date) -> set[int]:

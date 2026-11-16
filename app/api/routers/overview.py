@@ -466,18 +466,38 @@ def project_detail(
     principal: OverviewViewer,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
-    period: Period = "week",
+    period: OverviewPeriod = "week",
     start: date | None = None,
+    end: date | None = None,
 ) -> dict[str, Any]:
-    """One dự án: per-repo numbers, a 12-period series, finding categories, recent reviews."""
+    """One dự án: per-repo numbers, a 12-period series, finding categories, recent reviews.
+
+    period=range (docs/specs/10, e.g. "Hôm nay": today..today, 00:00 to now): whole days
+    start..end as on Tổng quan, deltas against the as-long days right before, the series by
+    week (by month past RANGE_WEEKLY_DAYS) up to the range's last day."""
     bp = session.get(BusinessProject, bp_id)
     if bp is None or not principal.can_view_project(bp.id):
         raise HTTPException(404, "dự án not found")
-    period_start, tz = _resolve_period(period, start, settings)
-    lo, hi = period_bounds(period_start, period, tz)
-    prev_lo, prev_hi = period_bounds(previous_period(period_start, period), period, tz)
-    series_starts = _trend_starts(period_start, period, SERIES_PERIODS)
-    series_lo = period_bounds(series_starts[0], period, tz)[0]
+    tz = ZoneInfo(settings.report_tz)
+    if period == "range":
+        w = _window(period, start, end, settings)
+        period_start, period_end = w.period_start, w.period_end
+        lo, hi, prev_lo, prev_hi = w.lo, w.hi, w.prev_lo, w.prev_hi
+        series_period: PeriodType = w.trend_period
+        series_starts = _trend_starts(
+            period_start_of(period_end, series_period), series_period, SERIES_PERIODS
+        )
+        series_lo = min(period_bounds(series_starts[0], series_period, tz)[0], prev_lo)
+        next_start = period_end + timedelta(days=1)
+    else:
+        period_start, tz = _resolve_period(period, start, settings)
+        series_period = period
+        lo, hi = period_bounds(period_start, period, tz)
+        prev_lo, prev_hi = period_bounds(previous_period(period_start, period), period, tz)
+        series_starts = _trend_starts(period_start, period, SERIES_PERIODS)
+        series_lo = period_bounds(series_starts[0], period, tz)[0]
+        next_start = next_period(period_start, period)
+        period_end = next_start - timedelta(days=1)
 
     repos = list(
         session.scalars(
@@ -500,7 +520,7 @@ def project_detail(
     by_period = _bucket(
         [r for r in rows if r[5] is not None],
         sev,
-        lambda p, bp_, fin: period_start_of(fin.astimezone(tz).date(), period),
+        lambda p, bp_, fin: period_start_of(fin.astimezone(tz).date(), series_period),
     )
     open_by_project = _open_severe(session)
     last_review: dict[int, datetime] = {}
@@ -546,7 +566,11 @@ def project_detail(
         "project": {"id": bp.id, "name": bp.name, "description": bp.description},
         "period_type": period,
         "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
         "period_range": [lo.isoformat(), hi.isoformat()],
+        # What each point of `series` is: the period itself, or for a range week / month.
+        "series_period": series_period,
+        "range_min": RANGE_MIN.isoformat(),
         "totals": {
             **cur.as_dict(),
             "severe": cur.severe,
@@ -576,5 +600,5 @@ def project_detail(
         ],
         "categories": [{"category": str(c), "count": int(n)} for c, n in categories],
         "recent": recent,
-        "next_period_start": next_period(period_start, period).isoformat(),
+        "next_period_start": next_start.isoformat(),
     }

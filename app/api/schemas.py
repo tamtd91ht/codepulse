@@ -832,6 +832,8 @@ class MetricsSeries(BaseModel):
     team_quality_index: float | None = None
     # [from, to) instants of the latest period, for links to the findings it counts.
     period_range: tuple[datetime, datetime] | None = None
+    # docs/specs/10, period=range (e.g. "Hôm nay"): the team over those days, computed now.
+    current: MetricsOut | None = None
 
 
 class LeaderboardRow(MetricsOut):

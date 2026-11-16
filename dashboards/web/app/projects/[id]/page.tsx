@@ -15,31 +15,41 @@ import {
 } from "recharts";
 
 import { CriteriaSummaryBlock } from "@/components/CriteriaScores";
+import { DateRangePicker } from "@/components/DateRangePicker";
 import { ProjectCriteria } from "@/components/ProjectCriteria";
 import { ProjectRepos } from "@/components/ProjectRepos";
 import { ReviewResults } from "@/components/ReviewResults";
 import { Card, ChartTip, Drawer, EmptyState, Loading, PageHeader, Pager, Segmented, SplitBar, StatStrip, StripStat } from "@/components/ui";
 import { scoreTone } from "@/components/Evaluation";
 import { type BoardScope, boardLink, can, canSetupProject, qs, useApi } from "@/lib/api";
-import { CATEGORY_LABEL, periodLabel, shiftDays, weekLabel } from "@/lib/format";
+import { CATEGORY_LABEL, periodLabel, rangeLabel, shiftDays, weekLabel } from "@/lib/format";
 import { scopeNote, useCycleScope } from "@/lib/timeScope";
 import type { Me, ProjectDetail } from "@/lib/types";
 
-type Period = "week" | "month";
+type Period = "week" | "month" | "range";
+/** "range": whole days (e.g. "Hôm nay", 00:00 to now), from RANGE_MIN on, as on Tổng quan. */
+const RANGE_MIN = "2026-04-01";
 
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  // The dashboard-wide period (lib/timeScope). This API takes weeks and months only, so a
-  // shared range shows as the week / month around its last day.
-  const time = useCycleScope();
-  const period: Period = time?.period === "month" ? "month" : "week";
-  const start = time?.start ?? null;
+  // The dashboard-wide period (lib/timeScope): a week, a month or a range of days.
+  const time = useCycleScope({ range: true, rangeMin: RANGE_MIN });
+  const period: Period = time?.period ?? "week";
+  const start = time && time.period !== "range" ? time.start : null;
+  const range = time?.range ?? { from: "", to: "" };
+  const today = time?.today ?? "";
   const latest = time?.latest ?? "";
+  const rangeOk = time !== null && range.from >= RANGE_MIN && range.from <= range.to && range.to <= today;
   const changePeriod = (p: Period) => time?.changePeriod(p);
   const step = (by: number) => time?.step(by);
+  const setRange = (r: { from: string; to: string }) => time?.setRange(r);
   const [criteriaOpen, setCriteriaOpen] = useState(false);
   const { data: me } = useApi<Me>("/auth/me");
-  const { data, error } = useApi<ProjectDetail>(start && `/metrics/projects/${id}${qs({ period, start })}`, { keepPreviousData: true });
+  const url =
+    period === "range"
+      ? rangeOk && `/metrics/projects/${id}${qs({ period, start: range.from, end: range.to })}`
+      : start && `/metrics/projects/${id}${qs({ period, start })}`;
+  const { data, error } = useApi<ProjectDetail>(url || null, { keepPreviousData: true });
 
   const note = scopeNote(time);
   const header = (
@@ -67,15 +77,20 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             options={[
               { value: "week", label: "Tuần" },
               { value: "month", label: "Tháng" },
+              { value: "range", label: "Khoảng ngày" },
             ]}
           />
-          <Pager
-            label={periodLabel(period, start)}
-            onPrev={() => step(-1)}
-            onNext={() => step(1)}
-            nextDisabled={start === null || start >= latest}
-            prevDisabled={start === null}
-          />
+          {period === "range" ? (
+            <DateRangePicker label="Thời gian" value={range} min={RANGE_MIN} max={today} onChange={setRange} />
+          ) : (
+            <Pager
+              label={periodLabel(period, start)}
+              onPrev={() => step(-1)}
+              onNext={() => step(1)}
+              nextDisabled={start === null || start >= latest}
+              prevDisabled={start === null}
+            />
+          )}
         </>
       }
     />
@@ -91,8 +106,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     );
 
   const t = data.totals;
+  // The response's own period (not the picker's, while the next one loads).
+  const shownLabel =
+    data.period_type === "range"
+      ? rangeLabel(data.period_start, data.period_end ?? data.period_start)
+      : periodLabel(data.period_type, data.period_start);
+  const seriesPeriod = data.series_period ?? (data.period_type === "month" ? "month" : "week");
   const series = data.series.map((s) => ({
-    period: period === "week" ? weekLabel(s.period_start) : s.period_start.slice(5, 7),
+    period: seriesPeriod === "week" ? weekLabel(s.period_start) : s.period_start.slice(5, 7),
     reviews: s.reviews,
     critical: s.critical,
     high: s.high,
@@ -100,14 +121,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   }));
   const scope: BoardScope = {
     project: data.project,
-    period: { range: data.period_range, label: periodLabel(data.period_type, data.period_start) },
+    period: { range: data.period_range, label: shownLabel },
   };
   const maxCat = Math.max(...data.categories.map((c) => c.count), 1);
   const days = {
     from: data.period_start,
     // The period's last day: the day before the next one starts.
     to: shiftDays(data.next_period_start, -1),
-    label: periodLabel(data.period_type, data.period_start),
+    label: shownLabel,
   };
 
   return (
@@ -139,7 +160,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       </StatStrip>
 
       <div className="grid wide-left">
-        <Card title="Xu hướng" actions={<span className="muted small">{data.series.length} {period === "week" ? "tuần" : "tháng"}</span>}>
+        <Card title="Xu hướng" actions={<span className="muted small">{data.series.length} {seriesPeriod === "week" ? "tuần" : "tháng"}</span>}>
           <div className="chart-box">
             <ResponsiveContainer>
               <ComposedChart data={series} margin={{ top: 8, right: 0, bottom: 0, left: -16 }}>

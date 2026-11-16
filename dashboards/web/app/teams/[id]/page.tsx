@@ -3,6 +3,7 @@
 import { use } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { DateRangePicker } from "@/components/DateRangePicker";
 import { Score, scoreTone } from "@/components/Evaluation";
 import {
   Card,
@@ -27,13 +28,17 @@ import {
   SEVERITY_LABEL,
   num,
   periodLabel,
+  rangeLabel,
   ratio,
+  shiftDays,
   weekLabel,
 } from "@/lib/format";
 import { scopeNote, useCycleScope } from "@/lib/timeScope";
 import type { Hotspots, Leaderboard, LeaderboardRow, MetricsSeries, Team } from "@/lib/types";
 
-type Period = "week" | "month";
+type Period = "week" | "month" | "range";
+/** Longest range of days the Team API computes (app/api/routers/metrics.py RANGE_MAX_DAYS). */
+const RANGE_MAX_DAYS = 366;
 
 function RankList({ items, warm }: { items: { label: string; count: number; mono?: boolean }[]; warm?: boolean }) {
   if (items.length === 0) return <p className="muted small">Không có finding trong kỳ.</p>;
@@ -159,20 +164,27 @@ function MembersTable({ members, scope }: { members: LeaderboardRow[]; scope: Bo
 
 export default function TeamOverview({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  // The dashboard-wide period (lib/timeScope). This API takes weeks and months only, so a
-  // shared range shows as the week / month around its last day.
-  const time = useCycleScope();
-  const period: Period = time?.period === "month" ? "month" : "week";
-  const start = time?.start ?? null;
+  // The dashboard-wide period (lib/timeScope): a week, a month or a range of days (e.g. "Hôm
+  // nay", 00:00 to now), the latter computed by the API from the reviews.
+  const time = useCycleScope({ range: true, rangeMaxDays: RANGE_MAX_DAYS });
+  const period: Period = time?.period ?? "week";
+  const start = time && time.period !== "range" ? time.start : null;
+  const range = time?.range ?? { from: "", to: "" };
+  const today = time?.today ?? "";
   const latest = time?.latest ?? "";
+  const rangeOk = time !== null && range.from !== "" && range.from <= range.to && range.to <= today;
   const changePeriod = (p: Period) => time?.changePeriod(p);
   const step = (by: number) => time?.step(by);
+  const setRange = (r: { from: string; to: string }) => time?.setRange(r);
   const { data: teams } = useApi<Team[]>("/teams/visible");
   const team = teams?.find((t) => String(t.id) === id);
   const keep = { keepPreviousData: true };
-  const { data: series, error } = useApi<MetricsSeries>(start && `/metrics/teams/${id}${qs({ period, to: start })}`, keep);
-  const { data: board, error: boardError } = useApi<Leaderboard>(start && `/leaderboard${qs({ team_id: id, period, start })}`, keep);
-  const { data: hot, error: hotError } = useApi<Hotspots>(start && `/metrics/teams/${id}/hotspots${qs({ period, start })}`, keep);
+  const days = { period, start: range.from, end: range.to };
+  const ask = (path: string, cycle: Record<string, string | number>) =>
+    period === "range" ? (rangeOk ? `${path}${qs({ ...cycle, ...days })}` : null) : start ? `${path}${qs(cycle)}` : null;
+  const { data: series, error } = useApi<MetricsSeries>(ask(`/metrics/teams/${id}`, { period, to: start ?? "" }), keep);
+  const { data: board, error: boardError } = useApi<Leaderboard>(ask("/leaderboard", { team_id: id, period, start: start ?? "" }), keep);
+  const { data: hot, error: hotError } = useApi<Hotspots>(ask(`/metrics/teams/${id}/hotspots`, { period, start: start ?? "" }), keep);
 
   const note = scopeNote(time);
   const header = (
@@ -189,15 +201,20 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
             options={[
               { value: "week", label: "Tuần" },
               { value: "month", label: "Tháng" },
+              { value: "range", label: "Khoảng ngày" },
             ]}
           />
-          <Pager
-            label={periodLabel(period, start)}
-            onPrev={() => step(-1)}
-            onNext={() => step(1)}
-            nextDisabled={start === null || start >= latest}
-            prevDisabled={start === null}
-          />
+          {period === "range" ? (
+            <DateRangePicker label="Thời gian" value={range} max={today} maxSpan={RANGE_MAX_DAYS} onChange={setRange} />
+          ) : (
+            <Pager
+              label={periodLabel(period, start)}
+              onPrev={() => step(-1)}
+              onNext={() => step(1)}
+              nextDisabled={start === null || start >= latest}
+              prevDisabled={start === null}
+            />
+          )}
         </>
       }
     />
@@ -215,7 +232,15 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
 
   // The period of this response: while the next one loads, numbers and links stay together.
   const shown = series.period_range?.[0].slice(0, 10) ?? start;
-  const current = series.series.find((m) => m.period_start === shown) ?? null;
+  // A range is computed now (series.current); a week / month is its stored row. (The API sends
+  // `current` as null for weeks and months too, so the chosen period tells them apart.)
+  const isRange = period === "range";
+  const current = isRange ? (series.current ?? null) : (series.series.find((m) => m.period_start === shown) ?? null);
+  const shownLabel = (s: string) =>
+    isRange && series.period_range
+      ? rangeLabel(s, shiftDays(series.period_range[1].slice(0, 10), -1))
+      : periodLabel(period === "month" ? "month" : "week", s);
+  const chartPeriod = isRange || period === "week" ? "week" : "month";
   // Team and person numbers count as status=counted does. Linked only where the list can match
   // the number: a stored row (metrics are built after the period ends; the running week has
   // none), and for the team tiles a viewer who sees the members' findings (lead, admin: the
@@ -224,13 +249,13 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
     series.period_range && team && current && shown
       ? {
           team: { id: team.id, name: team.name },
-          period: { range: series.period_range, label: periodLabel(period, shown), counted: true },
+          period: { range: series.period_range, label: shownLabel(shown), counted: true },
         }
       : null;
   const teamScope = board?.members ? scope : null;
   const d = series.delta;
   const chart = series.series.map((m) => ({
-    period: period === "week" ? weekLabel(m.period_start) : m.period_start.slice(0, 7),
+    period: chartPeriod === "week" ? weekLabel(m.period_start) : m.period_start.slice(0, 7),
     ...Object.fromEntries(SEVERITIES.filter((s) => s !== "info").map((s) => [s, m[s] ?? 0])),
   }));
 
@@ -282,7 +307,7 @@ export default function TeamOverview({ params }: { params: Promise<{ id: string 
       </StatStrip>
 
       <div className="grid two">
-        <Card title="Finding theo mức độ" actions={<span className="muted small">{period === "week" ? "12 tuần" : "các tháng gần nhất"}</span>}>
+        <Card title="Finding theo mức độ" actions={<span className="muted small">{chartPeriod === "week" ? "12 tuần" : "các tháng gần nhất"}</span>}>
           <div className="chart-box">
             <ResponsiveContainer>
               <BarChart data={chart} margin={{ top: 8, right: 8, bottom: 0, left: -16 }} barCategoryGap="28%">
