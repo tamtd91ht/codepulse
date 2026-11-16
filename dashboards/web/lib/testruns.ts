@@ -424,6 +424,9 @@ export interface BugIn {
   labels?: string[];
   assignee?: string;
   result_id?: number;
+  /** A CodePulse task bug: who fixes it, how urgent (a priority key of the dự án). */
+  assignee_id?: number;
+  priority?: string;
 }
 
 export interface BugOut {
@@ -445,6 +448,11 @@ export interface TestProjectSettings {
   jira_write_enabled: boolean;
   jira_base_url: string | null;
   can_edit: boolean;
+  /** docs/specs/31 §19.2: where "Tạo bug" goes (chosen / really). */
+  bug_target?: "codepulse" | "jira";
+  bug_target_effective?: "codepulse" | "jira";
+  /** The dự án's Task key when Task is on. */
+  task_space_key?: string | null;
 }
 
 /** The value of the run view's status filter that keeps only tests to run again. */

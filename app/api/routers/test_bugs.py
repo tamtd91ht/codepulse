@@ -15,7 +15,7 @@ settings. One bug is created per failed result (409 after that).
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, Literal, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -32,7 +32,17 @@ from app.config import Settings, get_settings
 from app.crypto import SecretBox
 from app.jira.client import JiraClient, JiraError
 from app.jira.settings import JiraConnection, connection
-from app.models import AuditLog, TestProjectSettings, TestResult, TestRun, TestRunTest
+from app.models import (
+    AuditLog,
+    Task,
+    TaskSpace,
+    TaskTestLink,
+    TestProjectSettings,
+    TestResult,
+    TestRun,
+    TestRunTest,
+)
+from app.tasks import service as ts
 from app.testcases import bugs, content
 from app.testcases import runs as rs
 from app.testcases import service as tc
@@ -86,6 +96,9 @@ FactoryDep = Annotated[BugFactory, Depends(get_bug_jira_factory)]
 
 class BugIn(BaseModel):
     summary: str | None = Field(default=None, max_length=bugs.SUMMARY_MAX)
+    # A CodePulse task (bug_target "codepulse", docs/specs/31 §19.2): who fixes it, how urgent.
+    assignee_id: int | None = None
+    priority: str | None = Field(default=None, max_length=30)
     description: str | None = Field(default=None, max_length=10_000)
     issue_type: str | None = Field(default=None, max_length=100)
     components: list[str] | None = Field(default=None, max_length=20)
@@ -127,6 +140,10 @@ class ProjectSettingsOut(BaseModel):
     jira_write_enabled: bool
     jira_base_url: str | None
     can_edit: bool
+    # docs/specs/31 §19.2: where "Tạo bug" goes, and whether the dự án has Task on.
+    bug_target: str = "codepulse"
+    bug_target_effective: str = "codepulse"
+    task_space_key: str | None = None
 
 
 class ProjectSettingsIn(BaseModel):
@@ -137,6 +154,7 @@ class ProjectSettingsIn(BaseModel):
     jira_issue_type: str | None = Field(default=None, max_length=100)
     jira_components: list[str] | None = Field(default=None, max_length=20)
     jira_labels: list[str] | None = Field(default=None, max_length=20)
+    bug_target: Literal["codepulse", "jira"] | None = None
 
 
 # -- helpers ---------------------------------------------------------------------------------------
@@ -167,9 +185,16 @@ def _jira_call[T](conn: JiraConnection, factory: BugFactory, work: Callable[[Bug
 
 
 def _settings_out(
-    principal: Principal, row: TestProjectSettings, conn: JiraConnection
+    principal: Principal,
+    row: TestProjectSettings,
+    conn: JiraConnection,
+    session: Session | None = None,
 ) -> ProjectSettingsOut:
+    space = session.get(TaskSpace, row.business_project_id) if session is not None else None
     return ProjectSettingsOut(
+        bug_target=row.bug_target or "codepulse",
+        bug_target_effective=bugs.effective_target(session, row) if session is not None else "jira",
+        task_space_key=space.key if space is not None else None,
         business_project_id=row.business_project_id,
         assigned_only=bool(row.assigned_only),
         require_approval=bool(row.require_approval),
@@ -200,6 +225,9 @@ def create_bug(
 ) -> BugOut:
     test, run = _test_for(session, principal, test_id)
     _recorder(session, principal, test, run)
+    prefs_now = bugs.project_settings(session, run.business_project_id)
+    if bugs.effective_target(session, prefs_now) == "codepulse":
+        return _create_task_bug(test_id, body, principal, session, settings)
     conn = connection(session, settings, box)
     if not conn.write_enabled:
         raise HTTPException(409, WRITE_OFF)
@@ -287,6 +315,118 @@ def create_bug(
     return BugOut(key=key, web_url=url, test=_detail(session, principal, test, run))
 
 
+def _locked_result(
+    session: Session, principal: Principal, test_id: int, result_id: int | None
+) -> tuple[TestRunTest, TestRun, TestResult]:
+    """The test (locked) and the failed result a bug is made from; 409 when one was made
+    from it already (one bug per failed result)."""
+    short_lock_wait(session)
+    test, run = _test_for(session, principal, test_id, lock=True)
+    _recorder(session, principal, test, run)
+    if result_id is not None:
+        result = bugs.target_result(session, test, result_id, failed_only=False)
+        if result is None:
+            raise HTTPException(422, NO_RESULT)
+        if result.status != "failed":
+            raise HTTPException(422, NOT_FAILED)
+    else:
+        result = bugs.target_result(session, test, None, failed_only=True)
+        if result is None:
+            raise HTTPException(422, NO_FAILED)
+    result = (
+        session.get(TestResult, result.id, with_for_update=True, populate_existing=True) or result
+    )
+    made_before = session.scalar(
+        select(AuditLog)
+        .where(AuditLog.action == "testresult.bug", AuditLog.target == f"test_result:{result.id}")
+        .order_by(AuditLog.id.desc())
+        .limit(1)
+    )
+    if made_before is not None:
+        raise HTTPException(409, ALREADY.format(key=(made_before.details or {}).get("key") or ""))
+    return test, run, result
+
+
+def _create_task_bug(
+    test_id: int, body: BugIn, principal: Principal, session: Session, settings: Settings
+) -> BugOut:
+    """The bug as a CodePulse task (docs/specs/31 §19.2): type Bug (Task if the dự án has no
+    Bug), the steps / environment / log / attachments in its description, the failed result's
+    defects and a task ↔ testcase link pointing at it."""
+    _test, run = _test_for(session, principal, test_id)
+    space = session.get(TaskSpace, run.business_project_id)
+    if space is None or not ts.can_view_space(principal, space.business_project_id):
+        raise HTTPException(
+            409,
+            "dự án chưa bật Task: bật ở Task > Cài đặt, hoặc chọn gửi bug lên Jira"
+            " trong Cài đặt dự án",
+        )
+    if not ts.can_create(principal, space.business_project_id):
+        raise HTTPException(403, "bạn không tạo được task ở dự án này (tasks.create)")
+    other = body.assignee_id is not None and body.assignee_id != principal.user_id
+    if other and not ts.can_assign_new(principal, space.business_project_id):
+        raise HTTPException(403, "bạn không có quyền giao task cho người khác (tasks.assign)")
+    test, run, result = _locked_result(session, principal, test_id, body.result_id)
+    prefs = bugs.project_settings(session, run.business_project_id)
+    shown = rs.views(session, run, [test])[test.id]
+    case_key = shown.get("case_key") or content.key("case", test.case_id)
+    labels = bugs.clean_list(
+        body.labels if body.labels is not None else prefs.jira_labels or [], labels=True
+    )
+    components = bugs.clean_list(
+        body.components if body.components is not None else prefs.jira_components or []
+    )
+    task = ts.create_task(
+        session,
+        space,
+        {
+            "type": "bug" if "bug" in space.types else "task",
+            "title": rs.line(body.summary, bugs.SUMMARY_MAX)
+            or bugs.summary(case_key, str(shown.get("title") or test.title)),
+            # Set below: test logs and steps are not @mentions of anyone.
+            "description": None,
+            "priority": (body.priority or "").strip() or None,
+            "assignee_id": body.assignee_id,
+            "labels": labels,
+            "components": components,
+        },
+        principal.user_id,
+    )
+    task.description = bugs.description_md(
+        shown,
+        result,
+        run,
+        test,
+        dashboard_url=settings.dashboard_url,
+        extra=rs.text(body.description),
+    )
+    if test.case_id is not None:
+        session.add(
+            TaskTestLink(
+                task_id=task.id,
+                case_id=test.case_id,
+                kind="bug",
+                result_id=result.id,
+                created_by=principal.user_id,
+            )
+        )
+    bugs.add_defect(result, task.key)
+    audit(
+        session,
+        principal.user_id,
+        "testresult.bug",
+        f"test_result:{result.id}",
+        key=task.key,
+        test_id=test.id,
+        run_id=run.id,
+        tracker="codepulse",
+    )
+    session.commit()
+    return BugOut(
+        key=task.key, web_url=f"/tasks/{task.key}", test=_detail(session, principal, test, run)
+    )
+
+
 @router.post("/testcases/tests/{test_id:int}/bug/link", response_model=BugOut)
 @busy_as_409(BUSY)
 def link_bug(
@@ -309,6 +449,14 @@ def link_bug(
     ):
         raise HTTPException(422, NO_RESULT)
     synced = bugs.synced_states(session, [key])
+    if key in synced and synced[key].get("source") == "codepulse":
+        # A CodePulse task only when the person may see it (docs/specs/31 §19.2); otherwise the
+        # key is treated as a Jira one (nothing says such a task exists).
+        task = session.scalars(
+            select(Task).where(Task.key == synced[key].get("task_key", key))
+        ).first()
+        if task is None or not ts.can_view_space(principal, task.business_project_id):
+            synced.pop(key)
     url = synced[key]["web_url"] if key in synced else None
     verified = key in synced
     conn = connection(session, settings, box)
@@ -342,6 +490,26 @@ def link_bug(
             or result
         )
         bugs.add_defect(result, key)
+    linked = bugs.task_states(session, [key])
+    if key in linked and test.case_id is not None:
+        task_id = session.scalar(select(Task.id).where(Task.key == linked[key]["task_key"]))
+        exists = session.scalar(
+            select(TaskTestLink.id).where(
+                TaskTestLink.task_id == task_id,
+                TaskTestLink.case_id == test.case_id,
+                TaskTestLink.kind == "bug",
+            )
+        )
+        if task_id is not None and exists is None:
+            session.add(
+                TaskTestLink(
+                    task_id=task_id,
+                    case_id=test.case_id,
+                    kind="bug",
+                    result_id=result.id,
+                    created_by=principal.user_id,
+                )
+            )
     audit(
         session,
         principal.user_id,
@@ -416,7 +584,21 @@ def bug_status(
                     found[k] = state
             finally:
                 client.close()
-    return [BugState(key=k, **{"state": "unknown", **found.get(k, {})}) for k in wanted]
+    if not ts.can_view_space(principal, bp.id):
+        # tests.view without tasks.view: a task bug's state, not its title (docs/specs/31 §19.2).
+        for state in found.values():
+            if state.get("source") == "codepulse":
+                state["title"] = None
+    return [
+        BugState(
+            key=k,
+            **{
+                "state": "unknown",
+                **{x: v for x, v in found.get(k, {}).items() if x in BugState.model_fields},
+            },
+        )
+        for k in wanted
+    ]
 
 
 # -- project settings ------------------------------------------------------------------------------
@@ -432,7 +614,7 @@ def get_project_settings(
 ) -> ProjectSettingsOut:
     bp = tc.project_for(session, principal, business_project_id)
     conn = connection(session, settings, box)
-    return _settings_out(principal, bugs.project_settings(session, bp.id), conn)
+    return _settings_out(principal, bugs.project_settings(session, bp.id), conn, session)
 
 
 @router.put("/testcases/project-settings", response_model=ProjectSettingsOut)
@@ -464,6 +646,8 @@ def put_project_settings(
         row.jira_components = bugs.clean_list(body.jira_components)
     if body.jira_labels is not None:
         row.jira_labels = bugs.clean_list(body.jira_labels, labels=True)
+    if body.bug_target is not None:
+        row.bug_target = body.bug_target
     row.updated_by = principal.user_id
     session.flush()
     audit(
@@ -474,4 +658,4 @@ def put_project_settings(
         changed=sorted(given - {"business_project_id"}),
     )
     session.commit()
-    return _settings_out(principal, row, connection(session, settings, box))
+    return _settings_out(principal, row, connection(session, settings, box), session)

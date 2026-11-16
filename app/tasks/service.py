@@ -29,6 +29,7 @@ from app.models import (
     Task,
     TaskGitLink,
     TaskHistory,
+    TaskImport,
     TaskPriority,
     TaskSpace,
     TaskStatus,
@@ -249,6 +250,13 @@ def enable_space(
     ).first()
     if clash is not None:
         raise HTTPException(409, f"mã {key} đã dùng cho dự án khác")
+    imported = session.scalar(
+        select(TaskImport.id).where(TaskImport.external_key.like(f"{key}-%")).limit(1)
+    )
+    if imported is not None:
+        raise HTTPException(
+            409, f"mã {key} là mã của issue Jira đã nhập (ví dụ {key}-1): chọn mã khác"
+        )
     space = session.get(TaskSpace, bp_id, with_for_update=True)
     if space is None:
         space = TaskSpace(

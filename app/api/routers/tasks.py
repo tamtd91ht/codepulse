@@ -1061,6 +1061,56 @@ def _version_out(session: Session, v: TaskVersion) -> dict[str, Any]:
     }
 
 
+class JiraImportIn(BaseModel):
+    project_key: str = Field(min_length=2, max_length=10)
+    dry_run: bool = True
+    rewrite_defects: bool = True
+
+
+@router.get("/tasks/spaces/{bp_id}/import/jira")
+def jira_import_sources(bp_id: int, principal: Viewer, session: SessionDep) -> dict[str, Any]:
+    """The Jira projects synced for this dự án and how much of each is imported (§19.2)."""
+    from app.tasks import importer
+
+    ts.space_or_404(session, principal, bp_id)
+    ts.require_manage(principal, bp_id)
+    return {
+        "sources": importer.sources(session, bp_id),
+        "imported": importer.imported_count(session, bp_id),
+    }
+
+
+@router.post("/tasks/spaces/{bp_id}/import/jira")
+def jira_import(
+    bp_id: int, body: JiraImportIn, principal: Viewer, session: SessionDep
+) -> dict[str, Any]:
+    """Preview (dry_run) or import a Jira project's synced issues as tasks (§19.2)."""
+    from app.tasks import importer
+
+    space = ts.space_or_404(session, principal, bp_id)
+    ts.require_manage(principal, bp_id)
+    out = importer.run(
+        session,
+        space,
+        body.project_key,
+        principal.user_id,
+        dry_run=body.dry_run,
+        rewrite_defects=body.rewrite_defects,
+    )
+    if not body.dry_run:
+        audit(
+            session,
+            principal.user_id,
+            "task.import.jira",
+            f"business_project:{bp_id}",
+            project_key=out["project_key"],
+            created=out["created"],
+            defects=out["defects_rewritten"],
+        )
+        session.commit()
+    return out
+
+
 @router.get("/tasks/spaces/{bp_id}/epics")
 def list_epics(bp_id: int, principal: Viewer, session: SessionDep) -> list[dict[str, Any]]:
     """The dự án's epics with their children's progress (the Backlog's Epic bar, §19.1)."""

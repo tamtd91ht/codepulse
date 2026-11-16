@@ -21,7 +21,16 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session
 
 from app.jira.scopes import jira_issue_in
-from app.models import Issue, TestProjectSettings, TestResult, TestRun, TestRunTest
+from app.models import (
+    Issue,
+    Task,
+    TaskImport,
+    TaskStatus,
+    TestProjectSettings,
+    TestResult,
+    TestRun,
+    TestRunTest,
+)
 from app.testcases import content
 from app.testcases import runs as rs
 
@@ -191,6 +200,142 @@ def description(
     return "\n".join(parts)[:DESCRIPTION_MAX]
 
 
+def _md(value: Any) -> str:
+    """Text for a task's Markdown: as written (CodePulse's renderer builds elements, never HTML,
+    and has no escapes), on one paragraph per original line."""
+    return str(value or "").strip()
+
+
+def description_md(
+    shown: dict[str, Any],
+    result: TestResult | None,
+    run: TestRun,
+    test: TestRunTest,
+    *,
+    dashboard_url: str,
+    extra: str | None = None,
+) -> str:
+    """The bug's body for a CodePulse task (docs/specs/31 §19.2), in the task's Markdown: the
+    same parts as the Jira one (steps expected vs actual, environment, log, attachments, link)."""
+    parts: list[str] = []
+    if extra and extra.strip():
+        parts += [extra.strip(), ""]
+    if (shown.get("preconditions") or "").strip():
+        parts += ["### Tiền điều kiện", _md(shown["preconditions"]), ""]
+    if (shown.get("test_data") or "").strip():
+        parts += ["### Dữ liệu test", _md(shown["test_data"]), ""]
+    steps = list(shown.get("steps_list") or []) if shown.get("template") == "steps" else []
+    step_results = list(result.step_results or []) if result is not None else []
+    if steps:
+        parts.append("### Các bước")
+        for i, step in enumerate(steps):
+            got = step_results[i] if i < len(step_results) else {}
+            status = str(got.get("status") or "")
+            mark = f" **({status})**" if status == "failed" else (f" ({status})" if status else "")
+            parts.append(f"{i + 1}. {_md(step.get('content'))}{mark}")
+            if (step.get("expected") or "").strip():
+                parts.append(f"   - Mong đợi: {_md(step.get('expected'))}")
+            if (got.get("actual") or "").strip():
+                parts.append(f"   - Thực tế: {_md(got.get('actual'))}")
+        parts.append("")
+    else:
+        if (shown.get("steps") or "").strip():
+            parts += ["### Các bước", _md(shown["steps"]), ""]
+        if (shown.get("expected") or "").strip():
+            parts += ["### Kết quả mong đợi", _md(shown["expected"]), ""]
+    if result is not None and (result.comment or "").strip():
+        parts += ["### Kết quả thực tế", _md(result.comment), ""]
+    if result is not None and (result.log or "").strip():
+        log = (result.log or "")[:5_000].replace("```", "'" * 3)
+        parts += ["### Log lỗi", "```", log, "```", ""]
+    env: list[str] = [f"- Test run: {_md(run.name)} ({content.key('run', run.id)})"]
+    if run.config:
+        env.append(f"- Cấu hình: {_md(run.config)}")
+    if result is not None and result.version:
+        env.append(f"- Phiên bản / build: {_md(result.version)}")
+    ci = dict(result.ci or {}) if result is not None else {}
+    if ci.get("branch"):
+        env.append(f"- Nhánh: `{_md(ci['branch'])}`")
+    if ci.get("commit_sha"):
+        env.append(f"- Commit: `{_md(ci['commit_sha'])}`")
+    if ci.get("mr_iid"):
+        env.append(f"- MR: !{_md(ci['mr_iid'])}")
+    parts += ["### Môi trường", *env, ""]
+    attachments = list(result.attachments or []) if result is not None else []
+    if attachments:
+        parts.append("### Đính kèm")
+        for a in attachments[:20]:
+            name = _md(a.get("name") or "tệp").replace("]", "")
+            if isinstance(a.get("id"), int):
+                parts.append(f"- [{name}]({attachment_url(dashboard_url, a['id'])})")
+                continue
+            where = str(a.get("url") or a.get("path") or "")
+            ok = where.startswith(("http://", "https://")) and not any(c in where for c in " ()")
+            parts.append(f"- [{name}]({where})" if ok else f"- {name} ({_md(where)})")
+        parts.append("")
+    back = test_link(dashboard_url, run, test)
+    where = f"{content.key('test', test.id)} trong {content.key('run', run.id)}"
+    parts.append(f"Tạo từ testcase: [{where}]({back})")
+    return "\n".join(parts)[:DESCRIPTION_MAX]
+
+
+def effective_target(session: Session, prefs: TestProjectSettings) -> str:
+    """Where "Tạo bug" really goes (docs/specs/31 §19.2): "jira" when chosen; else a CodePulse
+    task once the dự án has Task on; a dự án without Task that names a Jira project keeps Jira."""
+    from app.models import TaskSpace
+
+    if prefs.bug_target == "jira":
+        return "jira"
+    if session.get(TaskSpace, prefs.business_project_id) is not None:
+        return "codepulse"
+    return "jira" if prefs.jira_project_key else "codepulse"
+
+
+def task_states(
+    session: Session, keys: Iterable[str], bps: Iterable[int] | None = None
+) -> dict[str, dict[str, Any]]:
+    """key -> {state, status, title, web_url, source: "codepulse"} for CodePulse tasks among `keys`
+    (docs/specs/31 §19.2): closed once in a "done" status. A key imported from Jira (TaskImport)
+    answers with its task. With `bps`, only tasks of those dự án."""
+    wanted = sorted(set(keys))
+    if not wanted:
+        return {}
+    by_key = dict(session.execute(select(Task.key, Task.id).where(Task.key.in_(wanted))).all())
+    for ext, task_id in session.execute(
+        select(TaskImport.external_key, TaskImport.task_id).where(
+            TaskImport.external_key.in_([k for k in wanted if k not in by_key])
+        )
+    ).tuples():
+        by_key[str(ext)] = int(task_id)
+    if not by_key:
+        return {}
+    rows = {
+        int(t.id): (t, s)
+        for t, s in session.execute(
+            select(Task, TaskStatus)
+            .join(TaskStatus, TaskStatus.id == Task.status_id)
+            .where(Task.id.in_(set(by_key.values())))
+        ).tuples()
+    }
+    allowed = set(bps) if bps is not None else None
+    out: dict[str, dict[str, Any]] = {}
+    for key, task_id in by_key.items():
+        if task_id not in rows:
+            continue
+        task, status = rows[task_id]
+        if allowed is not None and task.business_project_id not in allowed:
+            continue
+        out[key] = {
+            "state": "closed" if status.category == "done" else "opened",
+            "status": status.name,
+            "title": task.title,
+            "web_url": f"/tasks/{task.key}",
+            "source": "codepulse",
+            "task_key": task.key,
+        }
+    return out
+
+
 def target_result(
     session: Session, test: TestRunTest, result_id: int | None, *, failed_only: bool
 ) -> TestResult | None:
@@ -226,13 +371,22 @@ def synced_states(
     wanted = sorted(set(keys))
     if not wanted:
         return {}
-    query = select(Issue.key, Issue.state, Issue.title, Issue.web_url).where(Issue.key.in_(wanted))
-    if bps is not None:
-        query = query.where(jira_issue_in(bps))
+    bp_list = list(bps) if bps is not None else None
+    # CodePulse tasks first (docs/specs/31 §19.2), then the issues synced from Jira.
+    found = task_states(session, wanted, bp_list)
+    rest = [k for k in wanted if k not in found]
+    if not rest:
+        return found
+    query = select(Issue.key, Issue.state, Issue.title, Issue.web_url).where(Issue.key.in_(rest))
+    if bp_list is not None:
+        query = query.where(jira_issue_in(bp_list))
     rows = session.execute(query).all()
     return {
-        str(k): {"state": state or "opened", "title": title, "web_url": url, "source": "sync"}
-        for k, state, title, url in rows
+        **found,
+        **{
+            str(k): {"state": state or "opened", "title": title, "web_url": url, "source": "sync"}
+            for k, state, title, url in rows
+        },
     }
 
 

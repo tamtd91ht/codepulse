@@ -6,7 +6,7 @@ import { Modal } from "@/components/CriteriaParts";
 import { IconButton } from "@/components/icons";
 import { MultiSelect } from "@/components/MultiSelect";
 import { Card, Loading, Message } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, useApi } from "@/lib/api";
 import type { TaskCategory, TaskField, TaskFieldKind, TaskPriorityColor, TaskPriorityLevel, TaskRules, TaskSpace, TaskType } from "@/lib/types";
 
 import {
@@ -126,6 +126,7 @@ export function TaskSettings({ space }: { space: TaskSpace }) {
       <PrioritiesCard key={`p${space.business_project_id}`} space={space} />
       <RulesCard key={`r${space.business_project_id}`} space={space} />
       <FieldsCard key={`f${space.business_project_id}`} space={space} />
+      <JiraImportCard key={`j${space.business_project_id}`} space={space} />
     </div>
   );
 }
@@ -761,6 +762,114 @@ function FieldsCard({ space }: { space: TaskSpace }) {
             </button>
           </div>
         </>
+      )}
+    </Card>
+  );
+}
+
+type JiraSource = { project_key: string; issues: number; imported: number };
+type JiraPreview = { project_key: string; to_create: number; skipped: number; preview: { jira_key: string; title: string | null; type: string; state: string }[] };
+type JiraDone = { project_key: string; created: number; skipped: number; defects_rewritten: number; mapping: { jira_key: string; task_key: string }[] };
+
+/** Import the issues CodePulse synced from Jira into this dự án's tasks (docs/specs/31 §19.2). */
+export function JiraImportCard({ space }: { space: TaskSpace }) {
+  const bp = space.business_project_id;
+  const got = useApi<{ sources: JiraSource[]; imported: number }>(`/tasks/spaces/${bp}/import/jira`);
+  const [project, setProject] = useState("");
+  const [rewrite, setRewrite] = useState(true);
+  const [preview, setPreview] = useState<JiraPreview | null>(null);
+  const [done, setDone] = useState<JiraDone | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const sources = got.data?.sources ?? [];
+  const chosen = project || sources[0]?.project_key || "";
+
+  async function call(dry: boolean) {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const out = await api.post<JiraPreview & JiraDone>(`/tasks/spaces/${bp}/import/jira`, { project_key: chosen, dry_run: dry, rewrite_defects: rewrite });
+      if (dry) {
+        setPreview(out);
+        setDone(null);
+      } else {
+        setDone(out);
+        setPreview(null);
+        await refreshTasks();
+        await got.mutate();
+      }
+    } catch (e) {
+      setMessage(`Lỗi: ${errorText(e)}`);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <Card
+      title="Nhập từ Jira"
+      id="tk-set-jira-import"
+      subtitle="Chuyển issue Jira đã đồng bộ về CodePulse thành task (không gọi Jira). Mã Jira cũ vẫn trỏ về task mới: commit, MR, bug của testcase."
+    >
+      {message && <Message text={message} onClose={() => setMessage(null)} />}
+      {!got.data ? (
+        <Loading error={got.error} rows={2} />
+      ) : !sources.length ? (
+        <p className="small faint">Chưa có issue Jira nào đồng bộ cho dự án này.</p>
+      ) : (
+        <div className="adm-form tk-form">
+          <div className="rq-grid">
+            <label className="rq-field">
+              <span className="rq-label">Project Jira</span>
+              <select value={chosen} onChange={(e) => (setProject(e.target.value), setPreview(null), setDone(null))}>
+                {sources.map((s) => (
+                  <option key={s.project_key} value={s.project_key}>
+                    {s.project_key} · {s.issues} issue{s.imported ? ` · đã nhập ${s.imported}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="inline-check" style={{ alignSelf: "end" }}>
+              <input type="checkbox" checked={rewrite} onChange={(e) => setRewrite(e.target.checked)} />
+              Đổi mã bug Jira trong kết quả test sang mã task
+            </label>
+          </div>
+          {preview && (
+            <div className="small">
+              <p style={{ margin: "0 0 6px" }}>
+                Sẽ tạo <strong>{preview.to_create}</strong> task{preview.skipped ? `, bỏ qua ${preview.skipped} issue đã nhập` : ""}.
+              </p>
+              {preview.preview.length > 0 && (
+                <ul className="tk-git-list">
+                  {preview.preview.map((r) => (
+                    <li key={r.jira_key}>
+                      <span className="tk-key">{r.jira_key}</span>
+                      <span className="tk-ellipsis">{r.title}</span>
+                      <span className="spacer" />
+                      <span className="small muted">
+                        {TYPE_LABEL[r.type as TaskType] ?? r.type} · {r.state === "closed" ? "Đã đóng" : "Đang mở"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          {done && (
+            <p className="small" role="status">
+              Đã tạo <strong>{done.created}</strong> task từ {done.project_key}
+              {done.skipped ? `, bỏ qua ${done.skipped} issue đã nhập` : ""}
+              {done.defects_rewritten ? `, đổi mã bug ở ${done.defects_rewritten} kết quả test` : ""}.
+            </p>
+          )}
+          <div className="adm-form-foot">
+            <button type="button" className="ghost" disabled={busy || !chosen} onClick={() => void call(true)}>
+              Xem trước
+            </button>
+            <button type="button" disabled={busy || !chosen || !preview || preview.to_create === 0} onClick={() => void call(false)}>
+              {busy ? "Đang nhập…" : `Nhập ${preview?.to_create ?? ""} task`}
+            </button>
+          </div>
+        </div>
       )}
     </Card>
   );

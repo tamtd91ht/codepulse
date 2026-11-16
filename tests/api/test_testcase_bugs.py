@@ -286,7 +286,12 @@ def test_create_bug_refusals(
     admin, viewer, binh = as_user(world.admin), as_user(world.an), as_user(world.binh)
     s = _setup(client, db_session, admin, bp)
     url = f"{API}/testcases/tests/{s['test']['id']}/bug"
-    # No Jira project in the settings: 422.
+    # Neither Task on nor a Jira project: bugs go to CodePulse tasks by default (docs/specs/31
+    # §19.2), so the answer says to turn Task on or pick Jira.
+    got = client.post(url, json={}, headers=admin)
+    assert got.status_code == 409 and "chưa bật Task" in got.json()["detail"]
+    # Jira chosen without a Jira project: 422.
+    _project(client, admin, bp, bug_target="jira")
     got = client.post(url, json={}, headers=admin)
     assert got.status_code == 422 and "project Jira" in got.json()["detail"]
     _project(client, admin, bp, jira_project_key="OMX")

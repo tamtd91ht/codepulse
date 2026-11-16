@@ -6,6 +6,7 @@ import { Modal } from "@/components/CriteriaParts";
 import { Icon } from "@/components/icons";
 import { Alert, Card, ExternalLink, Loading, Pill } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
+import type { TaskPerson, TaskSpace } from "@/lib/types";
 import {
   BUG_STATE_LABEL,
   type BugIn,
@@ -164,6 +165,118 @@ export function RetestPill({ test, spaced }: { test: Pick<TestOut, "id"> & { nee
 
 /* ---------------- The test drawer: create / link a bug ---------------- */
 
+/** A bug as a CodePulse task (docs/specs/31 §19.2): title, note, priority, who fixes it. */
+function CreateTaskBugModal({ detail, bp, prefs, onClose, onDone }: { detail: TestDetail; bp: number; prefs: TestProjectSettings; onClose: () => void; onDone: (key: string) => void }) {
+  const failed = detail.results.filter((r) => r.status === "failed");
+  const [resultId, setResultId] = useState<number | null>(failed[0]?.id ?? null);
+  const caseKey = detail.content.case_key ?? detail.case_key;
+  const [summary, setSummary] = useState(`${caseKey ? `[${caseKey}] ` : ""}${detail.content.title || detail.title} – Failed`);
+  const [extra, setExtra] = useState("");
+  const spaces = useApi<TaskSpace[]>("/tasks/spaces");
+  const space = spaces.data?.find((s) => s.business_project_id === bp) ?? null;
+  const people = useApi<TaskPerson[]>(`/tasks/people?space=${bp}`);
+  const [priority, setPriority] = useState<string>("");
+  const [assignee, setAssignee] = useState<string>("");
+  const [labels, setLabels] = useState(prefs.jira_labels.join(", "));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const priorities = [...(space?.priorities ?? [])].sort((a, b) => a.position - b.position);
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    const body: BugIn = {
+      summary: summary.trim() || undefined,
+      description: extra.trim() || undefined,
+      labels: splitNames(labels),
+      priority: priority || undefined,
+      assignee_id: assignee ? Number(assignee) : undefined,
+      result_id: resultId ?? undefined,
+    };
+    try {
+      const out = await api.post<BugOut>(`/testcases/tests/${detail.id}/bug`, body);
+      onDone(out.key);
+    } catch (e) {
+      setError(errorText(e));
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      title={`Tạo bug từ ${detail.key}`}
+      onClose={onClose}
+      busy={busy}
+      width={600}
+      footer={
+        <>
+          <button type="button" onClick={onClose} disabled={busy}>
+            Huỷ
+          </button>
+          <button type="button" className="primary" onClick={() => void submit()} disabled={busy || !failed.length || !summary.trim()}>
+            {busy ? "Đang tạo…" : "Tạo bug"}
+          </button>
+        </>
+      }
+    >
+      <div className="adm-form">
+        {error && <Alert tone="error">{error}</Alert>}
+        {!failed.length && <Alert tone="info">Test chưa có kết quả Failed: ghi kết quả Failed trước khi tạo bug.</Alert>}
+        <p className="small muted">
+          Bug thành task <strong>{prefs.task_space_key ?? ""}</strong> trong mục Task. Mô tả tự gồm các bước (mong đợi / thực tế), môi trường, log, đính kèm và link về testcase; bug đóng thì test được gợi ý chạy lại.
+        </p>
+        {failed.length > 1 && (
+          <label className="adm-field">
+            <span className="small muted">Kết quả Failed</span>
+            <select value={resultId ?? ""} onChange={(e) => setResultId(Number(e.target.value))}>
+              {failed.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.created_at ? r.created_at.slice(0, 16).replace("T", " ") : `#${r.id}`}
+                  {r.created_by ? ` · ${r.created_by.name}` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label className="adm-field">
+          <span className="small muted">Tiêu đề</span>
+          <input value={summary} maxLength={250} onChange={(e) => setSummary(e.target.value)} />
+        </label>
+        <label className="adm-field">
+          <span className="small muted">Ghi chú thêm (đầu mô tả)</span>
+          <textarea rows={3} value={extra} onChange={(e) => setExtra(e.target.value)} />
+        </label>
+        <div className="tr-form-row">
+          <label className="adm-field">
+            <span className="small muted">Ưu tiên</span>
+            <select value={priority} onChange={(e) => setPriority(e.target.value)}>
+              <option value="">Mặc định của dự án</option>
+              {priorities.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="adm-field">
+            <span className="small muted">Người xử lý</span>
+            <select value={assignee} onChange={(e) => setAssignee(e.target.value)} disabled={!people.data}>
+              <option value="">Chưa giao</option>
+              {(people.data ?? []).map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.full_name ?? u.primary_email ?? `#${u.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label className="adm-field">
+          <span className="small muted">Nhãn</span>
+          <input value={labels} onChange={(e) => setLabels(e.target.value)} placeholder="qa, regression" />
+        </label>
+      </div>
+    </Modal>
+  );
+}
+
 function CreateBugModal({ detail, prefs, onClose, onDone }: { detail: TestDetail; prefs: TestProjectSettings; onClose: () => void; onDone: (key: string) => void }) {
   const failed = detail.results.filter((r) => r.status === "failed");
   const [resultId, setResultId] = useState<number | null>(failed[0]?.id ?? null);
@@ -301,7 +414,7 @@ function LinkBugModal({ detail, onClose, onDone }: { detail: TestDetail; onClose
       <div className="adm-form">
         {error && <Alert tone="error">{error}</Alert>}
         <label className="adm-field">
-          <span className="small muted">Mã issue Jira</span>
+          <span className="small muted">Mã task (CRM-12) hoặc mã issue Jira</span>
           <input
             value={key}
             onChange={(e) => setKey(e.target.value)}
@@ -312,7 +425,7 @@ function LinkBugModal({ detail, onClose, onDone }: { detail: TestDetail; onClose
             }}
           />
         </label>
-        <p className="small muted">Mã được thêm vào ô Bug của kết quả gần nhất (Jira kiểm tra issue có tồn tại khi kết nối được).</p>
+        <p className="small muted">Mã được thêm vào ô Bug của kết quả gần nhất. Task CodePulse được kiểm tra ngay; issue Jira được kiểm tra khi kết nối được.</p>
       </div>
     </Modal>
   );
@@ -327,8 +440,15 @@ export function JiraBugPanel({ detail, onChanged }: { detail: TestDetail; onChan
   const [made, setMade] = useState<string | null>(null);
   const canAct = detail.can_record && !detail.run.completed;
   const p = prefs.data;
+  const toTask = p?.bug_target_effective === "codepulse";
   const createBlocked = !p
     ? "Đang tải cài đặt dự án…"
+    : toTask
+      ? !p.task_space_key
+        ? "Dự án chưa bật Task (Task › Cài đặt), hoặc chọn gửi bug lên Jira ở Cài đặt dự án"
+        : !detail.results.some((r) => r.status === "failed")
+          ? "Cần một kết quả Failed để tạo bug"
+          : null
     : !p.jira_write_enabled
       ? "Chưa bật tạo bug lên Jira (Admin › Jira › Kết nối)"
       : !p.jira_configured
@@ -347,7 +467,7 @@ export function JiraBugPanel({ detail, onChanged }: { detail: TestDetail; onChan
   if (!detail.defects.length && !canAct) return null;
   return (
     <div className="tr-block jb-panel">
-      <h4>Bug Jira</h4>
+      <h4>{toTask ? "Bug" : "Bug Jira"}</h4>
       {made && <Alert tone="success">Đã gắn {made} vào kết quả.</Alert>}
       <div className="jb-row">
         {detail.defects.length ? <BugPills keys={detail.defects} bp={bpId} /> : <span className="small muted">Chưa có bug.</span>}
@@ -355,8 +475,14 @@ export function JiraBugPanel({ detail, onChanged }: { detail: TestDetail; onChan
       </div>
       {canAct && (
         <div className="jb-row">
-          <button type="button" className="sm" onClick={() => setDialog("create")} disabled={createBlocked !== null} title={createBlocked ?? "Tạo issue trên Jira từ kết quả Failed"}>
-            <Icon name="plus" size={14} /> Tạo bug Jira
+          <button
+            type="button"
+            className="sm"
+            onClick={() => setDialog("create")}
+            disabled={createBlocked !== null}
+            title={createBlocked ?? (toTask ? "Tạo task Bug từ kết quả Failed" : "Tạo issue trên Jira từ kết quả Failed")}
+          >
+            <Icon name="plus" size={14} /> {toTask ? "Tạo bug" : "Tạo bug Jira"}
           </button>
           <button type="button" className="sm ghost" onClick={() => setDialog("link")}>
             Gắn bug có sẵn
@@ -364,7 +490,8 @@ export function JiraBugPanel({ detail, onChanged }: { detail: TestDetail; onChan
           {createBlocked && p && <span className="small muted">{createBlocked}</span>}
         </div>
       )}
-      {dialog === "create" && p && <CreateBugModal detail={detail} prefs={p} onClose={() => setDialog(null)} onDone={done} />}
+      {dialog === "create" && p && toTask && bpId && <CreateTaskBugModal detail={detail} bp={bpId} prefs={p} onClose={() => setDialog(null)} onDone={done} />}
+      {dialog === "create" && p && !toTask && <CreateBugModal detail={detail} prefs={p} onClose={() => setDialog(null)} onDone={done} />}
       {dialog === "link" && <LinkBugModal detail={detail} onClose={() => setDialog(null)} onDone={done} />}
     </div>
   );
@@ -397,7 +524,7 @@ export function ProjectSettingsCard({ projectId }: { projectId: number }) {
   const edit = () =>
     s && setDraft({ key: s.jira_project_key ?? "", type: s.jira_issue_type, components: s.jira_components.join(", "), labels: s.jira_labels.join(", ") });
   return (
-    <Card title="Cài đặt dự án" id="tr-project-settings" subtitle="Ai ghi kết quả, quy trình duyệt testcase và nơi nhận bug Jira">
+    <Card title="Cài đặt dự án" id="tr-project-settings" subtitle="Ai ghi kết quả, quy trình duyệt testcase và nơi nhận bug">
       {!s ? (
         <Loading error={got.error} rows={3} />
       ) : (
@@ -410,6 +537,26 @@ export function ProjectSettingsCard({ projectId }: { projectId: number }) {
           <label className="jira-switch">
             <input type="checkbox" role="switch" checked={s.require_approval} disabled={!s.can_edit || busy} onChange={(e) => void save({ require_approval: e.target.checked })} /> Bắt buộc duyệt testcase
           </label>
+          <h4>Nơi nhận bug</h4>
+          <div className="jb-row" role="radiogroup" aria-label="Nơi nhận bug">
+            <label className="inline-check">
+              <input
+                type="radio"
+                name={`bug-target-${projectId}`}
+                checked={(s.bug_target ?? "codepulse") === "codepulse"}
+                disabled={!s.can_edit || busy}
+                onChange={() => void save({ bug_target: "codepulse" })}
+              />
+              Task CodePulse{s.task_space_key ? ` (${s.task_space_key})` : " (dự án chưa bật Task)"}
+            </label>
+            <label className="inline-check">
+              <input type="radio" name={`bug-target-${projectId}`} checked={s.bug_target === "jira"} disabled={!s.can_edit || busy} onChange={() => void save({ bug_target: "jira" })} />
+              Issue Jira
+            </label>
+          </div>
+          {s.bug_target_effective && s.bug_target_effective !== (s.bug_target ?? "codepulse") && (
+            <p className="small muted">Dự án chưa bật Task nên bug vẫn tạo trên Jira (project đã chọn bên dưới).</p>
+          )}
           <h4>Bug Jira</h4>
           <p className="small muted">
             {s.jira_write_enabled ? (

@@ -382,3 +382,39 @@ class TaskAiRun(TimestampMixin, Base):
         DateTime(timezone=True), server_default=func.now()
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TaskTestLink(TimestampMixin, Base):
+    """A task and a testcase (docs/specs/31 §19.2, §19.4): `bug`: the task is a bug raised from
+    a failed result of the case; `covers`: the case tests the task (a Story's acceptance)."""
+
+    __tablename__ = "task_test_links"
+    __table_args__ = (
+        UniqueConstraint("task_id", "case_id", "kind"),
+        CheckConstraint("kind IN ('bug', 'covers')", name="kind"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
+    case_id: Mapped[int] = mapped_column(
+        ForeignKey("test_cases.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(10))
+    result_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("test_results.id", ondelete="SET NULL")
+    )
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class TaskImport(TimestampMixin, Base):
+    """A task made from another tracker's issue (docs/specs/31 §19.2): the old key keeps
+    resolving to it (commits, MRs and test defects that still name ABC-123)."""
+
+    __tablename__ = "task_imports"
+    __table_args__ = (UniqueConstraint("source", "external_key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(10))  # jira
+    external_key: Mapped[str] = mapped_column(String(30))
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
+    imported_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

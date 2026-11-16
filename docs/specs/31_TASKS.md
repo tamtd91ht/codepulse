@@ -418,3 +418,39 @@ P5 Mở rộng. Mỗi giai đoạn là một mục con bên dưới, ghi cả qu
   quyền, vào sau tự có, rời thì mất; "Quyền hiệu lực" ghi nguồn `team`. Migration tạo bộ **"Tester"**
   (viết / chạy testcase mọi dự án xem được, tạo và xử lý task của mình) để gán cho team QA. Thay cho B6
   (phạm vi Team) và B7 (vai trò tester): Lead quản lý task cả dự án đã có qua Lead/Manager dự án (21 §10).
+
+### 19.2 P1 – Thoát Jira (migration `b8d0f2a4c6e9`)
+- **Nơi nhận bug của testcase** (`test_project_settings.bug_target`: `codepulse` mặc định | `jira`).
+  Đích thực tế: `jira` khi chọn Jira; ngược lại dự án đã bật Task → task CodePulse; dự án chưa bật Task
+  mà đã chọn project Jira → vẫn Jira (dự án đang dùng Jira không gãy). Migration đặt `jira` cho dự án đã
+  có project Jira. Testcase › Thiết lập › Cài đặt dự án có lựa chọn "Nơi nhận bug".
+- **Tạo bug thành task** (`POST /testcases/tests/{id}/bug` khi đích là CodePulse): cần `tasks.create`
+  (giao cho người khác cần `tasks.assign`). Loại Bug (Task nếu dự án không dùng Bug), tiêu đề như cũ,
+  mô tả Markdown gồm tiền điều kiện, dữ liệu, các bước (mong đợi / thực tế), kết quả thực tế, log, môi
+  trường (run, cấu hình, build, nhánh, commit, MR), đính kèm của kết quả và link về test. Ưu tiên, người
+  xử lý, nhãn chọn trong hộp tạo bug. Mã task vào ô Bug của kết quả; liên kết `task_test_links`
+  (`bug`, testcase, kết quả). Vẫn một bug cho mỗi kết quả Failed (409 lần hai).
+- **Gắn bug có sẵn** nhận cả mã task CodePulse (chỉ task mình xem được) và tạo liên kết `bug`.
+- **Trạng thái bug** (`GET /testcases/bugs/status`, ô Bug, "Cần retest"): task CodePulse trả lời trước
+  (đóng khi ở nhóm Xong, `source: codepulse`, link `/tasks/{KEY}`), rồi mới tới issue Jira đã đồng bộ.
+  Nhờ vậy "Cần retest" tự hiện khi mọi bug-task của test đã xong.
+- **Nhập từ Jira** (`GET/POST /tasks/spaces/{bp}/import/jira`, `tasks.manage`; Task › Cài đặt › Nhập từ
+  Jira): đọc issue Jira **đã đồng bộ** của dự án (không gọi Jira) theo project; xem trước rồi nhập.
+  Loại: bug / incident → Bug, feature → Story, sub-task Jira → Sub-task của cha đã nhập, còn lại Task.
+  Đã đóng → trạng thái Xong + `done` (giữ thời điểm đóng); mở → Cần làm. Giữ tiêu đề, nhãn, thành
+  phần, story point, hạn, ngày tạo; người làm khi họ thuộc dự án (không gửi thông báo "giao cho bạn");
+  mô tả có link issue Jira; MR / commit đã nối với issue thành liên kết git của task. Mỗi issue chỉ
+  nhập một lần (`task_imports`); tuỳ chọn đổi mã Jira trong ô Bug của kết quả test sang mã task.
+- **Mã Jira cũ vẫn dùng được:** commit / MR / nhánh ghi `ABC-123` của issue đã nhập nối vào task mới;
+  trạng thái bug theo mã cũ cũng trả lời từ task.
+- **Cha – con khi nhập:** `parent` của Jira chỉ epic cho story nhưng chỉ story cho sub-task, dòng đồng
+  bộ không phân biệt. Suy theo cấu trúc: issue trên cùng có cháu, hoặc có con mang story point trong khi
+  nó không có, là **Epic**; con của Epic giữ loại của mình; con của issue trên cùng khác, hoặc cháu của
+  Epic, là **Sub-task**; sâu hơn thì bỏ quan hệ cha. Không bao giờ có sub-task làm cha (nhập không gãy).
+- **Mã trùng:** không nhập project Jira có mã trùng mã Task của một dự án (409); không đặt mã Task mới
+  trùng tiền tố issue Jira đã nhập. Nhờ vậy mã cũ luôn chỉ đúng một thứ.
+- **Một lượt nhập một lúc:** lượt nhập khoá không gian task của dự án trước khi đọc danh sách đã nhập.
+- **Quyền:** người có `tests.view` mà không xem được Task chỉ thấy trạng thái bug-task, không thấy tiêu
+  đề; gắn bug bằng mã task ở dự án mình không xem được thì coi như mã Jira (không lộ task). Mô tả bug từ
+  testcase không quét @nhắc (log hay có `@...`).
+- Chưa làm (để sau khi gỡ Jira hẳn): nhập bình luận / lịch sử Jira (CodePulse không đồng bộ chúng).

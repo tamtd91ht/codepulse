@@ -24,6 +24,7 @@ from app.models import (
     Task,
     TaskComment,
     TaskGitLink,
+    TaskImport,
     TaskSpace,
     TaskStatus,
     TaskWorklog,
@@ -49,18 +50,32 @@ def _space(session: Session, project: Project) -> TaskSpace | None:
 
 
 def _tasks(session: Session, space: TaskSpace, keys: Iterable[str]) -> dict[str, Task]:
-    """The tasks of this dự án among `keys` (another dự án's key never links here)."""
-    wanted = {k for k in keys if k.split("-", 1)[0] == space.key}
-    if not wanted:
-        return {}
-    return {
-        t.key: t
-        for t in session.scalars(
-            select(Task).where(
-                Task.business_project_id == space.business_project_id, Task.key.in_(wanted)
+    """The tasks of this dự án among `keys` (another dự án's key never links here). A key of an
+    issue imported from Jira (docs/specs/31 §19.2) names the task made from it."""
+    given = set(keys)
+    wanted = {k for k in given if k.split("-", 1)[0] == space.key}
+    out: dict[str, Task] = {}
+    if wanted:
+        out = {
+            t.key: t
+            for t in session.scalars(
+                select(Task).where(
+                    Task.business_project_id == space.business_project_id, Task.key.in_(wanted)
+                )
             )
-        )
-    }
+        }
+    others = given - wanted
+    if others:
+        for ext, task in session.execute(
+            select(TaskImport.external_key, Task)
+            .join(Task, Task.id == TaskImport.task_id)
+            .where(
+                TaskImport.external_key.in_(sorted(others)),
+                Task.business_project_id == space.business_project_id,
+            )
+        ).tuples():
+            out.setdefault(str(ext), task)
+    return out
 
 
 def link(

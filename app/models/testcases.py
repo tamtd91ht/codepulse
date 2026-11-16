@@ -504,6 +504,11 @@ class TestProjectSettings(TimestampMixin, Base):
     jira_issue_type: Mapped[str] = mapped_column(server_default="Bug", default="Bug")
     jira_components: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
     jira_labels: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
+    # Where "Tạo bug" from a failed test goes (docs/specs/31 §19.2): a CodePulse task (default)
+    # or a Jira issue (while Jira is still in use).
+    bug_target: Mapped[str] = mapped_column(
+        String(10), server_default="codepulse", default="codepulse"
+    )
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
 
 
