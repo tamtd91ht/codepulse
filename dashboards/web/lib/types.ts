@@ -2520,6 +2520,10 @@ export interface TaskRow {
   subtasks: { done: number; total: number } | null;
   rank: number | null;
   git: TaskGitCounts | null;
+  /** docs/specs/31 §20.1: an open task blocks it. */
+  blocked?: boolean;
+  /** §20.1: its linked MRs were all closed without merge. */
+  mr_closed?: boolean;
   created_at: string;
   updated_at: string;
   resolved_at: string | null;
@@ -2657,6 +2661,8 @@ export interface TaskDetail extends Omit<TaskRow, "git" | "subtasks"> {
   /** docs/specs/31 §19.4: the dự án's Definition of Done on this task. */
   dod?: { key: string; label: string; ok: boolean; detail: string }[];
   dod_enforced?: boolean;
+  /** §20.1: open tasks that block this one. */
+  blocked_by?: { key: string; title: string; status: string | null }[];
   can: {
     edit: boolean;
     assign: boolean;
@@ -2777,4 +2783,17 @@ export interface TaskAiRun {
   status: "queued" | "running" | "done" | "failed" | string;
   output: { items?: TaskAiItem[]; markdown?: string } | null;
   error: string | null;
+}
+
+/** GET /tasks/{key}/timeline (docs/specs/31 §20.1): one item of the task's timeline. */
+export type TaskTimelineType = "comment" | "history" | "worklog" | "git" | "review" | "test" | "deploy";
+
+export interface TaskTimelineItem {
+  id: string;
+  at: string;
+  type: TaskTimelineType;
+  actor: TaskPerson | null;
+  text: string;
+  link: string | null;
+  data: Record<string, unknown>;
 }

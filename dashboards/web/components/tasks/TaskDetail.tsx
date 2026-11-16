@@ -10,7 +10,7 @@ import { ApiError, api, useApi } from "@/lib/api";
 import { dateTimeMin, relative } from "@/lib/format";
 import type { TaskDetail as Detail, TaskLinkKind, TaskPriority, TaskResolution, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
 
-import { TaskActivity, TaskAttachments } from "./TaskActivity";
+import { TaskActivity, TaskAttachments, TaskCommentBox } from "./TaskActivity";
 import { FileTextarea } from "./taskFiles";
 import { TaskAiButtons } from "./TaskAi";
 import { TaskCode } from "./TaskCode";
@@ -45,7 +45,8 @@ import {
 
 /**
  * One task (§13 "Chi tiết task"), the same in the drawer (`/tasks?task=KEY`) and on `/tasks/KEY`.
- * Left: title, description, sub-tasks, links, Code, activity, files. Right: the fields.
+ * Left: title, health, description, sub-tasks, links, Code, the timeline, files and the comment box
+ * fixed at the bottom (§20.1). Right: the fields that have a value, "+ Thêm trường" for the rest.
  */
 export function TaskDetail({
   taskKey,
@@ -172,9 +173,10 @@ function Body({
         <TaskTests task={task} />
         <TaskActivity task={task} />
         <TaskAttachments task={task} />
+        <TaskCommentBox key={task.key} task={task} bp={bp} />
       </div>
       <aside className="tk-detail-side" aria-label="Thông tin task">
-        <Fields task={task} bp={bp} space={space} onPatch={patch} onTransition={(s) => void transition(s)} />
+        <Fields key={task.key} task={task} bp={bp} space={space} onPatch={patch} onTransition={(s) => void transition(s)} />
         {closingSubs && (
           <ParentDoneAsk
             taskKey={task.key}
@@ -536,6 +538,8 @@ function Fields({
   const versions = useVersions(bp);
   const fields = useTaskFields(bp);
   const [watchBusy, setWatchBusy] = useState(false);
+  // §20.1: empty fields stay hidden until picked from "+ Thêm trường" (this view only).
+  const [revealed, setRevealed] = useState<Set<string>>(() => new Set());
   const off = !task.can.edit;
   const statuses = useMemo(() => {
     const list = [task.status, ...(task.transitions ?? []).filter((s) => s.id !== task.status.id)];
@@ -557,6 +561,21 @@ function Fields({
   }
 
   const setCustom = (id: number, v: unknown) => void onPatch({ custom: { ...custom, [String(id)]: v === "" ? null : v } });
+  const filled = (v: unknown) => v !== null && v !== undefined && v !== "" && !(Array.isArray(v) && !v.length);
+  const has: Record<string, boolean> = {
+    labels: filled(task.labels),
+    components: filled(task.components),
+    version: filled(task.version_id),
+    points: filled(task.story_points),
+    estimate: !!task.estimate_min,
+    spent: !!task.spent_min,
+    due: filled(task.due_date),
+  };
+  for (const f of liveFields) has[`custom-${f.id}`] = !!f.required || filled(custom[String(f.id)]);
+  const show = (k: string) => has[k] || revealed.has(k);
+  const labelOf: Record<string, string> = { labels: "Nhãn", components: "Thành phần", version: "Phiên bản", points: "Story point", estimate: "Ước lượng", due: "Hạn" };
+  for (const f of liveFields) labelOf[`custom-${f.id}`] = f.name;
+  const hidden = Object.keys(labelOf).filter((k) => !show(k));
 
   return (
     <div className="tk-fields">
@@ -625,7 +644,7 @@ function Fields({
           </select>
         </Row>
       )}
-      <Row label="Nhãn">
+      {show("labels") && <Row label="Nhãn">
         <BlurInput
           label="Nhãn (cách nhau bằng dấu phẩy)"
           value={(task.labels ?? []).join(", ")}
@@ -640,8 +659,8 @@ function Fields({
             })
           }
         />
-      </Row>
-      <Row label="Thành phần">
+      </Row>}
+      {show("components") && <Row label="Thành phần">
         <BlurInput
           label="Thành phần (cách nhau bằng dấu phẩy)"
           value={(task.components ?? []).join(", ")}
@@ -656,7 +675,7 @@ function Fields({
             })
           }
         />
-      </Row>
+      </Row>}
       <Row label="Sprint">
         <select value={task.sprint_id ?? ""} disabled={off} aria-label="Sprint" onChange={(e) => void onPatch({ sprint_id: e.target.value ? Number(e.target.value) : null })}>
           <option value="">Backlog</option>
@@ -670,7 +689,7 @@ function Fields({
             ))}
         </select>
       </Row>
-      <Row label="Phiên bản">
+      {show("version") && <Row label="Phiên bản">
         <select value={task.version_id ?? ""} disabled={off} aria-label="Phiên bản" onChange={(e) => void onPatch({ version_id: e.target.value ? Number(e.target.value) : null })}>
           <option value="">Không</option>
           {(versions.data ?? []).map((v) => (
@@ -679,8 +698,8 @@ function Fields({
             </option>
           ))}
         </select>
-      </Row>
-      <Row label="Story point">
+      </Row>}
+      {show("points") && <Row label="Story point">
         <BlurInput
           type="number"
           label="Story point"
@@ -688,8 +707,8 @@ function Fields({
           disabled={off}
           onCommit={(v) => void onPatch({ story_points: v.trim() ? Number(v) : null })}
         />
-      </Row>
-      <Row label="Ước lượng">
+      </Row>}
+      {show("estimate") && <Row label="Ước lượng">
         <BlurInput
           label="Ước lượng (ví dụ 2h30m)"
           value={task.estimate_min ? fmtMinutes(task.estimate_min).replace(" ", "") : ""}
@@ -698,20 +717,21 @@ function Fields({
           invalid={(v) => !!v.trim() && parseDuration(v) === null}
           onCommit={(v) => void onPatch({ estimate_min: v.trim() ? parseDuration(v) : null })}
         />
-      </Row>
-      <Row label="Đã làm">
+      </Row>}
+      {show("spent") && <Row label="Đã làm">
         <span className="tk-field-text">
           {fmtMinutes(task.spent_min)}
           {task.estimate_min ? <span className="muted"> / {fmtMinutes(task.estimate_min)}</span> : null}
         </span>
-      </Row>
-      <Row label="Hạn">
+      </Row>}
+      {show("due") && <Row label="Hạn">
         <input type="date" value={task.due_date ?? ""} disabled={off} aria-label="Hạn" onChange={(e) => void onPatch({ due_date: e.target.value || null })} />
-      </Row>
+      </Row>}
       {liveFields.map((f) => {
         const id = f.id as number;
         const raw = custom[String(id)];
         const v = raw === null || raw === undefined ? "" : String(raw);
+        if (!show(`custom-${id}`)) return null;
         return (
           <Row key={id} label={f.required ? `${f.name} *` : f.name}>
             {f.kind === "select" ? (
@@ -746,6 +766,27 @@ function Fields({
           </Row>
         );
       })}
+      {!off && hidden.length > 0 && (
+        <details className="tl-add-field">
+          <summary className="link small">+ Thêm trường</summary>
+          <ul className="tl-add-field-menu">
+            {hidden.map((k) => (
+              <li key={k}>
+                <button
+                  type="button"
+                  className="ghost sm"
+                  onClick={(e) => {
+                    setRevealed((cur) => new Set(cur).add(k));
+                    (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
+                  }}
+                >
+                  {labelOf[k]}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       <Row label="Theo dõi">
         <span className="tk-watch">
           <button type="button" className="sm" aria-pressed={task.watching} disabled={watchBusy} onClick={() => void toggleWatch()}>
@@ -801,29 +842,49 @@ function ResolutionModal({ target, onClose, onPick }: { target: TaskStatusRef; o
 }
 
 /**
- * Sức khoẻ task (docs/specs/31 §19.3): what the code says, in one line under the title — the
- * MRs, their review score, open critical findings, failed pipelines, production. Hidden while the
- * task has no code.
+ * Sức khoẻ task (docs/specs/31 §19.3, §20.1), always at the top: blocked by, the MRs, their review
+ * score, open critical / high findings, pipelines, production, MR closed without merge, DoD and
+ * testcases. Each item jumps to its section; items that do not apply are hidden.
  */
 function TaskHealth({ task }: { task: Detail }) {
+  const tests = useApi<{ total: number; passed: number; failed: number; hidden?: boolean }>(`/tasks/${encodeURIComponent(task.key)}/tests`);
   const g = task.git?.summary;
-  if (!g || (!g.mrs && !g.commits)) return null;
-  const score = g.avg_score === null || g.avg_score === undefined ? null : Number(g.avg_score);
-  const merged = (task.git?.mrs ?? []).filter((m) => m.state === "merged").length;
-  const items: { text: string; tone: "good" | "bad" | "warn" | "muted"; title: string }[] = [
-    { text: g.mrs ? `${g.mrs} MR${merged ? ` (${merged} đã merge)` : ""}` : `${g.commits} commit`, tone: "muted", title: "MR và commit nối với task" },
-    ...(score !== null && !Number.isNaN(score) ? [{ text: `điểm ${score.toFixed(1)}`, tone: score >= 7 ? ("good" as const) : ("warn" as const), title: "Điểm review trung bình" }] : []),
-    { text: g.open_critical ? `${g.open_critical} critical` : "0 critical", tone: g.open_critical ? "bad" : "good", title: "Finding critical còn mở trên code của task" },
-    ...(g.open_high ? [{ text: `${g.open_high} high`, tone: "warn" as const, title: "Finding high còn mở" }] : []),
-    { text: g.pipelines_failed ? `${g.pipelines_failed} pipeline lỗi` : "pipeline ✓", tone: g.pipelines_failed ? "bad" : "good", title: "Pipeline của commit / MR" },
-    { text: g.deployed ? `đã lên ${g.deployed.environment}` : "chưa deploy", tone: g.deployed ? "good" : "muted", title: g.deployed ? `Deploy lúc ${g.deployed.at}` : "Chưa thấy deploy production" },
+  const hasCode = !!g && (g.mrs > 0 || g.commits > 0);
+  const score = !g || g.avg_score === null || g.avg_score === undefined ? null : Number(g.avg_score);
+  const mrs = task.git?.mrs ?? [];
+  const merged = mrs.filter((m) => m.state === "merged").length;
+  const closedMr = mrs.some((m) => m.state === "closed") && !mrs.some((m) => m.state === "merged" || m.state === "opened");
+  const dod = task.dod ?? [];
+  const dodOk = dod.filter((d) => d.ok).length;
+  const t = tests.data && !tests.data.hidden && tests.data.total > 0 ? tests.data : null;
+  type Item = { key: string; text: string; tone: "good" | "bad" | "warn" | "muted"; title: string; target: string };
+  const items: Item[] = [
+    ...(task.blocked_by ?? []).map((b) => ({ key: `blocked-${b.key}`, text: `⛔ Bị chặn bởi ${b.key}${b.status ? ` (${b.status})` : ""}`, tone: "bad" as const, title: b.title, target: "tk-links-title" })),
+    ...(hasCode && g
+      ? [
+          { key: "mr", text: g.mrs ? `${g.mrs} MR${merged ? ` (${merged} đã merge)` : ""}` : `${g.commits} commit`, tone: "muted" as const, title: "MR và commit nối với task", target: "tk-code-title" },
+          ...(score !== null && !Number.isNaN(score) ? [{ key: "score", text: `Review ${score.toFixed(1)}`, tone: score >= 7 ? ("good" as const) : ("warn" as const), title: "Điểm review trung bình", target: "tk-code-title" }] : []),
+          { key: "crit", text: `${g.open_critical} critical`, tone: g.open_critical ? ("bad" as const) : ("good" as const), title: "Finding critical còn mở trên code của task", target: "tk-code-title" },
+          ...(g.open_high ? [{ key: "high", text: `${g.open_high} high`, tone: "warn" as const, title: "Finding high còn mở", target: "tk-code-title" }] : []),
+          ...(g.mrs ? [{ key: "pipe", text: g.pipelines_failed ? `${g.pipelines_failed} pipeline lỗi` : "Pipeline ✓", tone: g.pipelines_failed ? ("bad" as const) : ("good" as const), title: "Pipeline của MR", target: "tk-code-title" }] : []),
+          { key: "deploy", text: g.deployed ? `Đã lên ${g.deployed.environment}` : "Chưa deploy", tone: g.deployed ? ("good" as const) : ("muted" as const), title: g.deployed ? `Deploy lúc ${dateTimeMin(g.deployed.at)}` : "Chưa thấy deploy production", target: "tk-code-title" },
+        ]
+      : []),
+    ...(closedMr ? [{ key: "mr-closed", text: "MR bị đóng không merge", tone: "warn" as const, title: "MR của task đã đóng mà không merge", target: "tk-code-title" }] : []),
+    ...(t ? [{ key: "tests", text: `Testcase ${t.passed}/${t.total} Passed`, tone: t.failed ? ("bad" as const) : t.passed === t.total ? ("good" as const) : ("muted" as const), title: t.failed ? `${t.failed} testcase Failed` : "Testcase phủ task", target: "tk-tests-title" }] : []),
+    ...(dod.length ? [{ key: "dod", text: `DoD ${dodOk}/${dod.length}`, tone: dodOk === dod.length ? ("good" as const) : ("warn" as const), title: "Definition of Done", target: "tk-dod-title" }] : []),
   ];
+  if (!items.length) return null;
+  const jump = (id: string) => {
+    const el = document.getElementById(id);
+    (el?.closest("section") ?? el)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   return (
-    <div className="tk-health" aria-label="Sức khoẻ task">
-      {items.map((it, i) => (
-        <span key={i} className={`tk-health-item tk-health-${it.tone}`} title={it.title}>
+    <div className="tk-health tl-health" role="group" aria-label="Sức khoẻ task">
+      {items.map((it) => (
+        <button key={it.key} type="button" className={`tk-health-item tk-health-${it.tone} tl-health-item`} title={it.title} onClick={() => jump(it.target)}>
           {it.text}
-        </span>
+        </button>
       ))}
     </div>
   );

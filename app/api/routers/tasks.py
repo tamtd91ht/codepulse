@@ -1467,6 +1467,15 @@ def detail(session: Session, principal: Principal, task: Task) -> dict[str, Any]
         # Definition of Done, ticked from real data (§19.4); [] when the dự án set none.
         "dod": _dod_of(session, task, git_now),
         "dod_enforced": _dod_enforced(session, task),
+        # §20.1: open tasks that block this one (the health block's "Bị chặn bởi").
+        "blocked_by": [
+            {"key": r["key"], "title": r["title"], "status": (r["status"] or {}).get("name")}
+            for x in links
+            if x.kind == "blocks"
+            and x.to_task_id == task.id
+            and (r := other_rows.get(x.from_task_id)) is not None
+            and (r["status"] or {}).get("category") != "done"
+        ],
     }
 
 
