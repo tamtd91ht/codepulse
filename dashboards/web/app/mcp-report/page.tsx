@@ -221,13 +221,13 @@ function useUrlParam(name: string): [string, (v: string) => void] {
   return [value, update];
 }
 
-type Preset = "7" | "30" | "90" | "month" | "last_month" | "custom";
+type Preset = "1" | "7" | "30" | "90" | "month" | "last_month" | "custom";
 interface Range {
   preset: Preset;
   from: string;
   to: string;
 }
-const PRESETS: Exclude<Preset, "custom">[] = ["7", "30", "90", "month", "last_month"];
+const PRESETS: Exclude<Preset, "custom">[] = ["1", "7", "30", "90", "month", "last_month"];
 
 function presetRange(p: Exclude<Preset, "custom">): { from: string; to: string } {
   const today = localDay();
@@ -250,7 +250,7 @@ function readUrlRange(): Range | null {
 }
 
 /**
- * ?range=7|30|90|month|last_month (rolling) or ?from=&to= (custom); default the last 30 days (§13.2).
+ * ?range=1|7|30|90|month|last_month (rolling) or ?from=&to= (custom); default the last 30 days (§13.2).
  * The range is the dashboard-wide period (lib/timeScope): a link's range becomes it on arrival,
  * a period picked on another screen opens here, and a range picked here carries to the others.
  */
@@ -292,6 +292,7 @@ function RangeFilter({ value, onChange }: { value: Range | null; onChange: (r: R
         value={value.preset}
         onChange={(preset) => onChange(preset === "custom" ? { ...value, preset } : { preset, ...presetRange(preset) })}
         options={[
+          { value: "1", label: "Hôm nay" },
           { value: "7", label: "7 ngày" },
           { value: "30", label: "30 ngày" },
           { value: "90", label: "90 ngày" },

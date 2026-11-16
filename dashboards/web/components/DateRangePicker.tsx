@@ -3,7 +3,7 @@
 import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { Icon } from "@/components/icons";
-import { dayLabel, rangeLabel, shiftDays, shiftMonths } from "@/lib/format";
+import { dayLabel, localDay, rangeLabel, shiftDays, shiftMonths } from "@/lib/format";
 
 export type DayRange = { from: string; to: string };
 type Field = "from" | "to";
@@ -36,6 +36,8 @@ function presets(min: string, max: string, bounded: boolean, maxSpan?: number): 
   const thisMonth = monthOf(max);
   const lastMonth = shiftMonths(thisMonth, -1);
   const list = [
+    // From 00:00 today to now (an API's last day is whole, so today's ends now).
+    ...(max === localDay() ? [{ label: "Hôm nay", range: { from: max, to: max } }] : []),
     { label: "7 ngày qua", range: { from: shiftDays(max, -6), to: max } },
     { label: "30 ngày qua", range: { from: shiftDays(max, -29), to: max } },
     { label: "90 ngày qua", range: { from: shiftDays(max, -89), to: max } },

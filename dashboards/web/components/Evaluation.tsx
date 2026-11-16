@@ -11,7 +11,7 @@ import type { EvaluationBucket, Verdict } from "@/lib/types";
 
 /* Shared pieces of the per-member evaluation (the Thành viên page and the member page). */
 
-export type Preset = "7" | "30" | "90" | "custom";
+export type Preset = "1" | "7" | "30" | "90" | "custom";
 
 export interface Range {
   preset: Preset;
@@ -42,12 +42,12 @@ export function useRange(initial: Exclude<Preset, "custom"> = "30"): [Range | nu
 /** A range and its setter, shared by several cards of one page so they move together. */
 export type SharedRange = [Range | null, (r: Range) => void];
 
-/* The range in the URL: ?range=7|30|90 (rolling, ends today) or ?from=…&to=…, and also the
+/* The range in the URL: ?range=1|7|30|90 (rolling, ends today) or ?from=…&to=…, and also the
    dashboard-wide period (lib/timeScope): a period picked on Tổng quan, Insights or a team opens
    here as its days, and a range picked here is what those screens open with. A range in the URL
    on arrival (a shared link) becomes the shared period. */
 
-const PRESETS = ["7", "30", "90"] as const;
+const PRESETS = ["1", "7", "30", "90"] as const;
 
 /** The query string of a range, for links to another page that reads it ("" for none). */
 export function rangeSearch(range: Range | null): string {
@@ -135,6 +135,7 @@ export function RangePicker({ value, onChange, compact = false }: { value: Range
           onChange(preset === "custom" ? { ...value, preset } : { preset, ...presetRange(preset) })
         }
         options={[
+          { value: "1", label: "Hôm nay" },
           { value: "7", label: "7 ngày" },
           { value: "30", label: "30 ngày" },
           { value: "90", label: "90 ngày" },

@@ -10,7 +10,7 @@ Lead / quản lý xem báo cáo để trả lời ba câu, theo thứ tự:
 
 ## 2. Vị trí và bộ lọc
 - Trang **Báo cáo thành viên** (`/members/report`), mục riêng trong menu, ngay sau **Thành viên**, cho ai thấy trang Thành viên (`members_page`). Lối vào khác: nút **Báo cáo & export** ở trang Thành viên (mang theo khoảng thời gian) và ở trang từng người (mở sẵn người đó; ai cũng mở được báo cáo của chính mình).
-- Bộ lọc ở đầu trang: **thành viên** (người mình xem được, `GET /people`), **dự án**, **repo** (lọc theo dự án đã chọn), **thời gian** (7 / 30 / 90 ngày hoặc tuỳ chọn, tối đa 366 ngày). Mọi bộ lọc nằm trên URL (`?user=&bp=&repo=&range=|from=&to=&tab=`) nên link báo cáo gửi được cho người khác.
+- Bộ lọc ở đầu trang: **thành viên** (người mình xem được, `GET /people`), **dự án**, **repo** (lọc theo dự án đã chọn), **thời gian** (hôm nay / 7 / 30 / 90 ngày hoặc tuỳ chọn, tối đa 366 ngày). Mọi bộ lọc nằm trên URL (`?user=&bp=&repo=&range=|from=&to=&tab=`) nên link báo cáo gửi được cho người khác.
 - **[Quyết định]** Ranh giới đúng ngày theo `REPORT_TZ`, không làm tròn theo tuần (khác thẻ "Đánh giá trong kỳ"), để số trong báo cáo khớp với khoảng người xem chọn và với file export.
 
 ## 3. Tab Tổng quan

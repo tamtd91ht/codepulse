@@ -49,7 +49,7 @@
 - [ ] Summary, điểm, findings với code excerpt, nút Dispute
 
 ### 6. Thành viên (đánh giá theo người; người dùng 2026-10-27, ngoài spec gốc)
-- [x] Khoảng thời gian 7/30/90 ngày hoặc tuỳ chọn; lọc team, dự án, repo; tìm tên; chỉ người có review / cần hỗ trợ
+- [x] Khoảng thời gian Hôm nay/7/30/90 ngày hoặc tuỳ chọn; lọc team, dự án, repo; tìm tên; chỉ người có review / cần hỗ trợ
 - [x] KPI: người có review, review (MR/commit/LOC), điểm TB theo LOC, tỉ lệ approve, critical, high (bấm mở Critical Board)
 - [x] Biểu đồ điểm TB theo người (thấp nhất trên cùng) + kết luận cả nhóm
 - [x] Bảng: review, điểm TB (+ thấp nhất), kết luận (thanh chia theo verdict), critical/high/khác, lỗi/100 LOC, xu hướng tuần, review gần nhất; dòng đỏ khi có critical hoặc điểm TB < 65
@@ -85,3 +85,4 @@ Thời gian chọn ở một màn (Tổng quan, Insights, Dự án, Team, Thành
 ## Gợi ý coaching
 - 40% finding thuộc "testing" → workshop viết unit test
 ```
+- [x] Lựa chọn **Hôm nay** (người dùng 2026-11-16) ở mọi bộ lọc thời gian có preset: ô chọn khoảng ngày (Tổng quan, Insights, Đóng finding, Critical, Đánh giá, tính lại tiêu chí), Thành viên / Báo cáo thành viên / Task Jira (`?range=1`), Tích hợp MCP, báo cáo Testcase. Tính từ 00h00 hôm nay (REPORT_TZ) đến hiện tại: khoảng hôm nay → hôm nay, ngày cuối của API là trọn ngày nên dừng ở hiện tại. Màn chỉ có tuần/tháng (Dự án, Team) hiện tuần chứa hôm nay, kèm dòng ghi chú như mọi khoảng ngày.

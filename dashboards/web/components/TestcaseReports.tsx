@@ -63,6 +63,7 @@ const CHANGE: Record<string, { label: string; tone: "bad" | "good" | "info" }> =
   changed: { label: "Thay đổi", tone: "info" },
 };
 const PERIODS = [
+  { value: "1", label: "Hôm nay" },
   { value: "7", label: "7 ngày" },
   { value: "30", label: "30 ngày" },
   { value: "90", label: "90 ngày" },

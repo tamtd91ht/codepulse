@@ -119,7 +119,7 @@ Sau khi tạo: **hệ thống tự chạy kiểm ngay** (**[Đã chốt]** user 
 ### 13.2 Trang "Tích hợp MCP" và quyền
 - Trang `/mcp-report` trong menu Theo dõi, nhãn **"Tích hợp MCP"** (đổi từ "Báo cáo Claude Code" theo yêu cầu người dùng 2026-11-05; tab ở Của tôi cũng tên "Tích hợp MCP"). Tài liệu tích hợp đầy đủ ở Hướng dẫn › Tích hợp MCP, `/guide/mcp`; trang báo cáo có nút "Quản lý token" mở Của tôi › Tích hợp MCP.
 - Quyền mới `report.mcp` (Admin › Phân quyền), mặc định theo vai trò: thành viên `own`, lead `team`, manager `project`, admin `all` (giống `report.member`). Nhật ký gọi chi tiết: chỉ admin.
-- Bộ lọc: khoảng thời gian (mặc định 30 ngày; preset 7/30/90 ngày, tháng này, tháng trước, tuỳ chọn), dự án, repo, team, thành viên, mức độ (critical/high). Mọi dữ liệu bị giới hạn thêm theo phạm vi `report.mcp` của người xem.
+- Bộ lọc: khoảng thời gian (mặc định 30 ngày; preset hôm nay, 7/30/90 ngày, tháng này, tháng trước, tuỳ chọn), dự án, repo, team, thành viên, mức độ (critical/high). Mọi dữ liệu bị giới hạn thêm theo phạm vi `report.mcp` của người xem.
 - **[Quyết định]** (review 2026-11-05) Lần gọi tool được lọc theo dự án mà `report.mcp` của người xem phủ, giống `work_scope` của yêu cầu đóng: lần gọi của chính mình; về repo của dự án mà phạm vi phủ mọi người (`project`: dự án mình manage; `all`: dự án mình xem được); của người mình lead về repo của dự án mình xem được. Manager phạm vi `project` **không** thấy lần gọi về dự án mình chỉ xem. Lần gọi không gắn repo (`project_id` null) chỉ tính cho người nằm trong phạm vi người của người xem.
 
 ### 13.3 Chỉ số theo thành viên
