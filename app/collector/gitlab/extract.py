@@ -122,6 +122,8 @@ class GlMergeRequest:
     files: list[GlFileStat] | None = None
     # Read for task keys (docs/specs/31 §5) only; never stored (spec 25 §4.1).
     description: str | None = None
+    # Who is asked to review it (docs/specs/31 §19.3: "MR chờ mình review").
+    reviewers: list[GlUser] = field(default_factory=list)
 
 
 @dataclass
@@ -279,6 +281,11 @@ def extract(rows: Iterable[RawGitlab]) -> Extracted:
                         payload.get("title"), description, branch=payload.get("source_branch")
                     ),
                     description=description,
+                    reviewers=[
+                        _user(r)
+                        for r in payload.get("reviewers") or []
+                        if isinstance(r, dict) and r.get("id") and r.get("username")
+                    ],
                 )
             case ep.EP_MR_COMMITS | ep.EP_MR_NOTES | ep.EP_MR_DIFFS:
                 mr_parts.setdefault(int(params["iid"]), {})[row.endpoint] = payload

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
+import { CommandPalette } from "@/components/CommandPalette";
 import { Icon, type IconName, IconButton } from "@/components/icons";
 import { InboxProvider, NotificationBell } from "@/components/Inbox";
 import { ReviewActivity } from "@/components/ReviewActivity";
@@ -264,6 +265,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </footer>
         </main>
       </div>
+      {me && <CommandPalette me={me} />}
       {me && <ReviewActivity />}
       {assistant && <Stetho />}
     </div>

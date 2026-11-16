@@ -2431,6 +2431,9 @@ export interface TaskStatusRef {
 export interface TaskStatus extends TaskStatusRef {
   position: number;
   transitions: number[] | null;
+  /** Board hints (docs/specs/31 §19.3): soft WIP cap, hours before a card is flagged. */
+  wip_limit?: number | null;
+  age_warning_hours?: number | null;
 }
 
 /** §2 `rules`. */
@@ -2675,6 +2678,8 @@ export interface Sprint {
   tasks?: TaskRow[];
   points?: number;
   done_points?: number;
+  /** Mean finished points of the last 3 closed sprints (§19.3); null before that. */
+  capacity?: number | null;
 }
 
 export interface TaskBurndown {

@@ -36,6 +36,25 @@ import {
 
 const NL = String.fromCharCode(10);
 
+/** A starting description per type (docs/specs/31 §19.3): a Story's acceptance criteria, a Bug's
+ * steps to reproduce. Swapped only while the description is still an untouched template. */
+const DESCRIPTION_TEMPLATE: Partial<Record<TaskType, string>> = {
+  story: ["**Là** …, **tôi muốn** …, **để** …", "", "### Tiêu chí chấp nhận", "- [ ] ", "- [ ] "].join(NL),
+  bug: [
+    "### Các bước tái hiện",
+    "1. ",
+    "2. ",
+    "",
+    "### Kết quả mong đợi",
+    "",
+    "### Kết quả thực tế",
+    "",
+    "### Môi trường",
+    "- Phiên bản / build: ",
+    "- Trình duyệt / thiết bị: ",
+  ].join(NL),
+};
+
 /** Quick-create (§13 "Tạo task"): the main fields in one modal; the rest in the task's detail. */
 export function TaskCreate({
   space,
@@ -65,7 +84,7 @@ export function TaskCreate({
         : (types[0] ?? "task"),
   );
   const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const [description, setDescription] = useState(() => DESCRIPTION_TEMPLATE[type] ?? "");
   const [priority, setPriority] = useState<TaskPriority>(() =>
     defaultPriority(space),
   );
@@ -236,7 +255,13 @@ export function TaskCreate({
             <span className="rq-label">Loại</span>
             <select
               value={type}
-              onChange={(e) => setType(e.target.value as TaskType)}
+              onChange={(e) => {
+                const next = e.target.value as TaskType;
+                if (!description.trim() || Object.values(DESCRIPTION_TEMPLATE).includes(description)) {
+                  setDescription(DESCRIPTION_TEMPLATE[next] ?? "");
+                }
+                setType(next);
+              }}
             >
               {types.map((t) => (
                 <option key={t} value={t}>

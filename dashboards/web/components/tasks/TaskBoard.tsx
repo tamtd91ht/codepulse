@@ -6,7 +6,7 @@ import { type MultiOption, MultiSelect } from "@/components/MultiSelect";
 import { Alert, Avatar, EmptyState, Loading } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
-import type { Me, TaskPage, TaskRow, TaskSpace, TaskType } from "@/lib/types";
+import type { Me, TaskPage, TaskPerson, TaskRow, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
 
 import {
   GitBadge,
@@ -49,6 +49,95 @@ const DRAG_TYPE = "text/x-task-key";
 
 type BoardFilters = { assignees: number[]; priorities: string[]; type: TaskType | ""; label: string; mine: boolean };
 
+/** Swimlanes (docs/specs/31 §19.3): rows of the board grouped by one field. */
+type LaneMode = "none" | "epic" | "parent" | "assignee" | "priority";
+const LANE_LABEL: Record<LaneMode, string> = {
+  none: "Không chia",
+  epic: "Theo epic",
+  parent: "Theo task cha",
+  assignee: "Theo người làm",
+  priority: "Theo ưu tiên",
+};
+const LANE_KEY = "tk-board-lane";
+
+function readLane(): LaneMode {
+  try {
+    const v = localStorage.getItem(LANE_KEY);
+    return v && v in LANE_LABEL ? (v as LaneMode) : "none";
+  } catch {
+    return "none";
+  }
+}
+
+/** Hours since the task entered its status. */
+function hoursIn(t: TaskRow): number | null {
+  if (!t.status_changed_at) return null;
+  return (Date.now() - new Date(t.status_changed_at).getTime()) / 3_600_000;
+}
+
+/**
+ * Quick create (§19.3): "Sửa lỗi OTP @an #bug !cao 3sp". @ a person (email name or a word of the
+ * name), # a type, ! a priority (its name or key, accents optional), "3sp" story points.
+ */
+export function parseQuick(
+  text: string,
+  people: TaskPerson[],
+  space: TaskSpace,
+): { title: string; assignee_id?: number; type?: TaskType; priority?: string; story_points?: number; ambiguous?: string } {
+  const fold = (v: string) =>
+    v
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/đ/g, "d")
+      .replace(/Đ/g, "D")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  const out: { title: string; assignee_id?: number; type?: TaskType; priority?: string; story_points?: number; ambiguous?: string } = { title: "" };
+  const words: string[] = [];
+  for (const word of text.trim().split(/\s+/)) {
+    const sp = /^(\d+(?:[.,]\d+)?)sp$/i.exec(word);
+    if (sp) {
+      out.story_points = Number(sp[1].replace(",", "."));
+      continue;
+    }
+    if (word.startsWith("@") && word.length > 1) {
+      const w = fold(word.slice(1));
+      const byMail = people.filter((p) => fold((p.primary_email ?? "").split("@")[0]) === w);
+      const byName = people.filter((p) => fold(p.full_name ?? "").split("-").includes(w));
+      // Only a sure match: Vietnamese names share words ("@van", "@anh").
+      const who = byMail.length === 1 ? byMail[0] : !byMail.length && byName.length === 1 ? byName[0] : null;
+      if (byMail.length + byName.length > 1 && !who) {
+        out.ambiguous = word;
+        continue;
+      }
+      if (who) {
+        out.assignee_id = who.id;
+        continue;
+      }
+    }
+    if (word.startsWith("#") && word.length > 1) {
+      const w = fold(word.slice(1)).replace("sub-task", "subtask");
+      const type = TASK_TYPES.find((t) => t === w || fold(TYPE_LABEL[t]) === w);
+      if (type && space.types.includes(type)) {
+        out.type = type;
+        continue;
+      }
+    }
+    if (word.startsWith("!") && word.length > 1) {
+      const w = fold(word.slice(1));
+      const prio = priorityList(space).find((p) => p.key === w || fold(p.name) === w || p.level === w);
+      if (prio) {
+        out.priority = prio.key;
+        continue;
+      }
+    }
+    words.push(word);
+  }
+  out.title = words.join(" ").trim();
+  return out;
+}
+
 /** Board (§13): one column per status, drag a card to change its status or order. */
 export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | undefined; onOpen: (key: string) => void }) {
   const bp = space.business_project_id;
@@ -82,7 +171,19 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
 
   const [filters, setFilters] = useState<BoardFilters>({ assignees: [], priorities: [], type: "", label: "", mine: false });
   const [drag, setDrag] = useState<{ key: string; from: number } | null>(null);
-  const [over, setOver] = useState<{ status: number; before: string | null } | null>(null);
+  const [over, setOver] = useState<{ status: number; before: string | null; lane: string } | null>(null);
+  const [lane, setLaneState] = useState<LaneMode>("none");
+  useEffect(() => setLaneState(readLane()), []);
+  const setLane = (v: LaneMode) => {
+    setLaneState(v);
+    try {
+      localStorage.setItem(LANE_KEY, v);
+    } catch {
+      /* a convenience only */
+    }
+  };
+  const [quick, setQuick] = useState<Record<number, string>>({});
+  const [quickBusy, setQuickBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmEl, ask] = useConfirm();
 
@@ -100,10 +201,64 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
       ),
     [rows, filters, me?.id],
   );
-  const columns = useMemo(
-    () => statuses.map((s) => ({ status: s, tasks: shown.filter((t) => t.status.id === s.id).sort(byRank) })),
-    [statuses, shown],
-  );
+  // Per column, across lanes: the WIP count (§19.3).
+  const colCount = useMemo(() => {
+    const n = new Map<number, number>();
+    for (const t of shown) n.set(t.status.id, (n.get(t.status.id) ?? 0) + 1);
+    return n;
+  }, [shown]);
+  const lanes = useMemo(() => {
+    if (lane === "none") return [{ id: "all", label: "", rows: shown }];
+    const byKey = new Map((rows ?? []).map((r) => [r.key, r]));
+    const groups = new Map<string, { id: string; label: string; order: number; rows: TaskRow[] }>();
+    const put = (id: string, label: string, order: number, t: TaskRow) => {
+      const g = groups.get(id) ?? { id, label, order, rows: [] };
+      g.rows.push(t);
+      groups.set(id, g);
+    };
+    const prios = priorityList(space);
+    for (const t of shown) {
+      if (lane === "assignee") put(`a${t.assignee?.id ?? 0}`, t.assignee ? personName(t.assignee) : "Chưa giao", t.assignee ? 0 : 1, t);
+      else if (lane === "priority") {
+        const i = prios.findIndex((p) => p.key === t.priority);
+        put(`p${t.priority}`, t.priority_name ?? t.priority, i < 0 ? 99 : i, t);
+      } else if (lane === "parent") {
+        const parent = t.type === "subtask" ? t.parent_key : t.subtasks && t.subtasks.total > 0 ? t.key : null;
+        const head = parent ? byKey.get(parent) : undefined;
+        put(parent ? `t${parent}` : "t-", parent ? `${parent}${head ? ` · ${head.title}` : ""}` : "Task không có sub-task", parent ? 0 : 1, t);
+      } else {
+        const up = t.type === "subtask" && t.parent_key ? byKey.get(t.parent_key) : t;
+        const epic = up?.parent_key ?? null;
+        const head = epic ? byKey.get(epic) : undefined;
+        put(epic ? `e${epic}` : "e-", epic ? `${epic}${head ? ` · ${head.title}` : ""}` : "Không thuộc epic", epic ? 0 : 1, t);
+      }
+    }
+    return [...groups.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
+  }, [lane, shown, rows, space]);
+
+  async function quickCreate(status: TaskStatusRef & { id: number }) {
+    const text = (quick[status.id] ?? "").trim();
+    if (!text) return;
+    const { ambiguous, ...parsed } = parseQuick(text, people.data ?? [], space);
+    if (ambiguous) {
+      setError(`“${ambiguous}” khớp nhiều người: dùng phần trước @ của email (ví dụ @an.nv).`);
+      return;
+    }
+    if (!parsed.title) {
+      setError("Cần tiêu đề: ví dụ “Sửa lỗi OTP @an #bug !cao 3sp”.");
+      return;
+    }
+    setQuickBusy(true);
+    setError(null);
+    try {
+      await api.post("/tasks", { space: bp, ...parsed, status_id: status.id, sprint_id: active?.id ?? undefined });
+      setQuick((q) => ({ ...q, [status.id]: "" }));
+      await refreshTasks();
+    } catch (e) {
+      setError(`Lỗi: ${errorText(e)}`);
+    }
+    setQuickBusy(false);
+  }
 
   const priorityOptions: MultiOption<string>[] = priorityList(space).map((p) => ({
     value: p.key,
@@ -147,14 +302,21 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
     await refreshTasks();
   }
 
-  const onCardDragOver = (e: DragEvent<HTMLElement>, statusId: number, list: TaskRow[], i: number) => {
+  const onCardDragOver = (e: DragEvent<HTMLElement>, statusId: number, list: TaskRow[], i: number, laneId: string) => {
     if (!drag) return;
     e.preventDefault();
     e.stopPropagation();
     const box = e.currentTarget.getBoundingClientRect();
     const lower = e.clientY > box.top + box.height / 2;
-    const before = lower ? (list[i + 1]?.key ?? null) : list[i].key;
-    if (over?.status !== statusId || over.before !== before) setOver({ status: statusId, before });
+    // "Before" is in the whole column (lanes only show part of it): below a lane's last card is
+    // before the card that follows it in the column, not the column's end.
+    let before: string | null = list[i].key;
+    if (lower) {
+      const column = (rows ?? []).filter((t) => t.status.id === statusId).sort(byRank);
+      const at = column.findIndex((t) => t.key === list[i].key);
+      before = column[at + 1]?.key ?? null;
+    }
+    if (over?.status !== statusId || over.before !== before || over.lane !== laneId) setOver({ status: statusId, before, lane: laneId });
   };
 
   return (
@@ -176,6 +338,16 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
             {TASK_TYPES.filter((t) => space.types.includes(t)).map((t) => (
               <option key={t} value={t}>
                 {TYPE_LABEL[t]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="rq-field">
+          <span className="rq-label">Swimlane</span>
+          <select value={lane} onChange={(e) => setLane(e.target.value as LaneMode)}>
+            {(Object.keys(LANE_LABEL) as LaneMode[]).map((m) => (
+              <option key={m} value={m}>
+                {LANE_LABEL[m]}
               </option>
             ))}
           </select>
@@ -220,73 +392,131 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
           Thêm trạng thái trong tab Cài đặt.
         </EmptyState>
       ) : (
-        <div className="tk-board" role="list" aria-label="Board">
-          {columns.map(({ status, tasks }) => {
-            const allowed = !drag || canMoveTo(statuses, drag.from, status.id);
-            const points = tasks.reduce((n, t) => n + (t.story_points ?? 0), 0);
-            return (
-              <section
-                key={status.id}
-                role="listitem"
-                className={`tk-col tk-cat-${status.category}${drag && !allowed ? " blocked" : ""}${over?.status === status.id ? " over" : ""}`}
-                aria-label={status.name}
-                onDragOver={(e) => {
-                  if (!drag || !allowed) return;
-                  e.preventDefault();
-                  if (over?.status !== status.id) setOver({ status: status.id, before: null });
-                }}
-                onDragLeave={(e) => {
-                  if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(null);
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const key = drag?.key ?? e.dataTransfer.getData(DRAG_TYPE);
-                  const before = over?.status === status.id ? over.before : null;
-                  setDrag(null);
-                  setOver(null);
-                  if (key && allowed) void move(key, status.id, before);
-                }}
-              >
-                <header className="tk-col-head">
-                  <span className="tk-col-name">{status.name}</span>
-                  <span className="tab-count">{tasks.length}</span>
-                  {points > 0 && <span className="small muted" title="Tổng story point">{points} SP</span>}
-                </header>
-                <div className="tk-col-body">
-                  {tasks.map((t, i) => (
-                    <div key={t.key}>
-                      {over?.status === status.id && over.before === t.key && drag?.key !== t.key && <div className="tk-drop-line" />}
-                      <TaskCard
-                        task={t}
-                        dragging={drag?.key === t.key}
-                        onOpen={() => onOpen(t.key)}
-                        onDragStart={(e) => {
-                          e.dataTransfer.setData(DRAG_TYPE, t.key);
-                          e.dataTransfer.effectAllowed = "move";
-                          setDrag({ key: t.key, from: t.status.id });
-                        }}
-                        onDragEnd={() => {
-                          setDrag(null);
-                          setOver(null);
-                        }}
-                        onDragOver={(e) => allowed && onCardDragOver(e, status.id, tasks, i)}
-                      />
-                    </div>
-                  ))}
-                  {over?.status === status.id && over.before === null && drag && <div className="tk-drop-line" />}
-                  {!tasks.length && !drag && <p className="small faint tk-col-empty">Không có task</p>}
-                </div>
-              </section>
-            );
-          })}
-        </div>
+        <>
+          {lanes.map((ln) => (
+            <section key={ln.id} className={lane === "none" ? "tk-lane-none" : "tk-lane"} aria-label={ln.label || "Board"}>
+              {lane !== "none" && (
+                <h3 className="tk-lane-head">
+                  {ln.label} <span className="tab-count">{ln.rows.length}</span>
+                </h3>
+              )}
+              <div className="tk-board" role="list" aria-label={ln.label || "Board"}>
+                {statuses.map((status) => {
+                  const tasks = ln.rows.filter((t) => t.status.id === status.id).sort(byRank);
+                  const allowed = !drag || canMoveTo(statuses, drag.from, status.id);
+                  const points = tasks.reduce((n, t) => n + (t.type === "story" || t.type === "task" || t.type === "bug" ? (t.story_points ?? 0) : 0), 0);
+                  const here = over?.status === status.id && over.lane === ln.id;
+                  const total = colCount.get(status.id) ?? 0;
+                  const overWip = !!status.wip_limit && total > status.wip_limit;
+                  return (
+                    <section
+                      key={status.id}
+                      role="listitem"
+                      className={`tk-col tk-cat-${status.category}${drag && !allowed ? " blocked" : ""}${here ? " over" : ""}${overWip ? " tk-wip-over" : ""}`}
+                      aria-label={status.name}
+                      onDragOver={(e) => {
+                        if (!drag || !allowed) return;
+                        e.preventDefault();
+                        if (!here) setOver({ status: status.id, before: null, lane: ln.id });
+                      }}
+                      onDragLeave={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(null);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const key = drag?.key ?? e.dataTransfer.getData(DRAG_TYPE);
+                        const before = here ? (over?.before ?? null) : null;
+                        setDrag(null);
+                        setOver(null);
+                        if (key && allowed) void move(key, status.id, before);
+                      }}
+                    >
+                      <header className="tk-col-head">
+                        <span className="tk-col-name">{status.name}</span>
+                        {status.wip_limit ? (
+                          <span className={`tab-count${overWip ? " tk-wip-badge" : ""}`} title={`Giới hạn WIP ${status.wip_limit}${overWip ? ": đang vượt" : ""}`}>
+                            {total}/{status.wip_limit}
+                          </span>
+                        ) : (
+                          <span className="tab-count">{lane === "none" ? tasks.length : `${tasks.length}`}</span>
+                        )}
+                        {points > 0 && (
+                          <span className="small muted" title="Tổng story point (Story / Task / Bug)">
+                            {points} SP
+                          </span>
+                        )}
+                      </header>
+                      <div className="tk-col-body">
+                        {tasks.map((t, i) => (
+                          <div key={t.key}>
+                            {here && over?.before === t.key && drag?.key !== t.key && <div className="tk-drop-line" />}
+                            <TaskCard
+                              task={t}
+                              ageWarnHours={status.age_warning_hours ?? null}
+                              dragging={drag?.key === t.key}
+                              onOpen={() => onOpen(t.key)}
+                              onDragStart={(e) => {
+                                e.dataTransfer.setData(DRAG_TYPE, t.key);
+                                e.dataTransfer.effectAllowed = "move";
+                                setDrag({ key: t.key, from: t.status.id });
+                              }}
+                              onDragEnd={() => {
+                                setDrag(null);
+                                setOver(null);
+                              }}
+                              onDragOver={(e) => {
+                                if (!allowed) return;
+                                onCardDragOver(e, status.id, tasks, i, ln.id);
+                              }}
+                            />
+                          </div>
+                        ))}
+                        {here && over?.before === null && drag && <div className="tk-drop-line" />}
+                        {!tasks.length && !drag && <p className="small faint tk-col-empty">Không có task</p>}
+                        {lane === "none" && space.can_create && status.category !== "done" && (
+                          <input
+                            className="tk-quick"
+                            value={quick[status.id] ?? ""}
+                            disabled={quickBusy}
+                            placeholder="+ Tạo nhanh: tiêu đề @người #bug !cao 3sp"
+                            aria-label={`Tạo nhanh task ở ${status.name}`}
+                            onChange={(e) => setQuick((q) => ({ ...q, [status.id]: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") void quickCreate(status);
+                              if (e.key === "Escape") setQuick((q) => ({ ...q, [status.id]: "" }));
+                            }}
+                          />
+                        )}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </>
       )}
     </div>
   );
 }
 
+/** The one signal a card shows (§19.3), most important first: critical findings, overdue, too
+ * long in its column. */
+function cardSignal(task: TaskRow, ageWarnHours: number | null): { tone: "bad" | "warn"; text: string; title: string } | null {
+  const crit = task.git?.open_critical ?? 0;
+  if (crit > 0 && task.status.category !== "done") return { tone: "bad", text: `${crit} critical`, title: "Code của task còn finding critical mở" };
+  if (task.due_date && task.status.category !== "done" && task.due_date < today()) return { tone: "bad", text: "Quá hạn", title: `Hạn ${task.due_date}` };
+  const h = hoursIn(task);
+  if (ageWarnHours && h !== null && task.status.category !== "done" && h > ageWarnHours) {
+    const days = Math.floor(h / 24);
+    return { tone: "warn", text: days >= 1 ? `${days} ngày ở đây` : `${Math.floor(h)} giờ ở đây`, title: `Ở “${task.status.name}” quá ngưỡng ${ageWarnHours} giờ của dự án` };
+  }
+  return null;
+}
+
 export function TaskCard({
   task,
+  ageWarnHours = null,
   dragging,
   onOpen,
   onDragStart,
@@ -294,6 +524,7 @@ export function TaskCard({
   onDragOver,
 }: {
   task: TaskRow;
+  ageWarnHours?: number | null;
   dragging?: boolean;
   onOpen: () => void;
   onDragStart?: (e: DragEvent<HTMLElement>) => void;
@@ -311,6 +542,14 @@ export function TaskCard({
       <button type="button" className="tk-card-title" onClick={onOpen}>
         {task.title}
       </button>
+      {(() => {
+        const signal = cardSignal(task, ageWarnHours);
+        return signal ? (
+          <span className={`tk-signal tk-signal-${signal.tone}`} title={signal.title}>
+            {signal.text}
+          </span>
+        ) : null;
+      })()}
       {(task.labels ?? []).length > 0 && (
         <div className="tk-card-labels">
           {task.labels.slice(0, 3).map((l) => (

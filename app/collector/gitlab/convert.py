@@ -206,6 +206,7 @@ class Converter:
                 "tasks_total": mr.tasks_total,
                 "tasks_done": mr.tasks_done,
                 "jira_keys": mr.jira_keys,
+                "reviewer_account_ids": [self.gitlab_account(r) for r in mr.reviewers],
             }
             stmt = self._upsert(MergeRequest, values, ["project_id", "iid"])
             mr_id = self._session.execute(stmt.returning(MergeRequest.id)).scalar_one()

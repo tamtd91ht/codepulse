@@ -344,3 +344,27 @@ def epics(session: Session, bp_id: int) -> list[dict[str, Any]]:
         )
     out.sort(key=lambda e: bool(e["closed"]))
     return out
+
+
+CAPACITY_SPRINTS = 3
+
+
+def capacity(session: Session, bp_id: int) -> float | None:
+    """Points a sprint of this dự án usually finishes: the mean completed points of the last
+    three closed sprints (docs/specs/31 §19.3). None with fewer than three: no forecast from
+    too little."""
+    closed = list(
+        session.scalars(
+            select(Sprint)
+            .where(Sprint.business_project_id == bp_id, Sprint.state == "closed")
+            .order_by(Sprint.closed_at.desc().nulls_last())
+            .limit(CAPACITY_SPRINTS)
+        )
+    )
+    if len(closed) < CAPACITY_SPRINTS:
+        return None
+    done = _done_ids(session, bp_id)
+    total = 0.0
+    for sprint in closed:
+        total += sum(points(t) for t in sprint_tasks(session, sprint.id) if t.status_id in done)
+    return round(total / len(closed), 1)

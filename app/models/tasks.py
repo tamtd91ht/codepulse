@@ -77,6 +77,10 @@ class TaskStatus(TimestampMixin, Base):
     position: Mapped[int] = mapped_column(server_default="0", default=0)
     # Statuses a task here may move to; NULL: any.
     transitions: Mapped[list[int] | None] = mapped_column(JSONB)
+    # Board hints (docs/specs/31 §19.3): a soft cap on tasks in the column, and the age (hours
+    # in this status) after which a card is flagged. NULL: none.
+    wip_limit: Mapped[int | None]
+    age_warning_hours: Mapped[int | None]
 
 
 class TaskPriority(TimestampMixin, Base):

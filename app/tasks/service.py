@@ -344,6 +344,8 @@ def set_statuses(
         status.name = item["name"].strip()
         status.category = item["category"]
         status.position = i
+        status.wip_limit = item.get("wip_limit")
+        status.age_warning_hours = item.get("age_warning_hours")
         out.append(status)
     session.flush()
     valid = {s.id for s in out}
@@ -587,6 +589,8 @@ def status_out(s: TaskStatus) -> dict[str, Any]:
         "category": s.category,
         "position": s.position,
         "transitions": s.transitions,
+        "wip_limit": s.wip_limit,
+        "age_warning_hours": s.age_warning_hours,
     }
 
 

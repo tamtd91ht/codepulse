@@ -152,6 +152,7 @@ function Body({
           )}
         </div>
         <TitleEdit task={task} canEdit={canEdit} onSave={(title) => patch({ title })} />
+        <TaskHealth task={task} />
         {message && <Message text={message} onClose={() => setMessage(null)} />}
         <DescriptionEdit task={task} canEdit={canEdit} onSave={(description) => patch({ description })} />
         <Subtasks task={task} bp={bp} space={space} onOpenTask={onOpenTask} />
@@ -772,5 +773,34 @@ function ResolutionModal({ target, onClose, onPick }: { target: TaskStatusRef; o
         </label>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * Sức khoẻ task (docs/specs/31 §19.3): what the code says, in one line under the title — the
+ * MRs, their review score, open critical findings, failed pipelines, production. Hidden while the
+ * task has no code.
+ */
+function TaskHealth({ task }: { task: Detail }) {
+  const g = task.git?.summary;
+  if (!g || (!g.mrs && !g.commits)) return null;
+  const score = g.avg_score === null || g.avg_score === undefined ? null : Number(g.avg_score);
+  const merged = (task.git?.mrs ?? []).filter((m) => m.state === "merged").length;
+  const items: { text: string; tone: "good" | "bad" | "warn" | "muted"; title: string }[] = [
+    { text: g.mrs ? `${g.mrs} MR${merged ? ` (${merged} đã merge)` : ""}` : `${g.commits} commit`, tone: "muted", title: "MR và commit nối với task" },
+    ...(score !== null && !Number.isNaN(score) ? [{ text: `điểm ${score.toFixed(1)}`, tone: score >= 7 ? ("good" as const) : ("warn" as const), title: "Điểm review trung bình" }] : []),
+    { text: g.open_critical ? `${g.open_critical} critical` : "0 critical", tone: g.open_critical ? "bad" : "good", title: "Finding critical còn mở trên code của task" },
+    ...(g.open_high ? [{ text: `${g.open_high} high`, tone: "warn" as const, title: "Finding high còn mở" }] : []),
+    { text: g.pipelines_failed ? `${g.pipelines_failed} pipeline lỗi` : "pipeline ✓", tone: g.pipelines_failed ? "bad" : "good", title: "Pipeline của commit / MR" },
+    { text: g.deployed ? `đã lên ${g.deployed.environment}` : "chưa deploy", tone: g.deployed ? "good" : "muted", title: g.deployed ? `Deploy lúc ${g.deployed.at}` : "Chưa thấy deploy production" },
+  ];
+  return (
+    <div className="tk-health" aria-label="Sức khoẻ task">
+      {items.map((it, i) => (
+        <span key={i} className={`tk-health-item tk-health-${it.tone}`} title={it.title}>
+          {it.text}
+        </span>
+      ))}
+    </div>
   );
 }

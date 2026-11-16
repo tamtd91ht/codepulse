@@ -15440,3 +15440,360 @@ a.icon-btn {
   object-fit: cover;
   border-radius: var(--radius-sm);
 }
+
+/* "Việc của tôi" (docs/specs/31 §19.3, components/tasks/MyWork.tsx). */
+.mw {
+  display: grid;
+  gap: 16px;
+}
+.mw-block {
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+.mw-attention {
+  border-color: var(--border-strong);
+}
+.mw-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.mw-toggle {
+  gap: 6px;
+  font-size: 16px;
+}
+.mw-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.mw-empty {
+  margin: 4px 0;
+}
+.mw-error {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+}
+.mw-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mw-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.mw-row:first-child {
+  border-top: 0;
+}
+.mw-kind {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.mw-kind-overdue .mw-kind,
+.mw-kind-critical .mw-kind,
+.mw-kind-test_failed .mw-kind {
+  background: var(--bad-soft);
+  color: var(--bad-text);
+}
+.mw-kind-review .mw-kind {
+  background: var(--info-soft);
+  color: var(--info);
+}
+.mw-kind-mention .mw-kind {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.mw-task .tk-type {
+  margin-top: 2px;
+}
+.mw-main {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+}
+.mw-subject {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.mw-subject svg {
+  flex: none;
+  align-self: center;
+}
+.mw-key {
+  flex: none;
+  color: var(--muted);
+  font: 600 12px var(--font-mono);
+}
+.mw-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.mw-blocked {
+  color: var(--warn);
+}
+.mw-action {
+  flex: none;
+}
+.mw-sprints {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mw-sprint-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+}
+.mw-sprint-sp {
+  margin-left: auto;
+  color: var(--text-2);
+}
+.mw-late {
+  color: var(--bad-text);
+}
+.mw-bar {
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.mw-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--success);
+}
+@media (max-width: 640px) {
+  .mw-block {
+    padding: 12px 16px;
+  }
+  .mw-row:not(.mw-task) {
+    flex-wrap: wrap;
+  }
+  .mw-row:not(.mw-task) .mw-action {
+    width: 100%;
+    padding-left: 40px;
+  }
+  .mw-sprint-sp {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+
+/* Command palette, Ctrl+K / Cmd+K (components/CommandPalette.tsx). */
+.cmdk-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 16px 16px;
+  background: var(--backdrop);
+}
+.cmdk {
+  display: flex;
+  flex-direction: column;
+  width: min(600px, 100%);
+  max-height: 70vh;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+.cmdk-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+.cmdk-field input {
+  flex: 1;
+  min-width: 0;
+  height: 52px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  box-shadow: none;
+}
+.cmdk-field input:focus,
+.cmdk-field input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.cmdk:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.cmdk-kbd {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+  font: 600 11px var(--font-mono);
+}
+.cmdk-list {
+  flex: 1;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  list-style: none;
+}
+.cmdk-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  color: var(--text);
+  cursor: pointer;
+}
+.cmdk-item.active {
+  background: var(--primary-soft);
+}
+.cmdk-sep {
+  margin-top: 6px;
+  box-shadow: inset 0 1px 0 var(--border);
+}
+.cmdk-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmdk-key {
+  flex: none;
+  color: var(--muted);
+  font: 600 12px var(--font-mono);
+}
+.cmdk-foot {
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* Board (docs/specs/31 §19.3): swimlanes, WIP, card signal, quick create; capacity. */
+.tk-lane {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.tk-lane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.tk-col.tk-wip-over .tk-col-head {
+  color: var(--bad-text);
+}
+.tk-wip-badge {
+  background: var(--bad-soft);
+  color: var(--bad-text);
+}
+.tk-signal {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.tk-signal-bad {
+  background: var(--bad-soft);
+  color: var(--bad-text);
+}
+.tk-signal-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.tk-quick {
+  width: 100%;
+  margin-top: 4px;
+  font-size: 13px;
+}
+.tk-num-input {
+  width: 72px;
+}
+.tk-over-capacity {
+  color: var(--bad-text);
+  font-weight: 600;
+}
+
+/* Sức khoẻ task (docs/specs/31 §19.3). */
+.tk-health {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tk-health-item {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.tk-health-good {
+  color: var(--good);
+}
+.tk-health-bad {
+  color: var(--bad-text);
+  background: var(--bad-soft);
+  border-color: transparent;
+}
+.tk-health-warn {
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-color: transparent;
+}
+.tk-health-muted {
+  color: var(--muted);
+}

@@ -454,3 +454,30 @@ P5 Mở rộng. Mỗi giai đoạn là một mục con bên dưới, ghi cả qu
   đề; gắn bug bằng mã task ở dự án mình không xem được thì coi như mã Jira (không lộ task). Mô tả bug từ
   testcase không quét @nhắc (log hay có `@...`).
 - Chưa làm (để sau khi gỡ Jira hẳn): nhập bình luận / lịch sử Jira (CodePulse không đồng bộ chúng).
+
+### 19.3 P2 – Hằng ngày (migration `c9e1a3b5d7f0`)
+- **Reviewer của MR:** collector đọc `reviewers` của MR GitLab → `merge_requests.reviewer_account_ids`
+  (tài khoản `gitlab_user`; có từ lần đồng bộ tiếp theo). `first_review_at` có sẵn cho thời gian chờ.
+- **Việc của tôi** (`GET /tasks/my-work`, trang `/tasks/me`, nút ở đầu trang Task): *Cần xử lý ngay* —
+  task của tôi quá hạn, code của task còn critical, MR đang mở tôi là reviewer (không phải tác giả,
+  repo tôi xem được, kèm tuổi MR), @nhắc chưa đọc, testcase phủ task đang Failed (§19.4); *Đang làm*;
+  *Chờ người khác* (bị chặn bởi task "blocks" còn mở); *Cần làm* (sprint đang chạy trước, tối đa 30);
+  *Xong tuần này* (lý do `done`); mỗi sprint đang chạy tôi có task: còn mấy ngày, SP / task tôi xong.
+  Mỗi dòng một hành động chính. Tự làm mới mỗi phút. Inbox (spec 24) giữ nguyên.
+- **Board:** *swimlane* chọn được (không chia / theo epic / theo task cha / theo người làm / theo ưu tiên,
+  nhớ trong trình duyệt); **WIP** theo cột (`task_statuses.wip_limit`, đếm cả các lane, vượt thì cột đỏ,
+  không chặn); **tuổi trong cột** (`age_warning_hours`, từ `status_changed_at`); card chỉ hiện **một tín
+  hiệu** quan trọng nhất: critical > quá hạn > quá tuổi; **tạo nhanh** ở cuối cột (khi không chia lane):
+  `Sửa lỗi OTP @an #bug !cao 3sp` (`@` email hoặc một chữ trong tên, `#` loại, `!` tên / mã / mức ưu tiên
+  không dấu, `Nsp`), vào trạng thái của cột và sprint đang chạy. Cài đặt › Trạng thái thêm cột WIP và
+  "Cảnh báo sau (giờ)".
+- **Sức chứa sprint:** trung bình SP hoàn thành của 3 sprint đóng gần nhất (`capacity` trong sprint đang
+  mở; null khi chưa đủ 3); Backlog ghi "sức chứa ~X SP", đỏ khi kéo vào nhiều hơn.
+- **Sức khoẻ task:** một dòng dưới tiêu đề: số MR (đã merge), điểm review TB, critical / high mở,
+  pipeline, đã deploy chưa; ẩn khi task chưa có code.
+- **Ctrl+K / Cmd+K:** mở task theo mã, tìm task theo tiêu đề, lệnh nhanh (Việc của tôi, Task, Tạo task →
+  `/tasks?create=1` mở form tạo, Tổng quan, Review, Testcase), ẩn lệnh khi thiếu quyền.
+- **Mẫu mô tả theo loại:** Story có "Là … tôi muốn … để …" + tiêu chí chấp nhận; Bug có các bước tái hiện,
+  mong đợi / thực tế, môi trường. Đổi loại thì đổi mẫu khi mô tả còn nguyên mẫu.
+- Chưa làm ở P2: cập nhật lạc quan + "Hoàn tác 5 giây" cho mọi thao tác (Board đã cập nhật lạc quan khi
+  kéo thả), phím tắt E/A/S/C (để P5).

@@ -88,6 +88,13 @@ function Tasks() {
     return ok(where.space) ?? ok(mounted ? remembered() : null) ?? (list.find((s) => s.enabled) ?? list[0]).business_project_id;
   }, [spaces.data, where.space, mounted]);
   const space = spaces.data?.find((s) => s.business_project_id === spaceId) ?? null;
+  // `?create=1` (the Ctrl+K "Tạo task" command, §19.3): open the create form once, then drop it.
+  const wantCreate = params.get("create") === "1";
+  useEffect(() => {
+    if (!wantCreate || !space) return;
+    if (space.enabled && space.can_create) setCreating(true);
+    go({});
+  }, [wantCreate, space, go]);
 
   useEffect(() => {
     if (!spaceId) return;
@@ -119,6 +126,9 @@ function Tasks() {
         subtitle="Việc của dự án gắn với nhánh, commit, MR và điểm review: trạng thái chạy theo git"
         actions={
           <>
+            <Link href="/tasks/me" className="button">
+              <Icon name="user" size={16} /> Việc của tôi
+            </Link>
             <label className="adm-field tc-project">
               <span className="small muted">Dự án</span>
               <select value={spaceId ?? ""} onChange={(e) => go({ space: Number(e.target.value), task: null })} disabled={!spaces.data}>

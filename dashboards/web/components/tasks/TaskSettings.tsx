@@ -170,11 +170,28 @@ function GeneralCard({ space }: { space: TaskSpace }) {
   );
 }
 
-type StatusDraft = { id?: number; tmp: string; name: string; category: TaskCategory; transitions: number[] | null };
+type StatusDraft = {
+  id?: number;
+  tmp: string;
+  name: string;
+  category: TaskCategory;
+  transitions: number[] | null;
+  wip_limit: number | null;
+  age_warning_hours: number | null;
+};
 
 function StatusesCard({ space }: { space: TaskSpace }) {
   const initial = useMemo<StatusDraft[]>(
-    () => sortedStatuses(space).map((s) => ({ id: s.id, tmp: `s${s.id}`, name: s.name, category: s.category, transitions: s.transitions ?? null })),
+    () =>
+      sortedStatuses(space).map((s) => ({
+        id: s.id,
+        tmp: `s${s.id}`,
+        name: s.name,
+        category: s.category,
+        transitions: s.transitions ?? null,
+        wip_limit: s.wip_limit ?? null,
+        age_warning_hours: s.age_warning_hours ?? null,
+      })),
     [space],
   );
   const [items, setItems] = useState<StatusDraft[]>(initial);
@@ -203,7 +220,14 @@ function StatusesCard({ space }: { space: TaskSpace }) {
     setMessage(null);
     try {
       await api.put(`/tasks/spaces/${space.business_project_id}/statuses`, {
-        statuses: items.map((s) => ({ ...(s.id ? { id: s.id } : {}), name: s.name.trim(), category: s.category, transitions: s.transitions })),
+        statuses: items.map((s) => ({
+          ...(s.id ? { id: s.id } : {}),
+          name: s.name.trim(),
+          category: s.category,
+          transitions: s.transitions,
+          wip_limit: s.wip_limit,
+          age_warning_hours: s.age_warning_hours,
+        })),
         ...(Object.keys(move).length ? { move } : {}),
       });
       await refreshTasks();
@@ -225,6 +249,8 @@ function StatusesCard({ space }: { space: TaskSpace }) {
               <th>Tên</th>
               <th>Nhóm</th>
               <th>Được chuyển tới</th>
+              <th title="Số task tối đa nên có trong cột (chỉ cảnh báo, không chặn)">WIP</th>
+              <th title="Task ở trạng thái này quá số giờ này thì card hiện cảnh báo">Cảnh báo sau (giờ)</th>
               <th className="tk-actions-col" aria-label="Thao tác" />
             </tr>
           </thead>
@@ -250,6 +276,28 @@ function StatusesCard({ space }: { space: TaskSpace }) {
                     value={s.transitions ?? []}
                     onChange={(v) => update(s.tmp, { transitions: v.length ? v : null })}
                     empty="Mọi trạng thái"
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    min={1}
+                    className="tk-num-input"
+                    value={s.wip_limit ?? ""}
+                    aria-label={`Giới hạn WIP của ${s.name}`}
+                    placeholder="—"
+                    onChange={(e) => update(s.tmp, { wip_limit: e.target.value ? Number(e.target.value) : null })}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    min={1}
+                    className="tk-num-input"
+                    value={s.age_warning_hours ?? ""}
+                    aria-label={`Số giờ cảnh báo của ${s.name}`}
+                    placeholder="—"
+                    onChange={(e) => update(s.tmp, { age_warning_hours: e.target.value ? Number(e.target.value) : null })}
                   />
                 </td>
                 <td className="tk-actions-col">
@@ -283,7 +331,7 @@ function StatusesCard({ space }: { space: TaskSpace }) {
         <button
           type="button"
           className="ghost"
-          onClick={() => setItems((list) => [...list, { tmp: `n${Date.now()}`, name: "", category: "todo", transitions: null }])}
+          onClick={() => setItems((list) => [...list, { tmp: `n${Date.now()}`, name: "", category: "todo", transitions: null, wip_limit: null, age_warning_hours: null }])}
         >
           Thêm trạng thái
         </button>

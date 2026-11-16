@@ -41,6 +41,11 @@ class MergeRequest(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("project_id", "iid"),
         Index("ix_merge_requests_project_id_merged_at", "project_id", "merged_at"),
+        Index(
+            "ix_merge_requests_reviewer_account_ids",
+            "reviewer_account_ids",
+            postgresql_using="gin",
+        ),
         Index("ix_merge_requests_author_account_id", "author_account_id"),
         Index(
             "ix_merge_requests_jira_keys",
@@ -60,6 +65,8 @@ class MergeRequest(TimestampMixin, Base):
     target_branch: Mapped[str | None]
     created_at_src: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     first_review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # GitLab reviewers (accounts) of the MR, docs/specs/31 §19.3.
+    reviewer_account_ids: Mapped[list[int] | None] = mapped_column(JSONB)
     merged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     additions: Mapped[int | None]

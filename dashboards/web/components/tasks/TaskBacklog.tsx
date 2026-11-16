@@ -186,6 +186,14 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
                   <span className="small muted">
                     {s.start_date ? `${date(s.start_date)} – ${date(s.end_date)}` : "Chưa đặt ngày"} · {tasks.length} task · {donePoints}/{points} SP
                   </span>
+                  {typeof s.capacity === "number" && (
+                    <span
+                      className={`small ${points > s.capacity ? "tk-over-capacity" : "muted"}`}
+                      title="Trung bình SP hoàn thành của 3 sprint gần nhất (docs/specs/31 §19.3)"
+                    >
+                      · sức chứa ~{s.capacity} SP{points > s.capacity ? ": đang kéo vào nhiều hơn" : ""}
+                    </span>
+                  )}
                 </div>
                 {s.goal && <p className="small muted tk-sprint-goal">{s.goal}</p>}
                 {canManage && (

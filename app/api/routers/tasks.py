@@ -107,6 +107,9 @@ class StatusIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     category: Literal["todo", "doing", "done"]
     transitions: list[int] | None = None
+    # Board hints (docs/specs/31 §19.3).
+    wip_limit: int | None = Field(default=None, ge=1, le=999)
+    age_warning_hours: int | None = Field(default=None, ge=1, le=24 * 365)
 
 
 class StatusesIn(BaseModel):
@@ -572,6 +575,14 @@ def list_tasks(
     return {"items": ts.rows(session, tasks), "total": int(total)}
 
 
+@router.get("/tasks/my-work")
+def get_my_work(principal: Viewer, session: SessionDep, settings: SettingsDep) -> dict[str, Any]:
+    """Việc của tôi (docs/specs/31 §19.3)."""
+    from app.tasks import mywork
+
+    return mywork.my_work(session, principal, ZoneInfo(settings.report_tz))
+
+
 @router.get("/tasks/linked")
 def linked_tasks(
     principal: Viewer,
@@ -822,7 +833,9 @@ def _sprint(session: Session, principal: Principal, sprint_id: int, manage: bool
     return sprint
 
 
-def _sprint_out(session: Session, sprint: Sprint) -> dict[str, Any]:
+def _sprint_out(
+    session: Session, sprint: Sprint, capacity: float | bool | None = False
+) -> dict[str, Any]:
     done_ids = set(
         session.scalars(
             select(TaskStatus.id).where(
@@ -834,6 +847,12 @@ def _sprint_out(session: Session, sprint: Sprint) -> dict[str, Any]:
     held = sorted(reports.sprint_tasks(session, sprint.id), key=lambda t: (t.rank, t.id))
     points = sum(reports.points(t) for t in held)
     return {
+        # Mean finished points of the last 3 closed sprints (§19.3); None before that.
+        "capacity": None
+        if sprint.state == "closed"
+        else capacity
+        if capacity is not False
+        else reports.capacity(session, sprint.business_project_id),
         "id": sprint.id,
         "space": sprint.business_project_id,
         "name": sprint.name,
@@ -867,7 +886,9 @@ def list_sprints(
         session.scalars(query),
         key=lambda s: (order[s.state], s.start_date or date.max, s.id),
     )
-    return [_sprint_out(session, s) for s in sprints]
+    # The same for every sprint of the dự án: computed once (§19.3).
+    cap = reports.capacity(session, bp_id) if any(s.state != "closed" for s in sprints) else None
+    return [_sprint_out(session, s, cap) for s in sprints]
 
 
 @router.post("/tasks/spaces/{bp_id}/sprints", status_code=201)
