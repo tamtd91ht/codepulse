@@ -6,6 +6,7 @@ import { useSWRConfig } from "swr";
 import { UserTokensDrawer } from "@/components/ApiTokens";
 import { Icon, IconButton } from "@/components/icons";
 import { ProfileDrawer } from "@/components/ProfileDrawer";
+import { TeamGitlabGroup } from "@/components/TeamGitlabGroup";
 import { Avatar, Drawer, EmptyState, Loading, Message, Segmented } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { localDay } from "@/lib/format";
@@ -314,6 +315,7 @@ export function TeamsAdmin() {
   const [teamQuery, setTeamQuery] = useState("");
 
   const teamName = (id: number | null) => teams.data?.find((t) => t.id === id)?.name ?? "—";
+  const selectedTeam = teams.data?.find((t) => t.id === teamId);
   const all = members.data ?? [];
   const current = all.filter((m) => !m.left_at);
   const left = all.length - current.length;
@@ -466,6 +468,13 @@ export function TeamsAdmin() {
                   </button>
                 </div>
               </div>
+              {selectedTeam && (
+                <TeamGitlabGroup
+                  key={selectedTeam.id}
+                  team={selectedTeam}
+                  onSynced={() => Promise.all([teams.mutate(), members.mutate()])}
+                />
+              )}
               {adding && (
                 <form
                   id="team-add-form"
@@ -546,7 +555,17 @@ export function TeamsAdmin() {
                     <tbody>
                       {shownMembers.map((m) => (
                         <tr key={`${m.user_id}-${m.joined_at}`} className={m.left_at ? "muted" : undefined}>
-                          <td>{m.full_name ?? m.primary_email}</td>
+                          <td>
+                            {m.full_name ?? m.primary_email}
+                            {m.source === "gitlab" && (
+                              <>
+                                {" "}
+                                <span className="pill info" title="Thêm tự động từ nhóm GitLab của team">
+                                  GitLab
+                                </span>
+                              </>
+                            )}
+                          </td>
                           <td>
                             {m.left_at ? (
                               (ROLES.find((r) => r.value === m.role)?.label ?? m.role ?? "Thành viên")

@@ -285,3 +285,6 @@ trước và sau đều là **Xem** hoặc **Lead dự án**. Người chọn l�
 - Bộ **"Tester"** (migration `a7c9e1b3d5f8`, tự tạo, sửa được): xem tổng quan, tài liệu; viết và chạy
   testcase mọi dự án xem được (`tests.edit`, `tests.run` = all, không xoá / duyệt); Task: xem, tạo, bình
   luận, đính kèm, sửa / giao / chuyển / ghi giờ / liên kết task của mình. Gán cho team QA ở màn Phân quyền.
+- Team gắn với một nhóm GitLab (docs/specs/31 §20.7, R2) có thành viên tự đồng bộ mỗi giờ từ thành viên trực
+  tiếp của nhóm, nên bộ quyền gán cho team (ví dụ "Tester" cho QA) tự đi theo nhóm GitLab. Chỉ admin gắn nhóm
+  (ai trong nhóm sẽ có bộ quyền của team); đồng bộ không đụng dòng thêm tay và dòng lead / manager.

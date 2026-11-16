@@ -389,6 +389,10 @@ class TeamOut(ORM):
     id: int
     name: str
     parent_id: int | None
+    # docs/specs/31 §20.7 (R2): the GitLab group the team follows, its last sync and error.
+    gitlab_group_path: str | None = None
+    gitlab_sync_at: datetime | None = None
+    gitlab_sync_error: str | None = None
 
 
 class TeamIn(BaseModel):
@@ -403,6 +407,7 @@ class MemberOut(BaseModel):
     role: str | None
     joined_at: date
     left_at: date | None
+    source: str = "manual"  # "gitlab": added by the GitLab group sync (docs/specs/31 §20.7)
 
 
 class MemberIn(BaseModel):
@@ -410,6 +415,32 @@ class MemberIn(BaseModel):
     role: Literal["member", "lead", "manager"] = "member"
     joined_at: date
     left_at: date | None = None
+
+
+class TeamGitlabIn(BaseModel):
+    """docs/specs/31 §20.7: the GitLab group (full path or URL) the team follows; null unlinks."""
+
+    group_path: str | None = Field(default=None, max_length=500)
+
+
+class TeamSyncPerson(BaseModel):
+    user_id: int
+    full_name: str | None
+
+
+class TeamSyncUnmapped(BaseModel):
+    gitlab_id: int
+    username: str
+    name: str | None
+
+
+class TeamGitlabSyncOut(BaseModel):
+    team: TeamOut
+    added: list[TeamSyncPerson]
+    ended: list[TeamSyncPerson]
+    unmapped: list[TeamSyncUnmapped]
+    skipped: int
+    error: str | None
 
 
 class AccountOut(ORM):

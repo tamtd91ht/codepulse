@@ -791,3 +791,44 @@ Chi tiết task đủ ngữ cảnh trên một màn hình (roadmap đợt 2 §3.
   ô chọn tiêu chí khi gắn và trên từng dòng. Story tạo từ mẫu mô tả không tự sinh tiêu chí.
 - Chưa làm: biểu tượng riêng cho loại `retest` ở trang Việc của tôi (đang dùng biểu tượng mặc định,
   `MyWork.tsx` ngoài phạm vi đợt này); tạo bug từ bước cho đích Jira trên giao diện.
+
+### 20.7 Đồng bộ team từ nhóm GitLab (R2)
+
+Mục đích: gán bộ quyền "Tester" cho team QA (spec 21 §11) thành tự động: ai vào nhóm GitLab QA thì vào team
+QA và có bộ quyền, ai rời nhóm thì rời team và mất quyền. Migration `e5a7c9d1f3b6`.
+
+- **Dữ liệu**: `teams.gitlab_group_path` (đường dẫn đầy đủ, ví dụ `omicx/qa`; NULL: team quản lý tay),
+  `teams.gitlab_sync_at`, `teams.gitlab_sync_error` (NULL: lần cuối thành công). `team_members.source`:
+  `manual` (mặc định, mọi dòng cũ, Admin / CSV) hoặc `gitlab` (do đồng bộ thêm).
+- **Chỉ thành viên trực tiếp** của nhóm (`GET /groups/:path/members`, không `/members/all`): thành viên kế thừa
+  từ nhóm cha (`omicx`) sẽ kéo cả công ty vào team QA; thành viên nhóm con không tính (nhóm con có team riêng).
+  Bỏ qua: tài khoản bị khoá, lời mời chưa nhận, quyền "minimal access" (< guest), bot (mẫu tên như
+  autolink), người CodePulse đã tắt.
+- **Ánh xạ**: thành viên GitLab → `accounts` (`kind = gitlab_user`, `external_key` = id GitLab) → `user_id`.
+  Thành viên chưa gắn người được liệt kê trong kết quả (`unmapped`), **không** tự tạo người (gắn ở Người &
+  Team › Tài khoản hoặc "Từ GitLab").
+- **Áp dụng** (khoá dòng team khi ghi, nút và job không thêm trùng):
+  - người được ánh xạ chưa ở team hôm nay → thêm dòng `role = member`, `joined_at` = hôm nay (UTC, như
+    `load_principal`), `source = gitlab`; nếu có dòng vào hôm nay đã kết thúc hôm nay thì mở lại dòng đó;
+  - dòng `source = gitlab`, vai trò member, của người không còn trong nhóm → `left_at` = hôm nay (giữ lịch
+    sử);
+  - **không bao giờ** đụng dòng thêm tay (`manual`) hay dòng lead / manager (kể cả dòng do đồng bộ thêm rồi
+    admin nâng vai trò).
+  - Lỗi GitLab (không kết nối nào thấy nhóm, mạng, 5xx sau khi thử lại) không đổi thành viên nào; lỗi ghi vào
+    `gitlab_sync_error`.
+- **Kết nối**: đọc qua kết nối GitLab (`connections.kind = gitlab`) đầu tiên thấy được nhóm (404 / 403 thì thử
+  kết nối kế), cùng token với repo. Gọi qua `GitLabClient.group_members` (thử lại, timeout, giới hạn tốc độ như
+  collector); nút bấm dùng ít lần thử hơn, timeout ngắn hơn vì có người chờ.
+- **Lịch**: job `team-gitlab-sync` mỗi giờ (`app/workers/team_gitlab_jobs.py`, chạy trên worker hàng
+  `default`), mỗi team một giao dịch. Audit `team.gitlab_sync` (người bấm hoặc NULL cho job) khi có thay đổi.
+- **Quyền**: chỉ **admin** gắn / đổi / bỏ nhóm (`PUT /teams/{id}/gitlab {group_path}`, nhận cả link nhóm):
+  ai trong nhóm GitLab sẽ có các bộ quyền gán cho team, vượt qua các chặn của `admin.people` uỷ quyền (spec 21
+  §3); audit `team.gitlab_group`. "Đồng bộ ngay" (`POST /teams/{id}/gitlab/sync`): `admin.people`, người
+  không phải admin không đồng bộ team của chính mình. Bỏ gắn nhóm giữ nguyên thành viên đang có (rời tay).
+- **Hệ quả**: bộ quyền gán cho team (`team_permission_sets`) theo thành viên, nên đi theo nhóm GitLab, không cần
+  thêm gì. Người ra khỏi nhóm GitLab mất quyền ngay ở lần đồng bộ kế (left_at = hôm nay, ngày rời không tính).
+- **Giao diện**: Admin › Người & Team › Team, khung thành viên: dòng "Theo nhóm GitLab …, lần cuối …", nút
+  "Đồng bộ ngay", "Gắn nhóm GitLab" / "Đổi nhóm" (lưu rồi đồng bộ luôn), "Bỏ gắn"; kết quả ghi số thêm / rời
+  và tên GitLab chưa gắn người. Dòng thành viên do đồng bộ thêm có nhãn "GitLab".
+- Admin rút tay ("Rời team") một người do đồng bộ thêm mà người đó vẫn ở nhóm GitLab: lần đồng bộ sau thêm lại.
+  Muốn loại hẳn thì bỏ họ khỏi nhóm GitLab hoặc bỏ gắn nhóm.

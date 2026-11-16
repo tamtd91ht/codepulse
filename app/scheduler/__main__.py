@@ -21,6 +21,8 @@ from app.workers.llm_jobs import llm_watch_job
 from app.workers.orphan_jobs import SWEEP_MIN, requeue_orphans_job
 from app.workers.task_automation_jobs import TICK_MIN as TASK_TICK_MIN
 from app.workers.task_automation_jobs import task_automation_tick_job
+from app.workers.team_gitlab_jobs import SYNC_INTERVAL_MIN as TEAM_GITLAB_MIN
+from app.workers.team_gitlab_jobs import enqueue_team_gitlab_sync_job
 
 
 def enqueue_dpi_month_job() -> None:
@@ -221,6 +223,15 @@ def build_scheduler(
         "interval",
         minutes=TASK_TICK_MIN,
         id="task-automation",
+        max_instances=1,
+        coalesce=True,
+    )
+    # docs/specs/31 §20.7 (R2): teams linked to a GitLab group follow its members, hourly.
+    scheduler.add_job(
+        enqueue_team_gitlab_sync_job,
+        "interval",
+        minutes=TEAM_GITLAB_MIN,
+        id="team-gitlab-sync",
         max_instances=1,
         coalesce=True,
     )

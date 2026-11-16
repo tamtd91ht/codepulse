@@ -49,8 +49,12 @@ from app.api.schemas import (
     RepoAssignment,
     RepoRemoval,
     RepoRemovalOut,
+    TeamGitlabIn,
+    TeamGitlabSyncOut,
     TeamIn,
     TeamOut,
+    TeamSyncPerson,
+    TeamSyncUnmapped,
     UserIn,
     UserOut,
     UserPatch,
@@ -95,6 +99,7 @@ from app.models import (
     User,
 )
 from app.models.source import ALL_BRANCHES
+from app.teams.gitlab_sync import normalize_group_path, sync_team
 from app.webhook.jobs import REVIEW_RETRY, review_job_timeout
 from app.workers.queues import review_queue
 
@@ -1623,6 +1628,7 @@ def list_members(team_id: int, principal: PeopleAdmin, session: SessionDep) -> l
             role=member.role,
             joined_at=member.joined_at,
             left_at=member.left_at,
+            source=member.source,
         )
         for member, user in rows
     ]
@@ -1660,6 +1666,83 @@ def set_member(
         left_at=str(body.left_at) if body.left_at else None,
     )
     session.commit()
+
+
+@router.put("/teams/{team_id}/gitlab", response_model=TeamOut)
+def set_team_gitlab_group(
+    team_id: int, body: TeamGitlabIn, principal: PeopleAdmin, session: SessionDep
+) -> Team:
+    """docs/specs/31 §20.7 (R2): link the team to a GitLab group, or unlink it (null). Admins
+    only: whoever is in the group then joins the team, and with it the permission sets given
+    to the team (docs/specs/21 §11), past the guards a delegated admin.people is held to.
+    Unlinking keeps the members the sync added; they leave by hand."""
+    if not principal.is_admin:
+        raise HTTPException(403, "chỉ admin gắn team với nhóm GitLab")
+    team = _get(session, Team, team_id, "team")
+    path: str | None = None
+    if body.group_path and body.group_path.strip():
+        try:
+            path = normalize_group_path(body.group_path)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+    if path != team.gitlab_group_path:
+        team.gitlab_group_path = path
+        team.gitlab_sync_at = None
+        team.gitlab_sync_error = None
+        audit(session, principal.user_id, "team.gitlab_group", f"team:{team_id}", group=path)
+    session.commit()
+    return team
+
+
+@router.post("/teams/{team_id}/gitlab/sync", response_model=TeamGitlabSyncOut)
+def sync_team_gitlab(
+    team_id: int,
+    principal: PeopleAdmin,
+    session: SessionDep,
+    box: Annotated[SecretBox, Depends(get_secret_box)],
+) -> TeamGitlabSyncOut:
+    """ "Đồng bộ ngay": the hourly sync of one team, now (app/teams/gitlab_sync.py). Someone
+    waits on it, so fewer retries and a shorter timeout than the job; a GitLab failure comes
+    back in `error` (and on the team), members unchanged."""
+    team = _get(session, Team, team_id, "team")
+    if not principal.is_admin and team_id in (
+        principal.lead_teams | principal.managed_teams | principal.own_teams
+    ):
+        raise HTTPException(403, "không đồng bộ team của chính mình")
+    if not team.gitlab_group_path:
+        raise HTTPException(409, "team chưa gắn nhóm GitLab")
+
+    def make_client(connection: Connection) -> GitLabClient:
+        return GitLabClient(
+            connection.base_url,
+            box.decrypt(connection.token_encrypted),
+            timeout=15.0,
+            max_retries=2,
+            max_retry_after=10.0,
+        )
+
+    outcome = sync_team(session, team_id, make_client, actor_user_id=principal.user_id)
+    if outcome is None:  # unlinked while GitLab was read
+        raise HTTPException(409, "team chưa gắn nhóm GitLab")
+    session.commit()
+    names: dict[int, str | None] = {
+        user_id: name
+        for user_id, name in session.execute(
+            select(User.id, User.full_name).where(User.id.in_(outcome.added + outcome.ended))
+        )
+    }
+    team = _get(session, Team, team_id, "team")
+    return TeamGitlabSyncOut(
+        team=TeamOut.model_validate(team),
+        added=[TeamSyncPerson(user_id=u, full_name=names.get(u)) for u in outcome.added],
+        ended=[TeamSyncPerson(user_id=u, full_name=names.get(u)) for u in outcome.ended],
+        unmapped=[
+            TeamSyncUnmapped(gitlab_id=m.gitlab_id, username=m.username, name=m.name)
+            for m in outcome.unmapped
+        ],
+        skipped=outcome.skipped,
+        error=outcome.error,
+    )
 
 
 @router.get("/accounts", response_model=list[AccountOut])
