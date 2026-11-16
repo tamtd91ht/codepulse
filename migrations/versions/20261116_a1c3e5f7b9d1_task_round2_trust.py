@@ -214,4 +214,14 @@ def downgrade() -> None:
     bind.execute(sa.text("UPDATE tasks SET resolution = 'wont_do' WHERE resolution = 'obsolete'"))
     op.drop_constraint(op.f("ck_tasks_resolution"), "tasks", type_="check")
     op.create_check_constraint(op.f("ck_tasks_resolution"), "tasks", _check(OLD))
-    bind.execute(sa.delete(items).where(items.c.scope == "team", items.c.permission.in_(LEAD_NEW)))
+    # Only what this revision gave the Lead set; a custom set an admin made keeps its items
+    # (they mean nothing to the older code, which ignores an unknown scope).
+    lead = bind.execute(sa.select(sets.c.id).where(sets.c.auto_role == "lead")).scalar()
+    if lead is not None:
+        bind.execute(
+            sa.delete(items).where(
+                items.c.set_id == lead,
+                items.c.scope == "team",
+                items.c.permission.in_(LEAD_NEW),
+            )
+        )

@@ -389,6 +389,7 @@ def may_record(principal: Principal, bp_id: int, assignees: Iterable[int | None]
     if principal.user_id in people:
         return True
     # "team" (docs/specs/31 §20.0): tests assigned to the people one leads or manages.
-    return principal.scope("tests.run") == "team" and bool(
+    # "project" is wider than team (sets merge to the widest), so it reaches the team as well.
+    return principal.scope("tests.run") in ("team", "project") and bool(
         people & principal.team_people("tests.run")
     )

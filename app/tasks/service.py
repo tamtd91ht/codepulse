@@ -128,9 +128,12 @@ def may(p: Principal, right: str, task: Task) -> bool:
     if scope == "project" and p.can_manage_project(bp_id):
         return True
     # "team" (§20.0): tasks reported by or assigned to the people one leads or manages, in a
-    # dự án one sees (checked above); it also covers one's own.
-    if scope == "team":
+    # dự án one sees (checked above). "project" reaches them too (it is wider than team, the merge
+    # of sets keeps the widest: a lead who manages another dự án must not lose their team).
+    if scope in ("team", "project"):
         people = p.team_people(f"tasks.{right}")
+        if right in ("delete", "moderate"):
+            people = people - {p.user_id}  # one's own task is not one's team's (see below)
         mine_team = (
             (task.reporter_id,) if right == "delete" else (task.reporter_id, task.assignee_id)
         )
@@ -138,8 +141,10 @@ def may(p: Principal, right: str, task: Task) -> bool:
             return True
     # "project" also covers one's own tasks elsewhere, as tasks.edit always did; not for delete
     # and moderate, which needed managing the dự án before they were split out.
-    if scope not in ("own", "team") and not (
-        scope == "project" and right not in ("delete", "moderate")
+    # One's own tasks: at "own"; at "team" / "project" too except delete and moderate (they never
+    # covered one's own: moderating one's own task would let one erase others' work on it).
+    if scope != "own" and not (
+        scope in ("team", "project") and right not in ("delete", "moderate")
     ):
         return False
     mine = (task.reporter_id,) if right == "delete" else (task.reporter_id, task.assignee_id)

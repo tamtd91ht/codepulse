@@ -351,3 +351,20 @@ def test_round2_trust_move_resolution_velocity_and_team_scope(
     assert client.get(f"{API}/tasks/{theirs['key']}", headers=lead).json()["can"]["edit"] is True
     got = client.get(f"{API}/tasks/{other['key']}", headers=lead).json()
     assert got["can"]["edit"] is False
+    # Team moderation never covers the lead's own task (others' comments on it stay theirs).
+    own = create(client, admin, world, assignee_id=world.lead.id)
+    note = client.post(
+        f"{API}/tasks/{own['key']}/comments", headers=admin, json={"body": "của PM"}
+    ).json()
+    res = client.delete(f"{API}/tasks/{own['key']}/comments/{note['id']}", headers=lead)
+    assert res.status_code == 403
+    # ...but covers a team member's task.
+    note = client.post(
+        f"{API}/tasks/{theirs['key']}/comments", headers=admin, json={"body": "x"}
+    ).json()
+    assert (
+        client.delete(
+            f"{API}/tasks/{theirs['key']}/comments/{note['id']}", headers=lead
+        ).status_code
+        == 204
+    )
