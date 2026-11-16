@@ -16612,6 +16612,63 @@ a.icon-btn {
   color: var(--text);
 }
 .tp-group-head {
+
+/* -- Thông báo & quy tắc (docs/specs/31 §20.5): channels, summary, snooze, rule log, dry run -- */
+.nr-note {
+  margin: 4px 0 0;
+}
+.nr-channels {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 6px 16px;
+}
+.nr-channel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.nr-channel select {
+  flex: 0 0 auto;
+}
+.nr-wrap {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+}
+.nr-wrap > .note-row {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: 40px;
+}
+.nr-wrap > .nr-snooze {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  opacity: 0.6;
+}
+.nr-wrap:hover > .nr-snooze,
+.nr-wrap > .nr-snooze:focus-visible {
+  opacity: 1;
+}
+.nr-view {
+  margin-bottom: 12px;
+}
+.nr-try {
+  align-self: flex-start;
+}
+.nr-dry-result {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.nr-dry-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -17009,4 +17066,34 @@ a.icon-btn {
     flex-wrap: wrap;
     gap: 4px 12px;
   }
+}
+
+.nr-dry-list {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 220px;
+  overflow: auto;
+}
+.nr-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nr-log-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.nr-log-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.nr-log-table {
+  width: 100%;
+}
+.nr-log-table tr.nr-dry td {
+  color: var(--muted);
 }

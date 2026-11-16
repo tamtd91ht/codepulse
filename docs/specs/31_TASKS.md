@@ -885,3 +885,59 @@ QA và có bộ quyền, ai rời nhóm thì rời team và mất quyền. Migra
   đã bật. Thiếu cả hai quyền → 403.
 - Chưa làm: mẫu do admin nạp sẵn (`builtin = true`) chưa có màn quản lý; số người xem được tính bằng nạp bộ
   quyền từng người (chậm dần khi có hàng trăm người, đủ cho trang quản trị).
+
+### 20.5 Thông báo & quy tắc (migration `d4f6b8c0e2a5`)
+
+- **Kênh theo loại** (`task_notify:<user id>` thêm `channels`): mỗi loại trong cài đặt "Thông báo Task" chọn
+  `inbox | telegram | off`. `off` chính là danh sách `kinds` bị tắt của §19.7 (API cũ vẫn nhận `kinds`).
+  `telegram` chỉ chọn được khi người đó đã liên kết Telegram (`/link MÃ`, quyền `telegram.self`, bảng
+  `accounts` kind `telegram`; id người dùng Telegram là id chat riêng) — chưa liên kết thì 422.
+  **Quyết định:** `telegram` = dòng trong hộp thư **vẫn được ghi** (lịch sử, và là thứ nút Đã xem / Ẩn tác
+  động) **cộng** một tin nhắn riêng trên Telegram, gửi bằng job RQ sau khi giao dịch commit
+  (`telegram_note_job`). Bot gửi: các bot đang bật, bot của dự án của task trước; bot chỉ nhắn được người
+  đã từng bắt đầu chat với nó, nên job thử lần lượt tới khi một bot gửi được. Thông báo bị giữ (giờ yên lặng
+  / chế độ gộp) không đi Telegram.
+- **`task.alert` bỏ qua giờ yên lặng và chế độ gộp** (Bug Cao nhất, code còn critical, hết bị chặn, testcase
+  Failed khi review…), nhưng vẫn tôn trọng `off`.
+- **Gom 10 phút** (`app/notifications/inbox.py`, chỉ `task.assigned | task.status | task.commented` có
+  `ref` `task:<id>`): cập nhật mới trên cùng task cho cùng người, khi còn một dòng **chưa đọc, không tạm ẩn**
+  được tạo trong 10 phút, **sửa dòng đó** thay vì thêm dòng: tiêu đề "N cập nhật trên OCX-2", nội dung là cập
+  nhật mới nhất, `updated_at` mới; đẩy lại qua SSE cùng id (chuông hiện lại, không tăng số chưa đọc). Cửa sổ
+  tính từ dòng đầu. Nhắc `@`, nhắc việc, cảnh báo, retest không gom (mỗi cái đòi người đó làm gì). Telegram
+  chỉ gửi cho dòng mới, không gửi lại khi gom.
+- **Tóm tắt cuối ngày** (`summary: {on, time, channel}`, mặc định **tắt**, 17:30, hộp thư; giờ theo
+  REPORT_TZ): job `task-automation` (15 phút) gửi ở lần chạy đầu tiên từ giờ đó, mỗi ngày một lần
+  (`task_notify_summary:<user id>`), loại `task.summary` (không bị giữ), liên kết `/tasks/me`. Nội dung lấy
+  từ `app/tasks/mywork.py`: việc xong hôm nay (lý do `done`), việc còn quá hạn, MR chờ tôi review. Không
+  có gì thì không gửi. Kênh Telegram như trên (kèm dòng hộp thư).
+- **Tạm ẩn** (`user_notifications.snoozed_until`): `POST /inbox/snooze {ids}` (dòng chưa đọc của chính
+  mình) đặt +1 ngày; dòng đang tạm ẩn không tính vào số chưa đọc, không có trong `?unread=true` và không
+  hiện trong chuông; trang Thông báo vẫn có. Chuông có nút "Tạm ẩn 1 ngày" trên dòng chưa đọc.
+  `GET /inbox?kind=` nhận cả loại `task.*`.
+- **Nút trên Telegram**: Mở (URL), Đã xem, Ẩn 1 ngày. Bot nhận được callback (poller đọc `getUpdates` của
+  mọi bot đang bật), nên Đã xem / Ẩn 1 ngày là nút callback `nt|<id>|r|s`: chỉ tác động lên thông báo của
+  đúng người đã liên kết tài khoản Telegram bấm nút, không xét danh sách chat của bot. Telegram từ chối
+  nút URL tới địa chỉ không công khai (localhost): khi đó liên kết nằm trong nội dung tin.
+- **Nhật ký quy tắc** (bảng `task_rule_runs`: `business_project_id, rule, task_id, action, detail JSONB,
+  dry_run, at`): mỗi hành động của quy tắc ghi một dòng (`notify | assign | move | set_version`, bị luồng
+  chặn → `skipped`, lỗi → `failed`). `GET /tasks/spaces/{bp}/automation/log?limit=` (`tasks.view`, tối đa
+  200). Task › Cài đặt › Quy tắc tự động có chế độ xem **Nhật ký** (lọc theo quy tắc).
+- **Chạy thử** `POST /tasks/spaces/{bp}/automation/{rule}/dry-run` (quản lý Task): **quyết định** — chạy
+  quy tắc ngay (bật hay tắt, mọi giờ) trong một SAVEPOINT luôn bị huỷ, nên không đổi gì, không gửi gì
+  (kể cả Telegram), rồi ghi **một** dòng nhật ký `dry_run` (`action dry_run`, `detail {count, items}`) và
+  trả về danh sách task + việc sẽ làm. Chỉ quy tắc chạy theo nhịp scheduler chạy thử được (`can_dry_run`);
+  quy tắc chạy theo thao tác (`assign_on_start`, …) trả 409. Nút "Chạy thử" trên từng quy tắc đó.
+- **5 quy tắc mới** (mặc định tắt; các quy tắc "khi có sự kiện" được kiểm ở mỗi nhịp 15 phút của scheduler,
+  không móc vào luồng git / kết quả test — trễ tối đa 15 phút):
+
+  | Khoá | Khi nào | Làm gì |
+  |---|---|---|
+  | `release_version` | MR của task (`task_git_links` kind mr) đã merge trong 14 ngày vào nhánh `release/<tên>` hoặc `release-<tên>`, `<tên>` trùng (không phân biệt hoa thường) tên một phiên bản của dự án; task chưa có phiên bản | Gắn phiên bản đó (sub-task theo cha), lịch sử không người. Mỗi task một lần: gỡ tay thì không gắn lại. |
+  | `column_age_warn` | Task nằm ở một cột có `age_warning_hours` (không phải nhóm Xong) lâu hơn mức đó | Báo quản lý dự án (quyền `manage`) một lần mỗi lần vào cột; nhiều task gộp một thông báo. |
+  | `test_failed_back` | Task ở trạng thái review của luật git, một testcase phủ (`covers`) có kết quả mới nhất Failed ghi **sau** khi task vào review | Chuyển về trạng thái "start" của luật git (theo luồng chuyển; luồng cấm → `skipped`), báo người làm (`task.alert`). Tối đa một lần mỗi task mỗi ngày. |
+  | `sprint_risk` (ngày 2, % 40) | Sprint đang chạy còn ≤ N ngày và phần điểm chưa xong > ngưỡng | Báo quản lý một lần mỗi sprint. |
+  | `unassigned_in_sprint` (ngày 3) | Task mở trong sprint đang chạy chưa có người làm, tạo quá N ngày trước (không lưu lúc task vào sprint nên tính từ lúc tạo) | Báo quản lý một lần mỗi task mỗi sprint; nhiều task gộp một thông báo. |
+
+  Không có quản lý nào thì không báo và không ghi nhật ký (sẽ báo khi dự án có quản lý).
+- Chưa làm: múi giờ riêng từng người (vẫn REPORT_TZ); sửa tin Telegram sau khi bấm (chỉ trả lời toast);
+  gom thông báo cho người nhận qua Telegram thành một tin.

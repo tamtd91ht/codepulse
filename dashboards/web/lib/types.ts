@@ -2239,7 +2239,8 @@ export type NotificationKind =
   | "task.retest"
   | "task.remind"
   | "task.alert"
-  | "task.digest";
+  | "task.digest"
+  | "task.summary";
 export interface InboxNote {
   id: number;
   user_id: number;
@@ -2252,6 +2253,33 @@ export interface InboxNote {
   actor_id: number | null;
   read_at: string | null;
   created_at: string | null;
+  /** docs/specs/31 §20.5: a grouped task update arrives again with the same id, newer stamp. */
+  updated_at?: string | null;
+  /** "Tạm ẩn 1 ngày": not unread until then. */
+  snoozed_until?: string | null;
+}
+
+/** docs/specs/31 §20.5: a task notification channel, the daily summary, the rule log. */
+export type TaskNotifyChannel = "inbox" | "telegram" | "off";
+export interface TaskNotifySummary {
+  on: boolean;
+  time: string;
+  channel: "inbox" | "telegram";
+}
+export interface TaskRuleRunRow {
+  id: number;
+  rule: string;
+  rule_title: string;
+  task_key: string | null;
+  action: string;
+  detail: Record<string, unknown>;
+  dry_run: boolean;
+  at: string | null;
+}
+export interface TaskRuleDryRun {
+  rule: string;
+  count: number;
+  items: Array<{ task_key: string | null; action: string } & Record<string, unknown>>;
 }
 export interface InboxPage {
   items: InboxNote[];

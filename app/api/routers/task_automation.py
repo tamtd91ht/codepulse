@@ -4,7 +4,7 @@ Registered before the tasks router: its paths are never read as a task key there
 
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -59,6 +59,31 @@ def put_automation(
     )
     session.commit()
     return _answer(principal, space)
+
+
+# -- the rule log and dry runs (§20.5) ------------------------------------------------------------
+
+
+@router.get("/tasks/spaces/{bp_id}/automation/log")
+def get_automation_log(
+    bp_id: int,
+    principal: Viewer,
+    session: SessionDep,
+    limit: Annotated[int, Query(ge=1, le=automation.LOG_MAX)] = 50,
+) -> dict[str, Any]:
+    ts.space_or_404(session, principal, bp_id)
+    return {"items": automation.log_out(session, bp_id, limit)}
+
+
+@router.post("/tasks/spaces/{bp_id}/automation/{rule}/dry-run")
+def dry_run_rule(bp_id: int, rule: str, principal: Viewer, session: SessionDep) -> dict[str, Any]:
+    """What a scheduled rule would do now, on or off: nothing is changed or sent; one log row
+    marked dry_run keeps the answer."""
+    space = ts.space_or_404(session, principal, bp_id)
+    ts.require_manage(principal, bp_id)
+    plan = automation.dry_run(session, space, rule)
+    session.commit()
+    return {"rule": rule, "count": len(plan), "items": plan[: automation.DRY_RUN_KEEP]}
 
 
 # -- parent_done_ask: close the open sub-tasks with their parent ---------------------------------
@@ -127,15 +152,28 @@ def close_subtasks(
 # -- one's own task notification preferences -------------------------------------------------------
 
 
+class SummaryIn(BaseModel):
+    on: bool | None = None
+    time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    channel: Literal["inbox", "telegram"] | None = None
+
+
 class NotifyPrefsIn(BaseModel):
     mode: Literal["immediate", "digest"] | None = None
     quiet_hours: list[int] | None = Field(default=None, min_length=2, max_length=2)
     kinds: list[str] | None = None
+    # §20.5: a channel per kind, and the daily summary.
+    channels: dict[str, Literal["inbox", "telegram", "off"]] | None = None
+    summary: SummaryIn | None = None
+
+
+def _prefs(session: Session, user_id: int, prefs: dict[str, Any]) -> dict[str, Any]:
+    return automation.prefs_out(prefs, automation.telegram_linked(session, user_id))
 
 
 @router.get("/me/task-notify")
 def get_task_notify(principal: CurrentPrincipal, session: SessionDep) -> dict[str, Any]:
-    return automation.prefs_out(automation.prefs_of(session, principal.user_id))
+    return _prefs(session, principal.user_id, automation.prefs_of(session, principal.user_id))
 
 
 @router.put("/me/task-notify")
@@ -143,6 +181,8 @@ def put_task_notify(
     body: NotifyPrefsIn, principal: CurrentPrincipal, session: SessionDep
 ) -> dict[str, Any]:
     sent = body.model_dump(include=body.model_fields_set)
+    if body.summary is not None:
+        sent["summary"] = body.summary.model_dump(exclude_none=True)
     prefs = automation.set_prefs(session, principal.user_id, sent)
     session.commit()
-    return automation.prefs_out(prefs)
+    return _prefs(session, principal.user_id, prefs)

@@ -9,11 +9,12 @@ and unread count read them from the database.
 
 import json
 import logging
+import re
 from collections.abc import Callable, Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import event, func, inspect, or_, select
+from sqlalchemy import event, func, inspect, or_, select, update
 from sqlalchemy.orm import Session, SessionTransaction
 
 from app.config import Settings
@@ -83,6 +84,9 @@ def as_message(row: UserNotification) -> dict[str, Any]:
         "actor_id": row.actor_id,
         "read_at": row.read_at.isoformat() if row.read_at else None,
         "created_at": row.created_at.isoformat() if row.created_at else None,
+        # A grouped task update (31 §20.5) comes again with the same id and a newer stamp.
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "snoozed_until": row.snoozed_until.isoformat() if row.snoozed_until else None,
     }
 
 
@@ -90,7 +94,9 @@ def as_message(row: UserNotification) -> dict[str, Any]:
 def _after_commit(session: Session) -> None:
     rows: list[UserNotification] = session.info.pop(PENDING, [])
     # A row added in a SAVEPOINT that was rolled back is no longer persistent: not published.
-    kept = [row for row in rows if inspect(row).persistent]
+    # A grouped row (31 §20.5) changed in a SAVEPOINT that rolled back is expired: skipped too
+    # (reloading it here, after the commit, would fail the whole batch).
+    kept = [row for row in rows if inspect(row).persistent and not inspect(row).expired_attributes]
     if not kept:
         return
     try:
@@ -127,21 +133,24 @@ def notify(
     active = set(
         session.scalars(select(User.id).where(User.id.in_(targets), User.active.is_not(False)))
     )
-    if kind.startswith("task."):  # per-person preferences: muted / held for a digest (31 §19.7)
+    channels: dict[int, str] = {}
+    if kind.startswith("task."):  # per-person preferences: muted / held / channel (31 §19.7)
         from app.tasks.automation import deliver_now
 
-        active = set(
-            deliver_now(
-                session,
-                [u for u in targets if u in active],
-                kind=kind,
-                title=title,
-                body=body,
-                link=link,
-                tone=tone,
-                ref=ref,
-            )
+        channels = deliver_now(
+            session,
+            [u for u in targets if u in active],
+            kind=kind,
+            title=title,
+            body=body,
+            link=link,
+            tone=tone,
+            ref=ref,
         )
+        active = set(channels)
+    grouped = _group(
+        session, [u for u in targets if u in active], kind, title, link, tone, actor_id, ref, now
+    )
     rows = [
         UserNotification(
             user_id=user_id,
@@ -153,16 +162,98 @@ def notify(
             actor_id=actor_id,
             ref=ref,
             created_at=now,
+            updated_at=now,
         )
         for user_id in targets
-        if user_id in active
+        if user_id in active and user_id not in grouped
     ]
-    if not rows:
+    if not rows and not grouped:
         return []
     session.add_all(rows)
     session.flush()
-    session.info.setdefault(PENDING, []).extend(rows)
-    return rows
+    session.info.setdefault(PENDING, []).extend([*rows, *grouped.values()])
+    # Telegram only for a new row: updates folded into it within GROUP_WINDOW do not ping again.
+    telegram = [row for row in rows if channels.get(row.user_id) == "telegram"]
+    if telegram:
+        from app.tasks.automation import queue_telegram
+
+        queue_telegram(session, telegram)
+    return [*rows, *grouped.values()]
+
+
+# -- grouping of task updates, snooze (31 §20.5) -------------------------------------------------
+
+# Updates on one task: a status change, a comment, an assignment. A mention, a reminder, an
+# alert, a retest request stay rows of their own (they ask the person for something).
+GROUP_KINDS = frozenset({"task.assigned", "task.status", "task.commented"})
+GROUP_WINDOW = timedelta(minutes=10)
+GROUPED_TITLE = re.compile(r"^(\d+) cập nhật trên ")
+SNOOZE = timedelta(days=1)
+
+
+def _group(
+    session: Session,
+    user_ids: list[int],
+    kind: str,
+    title: str,
+    link: str | None,
+    tone: str,
+    actor_id: int | None,
+    ref: str | None,
+    now: datetime,
+) -> dict[int, UserNotification]:
+    """Several updates on the same task for one person within GROUP_WINDOW (from the first) are
+    one unread row, "3 cập nhật trên OCX-2", the latest update as its body."""
+    if kind not in GROUP_KINDS or not ref or not ref.startswith("task:") or not user_ids:
+        return {}
+    found: dict[int, UserNotification] = {}
+    for row in session.scalars(
+        select(UserNotification)
+        .where(
+            UserNotification.user_id.in_(user_ids),
+            UserNotification.ref == ref,
+            UserNotification.kind.in_(GROUP_KINDS),
+            UserNotification.read_at.is_(None),
+            UserNotification.created_at >= now - GROUP_WINDOW,
+            unsnoozed(now),
+        )
+        .order_by(UserNotification.id)
+    ):
+        found[row.user_id] = row  # the newest one wins
+    key = link.split("task=", 1)[1].split("&", 1)[0] if link and "task=" in link else "task"
+    for row in found.values():
+        match = GROUPED_TITLE.match(row.title or "")
+        count = int(match.group(1)) + 1 if match else 2
+        row.title = f"{count} cập nhật trên {key}"[:200]
+        row.body = title[:500]
+        row.kind = kind
+        row.tone = tone
+        row.link = link
+        row.actor_id = actor_id
+        row.updated_at = now  # set here: a server-side stamp would be expired for the push
+    return found
+
+
+def unsnoozed(now: datetime) -> Any:
+    """Rows that count as unread now: never snoozed, or snoozed until a time already past."""
+    return or_(UserNotification.snoozed_until.is_(None), UserNotification.snoozed_until <= now)
+
+
+def snooze(session: Session, user_id: int, ids: list[int], now: datetime | None = None) -> datetime:
+    """Snooze ("Tạm ẩn 1 ngày"): the person's own unread rows leave the unread list until then."""
+    until = (now or datetime.now(UTC)) + SNOOZE
+    if ids:
+        session.execute(
+            update(UserNotification)
+            .where(
+                UserNotification.user_id == user_id,
+                UserNotification.id.in_(ids[:500]),
+                UserNotification.read_at.is_(None),
+            )
+            .values(snoozed_until=until)
+            .execution_options(synchronize_session=False)
+        )
+    return until
 
 
 # -- what each event says ------------------------------------------------------------------------

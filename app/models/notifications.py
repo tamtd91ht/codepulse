@@ -75,6 +75,8 @@ class UserNotification(TimestampMixin, Base):
     actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     ref: Mapped[str | None]  # review:12, finding:40, dispute:7
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # "Tạm ẩn 1 ngày" (docs/specs/31 §20.5): not counted or listed as unread until then.
+    snoozed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 WEBHOOK_DELIVERY_STATUSES = ("pending", "delivered", "failed")

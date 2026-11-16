@@ -463,3 +463,25 @@ class TaskSpaceTemplate(TimestampMixin, Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
     builtin: Mapped[bool] = mapped_column(server_default="false", default=False)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class TaskRuleRun(Base):
+    """One action of an automation rule (docs/specs/31 §20.5): what a rule did, to which task,
+    when. A dry run writes a single row with `dry_run` set (what it would do), nothing else."""
+
+    __tablename__ = "task_rule_runs"
+    __table_args__ = (
+        Index("ix_task_rule_runs_space_id", "business_project_id", "id"),
+        Index("ix_task_rule_runs_rule_task", "rule", "task_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("task_spaces.business_project_id", ondelete="CASCADE")
+    )
+    rule: Mapped[str] = mapped_column(String(40))
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id", ondelete="SET NULL"))
+    action: Mapped[str] = mapped_column(String(40))
+    detail: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
+    dry_run: Mapped[bool] = mapped_column(server_default="false", default=False)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
