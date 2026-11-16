@@ -1651,6 +1651,12 @@ class BotService:
 
     def handle_callback(self, cb: Callback) -> CallbackOutcome:
         """A button tap: toggle / page / go / cancel on a picker, or the menu and repo choice."""
+        if cb.data.startswith("nt|"):
+            # A task notification sent to the person's private chat (docs/specs/31 §20.5): it
+            # acts only on that person's own row, so the bot's chat list does not apply.
+            from app.tasks.automation import note_action
+
+            return CallbackOutcome(answer=note_action(self._s, cb.from_id, cb.data))
         allowed = self._bot.allowed_chat_ids or []
         if allowed and cb.chat_id not in allowed:
             return CallbackOutcome(answer="Bot không phục vụ chat này.", alert=True)

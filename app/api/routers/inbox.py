@@ -10,12 +10,12 @@ import asyncio
 import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
@@ -24,7 +24,7 @@ from app.api.security import SESSION_COOKIE, CurrentPrincipal, read_token
 from app.config import get_settings
 from app.db import get_sessionmaker
 from app.models import User, UserNotification
-from app.notifications.inbox import as_message
+from app.notifications.inbox import as_message, snooze, unsnoozed
 from app.notifications.stream import hub, sse
 
 router = APIRouter(tags=["inbox"])
@@ -49,11 +49,18 @@ class ReadIn(BaseModel):
     ids: list[int] | None = None  # None: every unread one
 
 
+class SnoozeIn(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=500)
+
+
 def _unread(session: Session, user_id: int) -> int:
+    """Unread and not snoozed right now (31 §20.5)."""
     return int(
         session.scalar(
             select(func.count()).where(
-                UserNotification.user_id == user_id, UserNotification.read_at.is_(None)
+                UserNotification.user_id == user_id,
+                UserNotification.read_at.is_(None),
+                unsnoozed(datetime.now(UTC)),
             )
         )
         or 0
@@ -67,17 +74,21 @@ def list_inbox(
     before: int | None = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = PAGE,
     unread: bool = False,
-    kind: Literal[
-        "review_done", "review_failed", "finding_closed", "dispute_new", "dispute_decided"
-    ]
-    | None = None,
+    kind: Annotated[
+        str | None,
+        Query(
+            pattern=r"^(review_done|review_failed|finding_closed|dispute_new|dispute_decided"
+            r"|task\.[a-z]+)$"
+        ),
+    ] = None,
 ) -> dict[str, Any]:
-    """Newest first; `before` (an id) pages back through the history."""
+    """Newest first; `before` (an id) pages back through the history. `unread` leaves out the
+    rows snoozed right now."""
     query = select(UserNotification).where(UserNotification.user_id == principal.user_id)
     if before is not None:
         query = query.where(UserNotification.id < before)
     if unread:
-        query = query.where(UserNotification.read_at.is_(None))
+        query = query.where(UserNotification.read_at.is_(None), unsnoozed(datetime.now(UTC)))
     if kind is not None:
         query = query.where(UserNotification.kind == kind)
     rows = list(session.scalars(query.order_by(UserNotification.id.desc()).limit(limit + 1)))
@@ -110,6 +121,17 @@ def mark_read(body: ReadIn, principal: CurrentPrincipal, session: SessionDep) ->
     )
     session.commit()
     return {"unread": _unread(session, principal.user_id)}
+
+
+@router.post("/inbox/snooze")
+def snooze_notes(
+    body: SnoozeIn, principal: CurrentPrincipal, session: SessionDep
+) -> dict[str, Any]:
+    """Snooze, "Tạm ẩn 1 ngày" (31 §20.5): one's own unread rows leave the unread count and
+    the unread list until `snoozed_until`; they stay in the history."""
+    until = snooze(session, principal.user_id, body.ids)
+    session.commit()
+    return {"snoozed_until": until.isoformat(), "unread": _unread(session, principal.user_id)}
 
 
 def _stream_user(token: str | None) -> int:

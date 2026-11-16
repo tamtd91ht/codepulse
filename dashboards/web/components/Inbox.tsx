@@ -48,6 +48,7 @@ export const KIND_LABEL: Record<NotificationKind, string> = {
   "task.remind": "Nhắc việc",
   "task.alert": "Cảnh báo task",
   "task.digest": "Tóm tắt task",
+  "task.summary": "Tóm tắt cuối ngày",
 };
 
 const KIND_ICON: Record<NotificationKind, IconName> = {
@@ -64,6 +65,7 @@ const KIND_ICON: Record<NotificationKind, IconName> = {
   "task.remind": "calendar",
   "task.alert": "alert",
   "task.digest": "inbox",
+  "task.summary": "calendar",
 };
 
 /** Lists that change with an event, re-read when it arrives (SWR keys are API paths). */
@@ -81,6 +83,7 @@ const REFRESH: Record<NotificationKind, string[]> = {
   "task.remind": ["/tasks"],
   "task.alert": ["/tasks"],
   "task.digest": ["/tasks"],
+  "task.summary": ["/tasks"],
 };
 
 type Toast = InboxNote & { key: number };
@@ -91,6 +94,8 @@ interface InboxState {
   recentError: string | null;
   loadRecent: () => Promise<void>;
   markRead: (ids?: number[]) => Promise<void>;
+  /** "Tạm ẩn 1 ngày" (docs/specs/31 §20.5): out of the unread list until tomorrow. */
+  snooze: (id: number) => Promise<void>;
   /** Pages showing the history apply live changes too. */
   subscribe: (listener: (note: InboxNote) => void) => () => void;
 }
@@ -140,6 +145,20 @@ export function InboxProvider({ enabled, children }: { enabled: boolean; childre
     }
   }, [refreshCount]);
 
+  const snooze = useCallback(
+    async (id: number) => {
+      const until = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+      setRecent((list) => list?.map((n) => (n.id === id ? { ...n, snoozed_until: until } : n)) ?? list);
+      try {
+        const r = await api.post<{ unread: number; snoozed_until: string }>("/inbox/snooze", { ids: [id] });
+        setUnread(r.unread);
+      } catch {
+        void loadRecent();
+      }
+    },
+    [loadRecent],
+  );
+
   const dismiss = useCallback((key: number) => setToasts((list) => list.filter((t) => t.key !== key)), []);
 
   useEffect(() => {
@@ -149,7 +168,10 @@ export function InboxProvider({ enabled, children }: { enabled: boolean; childre
     let retry: ReturnType<typeof setTimeout> | undefined;
     let closed = false;
     let lastId = 0; // the newest id known: a reconnect of ours asks for what came after it
-    const seen = new Set<number>();
+    // A grouped task update (§20.5) comes again with the same id and a newer updated_at: shown
+    // again, but the badge counts a row once.
+    const seen = new Set<string>();
+    const known = new Set<number>();
 
     const connect = () => {
       if (closed) return;
@@ -166,10 +188,13 @@ export function InboxProvider({ enabled, children }: { enabled: boolean; childre
         } catch {
           return;
         }
-        if (seen.has(note.id)) return;
-        seen.add(note.id);
+        const stamp = `${note.id}|${note.updated_at ?? ""}`;
+        if (seen.has(stamp)) return;
+        seen.add(stamp);
         lastId = Math.max(lastId, note.id);
-        if (!note.read_at) setUnread((n) => n + 1);
+        const again = known.has(note.id);
+        known.add(note.id);
+        if (!note.read_at && !again) setUnread((n) => n + 1);
         setRecent((list) => (list ? [note, ...list.filter((n) => n.id !== note.id)].slice(0, RECENT) : list));
         setToasts((list) => [...list, { ...note, key: note.id }].slice(-MAX_TOASTS));
         for (const listener of listeners.current) listener(note);
@@ -202,8 +227,8 @@ export function InboxProvider({ enabled, children }: { enabled: boolean; childre
   }, []);
 
   const value = useMemo(
-    () => ({ unread, recent, recentError, loadRecent, markRead, subscribe }),
-    [unread, recent, recentError, loadRecent, markRead, subscribe],
+    () => ({ unread, recent, recentError, loadRecent, markRead, snooze, subscribe }),
+    [unread, recent, recentError, loadRecent, markRead, snooze, subscribe],
   );
   return (
     <InboxContext.Provider value={enabled ? value : null}>
@@ -280,8 +305,23 @@ function ToastItem({
   );
 }
 
-/** One notification as a row: in the bell's panel and on the history page. */
-export function NoteRow({ note, onOpen, compact }: { note: InboxNote; onOpen: (note: InboxNote) => void; compact?: boolean }) {
+export function isSnoozed(note: InboxNote, now = Date.now()): boolean {
+  return !!note.snoozed_until && new Date(note.snoozed_until).getTime() > now;
+}
+
+/** One notification as a row: in the bell's panel and on the history page. `onSnooze` adds the
+ * "Tạm ẩn 1 ngày" action next to an unread row (docs/specs/31 §20.5). */
+export function NoteRow({
+  note,
+  onOpen,
+  compact,
+  onSnooze,
+}: {
+  note: InboxNote;
+  onOpen: (note: InboxNote) => void;
+  compact?: boolean;
+  onSnooze?: (note: InboxNote) => void;
+}) {
   const content = (
     <>
       <ToneMark note={note} />
@@ -297,7 +337,7 @@ export function NoteRow({ note, onOpen, compact }: { note: InboxNote; onOpen: (n
     </>
   );
   const className = `note-row${note.read_at ? "" : " unread"}`;
-  return note.link ? (
+  const row = note.link ? (
     <Link href={note.link} className={className} onClick={() => onOpen(note)}>
       {content}
     </Link>
@@ -305,6 +345,13 @@ export function NoteRow({ note, onOpen, compact }: { note: InboxNote; onOpen: (n
     <button type="button" className={className} onClick={() => onOpen(note)}>
       {content}
     </button>
+  );
+  if (!onSnooze || note.read_at || isSnoozed(note)) return row;
+  return (
+    <div className="nr-wrap">
+      {row}
+      <IconButton icon="moon" label="Tạm ẩn 1 ngày" size={14} className="nr-snooze" onClick={() => onSnooze(note)} />
+    </div>
   );
 }
 
@@ -368,7 +415,9 @@ export function NotificationBell({ className }: { className?: string }) {
   }, [open, place]);
 
   if (!inbox) return null;
-  const { unread, recent, recentError } = inbox;
+  const { unread, recentError } = inbox;
+  // Snoozed rows stay on the history page, out of the bell until their time (§20.5).
+  const recent = inbox.recent?.filter((n) => n.read_at || !isSnoozed(n)) ?? null;
   const label = unread ? `Thông báo, ${unread} chưa đọc` : "Thông báo";
   return (
     <>
@@ -424,6 +473,7 @@ export function NotificationBell({ className }: { className?: string }) {
                   key={n.id}
                   note={n}
                   compact
+                  onSnooze={(note) => void inbox.snooze(note.id)}
                   onOpen={(note) => {
                     if (!note.read_at) void inbox.markRead([note.id]);
                     setOpen(false);

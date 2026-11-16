@@ -25,36 +25,48 @@ local hours (REPORT_TZ), `kinds` muted among MUTABLE_KINDS. `deliver_now` is cal
 muted kinds are dropped, digest mode and quiet hours hold the notification
 (`task_notify_held:<user id>`, appended atomically) and `send_digests` later writes the held ones
 into the history as read rows plus one unread summary ("3 cập nhật trên CRM-2, CRM-5").
+
+**Round 2, stage 2.5 (docs/specs/31 §20.5).** A channel per task kind (`inbox | telegram |
+off`; "telegram" also writes the inbox row, which keeps the history and what the Telegram
+buttons act on), `task.alert` past quiet hours and digests, a daily summary at the person's
+time, five more rule templates, and the rule log (`task_rule_runs`): every action of a rule writes
+one row; a dry run (`dry_run`) runs a scheduled rule inside a SAVEPOINT that is rolled back and
+keeps a single log row marked `dry_run` with what it would have done.
 """
 
 import html
 import logging
+import re
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import case, event, func, select
+from sqlalchemy import and_, case, event, func, inspect, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, SessionTransaction
 
 from app.models import (
+    Account,
     AppSetting,
+    MergeRequest,
     ProjectGrant,
+    Sprint,
     Task,
     TaskGitLink,
     TaskSpace,
     TaskStatus,
+    TaskVersion,
     User,
     UserNotification,
 )
-from app.models.tasks import TaskLink
+from app.models.tasks import TaskLink, TaskRuleRun
 
 log = logging.getLogger(__name__)
 
@@ -142,6 +154,48 @@ TEMPLATES: tuple[Template, ...] = (
         "schedule",
         (Param("days", "Trước (ngày)", 1, 0, 14, "ngày"),),
     ),
+    # Round 2 (§20.5). The two "event" ones are checked on the scheduler's tick (every 15
+    # minutes), not inside the git / test result code paths.
+    Template(
+        "release_version",
+        "MR merge vào nhánh release → gắn phiên bản",
+        "MR của task merge vào nhánh release/<tên> hoặc release-<tên> trùng tên một phiên bản của "
+        "dự án: task chưa có phiên bản được gắn phiên bản đó (mỗi task một lần).",
+        "event",
+    ),
+    Template(
+        "column_age_warn",
+        "Task quá tuổi cột → báo quản lý",
+        "Task nằm ở một cột lâu hơn mức cảnh báo tuổi của cột đó: báo quản lý dự án một lần "
+        "(mỗi lần vào cột).",
+        "schedule",
+    ),
+    Template(
+        "test_failed_back",
+        "Testcase Failed khi đang review → về Đang làm",
+        "Testcase phủ task bị Failed trong lúc task ở trạng thái review: chuyển task về trạng "
+        "thái bắt đầu của luật git và báo người làm (mỗi task tối đa một lần mỗi ngày).",
+        "event",
+    ),
+    Template(
+        "sprint_risk",
+        "Sprint sắp hết mà còn nhiều điểm → báo quản lý",
+        "Sprint đang chạy còn tối đa N ngày mà phần điểm chưa xong vượt ngưỡng: báo quản lý dự "
+        "án (mỗi sprint một lần).",
+        "schedule",
+        (
+            Param("days", "Còn (ngày)", 2, 0, 14, "ngày"),
+            Param("percent", "Chưa xong trên", 40, 1, 99, "%"),
+        ),
+    ),
+    Template(
+        "unassigned_in_sprint",
+        "Task không người làm trong sprint → báo quản lý",
+        "Task mở trong sprint đang chạy chưa có người làm quá N ngày (tính từ lúc tạo): báo "
+        "quản lý dự án (mỗi task một lần mỗi sprint).",
+        "schedule",
+        (Param("days", "Sau (ngày)", 3, 1, 30, "ngày"),),
+    ),
 )
 BY_KEY = {t.key: t for t in TEMPLATES}
 # Reminders and digests are not sent before this local hour (REPORT_TZ).
@@ -203,6 +257,7 @@ def out(space: TaskSpace) -> list[dict[str, Any]]:
             "hint": t.hint,
             "trigger": t.trigger,
             "on": config[t.key]["on"],
+            "can_dry_run": t.key in SCHEDULED,
             "params": [
                 {
                     "key": p.key,
@@ -244,9 +299,103 @@ def _safely(session: Session, rule: str, task: Task, fn: Any, *args: Any) -> boo
         return True
     except HTTPException as exc:
         log.info("task rule skipped", extra={"rule": rule, "task": task.key, "why": exc.detail})
+        log_run(session, task.business_project_id, rule, task, "skipped", why=str(exc.detail))
     except Exception:
         log.exception("task rule failed", extra={"rule": rule, "task": task.key})
+        log_run(session, task.business_project_id, rule, task, "failed")
     return False
+
+
+# -- the rule log (§20.5) -------------------------------------------------------------------------
+
+# What a dry run collects (None outside one), and the clock of the current run (the scheduler's
+# `now`, so "once a day" is the same day for the log and the reminders).
+_PLAN: ContextVar[list[dict[str, Any]] | None] = ContextVar("task_rule_plan", default=None)
+_NOW: ContextVar[datetime | None] = ContextVar("task_rule_now", default=None)
+LOG_MAX = 200
+DRY_RUN_KEEP = 50
+
+
+def _clock() -> datetime:
+    return _NOW.get() or datetime.now(UTC)
+
+
+def log_run(
+    session: Session,
+    bp_id: int,
+    rule: str,
+    task: Task | None,
+    action: str,
+    **detail: Any,
+) -> None:
+    """One row per action of a rule. Inside a dry run the row is rolled back with the rest; what
+    it says is kept in the plan."""
+    session.add(
+        TaskRuleRun(
+            business_project_id=bp_id,
+            rule=rule,
+            task_id=task.id if task is not None else None,
+            action=action,
+            detail=detail,
+            dry_run=False,
+            at=_clock(),
+        )
+    )
+    plan = _PLAN.get()
+    if plan is not None:
+        plan.append(
+            {"task_key": task.key if task is not None else None, "action": action, **detail}
+        )
+
+
+def _logged_tasks(
+    session: Session,
+    rule: str,
+    task_ids: list[int],
+    since: datetime | None = None,
+    *,
+    with_skips: bool = False,
+) -> dict[int, datetime]:
+    """Tasks a rule really acted on (not a dry run; a skip only `with_skips`), last time."""
+    if not task_ids:
+        return {}
+    query = select(TaskRuleRun.task_id, func.max(TaskRuleRun.at)).where(
+        TaskRuleRun.rule == rule,
+        TaskRuleRun.task_id.in_(task_ids),
+        TaskRuleRun.dry_run.is_(False),
+    )
+    if not with_skips:
+        query = query.where(TaskRuleRun.action.not_in(("skipped", "failed")))
+    if since is not None:
+        query = query.where(TaskRuleRun.at >= since)
+    return {
+        int(task_id): at
+        for task_id, at in session.execute(query.group_by(TaskRuleRun.task_id)).all()
+        if task_id is not None
+    }
+
+
+def log_out(session: Session, bp_id: int, limit: int = 50) -> list[dict[str, Any]]:
+    rows = session.execute(
+        select(TaskRuleRun, Task.key)
+        .outerjoin(Task, Task.id == TaskRuleRun.task_id)
+        .where(TaskRuleRun.business_project_id == bp_id)
+        .order_by(TaskRuleRun.id.desc())
+        .limit(max(1, min(limit, LOG_MAX)))
+    ).all()
+    return [
+        {
+            "id": run.id,
+            "rule": run.rule,
+            "rule_title": BY_KEY[run.rule].title if run.rule in BY_KEY else run.rule,
+            "task_key": key,
+            "action": run.action,
+            "detail": run.detail or {},
+            "dry_run": run.dry_run,
+            "at": run.at.isoformat() if run.at else None,
+        }
+        for run, key in rows
+    ]
 
 
 # -- helpers --------------------------------------------------------------------------------------
@@ -286,6 +435,15 @@ def _sent(session: Session, user_id: int, ref: str) -> bool:
     return bool(held and any(i.get("ref") == ref for i in (held.value or [])))
 
 
+# The short rule names in reminder refs (kept: refs already sent) -> their template.
+REF_RULE = {
+    "overdue": "overdue_remind",
+    "due_soon": "due_soon_remind",
+    "review_stale": "review_stale_remind",
+    "critical": "critical_reassign",
+}
+
+
 def _remind(
     session: Session,
     users: Iterable[int | None],
@@ -306,6 +464,15 @@ def _remind(
     targets = [u for u in {u for u in users if u is not None} if not _sent(session, u, ref)]
     if not targets:
         return 0
+    log_run(
+        session,
+        task.business_project_id,
+        REF_RULE.get(rule, rule),
+        task,
+        "notify",
+        users=sorted(targets),
+        title=title,
+    )
     notify(
         session,
         targets,
@@ -375,6 +542,7 @@ def _assign_to(session: Session, task: Task, user_id: int) -> None:
     task.assignee_id = user_id
     history(session, task, None, "assignee", None, user.full_name if user else user_id)
     watch(session, task, user_id)
+    log_run(session, task.business_project_id, "assign_on_start", task, "assign", user=user_id)
 
 
 def _critical_now(session: Session, task: Task) -> None:
@@ -412,6 +580,15 @@ def _parent_to_review(
     )
     if open_left is None:
         set_status(session, parent, review, None, "web")
+        log_run(
+            session,
+            parent.business_project_id,
+            "subtasks_done_review",
+            parent,
+            "move",
+            to=review.name,
+            by=task.key,
+        )
 
 
 def _unblocked(session: Session, task: Task) -> None:
@@ -442,6 +619,15 @@ def _unblocked(session: Session, task: Task) -> None:
             .limit(1)
         )
         if still is None:
+            log_run(
+                session,
+                blocked.business_project_id,
+                "unblock_notify",
+                blocked,
+                "notify",
+                users=[blocked.assignee_id],
+                by=task.key,
+            )
             notify(
                 session,
                 [blocked.assignee_id],
@@ -501,9 +687,18 @@ def _bug_alert(session: Session, task: Task, actor_id: int | None) -> None:
 
     if _priority_level(session, task) != "highest":
         return
+    told = managers(session, task.business_project_id)
+    log_run(
+        session,
+        task.business_project_id,
+        "bug_highest_notify",
+        task,
+        "notify",
+        users=sorted(told),
+    )
     notify(
         session,
-        managers(session, task.business_project_id),
+        told,
         kind="task.alert",
         title=f"Bug ưu tiên cao nhất: {task.key}",
         body=task.title,
@@ -549,21 +744,144 @@ def _enqueue_redis(task_ids: list[int]) -> None:
 telegram_enqueuer: Any = _enqueue_redis
 
 
+def _enqueue_notes_redis(note_ids: list[int]) -> None:
+    from rq import Queue
+
+    from app.db import get_redis
+
+    Queue("default", connection=get_redis()).enqueue(
+        "app.workers.task_automation_jobs.telegram_note_job", note_ids
+    )
+
+
+# Swapped in tests, like telegram_enqueuer.
+telegram_note_enqueuer: Any = _enqueue_notes_redis
+TG_NOTES = "task_notify_telegram"
+
+
+def queue_telegram(session: Session, rows: Iterable[UserNotification]) -> None:
+    """Inbox rows whose person chose Telegram: sent by a worker once the event commits."""
+    session.info.setdefault(TG_NOTES, []).extend(rows)
+
+
 @event.listens_for(Session, "after_commit")
 def _after_commit(session: Session) -> None:
     task_ids: list[int] = session.info.pop(TG_PENDING, [])
-    if not task_ids:
-        return
-    try:
-        telegram_enqueuer(task_ids)
-    except Exception:
-        log.warning("telegram task alert not queued", exc_info=True)
+    notes: list[UserNotification] = session.info.pop(TG_NOTES, [])
+    # A row added in a SAVEPOINT that was rolled back (a dry run) is not sent.
+    note_ids = sorted({row.id for row in notes if inspect(row).persistent})
+    if task_ids:
+        try:
+            telegram_enqueuer(task_ids)
+        except Exception:
+            log.warning("telegram task alert not queued", exc_info=True)
+    if note_ids:
+        try:
+            telegram_note_enqueuer(note_ids)
+        except Exception:
+            log.warning("telegram task notes not queued", exc_info=True)
 
 
 @event.listens_for(Session, "after_transaction_end")
 def _after_transaction_end(session: Session, transaction: SessionTransaction) -> None:
     if transaction.parent is None:
         session.info.pop(TG_PENDING, None)
+        session.info.pop(TG_NOTES, None)
+
+
+# -- Telegram: a person's own chat (§20.5) --------------------------------------------------------
+
+NOTE_CALLBACK = "nt"  # callback data "nt|<notification id>|r" (seen) or "|s" (snooze a day)
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
+
+
+def telegram_chats_of(session: Session, user_id: int) -> list[int]:
+    """The private chats of a person's linked Telegram accounts (a user id is its private chat
+    id); linked with /link CODE (the `telegram.self` page)."""
+    from app.telegram.service import TELEGRAM_KIND
+
+    out: list[int] = []
+    for key in session.scalars(
+        select(Account.external_key).where(
+            Account.kind == TELEGRAM_KIND, Account.user_id == user_id
+        )
+    ):
+        try:
+            out.append(int(key))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def telegram_linked(session: Session, user_id: int) -> bool:
+    return bool(telegram_chats_of(session, user_id))
+
+
+def note_bots(session: Session, bp_id: int | None) -> list[int]:
+    """Enabled bots to send a person's note with: the task's dự án first. A bot can only write
+    to someone who has started it, so the job tries them in order."""
+    from app.models import TelegramBot
+
+    bots = list(session.scalars(select(TelegramBot).where(TelegramBot.enabled.is_(True))))
+    bots.sort(key=lambda b: (b.business_project_id != bp_id, b.id))
+    return [b.id for b in bots]
+
+
+def _url_ok(url: str) -> bool:
+    """Telegram refuses URL buttons that are not public http(s) links."""
+    lowered = url.lower()
+    if not lowered.startswith(("http://", "https://")):
+        return False
+    host = lowered.split("://", 1)[1].split("/", 1)[0].split(":", 1)[0]
+    return host not in LOCAL_HOSTS and "." in host
+
+
+def telegram_note(note: UserNotification, base_url: str) -> tuple[str, dict[str, Any]]:
+    """The message and its buttons: Mở (a URL, when the dashboard has a public address), Đã xem
+    and Ẩn 1 ngày (callbacks, answered by the bot poller, which polls every enabled bot)."""
+    url = base_url.rstrip("/") + (note.link or "/notifications")
+    text = f"<b>{html.escape(note.title)}</b>"
+    if note.body:
+        text += f"\n{html.escape(note.body)}"
+    rows: list[list[dict[str, str]]] = []
+    if _url_ok(url):
+        rows.append([{"text": "Mở", "url": url}])
+    else:
+        text += f"\n{html.escape(url)}"
+    rows.append(
+        [
+            {"text": "Đã xem", "callback_data": f"{NOTE_CALLBACK}|{note.id}|r"},
+            {"text": "Ẩn 1 ngày", "callback_data": f"{NOTE_CALLBACK}|{note.id}|s"},
+        ]
+    )
+    return text, {"inline_keyboard": rows}
+
+
+def note_action(session: Session, from_id: int, data: str, now: datetime | None = None) -> str:
+    """A tap on Đã xem / Ẩn 1 ngày: only on a notification of the person linked to this
+    Telegram account. Returns the text of the answer."""
+    from app.notifications.inbox import SNOOZE
+    from app.telegram.service import TELEGRAM_KIND
+
+    parts = data.split("|")
+    if len(parts) != 3 or parts[0] != NOTE_CALLBACK or not parts[1].isdigit():
+        return "Nút này không còn hiệu lực."
+    user_id = session.scalar(
+        select(Account.user_id).where(
+            Account.kind == TELEGRAM_KIND, Account.external_key == str(from_id)
+        )
+    )
+    note = session.get(UserNotification, int(parts[1]))
+    if user_id is None or note is None or note.user_id != user_id:
+        return "Thông báo không còn hoặc không phải của bạn."
+    now = now or datetime.now(UTC)
+    if parts[2] == "r":
+        note.read_at = note.read_at or now
+        return "Đã đánh dấu đã xem."
+    if parts[2] == "s":
+        note.snoozed_until = now + SNOOZE
+        return f"Đã ẩn tới {note.snoozed_until.astimezone(_tz()):%H:%M %d/%m}."
+    return "Nút này không còn hiệu lực."
 
 
 def telegram_text(session: Session, task: Task, base_url: str) -> str:
@@ -581,37 +899,106 @@ def telegram_text(session: Session, task: Task, base_url: str) -> str:
 # -- scheduled rules ------------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class Tick:
+    now: datetime
+    today: date
+    config: dict[str, dict[str, Any]]
+
+
+# The rules the scheduler's tick runs (and a dry run can run): template -> fn. Those in ANYTIME
+# run on every tick; the others (reminders) from SEND_HOUR.
+SCHEDULED: dict[str, Callable[[Session, TaskSpace, Tick], int]] = {
+    "overdue_remind": lambda s, sp, t: _overdue(s, sp, t.today),
+    "due_soon_remind": lambda s, sp, t: _due_soon(
+        s, sp, t.today, t.config["due_soon_remind"]["days"]
+    ),
+    "review_stale_remind": lambda s, sp, t: _review_stale(
+        s, sp, t.now, t.today, t.config["review_stale_remind"]["hours"]
+    ),
+    "critical_reassign": lambda s, sp, t: _critical_daily(s, sp, t.today),
+    "release_version": lambda s, sp, t: _release_version(s, sp, t),
+    "column_age_warn": lambda s, sp, t: _column_age(s, sp, t),
+    "test_failed_back": lambda s, sp, t: _test_failed_back(s, sp, t),
+    "sprint_risk": lambda s, sp, t: _sprint_risk(s, sp, t),
+    "unassigned_in_sprint": lambda s, sp, t: _unassigned(s, sp, t),
+}
+ANYTIME = frozenset({"release_version", "test_failed_back"})
+# The counters run_schedule returns (the first four kept their names).
+COUNTER = {v: k for k, v in REF_RULE.items()}
+
+
 def run_schedule(session: Session, now: datetime | None = None) -> dict[str, int]:
     """The scheduled rules of every space that has one on; reminders go out from SEND_HOUR."""
     now = now or datetime.now(UTC)
     local = now.astimezone(_tz())
     sent: Counter[str] = Counter()
-    if local.hour < SEND_HOUR:
-        return dict(sent)
-    today = local.date()
-    for space in session.scalars(select(TaskSpace)):
-        if not (space.rules or {}).get("automation"):
-            continue
-        config = config_of(space)
-        mine: Counter[str] = Counter()
-        try:
-            # One space failing (a bad row) neither stops nor rolls back the others.
-            with _acting(), session.begin_nested():
-                if config["overdue_remind"]["on"]:
-                    mine["overdue"] += _overdue(session, space, today)
-                if config["due_soon_remind"]["on"]:
-                    mine["due_soon"] += _due_soon(
-                        session, space, today, config["due_soon_remind"]["days"]
-                    )
-                if config["review_stale_remind"]["on"]:
-                    hours = config["review_stale_remind"]["hours"]
-                    mine["review_stale"] += _review_stale(session, space, now, today, hours)
-                if config["critical_reassign"]["on"]:
-                    mine["critical"] += _critical_daily(session, space, today)
-            sent.update(mine)
-        except Exception:
-            log.exception("task schedule failed", extra={"space": space.key})
+    morning = local.hour >= SEND_HOUR
+    tick_now = _NOW.set(now)
+    try:
+        for space in session.scalars(select(TaskSpace)):
+            if not (space.rules or {}).get("automation"):
+                continue
+            config = config_of(space)
+            tick = Tick(now, local.date(), config)
+            mine: Counter[str] = Counter()
+            try:
+                # One space failing (a bad row) neither stops nor rolls back the others.
+                with _acting(), session.begin_nested():
+                    for key, fn in SCHEDULED.items():
+                        if config[key]["on"] and (morning or key in ANYTIME):
+                            mine[COUNTER.get(key, key)] += fn(session, space, tick)
+                sent.update(mine)
+            except Exception:
+                log.exception("task schedule failed", extra={"space": space.key})
+    finally:
+        _NOW.reset(tick_now)
     return dict(sent)
+
+
+def dry_run(
+    session: Session, space: TaskSpace, rule: str, now: datetime | None = None
+) -> list[dict[str, Any]]:
+    """What a scheduled rule would do now (on or off, at any hour): it runs inside a SAVEPOINT
+    that is always rolled back; one log row marked `dry_run` keeps the plan."""
+    fn = SCHEDULED.get(rule)
+    if fn is None:
+        if rule in BY_KEY:
+            raise HTTPException(409, "quy tắc này chạy khi thao tác, không chạy thử được")
+        raise HTTPException(404, f"quy tắc không biết: {rule}")
+    now = now or datetime.now(UTC)
+    tick = Tick(now, now.astimezone(_tz()).date(), config_of(space))
+    plan: list[dict[str, Any]] = []
+    tokens = (_PLAN.set(plan), _NOW.set(now))
+    from app.notifications.inbox import PENDING
+
+    session.flush()
+    # What the run queues for after the commit (live pushes, Telegram) is dropped with it.
+    marks = {k: len(session.info.get(k, [])) for k in (PENDING, TG_NOTES, TG_PENDING)}
+    nested = session.begin_nested()
+    try:
+        with _acting():
+            fn(session, space, tick)
+    finally:
+        _PLAN.reset(tokens[0])
+        _NOW.reset(tokens[1])
+        nested.rollback()
+        for key, n in marks.items():
+            if key in session.info:
+                del session.info[key][n:]
+    session.add(
+        TaskRuleRun(
+            business_project_id=space.business_project_id,
+            rule=rule,
+            task_id=None,
+            action="dry_run",
+            detail={"count": len(plan), "items": plan[:DRY_RUN_KEEP]},
+            dry_run=True,
+            at=now,
+        )
+    )
+    session.flush()
+    return plan
 
 
 def _open_tasks(session: Session, bp_id: int) -> Any:
@@ -726,6 +1113,381 @@ def _critical_daily(session: Session, space: TaskSpace, today: date) -> int:
     return n
 
 
+# -- round 2 rules (§20.5) ------------------------------------------------------------------------
+
+# release/<name> or release-<name>; <name> is matched to a version of the dự án (case ignored).
+RELEASE_BRANCH = re.compile(r"^release[/-](.+)$", re.IGNORECASE)
+RELEASE_LOOKBACK = timedelta(days=14)
+
+
+def release_name(branch: str | None) -> str | None:
+    match = RELEASE_BRANCH.match((branch or "").strip())
+    return match.group(1).strip() if match else None
+
+
+def _tell_managers(
+    session: Session,
+    space: TaskSpace,
+    rule: str,
+    tasks: list[Task],
+    *,
+    title_one: str,
+    title_many: str,
+    body: str | None = None,
+    ref: str,
+    tone: str = "warn",
+) -> list[int]:
+    """One note to the dự án's managers about one or more tasks; [] when there is nobody to
+    tell (nothing is logged then, so the rule tells them once someone manages the dự án)."""
+    from app.notifications.inbox import notify
+    from app.tasks.service import link_of
+
+    told = managers(session, space.business_project_id)
+    if not told:
+        return []
+    keys = [t.key for t in tasks]
+    notify(
+        session,
+        told,
+        kind="task.remind",
+        title=title_one if len(tasks) == 1 else title_many,
+        body=body or (", ".join(keys[:8]) + (" …" if len(keys) > 8 else "")),
+        link=link_of(keys[0]) if len(tasks) == 1 else "/tasks",
+        tone=tone,
+        ref=ref,
+    )
+    return told
+
+
+def _release_version(session: Session, space: TaskSpace, tick: Tick) -> int:
+    from app.tasks.service import log as history
+
+    bp = space.business_project_id
+    found = session.execute(
+        select(Task, MergeRequest.target_branch, MergeRequest.iid)
+        .join(TaskGitLink, TaskGitLink.task_id == Task.id)
+        .join(
+            MergeRequest,
+            and_(
+                MergeRequest.project_id == TaskGitLink.project_id,
+                MergeRequest.iid == TaskGitLink.mr_iid,
+            ),
+        )
+        .where(
+            Task.business_project_id == bp,
+            Task.version_id.is_(None),
+            TaskGitLink.kind == "mr",
+            MergeRequest.state == "merged",
+            MergeRequest.merged_at >= tick.now - RELEASE_LOOKBACK,
+            or_(
+                MergeRequest.target_branch.ilike("release/%"),
+                MergeRequest.target_branch.ilike("release-%"),
+            ),
+        )
+        .order_by(MergeRequest.merged_at, Task.id)
+    ).all()
+    if not found:
+        return 0
+    versions = {
+        v.name.strip().lower(): v
+        for v in session.scalars(select(TaskVersion).where(TaskVersion.business_project_id == bp))
+    }
+    done = _logged_tasks(session, "release_version", [t.id for t, _, _ in found])
+    n = 0
+    for task, branch, iid in found:
+        name = release_name(branch)
+        version = versions.get(name.lower()) if name else None
+        if version is None or task.id in done or task.version_id is not None:
+            continue
+        task.version_id = version.id
+        history(session, task, None, "version", None, version.name)
+        if task.type != "subtask":  # sub-tasks go with their parent, as on a person's change
+            for child in session.scalars(
+                select(Task).where(Task.parent_id == task.id, Task.type == "subtask")
+            ):
+                child.version_id = version.id
+        log_run(
+            session,
+            bp,
+            "release_version",
+            task,
+            "set_version",
+            version=version.name,
+            branch=branch,
+            mr=iid,
+        )
+        done[task.id] = tick.now
+        n += 1
+    return n
+
+
+def _column_age(session: Session, space: TaskSpace, tick: Tick) -> int:
+    from app.tasks.service import statuses_of
+
+    watched = [
+        s
+        for s in statuses_of(session, space.business_project_id)
+        if s.age_warning_hours and s.category != "done"
+    ]
+    old: list[tuple[Task, TaskStatus]] = []
+    for status in watched:
+        for task in session.scalars(
+            select(Task)
+            .where(
+                Task.status_id == status.id,
+                Task.status_changed_at < tick.now - timedelta(hours=status.age_warning_hours or 0),
+            )
+            .order_by(Task.status_changed_at, Task.id)
+        ):
+            old.append((task, status))
+    if not old:
+        return 0
+    told = _logged_tasks(session, "column_age_warn", [t.id for t, _ in old])
+    # Once per stay in the column: told after the task entered it -> already told.
+    new = [
+        (t, s)
+        for t, s in old
+        if not (t.id in told and t.status_changed_at and told[t.id] >= t.status_changed_at)
+    ]
+    if not new:
+        return 0
+    first, status = new[0]
+    who = _tell_managers(
+        session,
+        space,
+        "column_age_warn",
+        [t for t, _ in new],
+        title_one=f"{first.key} nằm ở {status.name} quá {status.age_warning_hours} giờ",
+        title_many=f"{len(new)} task quá tuổi cột",
+        body=first.title if len(new) == 1 else None,
+        ref=f"auto:column_age_warn:{space.business_project_id}:{tick.now.isoformat()}",
+    )
+    if not who:
+        return 0
+    for task, st in new:
+        log_run(
+            session,
+            space.business_project_id,
+            "column_age_warn",
+            task,
+            "notify",
+            users=who,
+            status=st.name,
+            hours=st.age_warning_hours,
+        )
+    return len(new)
+
+
+def _test_failed_back(session: Session, space: TaskSpace, tick: Tick) -> int:
+    from app.notifications.inbox import notify
+    from app.tasks import quality
+    from app.tasks.service import link_of, rules_of, set_status
+    from app.testcases import content
+
+    review = _review_status(session, space)
+    start_id = rules_of(space).get("start")
+    start = _status_of(session, start_id) if isinstance(start_id, int) else None
+    if review is None or start is None or start.business_project_id != space.business_project_id:
+        return 0
+    tasks = list(session.scalars(select(Task).where(Task.status_id == review.id).order_by(Task.id)))
+    cover = quality.covering(session, [t.id for t in tasks])
+    tests = quality.latest_tests(session, sorted({c for cs in cover.values() for c in cs}))
+    midnight = datetime.combine(tick.today, time.min, _tz()).astimezone(UTC)
+    # A move the workflow refused counts too: tried once a day, not on every tick.
+    today_done = _logged_tasks(
+        session, "test_failed_back", [t.id for t in tasks], midnight, with_skips=True
+    )
+    n = 0
+    for task in tasks:
+        since = task.status_changed_at
+        failed = []
+        for case_id in cover.get(task.id, []):
+            test = tests.get(case_id)
+            at = test.tested_at if test is not None else None
+            # Failed while the task sat in review: recorded after it entered the status.
+            if (
+                test is not None
+                and test.status == "failed"
+                and at is not None
+                and (since is None or at >= since)
+            ):
+                failed.append(test)
+        if not failed or task.id in today_done:
+            continue
+        cases = [k for t in failed[:3] if (k := content.key("case", t.case_id))]
+        try:
+            with session.begin_nested():
+                set_status(session, task, start, None, "web")
+        except HTTPException as exc:
+            log_run(
+                session,
+                space.business_project_id,
+                "test_failed_back",
+                task,
+                "skipped",
+                why=str(exc.detail),
+            )
+            continue
+        except Exception:
+            log.exception("test_failed_back failed", extra={"task": task.key})
+            log_run(session, space.business_project_id, "test_failed_back", task, "failed")
+            continue
+        log_run(
+            session,
+            space.business_project_id,
+            "test_failed_back",
+            task,
+            "move",
+            to=start.name,
+            cases=cases,
+        )
+        if task.assignee_id is not None:
+            notify(
+                session,
+                [task.assignee_id],
+                kind="task.alert",
+                title=f"{task.key} về {start.name}: testcase Failed khi đang review",
+                body=", ".join(cases) or task.title,
+                link=link_of(task.key),
+                tone="bad",
+                ref=f"auto:test_failed_back:{task.id}:{tick.today.isoformat()}",
+            )
+        n += 1
+    return n
+
+
+def _active_sprints(session: Session, bp_id: int) -> list[Sprint]:
+    return list(
+        session.scalars(
+            select(Sprint).where(Sprint.business_project_id == bp_id, Sprint.state == "active")
+        )
+    )
+
+
+def _sprint_risk(session: Session, space: TaskSpace, tick: Tick) -> int:
+    from app.tasks import reports
+
+    params = tick.config["sprint_risk"]
+    n = 0
+    for sprint in _active_sprints(session, space.business_project_id):
+        if (
+            sprint.end_date is None
+            or not 0 <= (sprint.end_date - tick.today).days <= params["days"]
+        ):
+            continue
+        rows = session.execute(
+            select(Task, TaskStatus.category)
+            .join(TaskStatus, TaskStatus.id == Task.status_id)
+            .where(Task.sprint_id == sprint.id)
+        ).all()
+        total = sum(reports.points(t) for t, _ in rows)
+        left = sum(reports.points(t) for t, cat in rows if cat != "done")
+        if total <= 0 or left * 100 <= total * params["percent"]:
+            continue
+        told_before = session.scalar(
+            select(TaskRuleRun.id)
+            .where(
+                TaskRuleRun.business_project_id == space.business_project_id,
+                TaskRuleRun.rule == "sprint_risk",
+                TaskRuleRun.dry_run.is_(False),
+                TaskRuleRun.action == "notify",
+                TaskRuleRun.detail["sprint_id"].as_integer() == sprint.id,
+            )
+            .limit(1)
+        )
+        if told_before is not None:
+            continue
+        days = (sprint.end_date - tick.today).days
+        share = round(left * 100 / total)
+        when = "hôm nay" if days == 0 else f"sau {days} ngày"
+        from app.notifications.inbox import notify
+
+        told = managers(session, space.business_project_id)
+        if not told:
+            continue
+        notify(
+            session,
+            told,
+            kind="task.remind",
+            title=f"Sprint {sprint.name} kết thúc {when}, còn {share}% điểm chưa xong",
+            body=f"{left:g} / {total:g} điểm chưa xong",
+            link="/tasks",
+            tone="warn",
+            ref=f"auto:sprint_risk:{sprint.id}",
+        )
+        log_run(
+            session,
+            space.business_project_id,
+            "sprint_risk",
+            None,
+            "notify",
+            users=told,
+            sprint_id=sprint.id,
+            sprint=sprint.name,
+            left=left,
+            total=total,
+        )
+        n += 1
+    return n
+
+
+def _unassigned(session: Session, space: TaskSpace, tick: Tick) -> int:
+    days = tick.config["unassigned_in_sprint"]["days"]
+    n = 0
+    for sprint in _active_sprints(session, space.business_project_id):
+        tasks = list(
+            session.scalars(
+                _open_tasks(session, space.business_project_id)
+                .where(
+                    Task.sprint_id == sprint.id,
+                    Task.assignee_id.is_(None),
+                    Task.created_at < tick.now - timedelta(days=days),
+                )
+                .order_by(Task.rank, Task.id)
+            )
+        )
+        if not tasks:
+            continue
+        told_before = set(
+            session.scalars(
+                select(TaskRuleRun.task_id).where(
+                    TaskRuleRun.rule == "unassigned_in_sprint",
+                    TaskRuleRun.task_id.in_([t.id for t in tasks]),
+                    TaskRuleRun.dry_run.is_(False),
+                    TaskRuleRun.action == "notify",
+                    TaskRuleRun.detail["sprint_id"].as_integer() == sprint.id,
+                )
+            )
+        )
+        new = [t for t in tasks if t.id not in told_before]
+        if not new:
+            continue
+        who = _tell_managers(
+            session,
+            space,
+            "unassigned_in_sprint",
+            new,
+            title_one=f"{new[0].key} chưa có người làm sau {days} ngày trong {sprint.name}",
+            title_many=f"{len(new)} task chưa có người làm trong {sprint.name}",
+            body=new[0].title if len(new) == 1 else None,
+            ref=f"auto:unassigned_in_sprint:{sprint.id}:{tick.now.isoformat()}",
+        )
+        if not who:
+            continue
+        for task in new:
+            log_run(
+                session,
+                space.business_project_id,
+                "unassigned_in_sprint",
+                task,
+                "notify",
+                users=who,
+                sprint_id=sprint.id,
+            )
+        n += len(new)
+    return n
+
+
 # -- the parent asks to close its sub-tasks (parent_done_ask) -------------------------------------
 
 
@@ -769,25 +1531,64 @@ MUTABLE_KINDS = {
     "task.alert": "Cảnh báo tự động",
 }
 DIGEST_KIND = "task.digest"
+# The daily summary (§20.5): always delivered (its own time is the person's choice).
+SUMMARY_KIND = "task.summary"
+ALWAYS_NOW = frozenset({DIGEST_KIND, SUMMARY_KIND})
+# Past quiet hours and the digest (a "highest" bug, code with open critical findings, ...);
+# "off" still mutes it.
+URGENT_KIND = "task.alert"
+CHANNELS = ("inbox", "telegram", "off")
+SUMMARY_KEY = "task_notify_summary:{}"  # the local day of the last summary, apart from prefs
+SUMMARY_TIME = "17:30"
 MAX_HELD = 300
+TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+
+
+def default_summary() -> dict[str, Any]:
+    return {"on": False, "time": SUMMARY_TIME, "channel": "inbox"}
 
 
 def default_prefs() -> dict[str, Any]:
-    return {"mode": "immediate", "quiet_hours": None, "kinds": []}
+    return {
+        "mode": "immediate",
+        "quiet_hours": None,
+        "kinds": [],
+        "channels": {},
+        "summary": default_summary(),
+    }
+
+
+def _merge(value: dict[str, Any] | None) -> dict[str, Any]:
+    prefs = {**default_prefs(), **(value or {})}
+    prefs["summary"] = {**default_summary(), **(prefs.get("summary") or {})}
+    prefs["channels"] = dict(prefs.get("channels") or {})
+    return prefs
 
 
 def prefs_of(session: Session, user_id: int) -> dict[str, Any]:
     row = session.get(AppSetting, PREFS_KEY.format(user_id))
-    return {**default_prefs(), **(row.value if row is not None and row.value else {})}
+    return _merge(row.value if row is not None and row.value else None)
 
 
-def prefs_out(prefs: dict[str, Any]) -> dict[str, Any]:
+def channel_of(prefs: dict[str, Any], kind: str) -> str:
+    """inbox | telegram | off for one task kind ("off" is the muted list of §19.7)."""
+    if kind in prefs.get("kinds", []):
+        return "off"
+    chosen = (prefs.get("channels") or {}).get(kind)
+    return "telegram" if chosen == "telegram" else "inbox"
+
+
+def prefs_out(prefs: dict[str, Any], linked: bool = False) -> dict[str, Any]:
     return {
         "mode": prefs["mode"],
         "quiet_hours": prefs["quiet_hours"],
         "kinds": prefs["kinds"],
         "kind_labels": MUTABLE_KINDS,
         "send_hour": SEND_HOUR,
+        "channels": {k: channel_of(prefs, k) for k in MUTABLE_KINDS},
+        "urgent_kind": URGENT_KIND,
+        "summary": prefs["summary"],
+        "telegram_linked": linked,
     }
 
 
@@ -813,6 +1614,44 @@ def set_prefs(session: Session, user_id: int, body: dict[str, Any]) -> dict[str,
         if bad:
             raise HTTPException(422, f"loại không tắt được: {bad}")
         prefs["kinds"] = sorted(set(kinds))
+    linked: bool | None = None
+
+    def need_telegram() -> None:
+        nonlocal linked
+        if linked is None:
+            linked = telegram_linked(session, user_id)
+        if not linked:
+            raise HTTPException(422, "chưa liên kết Telegram (trang Của tôi → Telegram)")
+
+    if body.get("channels") is not None:
+        channels = body["channels"]
+        if not isinstance(channels, dict):
+            raise HTTPException(422, "channels là {loại: inbox | telegram | off}")
+        kinds_set = set(prefs["kinds"])
+        stored = dict(prefs["channels"])
+        for kind, value in channels.items():
+            if kind not in MUTABLE_KINDS or value not in CHANNELS:
+                raise HTTPException(422, f"kênh không hợp lệ: {kind} = {value}")
+            if value == "telegram":
+                need_telegram()
+            if value == "off":
+                kinds_set.add(kind)
+            else:
+                kinds_set.discard(kind)
+                stored[kind] = value
+        prefs["kinds"] = sorted(kinds_set)
+        prefs["channels"] = stored
+    if body.get("summary") is not None:
+        summary = {**prefs["summary"], **body["summary"]}
+        if not isinstance(summary.get("on"), bool):
+            raise HTTPException(422, "summary.on phải là true / false")
+        if not isinstance(summary.get("time"), str) or not TIME_RE.match(summary["time"]):
+            raise HTTPException(422, "summary.time là HH:MM")
+        if summary.get("channel") not in ("inbox", "telegram"):
+            raise HTTPException(422, "summary.channel là inbox hoặc telegram")
+        if summary["channel"] == "telegram" and summary["on"]:
+            need_telegram()
+        prefs["summary"] = {k: summary[k] for k in ("on", "time", "channel")}
     key = PREFS_KEY.format(user_id)
     row = session.get(AppSetting, key)
     if row is None:
@@ -832,10 +1671,12 @@ def in_quiet(quiet: list[int] | None, hour: int) -> bool:
 
 def should_deliver(prefs: dict[str, Any], kind: str, local: datetime) -> str:
     """now | hold | drop, for one person's preferences at their local time."""
-    if not kind.startswith("task.") or kind == DIGEST_KIND:
+    if not kind.startswith("task.") or kind in ALWAYS_NOW:
         return "now"
     if kind in prefs.get("kinds", []):
         return "drop"
+    if kind == URGENT_KIND:
+        return "now"
     if prefs.get("mode") == "digest" or in_quiet(prefs.get("quiet_hours"), local.hour):
         return "hold"
     return "now"
@@ -851,25 +1692,25 @@ def deliver_now(
     link: str | None,
     tone: str,
     ref: str | None,
-) -> list[int]:
-    """Called by `inbox.notify` for task kinds: who gets it now; the others' are held or
-    dropped by their preferences."""
-    if not user_ids or not kind.startswith("task.") or kind == DIGEST_KIND:
-        return user_ids
+) -> dict[int, str]:
+    """Called by `inbox.notify` for task kinds: who gets it now, with the channel (inbox |
+    telegram); the others' are held or dropped by their preferences."""
+    if not user_ids or not kind.startswith("task.") or kind in ALWAYS_NOW:
+        return {u: "inbox" for u in user_ids}
     keys = [PREFS_KEY.format(u) for u in user_ids]
     stored = {
         row.key: row.value
         for row in session.scalars(select(AppSetting).where(AppSetting.key.in_(keys)))
     }
     if not stored:
-        return user_ids
+        return {u: "inbox" for u in user_ids}
     local = datetime.now(_tz())
-    now: list[int] = []
+    now: dict[int, str] = {}
     for user_id in user_ids:
-        prefs = {**default_prefs(), **(stored.get(PREFS_KEY.format(user_id)) or {})}
+        prefs = _merge(stored.get(PREFS_KEY.format(user_id)))
         decision = should_deliver(prefs, kind, local)
         if decision == "now":
-            now.append(user_id)
+            now[user_id] = channel_of(prefs, kind)
         elif decision == "hold":
             _hold(
                 session,
@@ -999,3 +1840,121 @@ def _parse_at(value: Any) -> datetime | None:
         return datetime.fromisoformat(str(value)) if value else None
     except ValueError:
         return None
+
+
+# -- the daily summary (§20.5) --------------------------------------------------------------------
+
+
+def summary_content(session: Session, user_id: int, local: datetime) -> dict[str, Any] | None:
+    """Done today, still overdue, MRs waiting for my review (Việc của tôi, app/tasks/mywork.py);
+    None when the person cannot see tasks or there is nothing to say."""
+    from app.api.security import load_principal
+    from app.config import get_settings
+    from app.tasks.mywork import _visible_spaces, my_work
+
+    try:
+        principal = load_principal(session, user_id, get_settings())
+    except HTTPException:
+        return None
+    if not principal.can("tasks.view"):
+        return None
+    tz = local.tzinfo if isinstance(local.tzinfo, ZoneInfo) else _tz()
+    work = my_work(session, principal, tz)
+    overdue = [a["task"]["key"] for a in work["attention"] if a["kind"] == "overdue"]
+    reviews = [
+        f"{str(a['mr']['project']).rsplit('/', 1)[-1]} !{a['mr']['iid']}"
+        for a in work["attention"]
+        if a["kind"] == "review"
+    ]
+    midnight = datetime.combine(local.date(), time.min, tz)
+    spaces = _visible_spaces(session, principal)
+    done = list(
+        session.scalars(
+            select(Task.key)
+            .join(TaskStatus, TaskStatus.id == Task.status_id)
+            .where(
+                Task.assignee_id == user_id,
+                Task.business_project_id.in_(spaces),
+                TaskStatus.category == "done",
+                Task.resolved_at >= midnight,
+                or_(Task.resolution.is_(None), Task.resolution == "done"),
+            )
+            .order_by(Task.resolved_at)
+        )
+    )
+    if not (done or overdue or reviews):
+        return None
+    return {"done": done, "overdue": overdue, "reviews": reviews}
+
+
+def _keys(items: list[str], limit: int = 6) -> str:
+    return ", ".join(items[:limit]) + (" …" if len(items) > limit else "")
+
+
+def send_summaries(session: Session, now: datetime | None = None) -> int:
+    """Each person who turned the summary on gets it once a day, from their time (the first
+    tick at or after it), in the inbox and, when chosen, on Telegram."""
+    now = now or datetime.now(UTC)
+    local = now.astimezone(_tz())
+    today = local.date().isoformat()
+    sent = 0
+    for row in list(
+        session.scalars(select(AppSetting).where(AppSetting.key.like("task_notify:%")))
+    ):
+        summary = _merge(row.value if isinstance(row.value, dict) else None)["summary"]
+        match = TIME_RE.match(str(summary.get("time") or ""))
+        if not summary.get("on") or match is None:
+            continue
+        if (local.hour, local.minute) < (int(match.group(1)), int(match.group(2))):
+            continue
+        user_id = int(row.key.rsplit(":", 1)[1])
+        try:
+            # One person's failure neither stops nor rolls back the others' (nor their marks).
+            with session.begin_nested():
+                sent += _summary_for(session, user_id, summary, local, today)
+        except Exception:
+            log.exception("task summary failed", extra={"user_id": user_id})
+    session.flush()
+    return sent
+
+
+def _summary_for(
+    session: Session, user_id: int, summary: dict[str, Any], local: datetime, today: str
+) -> int:
+    from app.notifications.inbox import notify
+
+    day = session.get(AppSetting, SUMMARY_KEY.format(user_id))
+    if day is not None and day.value == today:
+        return 0
+    if day is None:
+        session.add(AppSetting(key=SUMMARY_KEY.format(user_id), value=today))
+    else:
+        day.value = today
+    session.flush()
+    content = summary_content(session, user_id, local)
+    if content is None:
+        return 0
+    done, overdue, reviews = content["done"], content["overdue"], content["reviews"]
+    parts = []
+    if done:
+        parts.append(f"Xong: {_keys(done)}")
+    if overdue:
+        parts.append(f"Quá hạn: {_keys(overdue)}")
+    if reviews:
+        parts.append(f"Chờ bạn review: {_keys(reviews)}")
+    rows = notify(
+        session,
+        [user_id],
+        kind=SUMMARY_KIND,
+        title=(
+            f"Tóm tắt {local:%d/%m}: {len(done)} xong, {len(overdue)} quá hạn, "
+            f"{len(reviews)} MR chờ review"
+        ),
+        body=" · ".join(parts),
+        link="/tasks/me",
+        tone="warn" if overdue else "info",
+        ref=f"summary:{today}",
+    )
+    if rows and summary.get("channel") == "telegram":
+        queue_telegram(session, rows)
+    return 1

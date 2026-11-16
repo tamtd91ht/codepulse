@@ -2,16 +2,26 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { Card, Loading, Message, Pill } from "@/components/ui";
+import { Card, Loading, Message, Pill, Segmented } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
-import type { TaskSpace } from "@/lib/types";
+import { relative } from "@/lib/format";
+import type { TaskRuleDryRun, TaskRuleRunRow, TaskSpace } from "@/lib/types";
 
 import { errorText } from "./taskParts";
 
-/* Quy tắc tự động (docs/specs/31 §19.7): a fixed library of rules, each on/off per dự án, some with one number. */
+/* Quy tắc tự động (docs/specs/31 §19.7, §20.5): a fixed library of rules, each on/off per dự án, some with one
+ * number; "Chạy thử" shows what a scheduled rule would do now; "Nhật ký" lists what the rules did. */
 
 type RuleParam = { key: string; label: string; value: number; default: number; min: number; max: number; unit: string };
-type Rule = { key: string; title: string; hint: string; trigger: "ui" | "event" | "schedule"; on: boolean; params: RuleParam[] };
+type Rule = {
+  key: string;
+  title: string;
+  hint: string;
+  trigger: "ui" | "event" | "schedule";
+  on: boolean;
+  params: RuleParam[];
+  can_dry_run?: boolean;
+};
 type AutomationOut = { rules: Rule[]; can_manage: boolean };
 type Draft = Record<string, { on: boolean } & Record<string, number | boolean>>;
 
@@ -31,8 +41,118 @@ function draftOf(rules: Rule[]): Draft {
   return out;
 }
 
+const ACTION_LABEL: Record<string, string> = {
+  notify: "Báo",
+  assign: "Giao người làm",
+  move: "Chuyển trạng thái",
+  set_version: "Gắn phiên bản",
+  skipped: "Bỏ qua",
+  failed: "Lỗi",
+  dry_run: "Chạy thử",
+};
+
+function detailText(action: string, detail: Record<string, unknown>): string {
+  if (action === "dry_run") return `${Number(detail.count ?? 0)} tác động`;
+  if (action === "move" && detail.to) return `→ ${String(detail.to)}`;
+  if (action === "set_version" && detail.version) return `${String(detail.version)} (${String(detail.branch ?? "")})`;
+  if (action === "skipped" && detail.why) return String(detail.why);
+  if (detail.title) return String(detail.title);
+  if (detail.sprint) return String(detail.sprint);
+  if (Array.isArray(detail.users)) return `${detail.users.length} người`;
+  return "";
+}
+
+function RuleLog({ path, rules }: { path: string; rules: Rule[] }) {
+  const { data, error, mutate } = useApi<{ items: TaskRuleRunRow[] }>(`${path}/log?limit=100`);
+  const [rule, setRule] = useState("");
+  if (!data) return <Loading error={error} rows={4} />;
+  const items = rule ? data.items.filter((i) => i.rule === rule) : data.items;
+  return (
+    <div className="nr-log">
+      <div className="nr-log-head">
+        <label className="nr-log-filter">
+          <span className="small muted">Quy tắc</span>
+          <select value={rule} onChange={(e) => setRule(e.target.value)} aria-label="Lọc theo quy tắc">
+            <option value="">Tất cả</option>
+            {rules.map((r) => (
+              <option key={r.key} value={r.key}>
+                {r.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="button" className="ghost sm" onClick={() => void mutate()}>
+          Tải lại
+        </button>
+      </div>
+      {items.length === 0 ? (
+        <p className="small muted">Chưa có lần chạy nào{rule ? " của quy tắc này" : ""}.</p>
+      ) : (
+        <div className="table-wrap">
+          <table className="nr-log-table">
+            <thead>
+              <tr>
+                <th>Lúc</th>
+                <th>Quy tắc</th>
+                <th>Task</th>
+                <th>Làm gì</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((i) => (
+                <tr key={i.id} className={i.dry_run ? "nr-dry" : undefined}>
+                  <td className="small" title={i.at ?? undefined}>
+                    {i.at ? relative(i.at) : "—"}
+                  </td>
+                  <td>{i.rule_title}</td>
+                  <td>{i.task_key ? <a href={`/tasks?task=${i.task_key}`}>{i.task_key}</a> : "—"}</td>
+                  <td>
+                    <Pill tone={i.dry_run ? "info" : i.action === "skipped" || i.action === "failed" ? "warn" : "good"}>
+                      {ACTION_LABEL[i.action] ?? i.action}
+                    </Pill>{" "}
+                    <span className="small muted">{detailText(i.action, i.detail)}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DryRunResult({ result, onClose }: { result: TaskRuleDryRun; onClose: () => void }) {
+  return (
+    <div className="nr-dry-result" role="status">
+      <div className="nr-dry-head">
+        <strong className="small">
+          {result.count ? `Chạy thử: ${result.count} tác động nếu chạy bây giờ` : "Chạy thử: bây giờ quy tắc không tác động tới task nào"}
+        </strong>
+        <button type="button" className="ghost sm" onClick={onClose}>
+          Đóng
+        </button>
+      </div>
+      {result.items.length > 0 && (
+        <ul className="nr-dry-list small">
+          {result.items.map((item, n) => (
+            <li key={n}>
+              <strong>{item.task_key ?? "—"}</strong> · {ACTION_LABEL[item.action] ?? item.action}{" "}
+              <span className="muted">{detailText(item.action, item)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="small muted">Không đổi gì, không gửi gì; chỉ ghi một dòng "Chạy thử" vào nhật ký.</p>
+    </div>
+  );
+}
+
 export function TaskAutomation({ space }: { space: TaskSpace }) {
   const path = `/tasks/spaces/${space.business_project_id}/automation`;
+  const [view, setView] = useState<"rules" | "log">("rules");
+  const [dry, setDry] = useState<Record<string, TaskRuleDryRun>>({});
+  const [trying, setTrying] = useState<string | null>(null);
   const { data, error, mutate } = useApi<AutomationOut>(path);
   const initial = useMemo(() => (data ? draftOf(data.rules) : {}), [data]);
   const [draft, setDraft] = useState<Draft>({});
@@ -44,6 +164,18 @@ export function TaskAutomation({ space }: { space: TaskSpace }) {
 
   function patch(key: string, change: Record<string, number | boolean>) {
     setDraft((d) => ({ ...d, [key]: { ...d[key], ...change } }));
+  }
+
+  async function tryRule(key: string) {
+    setTrying(key);
+    setMessage(null);
+    try {
+      const result = await api.post<TaskRuleDryRun>(`${path}/${key}/dry-run`, {});
+      setDry((d) => ({ ...d, [key]: result }));
+    } catch (e) {
+      setMessage(`Lỗi: ${errorText(e)}`);
+    }
+    setTrying(null);
   }
 
   async function save() {
@@ -77,8 +209,21 @@ export function TaskAutomation({ space }: { space: TaskSpace }) {
       subtitle="Bật các quy tắc có sẵn cho dự án. Tự động chạy dưới tên hệ thống, theo luồng trạng thái của dự án; nhắc việc mỗi task tối đa một lần mỗi ngày."
     >
       {message && <Message text={message} onClose={() => setMessage(null)} />}
+      <div className="nr-view">
+        <Segmented
+          label="Xem"
+          value={view}
+          onChange={setView}
+          options={[
+            { value: "rules", label: "Quy tắc" },
+            { value: "log", label: "Nhật ký" },
+          ]}
+        />
+      </div>
       {!data ? (
         <Loading error={error} rows={4} />
+      ) : view === "log" ? (
+        <RuleLog path={path} rules={data.rules} />
       ) : (
         <>
           <ul className="ta-list">
@@ -98,6 +243,17 @@ export function TaskAutomation({ space }: { space: TaskSpace }) {
                     <strong>{r.title}</strong>
                     <Pill tone={TRIGGER[r.trigger].tone}>{TRIGGER[r.trigger].label}</Pill>
                   </label>
+                  {canManage && r.can_dry_run && (
+                    <button
+                      type="button"
+                      className="ghost sm nr-try"
+                      disabled={trying !== null}
+                      onClick={() => void tryRule(r.key)}
+                      title="Xem quy tắc sẽ tác động tới những task nào nếu chạy bây giờ (không đổi gì)"
+                    >
+                      {trying === r.key ? "Đang chạy thử…" : "Chạy thử"}
+                    </button>
+                  )}
                   <p id={`ta-hint-${r.key}`} className="ta-hint small muted">
                     {r.hint}
                   </p>
@@ -119,6 +275,17 @@ export function TaskAutomation({ space }: { space: TaskSpace }) {
                         </label>
                       ))}
                     </div>
+                  )}
+                  {dry[r.key] && (
+                    <DryRunResult
+                      result={dry[r.key]}
+                      onClose={() =>
+                        setDry((d) => {
+                          const { [r.key]: _gone, ...rest } = d;
+                          return rest;
+                        })
+                      }
+                    />
                   )}
                 </li>
               );
