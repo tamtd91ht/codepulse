@@ -15797,3 +15797,75 @@ a.icon-btn {
 .tk-health-muted {
   color: var(--muted);
 }
+
+/* Quy tắc tự động, thông báo Task (docs/specs/31 §19.7). */
+.ta-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+  gap: 10px;
+}
+.ta-rule {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ta-rule.on {
+  border-color: var(--good);
+  background: var(--good-soft);
+}
+.ta-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  cursor: pointer;
+}
+.ta-hint {
+  margin: 0;
+}
+.ta-params,
+.ta-hours,
+.ta-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+.ta-param {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ta-param input {
+  width: 84px;
+}
+.ta-prefs {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ta-field {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ta-bad {
+  color: var(--bad-text);
+}
+.ta-sublist {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

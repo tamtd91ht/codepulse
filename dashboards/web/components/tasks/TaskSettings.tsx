@@ -23,6 +23,7 @@ import {
   sortedStatuses,
   useTaskFields,
 } from "./taskParts";
+import { TaskAutomation } from "./TaskAutomation";
 
 /* Cài đặt (§13, tasks.manage): key, types, statuses and their transitions, priorities (§18), git rules, custom fields. */
 
@@ -127,6 +128,7 @@ export function TaskSettings({ space }: { space: TaskSpace }) {
       <RulesCard key={`r${space.business_project_id}`} space={space} />
       <FieldsCard key={`f${space.business_project_id}`} space={space} />
       <JiraImportCard key={`j${space.business_project_id}`} space={space} />
+      <TaskAutomation key={`a${space.business_project_id}`} space={space} />
     </div>
   );
 }

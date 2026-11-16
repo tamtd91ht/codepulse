@@ -481,3 +481,48 @@ P5 Mở rộng. Mỗi giai đoạn là một mục con bên dưới, ghi cả qu
   mong đợi / thực tế, môi trường. Đổi loại thì đổi mẫu khi mô tả còn nguyên mẫu.
 - Chưa làm ở P2: cập nhật lạc quan + "Hoàn tác 5 giây" cho mọi thao tác (Board đã cập nhật lạc quan khi
   kéo thả), phím tắt E/A/S/C (để P5).
+
+### 19.7 P4 – Quy tắc tự động, thông báo (không migration)
+- **Thư viện quy tắc, không có bộ dựng quy tắc tự do.** Mỗi quy tắc bật / tắt theo dự án, vài quy tắc có
+  một tham số; lưu ở `task_spaces.rules["automation"]` dạng `{quy_tắc: {"on": bool, ...}}`
+  (`app/tasks/automation.py`). `GET /tasks/spaces/{bp}/automation` (`tasks.view`), `PUT` (`tasks.manage`,
+  chỉ gửi quy tắc cần đổi; tên / tham số lạ → 422; audit `task.automation`). Task › Cài đặt › **Quy tắc
+  tự động**: công tắc, mô tả ngắn, ô số cho tham số. Form "Luật đồng bộ git" gửi lại cả `rules` nên
+  `PUT /tasks/spaces/{bp}` bỏ qua khoá `automation`.
+- **Các quy tắc** (mặc định tắt hết trừ quy tắc giao diện, để dự án cũ không bỗng bị nhắc):
+
+  | Khoá | Khi nào | Làm gì |
+  |---|---|---|
+  | `parent_done_ask` (bật sẵn) | Chuyển task cha sang nhóm Xong khi còn sub-task mở | Hỏi đóng luôn các sub-task. `GET /tasks/{key}/open-subtasks`, `POST /tasks/{key}/close-subtasks {resolution}` (409 khi quy tắc tắt hoặc task cha chưa ở nhóm Xong): đóng sub-task người bấm được chuyển trạng thái, sang trạng thái "xong" của luật git (không xét luồng chuyển; cổng critical vẫn chặn, trả về trong `skipped`). Hộp hỏi `ParentDoneAsk.tsx` có sẵn, **chưa gắn vào TaskDetail** (ngoài phạm vi file lần này). |
+  | `subtasks_done_review` | Sub-task cuối cùng của task cha vào nhóm Xong | Task cha đang ở Cần làm / Đang làm sang trạng thái "review" của luật git (theo luồng chuyển; luồng cấm thì bỏ qua). |
+  | `assign_on_start` | Task chưa giao vào nhóm Đang làm, người chuyển là người (web / MCP) | Giao cho người chuyển. |
+  | `bug_highest_notify` | Tạo Bug có ưu tiên mức "highest" | Báo người có quyền dự án `manage` (Lead / Manager) trong hộp thư (`task.alert`); bot Telegram của dự án có `allowed_chat_ids` thì đăng vào các chat đó (job RQ sau khi commit). Bot trả lời mọi chat (không ghi chat) thì không đăng: không biết nhóm nào. |
+  | `critical_reassign` | Task vào trạng thái review / nhóm Xong, và mỗi ngày với task mở có code | Code của task còn finding critical mở → báo người làm. **Không tự đổi người làm**: người viết code là người sửa nhanh nhất, đổi người tự động làm mất dấu trách nhiệm và giẫm lên phân công của lead. |
+  | `unblock_notify` | Task "blocks" task khác vào nhóm Xong và task kia không còn gì chặn | Báo người làm của task kia. |
+  | `review_stale_remind` (giờ, mặc định 48) | Hằng ngày | Task nằm ở trạng thái review lâu hơn N giờ (`status_changed_at`) → nhắc người làm và người tạo. |
+  | `overdue_remind` | Hằng ngày | Task mở quá hạn → nhắc người làm. |
+  | `due_soon_remind` (ngày, mặc định 1) | Hằng ngày | Task mở tới hạn trong N ngày → nhắc người làm. |
+
+- **Tự động là hệ thống:** lịch sử không có người (`user_id` null, `via` web), thay đổi đi qua đúng hàm
+  của service (luồng chuyển, cổng critical). Một quy tắc không bao giờ kích hoạt chính nó hay quy tắc khác
+  trong cùng lời gọi (`ContextVar`, an toàn giữa các luồng của API). Mỗi quy tắc chạy trong SAVEPOINT: lỗi
+  chỉ huỷ phần của nó, không huỷ thao tác của người dùng. Móc vào `service.set_status` (sau khi đổi, trước
+  flush) và `service.create_task` (cuối hàm).
+- **Nhắc tối đa một lần mỗi task, người, ngày:** `ref` của thông báo là `auto:<rule>:<task id>:<ngày địa
+  phương>`, tìm trong lịch sử và trong thông báo đang giữ trước khi ghi. Nhắc từ 08:00 (REPORT_TZ). Job
+  scheduler `task-automation` mỗi 15 phút (`app/workers/task_automation_jobs.py`).
+- **Thông báo đúng lúc (cài đặt của từng người):** `app_settings` khoá `task_notify:<user id>` (không cần
+  migration): `mode` `immediate | digest`, `quiet_hours` `[bắt đầu, kết thúc)` giờ địa phương (qua nửa đêm
+  được), `kinds` loại tắt trong `task.assigned, task.status, task.commented, task.mentioned, task.remind,
+  task.alert`. `GET/PUT /me/task-notify`; giao diện ở trang **Thông báo** (thẻ "Thông báo Task", chỉ khi có
+  `tasks.view`).
+  - Áp dụng ở `app.notifications.inbox.notify` cho mọi loại `task.*` (nên `service.tell` không đổi): loại
+    tắt → bỏ; chế độ gộp hoặc giờ yên lặng → **giữ** (`app_settings` `task_notify_held:<user id>`, thêm
+    nguyên tử bằng `INSERT … ON CONFLICT … value || excluded.value`). Thông báo review / khiếu nại không bị ảnh hưởng.
+  - Job mỗi 15 phút: chế độ gộp gửi mỗi ngày một lần từ 08:00 (ngoài giờ yên lặng); chế độ ngay chỉ có thông
+    báo bị giữ vì giờ yên lặng, gửi khi hết giờ. Thông báo đang giữ vào lịch sử dạng **đã đọc** (giữ thời
+    điểm gốc), cộng **một** thông báo chưa đọc `task.digest` "N cập nhật trên CRM-2, CRM-5 …" (mở thẳng task
+    khi chỉ có một task). Giữ tối đa 300 mục mỗi người (bỏ mục cũ nhất khi thêm). Ngày gửi bản gộp gần nhất ở khoá riêng `task_notify_digest:<user id>`; job khoá hàng đang giữ bằng `SKIP LOCKED` (không chờ, không deadlock với request đang thêm); mỗi dự án chạy trong SAVEPOINT riêng.
+- Chưa làm: gắn `ParentDoneAsk` vào chi tiết task; nhãn / biểu tượng cho các loại `task.*` trong
+  `KIND_LABEL` của chuông (đã thiếu từ trước, áp dụng cho mọi loại task); múi giờ riêng từng người (dùng
+  REPORT_TZ).

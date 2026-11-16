@@ -127,6 +127,21 @@ def notify(
     active = set(
         session.scalars(select(User.id).where(User.id.in_(targets), User.active.is_not(False)))
     )
+    if kind.startswith("task."):  # per-person preferences: muted / held for a digest (31 §19.7)
+        from app.tasks.automation import deliver_now
+
+        active = set(
+            deliver_now(
+                session,
+                [u for u in targets if u in active],
+                kind=kind,
+                title=title,
+                body=body,
+                link=link,
+                tone=tone,
+                ref=ref,
+            )
+        )
     rows = [
         UserNotification(
             user_id=user_id,
