@@ -13,6 +13,7 @@ import { stethoHome } from "@/components/StethoTabs";
 import { REVIEW_MENU, underReviewMenu } from "@/components/ReviewTabs";
 import { RAIL_KEY, ThemeToggle } from "@/components/theme";
 import { UserMenu } from "@/components/UserMenu";
+import { openPalette, toggleShortcutHelp } from "@/components/tasks/shortcutEvents";
 import { can, managesAnyProject, setupProjects, useApi } from "@/lib/api";
 import type { Me } from "@/lib/types";
 
@@ -250,6 +251,19 @@ export function AppShell({ children }: { children: ReactNode }) {
           <span className="spacer" />
           {/* Global actions sit top right on every width (omicx-ui app shell). */}
           <div className="topbar-actions">
+            {/* docs/specs/31 §20.2: the palette and the shortcuts, visible (not only by keyboard). */}
+            {me && (
+              <button type="button" className="qk-find" onClick={() => openPalette("all")} aria-keyshortcuts="Control+K" title="Tìm task, chạy lệnh (Ctrl+K)">
+                <Icon name="search" size={16} />
+                <span className="qk-find-text">Tìm / lệnh</span>
+                <kbd className="qk-find-kbd">Ctrl K</kbd>
+              </button>
+            )}
+            {me && (
+              <button type="button" className="icon-btn qk-help-btn" onClick={toggleShortcutHelp} aria-label="Phím tắt (?)" data-tip="Phím tắt (?)" aria-keyshortcuts="?">
+                <span aria-hidden="true">?</span>
+              </button>
+            )}
             {me && <NotificationBell />}
             <ThemeToggle />
             {me && <UserMenu me={me} role={role} />}

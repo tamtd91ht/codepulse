@@ -1,12 +1,19 @@
 "use client";
 
-import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef } from "react";
+
+import { can } from "@/lib/api";
+import type { Me } from "@/lib/types";
+
+import { dialogOpen, openPalette, typingIn } from "./shortcutEvents";
 
 /*
- * Keyboard shortcuts on a task (docs/specs/31 §19.8). Each finds its target by a stable
- * `data-shortcut="..."` attribute, so the detail's components need no wiring. Never fires while
- * typing (input, textarea, select, contenteditable), with Ctrl / Alt / Meta held, or behind a
- * dialog.
+ * Keyboard shortcuts (docs/specs/31 §19.8, §20.2). Global ones (N, /, G B, G M, ?) run on every
+ * page from the command palette's mount; the task ones (E, A, S, C, .) run while a task is open and
+ * find their target by a stable `data-shortcut="..."` attribute, so the detail's components need no
+ * wiring. None fires while typing (input, textarea, select, contenteditable), with Ctrl / Alt / Meta
+ * held, or behind a dialog.
  */
 
 export interface TaskShortcut {
@@ -14,21 +21,22 @@ export interface TaskShortcut {
   label: string;
 }
 
+export const GLOBAL_SHORTCUTS: TaskShortcut[] = [
+  { keys: ["Ctrl", "K"], label: "Mở bảng lệnh (task, trang, lệnh)" },
+  { keys: ["/"], label: "Tìm task" },
+  { keys: ["N"], label: "Tạo task" },
+  { keys: ["G", "B"], label: "Mở Board" },
+  { keys: ["G", "M"], label: "Mở Việc của tôi" },
+  { keys: ["?"], label: "Hiện / ẩn danh sách phím tắt" },
+];
+
 export const TASK_SHORTCUTS: TaskShortcut[] = [
   { keys: ["E"], label: "Sửa mô tả" },
   { keys: ["A"], label: "Chọn người làm" },
   { keys: ["S"], label: "Chọn trạng thái" },
   { keys: ["C"], label: "Viết bình luận" },
-  { keys: ["."], label: "Mở bảng lệnh (như Ctrl+K)" },
-  { keys: ["?"], label: "Hiện / ẩn danh sách phím tắt" },
-  { keys: ["Esc"], label: "Đóng danh sách phím tắt" },
+  { keys: ["."], label: "Mở bảng lệnh với lệnh trên task" },
 ];
-
-function typing(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  return !!target.closest("input, textarea, select, [contenteditable=''], [contenteditable='true']");
-}
 
 function find(name: string): HTMLElement | null {
   const el = document.querySelector<HTMLElement>(`[data-shortcut="${name}"]`);
@@ -41,21 +49,14 @@ function focus(el: HTMLElement) {
   el.focus({ preventScroll: true });
 }
 
-/** Runs the shortcuts; `onHelp` toggles the "?" overlay. */
-export function useTaskShortcuts(onHelp: () => void, enabled = true) {
+const plain = (e: KeyboardEvent) => !(e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) && !typingIn(e.target);
+
+/** The task shortcuts (E, A, S, C, .); mounted by the task detail. */
+export function useTaskShortcuts(enabled = true) {
   useEffect(() => {
     if (!enabled) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
-      if (typing(e.target)) return;
-      // "?" needs Shift on most layouts; any other key with Shift is left alone.
-      if (e.key === "?") {
-        e.preventDefault();
-        onHelp();
-        return;
-      }
-      if (e.shiftKey) return;
-      if (document.querySelector(".modal-backdrop, .cmdk-backdrop")) return;
+      if (!plain(e) || e.shiftKey || dialogOpen()) return;
       const key = e.key.toLowerCase();
       let el: HTMLElement | null = null;
       if (key === "e") {
@@ -73,7 +74,7 @@ export function useTaskShortcuts(onHelp: () => void, enabled = true) {
       }
       if (key === ".") {
         e.preventDefault();
-        window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
+        openPalette("all");
         return;
       }
       const target = ({ a: "assignee", s: "status", c: "comment" } as Record<string, string>)[key];
@@ -85,5 +86,56 @@ export function useTaskShortcuts(onHelp: () => void, enabled = true) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onHelp, enabled]);
+  }, [enabled]);
+}
+
+/** A second key of "G …" counts within this many ms. */
+const CHORD_MS = 1500;
+
+/**
+ * The global shortcuts. `onHelp` toggles the "?" overlay; `helpOpen` lets "?" close it although it
+ * is a dialog. N needs tasks.create, G B / G M / and the search need tasks.view.
+ */
+export function useGlobalShortcuts(me: Me, onHelp: () => void, helpOpen: boolean) {
+  const router = useRouter();
+  const chord = useRef(0);
+  useEffect(() => {
+    const tasks = can(me, "tasks.view");
+    const onKey = (e: KeyboardEvent) => {
+      if (!plain(e)) return;
+      // "?" needs Shift on most layouts; any other key with Shift is left alone.
+      if (e.key === "?") {
+        if (dialogOpen() && !helpOpen) return;
+        e.preventDefault();
+        onHelp();
+        return;
+      }
+      if (e.shiftKey || dialogOpen()) return;
+      const key = e.key.toLowerCase();
+      const afterG = Date.now() - chord.current < CHORD_MS;
+      chord.current = 0;
+      if (afterG && tasks && (key === "b" || key === "m")) {
+        e.preventDefault();
+        router.push(key === "b" ? "/tasks?tab=board" : "/tasks/me");
+        return;
+      }
+      if (key === "g" && tasks) {
+        chord.current = Date.now();
+        return;
+      }
+      if (key === "/" && tasks) {
+        e.preventDefault();
+        openPalette("search");
+        return;
+      }
+      if (key === "n" && can(me, "tasks.create")) {
+        e.preventDefault();
+        // Keep the dự án in view when already on the Task page.
+        const space = window.location.pathname === "/tasks" ? new URLSearchParams(window.location.search).get("space") : null;
+        router.push(space && /^\d+$/.test(space) ? `/tasks?space=${space}&create=1` : "/tasks?create=1");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [me, onHelp, helpOpen, router]);
 }

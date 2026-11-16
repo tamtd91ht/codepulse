@@ -94,6 +94,21 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
     setFilters(next);
   }
 
+  // A saved filter opened from Ctrl+K (`?filter=ID`, docs/specs/31 §20.2): applied once loaded.
+  const [pendingSaved, setPendingSaved] = useState<string | null>(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("filter");
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    if (!pendingSaved || !saved.data) return;
+    applySaved(pendingSaved);
+    setPendingSaved(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingSaved, saved.data]);
+
   async function deleteSaved() {
     if (!current) return;
     if (!(await ask({ title: `Xoá bộ lọc “${current.name}”?`, body: <p>Người khác đang dùng bộ lọc chia sẻ này cũng mất nó.</p>, ok: "Xoá", danger: true }))) return;
