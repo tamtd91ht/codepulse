@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import func, select, tuple_, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.api.security import Principal
 from app.avatars import avatar_url
@@ -1416,6 +1416,39 @@ def _num(value: Decimal | None) -> float | None:
     return None if value is None else float(value)
 
 
+def _blocked_and_closed(session: Session, ids: list[int]) -> tuple[set[int], set[int]]:
+    """Tasks an open task "blocks"; tasks whose linked MRs are all closed without merge."""
+    from app.models import TaskLink
+
+    blocker = aliased(Task)
+    blocked = {
+        int(i)
+        for (i,) in session.execute(
+            select(TaskLink.to_task_id)
+            .join(blocker, blocker.id == TaskLink.from_task_id)
+            .join(TaskStatus, TaskStatus.id == blocker.status_id)
+            .where(
+                TaskLink.kind == "blocks",
+                TaskLink.to_task_id.in_(ids),
+                TaskStatus.category != "done",
+            )
+        ).all()
+    }
+    states: dict[int, set[str]] = defaultdict(set)
+    for task_id, mr_state, link_state in session.execute(
+        select(TaskGitLink.task_id, MergeRequest.state, TaskGitLink.state)
+        .outerjoin(
+            MergeRequest,
+            (MergeRequest.project_id == TaskGitLink.project_id)
+            & (MergeRequest.iid == TaskGitLink.mr_iid),
+        )
+        .where(TaskGitLink.task_id.in_(ids), TaskGitLink.kind == "mr")
+    ).all():
+        states[int(task_id)].add(str(mr_state or link_state or "opened"))
+    closed = {i for i, s in states.items() if s == {"closed"}}
+    return blocked, closed
+
+
 def rows(session: Session, tasks: list[Task]) -> list[dict[str, Any]]:
     """TaskRow for each task (docs/specs/31 §8), in the order given."""
     if not tasks:
@@ -1452,6 +1485,7 @@ def rows(session: Session, tasks: list[Task]) -> list[dict[str, Any]]:
         if category == "done":
             subtasks[int(parent_id)]["done"] += int(n)
     git = git_summaries(session, ids)
+    blocked, mr_closed = _blocked_and_closed(session, ids)
     prio = priority_meta(session, {t.business_project_id for t in tasks})
     out = []
     for t in tasks:
@@ -1484,6 +1518,9 @@ def rows(session: Session, tasks: list[Task]) -> list[dict[str, Any]]:
                 "subtasks": dict(subtasks.get(t.id, {"done": 0, "total": 0})),
                 "rank": t.rank,
                 "git": git[t.id],
+                # §20.1: an open task blocks it; its MRs were all closed without merge.
+                "blocked": t.id in blocked,
+                "mr_closed": t.id in mr_closed,
                 "created_at": t.created_at.isoformat() if t.created_at else None,
                 "updated_at": t.updated_at.isoformat() if t.updated_at else None,
                 "resolved_at": t.resolved_at.isoformat() if t.resolved_at else None,

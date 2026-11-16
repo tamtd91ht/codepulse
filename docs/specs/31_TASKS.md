@@ -717,3 +717,44 @@ sprint đóng, tuỳ chọn thông báo ở trang Thông báo): đợt 2 sửa c
 - Chưa làm: Danh sách chưa đọc tham số `filter` / bộ lọc trên URL (bộ lọc đã lưu mở đúng dự án và tab Danh
   sách nhưng cần một sửa nhỏ trong `TaskList` để tự áp); hoàn tác sau lệnh của bảng lệnh (để mục Hoàn tác
   chung).
+
+### 20.1 Một màn hình
+
+Chi tiết task đủ ngữ cảnh trên một màn hình (roadmap đợt 2 §3.1, §3.3 phần huy hiệu). Không migration.
+
+- **Dòng thời gian** `GET /api/v1/tasks/{key}/timeline?types=comment,history,worklog,git,review,test,deploy&before=<iso>&limit=50`
+  (quyền `tasks.view` trên dự án của task; `app/tasks/timeline.py`, router `task_timeline.py` đứng trước
+  router `tasks`). Một danh sách, mới nhất trước, mỗi mục `{id, at, type, actor, text, link, data}`:
+  - `comment` (TaskComment, `data.body`, `data.can_edit`), `history` (TaskHistory), `worklog` (TaskWorklog,
+    xếp theo lúc ghi `created_at`; `data.day` là ngày được ghi).
+  - `git`: mỗi liên kết nhánh / commit / MR lúc được nối (`TaskGitLink.created_at`, người nối nếu nối tay);
+    MR thêm một mục lúc merge (`merged_at`) hoặc lúc đóng không merge (`closed_at`).
+  - `review`: mọi review `done` của commit / MR đã nối (lúc `finished_at`), điểm, số finding critical / high.
+  - `test`: kết quả mới nhất (có trạng thái) của từng test trong từng run, của các testcase nối với task
+    (`covers` hoặc `bug`); chỉ khi người xem có `tests.view`.
+  - `deploy`: lần lên production đầu tiên, đúng cái `git_detail` tính (`summary.deployed`).
+  - `types` rỗng = tất cả, loại lạ → 422. `before` lấy cả mốc (`at <= before`), `limit` 1..200; trang sau
+    dùng `at` của mục cuối, các mục cùng mốc trả lại và giao diện bỏ những `id` đã có (nhiều hơn `limit`
+    mục cùng một mốc thì dừng). Mỗi nguồn lấy tối đa `limit` mục mới nhất rồi gộp, cắt còn `limit`; mục
+    cùng lúc xếp theo loại rồi số id.
+  - Test chỉ lấy run của dự án người xem thấy được (testcase có thể nối với task của dự án khác). Review
+    của commit khớp theo SHA (review không mang repo), như `latest_reviews`.
+- **Giao diện chi tiết** (`TaskDetail.tsx`, `TaskActivity.tsx`):
+  - Ba tab Bình luận / Lịch sử / Giờ làm thay bằng **Dòng thời gian** với chip `Tất cả | Bình luận | Code |
+    Test | Thay đổi | Giờ làm` (Code = git + review + deploy). Chip Giờ làm hiện bảng giờ làm và form ghi giờ
+    như cũ. Bình luận vẫn sửa / xoá ngay trên dòng thời gian. "Xem cũ hơn" tải trang tiếp theo.
+  - **Ô bình luận cố định** cuối cột chính (sticky): `@` gợi ý người của dự án (`/tasks/people`), chèn
+    `@<phần trước @ của email>` (đúng cách `mentioned()` đọc); `#` gợi ý task (`/tasks?q=&space=&limit=8`),
+    chèn mã. Mũi tên chọn, Enter / Tab chèn, Esc đóng gợi ý, Ctrl+Enter gửi. Dán / kéo thả file như cũ.
+  - **Khối Sức khoẻ** luôn ở đầu: ⛔ bị chặn bởi KEY (trạng thái), số MR + đã merge, điểm review, critical /
+    high, pipeline (khi có MR), deploy, MR bị đóng không merge, Testcase x/y Passed, DoD x/y. Bấm một mục
+    cuộn tới phần của nó (Liên kết, Code, Testcase, DoD). Mục không áp dụng thì ẩn (chưa có code, dự án
+    chưa đặt DoD, chưa có testcase hoặc không có `tests.view`).
+  - **Cột phải** chỉ hiện trường có giá trị, luôn có Trạng thái, Người làm, Ưu tiên, Sprint (và Loại, Theo
+    dõi); trường tuỳ chỉnh bắt buộc luôn hiện. "+ Thêm trường" mở các trường còn trống (chỉ trong lượt xem
+    này, không lưu).
+- **API bổ sung** (chỉ thêm trường): TaskRow có `blocked` (một task chưa Xong `blocks` nó, ở bất kỳ dự án nào: `rows()` không biết người xem, nên card có thể hiện ⛔ khi chi tiết không liệt kê được task chặn) và `mr_closed` (có
+  MR nối và mọi MR đều `closed`, không MR nào mở hay đã merge). Chi tiết task có
+  `blocked_by: [{key, title, status}]` (task chưa Xong chặn nó, người xem thấy được; `status` là tên trạng thái).
+- **Card Board** hiện một huy hiệu theo thứ tự: ⛔ bị chặn > critical > quá hạn > quá tuổi cột > 🔁 MR bị đóng
+  (task đã Xong không hiện huy hiệu nào).

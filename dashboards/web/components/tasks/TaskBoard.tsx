@@ -657,9 +657,10 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
   );
 }
 
-/** The one signal a card shows (§19.3), most important first: critical findings, overdue, too
- * long in its column. */
+/** The one signal a card shows (§19.3, §20.1), most important first: blocked, critical findings,
+ * overdue, too long in its column, MR closed without merge. */
 function cardSignal(task: TaskRow, ageWarnHours: number | null): { tone: "bad" | "warn"; text: string; title: string } | null {
+  if (task.blocked && task.status.category !== "done") return { tone: "bad", text: "⛔ Bị chặn", title: "Một task chưa xong đang chặn task này" };
   const crit = task.git?.open_critical ?? 0;
   if (crit > 0 && task.status.category !== "done") return { tone: "bad", text: `${crit} critical`, title: "Code của task còn finding critical mở" };
   if (task.due_date && task.status.category !== "done" && task.due_date < today()) return { tone: "bad", text: "Quá hạn", title: `Hạn ${task.due_date}` };
@@ -668,6 +669,7 @@ function cardSignal(task: TaskRow, ageWarnHours: number | null): { tone: "bad" |
     const days = Math.floor(h / 24);
     return { tone: "warn", text: days >= 1 ? `${days} ngày ở đây` : `${Math.floor(h)} giờ ở đây`, title: `Ở “${task.status.name}” quá ngưỡng ${ageWarnHours} giờ của dự án` };
   }
+  if (task.mr_closed && task.status.category !== "done") return { tone: "warn", text: "🔁 MR bị đóng", title: "MR của task đã đóng mà không merge" };
   return null;
 }
 
