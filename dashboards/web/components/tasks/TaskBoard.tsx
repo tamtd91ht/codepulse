@@ -9,6 +9,8 @@ import { date } from "@/lib/format";
 import type { Me, TaskPage, TaskPerson, TaskRow, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
 
 import { DensityToggle } from "./DensityToggle";
+import { type QuickPicks, QuickChips } from "./QuickChips";
+import { SubtaskGroup, readGroupSubs, writeGroupSubs } from "./SubtaskGroup";
 import {
   GitBadge,
   PersonAvatar,
@@ -76,25 +78,37 @@ function hoursIn(t: TaskRow): number | null {
   return (Date.now() - new Date(t.status_changed_at).getTime()) / 3_600_000;
 }
 
+/** One way to read an ambiguous quick-create token (§20.2): the chips under the input. */
+export type QuickChoice = { value: number | string; label: string; hint?: string };
+export type QuickAmbiguity = { token: string; field: "assignee_id" | "priority"; options: QuickChoice[] };
+export type QuickParsed = {
+  title: string;
+  assignee_id?: number;
+  type?: TaskType;
+  priority?: string;
+  story_points?: number;
+  parent_key?: string;
+  /** Tokens matching more than one value: the user picks (nothing is guessed). */
+  ambiguous: QuickAmbiguity[];
+};
+
 /**
- * Quick create (§19.3): "Sửa lỗi OTP @an #bug !cao 3sp". @ a person (email name or a word of the
- * name), # a type, ! a priority (its name or key, accents optional), "3sp" story points.
+ * Quick create (§19.3, §20.2): "Sửa lỗi OTP @an #bug !cao 3sp ^OCX-12". @ a person (email name or
+ * a word of the name), # a type, ! a priority (its name or key, accents optional), "3sp" story
+ * points, ^ the parent task (its key, or only the number in this dự án). A token matching several
+ * people (or priorities of one level) comes back in `ambiguous` with its candidates.
  */
-export function parseQuick(
-  text: string,
-  people: TaskPerson[],
-  space: TaskSpace,
-): { title: string; assignee_id?: number; type?: TaskType; priority?: string; story_points?: number; ambiguous?: string } {
+export function parseQuick(text: string, people: TaskPerson[], space: TaskSpace): QuickParsed {
   const fold = (v: string) =>
     v
       .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[̀-ͯ]/g, "")
       .replace(/đ/g, "d")
       .replace(/Đ/g, "D")
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
-  const out: { title: string; assignee_id?: number; type?: TaskType; priority?: string; story_points?: number; ambiguous?: string } = { title: "" };
+  const out: QuickParsed = { title: "", ambiguous: [] };
   const words: string[] = [];
   for (const word of text.trim().split(/\s+/)) {
     const sp = /^(\d+(?:[.,]\d+)?)sp$/i.exec(word);
@@ -102,18 +116,28 @@ export function parseQuick(
       out.story_points = Number(sp[1].replace(",", "."));
       continue;
     }
+    const parent = /^\^(?:([a-z][a-z0-9]*)-)?(\d+)$/i.exec(word);
+    if (parent && (parent[1] || space.key)) {
+      out.parent_key = `${(parent[1] ?? space.key ?? "").toUpperCase()}-${parent[2]}`;
+      continue;
+    }
     if (word.startsWith("@") && word.length > 1) {
       const w = fold(word.slice(1));
       const byMail = people.filter((p) => fold((p.primary_email ?? "").split("@")[0]) === w);
       const byName = people.filter((p) => fold(p.full_name ?? "").split("-").includes(w));
-      // Only a sure match: Vietnamese names share words ("@van", "@anh").
+      // Only a sure match: Vietnamese names share words ("@van", "@anh"); otherwise ask.
       const who = byMail.length === 1 ? byMail[0] : !byMail.length && byName.length === 1 ? byName[0] : null;
-      if (byMail.length + byName.length > 1 && !who) {
-        out.ambiguous = word;
-        continue;
-      }
       if (who) {
         out.assignee_id = who.id;
+        continue;
+      }
+      const all = [...new Map([...byMail, ...byName].map((p) => [p.id, p])).values()];
+      if (all.length > 1) {
+        out.ambiguous.push({
+          token: word,
+          field: "assignee_id",
+          options: all.map((p) => ({ value: p.id, label: p.full_name || p.primary_email || `#${p.id}`, hint: p.primary_email ?? undefined })),
+        });
         continue;
       }
     }
@@ -127,9 +151,15 @@ export function parseQuick(
     }
     if (word.startsWith("!") && word.length > 1) {
       const w = fold(word.slice(1));
-      const prio = priorityList(space).find((p) => p.key === w || fold(p.name) === w || p.level === w);
-      if (prio) {
-        out.priority = prio.key;
+      const list = priorityList(space);
+      const exact = list.find((p) => p.key === w || fold(p.name) === w);
+      const byLevel = list.filter((p) => p.level === w);
+      if (exact || byLevel.length === 1) {
+        out.priority = (exact ?? byLevel[0]).key;
+        continue;
+      }
+      if (byLevel.length > 1) {
+        out.ambiguous.push({ token: word, field: "priority", options: byLevel.map((p) => ({ value: p.key, label: p.name })) });
         continue;
       }
     }
@@ -187,6 +217,15 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
   };
   const [quick, setQuick] = useState<Record<number, string>>({});
   const [quickBusy, setQuickBusy] = useState(false);
+  // Ambiguous quick-create lines waiting for a pick, per column (§20.2).
+  const [quickAsk, setQuickAsk] = useState<Record<number, { text: string; parsed: QuickParsed; picks: QuickPicks }>>({});
+  // "Gom sub-task vào card cha" (§20.2): off by default, remembered per browser.
+  const [groupSubs, setGroupSubsState] = useState(false);
+  useEffect(() => setGroupSubsState(readGroupSubs()), []);
+  const setGroupSubs = (on: boolean) => {
+    setGroupSubsState(on);
+    writeGroupSubs(on);
+  };
   const [error, setError] = useState<string | null>(null);
   const [confirmEl, ask] = useConfirm();
 
@@ -210,7 +249,22 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
     for (const t of shown) n.set(t.status.id, (n.get(t.status.id) ?? 0) + 1);
     return n;
   }, [shown]);
+  // Grouped sub-tasks (§20.2): a sub-task whose parent is on the board folds into the parent's
+  // card; one whose parent is not stays a card. Not with "Theo task cha" lanes (already grouped).
+  const grouping = groupSubs && lane !== "parent";
+  const { cards, subsOf } = useMemo(() => {
+    const subsOf = new Map<string, TaskRow[]>();
+    if (!grouping) return { cards: shown, subsOf };
+    const onBoard = new Set(shown.map((t) => t.key));
+    for (const t of rows ?? []) {
+      if (t.type !== "subtask" || !t.parent_key || !onBoard.has(t.parent_key)) continue;
+      subsOf.set(t.parent_key, [...(subsOf.get(t.parent_key) ?? []), t]);
+    }
+    for (const list of subsOf.values()) list.sort((a, b) => a.id - b.id);
+    return { cards: shown.filter((t) => !(t.type === "subtask" && t.parent_key && onBoard.has(t.parent_key))), subsOf };
+  }, [grouping, shown, rows]);
   const lanes = useMemo(() => {
+    const shown = cards;
     if (lane === "none") return [{ id: "all", label: "", rows: shown }];
     const byKey = new Map((rows ?? []).map((r) => [r.key, r]));
     const groups = new Map<string, { id: string; label: string; order: number; rows: TaskRow[] }>();
@@ -237,25 +291,64 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
       }
     }
     return [...groups.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
-  }, [lane, shown, rows, space]);
+  }, [lane, cards, rows, space]);
 
+  const dropAsk = (statusId: number) =>
+    setQuickAsk((a) => {
+      const { [statusId]: _, ...rest } = a;
+      return rest;
+    });
+
+  /**
+   * Enter in a column's quick-create line (§19.3, §20.2). An unambiguous line saves at once; one with
+   * an ambiguous token shows chips to pick from, and saves once each token has its pick.
+   */
   async function quickCreate(status: TaskStatusRef & { id: number }) {
     const text = (quick[status.id] ?? "").trim();
     if (!text) return;
-    const { ambiguous, ...parsed } = parseQuick(text, people.data ?? [], space);
-    if (ambiguous) {
-      setError(`“${ambiguous}” khớp nhiều người: dùng phần trước @ của email (ví dụ @an.nv).`);
-      return;
+    const waiting = quickAsk[status.id];
+    let parsed: QuickParsed;
+    if (waiting && waiting.text === text) {
+      if (!waiting.parsed.ambiguous.every((a) => a.token in waiting.picks)) return;
+      parsed = { ...waiting.parsed };
+      for (const a of waiting.parsed.ambiguous) {
+        const v = waiting.picks[a.token];
+        if (v === null || v === undefined) continue;
+        if (a.field === "assignee_id") parsed.assignee_id = Number(v);
+        else parsed.priority = String(v);
+      }
+    } else {
+      parsed = parseQuick(text, people.data ?? [], space);
+      if (parsed.ambiguous.length) {
+        setError(null);
+        setQuickAsk((a) => ({ ...a, [status.id]: { text, parsed, picks: {} } }));
+        return;
+      }
     }
-    if (!parsed.title) {
-      setError("Cần tiêu đề: ví dụ “Sửa lỗi OTP @an #bug !cao 3sp”.");
+    const { ambiguous: _, parent_key, ...fields } = parsed;
+    if (!fields.title) {
+      setError("Cần tiêu đề: ví dụ “Sửa lỗi OTP @an #bug !cao 3sp ^OCX-12”.");
       return;
     }
     setQuickBusy(true);
     setError(null);
     try {
-      await api.post("/tasks", { space: bp, ...parsed, status_id: status.id, sprint_id: active?.id ?? undefined });
+      let type = fields.type;
+      if (parent_key) {
+        // ^KEY: a sub-task of a story / task / bug when the dự án has sub-tasks; under an epic the
+        // type stays as typed (or the default).
+        const parent = (rows ?? []).find((t) => t.key === parent_key) ?? (await api.get<TaskRow>(`/tasks/${encodeURIComponent(parent_key)}`).catch(() => null));
+        const wrong = !parent ? `Không tìm thấy task cha ${parent_key} trong dự án.` : parent.type === "subtask" ? `${parent_key} là sub-task, không làm task cha được.` : null;
+        if (!parent || wrong) {
+          setError(wrong);
+          setQuickBusy(false);
+          return;
+        }
+        if (!type && parent.type !== "epic" && space.types.includes("subtask")) type = "subtask";
+      }
+      await api.post("/tasks", { space: bp, ...fields, type, parent_key, status_id: status.id, sprint_id: active?.id ?? undefined });
       setQuick((q) => ({ ...q, [status.id]: "" }));
+      dropAsk(status.id);
       await refreshTasks();
     } catch (e) {
       setError(`Lỗi: ${errorText(e)}`);
@@ -355,6 +448,15 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
             ))}
           </select>
         </label>
+        {space.types.includes("subtask") && (
+          <div className="rq-field">
+            <span className="rq-label">Sub-task</span>
+            <label className="rq-check" title={lane === "parent" ? "“Theo task cha” đã gom sub-task theo lane" : "Ẩn card sub-task có task cha trên board; card cha hiện tiến độ"}>
+              <input type="checkbox" checked={groupSubs} disabled={lane === "parent"} onChange={(e) => setGroupSubs(e.target.checked)} />
+              Gom sub-task vào card cha
+            </label>
+          </div>
+        )}
         <div className="rq-field">
           <span className="rq-label">Nhãn</span>
           <div className="tk-inline">
@@ -475,23 +577,48 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
                                 onCardDragOver(e, status.id, tasks, i, ln.id);
                               }}
                             />
+                            {grouping && t.type !== "subtask" && (t.subtasks?.total ?? 0) > 0 && (
+                              <SubtaskGroup task={t} items={subsOf.get(t.key) ?? []} onOpen={onOpen} />
+                            )}
                           </div>
                         ))}
                         {here && over?.before === null && drag && <div className="tk-drop-line" />}
                         {!tasks.length && !drag && <p className="small faint tk-col-empty">Không có task</p>}
                         {lane === "none" && space.can_create && status.category !== "done" && (
-                          <input
-                            className="tk-quick"
-                            value={quick[status.id] ?? ""}
-                            disabled={quickBusy}
-                            placeholder="+ Tạo nhanh: tiêu đề @người #bug !cao 3sp"
-                            aria-label={`Tạo nhanh task ở ${status.name}`}
-                            onChange={(e) => setQuick((q) => ({ ...q, [status.id]: e.target.value }))}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") void quickCreate(status);
-                              if (e.key === "Escape") setQuick((q) => ({ ...q, [status.id]: "" }));
-                            }}
-                          />
+                          <>
+                            <input
+                              className="tk-quick"
+                              value={quick[status.id] ?? ""}
+                              disabled={quickBusy}
+                              placeholder="+ Tạo nhanh: tiêu đề @người #bug !cao 3sp ^OCX-1"
+                              title="@người · #loại · !ưu tiên · 3sp · ^mã task cha (sub-task)"
+                              aria-label={`Tạo nhanh task ở ${status.name}`}
+                              onChange={(e) => {
+                                setQuick((q) => ({ ...q, [status.id]: e.target.value }));
+                                // Another line: the picks for the old one no longer apply.
+                                if (quickAsk[status.id]) dropAsk(status.id);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") void quickCreate(status);
+                                if (e.key === "Escape") {
+                                  setQuick((q) => ({ ...q, [status.id]: "" }));
+                                  dropAsk(status.id);
+                                }
+                              }}
+                            />
+                            {quickAsk[status.id] && (
+                              <QuickChips
+                                ambiguous={quickAsk[status.id].parsed.ambiguous}
+                                picks={quickAsk[status.id].picks}
+                                busy={quickBusy}
+                                onPick={(token, value) =>
+                                  setQuickAsk((a) => (a[status.id] ? { ...a, [status.id]: { ...a[status.id], picks: { ...a[status.id].picks, [token]: value } } } : a))
+                                }
+                                onSave={() => void quickCreate(status)}
+                                onCancel={() => dropAsk(status.id)}
+                              />
+                            )}
+                          </>
                         )}
                       </div>
                     </section>

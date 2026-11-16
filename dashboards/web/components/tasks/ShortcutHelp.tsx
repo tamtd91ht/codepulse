@@ -1,34 +1,48 @@
 "use client";
 
-import { useCallback, useState } from "react";
-
 import { Modal } from "@/components/CriteriaParts";
 
-import { TASK_SHORTCUTS, useTaskShortcuts } from "./useTaskShortcuts";
+import { GLOBAL_SHORTCUTS, TASK_SHORTCUTS, type TaskShortcut, useTaskShortcuts } from "./useTaskShortcuts";
 
-/** Mounts the task shortcuts and the "?" overlay listing them (docs/specs/31 §19.8). */
+/**
+ * Mounted by the task detail: runs the task shortcuts (E, A, S, C, .). The "?" overlay itself is
+ * global (ShortcutHelpModal, opened from the command palette's mount), docs/specs/31 §20.2.
+ */
 export function ShortcutHelp() {
-  const [open, setOpen] = useState(false);
-  const toggle = useCallback(() => setOpen((v) => !v), []);
-  useTaskShortcuts(toggle);
-  if (!open) return null;
+  useTaskShortcuts();
+  return null;
+}
+
+function Keys({ title, list }: { title: string; list: TaskShortcut[] }) {
   return (
-    <Modal title="Phím tắt" onClose={() => setOpen(false)} width={400}>
-      <p className="small muted nl-help-note">Không chạy khi đang gõ trong ô nhập hoặc giữ Ctrl / Alt.</p>
+    <section className="qk-help-group">
+      <h3 className="qk-help-title">{title}</h3>
       <dl className="nl-keys">
-        {TASK_SHORTCUTS.map((s) => (
+        {list.map((s) => (
           <div key={s.label} className="nl-keys-row">
             <dt>
-              {s.keys.map((k) => (
-                <kbd key={k} className="nl-kbd">
-                  {k}
-                </kbd>
+              {s.keys.map((k, i) => (
+                <span key={k}>
+                  {i > 0 && <span className="small faint"> {s.keys[0] === "Ctrl" ? "+" : "rồi"} </span>}
+                  <kbd className="nl-kbd">{k}</kbd>
+                </span>
               ))}
             </dt>
             <dd>{s.label}</dd>
           </div>
         ))}
       </dl>
+    </section>
+  );
+}
+
+/** The "?" overlay: every shortcut, global first, then those on an open task. */
+export function ShortcutHelpModal({ onClose }: { onClose: () => void }) {
+  return (
+    <Modal title="Phím tắt" onClose={onClose} width={440}>
+      <p className="small muted nl-help-note">Không chạy khi đang gõ trong ô nhập, giữ Ctrl / Alt, hoặc đang mở hộp thoại. Trên Mac dùng ⌘ thay Ctrl.</p>
+      <Keys title="Mọi trang" list={GLOBAL_SHORTCUTS} />
+      <Keys title="Khi đang mở một task" list={TASK_SHORTCUTS} />
     </Modal>
   );
 }

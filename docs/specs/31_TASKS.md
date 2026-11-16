@@ -659,3 +659,41 @@ sprint đóng, tuỳ chọn thông báo ở trang Thông báo): đợt 2 sửa c
 | 2.4 Nhân rộng | Mẫu lưu được, mẫu Mobile, Tình trạng bật Task, hướng dẫn bật đủ bước | 20.4 |
 | 2.5 Thông báo & quy tắc | Kênh theo sự kiện, Bug Cao nhất bỏ qua giờ yên lặng, gom 10 phút, tóm tắt 17:30 Telegram, tạm ẩn, nhật ký + chạy thử, 5 quy tắc mới | 20.5 |
 | 2.6 Đánh giá sprint | Tóm tắt khi đóng sprint + trang retro, thay đổi phạm vi, dự báo có khoảng, xu hướng 4 sprint, trạng thái rỗng | 20.6 |
+
+### 20.2 Nhanh tay
+- **Thấy được:** thanh trên cùng có nút "Tìm / lệnh" (kèm `Ctrl K`; điện thoại chỉ còn biểu tượng) mở
+  bảng lệnh, và nút `?` mở danh sách phím tắt. Nút, phím tắt và bảng lệnh gặp nhau qua sự kiện cửa sổ
+  (`cp:palette-open {mode}`, `cp:shortcut-help`, `components/tasks/shortcutEvents.ts`), không cần context.
+- **Lệnh trên task đang mở** (URL `/tasks/KEY` hoặc `/tasks?task=KEY`, đọc lúc mở bảng lệnh): *Giao cho
+  tôi* (`PATCH /tasks/{key} {assignee_id}`; cần `can.assign`, ẩn khi đã là của tôi); *Đổi trạng thái…*
+  (danh sách con từ `transitions` của chi tiết; `POST /tasks/{key}/transition`, trạng thái nhóm "done"
+  gửi `resolution: "done"`; còn finding critical thì phải Enter lần hai; cần `can.transition`); *Thêm vào
+  sprint…* (sprint chưa đóng của dự án, trừ sprint hiện tại, thêm "Backlog (bỏ khỏi sprint)"; `POST
+  /tasks/{key}/move {sprint_id}`; cần `can.edit`, ẩn với dự án Kanban và epic); *Sao chép link*
+  (`/tasks/KEY`). Lỗi API hiện ở chân bảng lệnh, bảng lệnh giữ mở; thành công thì đóng và làm mới task.
+  Hỏi đóng sub-task còn mở / lý do đóng khác chỉ có trong chi tiết task.
+- **Mọi trang:** *Chuyển dự án…* (`GET /tasks/spaces` → `/tasks?space=`; dự án chưa bật ghi "Chưa bật
+  Task") và *Bộ lọc đã lưu…* (`GET /tasks/filters` → `/tasks?space=&tab=list&filter=ID&<query>`). Danh
+  sách con: gõ để lọc, Backspace (ô trống) / Esc quay lại. Mỗi danh sách chỉ tải khi mở.
+- **Phím tắt mọi trang:** `N` tạo task (`/tasks?create=1`, giữ `space` khi đang ở trang Task; cần
+  `tasks.create`), `/` mở bảng lệnh ở chế độ chỉ tìm task, `G` rồi `B` (trong 1,5 giây) → Board
+  (`/tasks?tab=board`), `G` rồi `M` → `/tasks/me` (cần `tasks.view`), `?` bật / tắt danh sách phím tắt.
+  Phím tắt chi tiết (`E`, `A`, `S`, `C`, `.`) giữ nguyên; `.` mở bảng lệnh (có lệnh trên task). Cùng điều
+  kiện §19.8: không khi đang gõ, giữ Ctrl / Alt / Meta, hay có hộp thoại (`?` vẫn đóng được chính danh sách
+  phím tắt). Danh sách phím tắt chia "Mọi trang" và "Khi đang mở một task".
+- **Tạo nhanh `^`:** `^OCX-12` (hoặc `^12` = mã dự án) đặt `parent_key`. Cha là story / task / bug và dự án
+  có loại sub-task, không ghi `#loại` → task tạo ra là sub-task; cha là epic → loại giữ như gõ / mặc định;
+  cha là sub-task hoặc không tìm thấy → báo lỗi, không tạo. Cha tìm trên Board trước, không có thì `GET
+  /tasks/{key}`.
+- **Chip khi mơ hồ:** `@an` khớp nhiều người (hoặc `!cao` khớp theo mức nhiều ưu tiên) → không báo lỗi mà
+  hiện chip dưới ô: mỗi chỗ mơ hồ chọn một giá trị hoặc "Bỏ", rồi "Tạo task" hoặc Enter. Sửa dòng chữ thì
+  bỏ các lựa chọn cũ. Dòng không mơ hồ vẫn lưu ngay khi Enter.
+- **Gom sub-task vào card cha** (công tắc trên Board, mặc định tắt, nhớ trong trình duyệt
+  `tk-board-group-subs`; chỉ hiện khi dự án có loại sub-task; tắt được khi swimlane "Theo task cha" vì đã gom
+  theo lane): bật thì card sub-task có cha trên Board (sau bộ lọc) bị ẩn; card cha có thanh `xong/tổng`
+  (số của server) bấm để mở danh sách sub-task (mã, tiêu đề, trạng thái, người làm; bấm mở task), ghi "+N
+  sub-task không ở board này". Sub-task có cha không ở Board vẫn là card. WIP của cột vẫn đếm cả sub-task bị
+  gom.
+- Chưa làm: Danh sách chưa đọc tham số `filter` / bộ lọc trên URL (bộ lọc đã lưu mở đúng dự án và tab Danh
+  sách nhưng cần một sửa nhỏ trong `TaskList` để tự áp); hoàn tác sau lệnh của bảng lệnh (để mục Hoàn tác
+  chung).
