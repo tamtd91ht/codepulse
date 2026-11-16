@@ -454,3 +454,37 @@ P5 Mở rộng. Mỗi giai đoạn là một mục con bên dưới, ghi cả qu
   đề; gắn bug bằng mã task ở dự án mình không xem được thì coi như mã Jira (không lộ task). Mô tả bug từ
   testcase không quét @nhắc (log hay có `@...`).
 - Chưa làm (để sau khi gỡ Jira hẳn): nhập bình luận / lịch sử Jira (CodePulse không đồng bộ chúng).
+
+### 19.5 P4 – Tổng quan (Sprint Health, đa dự án)
+Chỉ đọc, không migration. Mã: `app/tasks/health.py`, `app/api/routers/task_health.py` (gắn trước router
+`tasks` để `/tasks/overview` không bị hiểu là mã task).
+- **`GET /tasks/spaces/{bp}/health`** (`tasks.view` trên dự án; 404 như các API không gian khác). Dự án
+  không có sprint `active` → `{"sprint": null}` (không 404). Có sprint thì trả:
+  - **Dự báo:** các ngày burndown (dùng lại `reports.burndown`), point cam kết, phạm vi (point hiện có
+    trong sprint, chỉ Story / Task / Bug), point xong (task ở nhóm Xong), lý tưởng còn lại hôm nay. **Dự
+    phóng tuyến tính:** tốc độ = point xong / số ngày đã qua; `projected_done_points` = tốc độ × số ngày
+    của sprint (tối đa bằng phạm vi), `projected_pct` = phần trăm của phạm vi. Chỉ tính khi đã qua ≥ 2
+    ngày, trước đó `null`. Giao diện vẽ thêm đường "Dự phóng" từ hôm nay tới ngày cuối.
+  - **Kẹt:** (1) task mở ở một trạng thái lâu hơn ngưỡng của trạng thái (`age_warning_hours` khi có,
+    mặc định 72 giờ cho nhóm Đang làm; nhóm Cần làm không có mặc định), tính từ `status_changed_at`;
+    (2) MR đang mở nối với task của sprint, mở quá 24 giờ (`created_at_src` của MR) mà chưa có
+    `first_review_at`; (3) task mở bị chặn bởi một task mở khác (liên kết `blocks`).
+  - **Tải:** mỗi người (và "Chưa giao") số task mở và point mở trong sprint, **xếp theo tên**, thanh
+    ngang, không có lời lẽ xếp hạng. Epic không tính.
+  - **Chất lượng:** finding critical còn mở trên review mới nhất của commit / MR nối với task trong
+    sprint (`service.git_summaries`), bug mức ưu tiên cao nhất còn mở trong sprint, bug của dự án tạo
+    trong khoảng ngày sprint, số task trong sprint bị mở lại (lịch sử `status` từ tên trạng thái nhóm
+    Xong sang tên trạng thái mở, trong khoảng ngày sprint; mỗi task tính một lần).
+- **`GET /tasks/overview`** (Manager, nhiều dự án; cần `tasks.view`): một dòng cho mỗi dự án bật Task mà
+  người xem thấy, theo tên: sprint đang chạy, % point xong, `projected_pct` (cùng cách tính), số bug
+  **đang mở có ưu tiên mức `highest`** (khoá ưu tiên → `TaskPriority.level`), số finding critical còn mở
+  trên các task đang mở, **lead time trung vị** (tạo → xong, lý do `done`, xong trong 30 ngày qua, giờ),
+  **phiên bản kế tiếp** (chưa phát hành, `release_date` sớm nhất, không có ngày xếp sau) với % task xong.
+- **Màu sức khoẻ** (`health`, cả hai API): **đỏ** khi dự phóng < 70% hoặc có bug mức cao nhất đang mở
+  hoặc có finding critical đang mở; **vàng** khi dự phóng < 90%; còn lại **xanh** (không có sprint hay
+  chưa đủ 2 ngày thì chỉ bug / critical quyết định). Giao diện luôn kèm chữ ("Rủi ro", "Cần chú ý",
+  "Ổn"), không chỉ màu.
+- **Giao diện:** tab "Sức khoẻ sprint" của trang Task (`/tasks?space={bp}&tab=health`) với 4 khối Dự báo,
+  Kẹt, Tải, Chất lượng (mỗi khối có skeleton / trống / lỗi + Thử lại); trang `/tasks/overview` là bảng các
+  dự án, mỗi dòng mở tab Sức khoẻ sprint của dự án đó.
+- Chưa làm: lịch sử sức khoẻ theo thời gian, thông báo tự động khi chuyển đỏ (phần "tự động" của P4).
