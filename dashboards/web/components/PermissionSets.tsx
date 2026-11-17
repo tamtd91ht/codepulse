@@ -130,7 +130,7 @@ function SetsView() {
               </button>
             }
           >
-            <div role="listbox" aria-label="Bộ quyền" style={{ display: "grid", gap: 4, padding: 8 }}>
+            <div role="listbox" data-inline aria-label="Bộ quyền" style={{ display: "grid", gap: 4, padding: 8 }}>
               {rows.map((s) => {
                 const on = current?.id === s.id;
                 return (

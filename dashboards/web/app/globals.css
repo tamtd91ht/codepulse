@@ -18121,9 +18121,6 @@ button.hb-item:hover {
 .sw-note {
   margin: 8px 0 0;
 }
-.sw-board-note {
-  margin-bottom: 10px;
-}
 @media (max-width: 640px) {
   .sw-check li {
     flex-wrap: wrap;
@@ -20928,7 +20925,8 @@ input.fb-cell-edit {
   }
 }
 
-/* Pinned chips: name + values on wide windows; icon (+ count) with a tooltip under 1280 px. */
+/* Pinned chips: "Loại ▾", or "Loại: Bug ✕" once picked, at every width (§22.10: never icon-only;
+   a full row folds them into "+N bộ lọc"). */
 .fb-pinned {
   position: relative;
 }
@@ -20937,38 +20935,7 @@ input.fb-cell-edit {
   align-items: center;
   gap: 4px;
 }
-.fb-pin-icon,
-.fb-pin-n {
-  display: none;
-}
 @media (max-width: 1279px) {
-  .fb-pinned .fb-pin-label {
-    display: none;
-  }
-  .fb-pinned .fb-pin-icon {
-    display: inline-block;
-    flex: none;
-  }
-  .fb-pinned .fb-chip-text,
-  .fb-pinned:not(.fb-active) .fb-chip-text {
-    padding: 0 8px;
-  }
-  .fb-pinned.fb-active .fb-chip-text {
-    padding-right: 2px;
-  }
-  .fb-pin-n {
-    display: inline-grid;
-    place-items: center;
-    min-width: 16px;
-    height: 16px;
-    padding: 0 4px;
-    border-radius: 999px;
-    background: var(--link);
-    color: var(--on-primary);
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 1;
-  }
   .fb-bar [data-narrow-tip]:hover::after,
   .fb-bar [data-narrow-tip]:focus-within::after {
     content: attr(data-narrow-tip);
@@ -21000,9 +20967,6 @@ input.fb-cell-edit {
 /* Under 1280 px the right side keeps icons only for Hiển thị / Tạo sprint (names in tooltips), and
    the search gives way first, so the row never runs wider than the window. */
 @media (max-width: 1279px) {
-  .fb-search {
-    min-width: 120px;
-  }
   .fb-display .fb-btn-text,
   .nw-act .fb-btn-text {
     position: absolute;
@@ -21517,10 +21481,6 @@ input.fb-cell-edit {
   top: var(--tk-bar-top);
   z-index: 5;
 }
-.bd-screen > .sw-board-note {
-  flex: none;
-  margin-bottom: 0;
-}
 .bd-area {
   position: relative;
   display: flex;
@@ -21866,14 +21826,9 @@ input.fb-cell-edit {
   .bd-pins {
     display: none;
   }
-  /* Guard: until the bar has its own narrow layout, a too-wide bar scrolls in place rather than
-     widening the page (which would break the column swipe). */
+  /* The bar never scrolls (§22.10: it folds); the screen still never widens the page. */
   .bd-screen {
     min-width: 0;
-  }
-  .bd-screen > .fb-bar {
-    overflow-x: auto;
-    scrollbar-width: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -21907,5 +21862,130 @@ input.fb-cell-edit {
 @media (max-width: 1279px) {
   .fb-people-sel {
     width: 140px;
+  }
+}
+
+/* UI fix: FilterBar, shortcuts, toast */
+/* docs/specs/31 §22.10. The filter bar folds instead of squeezing or scrolling: every chip reads
+   "Field: values ✕", the search keeps 240 px, overflowing chips go under "+N bộ lọc ▾" (measured in
+   FilterBar.tsx), and the fold steps below take the rest of the room. Height stays 40 px. */
+.fb-bar {
+  overflow-x: clip;
+  overflow-y: visible;
+}
+@media (min-width: 768px) and (min-height: 720px) {
+  .fb-search,
+  .fb-search.wide {
+    flex: 0 1 280px;
+    min-width: 240px;
+    transition: border-color var(--duration-fast) var(--ease-standard);
+  }
+  /* The chips never shrink and clip: a full row folds them (the measure needs them whole). */
+  .fb-chips {
+    flex: none;
+    overflow: visible;
+  }
+}
+.fb-chip-text {
+  white-space: nowrap;
+}
+.fb-pinned.fb-active .fb-chip-text {
+  display: inline-block;
+  line-height: 26px;
+}
+.fb-pinned:not(.fb-active) .fb-chip-text svg {
+  flex: none;
+  color: var(--muted);
+}
+/* Fold steps (FilterBar.tsx steps): empty pinned chips, active chips, then the status label and
+   pinned saved filters, then "· đã lọc", then "Của tôi" as an icon (its name stays in aria-label and
+   the tooltip) with a narrower Người làm and gaps; the pinned chips with a value fold last. */
+.fb-fold-status .fb-status,
+.fb-fold-status .bd-pins {
+  display: none;
+}
+.fb-tight .fb-mine-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.fb-people-sel .msel {
+  display: flex;
+  width: 100%;
+}
+.fb-tight .fb-people-sel {
+  width: 112px;
+}
+.fb-bar.fb-tight,
+.fb-tight .fb-fixed,
+.fb-tight .fb-right {
+  gap: 6px;
+}
+.fb-fold-tag .fb-count-tag {
+  display: none;
+}
+.fb-bar > .fb-more {
+  gap: 4px;
+}
+/* The filter-sentence hint: as wide as the search, at least 320 px, one line. */
+.fb-suggest {
+  right: auto;
+  width: max(100%, 320px);
+  max-width: calc(100vw - 32px);
+}
+.fb-suggest-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.fb-suggest-btn kbd {
+  flex: none;
+}
+.fb-suggest-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Board: "Checklist 2/6" in the filter bar (it replaced the banner) and its popover. */
+.sw-chip {
+  flex: none;
+  position: relative;
+  border-color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--text);
+}
+.sw-chip svg {
+  color: var(--warn);
+}
+.sw-chip:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.sw-pop .fb-pop-head {
+  justify-content: space-between;
+}
+.sw-pop .sw-check li {
+  padding: 6px 2px;
+}
+.sw-pop-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-search,
+  .fb-search.wide,
+  .fb-suggest,
+  .sw-chip {
+    transition: none;
+    animation: none;
   }
 }

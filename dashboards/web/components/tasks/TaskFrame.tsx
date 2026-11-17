@@ -7,7 +7,7 @@ import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObjec
 import { Icon, type IconName } from "@/components/icons";
 import type { TaskSpace } from "@/lib/types";
 
-import { dialogOpen, typingIn } from "./shortcutEvents";
+import { shortcutBlocked } from "./shortcutEvents";
 
 /*
  * The one page frame of every Task screen (docs/specs/31 §22.1, UI/UX §3.1–§3.2): a single 48 px
@@ -299,8 +299,7 @@ export function TaskFrame({ crumb, help, tabs, tab, onTab, menu, settingsActive,
   // §7: 1…9 switch tabs, C creates.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing) return;
-      if (typingIn(e.target) || dialogOpen()) return;
+      if (e.shiftKey || shortcutBlocked(e)) return;
       if (/^[1-9]$/.test(e.key) && tabs && onTab) {
         const t = tabs.find((x) => x.digit === Number(e.key));
         if (!t) return;

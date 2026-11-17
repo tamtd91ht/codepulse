@@ -1525,6 +1525,70 @@ def delete_task(key: str, principal: Viewer, session: SessionDep) -> None:
     _remove_files(files)
 
 
+# "Hoàn tác" on the "Đã tạo OCX-12" toast (docs/specs/31 §22.10): this long after creation.
+UNDO_CREATE_WINDOW = timedelta(minutes=2)
+
+
+def _undo_create_blocker(session: Session, task: Task, user_id: int) -> str | None:
+    """Why the person cannot take back creating this task, or None when they can."""
+    created = session.scalars(
+        select(TaskHistory)
+        .where(TaskHistory.task_id == task.id, TaskHistory.field == "created")
+        .order_by(TaskHistory.id)
+        .limit(1)
+    ).first()
+    creator = created.user_id if created is not None else task.reporter_id
+    if creator != user_id:
+        return "chỉ người tạo task mới hoàn tác được"
+    born = task.created_at
+    if born.tzinfo is None:
+        born = born.replace(tzinfo=UTC)
+    if datetime.now(UTC) - born > UNDO_CREATE_WINDOW:
+        return "đã quá 2 phút từ lúc tạo, hãy xoá task theo cách thường"
+    checks: list[tuple[Any, str]] = [
+        (select(TaskComment.id).where(TaskComment.task_id == task.id), "task đã có bình luận"),
+        (select(TaskWorklog.id).where(TaskWorklog.task_id == task.id), "task đã có giờ làm"),
+        (
+            select(TaskLink.id).where(
+                or_(TaskLink.from_task_id == task.id, TaskLink.to_task_id == task.id)
+            ),
+            "task đã được liên kết với task khác",
+        ),
+        (select(TaskGitLink.id).where(TaskGitLink.task_id == task.id), "task đã gắn nhánh / MR"),
+        (
+            select(TaskAttachment.id).where(TaskAttachment.task_id == task.id),
+            "task đã có tệp đính kèm",
+        ),
+        (select(Task.id).where(Task.parent_id == task.id), "task đã có sub-task"),
+        (
+            select(TaskHistory.id).where(
+                TaskHistory.task_id == task.id,
+                TaskHistory.user_id.is_not(None),
+                TaskHistory.user_id != user_id,
+            ),
+            "người khác đã sửa task",
+        ),
+    ]
+    for query, reason in checks:
+        if session.scalars(query.limit(1)).first() is not None:
+            return reason
+    return None
+
+
+@router.post("/tasks/{key}/undo-create", status_code=204)
+def undo_create(key: str, principal: Viewer, session: SessionDep) -> None:
+    """The creator takes a just-made task back: 2 minutes, nothing added to it, nobody else
+    touched it. Not the delete right: one who may create may undo their own slip. The DPI
+    projection drops its row through the same session hook as a delete."""
+    task = ts.task_or_404(session, principal, key)
+    reason = _undo_create_blocker(session, task, principal.user_id)
+    if reason is not None:
+        raise HTTPException(409, reason)
+    audit(session, principal.user_id, "task.undo_create", f"task:{task.key}", title=task.title)
+    session.delete(task)
+    session.commit()
+
+
 @router.post("/tasks/{key}/transition")
 def transition(
     key: str, body: TransitionIn, principal: Viewer, session: SessionDep

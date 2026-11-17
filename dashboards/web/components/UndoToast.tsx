@@ -12,6 +12,8 @@ export type UndoOffer = {
   text: string;
   /** The inverse call(s); a thrown error is shown in the toast. */
   undo: () => Promise<void>;
+  /** A second action before "Hoàn tác" ("Mở" on "Đã tạo OCX-12", docs/specs/31 §22.10). */
+  action?: { label: string; run: () => void };
 };
 
 type Shown = UndoOffer & { id: number; state: "ready" | "busy" | "done" | "error"; error?: string };
@@ -76,6 +78,18 @@ export function useUndo(): [ReactNode, (offer: UndoOffer) => void] {
           <span className="lv-undo-text">
             {shown.state === "done" ? "Đã hoàn tác." : shown.state === "error" ? `Không hoàn tác được: ${shown.error}` : shown.text}
           </span>
+          {shown.action && shown.state === "ready" && (
+            <button
+              type="button"
+              className="sm ghost lv-undo-btn"
+              onClick={() => {
+                shown.action?.run();
+                close();
+              }}
+            >
+              {shown.action.label}
+            </button>
+          )}
           {(shown.state === "ready" || shown.state === "busy") && (
             <button type="button" className="sm ghost lv-undo-btn" disabled={shown.state === "busy"} onClick={() => void run()} title="Hoàn tác (Ctrl+Z)">
               {shown.state === "busy" ? "Đang hoàn tác…" : "Hoàn tác"}

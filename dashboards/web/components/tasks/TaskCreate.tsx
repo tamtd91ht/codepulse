@@ -33,6 +33,7 @@ import {
   useDraftFiles,
   type DraftFile,
 } from "./taskFiles";
+import { announceTaskCreated } from "./createdToast";
 
 const NL = String.fromCharCode(10);
 
@@ -176,6 +177,7 @@ export function TaskCreate({
         }
       }
       await refreshTasks();
+      announceTaskCreated(created.key);
       onCreated(created.key);
     } catch (e) {
       setError(errorText(e));

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { Modal } from "@/components/CriteriaParts";
 import { Icon } from "@/components/icons";
@@ -10,12 +10,13 @@ import { api, useApi } from "@/lib/api";
 import { dateTime, relative } from "@/lib/format";
 import type { TaskAliasUse, TaskChecklistItem, TaskDemoCreated, TaskDemoDeleted, TaskSpace, TaskSwitchoverState } from "@/lib/types";
 
+import { Popover } from "./FilterBar";
 import { errorText, refreshTasks, useConfirm } from "./taskParts";
 import { MembersStep } from "./TaskTemplates";
 
 /* Chuyển đổi (docs/specs/31 §21.6, tasks.manage): the Lead checklist, old Jira keys still used in git,
  * "Ngừng dùng Jira" and demo data for a training session. Mounted at the end of Task › Cài đặt;
- * SwitchoverBoardNote shows the unfinished checklist on the Board (dismissible per browser). */
+ * SwitchoverChip shows the unfinished checklist in the Board's filter bar (dismissible per browser). */
 
 const path = (bp: number) => `/tasks/spaces/${bp}/switchover`;
 
@@ -102,22 +103,9 @@ function ChecklistCard({ space, state, onChange }: { space: TaskSpace; state: Ta
       }
     >
       {message && <Message text={message} onClose={() => setMessage(null)} />}
-      <ul className="sw-check">
-        {checklist.items
-          .filter((i) => i.applies)
-          .map((item) => (
-            <li key={item.key} className={item.done ? "sw-done" : undefined}>
-              <span className="sw-check-icon" aria-hidden>
-                <Icon name={item.done ? "checkCircle" : "alertCircle"} size={16} />
-              </span>
-              <span className="sw-check-text">
-                <span className="sw-check-label">
-                  {item.label}
-                  <span className="sr-only">{item.done ? " (đã xong)" : " (chưa xong)"}</span>
-                </span>
-                <span className="small muted">{item.detail}</span>
-              </span>
-              {!item.done && (
+      <ChecklistRows
+        items={checklist.items}
+        fix={(item) => (
                 <span className="sw-check-fix">
                   {item.key === "automation" && (
                     <button type="button" className="ghost sm" disabled={busy} onClick={() => void recommended()}>
@@ -138,10 +126,8 @@ function ChecklistCard({ space, state, onChange }: { space: TaskSpace; state: Ta
                     </button>
                   ) : null}
                 </span>
-              )}
-            </li>
-          ))}
-      </ul>
+        )}
+      />
       {members && (
         <Modal
           title="Thành viên dự án"
@@ -169,11 +155,42 @@ function ChecklistCard({ space, state, onChange }: { space: TaskSpace; state: Ta
   );
 }
 
-/** The unfinished checklist on the Board, for managers; "Ẩn" hides it in this browser. */
-export function SwitchoverBoardNote({ space }: { space: TaskSpace }) {
+/** The checklist's rows (a done / to-do icon, the label, the detail), with an optional fix action. */
+function ChecklistRows({ items, fix }: { items: TaskChecklistItem[]; fix?: (item: TaskChecklistItem) => ReactNode }) {
+  return (
+    <ul className="sw-check">
+      {items
+        .filter((i) => i.applies)
+        .map((item) => (
+          <li key={item.key} className={item.done ? "sw-done" : undefined}>
+            <span className="sw-check-icon" aria-hidden>
+              <Icon name={item.done ? "checkCircle" : "alertCircle"} size={16} />
+            </span>
+            <span className="sw-check-text">
+              <span className="sw-check-label">
+                {item.label}
+                <span className="sr-only">{item.done ? " (đã xong)" : " (chưa xong)"}</span>
+              </span>
+              <span className="small muted">{item.detail}</span>
+            </span>
+            {!item.done && fix?.(item)}
+          </li>
+        ))}
+    </ul>
+  );
+}
+
+/**
+ * The unfinished checklist on the Board, for managers (docs/specs/31 §22.10): a small "Checklist 2/6"
+ * chip in the filter bar, not a banner; it opens a popover with the steps. Gone once every step is
+ * done, or after "Ẩn checklist" (this browser).
+ */
+export function SwitchoverChip({ space }: { space: TaskSpace }) {
   const bp = space.business_project_id;
   const storeKey = `tk-sw-checklist-hidden:${bp}`;
   const [hidden, setHidden] = useState(true);
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     try {
       setHidden(localStorage.getItem(storeKey) === "1");
@@ -184,27 +201,51 @@ export function SwitchoverBoardNote({ space }: { space: TaskSpace }) {
   const got = useApi<TaskSwitchoverState>(space.can_manage && !hidden ? path(bp) : null);
   const list = got.data?.checklist;
   if (hidden || !list || list.complete) return null;
-  const left = list.items.filter((i) => i.applies && !i.done);
+  const hide = () => {
+    try {
+      localStorage.setItem(storeKey, "1");
+    } catch {
+      /* private mode: hidden until reload */
+    }
+    setOpen(false);
+    setHidden(true);
+  };
   return (
-    <div className="sw-board-note">
-      <Alert
-        tone="info"
-        onClose={() => {
-          try {
-            localStorage.setItem(storeKey, "1");
-          } catch {
-            /* private mode: hidden until reload */
-          }
-          setHidden(true);
-        }}
+    <>
+      <button
+        ref={anchor}
+        type="button"
+        className="fb-chip sw-chip"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={`Checklist bật Task: ${list.done}/${list.total} bước xong`}
+        data-tip="Checklist bật Task"
+        onClick={() => setOpen((v) => !v)}
       >
-        <strong>
-          Checklist bật Task: {list.done}/{list.total} bước.
-        </strong>{" "}
-        Còn: {left.map((i) => i.label.toLowerCase()).join(", ")}.{" "}
-        <Link href={`/tasks?space=${bp}&tab=settings`}>Mở Cài đặt</Link>
-      </Alert>
-    </div>
+        <Icon name="clipboardCheck" size={14} /> Checklist {list.done}/{list.total}
+      </button>
+      {open && (
+        <Popover anchor={anchor} onClose={() => setOpen(false)} label="Checklist bật Task" width={360} align="end">
+          <div className="sw-pop">
+            <div className="fb-pop-head">
+              <strong>Checklist bật Task</strong>
+              <span className="small muted">
+                {list.done}/{list.total} bước
+              </span>
+            </div>
+            <ChecklistRows items={list.items} />
+            <div className="sw-pop-foot">
+              <button type="button" className="link small" onClick={hide}>
+                Ẩn checklist
+              </button>
+              <Link className="button sm" href={`/tasks?space=${bp}&tab=settings#tk-set-checklist`} onClick={() => setOpen(false)}>
+                Mở Cài đặt
+              </Link>
+            </div>
+          </div>
+        </Popover>
+      )}
+    </>
   );
 }
 
