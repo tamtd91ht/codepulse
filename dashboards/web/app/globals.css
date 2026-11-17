@@ -17916,3 +17916,125 @@ button.hb-item:hover {
     padding: 8px;
   }
 }
+/* Tìm gì cũng thấy (docs/specs/31 §21.4): the chip bar, its editor, the Board's pinned filters. */
+.fs-chips {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.fs-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fs-chip-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+.fs-or {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.fs-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 2px 2px 2px 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13px;
+}
+.fs-chip.editing {
+  border-color: var(--accent);
+}
+.fs-chip-text {
+  overflow: hidden;
+  max-width: 360px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fs-chip-text:hover {
+  background: var(--surface-hover);
+}
+.fs-chip .icon-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+}
+.fs-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.fs-error {
+  margin: 0;
+  color: var(--bad-text);
+}
+.fs-editor {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+.fs-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.fs-pinned-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.fs-pin {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+.fs-pin:hover {
+  background: var(--surface-hover);
+}
+.fs-pin.on {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary-text);
+  font-weight: 600;
+}
+@media (max-width: 640px) {
+  .fs-chip-text {
+    max-width: 220px;
+  }
+  .fs-editor {
+    grid-template-columns: 1fr;
+  }
+}

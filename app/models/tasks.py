@@ -16,6 +16,7 @@ from sqlalchemy import (
     Index,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -42,6 +43,8 @@ BOARD_MODES = ("scrum", "kanban")
 # Where a sprint's capacity comes from (docs/specs/31 §21.3): the mean of the last 3 closed
 # sprints, or a number typed in by whoever plans it.
 CAPACITY_SOURCES = ("auto", "manual")
+# Who sees a saved filter (docs/specs/31 §21.4): its owner, the owner's teams, the dự án.
+FILTER_SCOPES = ("me", "team", "project")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -210,6 +213,9 @@ class Task(TimestampMixin, Base):
     # When it entered its current status: the age in its Board column (§19.3).
     status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     custom: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
+    # Key, title, description and comments folded (lower case, no Vietnamese accents) for the
+    # full-text search (§21.4); kept by a session hook in app/tasks/search.py.
+    search_text: Mapped[str] = mapped_column(Text, server_default="", default="")
 
 
 class TaskComment(TimestampMixin, Base):
@@ -351,6 +357,7 @@ class TaskGitLink(TimestampMixin, Base):
 
 class TaskFilter(TimestampMixin, Base):
     __tablename__ = "task_filters"
+    __table_args__ = (CheckConstraint(_in("shared_scope", FILTER_SCOPES), name="shared_scope"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -360,6 +367,16 @@ class TaskFilter(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(120))
     query: Mapped[dict[str, Any]] = mapped_column(JSONB)
     shared: Mapped[bool] = mapped_column(server_default="false", default=False)
+    # §21.4: the condition tree ({all: [{field, op, value} | {any: [...]}]}); NULL: an older
+    # filter that only has `query` (the GET /tasks params).
+    tree: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # me | team | project; `shared` stays true for "project" (the older list reads it).
+    shared_scope: Mapped[str] = mapped_column(String(10), server_default="me", default="me")
+    # A quick filter on the dự án's Board.
+    pinned: Mapped[bool] = mapped_column(server_default="false", default=False)
+    # {cadence: daily | weekly, last_sent: YYYY-MM-DD}: a digest of the matching tasks to the
+    # owner (Telegram when linked, else the inbox); NULL: none.
+    subscription: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 
 class TaskField(TimestampMixin, Base):

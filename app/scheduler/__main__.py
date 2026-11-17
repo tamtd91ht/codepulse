@@ -21,6 +21,8 @@ from app.workers.llm_jobs import llm_watch_job
 from app.workers.orphan_jobs import SWEEP_MIN, requeue_orphans_job
 from app.workers.task_automation_jobs import TICK_MIN as TASK_TICK_MIN
 from app.workers.task_automation_jobs import task_automation_tick_job
+from app.workers.task_filter_jobs import TICK_MIN as FILTER_TICK_MIN
+from app.workers.task_filter_jobs import filter_digest_job
 from app.workers.team_gitlab_jobs import SYNC_INTERVAL_MIN as TEAM_GITLAB_MIN
 from app.workers.team_gitlab_jobs import enqueue_team_gitlab_sync_job
 
@@ -223,6 +225,15 @@ def build_scheduler(
         "interval",
         minutes=TASK_TICK_MIN,
         id="task-automation",
+        max_instances=1,
+        coalesce=True,
+    )
+    # docs/specs/31 §21.4: digests of subscribed saved filters (once a day / week each).
+    scheduler.add_job(
+        filter_digest_job,
+        "interval",
+        minutes=FILTER_TICK_MIN,
+        id="task-filter-digests",
         max_instances=1,
         coalesce=True,
     )

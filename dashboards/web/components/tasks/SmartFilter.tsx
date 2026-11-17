@@ -2,21 +2,24 @@
 
 import { useState } from "react";
 
-import { Icon, IconButton } from "@/components/icons";
+import { Icon } from "@/components/icons";
 import { api } from "@/lib/api";
+import type { SearchCond } from "@/lib/types";
 
 import { errorText } from "./taskParts";
 
 /*
  * Lọc nhanh bằng câu (docs/specs/31 §19.8): "bug cao chưa giao sprint này" → POST
- * /tasks/nl-filter → chips + the GET /tasks params. Applying replaces the List's filters; removing
- * a chip clears that one filter. A chip hides once its filter was changed by hand.
+ * /tasks/nl-filter → chips. Since §21.4 each chip carries its condition (`cond`): applying puts
+ * them in the chip bar, where they are seen and edited like any other condition.
  */
 
 export interface NlChip {
   field: string;
   value: string;
   label: string;
+  op?: string;
+  cond?: SearchCond;
 }
 interface NlResult {
   chips: NlChip[];
@@ -24,20 +27,8 @@ interface NlResult {
   used_ai: boolean;
 }
 
-export function SmartFilter({
-  bp,
-  active,
-  onApply,
-  onRemove,
-}: {
-  bp: number;
-  /** The List's current filters, to show only chips still in force. */
-  active: Record<string, string>;
-  onApply: (query: Record<string, string>) => void;
-  onRemove: (field: string) => void;
-}) {
+export function SmartFilter({ bp, onApply }: { bp: number; onApply: (conds: SearchCond[]) => void }) {
   const [text, setText] = useState("");
-  const [chips, setChips] = useState<NlChip[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [none, setNone] = useState(false);
@@ -49,16 +40,17 @@ export function SmartFilter({
     setError(null);
     try {
       const res = await api.post<NlResult>("/tasks/nl-filter", { space: bp, text: sentence });
-      setChips(res.chips);
-      setNone(!res.chips.length);
-      onApply(res.query);
+      const conds = res.chips.map((c) => c.cond).filter((c): c is SearchCond => !!c);
+      setNone(!conds.length);
+      if (conds.length) {
+        onApply(conds);
+        setText("");
+      }
     } catch (e) {
       setError(errorText(e));
     }
     setBusy(false);
   }
-
-  const shown = chips.filter((c) => active[c.field] === c.value);
 
   return (
     <div className="nl-filter">
@@ -95,24 +87,6 @@ export function SmartFilter({
         </p>
       )}
       {none && !error && <p className="small muted">Chưa hiểu câu này; thử “bug quá hạn của tôi”, “@an đang làm”, “nhãn backend”.</p>}
-      {shown.length > 0 && (
-        <ul className="nl-chips" aria-label="Bộ lọc từ câu">
-          {shown.map((c) => (
-            <li key={c.field} className="nl-chip">
-              <span>{c.label}</span>
-              <IconButton
-                icon="close"
-                size={14}
-                label={`Bỏ lọc ${c.label}`}
-                onClick={() => {
-                  setChips((all) => all.filter((x) => x.field !== c.field));
-                  onRemove(c.field);
-                }}
-              />
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

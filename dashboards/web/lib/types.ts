@@ -3168,3 +3168,61 @@ export interface UsageSummary {
   keyboard: { total: number; keyboard: number; share: number | null };
   keep_days: number;
 }
+/* ---- Tìm gì cũng thấy (docs/specs/31 §21.4) ---- */
+
+export type SearchOp = "is" | "is_not" | "empty" | "not_empty" | "before" | "after" | "within_days" | "gte" | "lte";
+
+/** One condition of the search tree: "Trường · toán tử · giá trị". */
+export interface SearchCond {
+  field: string;
+  op: SearchOp;
+  value?: string | number | boolean | string[];
+}
+
+/** `{all: [...]}` (AND) or `{any: [...]}` (OR) of conditions and groups. */
+export interface SearchTree {
+  all?: SearchNode[];
+  any?: SearchNode[];
+}
+
+export type SearchNode = SearchCond | SearchTree;
+
+export interface SearchFieldInfo {
+  field: string;
+  kind: string;
+  ops: SearchOp[];
+  /** Custom fields: their name, kind and options. */
+  name?: string;
+  custom_kind?: TaskFieldKind;
+  options?: string[];
+}
+
+export interface SearchFields {
+  fields: SearchFieldInfo[];
+  custom: SearchFieldInfo[];
+}
+
+export type FilterScope = "me" | "team" | "project";
+
+export interface SavedTaskFilter extends TaskFilter {
+  tree: SearchTree;
+  shared_scope: FilterScope;
+  pinned: boolean;
+  subscription: { cadence: "daily" | "weekly"; channel?: "telegram" | "inbox" } | null;
+  mine: boolean;
+  can_edit: boolean;
+}
+
+export interface TaskSearchPage extends TaskPage {
+  tree: SearchTree;
+}
+
+export interface QuickSearchHit {
+  key: string;
+  title: string;
+  type: TaskType;
+  space: number;
+  status: TaskStatusRef | null;
+  match: "key" | "title" | "text";
+  snippet: string | null;
+}

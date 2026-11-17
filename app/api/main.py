@@ -60,6 +60,7 @@ from app.api.routers import (
     task_health,
     task_nlfilter,
     task_planning,
+    task_search,
     task_templates,
     task_timeline,
     tasks,
@@ -183,6 +184,7 @@ for api_router in (
     task_health.router,  # docs/specs/31 §19.5, before tasks: /tasks/overview is not a key
     task_templates.router,  # §20.4 /tasks/templates, /tasks/adoption, before tasks
     task_nlfilter.router,  # §19.8 POST /tasks/nl-filter, before tasks
+    task_search.router,  # §21.4 /tasks/search*, before tasks: not a task key
     task_automation.router,  # docs/specs/31 §19.7, before tasks: not a task key
     task_timeline.router,  # docs/specs/31 §20.1 /tasks/{key}/timeline
     task_criteria.router,  # docs/specs/31 §20.3 /tasks/{key}/criteria, before tasks

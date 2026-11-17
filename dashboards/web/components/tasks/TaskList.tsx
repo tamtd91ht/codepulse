@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import useSWR from "swr";
 
 import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
 import { EmptyState, Loading, Message, Pagination, SortTh } from "@/components/ui";
-import { api, qs, useApi } from "@/lib/api";
+import { type ApiError, api, qs, useApi } from "@/lib/api";
 import { date, relative } from "@/lib/format";
-import type { Me, TaskFilter, TaskPage, TaskSpace } from "@/lib/types";
+import type { FilterScope, Me, SavedTaskFilter, SearchCond, SearchTree, TaskSearchPage, TaskSpace } from "@/lib/types";
 
 import {
   GitBadge,
@@ -31,9 +32,13 @@ import {
   useVersions,
 } from "./taskParts";
 import { DensityToggle } from "./DensityToggle";
+import { type ChipCond, FilterChips, chipId, fromTree, toTree } from "./FilterChips";
 import { SmartFilter } from "./SmartFilter";
 
-/* Danh sách (§13): every field as a filter, saved filters, sortable columns, bulk changes, paging. */
+/*
+ * Danh sách (§13): every field as a filter, saved filters, sortable columns, bulk changes, paging.
+ * Since §21.4 it reads POST /tasks/search: the grid's filters ANDed with the chip bar's tree.
+ */
 
 // category and updated_from have no control of their own: only "Lọc nhanh" (§19.8) sets them.
 const FILTER_KEYS = ["q", "status", "type", "assignee", "priority", "sprint", "version", "label", "due", "category", "updated_from", "resolution"] as const;
@@ -41,14 +46,32 @@ type FilterKey = (typeof FILTER_KEYS)[number];
 type Filters = Record<FilterKey, string>;
 const NO_FILTERS: Filters = { q: "", status: "", type: "", assignee: "", priority: "", sprint: "", version: "", label: "", due: "", category: "", updated_from: "", resolution: "" };
 
+/** The grid's filters as conditions of the search tree. */
+function gridConds(f: Filters): SearchCond[] {
+  const out: SearchCond[] = [];
+  for (const k of FILTER_KEYS) {
+    const v = f[k].trim();
+    if (!v) continue;
+    if (k === "q") out.push({ field: "text", op: "is", value: v });
+    else if (k === "due") out.push({ field: "due", op: "is", value: v });
+    else if (k === "updated_from") {
+      const d = new Date(`${v}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() - 1); // "from D" = after the day before
+      out.push({ field: "updated", op: "after", value: d.toISOString().slice(0, 10) });
+    } else out.push({ field: k, op: "is", value: [v] });
+  }
+  return out;
+}
+
 export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | undefined; onOpen: (key: string) => void }) {
   const bp = space.business_project_id;
   const statuses = useMemo(() => sortedStatuses(space), [space]);
   const people = useTaskPeople(bp);
   const sprints = useSprints(bp);
   const versions = useVersions(bp);
-  const saved = useApi<TaskFilter[]>("/tasks/filters");
+  const saved = useApi<SavedTaskFilter[]>(`/tasks/search/filters?space=${bp}`);
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const [chips, setChipsState] = useState<ChipCond[]>([]);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" }>({ key: "updated", dir: "desc" });
   const [page, setPage] = useState(1);
@@ -69,29 +92,42 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
   useEffect(() => {
     setPage(1);
     setSelected(new Set());
-  }, [filters, sort, size, bp]);
+  }, [filters, chips, sort, size, bp]);
 
-  const path = `/tasks${qs({ space: bp, ...filters, sort: sort.key, order: sort.dir, limit: size, offset: (page - 1) * size })}`;
-  const list = useApi<TaskPage>(path, { keepPreviousData: true });
+  // The grid ANDed with the chip bar (its "là" chips of one field ORed).
+  const tree: SearchTree = useMemo(() => ({ all: [...gridConds(filters), ...(toTree(chips).all ?? [])] }), [filters, chips]);
+  const treeJson = JSON.stringify(tree);
+  const body = { space: [bp], tree, sort: sort.key, order: sort.dir, limit: size, offset: (page - 1) * size };
+  // A string key under /tasks: refreshTasks() refreshes it with the rest of the module.
+  const list = useSWR<TaskSearchPage, ApiError>(`/tasks/search#${JSON.stringify(body)}`, () => api.post<TaskSearchPage>("/tasks/search", body), {
+    keepPreviousData: true,
+    shouldRetryOnError: (err: ApiError) => !err.status || err.status >= 500,
+  });
   const rows = list.data?.items ?? [];
-  const filtersOn = FILTER_KEYS.some((k) => filters[k]);
+  const filtersOn = FILTER_KEYS.some((k) => filters[k]) || chips.length > 0;
+  const exportHref = `/api/v1/tasks/search/export.csv${qs({ space: bp, tree: treeJson, sort: sort.key, order: sort.dir })}`;
   const set = (k: FilterKey, v: string) => {
     setSavedId("");
     setFilters((f) => ({ ...f, [k]: v }));
+  };
+  const setChips = (next: ChipCond[]) => {
+    setSavedId("");
+    setChipsState(next);
   };
   const toggleSort = (key: string) => setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "key" ? "asc" : "desc" }));
   const mySaved = (saved.data ?? []).filter((f) => f.space === null || f.space === undefined || f.space === bp);
   const current = mySaved.find((f) => String(f.id) === savedId) ?? null;
   const canDeleteSaved = !!current && (current.can_delete ?? current.user_id === me?.id);
+  const [editingSaved, setEditingSaved] = useState(false);
 
+  // A saved filter opens as chips (its whole tree), so one sees and edits what it does.
   function applySaved(id: string) {
     setSavedId(id);
     const f = mySaved.find((x) => String(x.id) === id);
     if (!f) return;
-    const next = { ...NO_FILTERS };
-    for (const k of FILTER_KEYS) if (typeof f.query?.[k] === "string") next[k] = f.query[k];
-    setQ(next.q);
-    setFilters(next);
+    setQ("");
+    setFilters(NO_FILTERS);
+    setChipsState(fromTree(f.tree));
   }
 
   // A saved filter opened from Ctrl+K (`?filter=ID`, docs/specs/31 §20.2): applied once loaded.
@@ -151,19 +187,14 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
       <section className="card">
         <SmartFilter
           bp={bp}
-          active={filters}
-          onApply={(query) => {
-            const next = { ...NO_FILTERS };
-            for (const k of FILTER_KEYS) if (typeof query[k] === "string") next[k] = query[k];
-            setSavedId("");
-            setQ(next.q);
-            setFilters(next);
-          }}
-          onRemove={(k) => {
-            if (k === "q") setQ("");
-            else if ((FILTER_KEYS as readonly string[]).includes(k)) set(k as FilterKey, "");
+          onApply={(conds) => {
+            // The sentence's chips replace every filter, shown in the chip bar to edit (§21.4).
+            setQ("");
+            setFilters(NO_FILTERS);
+            setChips(conds.map((c) => ({ ...c, id: chipId() })));
           }}
         />
+        <FilterChips space={space} chips={chips} onChange={setChips} />
         <div className="rq-grid">
           <label className="rq-field">
             <span className="rq-label">Tìm</span>
@@ -271,13 +302,23 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
               {mySaved.map((f) => (
                 <option key={f.id} value={f.id}>
                   {f.name}
-                  {f.shared ? " (chia sẻ)" : ""}
+                  {f.shared_scope === "team" ? " (team)" : f.shared_scope === "project" ? " (dự án)" : ""}
+                  {f.pinned ? " · ghim" : ""}
                 </option>
               ))}
             </select>
+            {saved.error && (
+              <button type="button" className="link small" onClick={() => void saved.mutate()}>
+                Tải lại bộ lọc
+              </button>
+            )}
+            {current?.can_edit && <IconButton icon="settings" label="Chia sẻ, ghim, đăng ký bộ lọc này" onClick={() => setEditingSaved(true)} />}
             {canDeleteSaved && <IconButton icon="remove" tone="danger" label="Xoá bộ lọc này" onClick={() => void deleteSaved()} />}
           </div>
           <div className="tk-inline">
+            <a className="button ghost sm" href={exportHref} download aria-label="Xuất CSV theo bộ lọc hiện tại">
+              <Icon name="download" size={14} /> CSV
+            </a>
             {filtersOn && (
               <button
                 type="button"
@@ -286,6 +327,7 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
                   setQ("");
                   setSavedId("");
                   setFilters(NO_FILTERS);
+                  setChipsState([]);
                 }}
               >
                 Xoá lọc
@@ -477,7 +519,8 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
           </>
         )}
       </section>
-      {saving && <SaveFilterModal bp={bp} query={filters} onClose={() => setSaving(false)} onSaved={(id) => void saved.mutate().then(() => setSavedId(String(id)))} />}
+      {saving && <SaveFilterModal bp={bp} query={filters} tree={tree} onClose={() => setSaving(false)} onSaved={(id) => void saved.mutate().then(() => setSavedId(String(id)))} />}
+      {editingSaved && current && <SaveFilterModal bp={bp} query={filters} tree={tree} existing={current} onClose={() => setEditingSaved(false)} onSaved={() => void saved.mutate()} />}
     </div>
   );
 }
@@ -499,18 +542,49 @@ function BulkSelect({ label, disabled, onPick, children }: { label: string; disa
   );
 }
 
-function SaveFilterModal({ bp, query, onClose, onSaved }: { bp: number; query: Filters; onClose: () => void; onSaved: (id: number) => void }) {
-  const [name, setName] = useState("");
-  const [shared, setShared] = useState(false);
+const SCOPE_LABEL: Record<FilterScope, string> = {
+  me: "Chỉ mình tôi",
+  team: "Team của tôi",
+  project: "Mọi người xem dự án",
+};
+
+/* Lưu bộ lọc (§21.4): its tree, who sees it, a Board pin, a daily / weekly digest. With
+ * `existing`: change those settings of one's own filter (its conditions stay). */
+function SaveFilterModal({
+  bp,
+  query,
+  tree,
+  existing,
+  onClose,
+  onSaved,
+}: {
+  bp: number;
+  query: Filters;
+  tree: SearchTree;
+  existing?: SavedTaskFilter;
+  onClose: () => void;
+  onSaved: (id: number) => void;
+}) {
+  const [name, setName] = useState(existing?.name ?? "");
+  const [scope, setScope] = useState<FilterScope>(existing?.shared_scope ?? "me");
+  const [pinned, setPinned] = useState(existing?.pinned ?? false);
+  const [cadence, setCadence] = useState<"" | "daily" | "weekly">(existing?.subscription?.cadence ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function save() {
     if (!name.trim()) return;
     setBusy(true);
     try {
-      const clean = Object.fromEntries(Object.entries(query).filter(([, v]) => v));
-      const created = await api.post<TaskFilter>("/tasks/filters", { name: name.trim(), space: bp, query: clean, shared });
-      onSaved(created.id);
+      let id: number;
+      if (existing) {
+        const body = { name: name.trim(), shared_scope: scope, pinned, ...(cadence ? { subscription: { cadence } } : { unsubscribe: true }) };
+        id = (await api.patch<SavedTaskFilter>(`/tasks/search/filters/${existing.id}`, body)).id;
+      } else {
+        const clean = Object.fromEntries(Object.entries(query).filter(([, v]) => v));
+        const body = { name: name.trim(), space: bp, query: clean, tree, shared_scope: scope, pinned, subscription: cadence ? { cadence } : null };
+        id = (await api.post<SavedTaskFilter>("/tasks/search/filters", body)).id;
+      }
+      onSaved(id);
       onClose();
     } catch (e) {
       setError(errorText(e));
@@ -519,10 +593,10 @@ function SaveFilterModal({ bp, query, onClose, onSaved }: { bp: number; query: F
   }
   return (
     <Modal
-      title="Lưu bộ lọc"
+      title={existing ? `Bộ lọc “${existing.name}”` : "Lưu bộ lọc"}
       onClose={onClose}
       busy={busy}
-      width={420}
+      width={460}
       footer={
         <>
           <button type="button" className="ghost" onClick={onClose} disabled={busy}>
@@ -546,8 +620,27 @@ function SaveFilterModal({ bp, query, onClose, onSaved }: { bp: number; query: F
           <span className="rq-label">Tên</span>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Bug quá hạn của tôi" autoFocus />
         </label>
+        <label className="rq-field">
+          <span className="rq-label">Ai thấy</span>
+          <select value={scope} onChange={(e) => setScope(e.target.value as FilterScope)}>
+            {(Object.keys(SCOPE_LABEL) as FilterScope[]).map((k) => (
+              <option key={k} value={k}>
+                {SCOPE_LABEL[k]}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="inline-check">
-          <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} /> Chia sẻ cho mọi người xem dự án
+          <input type="checkbox" checked={pinned} onChange={(e) => setPinned(e.target.checked)} /> Ghim lên Board làm lọc nhanh
+        </label>
+        <label className="rq-field">
+          <span className="rq-label">Nhận tóm tắt</span>
+          <select value={cadence} onChange={(e) => setCadence(e.target.value as "" | "daily" | "weekly")}>
+            <option value="">Không</option>
+            <option value="daily">Hằng ngày (8:00)</option>
+            <option value="weekly">Hằng tuần (thứ Hai 8:00)</option>
+          </select>
+          <span className="small muted">Gửi qua Telegram nếu bạn đã liên kết, không thì vào hộp thông báo.</span>
         </label>
       </form>
     </Modal>
