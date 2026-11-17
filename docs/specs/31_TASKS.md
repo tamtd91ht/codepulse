@@ -1676,3 +1676,59 @@ cuối `app/globals.css`, khối `/* UI/UX narrow + toolbars */` (tiền tố `n
   vuốt ngang dưới 768 px (§6) thuộc phần Board. Báo cáo vẫn cuộn trang (lưới biểu đồ, ngoài phạm vi). ★ Bộ lọc
   (bộ lọc đã lưu) chưa có trên Backlog vì bộ lọc lưu là cây của `POST /tasks/search` còn Backlog lọc tại chỗ.
   Trong bottom sheet chưa ghim / bỏ ghim trường (nút ghim chỉ có ở "+ Lọc" màn rộng).
+### 22.4 Board
+
+Bước 4 của chuẩn hoá UI/UX (§4.1, §5 "Tiêu đề cột Board 32 px, card Gọn 56 / Thoáng 88 px", §6, tiêu chí A2,
+A4, A10, phụ lục Board). Code: `components/tasks/TaskBoard.tsx`, bộ so khớp `components/tasks/boardFilter.ts`,
+CSS cuối `app/globals.css` khối `/* UI/UX Board */` (tiền tố `bd-`).
+
+- **Bỏ khối lọc 3 hàng** (Người làm, Ưu tiên, Loại, Swimlane, Sub-task, Nhãn, Mật độ, dòng "Lọc nhanh"). Board
+  dùng FilterBar dùng chung (§22.2) với `screen="board"`: Người làm → chồng avatar, "Chỉ của tôi" → "Của
+  tôi", Ưu tiên / Loại → chip ghim, Nhãn và mọi trường khác → "+ Lọc". Bộ lọc nhớ theo người × dự án × màn
+  (`cp:fb:<user>:<bp>:board`) và nằm trên URL (`f`, `fq`).
+- **Lọc tại trình duyệt:** Board đã có sẵn các task của nó (sprint đang chạy, hoặc task chưa xong + Done 14
+  ngày), nên cây lọc được so trên từng `TaskRow` (`boardFilter.ts`, cùng nghĩa với `app/tasks/search.py`):
+  trạng thái, nhóm trạng thái, loại, ưu tiên, lý do đóng, người làm (cả "me", "none"), người tạo, nhãn, sprint
+  (cả "đang chạy", "backlog"), phiên bản, task cha, hạn (ngày, quá hạn, 7 ngày tới, trong N ngày), ngày tạo /
+  cập nhật / đóng, story point, giờ trong cột, bị chặn, có critical. Điều kiện Board không tự so được (chữ
+  tìm — vì tìm cả mô tả và bình luận —, người theo dõi, thành phần, có MR, testcase failed, DoD, trường tuỳ
+  biến) thì Board gọi `POST /tasks/search` với cả cây (`filterTree`) và chỉ lấy mã task (trang 500, tới
+  5.000), rồi giao với các task của Board. Trong lúc chờ, chữ tìm được so tạm theo mã + tiêu đề nên Board
+  không trống đi. Khoá SWR `/tasks/search#board#…` nên `refreshTasks()` và luồng realtime làm mới nó.
+  Số đếm trong "+ Lọc" (`Bug · 3`) vẫn là số của cả dự án (facets phía máy chủ), không riêng phạm vi Board.
+- **Nhãn trạng thái** (khe `status` của FilterBar) thay dòng "Chưa có sprint đang chạy…": có sprint →
+  `<tên sprint> · còn N ngày` (`kết thúc hôm nay`, `trễ N ngày`), là link sang tab Sức khoẻ
+  (`/tasks?space=…&tab=health`); không có sprint → `Không có sprint · hiện task chưa xong + Done 14 ngày`;
+  Kanban → `Kanban · …`. Nút ⓘ (có nhãn, tooltip) nói rõ phạm vi. Dưới 1280 px nhãn ẩn như FilterBar quy định.
+- **Bộ lọc đã ghim** (§21.4): tối đa 2 chip 📌 cạnh "★ Bộ lọc"; bấm mở bộ lọc thành chip (không còn lọc theo
+  danh sách mã), chip đang dùng ở trạng thái nhấn, bấm lần nữa bỏ lọc. Bộ lọc ghim khác vẫn ở "★ Bộ lọc".
+- **⧉ Hiển thị** (`useViewOptions("board")`, nhớ theo người, khác mặc định thì lên `v`): Swimlane (không / epic
+  / task cha / người làm / ưu tiên), Gom sub-task vào card cha, Mật độ Thoáng / Gọn (**mặc định Gọn**), Trường
+  trên card (SP, người làm, nhãn, hạn), Ẩn cột rỗng, Thu gọn cột Done, "Về mặc định". *Quyết định:* lựa chọn
+  cũ lưu theo trình duyệt (`tk-board-lane`, `tk-board-group-subs`, `tk-density-board`) không được chuyển sang.
+- **Bố cục:** khung Board cao `var(--tk-view-h-full)` (thanh lọc 40 px + khoảng 8 px + vùng board =
+  `--tk-view-h`); trang không cuộn. Thanh lọc `sticky` ở `--tk-bar-top` phòng khi cửa sổ thấp hơn 360 px.
+  Mỗi cột tự cuộn dọc; tiêu đề cột 32 px không cuộn theo (tên, số task hoặc `n/WIP` đỏ khi vượt, tổng SP,
+  nút thu gọn hiện khi rê chuột / focus). Nhiều cột thì vùng board cuộn ngang, mép còn cột bị che mờ dần
+  (`mask-image`, thuộc tính `data-fade-l/r` cập nhật khi cuộn / đổi kích thước). Có swimlane thì cả vùng
+  cuộn hai chiều, tiêu đề cột ghim ở đỉnh trong từng lane, tên lane ghim mép trái.
+- **Thu gọn cột** thành dải 40 px (tên viết dọc, số task; bấm để mở, vẫn thả card vào được — vào cuối cột).
+  Nhớ theo dự án ở trình duyệt (`cp:tasks:board:folded:<bp>`, bấm tay thắng "Thu gọn cột Done"; bật / tắt
+  "Thu gọn cột Done" xoá lựa chọn tay của các cột Done). Ẩn cột rỗng: cột không còn card (sau lọc) ẩn đi,
+  nhưng hiện lại trong lúc kéo hoặc nhấc card bằng bàn phím để vẫn thả được.
+- **Tạo nhanh:** cột chưa có task chỉ hiện "Thả task vào đây"; hàng "+ Tạo nhanh" cao 28 px ở cuối cột (chữ
+  mờ; ở cột rỗng chỉ hiện khi rê chuột / focus, luôn hiện trên màn cảm ứng), bấm thì thành ô nhập như cũ (cú
+  pháp `@người #loại !ưu tiên 3sp ^cha`, xem trước, chọn khi mơ hồ); ô trống mất focus hoặc Esc thì đóng.
+- **Card:** Gọn ≈ 56 px — tiêu đề một dòng (đủ ở tooltip), loại, mã, **một** huy hiệu (tín hiệu sức khoẻ
+  §21.1 nếu có, không thì mức ưu tiên), SP, avatar. Thoáng ≈ 88 px — tiêu đề tối đa 2 dòng, một hàng
+  tín hiệu + nhãn (khi có, thêm ~26 px), huy hiệu git, tiến độ sub-task, hạn `dd/mm` (khi chưa quá hạn), SP,
+  ưu tiên, avatar. Khoảng cách card 6 px.
+- **Không có kết quả:** hộp nhỏ "Không có task khớp · Xoá lọc" nổi trên các cột (cột vẫn là chỗ thả); thông
+  báo đóng task / lỗi nổi ở đáy vùng board; nên thêm, bớt chip hay hiện thông báo không đẩy cột (A10). Thông
+  báo checklist chuyển đổi (`SwitchoverBoardNote`) vẫn nằm trên board và làm board thấp lại.
+- **Giữ nguyên:** kéo thả, di chuyển bằng bàn phím + vùng thông báo, Hoàn tác, cập nhật trực tiếp
+  (`useTaskLive`), chọn card, tín hiệu sức khoẻ, DoD thiếu, tạo nhanh. J/K (§22.6) đi theo thứ tự card đang
+  hiện: lane, rồi cột chưa thu gọn, sau lọc.
+- **Dưới 768 px** (§6): mỗi cột rộng gần hết màn (`100% − 24px`, hé cột sau), vuốt ngang chuyển cột
+  (`scroll-snap-type: x mandatory`); không thu gọn cột ở đây; chip bộ lọc ghim ẩn.
+- **Chưa làm:** chấm chỉ cột đang xem trên điện thoại; số đếm trong "+ Lọc" theo đúng phạm vi Board.

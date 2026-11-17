@@ -21501,3 +21501,386 @@ input.fb-cell-edit {
     animation: none;
   }
 }
+/* UI/UX Board (docs/specs/31 §22.4): the shared FilterBar on top, then the board fills the rest of
+   the window (--tk-view-h) and each column scrolls on its own under a 32 px header. Columns fold to
+   a 40 px strip; many columns scroll sideways with a fade at the edge that has more. Cards: Gọn
+   ≈56 px, Thoáng ≈88 px, 6 px apart. Under 768 px one column at a time, swiped (scroll-snap). */
+.bd-screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tk-gap);
+  height: var(--tk-view-h-full);
+  min-height: 360px;
+}
+.bd-screen > .fb-bar {
+  position: sticky;
+  top: var(--tk-bar-top);
+  z-index: 5;
+}
+.bd-screen > .sw-board-note {
+  flex: none;
+  margin-bottom: 0;
+}
+.bd-area {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.bd-screen .tk-board {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+}
+.bd-board {
+  position: relative; /* contains absolutely placed text, like the column bodies below */
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.bd-screen .tk-col {
+  flex: 1 0 260px;
+  min-width: 0;
+  min-height: 0;
+}
+.bd-dense .tk-col {
+  flex-basis: 240px;
+}
+.bd-screen .tk-col.bd-folded {
+  flex: 0 0 40px;
+}
+
+/* Column header: 32 px, name · count · SP · fold; red when past the WIP limit. */
+.bd-col-head {
+  flex: none;
+  gap: 6px;
+  height: 32px;
+  padding: 0 4px 0 10px;
+}
+.bd-col-head .tab-count {
+  flex: none;
+}
+.bd-col-sp {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.bd-col-head .bd-fold {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  opacity: 0;
+}
+.tk-col:hover .bd-fold,
+.bd-col-head .bd-fold:focus-visible {
+  opacity: 1;
+}
+.bd-screen .tk-col-body {
+  /* The containing block of the cards' visually-hidden text (position: absolute): without it that
+     text escapes the column's scroll box and makes the whole page scroll. */
+  position: relative;
+  flex: 1 1 auto;
+  gap: 6px;
+  padding: 6px;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Folded column: a 40 px strip, the name written downwards; still a drop target. */
+.bd-strip {
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: 8px 0;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  box-shadow: none;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.bd-strip:hover {
+  background: var(--surface-hover);
+}
+.bd-strip:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.bd-strip-name {
+  min-height: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  writing-mode: vertical-rl;
+}
+
+/* Empty column: one line; the quick create row is faint and shows fully on hover / focus. */
+.bd-drop-hint {
+  margin: 0;
+  padding: 10px 8px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+.bd-quick-add {
+  flex: none;
+  justify-content: flex-start;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 13px;
+}
+.bd-quick-add:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.bd-quick-add:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.tk-col.bd-empty .bd-quick-add {
+  opacity: 0;
+}
+.tk-col.bd-empty:hover .bd-quick-add,
+.tk-col.bd-empty .bd-quick-add:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .tk-col.bd-empty .bd-quick-add,
+  .bd-col-head .bd-fold {
+    opacity: 1;
+  }
+}
+.bd-quick-box {
+  display: grid;
+  gap: 6px;
+}
+.bd-quick-box .tk-quick {
+  height: 32px;
+  margin-top: 0;
+}
+
+/* Cards */
+.bd-screen .tk-card {
+  gap: 6px;
+  padding: 8px 10px;
+}
+.bd-comfy .tk-card {
+  min-height: 88px;
+  align-content: space-between;
+}
+.bd-card-meta {
+  align-items: center;
+  max-height: 20px;
+  overflow: hidden;
+}
+.bd-comfy .tk-card-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.bd-screen .tk-card.bd-card-dense {
+  gap: 4px;
+  min-height: 56px;
+  padding: 6px 10px;
+}
+.bd-card-dense .tk-card-title {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bd-card-dense .tk-card-foot {
+  flex-wrap: nowrap;
+  min-width: 0;
+  height: 20px;
+}
+.bd-card-dense .tk-signal {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bd-due {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Swimlanes: the area scrolls both ways; column headers stick to its top within their lane. */
+.bd-lanes {
+  position: relative;
+  display: block;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.bd-lanes .tk-board {
+  overflow: visible;
+}
+.bd-lanes .tk-col {
+  min-height: 120px;
+}
+.bd-lanes .tk-col-body {
+  overflow: visible;
+}
+.bd-lanes .bd-col-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--bg-elevated);
+}
+.bd-lanes .tk-col.bd-folded .bd-strip {
+  position: sticky;
+  top: 0;
+  height: auto;
+  min-height: 120px;
+}
+.bd-lane-head {
+  position: sticky;
+  left: 0;
+  width: max-content;
+}
+
+/* Edge fade where the board has more columns that way (an alpha mask; the colour is irrelevant). */
+.bd-screen [data-fade-r] {
+  mask-image: linear-gradient(to right, var(--text) calc(100% - 32px), transparent);
+}
+.bd-screen [data-fade-l] {
+  mask-image: linear-gradient(to right, transparent, var(--text) 32px);
+}
+.bd-screen [data-fade-l][data-fade-r] {
+  mask-image: linear-gradient(to right, transparent, var(--text) 32px, var(--text) calc(100% - 32px), transparent);
+}
+
+/* "Không có task khớp" over the (still droppable) columns; notes float at the bottom. */
+.bd-nomatch {
+  position: absolute;
+  top: 96px;
+  left: 50%;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 8px 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  color: var(--text);
+  font-size: 13px;
+  transform: translateX(-50%);
+}
+.bd-notes {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  z-index: 4;
+  display: grid;
+  gap: 8px;
+  max-width: 640px;
+  margin: 0 auto;
+  animation: fb-fade 150ms ease-out;
+}
+.bd-notes .alert {
+  margin: 0;
+  box-shadow: var(--shadow-md);
+}
+
+/* The FilterBar's status label (sprint · days left, or what the board holds) and pinned filters. */
+.fb-status:has(.bd-scope) {
+  max-width: 360px;
+}
+.bd-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+.bd-scope-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bd-scope-link {
+  color: var(--link);
+}
+.bd-scope-info {
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+.bd-pins {
+  display: flex;
+  gap: 6px;
+}
+.bd-pin {
+  max-width: 160px;
+}
+.bd-pin-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 1280px) {
+  .bd-pin {
+    max-width: 120px;
+  }
+}
+
+/* Under 768 px: one column at a time, swiped sideways. */
+@media (max-width: 767px) {
+  .bd-screen .tk-board {
+    gap: 8px;
+    scroll-snap-type: x mandatory;
+  }
+  .bd-screen .tk-col,
+  .bd-dense .tk-col {
+    flex: 0 0 calc(100% - 24px);
+    scroll-snap-align: start;
+  }
+  .bd-pins {
+    display: none;
+  }
+  /* Guard: until the bar has its own narrow layout, a too-wide bar scrolls in place rather than
+     widening the page (which would break the column swipe). */
+  .bd-screen {
+    min-width: 0;
+  }
+  .bd-screen > .fb-bar {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bd-notes {
+    animation: none;
+  }
+  .bd-screen .tk-board {
+    scroll-behavior: auto;
+  }
+}
