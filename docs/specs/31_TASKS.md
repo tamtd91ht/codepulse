@@ -1732,3 +1732,37 @@ CSS cuối `app/globals.css` khối `/* UI/UX Board */` (tiền tố `bd-`).
 - **Dưới 768 px** (§6): mỗi cột rộng gần hết màn (`100% − 24px`, hé cột sau), vuốt ngang chuyển cột
   (`scroll-snap-type: x mandatory`); không thu gọn cột ở đây; chip bộ lọc ghim ẩn.
 - **Chưa làm:** chấm chỉ cột đang xem trên điện thoại; số đếm trong "+ Lọc" theo đúng phạm vi Board.
+### 22.11 Sửa đọc được: Danh sách, Timeline, Báo cáo, chi tiết task
+
+Danh sách sửa UI/UX ưu tiên khả năng đọc (mục 1, 5, 6; không thêm tính năng). CSS ở cuối `app/globals.css`,
+khối `/* UI fix: List, Timeline, Reports, detail */` (sửa thêm luật `fb-`, `rm-`, `rp-`, `tl-composer`).
+
+- **Danh sách** (`TaskList.tsx`): độ rộng cột là biến CSS trên `.fb-table` (`--fb-w-key`, `--fb-w-status`…,
+  `--fb-w-title-min`); bảng tính `min-width` = tổng các cột đang hiện + tiêu đề tối thiểu (biến `--fb-min`
+  đặt inline từ danh sách cột), `width: 100%`. Cột Tiêu đề (`<col class="fb-w-title">`) nhận phần còn lại,
+  một dòng, cắt "…", tooltip (`title`) là tiêu đề đầy đủ; chỗ cho huy hiệu git (critical/high, commit/MR) được
+  trừ ra bằng `:has()`. Mã 96, SP 52, Hạn 104, Cập nhật 96 px (vừa nội dung đo ở Chrome: `OCX-260`,
+  `21/12/2026`, `3 phút trước`); dưới 1440 px Trạng thái / Ưu tiên 112, Người làm 140 px (thay khối
+  768–1439 px của §22.9, đã bỏ). Khi tổng vượt bề rộng thì bảng cuộn ngang **trong** `.fb-scroll`, trang
+  không cuộn ngang. *Quyết định:* tiêu đề tối thiểu **336 px** chứ không 280 px: 280 px chỉ đọc được 33 ký tự,
+  336 px đọc được 41, đạt nghiệm thu "≥ 40 ký tự". Đo Chrome headless (263 task mẫu):
+  1191 × 855 tiêu đề 336 px / 41 ký tự, bảng cuộn ngang 230 px; 1280 × 720 như vậy; 1510 × 855 tiêu đề 365 px,
+  không cuộn ngang; 400 px vẫn là thẻ hai tầng của §22.9, không cuộn ngang.
+- **Board** (Thoáng): tiêu đề card tối đa 2 dòng (luật `.bd-comfy .tk-card-title` của §22.4 vẫn đúng, đã kiểm);
+  card nay luôn có tooltip tiêu đề đầy đủ (trước chỉ ở chế độ Gọn). Chỉ đổi thuộc tính `title` của nút tiêu đề.
+- **Timeline** (`TaskTimeline.tsx`): dòng cao 40 px (trước 34), tên task / epic tối đa 2 dòng (13/16 px,
+  `line-clamp`), tooltip giữ nguyên; nút mã gọn lại để tên có chỗ. Cột tên **kéo rộng được**: mép phải ô tiêu đề
+  cột tên là `role="separator"` (focus được, vòng focus `--ring`): kéo chuột / bút, ← / → (Shift: bước 48 px,
+  thường 16 px), Home hoặc bấm đúp về 280 px; 200–560 px; nhớ trong localStorage `cp:tasks:timeline:name-w`
+  (try/catch; dùng chung cho Timeline một dự án và nhiều dự án). Vị trí vạch hôm nay và mũi tên "blocks" tính
+  theo độ rộng này.
+- **Chi tiết task** (`TaskDetail.tsx`, toàn trang và ngăn bên phải): ô bình luận không còn `position: sticky`
+  (trước đây dính đáy vùng cuộn nên hiện đè giữa khối Code và Tiêu chí chấp nhận). Thứ tự cuối trang: …
+  Testcase, Đính kèm, **Dòng thời gian, ô bình luận**. Giữ `@` / `#`, `data-shortcut="comment"` (phím C), đính
+  kèm và dán ảnh.
+- **Báo cáo** (`TaskReports.tsx`): nhãn trong dải chỉ số xuống tối đa 2 dòng (`white-space: normal`,
+  `max-height` 2 dòng, `text-overflow: clip`, không "…"); ô cao tối thiểu 64 px, tự cao thêm khi nhãn 2 dòng.
+  Tooltip của ô bắt đầu bằng tên đầy đủ: `<nhãn> — <giải thích>`.
+- **Chưa làm:** cột Mã + Tiêu đề không ghim trái khi bảng cuộn ngang ở màn hẹp (ở 1191 px phải cuộn để thấy
+  Hạn / Cập nhật); độ rộng cột Danh sách chưa kéo được (chỉ Timeline); độ rộng cột Timeline nhớ theo trình
+  duyệt, không theo người dùng.
