@@ -1766,3 +1766,54 @@ khối `/* UI fix: List, Timeline, Reports, detail */` (sửa thêm luật `fb-`
 - **Chưa làm:** cột Mã + Tiêu đề không ghim trái khi bảng cuộn ngang ở màn hẹp (ở 1191 px phải cuộn để thấy
   Hạn / Cập nhật); độ rộng cột Danh sách chưa kéo được (chỉ Timeline); độ rộng cột Timeline nhớ theo trình
   duyệt, không theo người dùng.
+### 22.10 Sửa đọc được: thanh lọc, phím tắt, toast tạo task
+
+Người dùng 2026-11-17 (danh sách sửa UI/UX mục 2, 3, 4, 7; ưu tiên đọc được, không thêm tính năng). Các
+quyết định dưới đây do agent chọn (người dùng giao toàn quyền).
+
+- **Chip đọc được:** mọi chip đang lọc hiện tên trường và giá trị, `Loại: Bug ✕`, `Ưu tiên: Cao nhất, Cao ✕`,
+  ở mọi độ rộng — kể cả chip ghim (Loại, Ưu tiên); bỏ hẳn chế độ chip ghim chỉ còn icon + số dưới 1280 px.
+  Chip ghim chưa chọn đọc `Loại ▾`. Chip dài cắt bằng `…`, đủ chữ ở `title`. Mọi nút chỉ có icon trên thanh
+  (✕ bỏ lọc, ✕ xoá chữ tìm, Hiển thị khi chỉ còn icon, "Của tôi" khi gọn) có `aria-label` và tooltip
+  (`title` / `data-tip`).
+- **Gom thay vì bóp:** ô tìm luôn ≥ 240 px (cơ sở 280 px, không còn nở ra khi gõ); thanh lọc không xuống
+  dòng, không cuộn ngang (`overflow-x: clip`; bỏ `overflow-x: auto` của Board dưới 768 px). FilterBar đo
+  trước khi vẽ (mép phải khối bên phải so với mép thanh; `ResizeObserver` cho thanh và khối phải) rồi áp
+  từng bước gom: chip ghim chưa chọn (chỉ là lối tắt, vẫn có trong "+ Lọc") → chip đang lọc từ cuối → ẩn
+  nhãn trạng thái và bộ lọc đã ghim của Board → ẩn "· đã lọc" → "Của tôi" chỉ còn icon, Người làm và khoảng
+  cách hẹp lại → cuối cùng chip ghim đang có giá trị. Chip bị gom có giá trị nằm trong
+  `+N bộ lọc ▾` (đọc `Trường: giá trị`, bỏ từng cái được). Quá 4 chip vẫn là 3 chip + `+N`. Đổi độ rộng
+  thanh thì đo lại từ đầu; khối phải tự rộng ra (dữ liệu về muộn) thì gom thêm. Chiều cao 40 px không đổi.
+- **Câu lọc không tự áp:** gõ xong 200 ms, chữ được hỏi `POST /tasks/nl-filter`. Nhận ra là câu lọc ("bug
+  cao nhất") thì **không** tìm theo chữ, chỉ hiện gợi ý một dòng `Enter để lọc: Loại Bug · Ưu tiên Cao nhất`
+  (rộng bằng ô tìm, tối thiểu 320 px, dài thì `…` + `title`); Enter hoặc bấm gợi ý thì thành chip (phần chữ
+  còn lại thành chữ tìm). Bỏ việc tự lấy chip sau 700 ms. Chữ thường được tìm khi có trả lời (hoặc ngay khi
+  Enter).
+- **Phím tắt một chữ:** một hàm chung `shortcutBlocked(e)` trong `shortcutEvents.ts` (cùng `overlayOpen()`;
+  `dialogOpen()` giờ là `overlayOpen()`): bỏ qua khi giữ Ctrl / Alt / Meta, đang gõ IME, focus ở input /
+  textarea / select / contenteditable, hoặc có lớp nổi: `.modal-backdrop`, bảng lệnh, `[aria-modal=true]`,
+  `[role=dialog]` (trừ ngăn task `aria-modal=false`), `[role=menu]`, `[role=listbox]` (trừ listbox nằm sẵn
+  trên trang, đánh dấu `data-inline`), nút có `aria-haspopup` đang `aria-expanded=true`, `.msel-pop`,
+  `.fb-pop`, `.fb-sheet`, `.tf-pop`. Dùng ở: phím toàn cục (N, /, G B, G M, ?), phím task (E, A, S, C, .),
+  khung trang (1–7, C), thanh lọc (/, F, Shift+F, Shift+X, V), J/K của ngăn task (Esc của ngăn dùng
+  `overlayOpen`). Gõ "c" khi một popover đang mở không tạo task.
+- **Toast sau khi tạo:** `Đã tạo OCX-12 · Mở · Hoàn tác` trong 10 giây (`useUndo` có thêm một nút phụ),
+  một chỗ hiện (`TaskCreatedToast`, gắn cạnh bảng lệnh nên có ở mọi trang), các đường tạo gọi
+  `announceTaskCreated(key)`: form tạo task (C, N, "+ Tạo", sub-task từ bảng lệnh) và tạo nhanh trên Board.
+  *Quyết định:* tạo xong ở `/tasks` **không** tự mở ngăn task nữa, sub-task từ bảng lệnh không tự chuyển
+  trang — "Mở" làm việc đó (`?task=KEY` ở `/tasks`, trang task ở nơi khác). Tạo sub-task trong trang chi
+  tiết (`TaskDetail.tsx`) chưa gọi `announceTaskCreated` (file thuộc phần việc khác).
+- **Hoàn tác tạo:** `POST /tasks/{key}/undo-create` (204). Chỉ người tạo (dòng lịch sử `created`, không có
+  thì người báo cáo), trong 2 phút từ lúc tạo, khi task chưa có bình luận, giờ làm, liên kết task, liên kết
+  git, tệp đính kèm, sub-task và không ai khác sửa (lịch sử chỉ của người tạo hoặc của hệ thống). Không cần
+  quyền xoá: ai tạo được thì gỡ được lỗi của mình ngay. Không đạt thì 409 với lý do tiếng Việt (toast hiện
+  "Không hoàn tác được: …"). Ghi audit `task.undo_create`; dòng DPI (`issues`, nguồn `codepulse`) đi theo
+  cùng hook phiên như khi xoá. Hoàn tác xong: đóng ngăn / rời trang của task đó, làm mới dữ liệu.
+- **Checklist trên Board:** banner "Checklist bật Task" (`SwitchoverBoardNote`) thành chip nhỏ
+  `Checklist 2/6` ở ô `actions` của thanh lọc (`SwitchoverChip`, chỉ người quản lý); bấm mở popover các bước
+  (dùng chung hàng `ChecklistRows` với thẻ ở Cài đặt), chân popover có "Ẩn checklist" (nhớ theo trình duyệt
+  như trước) và "Mở Cài đặt". Xong hết bước thì chip tự biến mất. Board không còn thấp đi vì banner.
+- **CSS:** cuối `globals.css`, mục `/* UI fix: FilterBar, shortcuts, toast */`; sửa tại chỗ các luật
+  `fb-` (chip ghim icon, `min-width` ô tìm), `bd-` (bỏ cuộn ngang thanh), `sw-` (bỏ `sw-board-note`).
+- **Kiểm thử:** `tests/api/test_task_undo_create.py` (người tạo hoàn tác được và dòng DPI mất, người khác
+  409, có bình luận / sub-task / người khác sửa / quá 2 phút thì 409, sửa của chính mình không chặn).

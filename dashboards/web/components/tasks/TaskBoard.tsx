@@ -14,13 +14,14 @@ import type { Me, SavedTaskFilter, TaskDodGaps, TaskPage, TaskPerson, TaskResolu
 
 import { clientMatchable, hasText, matchTree } from "./boardFilter";
 import { selectCard, useCardSelected } from "./cardSelection";
+import { announceTaskCreated } from "./createdToast";
 import { useDrawerList } from "./drawerNav";
 import { FilterBar } from "./FilterBar";
 import { fromTree } from "./FilterChips";
 import { type FilterValue, filterCount, filterTree, useFilterState, useViewOptions } from "./filterState";
 import { type QuickPicks, QuickChips, QuickPreview } from "./QuickChips";
 import { SavedFilterMenu } from "./SavedFilterMenu";
-import { SwitchoverBoardNote } from "./TaskSwitchover";
+import { SwitchoverChip } from "./TaskSwitchover";
 import { SubtaskGroup } from "./SubtaskGroup";
 import {
   GitBadge,
@@ -487,7 +488,8 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
         }
         if (!type && parent.type !== "epic" && space.types.includes("subtask")) type = "subtask";
       }
-      await api.post("/tasks", { space: bp, ...fields, type, parent_key, status_id: status.id, sprint_id: active?.id ?? undefined });
+      const made = await api.post<{ key: string }>("/tasks", { space: bp, ...fields, type, parent_key, status_id: status.id, sprint_id: active?.id ?? undefined });
+      announceTaskCreated(made.key);
       setQuick((q) => ({ ...q, [status.id]: "" }));
       dropAsk(status.id);
       await refreshTasks();
@@ -951,8 +953,8 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
           </>
         }
         display={display}
+        actions={<SwitchoverChip space={space} />}
       />
-      <SwitchoverBoardNote space={space} />
       <div className={`bd-area${lane === "none" ? "" : " bd-lanes"}`} ref={lane === "none" ? undefined : scroller}>
         {!rows ? (
           <Loading error={loadError} rows={6} />

@@ -13,6 +13,7 @@ import { listHref } from "@/components/tasks/filterState";
 import { HELP_EVENT, PALETTE_EVENT, type PaletteMode } from "@/components/tasks/shortcutEvents";
 import { PersonAvatar, RESOLUTIONS, RESOLUTION_LABEL, StatusPill, errorText, personName, priorityList, refreshTasks, spaceOf } from "@/components/tasks/taskParts";
 import { branchName } from "@/components/tasks/taskSignal";
+import { TaskCreatedToast } from "@/components/tasks/createdToast";
 import { useGlobalShortcuts } from "@/components/tasks/useTaskShortcuts";
 import { ApiError, api, can, useApi } from "@/lib/api";
 import type { Me, Sprint, TaskDetail, TaskFilter, TaskPage, TaskPerson, TaskResolution, TaskRow, TaskSpace, TaskStatusRef, TaskVersion } from "@/lib/types";
@@ -145,7 +146,6 @@ export function CommandPalette({ me }: { me: Me }) {
   const [open, setOpen] = useState<PaletteMode | null>(null);
   const [help, setHelp] = useState(false);
   const [subtask, setSubtask] = useState<{ space: TaskSpace; parent: string } | null>(null);
-  const router = useRouter();
   const pathname = usePathname();
   const toggleHelp = useCallback(() => setHelp((v) => !v), []);
   useGlobalShortcuts(me, toggleHelp, help);
@@ -192,14 +192,14 @@ export function CommandPalette({ me }: { me: Me }) {
         />
       )}
       {help && !open && <ShortcutHelpModal onClose={() => setHelp(false)} />}
+      <TaskCreatedToast />
       {subtask && (
         <TaskCreate
           space={subtask.space}
           parentKey={subtask.parent}
           onClose={() => setSubtask(null)}
-          onCreated={(key) => {
+          onCreated={() => {
             setSubtask(null);
-            router.push(`/tasks/${encodeURIComponent(key)}`);
           }}
         />
       )}

@@ -45,6 +45,7 @@ import {
   useTaskSpaces,
   useVersions,
 } from "./taskParts";
+import { announceTaskCreated } from "./createdToast";
 
 /**
  * One task (§13 "Chi tiết task"), the same in the drawer (`/tasks?task=KEY`) and on `/tasks/KEY`.
@@ -469,7 +470,8 @@ function Subtasks({ task, bp, space, onOpenTask }: { task: Detail; bp: number | 
     setBusy(true);
     setError(null);
     try {
-      await api.post("/tasks", { space: bp, type, title: title.trim(), parent_key: task.key });
+      const made = await api.post<{ key: string }>("/tasks", { space: bp, type, title: title.trim(), parent_key: task.key });
+      announceTaskCreated(made.key); // update_ui_ux item 4: "Đã tạo … · Mở · Hoàn tác"
       setTitle("");
       await refreshTasks();
     } catch (e) {

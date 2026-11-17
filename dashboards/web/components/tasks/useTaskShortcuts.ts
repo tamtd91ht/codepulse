@@ -6,7 +6,7 @@ import { useEffect, useRef } from "react";
 import { can } from "@/lib/api";
 import type { Me } from "@/lib/types";
 
-import { dialogOpen, openPalette, typingIn } from "./shortcutEvents";
+import { openPalette, shortcutBlocked } from "./shortcutEvents";
 
 /*
  * Keyboard shortcuts (docs/specs/31 §19.8, §20.2). Global ones (N, /, G B, G M, ?) run on every
@@ -55,14 +55,14 @@ function focus(el: HTMLElement) {
   el.focus({ preventScroll: true });
 }
 
-const plain = (e: KeyboardEvent) => !(e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) && !typingIn(e.target);
+// Every key here goes through the one shared guard (shortcutEvents.ts, docs/specs/31 §22.10).
 
 /** The task shortcuts (E, A, S, C, .); mounted by the task detail. */
 export function useTaskShortcuts(enabled = true) {
   useEffect(() => {
     if (!enabled) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!plain(e) || e.shiftKey || dialogOpen()) return;
+      if (shortcutBlocked(e) || e.shiftKey) return;
       const key = e.key.toLowerCase();
       let el: HTMLElement | null = null;
       if (key === "e") {
@@ -108,15 +108,15 @@ export function useGlobalShortcuts(me: Me, onHelp: () => void, helpOpen: boolean
   useEffect(() => {
     const tasks = can(me, "tasks.view");
     const onKey = (e: KeyboardEvent) => {
-      if (!plain(e)) return;
+      if (shortcutBlocked(e, { allowOverlay: true })) return;
       // "?" needs Shift on most layouts; any other key with Shift is left alone.
       if (e.key === "?") {
-        if (dialogOpen() && !helpOpen) return;
+        if (!helpOpen && shortcutBlocked(e)) return;
         e.preventDefault();
         onHelp();
         return;
       }
-      if (e.shiftKey || dialogOpen()) return;
+      if (e.shiftKey || shortcutBlocked(e)) return;
       const key = e.key.toLowerCase();
       const afterG = Date.now() - chord.current < CHORD_MS;
       chord.current = 0;

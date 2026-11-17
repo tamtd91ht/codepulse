@@ -9,7 +9,7 @@ import { useApi } from "@/lib/api";
 import type { TaskDetail as Detail } from "@/lib/types";
 
 import { stepKey, useDrawerKeys } from "./drawerNav";
-import { dialogOpen, typingIn } from "./shortcutEvents";
+import { overlayOpen, shortcutBlocked, typingIn } from "./shortcutEvents";
 import { TaskDetail } from "./TaskDetail";
 import { TypeIcon } from "./taskParts";
 
@@ -47,15 +47,8 @@ function storeWidth(w: number) {
   }
 }
 
-/** A popover, menu or dialog is open somewhere: Esc belongs to it, not to the drawer. */
-function popoverOpen(): boolean {
-  if (dialogOpen()) return true;
-  return !!document.querySelector(
-    "[aria-modal='true'], [role='menu'], [role='listbox']:not([aria-hidden='true']), [aria-haspopup][aria-expanded='true'], .tl-add-field[open]",
-  );
-}
-
-const plainKey = (e: KeyboardEvent) => !(e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing);
+/** A popover, menu or dialog is open somewhere: Esc belongs to it, not to the drawer (shared guard, §22.10). */
+const popoverOpen = overlayOpen;
 
 export function TaskDrawer({
   taskKey,
@@ -137,7 +130,7 @@ export function TaskDrawer({
         live.current.onClose();
         return;
       }
-      if (!plainKey(e) || e.shiftKey || typingIn(e.target) || dialogOpen()) return;
+      if (e.shiftKey || shortcutBlocked(e)) return;
       const k = e.key.toLowerCase();
       const to = k === "j" ? live.current.next : k === "k" ? live.current.prev : null;
       if (k !== "j" && k !== "k") return;

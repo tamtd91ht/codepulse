@@ -4,21 +4,22 @@ import { type ReactNode, type RefObject, useCallback, useEffect, useId, useLayou
 import { createPortal } from "react-dom";
 import useSWR from "swr";
 
-import { Icon, type IconName } from "@/components/icons";
+import { Icon } from "@/components/icons";
 import { api, useApi } from "@/lib/api";
 import type { Me, SearchCond, SearchFieldInfo, SearchFields, SearchTree, TaskSearchFacets, TaskSpace } from "@/lib/types";
 
 import { type ChipCond, ChipEditor, FIELD_LABEL, chipId, chipValueLabel, first, opLabel, valueOptions } from "./FilterChips";
 import { type FilterValue, filterCount, filterTree } from "./filterState";
-import { dialogOpen, typingIn } from "./shortcutEvents";
+import { shortcutBlocked } from "./shortcutEvents";
 import { MultiSelect } from "@/components/MultiSelect";
 import { PersonAvatar, errorText, personName, useSprints, useTaskPeople, useVersions } from "./taskParts";
 
 /*
  * FilterBar (docs/specs/31 §22.2, UI/UX §3.3): one 40 px row shared by the Task screens. Left to
- * right: the smart search (text, or a sentence that turns into chips), "Của tôi", the people as
- * stacked avatars, two pinned field chips (Loại, Ưu tiên by default), "+ Lọc", the active chips
- * (past four they fold into "+N bộ lọc"), "Xoá lọc"; on the right the count ("24 task · đã lọc"),
+ * right: the smart search (text, or a sentence that turns into chips; ≥ 240 px), "Của tôi", Người làm
+ * (a multi-pick select box), two pinned field chips (Loại, Ưu tiên by default), "+ Lọc", the active
+ * chips — each "Field: values ✕"; past four, or when the row is full, they fold into "+N bộ lọc ▾"
+ * (§22.10) — and "Xoá lọc"; on the right the count ("24 task · đã lọc"),
  * a status label, the saved filters slot, "Hiển thị" and extra actions. The value is
  * `{text, chips}` (filterState.ts) and becomes the search tree with `filterTree`.
  *
@@ -38,26 +39,6 @@ const FLAGS: { label: string; cond: SearchCond }[] = [
   { label: "DoD chưa đạt", cond: { field: "dod_met", op: "is", value: "unmet" } },
 ];
 const HIDDEN_FIELDS = new Set(["text", "space", "category"]);
-/** The icon a pinned chip keeps under 1280 px, when its name hides (UI/UX §6, docs/specs/31 §22.9). */
-const FIELD_ICON: Record<string, IconName> = {
-  type: "file",
-  priority: "flag",
-  status: "pulse",
-  label: "pin",
-  component: "folder",
-  sprint: "activity",
-  version: "clipboardCheck",
-  due: "calendar",
-  created: "calendar",
-  updated: "calendar",
-  resolved: "calendar",
-  resolution: "checkCircle",
-  assignee: "user",
-  reporter: "user",
-  watcher: "user",
-  parent: "board",
-};
-const fieldIcon = (field: string): IconName => FIELD_ICON[field] ?? "filter";
 /**
  * Compact bar (UI/UX §5, §6): under 768 px wide or 720 px tall the row keeps only `🔍` and
  * `Lọc (n)`, which opens a bottom sheet. CSS does the layout (globals.css, "UI/UX narrow"); this
@@ -584,8 +565,7 @@ export function FilterBar(props: FilterBarProps) {
   useEffect(() => {
     if (replaceWith) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing || typingIn(e.target) || dialogOpen()) return;
-      if (document.querySelector(".fb-pop, .fb-sheet")) return;
+      if (shortcutBlocked(e)) return;
       const k = e.key.toLowerCase();
       if ((k === "/" || k === "f") && !e.shiftKey) {
         e.preventDefault();
@@ -648,25 +628,91 @@ export function FilterBar(props: FilterBarProps) {
     }
     return out;
   }, [value.chips, pins, people, cat]);
-  // At most 4 chips, fewer when the row is full: the rest fold into "+N bộ lọc" (no wrap, no jump).
-  const chipsRef = useRef<HTMLDivElement>(null);
-  const sig = `${groups.map((g) => g.key + g.text).join("|")}#${pins.join()}#${value.text ? 1 : 0}`;
-  const [fit, setFit] = useState<{ sig: string; n: number }>({ sig: "", n: CHIPS_SHOWN });
-  const slots = fit.sig === sig ? fit.n : CHIPS_SHOWN;
-  useLayoutEffect(() => {
-    const el = chipsRef.current;
-    if (el && el.scrollWidth > el.clientWidth + 1 && shownCount > 0) setFit({ sig, n: shownCount - 1 });
-  });
-  useEffect(() => {
-    const again = () => setFit({ sig: "", n: CHIPS_SHOWN });
-    window.addEventListener("resize", again);
-    return () => window.removeEventListener("resize", again);
-  }, []);
-  // Past 4 chips: 3 and "+N"; "+N" and "Xoá lọc" sit outside the clipped strip, always seen.
-  const shownCount = Math.min(groups.length > CHIPS_SHOWN ? CHIPS_SHOWN - 1 : CHIPS_SHOWN, slots, groups.length);
-  const shownGroups = groups.slice(0, shownCount);
-  const hiddenGroups = groups.slice(shownGroups.length);
+  // The pinned fields as groups too: a full row folds them into "+N bộ lọc" like any chip.
+  const pinGroups: Group[] = useMemo(
+    () =>
+      pins.map((field) => {
+        const chips = value.chips.filter((c) => c.field === field && c.op === "is");
+        return { key: `pin:${field}`, field, chips, text: chips.map((c) => cat.valueLabel(c)).join(", ") };
+      }),
+    [pins, value.chips, cat],
+  );
   const anyFilter = filterCount(value) > 0;
+
+  /*
+   * Folding (docs/specs/31 §22.10): every chip reads "Loại: Bug ✕"; when the row runs out of room
+   * (measured before paint: the right block past the bar's edge) fold steps apply one by one — empty
+   * pinned chips ("Loại ▾", reachable from "+ Lọc"), the active chips from the last, the status label
+   * and the pinned saved filters, the "· đã lọc" tag, "Của tôi" / Người làm go compact (gaps narrow
+   * too), and last the pinned chips that hold a value (`steps` below). Folded
+   * chips with a value are listed under "+N bộ lọc ▾". The search keeps its 240 px, the row never
+   * wraps or scrolls, and its height never changes.
+   */
+  const barRef = useRef<HTMLDivElement>(null);
+  const rightRef = useRef<HTMLDivElement>(null);
+  const [measure, setMeasure] = useState(0);
+  const groupMax = groups.length > CHIPS_SHOWN ? CHIPS_SHOWN - 1 : groups.length;
+  // The fold steps in order (keys of what goes): empty pinned chips (only shortcuts), the active
+  // chips from the last, the status label, the "· đã lọc" tag, the compact people controls, and
+  // last the pinned chips that hold a value.
+  const steps = [
+    ...pinGroups
+      .filter((g) => !g.chips.length)
+      .map((g) => g.key)
+      .reverse(),
+    ...groups
+      .slice(0, groupMax)
+      .map((g) => g.key)
+      .reverse(),
+    "~status",
+    "~tag",
+    "~tight",
+    ...pinGroups
+      .filter((g) => g.chips.length)
+      .map((g) => g.key)
+      .reverse(),
+  ];
+  const maxFold = steps.length;
+  const sig = `${groups.map((g) => g.key + g.text).join("|")}#${pinGroups.map((g) => g.key + g.text).join("|")}#${anyFilter ? 1 : 0}#${measure}`;
+  const [fit, setFit] = useState<{ sig: string; fold: number }>({ sig: "", fold: 0 });
+  const fold = fit.sig === sig ? fit.fold : 0;
+  const overflowing = () => {
+    const bar = barRef.current;
+    const right = rightRef.current;
+    if (!bar || !right || compactNow()) return false;
+    return right.getBoundingClientRect().right > bar.getBoundingClientRect().right + 1;
+  };
+  const step = useRef<() => void>(() => undefined);
+  step.current = () => {
+    if (fold < maxFold && overflowing()) setFit({ sig, fold: fold + 1 });
+  };
+  useLayoutEffect(() => step.current());
+  useEffect(() => {
+    const bar = barRef.current;
+    const right = rightRef.current;
+    if (!bar || typeof ResizeObserver === "undefined") return;
+    // A new width (window, drawer): measure again from nothing folded. The right block growing on
+    // its own (a slot's data arriving): fold further.
+    let width = bar.getBoundingClientRect().width;
+    const onBar = new ResizeObserver(() => {
+      const w = bar.getBoundingClientRect().width;
+      if (Math.abs(w - width) < 1) return;
+      width = w;
+      setMeasure((m) => m + 1);
+    });
+    const onRight = new ResizeObserver(() => step.current());
+    onBar.observe(bar);
+    if (right) onRight.observe(right);
+    return () => {
+      onBar.disconnect();
+      onRight.disconnect();
+    };
+  }, [replaceWith]);
+  const applied = new Set(steps.slice(0, fold));
+  const shownGroups = groups.slice(0, groupMax).filter((g) => !applied.has(g.key));
+  const shownPins = pinGroups.filter((g) => !applied.has(g.key));
+  const hiddenGroups = [...pinGroups.filter((g) => applied.has(g.key) && g.chips.length > 0), ...groups.filter((g) => !shownGroups.includes(g))];
+  const foldClass = `${applied.has("~status") ? " fb-fold-status" : ""}${applied.has("~tag") ? " fb-fold-tag" : ""}${applied.has("~tight") ? " fb-tight" : ""}`;
 
   const removeGroup = (g: Group) => change({ ...value, chips: value.chips.filter((c) => !g.chips.some((x) => x.id === c.id)) });
   const openGroup = (g: Group, anchor: RefObject<HTMLElement | null>) => {
@@ -683,7 +729,7 @@ export function FilterBar(props: FilterBarProps) {
     );
 
   return (
-    <div className="fb-bar" role="toolbar" aria-label="Lọc task">
+    <div className={`fb-bar${foldClass}`} ref={barRef} role="toolbar" aria-label="Lọc task">
       <SmartSearch ref={searchRef} bp={bp} value={value} onChange={change} placeholder={props.placeholder} />
       <button
         ref={sheetRef}
@@ -705,9 +751,10 @@ export function FilterBar(props: FilterBarProps) {
               className={`fb-chip fb-toggle${mine ? " on" : ""}`}
               aria-pressed={mine}
               onClick={() => change(toggleValue(latest.current, "assignee", "me", "person"))}
+              aria-label="Của tôi: chỉ task giao cho tôi"
               data-tip="Chỉ task giao cho tôi"
             >
-              <Icon name="user" size={14} /> Của tôi
+              <Icon name="user" size={14} /> <span className="fb-mine-text">Của tôi</span>
             </button>
             {/* Người làm: one multi-pick select box (user 2026-11-17), not a row of avatar buttons. */}
             <div className="fb-people-sel">
@@ -732,8 +779,8 @@ export function FilterBar(props: FilterBarProps) {
             </div>
           </>
         )}
-        {pins.map((field) => (
-          <PinnedChip key={field} field={field} value={value} cat={cat} onOpen={(anchor) => setOpen({ kind: "field", field, anchor })} onClear={() => change(without(value, field))} />
+        {shownPins.map((g) => (
+          <PinnedChip key={g.key} field={g.field} value={value} cat={cat} onOpen={(anchor) => setOpen({ kind: "field", field: g.field, anchor })} onClear={() => change(without(value, g.field))} />
         ))}
         <button
           ref={addRef}
@@ -748,7 +795,7 @@ export function FilterBar(props: FilterBarProps) {
           <Icon name="plus" size={14} /> Lọc
         </button>
       </div>
-      <div className="fb-chips" ref={chipsRef}>
+      <div className="fb-chips">
         {shownGroups.map((g) => (
           <ActiveChip key={g.key} label={cat.fieldName(g.field)} text={g.text} onOpen={(a) => openGroup(g, a)} onRemove={() => removeGroup(g)} />
         ))}
@@ -765,9 +812,11 @@ export function FilterBar(props: FilterBarProps) {
           className="fb-chip fb-more"
           aria-haspopup="dialog"
           aria-expanded={open?.kind === "more"}
+          aria-label={`${hiddenGroups.length} bộ lọc khác: ${hiddenGroups.map((g) => `${cat.fieldName(g.field)}: ${g.text}`).join("; ")}`}
+          title={hiddenGroups.map((g) => `${cat.fieldName(g.field)}: ${g.text}`).join("\n")}
           onClick={() => setOpen(open?.kind === "more" ? null : { kind: "more" })}
         >
-          +{hiddenGroups.length} bộ lọc <Icon name="more" size={12} />
+          +{hiddenGroups.length} bộ lọc <Icon name="chevronDown" size={12} />
         </button>
       )}
       {anyFilter && (
@@ -775,7 +824,7 @@ export function FilterBar(props: FilterBarProps) {
           Xoá lọc
         </button>
       )}
-      <div className="fb-right">
+      <div className="fb-right" ref={rightRef}>
         {status && <span className="fb-status small">{status}</span>}
         <span className={`fb-count${anyFilter ? " filtered" : ""}`} aria-live="polite">
           {total === null || total === undefined ? "…" : `${total} ${unit}`}
@@ -791,7 +840,8 @@ export function FilterBar(props: FilterBarProps) {
             aria-expanded={open?.kind === "display"}
             aria-keyshortcuts="V"
             onClick={() => setOpen(open?.kind === "display" ? null : { kind: "display" })}
-            data-narrow-tip="Hiển thị"
+            aria-label="Hiển thị (V)"
+            data-narrow-tip="Hiển thị (V)"
           >
             <Icon name="settings" size={14} /> <span className="fb-btn-text">Hiển thị</span>
           </button>
@@ -833,7 +883,7 @@ export function FilterBar(props: FilterBarProps) {
                 <span className="fb-opt-label">
                   <strong>{cat.fieldName(g.field)}</strong>: {g.text}
                 </span>
-                <button type="button" className="icon-btn" aria-label={`Bỏ lọc ${cat.fieldName(g.field)}: ${g.text}`} onClick={() => removeGroup(g)}>
+                <button type="button" className="icon-btn" aria-label={`Bỏ lọc ${cat.fieldName(g.field)}: ${g.text}`} title="Bỏ lọc" onClick={() => removeGroup(g)}>
                   <Icon name="close" size={14} />
                 </button>
               </li>
@@ -874,43 +924,44 @@ function ActiveChip({ label, text, onOpen, onRemove }: { label: string; text: st
   const ref = useRef<HTMLSpanElement>(null);
   return (
     <span className="fb-chip fb-active" ref={ref}>
-      <button type="button" className="fb-chip-text" onClick={() => onOpen(ref)} aria-label={`Sửa lọc ${label}: ${text}`}>
+      <button type="button" className="fb-chip-text" onClick={() => onOpen(ref)} aria-label={`Sửa lọc ${label}: ${text}`} title={`${label}: ${text}`}>
         <span className="fb-chip-field">{label}:</span> {text}
       </button>
-      <button type="button" className="fb-x" aria-label={`Bỏ lọc ${label}: ${text}`} onClick={onRemove}>
+      <button type="button" className="fb-x" aria-label={`Bỏ lọc ${label}: ${text}`} title="Bỏ lọc" onClick={onRemove}>
         <Icon name="close" size={12} />
       </button>
     </span>
   );
 }
 
+/** A pinned field: "Loại ▾" while empty, "Loại: Bug, Task ✕" once picked, at every width (§22.10). */
 function PinnedChip({ field, value, cat, onOpen, onClear }: { field: string; value: FilterValue; cat: FilterCatalogue; onOpen: (anchor: RefObject<HTMLElement | null>) => void; onClear: () => void }) {
   const ref = useRef<HTMLSpanElement>(null);
   const picked = value.chips.filter((c) => c.field === field && c.op === "is");
   const name = cat.fieldName(field);
   const text = picked.map((c) => cat.valueLabel(c)).join(", ");
   return (
-    // Under 1280 px only the icon stays (and a count when picked); the name moves to a tooltip.
-    <span className={`fb-chip fb-pinned${picked.length ? " fb-active" : ""}`} ref={ref} data-narrow-tip={picked.length ? `${name}: ${text}` : name}>
-      <button type="button" className="fb-chip-text" aria-haspopup="dialog" onClick={() => onOpen(ref)} aria-label={picked.length ? `Sửa lọc ${name}: ${text}` : `Lọc theo ${name}`}>
-        <Icon name={fieldIcon(field)} size={14} className="fb-pin-icon" />
+    <span className={`fb-chip fb-pinned${picked.length ? " fb-active" : ""}`} ref={ref}>
+      <button
+        type="button"
+        className="fb-chip-text"
+        aria-haspopup="dialog"
+        onClick={() => onOpen(ref)}
+        aria-label={picked.length ? `Sửa lọc ${name}: ${text}` : `Lọc theo ${name}`}
+        title={picked.length ? `${name}: ${text}` : `Lọc theo ${name}`}
+      >
         {picked.length ? (
           <>
-            <span className="fb-pin-label">
-              <span className="fb-chip-field">{name}:</span> {text}
-            </span>
-            <span className="fb-pin-n" aria-hidden="true">
-              {picked.length}
-            </span>
+            <span className="fb-chip-field">{name}:</span> {text}
           </>
         ) : (
-          <span className="fb-pin-label">
-            {name} <Icon name="more" size={12} />
-          </span>
+          <>
+            {name} <Icon name="chevronDown" size={12} />
+          </>
         )}
       </button>
       {picked.length > 0 && (
-        <button type="button" className="fb-x" aria-label={`Bỏ lọc ${name}: ${text}`} onClick={onClear}>
+        <button type="button" className="fb-x" aria-label={`Bỏ lọc ${name}: ${text}`} title="Bỏ lọc" onClick={onClear}>
           <Icon name="close" size={12} />
         </button>
       )}
@@ -1158,11 +1209,15 @@ interface NlChip {
   cond?: SearchCond;
 }
 
+/** "Loại: Bug" → "Loại Bug": the hint reads as one line of field and value pairs. */
+const hintLabel = (label: string) => label.replace(/^([^:]+):\s*/, "$1 ");
+
 /**
- * The search box (UI/UX §3.3): text applies 200 ms after typing stops; a sentence the dự án's words
- * explain ("bug cao chưa giao") is offered as chips under the box, Enter takes them, and when every
- * word was understood (two or more) they are taken on their own after a short pause. Backspace in
- * the empty box drops the last chip.
+ * The search box (UI/UX §3.3, docs/specs/31 §22.10). 200 ms after typing stops the text is asked of
+ * the dự án's words (POST /tasks/nl-filter). A sentence they explain ("bug cao nhất") is not searched
+ * as text: only the hint "Enter để lọc: Loại Bug · Ưu tiên Cao nhất" shows under the box, and Enter
+ * (or a click on it) turns it into chips; nothing is applied on its own. Any other text is searched
+ * once the answer is in (or at once on Enter). Backspace in the empty box drops the last chip.
  */
 function SmartSearch({ ref, bp, value, onChange, placeholder }: { ref: RefObject<HTMLInputElement | null>; bp: number; value: FilterValue; onChange: (v: FilterValue) => void; placeholder?: string }) {
   const [draft, setDraft] = useState(value.text);
@@ -1171,47 +1226,52 @@ function SmartSearch({ ref, bp, value, onChange, placeholder }: { ref: RefObject
   const latest = useRef(value);
   latest.current = value;
   const typed = useRef(false);
+  const hintId = `fb-q-${bp}-hint`;
 
   // An outside change (Xoá lọc, a saved filter, Back) shows in the box.
   useEffect(() => {
     if (!typed.current) setDraft(value.text);
   }, [value.text]);
 
-  // Text: 200 ms after the last key.
+  const applyText = useCallback(
+    (text: string) => {
+      typed.current = false;
+      if (latest.current.text !== text) onChange({ ...latest.current, text });
+    },
+    [onChange],
+  );
+
+  // 200 ms after the last key: a filter sentence waits for Enter, any other text is searched.
   useEffect(() => {
     if (!typed.current) return;
-    const t = window.setTimeout(() => {
-      typed.current = false;
-      if (latest.current.text !== draft) onChange({ ...latest.current, text: draft });
-    }, 200);
-    return () => window.clearTimeout(t);
-  }, [draft, onChange]);
-
-  // The sentence: asked after a pause; taken alone when fully understood.
-  useEffect(() => {
     const sentence = draft.trim();
-    if (sentence.length < 2) {
-      setSuggest(null);
-      return;
-    }
     let live = true;
     const t = window.setTimeout(async () => {
+      if (sentence.length < 2) {
+        setSuggest(null);
+        applyText(draft);
+        return;
+      }
       try {
         const res = await api.post<{ chips: NlChip[] }>("/tasks/nl-filter", { space: bp, text: sentence });
         if (!live) return;
         const conds = res.chips.filter((c) => c.cond && c.cond.field !== "text");
         const rest = res.chips.find((c) => c.cond?.field === "text");
-        if (!conds.length) return setSuggest(null);
-        setSuggest({ text: sentence, chips: conds, rest: rest ? first(rest.cond?.value) : "" });
+        if (conds.length) {
+          setSuggest({ text: sentence, chips: conds, rest: rest ? first(rest.cond?.value) : "" });
+          return;
+        }
       } catch {
-        if (live) setSuggest(null);
+        if (!live) return;
       }
-    }, 250);
+      setSuggest(null);
+      applyText(draft);
+    }, 200);
     return () => {
       live = false;
       window.clearTimeout(t);
     };
-  }, [draft, bp]);
+  }, [draft, bp, applyText]);
 
   const take = useCallback(
     (s: { chips: NlChip[]; rest: string }) => {
@@ -1227,13 +1287,11 @@ function SmartSearch({ ref, bp, value, onChange, placeholder }: { ref: RefObject
     [onChange],
   );
 
-  useEffect(() => {
-    if (!suggest || suggest.rest || suggest.text.split(/\s+/).length < 2 || suggest.text !== draft.trim()) return;
-    const t = window.setTimeout(() => take(suggest), 700);
-    return () => window.clearTimeout(t);
-  }, [suggest, draft, take]);
-
-  const shownSuggest = focus && suggest && suggest.text === draft.trim() ? suggest : null;
+  const current = suggest && suggest.text === draft.trim() ? suggest : null;
+  const shownSuggest = focus ? current : null;
+  const hint = shownSuggest
+    ? `Enter để lọc: ${shownSuggest.chips.map((c) => hintLabel(c.label)).join(" · ")}${shownSuggest.rest ? ` · tìm “${shownSuggest.rest}”` : ""}`
+    : "";
   return (
     <div className={`fb-search${draft ? " wide" : ""}`} role="search">
       <Icon name="search" size={14} />
@@ -1248,7 +1306,7 @@ function SmartSearch({ ref, bp, value, onChange, placeholder }: { ref: RefObject
         maxLength={300}
         placeholder={placeholder ?? "Tìm hoặc gõ “bug cao chưa giao”…"}
         aria-keyshortcuts="/ F"
-        aria-describedby={shownSuggest ? `fb-q-${bp}-hint` : undefined}
+        aria-describedby={shownSuggest ? hintId : undefined}
         onFocus={() => setFocus(true)}
         onBlur={() => setFocus(false)}
         onChange={(e) => {
@@ -1256,9 +1314,10 @@ function SmartSearch({ ref, bp, value, onChange, placeholder }: { ref: RefObject
           setDraft(e.target.value);
         }}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && suggest && suggest.text === draft.trim()) {
+          if (e.key === "Enter") {
             e.preventDefault();
-            take(suggest);
+            if (current) take(current);
+            else applyText(draft);
           } else if (e.key === "Escape") {
             e.currentTarget.blur();
           } else if (e.key === "Backspace" && !draft && latest.current.chips.length) {
@@ -1272,9 +1331,11 @@ function SmartSearch({ ref, bp, value, onChange, placeholder }: { ref: RefObject
           type="button"
           className="fb-x"
           aria-label="Xoá chữ tìm"
+          title="Xoá chữ tìm"
           onClick={() => {
             typed.current = false;
             setDraft("");
+            setSuggest(null);
             onChange({ ...latest.current, text: "" });
           }}
         >
@@ -1282,10 +1343,10 @@ function SmartSearch({ ref, bp, value, onChange, placeholder }: { ref: RefObject
         </button>
       )}
       {shownSuggest && (
-        <div className="fb-suggest" id={`fb-q-${bp}-hint`} role="status" onPointerDown={(e) => e.preventDefault()}>
-          <button type="button" className="fb-suggest-btn" onClick={() => take(shownSuggest)}>
-            <kbd>Enter</kbd> lọc theo: {shownSuggest.chips.map((c) => c.label).join(" · ")}
-            {shownSuggest.rest && <span className="muted"> · tìm “{shownSuggest.rest}”</span>}
+        <div className="fb-suggest" id={hintId} role="status" onPointerDown={(e) => e.preventDefault()}>
+          <button type="button" className="fb-suggest-btn" onClick={() => take(shownSuggest)} title={hint}>
+            <kbd>Enter</kbd>
+            <span className="fb-suggest-text">{hint.replace(/^Enter /, "")}</span>
           </button>
         </div>
       )}

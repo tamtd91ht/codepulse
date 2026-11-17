@@ -193,10 +193,8 @@ function Tasks() {
         <TaskCreate
           space={space}
           onClose={() => setCreating(false)}
-          onCreated={(key) => {
-            setCreating(false);
-            go({ task: key });
-          }}
+          // The view stays; the "Đã tạo OCX-12 · Mở · Hoàn tác" toast opens it (docs/specs/31 §22.10).
+          onCreated={() => setCreating(false)}
         />
       )}
       {where.task && <TaskDrawer taskKey={where.task} onOpenTask={openTask} onClose={() => go({ task: null })} onDeleted={() => go({ task: null })} />}
