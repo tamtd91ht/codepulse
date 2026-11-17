@@ -1084,3 +1084,40 @@ Roadmap đợt 3 §3.1 (R5) và §3.2 (R7b). Không migration; một API đọc 
 - Chưa làm: tab Danh sách chưa đọc tham số `assignee` trên URL (lệnh "Mở Danh sách lọc theo …" mở đúng dự án và tab,
   cần một sửa nhỏ trong `TaskList` để tự áp; danh sách việc của người đó đã có ngay trong bảng lệnh); hoàn tác sau
   lệnh của bảng lệnh (để mục Hoàn tác chung §21.7).
+### 21.5 Phân quyền còn lại
+
+(Giai đoạn 3.4b, không migration: bộ quyền có sẵn không đổi.)
+
+- **R1b – phạm vi Team cho quyền cấp dự án:** `tests.edit`, `tests.approve`, `tests.manage`, `tests.delete`,
+  `tasks.sprint`, `tasks.manage` có thêm mức `team` (thứ tự vẫn own < team < project < all; danh mục
+  `PROJECT_TEAM_KEYS`). Team = dự án mà ít nhất một người **khác** trong team mình lead, hoặc manage (cả team con;
+  cả sáu quyền đều `managed_team`), đang được cấp quyền dự án (`project_grants`, người còn hoạt động), trong các
+  dự án mình xem được. Quyền dự án của chính mình không tính (không phải "của team"); `manage_all` của người
+  trong team không tính (không phải grant). Kiểm ở một chỗ: `Principal.covers_project(key, bp)` /
+  `Principal.team_projects(key)`; `testcases._scoped`, `tasks.can_manage_space`, `tasks.can_sprint` gọi nó.
+  `tests.run` mức team vẫn tính theo từng test (§20.0), không mở cả dự án.
+- **Gộp bộ quyền (bài học §20.0):** gộp giữ mức rộng nhất, nên khi **một bộ** cho quyền ở mức `team` và bộ khác cho
+  `project`, mức `project` vẫn với tới dự án của team (`Principal.team_granted`: các quyền cấp dự án mà ít nhất một
+  bộ cho ở mức team). Quyết định: `project` **một mình** thì **không** với tới dự án của team. Lý do: bộ "Quản lý
+  dự án" có sẵn cho `tasks.manage`/`tasks.sprint`/`tests.*` ở mức project với mọi người manage một dự án; nếu
+  project tự mở dự án của team thì mọi lead đang manage một dự án sẽ thành người quản trị Task / testcase của
+  mọi dự án team mình tham gia. `all` vẫn là mọi dự án xem được.
+- **Bộ Lead có sẵn: không nhận quyền nào trong sáu quyền trên** (quyết định). Lead là người kèm cặp, không phải
+  chủ dự án khác: một người trong team chỉ cần được cấp xem một dự án là cả dự án ấy (sprint, trạng thái, luật
+  git, testcase) mở cho lead – quá rộng để mặc định. Admin muốn thì tạo bộ (ví dụ "QA Lead": `tests.edit`,
+  `tests.approve`, `tests.manage` = team; "Scrum master": `tasks.sprint` = team) rồi gán cho người / team. Vì bộ có
+  sẵn không đổi nên không cần migration; `tests/permissions/test_catalog.py` vẫn so với migration `a1c3e5f7b9d1`.
+- **Quyền của tôi:** `GET /api/v1/me/permissions` (chỉ cần đăng nhập, không cần `admin.permissions`) trả đúng như
+  `GET /admin/users/{id}/permissions` cho chính mình: vai trò, bộ quyền và nguồn (`via`: role / given / personal /
+  team), mỗi quyền với mức và các bộ cho nó; thêm `projects` (dự án mình xem được, để chọn).
+  - `?explain=1`: mỗi quyền có `label` và `meaning` ("chỉ task bạn tạo hoặc được giao", "dự án có người trong team
+    bạn lead hoặc manage được cấp quyền"…).
+  - `?check=<key>&task=<KEY>` hoặc `&project=<id>`: `check {key, label, scope, allowed, target, reason, lines}`
+    bằng tiếng Việt, ví dụ "Bạn có tasks.edit ở mức own (của mình) (từ bộ Thành viên): chỉ task bạn tạo hoặc được
+    giao. Task CRM-3 do Binh tạo, giao cho chưa ai. Mức own chỉ gồm task bạn tạo hoặc được giao. Kết luận: không
+    được." `allowed` lấy từ đúng hàm kiểm quyền của endpoint (`tasks.may`, `can_sprint`, `may_edit`…), lời giải
+    thích chỉ đi lại các bước; quyền task hỏi cho cả dự án mà còn tuỳ task → `allowed: null`. Task / dự án không
+    xem được → 404 (không lộ có hay không); quyền lạ → 422. Mã nguồn: `app/permissions/explain.py`.
+  - Trang `/me/permissions` ("Quyền của tôi", mục trong menu tài khoản góc phải): ô "Tôi có làm được không?"
+    (quyền, task hoặc dự án → được / không được / tuỳ task kèm lý do), vai trò và bộ quyền, bảng quyền đang có
+    (mức, nghĩa là, từ bộ nào).

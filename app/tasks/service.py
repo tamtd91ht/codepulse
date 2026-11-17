@@ -91,10 +91,10 @@ def can_view_space(p: Principal, bp_id: int) -> bool:
 
 
 def can_manage_space(p: Principal, bp_id: int) -> bool:
-    scope = p.scope("tasks.manage")
-    if scope == "all":
-        return p.can_view_project(bp_id)
-    return scope == "project" and p.can_manage_project(bp_id)
+    """tasks.manage over the dự án: all = every dự án one sees, project = the dự án one manages,
+    team (§21.5) = the dự án where someone of a team one leads / manages holds a grant (project
+    reaches those too)."""
+    return p.covers_project("tasks.manage", bp_id)
 
 
 # The task rights, as Jira's permission scheme splits them (docs/specs/31 §4.1). Scoped ones
@@ -185,13 +185,10 @@ def can_assign_new(p: Principal, bp_id: int) -> bool:
 
 
 def can_sprint(p: Principal, bp_id: int) -> bool:
-    """tasks.sprint: plan, start, complete sprints of the dự án."""
+    """tasks.sprint: plan, start, complete sprints of the dự án (scopes as tasks.manage, §21.5)."""
     if not can_view_space(p, bp_id):
         return False
-    if can_manage_space(p, bp_id):
-        return True
-    scope = p.scope("tasks.sprint")
-    return scope == "all" or (scope == "project" and p.can_manage_project(bp_id))
+    return can_manage_space(p, bp_id) or p.covers_project("tasks.sprint", bp_id)
 
 
 def can_edit(p: Principal, task: Task) -> bool:
