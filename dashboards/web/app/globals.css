@@ -20111,3 +20111,767 @@ ol.st-stepper > li {
     display: none;
   }
 }
+/* UI/UX FilterBar + List */
+/* FilterBar (components/tasks/FilterBar.tsx, docs/specs/31 §22.2): one 40 px row, chips that never
+   wrap (they fold into "+N bộ lọc"), popovers in a portal. Danh sách: the table fills the window
+   under the bar, sticky header, its own scroll, fixed row heights (Gọn 36 / Thoáng 48). */
+.fb-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  min-width: 0;
+  flex: none;
+}
+.fb-replaced {
+  padding: 0 8px;
+  border-radius: var(--radius);
+  background: var(--primary-soft);
+}
+.fb-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 280px;
+  min-width: 160px;
+  height: 32px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  background: var(--surface);
+  color: var(--muted);
+  transition: flex-basis 180ms ease-out, border-color var(--duration-fast) var(--ease-standard);
+}
+.fb-search.wide {
+  flex-basis: min(420px, 36vw);
+}
+.fb-search:focus-within {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 1px var(--ring);
+}
+.fb-search input[type] {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: none;
+}
+.fb-search input:focus-visible {
+  outline: none; /* the box carries the ring (:focus-within above) */
+}
+.fb-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  animation: fb-fade 150ms ease-out;
+}
+.fb-suggest-btn {
+  width: 100%;
+  height: auto;
+  min-height: 32px;
+  justify-content: flex-start;
+  padding: 6px 10px;
+  border-color: var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 400;
+  white-space: normal;
+  text-align: left;
+}
+.fb-suggest-btn kbd {
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+}
+.fb-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: clip;
+  overflow-y: visible;
+}
+.fb-fixed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.fb-chips > * {
+  flex: none;
+}
+.fb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  max-width: 260px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  animation: fb-fade 150ms ease-out;
+}
+button.fb-chip:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+.fb-chip.on,
+.fb-chip.fb-active {
+  border-color: var(--link);
+  background: var(--info-soft);
+  color: var(--text);
+}
+.fb-chip.fb-active,
+.fb-chip.fb-pinned {
+  padding: 0 4px 0 0;
+}
+.fb-chip-text {
+  height: 26px;
+  min-width: 0;
+  padding: 0 4px 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fb-pinned:not(.fb-active) .fb-chip-text {
+  padding-right: 6px;
+}
+.fb-chip-text:hover:not(:disabled) {
+  background: none;
+  text-decoration: underline;
+}
+.fb-chip-field {
+  color: var(--muted);
+  font-weight: 400;
+}
+.fb-x {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+}
+.fb-x:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.fb-add {
+  border-style: dashed;
+  background: none;
+}
+.fb-bar > .fb-more {
+  flex: none;
+}
+.fb-clear {
+  flex: none;
+  height: 28px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  font-size: 13px;
+}
+.fb-error {
+  color: var(--bad-text);
+}
+.fb-people {
+  display: inline-flex;
+  align-items: center;
+  padding-left: 6px;
+}
+.fb-face {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-left: -6px;
+  padding: 0;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  transition: transform var(--duration-fast) ease-out;
+}
+.fb-face .tk-avatar .avatar.sm,
+.fb-face .tk-unassigned {
+  width: 24px;
+  height: 24px;
+}
+.fb-face:hover:not(:disabled) {
+  z-index: 1;
+  transform: translateY(-2px);
+  background: var(--surface-2);
+}
+.fb-face.on {
+  z-index: 1;
+  border-color: var(--link);
+  box-shadow: 0 0 0 1px var(--link);
+}
+.fb-face:focus-visible {
+  z-index: 2;
+}
+.fb-bar [data-tip]:not(.icon-btn):hover::after,
+.fb-bar [data-tip]:not(.icon-btn):focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  padding: 4px 8px;
+  border-radius: var(--radius-small);
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.fb-toggle {
+  position: relative;
+}
+.fb-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  margin-left: auto;
+}
+.fb-status {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.fb-count {
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.fb-count.filtered {
+  color: var(--link);
+  font-weight: 600;
+}
+.fb-count-tag {
+  font-weight: 500;
+}
+.fb-saved {
+  position: relative;
+}
+.fb-saved-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fb-icon-link {
+  display: inline-grid;
+  place-items: center;
+}
+
+/* Popovers */
+.fb-pop {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  max-height: min(420px, calc(100vh - 80px));
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  font-size: 13px;
+  animation: fb-pop-in 160ms ease-out;
+}
+.fb-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  margin-bottom: 6px;
+}
+.fb-pop-head .fb-pop-clear {
+  margin-left: auto;
+}
+.fb-back {
+  width: 24px;
+  height: 24px;
+}
+.fb-pop-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  margin-bottom: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  color: var(--muted);
+}
+.fb-pop-search:focus-within {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 1px var(--ring);
+}
+.fb-pop-search input[type] {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+}
+.fb-pop-search input:focus-visible {
+  outline: none;
+}
+.fb-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fb-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 2px 8px;
+  border-radius: var(--radius-small);
+  cursor: pointer;
+}
+.fb-opt:hover,
+.fb-opt.active {
+  background: var(--surface-hover);
+}
+.fb-opt.active {
+  box-shadow: inset 2px 0 0 var(--ring);
+}
+.fb-opt-btn {
+  width: 100%;
+  height: auto;
+  justify-content: flex-start;
+  border: 0;
+  background: none;
+  font-weight: 400;
+  text-align: left;
+}
+.fb-check {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--on-primary);
+}
+.fb-opt.on .fb-check {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+.fb-opt-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-opt-count {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.fb-empty {
+  padding: 8px;
+}
+.fb-pin {
+  width: 24px;
+  height: 24px;
+  opacity: 0.5;
+}
+.fb-opt:hover .fb-pin,
+.fb-pin.on,
+.fb-pin:focus-visible {
+  opacity: 1;
+}
+.fb-pin.on {
+  color: var(--link);
+}
+.fb-flags,
+.fb-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.fb-presets {
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+}
+.fb-editor .fs-editor {
+  grid-template-columns: minmax(0, 1fr);
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+.fb-pop > .fs-editor {
+  grid-template-columns: minmax(0, 1fr);
+  padding: 4px;
+  border: 0;
+  box-shadow: none;
+}
+.fb-more-row {
+  cursor: default;
+}
+.fb-pop-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.fb-pop-foot > button {
+  justify-content: flex-start;
+}
+.fb-pop-foot-row {
+  flex-direction: row;
+  justify-content: flex-end;
+}
+.fb-display-pop,
+.fb-label-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px;
+}
+.fb-display-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.fb-display-row select {
+  height: 32px;
+}
+.fb-display-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.fb-display-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.fb-display-cols legend {
+  margin-bottom: 6px;
+}
+.fb-display-pop > .link {
+  align-self: flex-start;
+}
+
+/* Bulk bar in the bar's row */
+.fb-bulk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+.fb-bulk-n {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  font-size: 13px;
+}
+.fb-sep {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  background: var(--border-strong);
+}
+.fb-bulk-select {
+  flex: none;
+  max-width: 150px;
+}
+.fb-spacer-flex {
+  flex: 1;
+}
+
+/* Danh sách */
+.fb-listwrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 320px;
+}
+.fb-listwrap > .alert,
+.fb-listwrap > .message {
+  flex: none;
+}
+.tk-list.fb-listwrap > .card + .card {
+  margin-top: 0;
+}
+.fb-tablebox {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.fb-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  position: relative; /* contains visually-hidden labels, which would grow the page */
+  overscroll-behavior: contain;
+}
+.fb-empty-box {
+  display: grid;
+  place-items: center;
+}
+.fb-table {
+  table-layout: fixed;
+  min-width: 860px;
+}
+.fb-table .fb-w-check {
+  width: 44px;
+}
+.fb-table .fb-w-key {
+  width: 112px;
+}
+.fb-table .fb-w-type {
+  width: 96px;
+}
+.fb-table .fb-w-status {
+  width: 140px;
+}
+.fb-table .fb-w-priority {
+  width: 124px;
+}
+.fb-table .fb-w-assignee {
+  width: 176px;
+}
+.fb-table .fb-w-points {
+  width: 64px;
+}
+.fb-table .fb-w-due {
+  width: 116px;
+}
+.fb-table .fb-w-updated {
+  width: 116px;
+}
+.fb-table .fb-w-labels {
+  width: 168px;
+}
+.fb-table .fb-w-actions {
+  width: 52px;
+}
+.fb-table tbody td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fb-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 36px;
+  padding-block: 0;
+  background: var(--surface);
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+.fb-table thead th.check-col {
+  left: 0;
+  z-index: 3;
+}
+.fb-table tbody td {
+  height: 48px;
+  max-width: none;
+  padding-block: 0;
+  white-space: nowrap;
+}
+.fb-dense .fb-table tbody td {
+  height: 36px;
+}
+.fb-table tbody td.check-col {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+.fb-row {
+  cursor: pointer;
+}
+.fb-row:hover > td,
+.fb-row:hover > td.check-col {
+  background: var(--surface-hover);
+}
+.fb-table tr.fb-row.selected > td {
+  background: var(--primary-soft);
+}
+.fb-c-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fb-table td .fb-title {
+  display: inline-block;
+  max-width: calc(100% - 8px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.fb-c-title .git-badge,
+.fb-c-title > span {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.fb-c-labels .tk-label + .tk-label {
+  margin-left: 4px;
+}
+.fb-cell {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  max-width: 100%;
+  padding: 0 6px;
+  margin-left: -6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-small);
+  background: none;
+  color: inherit;
+  font-weight: 400;
+}
+.fb-cell:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--surface);
+}
+td.num .fb-cell {
+  margin: 0 -6px 0 0;
+}
+.fb-cell-edit {
+  height: 28px;
+  font-size: 13px;
+}
+input.fb-cell-edit {
+  height: 28px;
+  padding: 0 6px;
+}
+.fb-cell-num {
+  width: 72px;
+}
+.fb-spacer > td {
+  padding: 0;
+  border: 0;
+}
+.fb-group > th {
+  position: static;
+  height: 48px;
+  padding: 0 12px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+}
+.fb-dense .fb-group > th {
+  height: 36px;
+}
+.fb-table .fb-title {
+  color: var(--link);
+}
+.fb-table tr.selected > td {
+  background: var(--primary-soft);
+}
+.fb-more-rows {
+  margin: 0;
+  padding: 8px 12px;
+  text-align: center;
+}
+
+@keyframes fb-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes fb-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-chip,
+  .fb-pop,
+  .fb-suggest,
+  .fb-search,
+  .fb-face {
+    animation: none;
+    transition: none;
+  }
+}
+/* Narrow windows (UI/UX §6): the search shrinks, the pinned chips keep their name only. */
+@media (max-width: 1600px) {
+  .fb-saved .fb-saved-name {
+    display: none;
+  }
+}
+@media (max-width: 1280px) {
+  .fb-status {
+    display: none;
+  }
+}
+@media (max-width: 768px) {
+  .fb-search,
+  .fb-search.wide {
+    flex: 1 1 140px;
+  }
+  .fb-people,
+  .fb-count-tag {
+    display: none;
+  }
+}

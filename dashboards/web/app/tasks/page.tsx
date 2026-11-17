@@ -73,7 +73,15 @@ function Tasks() {
   const go = useCallback(
     (next: Partial<Where>) => {
       const w = { ...where, ...next };
+      // The FilterBar's own params (f, fq, v: docs/specs/31 §22.2) stay while the screen does.
       const p = new URLSearchParams();
+      if (w.space === where.space && w.tab === where.tab) {
+        const now = new URLSearchParams(window.location.search);
+        for (const k of ["f", "fq", "v"]) {
+          const v = now.get(k);
+          if (v !== null) p.set(k, v);
+        }
+      }
       if (w.space) p.set("space", String(w.space));
       if (w.tab !== "board") p.set("tab", w.tab);
       if (w.task) p.set("task", w.task);

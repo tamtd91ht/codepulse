@@ -1563,3 +1563,44 @@ tiền tố `mw-`, `rp-`, `sh-`, `vs-`, `st-`.
 - **Hướng dẫn bật Task** (`WizardSteps` trong `TaskTemplates.tsx`): thanh bước ngang một dòng
   `① Mã và loại → ② Mẫu → ③ Thành viên → ④ Xác nhận → ⑤ Jira (tuỳ chọn)`. Sửa lỗi lặp số bước: tắt đánh
   số của `<ol>`, số chỉ nằm trong huy hiệu (bước xong hiện dấu ✓); trình đọc màn hình nghe "Bước n/N".
+### 22.2 FilterBar và Danh sách
+
+Theo tài liệu UI/UX “Chuẩn hoá UI/UX, ưu tiên diện tích cho view chính” (§2, §3.3–3.6, §4.2, §7), bước 2–3.
+
+- **FilterBar dùng chung** (`components/tasks/FilterBar.tsx`): một hàng 40 px gồm ô tìm thông minh, “Của tôi”,
+  chồng avatar người làm (3 người có nhiều task đang mở nhất, `+N` mở danh sách đủ), 2 chip ghim (mặc định
+  Loại, Ưu tiên; ghim/bỏ ghim bằng nút ghim trong “+ Lọc”, nhớ theo màn), “+ Lọc”, chip đang lọc; bên phải
+  số kết quả, khe `status`, khe `saved` (★ Bộ lọc), “Hiển thị”, khe `actions`. Prop `replaceWith` cho thanh
+  thao tác hàng loạt thay đúng hàng đó. Màn khác (Board, Backlog…) dùng lại với `screen` riêng.
+- **Giá trị** là `{text, chips}` (`filterState.ts`); `filterTree()` ra cây POST /tasks/search. Các chip “là”
+  cùng trường gộp thành một chip hiển thị (`Loại: Bug, Story`, OR); “Của tôi” và avatar là chip
+  `assignee là me/ID`.
+- **Không xuống hàng**: chip đang lọc nằm trong dải bị cắt; tối đa 4, quá thì 3 + `+N bộ lọc`; khi hàng
+  chật thì đo `scrollWidth` và gom thêm vào `+N`. `+N` và “Xoá lọc” nằm ngoài dải nên luôn thấy.
+- **Ô tìm**: chữ áp dụng sau 200 ms; câu được gửi POST /tasks/nl-filter (bộ phân tích tất định, không gọi
+  LLM). Có điều kiện hiểu được thì hiện gợi ý “Enter lọc theo: …”; câu ≥ 2 từ mà hiểu hết thì tự thành chip
+  sau 700 ms; phần không hiểu ở lại làm chữ tìm. Backspace ở ô trống xoá chip cuối.
+- **Số theo giá trị** (“Bug · 3”): endpoint mới `POST /tasks/search/facets {space, tree, fields}` → `{counts:
+  {field: {value: n}}}`, một GROUP BY mỗi trường (status, type, priority, resolution, assignee, reporter,
+  sprint, version, label, component; không có giá trị đếm vào “none”, sprint vào “backlog”). Cây gửi lên bỏ
+  các chip của chính trường đang đếm. Nhãn/thành phần lấy danh sách giá trị từ đây.
+- **URL và ghi nhớ**: `fq` (chữ), `f` (chip, JSON gọn `[[field, op, value]]`), `v` (tuỳ chọn Hiển thị khác
+  mặc định). Thêm/bớt chip tạo mục lịch sử (Back/Forward), gõ chữ thì không. Ghi nhớ trong localStorage theo
+  người × dự án × màn (`cp:fb:<user>:<bp>:<screen>`), link thắng bộ nhớ; “Khôi phục mặc định” trong ★ Bộ lọc.
+  `go()` của trang Task giữ `f/fq/v` khi chỉ mở/đóng task.
+- **Phím** (không khi đang gõ hay có hộp thoại): `/` hoặc `F` vào ô tìm (bắt ở pha capture nên thắng bảng lệnh
+  `/` toàn cục trên màn có FilterBar), `Shift+F` “+ Lọc”, `Shift+X` xoá lọc, `V` Hiển thị. Popover vẽ qua
+  portal (hàng bị cắt), giữ focus, Esc đóng và trả focus.
+- **★ Bộ lọc** (`SavedFilterMenu.tsx`): chọn bộ lọc đã lưu (mở thành chip), lưu bộ lọc hiện tại, chia sẻ/ghim/
+  tóm tắt, xoá, khôi phục mặc định; `?filter=ID` vẫn áp dụng.
+- **Danh sách**: bỏ lưới lọc 5 hàng và dòng “Lọc nhanh”. Bảng cao bằng phần còn lại của cửa sổ (đo từ đỉnh
+  bảng), tiêu đề cột ghim, cuộn riêng; `table-layout: fixed`, tiêu đề cắt “…”. Thay phân trang bằng tải dần
+  khi cuộn (100, rồi +200; quá 500 thì gọi song song nhiều trang trong cùng một khoá SWR `/tasks/search#…` để
+  `refreshTasks()` và luồng realtime vẫn làm mới). Trên 200 dòng chỉ vẽ dòng đang thấy (đệm trên/dưới, chiều
+  cao dòng đo từ dòng thật). Hiển thị: Mật độ Gọn 36 px (mặc định) / Thoáng 48 px, Nhóm theo (không, trạng
+  thái, người làm, sprint, ưu tiên, loại), cột hiển thị. Sửa tại ô: Trạng thái (POST transition, chặn bước
+  không cho phép, hỏi khi còn critical), Ưu tiên, Người làm (không có quyền giao chỉ thấy mình/người hiện tại),
+  SP, Hạn (PATCH /tasks/{key}); mỗi lần sửa có Hoàn tác 10 giây. Bấm dòng mở `?task=KEY`. Không có kết quả:
+  “Không có task khớp” + “Xoá lọc”; số kết quả đổi màu kèm “đã lọc”.
+- **Chưa làm**: kéo để sắp xếp cột, “Hiện sub-task lồng”, nhóm theo Epic (dòng chưa có epic), bottom sheet
+  dưới 768 px, chip ghim chỉ còn icon dưới 1280 px.

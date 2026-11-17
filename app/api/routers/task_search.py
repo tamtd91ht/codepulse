@@ -122,6 +122,27 @@ def search(body: SearchIn, principal: Viewer, session: SessionDep) -> dict[str, 
     return {"items": ts.rows(session, tasks), "total": total, "tree": tree}
 
 
+class FacetsIn(BaseModel):
+    space: list[int] = Field(default_factory=list, max_length=50)
+    tree: dict[str, Any] | None = None
+    fields: list[str] = Field(min_length=1, max_length=len(sx.FACETS))
+
+
+@router.post("/tasks/search/facets")
+def facets(body: FacetsIn, principal: Viewer, session: SessionDep) -> dict[str, Any]:
+    """The FilterBar's counts (docs/specs/31 §22.2): per field, tasks matching the tree per
+    value. The caller leaves the counted field's own chips out of the tree."""
+    unknown = [f for f in body.fields if f not in sx.FACETS]
+    if unknown:
+        raise HTTPException(422, f"không đếm được trường: {', '.join(unknown)}")
+    for bp in body.space:
+        ts.space_or_404(session, principal, bp)
+    counts = sx.facets(
+        session, principal, sx.clean_tree(body.tree), spaces=body.space, fields=body.fields
+    )
+    return {"counts": counts}
+
+
 @router.get("/tasks/search")
 def quick_search(
     principal: Viewer,
