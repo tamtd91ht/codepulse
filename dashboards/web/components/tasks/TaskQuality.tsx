@@ -8,6 +8,7 @@ import { Card, Loading, Message, Pill } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 import type { TaskCoverCase, TaskCriterion, TaskDetail, TaskSpace, TaskVersion } from "@/lib/types";
 
+import { type SaveOpts, useSettingsDraft } from "./settingsDraft";
 import { errorText, refreshTasks } from "./taskParts";
 
 /* Task ↔ test quality (docs/specs/31 §19.4): the testcases covering a task, its Definition of
@@ -334,27 +335,32 @@ export function DodCard({ space }: { space: TaskSpace }) {
   const [checks, setChecks] = useState<string[]>(current.checks ?? []);
   const [minScore, setMinScore] = useState<number>(current.min_score ?? 7);
   const [enforce, setEnforce] = useState<boolean>(!!current.enforce);
-  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  useEffect(() => {
+  const reset = () => {
     setChecks(current.checks ?? []);
     setMinScore(current.min_score ?? 7);
     setEnforce(!!current.enforce);
+  };
+  useEffect(() => {
+    reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [space.business_project_id, JSON.stringify(current)]);
 
-  async function save() {
-    setBusy(true);
+  async function save({ refresh = true }: SaveOpts = {}): Promise<boolean> {
     setMessage(null);
     try {
       await api.put(`/tasks/spaces/${space.business_project_id}`, { key: space.key, rules: { dod: { checks, min_score: minScore, enforce } } });
-      await refreshTasks();
-      setMessage("Đã lưu Definition of Done.");
+      if (refresh) await refreshTasks();
+      return true;
     } catch (e) {
       setMessage(`Lỗi: ${errorText(e)}`);
+      return false;
     }
-    setBusy(false);
   }
+  // Saved through Cài đặt's bottom bar (§22.7).
+  const dirty =
+    JSON.stringify([...checks].sort()) !== JSON.stringify([...(current.checks ?? [])].sort()) || minScore !== (current.min_score ?? 7) || enforce !== !!current.enforce;
+  useSettingsDraft("st-dod", "DoD", 5, { dirty, valid: Number.isFinite(minScore) && minScore >= 0 && minScore <= 10, save, reset });
 
   return (
     <Card title="Definition of Done" id="tk-set-dod" subtitle="Danh sách tự tích từ dữ liệu thật (MR, review, pipeline, testcase) hiện trên mỗi task.">
@@ -378,11 +384,6 @@ export function DodCard({ space }: { space: TaskSpace }) {
           <input type="checkbox" checked={enforce} onChange={(e) => setEnforce(e.target.checked)} />
           Bắt buộc: chưa đạt thì không chuyển được sang nhóm Xong (git tự chuyển thì ghi lại, chưa chuyển)
         </label>
-        <div className="adm-form-foot">
-          <button type="button" disabled={busy} onClick={() => void save()}>
-            Lưu DoD
-          </button>
-        </div>
       </div>
     </Card>
   );

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 
+import { Icon } from "@/components/icons";
 import { Card, EmptyState, Loading, PageHeader } from "@/components/ui";
 import { can, useApi } from "@/lib/api";
 import { dateTime } from "@/lib/format";
@@ -13,6 +14,8 @@ import type { Me, TaskAdoption, UsageSummary } from "@/lib/types";
  * access to the dự án may see Task. Admins also see the dự án without Task, with a link to turn it
  * on; those who manage Task see the dự án they can view that have it on. Read-only.
  */
+
+const ABOUT = "Dự án nào đã dùng Task, theo mẫu nào, có bao nhiêu việc và hoạt động gần nhất khi nào.";
 
 export default function TaskAdoptionPage() {
   const { data: me } = useApi<Me>("/auth/me");
@@ -31,11 +34,17 @@ export default function TaskAdoptionPage() {
   const on = rows.filter((r) => r.enabled).length;
   return (
     <>
-      <PageHeader
-        eyebrow={<Link href="/tasks">Task</Link>}
-        title="Tình trạng bật Task"
-        subtitle="Dự án nào đã dùng Task, theo mẫu nào, có bao nhiêu việc và hoạt động gần nhất khi nào."
-      />
+      {/* §22.7: a 48px breadcrumb header; the description sits behind ⓘ. */}
+      <header className="mw-head">
+        <nav aria-label="Đường dẫn" className="mw-crumb">
+          <Link href="/tasks">Task</Link>
+          <span aria-hidden="true">/</span>
+          <h1>Tình trạng bật Task</h1>
+        </nav>
+        <span className="mw-help" tabIndex={0} role="note" aria-label={ABOUT} title={ABOUT}>
+          <Icon name="info" size={14} />
+        </span>
+      </header>
       <Card
         flush
         title="Dự án"
@@ -62,7 +71,7 @@ export default function TaskAdoptionPage() {
           </EmptyState>
         ) : (
           <div className="table-wrap">
-            <table className="tp-table">
+            <table className="tp-table st-compact">
               <thead>
                 <tr>
                   <th>Dự án</th>
@@ -214,7 +223,7 @@ function UsageSection() {
             </div>
           </div>
           <div className="table-wrap">
-            <table className="tp-table us-table">
+            <table className="tp-table us-table st-compact">
               <caption className="visually-hidden">Số lần theo sự kiện và nơi dùng, 4 tuần gần nhất</caption>
               <thead>
                 <tr>
@@ -249,7 +258,7 @@ function UsageSection() {
             </table>
           </div>
           <div className="table-wrap">
-            <table className="tp-table us-table">
+            <table className="tp-table us-table st-compact">
               <caption className="visually-hidden">Số sự kiện theo vai trò, 4 tuần gần nhất</caption>
               <thead>
                 <tr>

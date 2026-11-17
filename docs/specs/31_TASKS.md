@@ -1417,3 +1417,54 @@ Không migration. Mã: `app/tasks/live.py` (mới), `app/tasks/__init__.py`, `ap
   có cờ hoặc đang ở team QA → `auto_role = tester`. Migration biến bộ "Tester" tự tạo thành bộ dựng sẵn
   tự gán: team đang được gán bộ đó → `is_qa`, người được gán tay → `is_tester`, các dòng gán cũ bị xoá
   (downgrade trả lại). Không ai tự bật cờ cho mình hoặc cho team mình đang ở/lead/manage (trừ admin).
+
+### 22.7 Việc của tôi, Báo cáo, Sức khoẻ, Phiên bản, Cài đặt
+
+Theo `codepulse-task-uiux.md` §4.4–4.7, §4.9, §4.10 (bước 7 và 8). View chính chiếm phần còn lại của
+màn hình: `calc(100dvh - var(--tk-frame-h, 112px))` (biến do khung trang dùng chung định nghĩa).
+Trạng thái rỗng trong khối tối đa 80 px. CSS ở cuối `app/globals.css` (`/* UI/UX other screens */`),
+tiền tố `mw-`, `rp-`, `sh-`, `vs-`, `st-`.
+
+- **Việc của tôi** (`MyWork.tsx`, `app/tasks/me`): đầu trang 48 px là breadcrumb `Task / Việc của tôi`,
+  phụ đề vào nút ⓘ. Thanh công cụ gọn: ô tìm (mã, tiêu đề; lọc tại chỗ), chip dự án khi task thuộc từ 2
+  dự án, "Xoá lọc". Từ 1280 px chia 2 cột, mỗi cột tự cuộn: trái Cần xử lý ngay + Đang làm; phải Chờ
+  người khác, Cần làm, Xong tuần này, Sprint của tôi. Nhóm rỗng là một dòng 32 px (`✓ Không có gì cần
+  xử lý ngay`). Dòng task 36 px: loại, mã, tiêu đề, trạng thái, ưu tiên, SP, hạn, git; nút "Mở" hiện khi
+  rê chuột/focus. *Quyết định:* chưa có popover Hiển thị; thanh lọc là bản cục bộ, có `TODO` thay bằng
+  FilterBar dùng chung.
+- **Báo cáo** (`TaskReports.tsx`): khoảng ngày là chip `📅 … ▾` trên thanh công cụ (DateRangePicker)
+  với lựa chọn nhanh 7 / 30 / 90 ngày, Sprint này (ngày bắt đầu sprint đang chạy tới hôm nay), Sprint
+  trước (sprint đã đóng gần nhất). Dải 6 chỉ số cao 64 px; bấm ô mở tab Danh sách lọc qua URL bằng tên
+  tham số của `GET /tasks` (`category=done&resolution=done&updated_from=…`, `sort=created` …) để FilterBar
+  dùng chung đọc. Biểu đồ lưới 2 cột (bảng Ưu tiên, Người làm rộng 2 cột). Biểu đồ không có dữ liệu là
+  thẻ 80 px kèm bước tiếp, ví dụ "Chưa có sprint nào bắt đầu · Bắt đầu sprint ở Backlog →". Nút
+  "Hiển thị" ẩn/hiện từng biểu đồ, nhớ theo trình duyệt (`cp:tasks:reports:hidden`). *Chưa làm:* chip
+  lọc Người làm / Loại / Epic (API báo cáo chưa nhận các tham số này) và "khoảng ngày mặc định".
+- **Sức khoẻ sprint** (`TaskHealth.tsx`): thanh công cụ có chip `Sprint: … ▾` chọn sprint đang chạy
+  hoặc một sprint đã đóng (sprint đã đóng hiện đánh giá sprint `GET /tasks/sprints/{id}/review` và nút
+  tạo trang retro). Có sprint: lưới 2×2 Dự báo, Kẹt, Tải, Chất lượng vừa một màn hình, mỗi ô tự cuộn;
+  "Thay đổi phạm vi" nằm trong ô Chất lượng; mô tả dài của từng khối vào tooltip tiêu đề. Không có sprint:
+  một thẻ gọn (biểu tượng, một câu, `Bắt đầu sprint`, `Tổng quan mọi dự án`) và ngay dưới là số liệu
+  sprint gần nhất hoặc dòng chảy Kanban 14 ngày.
+- **Phiên bản** (`TaskVersions.tsx`): thanh công cụ gồm tìm, chip trạng thái (Chưa phát hành / Đã phát
+  hành / Tất cả, kèm số; mặc định Chưa phát hành) và `+ Phiên bản` (nút chính duy nhất). Bảng mật độ
+  Gọn (dòng 36 px, tiêu đề ghim). Cột Sẵn sàng là thanh tiến độ (số điều kiện đạt / tổng) kèm chip
+  `Chưa sẵn sàng (n) ▸` mở ngăn phải liệt kê từng điều kiện và task còn thiếu. Release notes, Sửa, Xoá
+  vào menu ⋯; nút "Phát hành" chỉ hiện khi đã sẵn sàng. *Quyết định:* phát hành khi chưa sẵn sàng (có lý
+  do, §19.4) vẫn giữ, qua mục "Vẫn phát hành…" trong menu ⋯ hoặc trong ngăn phải.
+- **Cài đặt** (`TaskSettings.tsx`, `settingsDraft.tsx`): mục lục cố định bên trái rộng 200 px (Mã và
+  loại, Trạng thái, Ưu tiên, Luật git, Trường tuỳ biến, DoD, Nhập từ Jira, Quy tắc tự động, Chuyển khỏi
+  Jira), tự đánh dấu phần đang xem (scroll-spy trên vùng cuộn bên phải). Bỏ nút "Lưu" từng phần: các phần
+  có bản nháp (Mã và loại, Trạng thái, Ưu tiên, Trường tuỳ biến, DoD, Quy tắc tự động) đăng ký với thanh
+  ghim đáy "Có thay đổi chưa lưu · {các phần} · Hoàn tác / Lưu"; Lưu chạy lần lượt theo thứ tự trang rồi
+  làm mới dữ liệu task một lần (để một phần lưu xong không xoá bản nháp của phần khác); phần lỗi giữ
+  bản nháp và báo lỗi tại chỗ; rời trang khi còn thay đổi thì trình duyệt hỏi. Luật git tự lưu ngay khi
+  đổi (công tắc, trạng thái đích). Bảng mức ưu tiên: mỗi hàng chỉ hiện giá trị đang chọn
+  (`↑ Cao nhất · Mũi tên · Màu · Mặc định`), bấm hàng mới mở chỉnh sửa; mức mới tự mở. Quy tắc tự động
+  là danh sách gọn: công tắc, tên, thời điểm chạy, tham số, Chạy thử; mô tả dài là dòng phụ mờ một dòng
+  (đầy đủ trong tooltip). Nhập từ Jira và Chuyển đổi khỏi Jira giữ nút thao tác riêng (không phải lưu).
+- **Tình trạng bật Task** (`app/tasks/adoption`): breadcrumb 48 px, mô tả vào ⓘ, bảng mật độ Gọn
+  (dòng 36 px, tiêu đề ghim). Đưa lối vào sang menu ⚙ / Admin thuộc phần khung trang dùng chung.
+- **Hướng dẫn bật Task** (`WizardSteps` trong `TaskTemplates.tsx`): thanh bước ngang một dòng
+  `① Mã và loại → ② Mẫu → ③ Thành viên → ④ Xác nhận → ⑤ Jira (tuỳ chọn)`. Sửa lỗi lặp số bước: tắt đánh
+  số của `<ol>`, số chỉ nằm trong huy hiệu (bước xong hiện dấu ✓); trình đọc màn hình nghe "Bước n/N".

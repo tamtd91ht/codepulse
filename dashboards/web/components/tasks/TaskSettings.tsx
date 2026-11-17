@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Modal } from "@/components/CriteriaParts";
 import { IconButton } from "@/components/icons";
@@ -41,6 +41,7 @@ import {
 
 import { TaskAutomation } from "./TaskAutomation";
 import { TaskSwitchover, useJiraRetired } from "./TaskSwitchover";
+import { type SaveOpts, SettingsDrafts, useSettingsDraft } from "./settingsDraft";
 
 /* Cài đặt (§13, tasks.manage): key, types, statuses and their transitions, priorities (§18), git rules, custom fields. */
 
@@ -136,7 +137,7 @@ export function EnableSpace({ space, onDone }: { space: TaskSpace; onDone: () =>
     if (jira) setStep(LAST + 1);
     else await finish();
   }
-  const labels = ["Mã và loại task", "Chọn mẫu", "Thành viên", "Xác nhận", "Nhập từ Jira (tuỳ chọn)"];
+  const labels = ["Mã và loại", "Mẫu", "Thành viên", "Xác nhận", "Jira (tuỳ chọn)"];
   if (enabled && step > LAST)
     return (
       <div className="tp-wizard">
@@ -266,18 +267,119 @@ function TypeChecks({ value, onChange }: { value: TaskType[]; onChange: (v: Task
   );
 }
 
+/** Sections of Cài đặt, in page order: the left table of contents and the save bar's order. */
+const SECTIONS = [
+  { id: "st-general", label: "Mã và loại" },
+  { id: "st-statuses", label: "Trạng thái" },
+  { id: "st-priorities", label: "Ưu tiên" },
+  { id: "st-rules", label: "Luật git" },
+  { id: "st-fields", label: "Trường tuỳ biến" },
+  { id: "st-dod", label: "DoD" },
+  { id: "st-jira", label: "Nhập từ Jira" },
+  { id: "st-automation", label: "Quy tắc tự động" },
+  { id: "st-switchover", label: "Chuyển khỏi Jira" },
+] as const;
+
+/**
+ * Cài đặt (§22.7): a sticky 200px table of contents on the left that marks the section in view,
+ * the sections scrolling on the right, and one sticky "Có thay đổi chưa lưu · Lưu / Hoàn tác" bar
+ * at the bottom instead of a save button per section (git rules save on change).
+ */
 export function TaskSettings({ space }: { space: TaskSpace }) {
+  const bp = space.business_project_id;
+  const body = useRef<HTMLDivElement>(null);
+  const [active, setActive] = useState<string>(SECTIONS[0].id);
+
+  // Scroll-spy: the last section whose top passed the upper quarter of the scroll box.
+  useEffect(() => {
+    const box = body.current;
+    if (!box) return;
+    let frame = 0;
+    const spy = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const edge = box.getBoundingClientRect().top + Math.min(120, box.clientHeight / 4);
+        let current: string = SECTIONS[0].id;
+        for (const s of SECTIONS) {
+          const el = document.getElementById(s.id);
+          if (el && el.getBoundingClientRect().top <= edge) current = s.id;
+        }
+        // At the very bottom the last short sections can never reach the edge: mark the last one.
+        if (box.scrollTop + box.clientHeight >= box.scrollHeight - 2) current = SECTIONS[SECTIONS.length - 1].id;
+        setActive(current);
+      });
+    };
+    spy();
+    box.addEventListener("scroll", spy, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      box.removeEventListener("scroll", spy);
+    };
+  }, []);
+
+  const jump = (id: string) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+    setActive(id);
+    el.focus({ preventScroll: true });
+  };
+
   return (
-    <div className="tk-settings">
-      <GeneralCard key={`g${space.business_project_id}`} space={space} />
-      <StatusesCard key={`s${space.business_project_id}`} space={space} />
-      <PrioritiesCard key={`p${space.business_project_id}`} space={space} />
-      <RulesCard key={`r${space.business_project_id}`} space={space} />
-      <FieldsCard key={`f${space.business_project_id}`} space={space} />
-      <DodCard key={`d${space.business_project_id}`} space={space} />
-      <JiraImportCard key={`j${space.business_project_id}`} space={space} />
-      <TaskAutomation key={`a${space.business_project_id}`} space={space} />
-      <TaskSwitchover key={`sw${space.business_project_id}`} space={space} />
+    <div className="st">
+      <nav className="st-toc" aria-label="Mục lục cài đặt">
+        <ol>
+          {SECTIONS.map((s) => (
+            <li key={s.id}>
+              <a
+                href={`#${s.id}`}
+                aria-current={active === s.id ? "location" : undefined}
+                className={active === s.id ? "active" : undefined}
+                onClick={(e) => {
+                  e.preventDefault();
+                  jump(s.id);
+                }}
+              >
+                {s.label}
+              </a>
+            </li>
+          ))}
+        </ol>
+      </nav>
+      <div className="st-body" ref={body}>
+        <SettingsDrafts>
+          <div className="tk-settings st-sections">
+            <section id="st-general" className="st-sec" tabIndex={-1} aria-label="Mã và loại">
+              <GeneralCard key={`g${bp}`} space={space} />
+            </section>
+            <section id="st-statuses" className="st-sec" tabIndex={-1} aria-label="Trạng thái">
+              <StatusesCard key={`s${bp}`} space={space} />
+            </section>
+            <section id="st-priorities" className="st-sec" tabIndex={-1} aria-label="Ưu tiên">
+              <PrioritiesCard key={`p${bp}`} space={space} />
+            </section>
+            <section id="st-rules" className="st-sec" tabIndex={-1} aria-label="Luật git">
+              <RulesCard key={`r${bp}`} space={space} />
+            </section>
+            <section id="st-fields" className="st-sec" tabIndex={-1} aria-label="Trường tuỳ biến">
+              <FieldsCard key={`f${bp}`} space={space} />
+            </section>
+            <section id="st-dod" className="st-sec" tabIndex={-1} aria-label="DoD">
+              <DodCard key={`d${bp}`} space={space} />
+            </section>
+            <section id="st-jira" className="st-sec" tabIndex={-1} aria-label="Nhập từ Jira">
+              <JiraImportCard key={`j${bp}`} space={space} />
+            </section>
+            <section id="st-automation" className="st-sec" tabIndex={-1} aria-label="Quy tắc tự động">
+              <TaskAutomation key={`a${bp}`} space={space} />
+            </section>
+            <section id="st-switchover" className="st-sec" tabIndex={-1} aria-label="Chuyển khỏi Jira">
+              <TaskSwitchover key={`sw${bp}`} space={space} />
+            </section>
+          </div>
+        </SettingsDrafts>
+      </div>
     </div>
   );
 }
@@ -286,7 +388,6 @@ function GeneralCard({ space }: { space: TaskSpace }) {
   const [key, setKey] = useState(space.key ?? "");
   const [types, setTypes] = useState<TaskType[]>(space.types);
   const [mode, setMode] = useState<BoardMode>(space.board_mode ?? "scrum");
-  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   // §20.4: apply a template to this dự án, or save its setup as one.
   const [dialog, setDialog] = useState<"apply" | "save" | null>(null);
@@ -295,18 +396,27 @@ function GeneralCard({ space }: { space: TaskSpace }) {
   const templateName = templateKey ? (templates.data?.find((t) => t.key === templateKey)?.name ?? templateKey) : null;
   const valid = KEY_RE.test(key);
   const dirty = key !== space.key || types.join() !== space.types.join() || mode !== (space.board_mode ?? "scrum");
-  async function save() {
-    setBusy(true);
+  async function save({ refresh = true }: SaveOpts = {}): Promise<boolean> {
     setMessage(null);
     try {
       await api.put(`/tasks/spaces/${space.business_project_id}`, { key, types, board_mode: mode });
-      await refreshTasks();
-      setMessage("Đã lưu.");
+      if (refresh) await refreshTasks();
+      return true;
     } catch (e) {
       setMessage(`Lỗi: ${errorText(e)}`);
+      return false;
     }
-    setBusy(false);
   }
+  useSettingsDraft("st-general", "Mã và loại", 0, {
+    dirty,
+    valid: valid && types.length > 0,
+    save,
+    reset: () => {
+      setKey(space.key ?? "");
+      setTypes(space.types);
+      setMode(space.board_mode ?? "scrum");
+    },
+  });
   return (
     <Card
       title="Mã, loại task và chế độ bảng"
@@ -345,11 +455,6 @@ function GeneralCard({ space }: { space: TaskSpace }) {
         </label>
         <TypeChecks value={types} onChange={setTypes} />
         <BoardModeField value={mode} onChange={setMode} />
-        <div className="adm-form-foot">
-          <button type="button" disabled={busy || !dirty || !valid || !types.length} onClick={() => void save()}>
-            Lưu
-          </button>
-        </div>
       </div>
     </Card>
   );
@@ -382,7 +487,6 @@ function StatusesCard({ space }: { space: TaskSpace }) {
   const [items, setItems] = useState<StatusDraft[]>(initial);
   const [move, setMove] = useState<Record<string, number>>({});
   const [removing, setRemoving] = useState<StatusDraft | null>(null);
-  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   useEffect(() => {
     setItems(initial);
@@ -400,8 +504,7 @@ function StatusesCard({ space }: { space: TaskSpace }) {
       return next;
     });
 
-  async function save() {
-    setBusy(true);
+  async function save({ refresh = true }: SaveOpts = {}): Promise<boolean> {
     setMessage(null);
     try {
       await api.put(`/tasks/spaces/${space.business_project_id}/statuses`, {
@@ -415,14 +518,20 @@ function StatusesCard({ space }: { space: TaskSpace }) {
         })),
         ...(Object.keys(move).length ? { move } : {}),
       });
-      await refreshTasks();
       setMove({});
-      setMessage("Đã lưu trạng thái.");
+      if (refresh) await refreshTasks();
+      return true;
     } catch (e) {
       setMessage(`Lỗi: ${errorText(e)}`);
+      return false;
     }
-    setBusy(false);
   }
+  useSettingsDraft("st-statuses", "Trạng thái", 1, {
+    dirty: dirty || Object.keys(move).length > 0,
+    valid: !items.some((s) => !s.name.trim()),
+    save,
+    reset: () => (setItems(initial), setMove({})),
+  });
 
   return (
     <Card title="Trạng thái và luồng chuyển" id="tk-set-statuses" subtitle="Thứ tự là thứ tự cột trên board. Để trống “Được chuyển tới” = chuyển tới mọi trạng thái.">
@@ -530,12 +639,6 @@ function StatusesCard({ space }: { space: TaskSpace }) {
             Đổi tên sang tiếng Việt
           </button>
         )}
-        <button type="button" className="ghost" disabled={!dirty || busy} onClick={() => (setItems(initial), setMove({}))}>
-          Hoàn tác
-        </button>
-        <button type="button" disabled={!dirty || busy || items.some((s) => !s.name.trim())} onClick={() => void save()}>
-          Lưu trạng thái
-        </button>
       </div>
       {removing && (
         <RemoveStatusModal
@@ -575,16 +678,26 @@ function PrioritiesCard({ space }: { space: TaskSpace }) {
   const [items, setItems] = useState<PriorityDraft[]>(initial);
   const [move, setMove] = useState<Record<string, number>>({});
   const [removing, setRemoving] = useState<PriorityDraft | null>(null);
-  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // Rows show the current value; a click opens that row's editor (new rows open by themselves).
+  const [open, setOpen] = useState<Set<string>>(new Set());
   useEffect(() => {
     setItems(initial);
     setMove({});
+    setOpen(new Set());
   }, [initial]);
   const named = new Map(initial.map((p) => [p.id, p.name]));
   const dirty = JSON.stringify(items) !== JSON.stringify(initial);
   const names = items.map((p) => p.name.trim().toLowerCase());
   const invalid = names.some((n) => !n) || new Set(names).size !== names.length;
+  const colorLabel = (c: TaskPriorityColor) => PRIORITY_COLORS.find((x) => x.value === c)?.label ?? c;
+  const toggle = (tmp: string) =>
+    setOpen((s) => {
+      const next = new Set(s);
+      if (next.has(tmp)) next.delete(tmp);
+      else next.add(tmp);
+      return next;
+    });
 
   const update = (tmp: string, patch: Partial<PriorityDraft>) => setItems((list) => list.map((p) => (p.tmp === tmp ? { ...p, ...patch } : p)));
   const shift = (i: number, by: number) =>
@@ -595,93 +708,103 @@ function PrioritiesCard({ space }: { space: TaskSpace }) {
       return next;
     });
 
-  async function save() {
-    setBusy(true);
+  async function save({ refresh = true }: SaveOpts = {}): Promise<boolean> {
     setMessage(null);
     try {
       await api.put(`/tasks/spaces/${space.business_project_id}/priorities`, {
         priorities: items.map((p) => ({ ...(p.id ? { id: p.id } : {}), name: p.name.trim(), level: p.level, color: p.color, is_default: p.is_default })),
         ...(Object.keys(move).length ? { move } : {}),
       });
-      await refreshTasks();
       setMove({});
-      setMessage("Đã lưu mức ưu tiên.");
+      if (refresh) await refreshTasks();
+      return true;
     } catch (e) {
       setMessage(`Lỗi: ${errorText(e)}`);
+      return false;
     }
-    setBusy(false);
   }
+  useSettingsDraft("st-priorities", "Ưu tiên", 2, {
+    dirty: dirty || Object.keys(move).length > 0,
+    valid: !invalid,
+    save,
+    reset: () => (setItems(initial), setMove({}), setOpen(new Set())),
+  });
 
   return (
     <Card
       title="Mức ưu tiên"
       id="tk-set-priorities"
-      subtitle="Như priority scheme của Jira: tên, màu và thứ tự riêng của dự án (trên cùng = gấp nhất). Mũi tên cho biết mức độ; Bug production mức Cao nhất / Cao tính P1 / P2 trong DPI."
+      subtitle="Như priority scheme của Jira: tên, màu và thứ tự riêng của dự án (trên cùng = gấp nhất). Bấm một hàng để sửa."
     >
       {message && <Message text={message} onClose={() => setMessage(null)} />}
-      <div className="table-wrap">
-        <table className="tk-edit-table">
-          <thead>
-            <tr>
-              <th>Hiển thị</th>
-              <th>Tên</th>
-              <th>Mũi tên (mức độ)</th>
-              <th>Màu</th>
-              <th>Mặc định</th>
-              <th className="tk-actions-col" aria-label="Thao tác" />
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((p, i) => (
-              <tr key={p.tmp}>
-                <td>
+      <ul className="st-prio-list" aria-label="Mức ưu tiên">
+        {items.map((p, i) => {
+          const editing = open.has(p.tmp);
+          const panel = `st-prio-${p.tmp}`;
+          return (
+            <li key={p.tmp} className={`st-prio${editing ? " open" : ""}`}>
+              <div className="st-prio-row">
+                <button type="button" className="st-prio-sum" aria-expanded={editing} aria-controls={panel} onClick={() => toggle(p.tmp)}>
                   <PriorityIcon name={p.name || "…"} level={p.level} color={p.color} withLabel />
-                </td>
-                <td>
-                  <input value={p.name} onChange={(e) => update(p.tmp, { name: e.target.value })} aria-label="Tên mức ưu tiên" maxLength={40} />
-                </td>
-                <td>
-                  <select value={p.level} onChange={(e) => update(p.tmp, { level: e.target.value as TaskPriorityLevel })} aria-label="Mũi tên">
-                    {PRIORITY_LEVELS.map((l) => (
-                      <option key={l} value={l}>
-                        {LEVEL_LABEL[l]}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td>
-                  <select value={p.color} onChange={(e) => update(p.tmp, { color: e.target.value as TaskPriorityColor })} aria-label="Màu">
-                    {PRIORITY_COLORS.map((c) => (
-                      <option key={c.value} value={c.value}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td>
-                  <label className="inline-check">
-                    <input type="radio" name={`prio-default-${space.business_project_id}`} checked={p.is_default} onChange={() => setItems((list) => list.map((x) => ({ ...x, is_default: x.tmp === p.tmp })))} />
-                    <span className="visually-hidden">Mặc định khi tạo task</span>
-                  </label>
-                </td>
-                <td className="tk-actions-col">
-                  <span className="actions">
-                    <IconButton icon="chevronUp" label="Lên" disabled={i === 0} onClick={() => shift(i, -1)} />
-                    <IconButton icon="chevronDown" label="Xuống" disabled={i === items.length - 1} onClick={() => shift(i, 1)} />
-                    <IconButton
-                      icon="remove"
-                      tone="danger"
-                      label="Xoá mức ưu tiên"
-                      disabled={items.length <= 1}
-                      onClick={() => (p.id ? setRemoving(p) : setItems((list) => list.filter((x) => x.tmp !== p.tmp)))}
-                    />
+                  <span className="small muted">
+                    · {LEVEL_LABEL[p.level]} · {colorLabel(p.color)}
                   </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                  {p.is_default && <span className="st-prio-default small">Mặc định</span>}
+                </button>
+                <span className="actions">
+                  <IconButton icon="chevronUp" label="Lên" disabled={i === 0} onClick={() => shift(i, -1)} />
+                  <IconButton icon="chevronDown" label="Xuống" disabled={i === items.length - 1} onClick={() => shift(i, 1)} />
+                  <IconButton
+                    icon="remove"
+                    tone="danger"
+                    label="Xoá mức ưu tiên"
+                    disabled={items.length <= 1}
+                    onClick={() => (p.id ? setRemoving(p) : setItems((list) => list.filter((x) => x.tmp !== p.tmp)))}
+                  />
+                </span>
+              </div>
+              {editing && (
+                <div id={panel} className="st-prio-edit">
+                  <label className="rq-field">
+                    <span className="rq-label">Tên</span>
+                    <input value={p.name} onChange={(e) => update(p.tmp, { name: e.target.value })} maxLength={40} autoFocus={!p.id} />
+                  </label>
+                  <label className="rq-field">
+                    <span className="rq-label">Mũi tên (mức độ)</span>
+                    <select value={p.level} onChange={(e) => update(p.tmp, { level: e.target.value as TaskPriorityLevel })}>
+                      {PRIORITY_LEVELS.map((l) => (
+                        <option key={l} value={l}>
+                          {LEVEL_LABEL[l]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="rq-field">
+                    <span className="rq-label">Màu</span>
+                    <select value={p.color} onChange={(e) => update(p.tmp, { color: e.target.value as TaskPriorityColor })}>
+                      {PRIORITY_COLORS.map((c) => (
+                        <option key={c.value} value={c.value}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="inline-check st-prio-default-pick">
+                    <input
+                      type="radio"
+                      name={`prio-default-${space.business_project_id}`}
+                      checked={p.is_default}
+                      onChange={() => setItems((list) => list.map((x) => ({ ...x, is_default: x.tmp === p.tmp })))}
+                    />
+                    Mặc định khi tạo task
+                  </label>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <p className="small muted st-note">Mũi tên cho biết mức độ; Bug production mức Cao nhất / Cao tính P1 / P2 trong DPI.</p>
       {Object.keys(move).length > 0 && (
         <p className="small muted">
           Khi lưu:{" "}
@@ -697,15 +820,13 @@ function PrioritiesCard({ space }: { space: TaskSpace }) {
           type="button"
           className="ghost"
           disabled={items.length >= 12}
-          onClick={() => setItems((list) => [...list, { tmp: `n${Date.now()}`, name: "", level: "medium", color: "blue", is_default: false }])}
+          onClick={() => {
+            const tmp = `n${Date.now()}`;
+            setItems((list) => [...list, { tmp, name: "", level: "medium", color: "blue", is_default: false }]);
+            setOpen((s) => new Set(s).add(tmp));
+          }}
         >
           Thêm mức
-        </button>
-        <button type="button" className="ghost" disabled={!dirty || busy} onClick={() => (setItems(initial), setMove({}))}>
-          Hoàn tác
-        </button>
-        <button type="button" disabled={!dirty || busy || invalid} onClick={() => void save()}>
-          Lưu mức ưu tiên
         </button>
       </div>
       {removing && (
@@ -738,7 +859,7 @@ function PrioritiesCard({ space }: { space: TaskSpace }) {
             </>
           }
         >
-          <p className="small muted">Task đang ở mức này chuyển sang mức bạn chọn. Thay đổi chỉ áp dụng khi bấm “Lưu mức ưu tiên”.</p>
+          <p className="small muted">Task đang ở mức này chuyển sang mức bạn chọn. Thay đổi chỉ áp dụng khi bấm Lưu ở thanh dưới.</p>
         </Modal>
       )}
     </Card>
@@ -800,28 +921,33 @@ function RemoveStatusModal({
             </option>
           ))}
         </select>
-        <p className="small muted">Thay đổi chỉ áp dụng khi bấm “Lưu trạng thái”.</p>
+        <p className="small muted">Thay đổi chỉ áp dụng khi bấm Lưu ở thanh dưới.</p>
       </div>
     </Modal>
   );
 }
 
+/** Git rules save on every change (autosave, §22.7): a switch or a target status at a time. */
 function RulesCard({ space }: { space: TaskSpace }) {
   const statuses = sortedStatuses(space);
   const initial = useMemo<TaskRules>(() => ({ ...DEFAULT_RULES, ...(space.rules ?? {}) }), [space]);
   const [rules, setRules] = useState<TaskRules>(initial);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
   useEffect(() => setRules(initial), [initial]);
-  const dirty = JSON.stringify(rules) !== JSON.stringify(initial);
-  async function save() {
+  async function change(next: TaskRules) {
+    const before = rules;
+    setRules(next);
     setBusy(true);
     setMessage(null);
+    setSaved(false);
     try {
-      await api.put(`/tasks/spaces/${space.business_project_id}`, { key: space.key, rules });
+      await api.put(`/tasks/spaces/${space.business_project_id}`, { key: space.key, rules: next });
       await refreshTasks();
-      setMessage("Đã lưu luật git.");
+      setSaved(true);
     } catch (e) {
+      setRules(before);
       setMessage(`Lỗi: ${errorText(e)}`);
     }
     setBusy(false);
@@ -829,7 +955,7 @@ function RulesCard({ space }: { space: TaskSpace }) {
   const target = (k: "start" | "review" | "done", label: string) => (
     <label className="rq-field">
       <span className="rq-label">{label}</span>
-      <select value={rules[k] ?? ""} onChange={(e) => setRules({ ...rules, [k]: e.target.value ? Number(e.target.value) : null })}>
+      <select value={rules[k] ?? ""} disabled={busy} onChange={(e) => void change({ ...rules, [k]: e.target.value ? Number(e.target.value) : null })}>
         <option value="">Không đặt</option>
         {statuses.map((s) => (
           <option key={s.id} value={s.id}>
@@ -840,37 +966,48 @@ function RulesCard({ space }: { space: TaskSpace }) {
     </label>
   );
   return (
-    <Card title="Luật đồng bộ git" id="tk-set-rules" subtitle="Trạng thái task chạy theo nhánh, commit và MR có mã task.">
+    <Card
+      title="Luật đồng bộ git"
+      id="tk-set-rules"
+      subtitle="Trạng thái task chạy theo nhánh, commit và MR có mã task. Tự lưu khi đổi."
+      actions={
+        <span className="small muted st-autosave" role="status" aria-live="polite">
+          {busy ? "Đang lưu…" : saved ? "Đã lưu" : null}
+        </span>
+      }
+    >
       {message && <Message text={message} onClose={() => setMessage(null)} />}
-      <div className="settings-grid">
+      <ul className="st-rule-list">
         {RULE_TEXT.map((r) => (
-          <label key={r.key} className="setting-tile tk-rule">
-            <span className="inline-check">
+          <li key={r.key}>
+            <label className="st-rule">
               <input
                 type="checkbox"
                 role="switch"
                 checked={!!rules[r.key]}
-                onChange={(e) => setRules({ ...rules, [r.key]: e.target.checked })}
+                disabled={busy}
+                onChange={(e) => void change({ ...rules, [r.key]: e.target.checked })}
+                aria-describedby={`st-rule-${r.key}`}
               />
-              <strong>{r.label}</strong>
-            </span>
-            <span className="small muted">{r.hint}</span>
-          </label>
+              <span className="st-rule-text">
+                <strong>{r.label}</strong>
+                <span id={`st-rule-${r.key}`} className="small muted st-sub" title={r.hint}>
+                  {r.hint}
+                </span>
+              </span>
+            </label>
+          </li>
         ))}
-      </div>
+      </ul>
       <div className="rq-grid tk-rule-targets">
         {target("start", "Trạng thái “bắt đầu”")}
         {target("review", "Trạng thái “review”")}
         {target("done", "Trạng thái “xong”")}
       </div>
-      <div className="adm-form-foot">
-        <button type="button" disabled={!dirty || busy} onClick={() => void save()}>
-          Lưu luật
-        </button>
-      </div>
     </Card>
   );
 }
+
 
 const FIELD_KIND_LABEL: Record<TaskFieldKind, string> = { text: "Văn bản", number: "Số", date: "Ngày", select: "Chọn một", user: "Người" };
 type FieldDraft = TaskField & { tmp: string; optionsText: string };
@@ -885,7 +1022,6 @@ function FieldsCard({ space }: { space: TaskSpace }) {
     [fields.data],
   );
   const [items, setItems] = useState<FieldDraft[]>([]);
-  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   useEffect(() => setItems(initial), [initial]);
   const dirty = JSON.stringify(items) !== JSON.stringify(initial);
@@ -898,8 +1034,7 @@ function FieldsCard({ space }: { space: TaskSpace }) {
       return next;
     });
 
-  async function save() {
-    setBusy(true);
+  async function save({ refresh = true }: SaveOpts = {}): Promise<boolean> {
     setMessage(null);
     try {
       await api.put(`/tasks/spaces/${space.business_project_id}/fields`, {
@@ -919,13 +1054,21 @@ function FieldsCard({ space }: { space: TaskSpace }) {
           archived: f.archived,
         })),
       });
-      await refreshTasks();
-      setMessage("Đã lưu trường tuỳ biến.");
+      if (refresh) await refreshTasks();
+      // The field list is its own resource: refetch it so the draft starts from what was saved.
+      await fields.mutate();
+      return true;
     } catch (e) {
       setMessage(`Lỗi: ${errorText(e)}`);
+      return false;
     }
-    setBusy(false);
   }
+  useSettingsDraft("st-fields", "Trường tuỳ biến", 4, {
+    dirty,
+    valid: !items.some((f) => !f.name.trim()),
+    save,
+    reset: () => setItems(initial),
+  });
 
   return (
     <Card title="Trường tuỳ biến" id="tk-set-fields" subtitle="Thêm trường riêng của dự án; trường đã dùng nên ẩn (lưu trữ) thay vì xoá.">
@@ -999,9 +1142,6 @@ function FieldsCard({ space }: { space: TaskSpace }) {
               }
             >
               Thêm trường
-            </button>
-            <button type="button" disabled={!dirty || busy || items.some((f) => !f.name.trim())} onClick={() => void save()}>
-              Lưu trường
             </button>
           </div>
         </>

@@ -1,15 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { Alert, Card, ChartTip, EmptyState, Expander, Loading, StatStrip, StripStat } from "@/components/ui";
+import { Icon } from "@/components/icons";
+import { Alert, Card, ChartTip, Expander, Loading, StatStrip, StripStat } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
 import { dayLabel } from "@/lib/format";
 import type { ForecastRange, LatestSprintReview, SprintReview, SprintScopeChange, SprintTaskGroup, TaskPerson, TaskSpace } from "@/lib/types";
 
-import { PersonAvatar } from "./taskParts";
+import { PersonAvatar, useSprints } from "./taskParts";
 
 /*
  * Sức khoẻ sprint (docs/specs/31 §19.5, roadmap P4): the active sprint's forecast, what is stuck,
@@ -74,9 +75,18 @@ function TaskRef({ k, title }: { k: string; title: string }) {
   );
 }
 
+/** "" = the running sprint (GET …/health); a number = a closed sprint's review. */
+type SprintPick = "" | number;
+
 export function TaskHealth({ space }: { space: TaskSpace }) {
   const bp = space.business_project_id;
   const res = useApi<SprintHealth>(`/tasks/spaces/${bp}/health`);
+  const sprints = useSprints(bp);
+  const closed = useMemo(
+    () => (sprints.data ?? []).filter((s) => s.state === "closed").sort((a, b) => (b.closed_at ?? b.end_date ?? "").localeCompare(a.closed_at ?? a.end_date ?? "") || b.id - a.id),
+    [sprints.data],
+  );
+  const [pick, setPick] = useState<SprintPick>("");
   const h = res.data;
   const retry = () => void res.mutate();
 
@@ -100,7 +110,17 @@ export function TaskHealth({ space }: { space: TaskSpace }) {
     }));
   }, [h]);
 
-  if (h && !h.sprint) return <NoActiveSprint space={space} />;
+  const picker = (
+    <SprintChip
+      running={h?.sprint ? h.sprint.name : null}
+      closed={closed.map((s) => ({ id: s.id, name: s.name }))}
+      value={pick}
+      onChange={setPick}
+    />
+  );
+
+  if (pick !== "") return <ClosedSprint id={pick} picker={picker} />;
+  if (h && !h.sprint) return <NoActiveSprint space={space} picker={closed.length ? picker : null} onPick={setPick} lastClosed={closed[0]?.id ?? null} />;
 
   const fc = h?.forecast;
   const st = h?.stuck;
@@ -108,76 +128,90 @@ export function TaskHealth({ space }: { space: TaskSpace }) {
   const qa = h?.quality;
   const maxPoints = Math.max(...load.map((l) => l.open_points), 1);
   const maxOpen = Math.max(...load.map((l) => l.open), 1);
+  const scope = h?.scope_change;
+  const scopeChanged = !!scope && (!!scope.added_after_start.count || !!scope.removed_after_start.count);
 
   return (
-    <div className="th-health">
-      {h?.sprint && (
-        <div className="th-head">
-          <div>
-            <strong>{h.sprint.name}</strong>
-            {h.sprint.start_date && h.sprint.end_date && (
-              <span className="th-muted">
-                {" "}
-                · {dayLabel(h.sprint.start_date)} – {dayLabel(h.sprint.end_date)}
-              </span>
-            )}
-          </div>
-          <div className="th-head-right">
-            {h.health && <HealthBadge value={h.health} />}
-            <Link href="/tasks/overview" className="button sm">
-              Tổng quan mọi dự án
-            </Link>
-          </div>
-        </div>
-      )}
+    <div className="sh">
+      <div className="sh-toolbar">
+        {picker}
+        {h?.sprint?.start_date && h.sprint.end_date && (
+          <span className="small muted">
+            {dayLabel(h.sprint.start_date)} – {dayLabel(h.sprint.end_date)}
+          </span>
+        )}
+        {h?.health && <HealthBadge value={h.health} />}
+        {h?.sprint?.goal && (
+          <span className="sh-goal small muted" title={h.sprint.goal}>
+            Mục tiêu: {h.sprint.goal}
+          </span>
+        )}
+        <span className="sh-spacer" />
+        <Link href="/tasks/overview" className="button sm ghost">
+          Tổng quan mọi dự án
+        </Link>
+      </div>
 
-      <Card title="Dự báo" id="th-forecast" subtitle="Burndown và đường dự phóng theo tốc độ đã làm">
-        {errorBox ?? (!fc ? (
-          <Loading rows={4} />
-        ) : (
-          <>
-            <StatStrip label="Dự báo sprint" inline>
-              <StripStat label="Point cam kết" value={fc.committed_points} digits={1} />
-              <StripStat label="Point xong" value={fc.done_points} digits={1} sub={fc.done_pct === null ? undefined : `${fc.done_pct}% phạm vi`} />
-              <StripStat label="Lý tưởng còn lại" value={fc.ideal_remaining ?? undefined} digits={1} title="Point còn lại hôm nay theo đường lý tưởng" />
-              <StripStat
-                label="Dự phóng hoàn thành"
-                value={fc.projected_pct ?? undefined}
-                digits={1}
-                unit="%"
-                tone={fc.projected_pct === null ? undefined : fc.projected_pct < 70 ? "bad" : fc.projected_pct < 90 ? "warn" : "good"}
-                title="Theo tốc độ trung bình từ đầu sprint; cần ít nhất 2 ngày. Khoảng: độ dao động của tốc độ từng ngày (từ 4 ngày) và velocity các sprint đã đóng (từ 3 sprint)"
-                sub={<ForecastSub fc={fc} />}
-              />
-            </StatStrip>
-            {!fc.days.length ? (
-              <EmptyState icon="calendar" title="Sprint chưa có ngày bắt đầu / kết thúc" />
-            ) : (
-              <div className="chart-box th-chart" role="img" aria-label={`Burndown ${h?.sprint?.name ?? ""}: đường lý tưởng, còn lại và dự phóng`}>
-                <ResponsiveContainer>
-                  <LineChart data={chart} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
-                    <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
-                    <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} minTickGap={12} />
-                    <YAxis allowDecimals={false} tickLine={false} axisLine={false} fontSize={12} />
-                    <Tooltip content={<ChartTip />} />
-                    <Legend iconType="circle" iconSize={8} />
-                    <Line dataKey="ideal_points" name="Lý tưởng" stroke="var(--faint)" strokeDasharray="4 4" strokeWidth={2} dot={false} />
-                    <Line dataKey="remaining_points" name="Còn lại (SP)" stroke="var(--chart-1)" strokeWidth={2.5} dot={false} connectNulls />
-                    <Line dataKey="projected" name="Dự phóng" stroke="var(--chart-3)" strokeDasharray="2 3" strokeWidth={2} dot={false} connectNulls />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </>
-        ))}
-      </Card>
+      <div className="sh-grid">
+        <Card title="Dự báo" id="th-forecast" className="sh-cell sh-forecast" collapsible={false}>
+          {errorBox ?? (!fc ? (
+            <Loading rows={4} />
+          ) : (
+            <>
+              <StatStrip label="Dự báo sprint" inline>
+                <StripStat label="Point cam kết" value={fc.committed_points} digits={1} />
+                <StripStat label="Point xong" value={fc.done_points} digits={1} sub={fc.done_pct === null ? undefined : `${fc.done_pct}% phạm vi`} />
+                <StripStat label="Lý tưởng còn lại" value={fc.ideal_remaining ?? undefined} digits={1} title="Point còn lại hôm nay theo đường lý tưởng" />
+                <StripStat
+                  label="Dự phóng hoàn thành"
+                  value={fc.projected_pct ?? undefined}
+                  digits={1}
+                  unit="%"
+                  tone={fc.projected_pct === null ? undefined : fc.projected_pct < 70 ? "bad" : fc.projected_pct < 90 ? "warn" : "good"}
+                  title="Theo tốc độ trung bình từ đầu sprint; cần ít nhất 2 ngày. Khoảng: độ dao động của tốc độ từng ngày (từ 4 ngày) và velocity các sprint đã đóng (từ 3 sprint)"
+                  sub={<ForecastSub fc={fc} />}
+                />
+              </StatStrip>
+              {!fc.days.length ? (
+                <p className="sh-none muted">
+                  <Icon name="calendar" size={14} /> Sprint chưa có ngày bắt đầu / kết thúc
+                </p>
+              ) : (
+                <div className="chart-box th-chart sh-chart" role="img" aria-label={`Burndown ${h?.sprint?.name ?? ""}: đường lý tưởng, còn lại và dự phóng`}>
+                  <ResponsiveContainer>
+                    <LineChart data={chart} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+                      <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
+                      <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} minTickGap={12} />
+                      <YAxis allowDecimals={false} tickLine={false} axisLine={false} fontSize={12} />
+                      <Tooltip content={<ChartTip />} />
+                      <Legend iconType="circle" iconSize={8} />
+                      <Line dataKey="ideal_points" name="Lý tưởng" stroke="var(--faint)" strokeDasharray="4 4" strokeWidth={2} dot={false} />
+                      <Line dataKey="remaining_points" name="Còn lại (SP)" stroke="var(--chart-1)" strokeWidth={2.5} dot={false} connectNulls />
+                      <Line dataKey="projected" name="Dự phóng" stroke="var(--chart-3)" strokeDasharray="2 3" strokeWidth={2} dot={false} connectNulls />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </>
+          ))}
+        </Card>
 
-      <div className="grid two">
-        <Card title="Kẹt" id="th-stuck" subtitle={st ? `Quá ${st.doing_warning_hours} giờ trong cột Đang làm (hoặc ngưỡng của trạng thái), MR chờ review quá ${st.mr_review_hours} giờ, task bị chặn` : undefined}>
+        <Card
+          title={
+            <span title={st ? `Quá ${st.doing_warning_hours} giờ trong cột Đang làm (hoặc ngưỡng của trạng thái), MR chờ review quá ${st.mr_review_hours} giờ, task bị chặn` : undefined}>
+              Kẹt{st?.count ? <span className="sh-count">{st.count}</span> : null}
+            </span>
+          }
+          id="th-stuck"
+          className="sh-cell"
+          collapsible={false}
+        >
           {errorBox ?? (!st ? (
             <Loading rows={4} />
           ) : !st.count ? (
-            <EmptyState icon="checkCircle" tone="good" title="Không có việc nào đang kẹt" />
+            <p className="sh-none sh-good">
+              <Icon name="checkCircle" size={14} /> Không có việc nào đang kẹt
+            </p>
           ) : (
             <div className="th-stuck">
               {st.aged.length > 0 && (
@@ -227,11 +261,18 @@ export function TaskHealth({ space }: { space: TaskSpace }) {
           ))}
         </Card>
 
-        <Card title="Tải" id="th-load" subtitle="Point (thanh trên) và task (thanh dưới) đang mở của mỗi người trong sprint, xếp theo tên">
+        <Card
+          title={<span title="Point (thanh trên) và task (thanh dưới) đang mở của mỗi người trong sprint, xếp theo tên">Tải</span>}
+          id="th-load"
+          className="sh-cell"
+          collapsible={false}
+        >
           {errorBox ?? (!h ? (
             <Loading rows={4} />
           ) : !load.length ? (
-            <EmptyState icon="checkCircle" tone="good" title="Không còn task mở trong sprint" />
+            <p className="sh-none sh-good">
+              <Icon name="checkCircle" size={14} /> Không còn task mở trong sprint
+            </p>
           ) : (
             <ul className="th-load">
               {load.map((l) => (
@@ -256,36 +297,103 @@ export function TaskHealth({ space }: { space: TaskSpace }) {
             </ul>
           ))}
         </Card>
+
+        <Card
+          title={<span title="Tín hiệu từ review code và bug trong thời gian sprint; task thêm hoặc bỏ sau khi sprint bắt đầu">Chất lượng</span>}
+          id="th-quality"
+          className="sh-cell"
+          collapsible={false}
+        >
+          {errorBox ?? (!qa || !h ? (
+            <Loading rows={2} />
+          ) : (
+            <>
+              <StatStrip label="Chất lượng sprint" inline>
+                <StripStat label="Critical đang mở" value={qa.open_critical} tone={qa.open_critical ? "bad" : "good"} title="Finding critical còn mở trên review mới nhất của commit / MR nối với task trong sprint" />
+                <StripStat label="Bug cao nhất mở" value={qa.highest_bugs} tone={qa.highest_bugs ? "bad" : "good"} title="Bug trong sprint có ưu tiên mức cao nhất, chưa xong" />
+                <StripStat label="Bug tạo" value={qa.bugs_created} title="Task loại Bug của dự án tạo trong khoảng ngày của sprint" />
+                <StripStat label="Task mở lại" value={qa.reopened} tone={qa.reopened ? "warn" : undefined} title="Task trong sprint rời trạng thái Xong về trạng thái mở trong thời gian sprint" />
+              </StatStrip>
+              <h4 className="th-sub sh-scope-h">Thay đổi phạm vi</h4>
+              {!scopeChanged || !scope ? (
+                <p className="sh-none sh-good">
+                  <Icon name="checkCircle" size={14} /> Phạm vi giữ nguyên từ lúc bắt đầu
+                </p>
+              ) : (
+                <div className="sr-scope">
+                  <ScopeList title="Thêm sau khi bắt đầu" sign="+" group={scope.added_after_start} />
+                  <ScopeList title="Bỏ ra sau khi bắt đầu" sign="−" group={scope.removed_after_start} />
+                </div>
+              )}
+            </>
+          ))}
+        </Card>
       </div>
+    </div>
+  );
+}
 
-      <Card title="Chất lượng" id="th-quality" subtitle="Tín hiệu từ review code và bug trong thời gian sprint">
-        {errorBox ?? (!qa ? (
-          <Loading rows={2} />
-        ) : (
-          <StatStrip label="Chất lượng sprint" inline>
-            <StripStat label="Lỗi critical đang mở" value={qa.open_critical} tone={qa.open_critical ? "bad" : "good"} title="Finding critical còn mở trên review mới nhất của commit / MR nối với task trong sprint" />
-            <StripStat label="Bug cao nhất đang mở" value={qa.highest_bugs} tone={qa.highest_bugs ? "bad" : "good"} title="Bug trong sprint có ưu tiên mức cao nhất, chưa xong" />
-            <StripStat label="Bug tạo trong sprint" value={qa.bugs_created} title="Task loại Bug của dự án tạo trong khoảng ngày của sprint" />
-            <StripStat label="Task mở lại" value={qa.reopened} tone={qa.reopened ? "warn" : undefined} title="Task trong sprint rời trạng thái Xong về trạng thái mở trong thời gian sprint" />
-          </StatStrip>
+/** "Sprint: Sprint demo ▾" on the toolbar: the running sprint or a closed one's review. */
+function SprintChip({
+  running,
+  closed,
+  value,
+  onChange,
+}: {
+  running: string | null;
+  closed: { id: number; name: string }[];
+  value: SprintPick;
+  onChange: (v: SprintPick) => void;
+}) {
+  return (
+    <label className="sh-chip">
+      <span className="sh-chip-label">Sprint:</span>
+      <select value={value === "" ? "" : String(value)} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : "")} aria-label="Chọn sprint">
+        <option value="">{running ? `${running} (đang chạy)` : "Đang chạy: không có"}</option>
+        {closed.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name} (đã đóng)
+          </option>
         ))}
-      </Card>
+      </select>
+    </label>
+  );
+}
 
-      <Card title="Thay đổi phạm vi" id="th-scope" subtitle="Task thêm vào hoặc bỏ ra sau khi sprint bắt đầu">
-        {errorBox ?? (!h ? (
-          <Loading rows={2} />
-        ) : !h.scope_change || (!h.scope_change.added_after_start.count && !h.scope_change.removed_after_start.count) ? (
-          <EmptyState icon="checkCircle" tone="good" title="Phạm vi giữ nguyên từ lúc bắt đầu" />
-        ) : (
-          <div className="sr-scope">
-            <ScopeList title="Thêm sau khi bắt đầu" sign="+" group={h.scope_change.added_after_start} />
-            <ScopeList title="Bỏ ra sau khi bắt đầu" sign="−" group={h.scope_change.removed_after_start} />
+/** A closed sprint picked on the chip: its review (§20.6). */
+function ClosedSprint({ id, picker }: { id: number; picker: ReactNode }) {
+  const res = useApi<SprintReview>(`/tasks/sprints/${id}/review`);
+  const r = res.data;
+  return (
+    <div className="sh">
+      <div className="sh-toolbar">
+        {picker}
+        {r?.sprint.start_date && r.sprint.end_date && (
+          <span className="small muted">
+            {dayLabel(r.sprint.start_date)} – {dayLabel(r.sprint.end_date)}
+          </span>
+        )}
+        <span className="sh-spacer" />
+        {r && <RetroButton review={r} />}
+      </div>
+      <Card title="Đánh giá sprint" id="sr-picked" collapsible={false}>
+        {res.error ? (
+          <div className="th-error">
+            <Loading error={res.error} />
+            <button type="button" className="ghost sm" onClick={() => void res.mutate()}>
+              Thử lại
+            </button>
           </div>
-        ))}
+        ) : !r ? (
+          <Loading rows={3} />
+        ) : (
+          <SprintReviewView review={r} />
+        )}
       </Card>
     </div>
   );
 }
+
 
 /* -- §20.6: forecast range, scope change, sprint review, empty state ------------------------------ */
 
@@ -445,60 +553,96 @@ export function ScopeNote({ sprintId }: { sprintId: number }) {
   );
 }
 
-/** No sprint running: the last closed sprint's review, or the Kanban flow of 14 days. */
-function NoActiveSprint({ space }: { space: TaskSpace }) {
+
+/**
+ * No sprint running (§22.7): one compact card (icon, a sentence, "Bắt đầu sprint" and "Tổng quan
+ * mọi dự án"), then the last closed sprint's numbers, or the Kanban flow of 14 days.
+ */
+function NoActiveSprint({
+  space,
+  picker,
+  onPick,
+  lastClosed,
+}: {
+  space: TaskSpace;
+  picker: ReactNode;
+  onPick: (id: number) => void;
+  lastClosed: number | null;
+}) {
   const bp = space.business_project_id;
   const res = useApi<LatestSprintReview>(`/tasks/spaces/${bp}/review/latest`);
   const kanban = space.board_mode === "kanban";
-  const startLink = kanban ? null : (
-    <Link href={`/tasks?space=${bp}&tab=backlog`} className="button sm">
-      Bắt đầu sprint
-    </Link>
-  );
   const data = res.data;
   return (
-    <div className="th-health">
-      <div className="th-head">
-        <div>
-          <strong>{kanban ? "Dòng chảy 14 ngày qua" : "Chưa có sprint đang chạy"}</strong>
-          {data?.review && <span className="th-muted"> · sprint gần nhất: {data.review.sprint.name}</span>}
-        </div>
-        <div className="th-head-right">
-          {startLink}
+    <div className="sh">
+      {picker && <div className="sh-toolbar">{picker}</div>}
+      <section className="sh-empty" aria-label={kanban ? "Kanban" : "Chưa có sprint đang chạy"}>
+        <span className="sh-empty-icon" aria-hidden="true">
+          <Icon name={kanban ? "activity" : "calendar"} size={18} />
+        </span>
+        <p className="sh-empty-text">
+          {kanban ? (
+            <>
+              <strong>Dự án chạy Kanban</strong> · không theo sprint; dưới đây là dòng chảy 14 ngày qua.
+            </>
+          ) : (
+            <>
+              <strong>Chưa có sprint đang chạy</strong> · bắt đầu một sprint để xem dự báo, việc kẹt, tải và chất lượng.
+            </>
+          )}
+        </p>
+        <span className="sh-empty-actions">
+          {!kanban && (
+            <Link href={`/tasks?space=${bp}&tab=backlog`} className="button sm primary ink">
+              Bắt đầu sprint
+            </Link>
+          )}
           <Link href="/tasks/overview" className="button sm">
             Tổng quan mọi dự án
           </Link>
+        </span>
+      </section>
+
+      {res.error ? (
+        <div className="th-error">
+          <Loading error={res.error} />
+          <button type="button" className="ghost sm" onClick={() => void res.mutate()}>
+            Thử lại
+          </button>
         </div>
-      </div>
-      <Card
-        title={data?.flow ? "Kanban: 14 ngày qua" : "Sprint gần nhất"}
-        id="sr-latest"
-        subtitle={data?.flow ? "Số task xong, cycle time và task mới, không theo sprint" : "Đánh giá của sprint đã đóng gần nhất"}
-        actions={data?.review ? <RetroButton review={data.review} /> : undefined}
-      >
-        {res.error ? (
-          <div className="th-error">
-            <Loading error={res.error} />
-            <button type="button" className="ghost sm" onClick={() => void res.mutate()}>
-              Thử lại
-            </button>
-          </div>
-        ) : !data ? (
-          <Loading rows={3} />
-        ) : data.flow ? (
+      ) : !data ? (
+        <Loading rows={2} />
+      ) : data.flow ? (
+        <Card title="Kanban: 14 ngày qua" id="sr-latest" subtitle="Số task xong, cycle time và task mới, không theo sprint" collapsible={false}>
           <StatStrip label="Kanban 14 ngày" inline>
             <StripStat label="Task xong" value={data.flow.throughput} sub={`${data.flow.throughput_points} SP · ${data.flow.per_week}/tuần`} />
             <StripStat label="Cycle time trung vị" {...cycleStat(data.flow.cycle_time_h)} />
             <StripStat label="Task mới" value={data.flow.created} />
           </StatStrip>
-        ) : data.review ? (
+        </Card>
+      ) : data.review ? (
+        <Card
+          title={`Sprint gần nhất · ${data.review.sprint.name}`}
+          id="sr-latest"
+          collapsible={false}
+          actions={
+            <span className="sh-latest-actions">
+              {lastClosed !== null && (
+                <button type="button" className="ghost sm" onClick={() => onPick(lastClosed)}>
+                  Xem chi tiết
+                </button>
+              )}
+              <RetroButton review={data.review} />
+            </span>
+          }
+        >
           <SprintReviewView review={data.review} />
-        ) : (
-          <EmptyState icon="calendar" title="Dự án chưa có sprint nào đã đóng">
-            Bắt đầu một sprint ở tab Backlog để xem dự báo, việc kẹt, tải và chất lượng.
-          </EmptyState>
-        )}
-      </Card>
+        </Card>
+      ) : (
+        <p className="sh-none muted">
+          <Icon name="info" size={14} /> Dự án chưa có sprint nào đã đóng.
+        </p>
+      )}
     </div>
   );
 }
