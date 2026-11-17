@@ -288,3 +288,10 @@ trước và sau đều là **Xem** hoặc **Lead dự án**. Người chọn l�
 - Team gắn với một nhóm GitLab (docs/specs/31 §20.7, R2) có thành viên tự đồng bộ mỗi giờ từ thành viên trực
   tiếp của nhóm, nên bộ quyền gán cho team (ví dụ "Tester" cho QA) tự đi theo nhóm GitLab. Chỉ admin gắn nhóm
   (ai trong nhóm sẽ có bộ quyền của team); đồng bộ không đụng dòng thêm tay và dòng lead / manager.
+
+## 12. Phạm vi Team cho quyền cấp dự án, "Quyền của tôi" (docs/specs/31 §21.5)
+
+- `tests.edit/approve/manage/delete`, `tasks.sprint/manage` có mức `team`: dự án mà người khác trong team mình
+  lead / manage đang được cấp quyền, trong dự án mình xem được. `project` chỉ với tới dự án đó khi một bộ khác
+  của mình cho quyền ấy ở mức team (gộp không làm mất team); bộ Lead có sẵn không nhận các quyền này.
+- Mỗi người tự xem quyền hiệu lực và lý do được / không được ở `GET /me/permissions` (trang "Quyền của tôi").

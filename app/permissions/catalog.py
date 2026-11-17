@@ -150,20 +150,23 @@ CATALOG: tuple[Permission, ...] = (
         "tests.edit",
         "Testcase",
         "Thiết kế testcase: thêm, sửa, nhập, thư mục, bước dùng chung, AI sinh / rà soát",
-        "project all",
+        "team project all",
+        managed_team=True,
     ),
     # §15.9 (G7): deleting and approving are their own rights.
     _p(
         "tests.delete",
         "Testcase",
         "Xoá testcase, bộ testcase, thư mục",
-        "project all",
+        "team project all",
+        managed_team=True,
     ),
     _p(
         "tests.approve",
         "Testcase",
         "Duyệt / từ chối testcase khi dự án bật quy trình duyệt",
-        "project all",
+        "team project all",
+        managed_team=True,
     ),
     _p(
         "tests.run",
@@ -177,7 +180,8 @@ CATALOG: tuple[Permission, ...] = (
         "tests.manage",
         "Testcase",
         "Tạo, sửa, đóng, xoá test run / test plan, milestone, cấu hình; phân tích MR bằng AI",
-        "project all",
+        "team project all",
+        managed_team=True,
     ),
     # docs/specs/31 §4.1: CodePulse's own task tracker (Task), its rights split as Jira's
     # permission scheme (user 2026-11-16: "phân quyền cho menu này, giống phân quyền jira").
@@ -236,13 +240,20 @@ CATALOG: tuple[Permission, ...] = (
         "team project all",
         managed_team=True,
     ),
-    _p("tasks.sprint", "Task", "Lập, bắt đầu, đóng sprint (Manage sprints)", "project all"),
+    _p(
+        "tasks.sprint",
+        "Task",
+        "Lập, bắt đầu, đóng sprint (Manage sprints)",
+        "team project all",
+        managed_team=True,
+    ),
     _p(
         "tasks.manage",
         "Task",
         "Quản trị Task của dự án (Administer projects): bật Task, trạng thái, luật git, "
         "phiên bản, trường tuỳ biến; giữ mọi quyền Task ở dự án đó",
-        "project all",
+        "team project all",
+        managed_team=True,
     ),
     _p("knowledge.view", "Tiền đề review", "Xem Tiền đề review của repo"),
     _p(
@@ -289,6 +300,22 @@ CATALOG: tuple[Permission, ...] = (
     _p("admin.permissions", "Quản trị", "Tạo, sửa, gán bộ quyền", sensitive=True),
 )
 BY_KEY: dict[str, Permission] = {p.key: p for p in CATALOG}
+
+# docs/specs/31 §21.5 (R1b): the permissions held over a whole dự án, not over one person's work.
+# Their "team" scope reaches the dự án where someone of a team one leads (or manages: catalog
+# `managed_team`) holds a project grant, among the dự án one sees; "project" reaches those too
+# (merging sets keeps the widest scope, which must not lose the team's dự án) and the dự án one
+# manages; "all" every dự án one sees. `Principal.covers_project` checks them.
+PROJECT_TEAM_KEYS: frozenset[str] = frozenset(
+    {
+        "tests.edit",
+        "tests.approve",
+        "tests.manage",
+        "tests.delete",
+        "tasks.sprint",
+        "tasks.manage",
+    }
+)
 
 
 @dataclass(frozen=True)

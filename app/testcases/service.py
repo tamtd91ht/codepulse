@@ -108,12 +108,11 @@ def may_view(principal: Principal, bp_id: int | None) -> bool:
 
 
 def _scoped(principal: Principal, key: str, bp_id: int | None) -> bool:
-    """A `project | all` permission over dự án `bp_id`: `project` covers the dự án one manages,
-    `all` every dự án one sees."""
-    scope = principal.scope(key)
-    if scope not in ("project", "all") or not principal.can_view_project(bp_id):
-        return False  # "team" (tests.run, §20.0) is per test, never the whole dự án
-    return scope == "all" or principal.can_manage_project(bp_id)
+    """A dự án-wide permission over dự án `bp_id`: `project` covers the dự án one manages,
+    `all` every dự án one sees; `team` (tests.edit / approve / manage / delete, docs/specs/31
+    §21.5) the dự án where someone of a team one leads or manages holds a grant, and `project`
+    those too. For tests.run "team" is per test (§20.0), never the whole dự án."""
+    return principal.covers_project(key, bp_id)
 
 
 def may_edit(principal: Principal, bp_id: int | None) -> bool:

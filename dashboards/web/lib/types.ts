@@ -80,8 +80,34 @@ export interface UserPermissions {
   is_admin: boolean;
   active: boolean;
   roles: string[];
-  sets: { id: number; name: string; auto_role: string | null; via: "role" | "given" | "personal" }[];
-  permissions: { key: string; scope: string; sources: { set_id: number | null; name: string; scope: string }[] }[];
+  sets: { id: number; name: string; auto_role: string | null; via: "role" | "given" | "personal" | "team" }[];
+  permissions: {
+    key: string;
+    scope: string;
+    sources: { set_id: number | null; name: string; scope: string }[];
+    /** GET /me/permissions?explain=1 only (docs/specs/31 §21.5). */
+    label?: string | null;
+    meaning?: string | null;
+  }[];
+}
+
+/** "May I, and why" for one permission (GET /me/permissions?check=…, docs/specs/31 §21.5). */
+export interface PermissionCheck {
+  key: string;
+  label: string;
+  scope: string | null;
+  /** null: depends on the task (a task right asked of a whole dự án). */
+  allowed: boolean | null;
+  target: string | null;
+  reason: string;
+  lines: string[];
+}
+
+/** Quyền của tôi: GET /me/permissions (the caller's own effective permissions). */
+export interface MyPermissions extends UserPermissions {
+  check: PermissionCheck | null;
+  /** The dự án the caller sees (to ask about one). */
+  projects: { id: number; name: string }[];
 }
 
 export type ProjectRole = "view" | "manage";

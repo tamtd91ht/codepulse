@@ -81,6 +81,10 @@ export function UserMenu({ me, role }: { me: Me; role: string }) {
               <Icon name="user" size={18} />
               Của tôi
             </Link>
+            <Link href="/me/permissions" className="user-menu-item" onClick={() => setOpen(false)}>
+              <Icon name="key" size={18} />
+              Quyền của tôi
+            </Link>
             <Link href="/notifications" className="user-menu-item" onClick={() => setOpen(false)}>
               <Icon name="bell" size={18} />
               Lịch sử thông báo

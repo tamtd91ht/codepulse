@@ -14,16 +14,17 @@ Every endpoint needs `admin.permissions` (by default: admins only). Rules (docs/
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.api.audit import audit
 from app.api.deps import get_session
-from app.api.security import Principal, load_principal, require
+from app.api.security import CurrentPrincipal, Principal, load_principal, require
 from app.config import Settings, get_settings
 from app.models import (
+    BusinessProject,
     PermissionSet,
     PermissionSetItem,
     ProjectGrant,
@@ -43,6 +44,8 @@ from app.permissions.catalog import (
     merge,
     valid_item,
 )
+from app.permissions.explain import explain as explain_check
+from app.permissions.explain import scope_meaning
 
 router = APIRouter(tags=["admin"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -180,6 +183,9 @@ class EffectiveOut(BaseModel):
     key: str
     scope: str
     sources: list[SourceOut]  # widest first
+    # docs/specs/31 §21.5: `?explain=1` on /me/permissions: what the scope reaches, in words.
+    label: str | None = None
+    meaning: str | None = None
 
 
 class HeldSetOut(BaseModel):
@@ -196,6 +202,29 @@ class UserPermissionsOut(BaseModel):
     roles: list[str]
     sets: list[HeldSetOut]
     permissions: list[EffectiveOut]
+
+
+class CheckOut(BaseModel):
+    """docs/specs/31 §21.5: may I use one permission (on a task, in a dự án), and why."""
+
+    key: str
+    label: str
+    scope: str | None
+    allowed: bool | None  # None: depends on the task
+    target: str | None
+    reason: str
+    lines: list[str]
+
+
+class ProjectRefOut(BaseModel):
+    id: int
+    name: str
+
+
+class MyPermissionsOut(UserPermissionsOut):
+    check: CheckOut | None = None
+    # The dự án one sees, to ask about one of them (the page's picker).
+    projects: list[ProjectRefOut] = []
 
 
 # -- helpers ------------------------------------------------------------------------------------
@@ -687,6 +716,58 @@ def user_permissions(
     user = session.get(User, user_id)
     if user is None:
         raise HTTPException(404, "user not found")
+    return _effective(session, settings, user)
+
+
+@router.get("/me/permissions")
+def my_permissions(
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    settings: SettingsDep,
+    explain: bool = False,
+    check: Annotated[str | None, Query(max_length=64)] = None,
+    task: Annotated[str | None, Query(max_length=40)] = None,
+    project: int | None = None,
+) -> MyPermissionsOut:
+    """Quyền của tôi (docs/specs/31 §21.5): what Admin > Phân quyền shows of a person, for the
+    caller only (no admin.permissions needed); `explain=1` says what each scope reaches;
+    `check=<key>` with `task=<KEY>` or `project=<id>` answers "may I, and why"."""
+    user = session.get(User, principal.user_id)
+    if user is None:
+        raise HTTPException(404, "user not found")
+    out = MyPermissionsOut(**_effective(session, settings, user).model_dump())
+    seen = principal.visible_projects()
+    query = select(BusinessProject.id, BusinessProject.name).order_by(BusinessProject.name)
+    if seen is not None:
+        query = query.where(BusinessProject.id.in_(sorted(seen)))
+    out.projects = [ProjectRefOut(id=i, name=n) for i, n in session.execute(query).all()]
+    if explain:
+        for item in out.permissions:
+            item.label = BY_KEY[item.key].label if item.key in BY_KEY else None
+            item.meaning = scope_meaning(item.key, item.scope)
+    if check:
+        names = [
+            src.name
+            for item in out.permissions
+            if item.key == check
+            for src in item.sources
+            if src.set_id is not None
+        ]
+        result = explain_check(session, principal, check, names, task_key=task, project_id=project)
+        out.check = CheckOut(
+            key=result.key,
+            label=result.label,
+            scope=result.scope,
+            allowed=result.allowed,
+            target=result.target,
+            reason=result.reason,
+            lines=result.lines,
+        )
+    return out
+
+
+def _effective(session: Session, settings: Settings, user: User) -> UserPermissionsOut:
+    """One person's effective permissions, the sets they hold and where each comes from."""
     person = _person(user)
     if _is_admin(user, settings):
         return UserPermissionsOut(

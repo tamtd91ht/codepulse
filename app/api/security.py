@@ -31,7 +31,7 @@ from app.models import (
     User,
     UserPermissionSet,
 )
-from app.permissions.catalog import BY_KEY, FLAG, everything, merge
+from app.permissions.catalog import BY_KEY, FLAG, PROJECT_TEAM_KEYS, everything, merge
 from app.ratelimit import WindowCounter
 
 SESSION_COOKIE = "codepulse_session"
@@ -92,6 +92,13 @@ class Principal:
     # docs/specs/21 §10: dự án id -> "lead" | "manager" (project_grants.admin_role), the dự án
     # this person sets up (repos, .claude repo, rules) without being admin.
     project_admin: dict[int, str] = field(default_factory=dict)
+    # docs/specs/31 §21.5 (R1b): the dự án where someone else of a team this person leads
+    # (lead_member_projects) or manages (managed_member_projects) holds a project grant now.
+    lead_member_projects: set[int] = field(default_factory=set)
+    managed_member_projects: set[int] = field(default_factory=set)
+    # The dự án-wide permissions some set of this person gives at "team": merged with a wider
+    # scope (say "project" from the built-in Quản lý dự án set) they keep the team's dự án.
+    team_granted: set[str] = field(default_factory=set)
 
     def _bound_out(self, bp_id: int | None) -> bool:
         """A dự án outside the one the token is bound to."""
@@ -117,6 +124,42 @@ class Principal:
         if perm is not None and perm.managed_team:
             return self.lead_members | self.managed_members
         return set(self.lead_members)
+
+    def team_projects(self, key: str) -> set[int]:
+        """Where the "team" scope of a dự án-wide permission (catalog `PROJECT_TEAM_KEYS`,
+        docs/specs/31 §21.5) reaches: the dự án where someone of a team one leads, and for the
+        permissions that say so (`managed_team`) of a team one manages, holds a project grant,
+        among the dự án one sees. One's own grants do not count: they are not the team's."""
+        perm = BY_KEY.get(key)
+        ids = set(self.lead_member_projects)
+        if perm is not None and perm.managed_team:
+            ids |= self.managed_member_projects
+        return {bp for bp in ids if self.can_view_project(bp)}
+
+    def covers_project(self, key: str, bp_id: int | None) -> bool:
+        """Holds the dự án-wide permission `key` over dự án `bp_id` (docs/specs/31 §21.5):
+        "team" = a dự án of `team_projects(key)`; "project" = a dự án one manages, plus the
+        team's when some set gives `key` at "team" (merging keeps the widest scope, which must
+        not lose them; a "project" alone does not reach them: managing one dự án makes nobody
+        the owner of the dự án their team works in); "all" = every dự án one sees. "team" on a
+        permission outside `PROJECT_TEAM_KEYS` (tests.run: per test) reaches no dự án."""
+        if bp_id is None or not self.can_view_project(bp_id):
+            return False
+        held = self.scope(key)
+        if held in ("all", FLAG):
+            return True
+        if held not in ("team", "project"):
+            return False
+        if held == "project" and self.can_manage_project(bp_id):
+            return True
+        if held == "project" and key not in self.team_granted:
+            return False
+        if key not in PROJECT_TEAM_KEYS:
+            return False
+        perm = BY_KEY[key]  # visibility checked above: no need for team_projects' filter
+        return bp_id in self.lead_member_projects or (
+            perm.managed_team and bp_id in self.managed_member_projects
+        )
 
     def covers(self, key: str, user_id: int | None, bp_id: int | None) -> bool:
         """Holds `key` over the work of `user_id` in dự án `bp_id` (docs/specs/21 §2): own
@@ -322,6 +365,11 @@ def load_principal(
             for m in session.scalars(select(TeamMember).where(TeamMember.team_id.in_(managed)))
             if m.joined_at <= day and (m.left_at is None or m.left_at > day)
         } - {user.id}
+    lead_projects, managed_projects = (
+        _member_projects(session, lead_members - {user.id}, managed_members)
+        if not is_admin
+        else (set(), set())
+    )
     auto_roles = ["member"]
     if lead:
         auto_roles.append("lead")
@@ -333,6 +381,11 @@ def load_principal(
         auto_roles.append("manage_all")
     if project_admin:
         auto_roles.append("project_admin")
+    items = (
+        []
+        if is_admin
+        else _permission_items(session, user.id, auto_roles, {m.team_id for m in memberships})
+    )
     return Principal(
         user_id=user.id,
         email=user.primary_email,
@@ -343,19 +396,43 @@ def load_principal(
         lead_members=lead_members,
         project_roles=roles,
         manages_all=manages_all,
-        perms=everything()
-        if is_admin
-        else _permissions(session, user.id, auto_roles, {m.team_id for m in memberships}),
+        perms=everything() if is_admin else merge(items),
         managed_members=managed_members,
         project_admin=project_admin,
+        lead_member_projects=lead_projects,
+        managed_member_projects=managed_projects,
+        team_granted={k for k, v in items if v == "team"} & PROJECT_TEAM_KEYS,
     )
 
 
-def _permissions(
+def _member_projects(
+    session: Session, led: set[int], managed: set[int]
+) -> tuple[set[int], set[int]]:
+    """The dự án where an active person of `led` / of `managed` holds a project grant
+    (docs/specs/31 §21.5): one query, none when one leads and manages nobody."""
+    people = led | managed
+    if not people:
+        return set(), set()
+    lead_out: set[int] = set()
+    managed_out: set[int] = set()
+    rows = session.execute(
+        select(ProjectGrant.user_id, ProjectGrant.business_project_id)
+        .join(User, User.id == ProjectGrant.user_id)
+        .where(ProjectGrant.user_id.in_(sorted(people)), User.active.is_not(False))
+    ).all()
+    for uid, bp in rows:
+        if uid in led:
+            lead_out.add(int(bp))
+        if uid in managed:
+            managed_out.add(int(bp))
+    return lead_out, managed_out
+
+
+def _permission_items(
     session: Session, user_id: int, auto_roles: list[str], team_ids: set[int] | None = None
-) -> dict[str, str]:
-    """The union of the sets of these roles, the sets given to the person and the sets given to
-    the teams they are in now (docs/specs/21, §11)."""
+) -> list[tuple[str, str]]:
+    """The items of the sets of these roles, the sets given to the person and the sets given to
+    the teams they are in now (docs/specs/21, §11); `merge` makes their union."""
     given = select(UserPermissionSet.set_id).where(UserPermissionSet.user_id == user_id)
     by_team = select(TeamPermissionSet.set_id).where(
         TeamPermissionSet.team_id.in_(sorted(team_ids or set()))
@@ -371,7 +448,7 @@ def _permissions(
             )
         )
     ).tuples()
-    return merge([(str(k), str(v)) for k, v in rows])
+    return [(str(k), str(v)) for k, v in rows]
 
 
 def require(key: str) -> Any:
