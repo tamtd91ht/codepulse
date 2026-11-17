@@ -11,6 +11,7 @@ import type { Me, SearchCond, SearchFieldInfo, SearchFields, SearchTree, TaskSea
 import { type ChipCond, ChipEditor, FIELD_LABEL, chipId, chipValueLabel, first, opLabel, valueOptions } from "./FilterChips";
 import { type FilterValue, filterCount, filterTree } from "./filterState";
 import { dialogOpen, typingIn } from "./shortcutEvents";
+import { MultiSelect } from "@/components/MultiSelect";
 import { PersonAvatar, errorText, personName, useSprints, useTaskPeople, useVersions } from "./taskParts";
 
 /*
@@ -70,7 +71,6 @@ const compactNow = () => {
     return false;
   }
 };
-const PEOPLE_SHOWN = 3;
 const CHIPS_SHOWN = 4;
 
 export const FIELD_LABEL_FB: Record<string, string> = { ...FIELD_LABEL, parent: "Task cha / Epic" };
@@ -552,7 +552,7 @@ function readPins(screen: string, fallback: string[]): string[] {
   }
 }
 
-type Open = { kind: "add" } | { kind: "field"; field: string; anchor: RefObject<HTMLElement | null> } | { kind: "edit"; chip: ChipCond; anchor: RefObject<HTMLElement | null> } | { kind: "people" } | { kind: "more" } | { kind: "display" } | { kind: "sheet" } | null;
+type Open = { kind: "add" } | { kind: "field"; field: string; anchor: RefObject<HTMLElement | null> } | { kind: "edit"; chip: ChipCond; anchor: RefObject<HTMLElement | null> } | { kind: "more" } | { kind: "display" } | { kind: "sheet" } | null;
 
 export function FilterBar(props: FilterBarProps) {
   const { space, me, screen, value, onChange, people = true, counts = true, total, unit = "task", status, saved, display, actions, replaceWith } = props;
@@ -576,7 +576,6 @@ export function FilterBar(props: FilterBarProps) {
 
   const searchRef = useRef<HTMLInputElement>(null);
   const addRef = useRef<HTMLButtonElement>(null);
-  const peopleRef = useRef<HTMLButtonElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
   const displayRef = useRef<HTMLButtonElement>(null);
   const sheetRef = useRef<HTMLButtonElement>(null);
@@ -606,7 +605,7 @@ export function FilterBar(props: FilterBarProps) {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [replaceWith, display, change]);
 
-  // People: the 5 with most open tasks, those picked first.
+  // People: in the select box, those picked first, then by open tasks.
   const peopleCounts = useFacets(bp, { all: [{ field: "category", op: "is_not", value: ["done"] }] }, people ? ["assignee"] : null);
   const pickedPeople = isValues(value, "assignee").filter((v) => v !== "me" && v !== "none");
   const mine = isValues(value, "assignee").includes("me");
@@ -619,8 +618,6 @@ export function FilterBar(props: FilterBarProps) {
     const order = [...pickedPeople, ...byCount.filter((id) => !pickedPeople.includes(id)), ...known.filter((id) => !byCount.includes(id) && !pickedPeople.includes(id))];
     return order.filter((id) => known.includes(id));
   }, [peopleCounts.data, cat.lookups.people, pickedPeople]);
-  const stackShown = stack.slice(0, Math.max(PEOPLE_SHOWN, pickedPeople.length));
-  const stackMore = stack.length - stackShown.length;
 
   // Chips on the bar: pinned fields and people have their own control; the rest, grouped by field.
   type Group = { key: string; field: string; chips: ChipCond[]; text: string };
@@ -712,36 +709,26 @@ export function FilterBar(props: FilterBarProps) {
             >
               <Icon name="user" size={14} /> Của tôi
             </button>
-            <div className="fb-people" role="group" aria-label="Lọc theo người làm">
-              {stackShown.map((id) => {
-                const p = cat.lookups.people.find((x) => String(x.id) === id) ?? null;
-                const on = pickedPeople.includes(id);
-                const n = peopleCounts.data?.assignee?.[id];
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    className={`fb-face${on ? " on" : ""}`}
-                    aria-pressed={on}
-                    aria-label={`${on ? "Bỏ lọc" : "Lọc"} người làm: ${personName(p)}${n ? ` (${n} task đang mở)` : ""}`}
-                    data-tip={personName(p)}
-                    onClick={() => change(toggleValue(latest.current, "assignee", id, "person"))}
-                  >
-                    <PersonAvatar person={p} />
-                  </button>
-                );
-              })}
-              <button
-                ref={peopleRef}
-                type="button"
-                className="fb-face fb-face-more"
-                aria-label={stackMore > 0 ? `Thêm ${stackMore} người` : "Chọn người làm"}
-                aria-haspopup="dialog"
-                aria-expanded={open?.kind === "people"}
-                onClick={() => setOpen(open?.kind === "people" ? null : { kind: "people" })}
-              >
-                {stackMore > 0 ? `+${stackMore}` : <Icon name="members" size={14} />}
-              </button>
+            {/* Người làm: one multi-pick select box (user 2026-11-17), not a row of avatar buttons. */}
+            <div className="fb-people-sel">
+              <MultiSelect<string>
+                label="Người làm"
+                empty="Mọi người làm"
+                placeholder="Tìm người…"
+                unit="người"
+                options={stack.map((id) => {
+                  const p = cat.lookups.people.find((x) => String(x.id) === id) ?? null;
+                  const n = peopleCounts.data?.assignee?.[id];
+                  return { value: id, label: personName(p), hint: n ? `${n} task đang mở` : (p?.primary_email ?? undefined), lead: <PersonAvatar person={p} /> };
+                })}
+                value={pickedPeople}
+                onChange={(next) => {
+                  let v = latest.current;
+                  for (const id of pickedPeople) if (!next.includes(id)) v = toggleValue(v, "assignee", id, "person");
+                  for (const id of next) if (!pickedPeople.includes(id)) v = toggleValue(v, "assignee", id, "person");
+                  change(v);
+                }}
+              />
             </div>
           </>
         )}
@@ -836,11 +823,6 @@ export function FilterBar(props: FilterBarProps) {
               close();
             }}
           />
-        </Popover>
-      )}
-      {open?.kind === "people" && (
-        <Popover anchor={peopleRef} onClose={close} label="Lọc người làm">
-          <FieldValues field="assignee" cat={cat} bp={bp} meId={me?.id} value={value} counts={counts} onChange={change} latest={latest} />
         </Popover>
       )}
       {open?.kind === "more" && (

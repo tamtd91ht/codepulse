@@ -21884,3 +21884,28 @@ input.fb-cell-edit {
     scroll-behavior: auto;
   }
 }
+
+/* FilterBar: Người làm as a multi-pick select box (user 2026-11-17), sized like the bar's chips. */
+.fb-people-sel {
+  flex: none;
+  width: 180px;
+}
+.fb-people-sel button.msel-trigger {
+  height: 28px;
+  padding: 0 8px 0 10px;
+  border-radius: 14px;
+  font-size: 13px;
+}
+.fb-people-sel .msel.set button.msel-trigger {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+.fb-people-sel .msel-pop {
+  width: 280px;
+  max-height: 420px;
+}
+@media (max-width: 1279px) {
+  .fb-people-sel {
+    width: 140px;
+  }
+}
