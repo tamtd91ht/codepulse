@@ -20913,6 +20913,7 @@ input.fb-cell-edit {
   overscroll-behavior-x: contain;
 }
 .bd-board {
+  position: relative; /* contains absolutely placed text, like the column bodies below */
   flex: 1 1 auto;
   min-height: 0;
 }
