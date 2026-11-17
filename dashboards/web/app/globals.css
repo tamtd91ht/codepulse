@@ -17245,3 +17245,157 @@ a.icon-btn {
   text-decoration: underline wavy var(--danger);
   text-underline-offset: 3px;
 }
+/* Một cái nhìn (docs/specs/31 §21.1): the Sức khoẻ block with one overall colour, the selected
+   Board card, the command palette's groups and task rows. */
+.hb-block {
+  display: grid;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+.hb-red {
+  border-left-color: var(--bad);
+}
+.hb-amber {
+  border-left-color: var(--warning);
+}
+.hb-green {
+  border-left-color: var(--success);
+}
+.hb-none {
+  border-left-color: var(--border);
+}
+.hb-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.hb-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--sev-info);
+}
+.hb-red .hb-dot {
+  background: var(--bad);
+}
+.hb-amber .hb-dot {
+  background: var(--warning);
+}
+.hb-green .hb-dot {
+  background: var(--success);
+}
+.hb-state {
+  color: var(--muted);
+}
+.hb-red .hb-state {
+  color: var(--bad-text);
+}
+.hb-amber .hb-state {
+  color: var(--warn);
+}
+.hb-green .hb-state {
+  color: var(--good);
+}
+.hb-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hb-item {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  min-height: 0;
+  height: auto;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-standard);
+}
+span.hb-item {
+  cursor: default;
+}
+a.hb-item:hover,
+button.hb-item:hover {
+  border-color: var(--border-strong);
+  text-decoration: underline;
+}
+.hb-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.hb-missing {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 6px 10px;
+  list-style: none;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+}
+.hb-missing span[aria-hidden] {
+  color: var(--bad-text);
+}
+.hb-empty {
+  margin: 0;
+}
+
+.tk-card.cp-card-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow-sm);
+}
+.tk-card:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.cmdk-item.cp-cmdk-group {
+  position: relative;
+  margin-top: 22px;
+}
+.cmdk-item.cp-cmdk-group:first-child {
+  margin-top: 18px;
+}
+.cmdk-item.cp-cmdk-group::before {
+  content: attr(data-group);
+  position: absolute;
+  top: -19px;
+  left: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+.cp-cmdk-person {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  max-width: 140px;
+}
+.cp-cmdk-person-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cp-cmdk-context {
+  padding: 6px 16px 0;
+}
+.cmdk-item .cmdk-hint {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 480px) {
+  .cp-cmdk-person-name {
+    display: none;
+  }
+}

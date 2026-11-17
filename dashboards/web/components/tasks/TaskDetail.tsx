@@ -14,6 +14,7 @@ import { TaskActivity, TaskAttachments, TaskCommentBox } from "./TaskActivity";
 import { FileTextarea } from "./taskFiles";
 import { TaskAiButtons } from "./TaskAi";
 import { TaskCode } from "./TaskCode";
+import { TaskHealth } from "./TaskHealthBlock";
 import { type OpenSubtasks, ParentDoneAsk } from "./ParentDoneAsk";
 import { TaskDod, TaskTests } from "./TaskQuality";
 
@@ -163,7 +164,7 @@ function Body({
           )}
         </div>
         <TitleEdit task={task} canEdit={canEdit} onSave={(title) => patch({ title })} />
-        <TaskHealth task={task} />
+        <TaskHealth task={task} onOpenTask={onOpenTask} />
         {message && <Message text={message} onClose={() => setMessage(null)} />}
         <DescriptionEdit task={task} canEdit={canEdit} onSave={(description) => patch({ description })} />
         <Subtasks task={task} bp={bp} space={space} onOpenTask={onOpenTask} />
@@ -838,54 +839,5 @@ function ResolutionModal({ target, onClose, onPick }: { target: TaskStatusRef; o
         </label>
       </div>
     </Modal>
-  );
-}
-
-/**
- * Sức khoẻ task (docs/specs/31 §19.3, §20.1), always at the top: blocked by, the MRs, their review
- * score, open critical / high findings, pipelines, production, MR closed without merge, DoD and
- * testcases. Each item jumps to its section; items that do not apply are hidden.
- */
-function TaskHealth({ task }: { task: Detail }) {
-  const tests = useApi<{ total: number; passed: number; failed: number; hidden?: boolean }>(`/tasks/${encodeURIComponent(task.key)}/tests`);
-  const g = task.git?.summary;
-  const hasCode = !!g && (g.mrs > 0 || g.commits > 0);
-  const score = !g || g.avg_score === null || g.avg_score === undefined ? null : Number(g.avg_score);
-  const mrs = task.git?.mrs ?? [];
-  const merged = mrs.filter((m) => m.state === "merged").length;
-  const closedMr = mrs.some((m) => m.state === "closed") && !mrs.some((m) => m.state === "merged" || m.state === "opened");
-  const dod = task.dod ?? [];
-  const dodOk = dod.filter((d) => d.ok).length;
-  const t = tests.data && !tests.data.hidden && tests.data.total > 0 ? tests.data : null;
-  type Item = { key: string; text: string; tone: "good" | "bad" | "warn" | "muted"; title: string; target: string };
-  const items: Item[] = [
-    ...(task.blocked_by ?? []).map((b) => ({ key: `blocked-${b.key}`, text: `⛔ Bị chặn bởi ${b.key}${b.status ? ` (${b.status})` : ""}`, tone: "bad" as const, title: b.title, target: "tk-links-title" })),
-    ...(hasCode && g
-      ? [
-          { key: "mr", text: g.mrs ? `${g.mrs} MR${merged ? ` (${merged} đã merge)` : ""}` : `${g.commits} commit`, tone: "muted" as const, title: "MR và commit nối với task", target: "tk-code-title" },
-          ...(score !== null && !Number.isNaN(score) ? [{ key: "score", text: `Review ${score.toFixed(1)}`, tone: score >= 7 ? ("good" as const) : ("warn" as const), title: "Điểm review trung bình", target: "tk-code-title" }] : []),
-          { key: "crit", text: `${g.open_critical} critical`, tone: g.open_critical ? ("bad" as const) : ("good" as const), title: "Finding critical còn mở trên code của task", target: "tk-code-title" },
-          ...(g.open_high ? [{ key: "high", text: `${g.open_high} high`, tone: "warn" as const, title: "Finding high còn mở", target: "tk-code-title" }] : []),
-          ...(g.mrs ? [{ key: "pipe", text: g.pipelines_failed ? `${g.pipelines_failed} pipeline lỗi` : "Pipeline ✓", tone: g.pipelines_failed ? ("bad" as const) : ("good" as const), title: "Pipeline của MR", target: "tk-code-title" }] : []),
-          { key: "deploy", text: g.deployed ? `Đã lên ${g.deployed.environment}` : "Chưa deploy", tone: g.deployed ? ("good" as const) : ("muted" as const), title: g.deployed ? `Deploy lúc ${dateTimeMin(g.deployed.at)}` : "Chưa thấy deploy production", target: "tk-code-title" },
-        ]
-      : []),
-    ...(closedMr ? [{ key: "mr-closed", text: "MR bị đóng không merge", tone: "warn" as const, title: "MR của task đã đóng mà không merge", target: "tk-code-title" }] : []),
-    ...(t ? [{ key: "tests", text: `Testcase ${t.passed}/${t.total} Passed`, tone: t.failed ? ("bad" as const) : t.passed === t.total ? ("good" as const) : ("muted" as const), title: t.failed ? `${t.failed} testcase Failed` : "Testcase phủ task", target: "tk-tests-title" }] : []),
-    ...(dod.length ? [{ key: "dod", text: `DoD ${dodOk}/${dod.length}`, tone: dodOk === dod.length ? ("good" as const) : ("warn" as const), title: "Definition of Done", target: "tk-dod-title" }] : []),
-  ];
-  if (!items.length) return null;
-  const jump = (id: string) => {
-    const el = document.getElementById(id);
-    (el?.closest("section") ?? el)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-  return (
-    <div className="tk-health tl-health" role="group" aria-label="Sức khoẻ task">
-      {items.map((it) => (
-        <button key={it.key} type="button" className={`tk-health-item tk-health-${it.tone} tl-health-item`} title={it.title} onClick={() => jump(it.target)}>
-          {it.text}
-        </button>
-      ))}
-    </div>
   );
 }

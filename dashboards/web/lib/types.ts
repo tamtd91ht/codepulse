@@ -2505,6 +2505,8 @@ export interface TaskRules {
   start: number | null;
   review: number | null;
   done: number | null;
+  /** Definition of Done (docs/specs/31 §19.4). */
+  dod?: { checks?: string[]; min_score?: number; enforce?: boolean } | null;
 }
 
 /** GET /tasks/spaces: a dự án and its Task setup (not enabled: shown to its managers only). */
@@ -2998,4 +3000,12 @@ export interface OverviewTrends {
   lead_time_h: { values: (number | null)[]; direction: TrendDirection };
   highest_bugs: { values: number[]; direction: TrendDirection };
   critical_findings: { values: number[]; direction: TrendDirection };
+}
+
+/* -- Một cái nhìn (docs/specs/31 §21.1) ------------------------------------------------------- */
+
+/** GET /tasks/spaces/{bp}/dod-gaps: the enforced DoD checks each "doing" task still fails. */
+export interface TaskDodGaps {
+  enforced: boolean;
+  gaps: Record<string, string[]>;
 }

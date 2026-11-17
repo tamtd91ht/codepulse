@@ -12,7 +12,8 @@ import type { TaskCommitCandidate, TaskDetail, TaskGit, TaskRelation, TaskReview
 
 import { errorText, refreshTasks, useConfirm, useSpaceRepos } from "./taskParts";
 
-/* The "Code" of a task (§7): what git knows about it, with review quality and deployment. */
+/* The "Code" of a task (§7): the lists of branches, MRs and commits git knows about, each with its
+ * review. The summary (counts, score, critical, pipeline, deploy) is in the Sức khoẻ block (§21.1). */
 
 const MR_STATE: Record<string, { label: string; tone?: "good" | "bad" | "info" }> = {
   opened: { label: "Đang mở", tone: "info" },
@@ -39,7 +40,6 @@ export function TaskCode({ task, bp }: { task: TaskDetail; bp: number | null }) 
     mrs: [],
     summary: { commits: 0, mrs: 0, open_critical: 0, open_high: 0, avg_score: null, pipelines_failed: 0, deployed: null },
   };
-  const s = git.summary;
   const [dialog, setDialog] = useState<"commit" | "branch" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [confirmEl, ask] = useConfirm();
@@ -76,23 +76,6 @@ export function TaskCode({ task, bp }: { task: TaskDetail; bp: number | null }) 
         )}
       </div>
       {message && <Message text={message} onClose={() => setMessage(null)} />}
-      <div className="tk-code-chips">
-        <span className="tk-chip">{s.commits} commit</span>
-        <span className="tk-chip">{s.mrs} MR</span>
-        <span className="tk-chip" title="Điểm review trung bình">
-          Điểm TB {num(s.avg_score === null ? null : String(s.avg_score), 0)}
-        </span>
-        {s.open_critical > 0 ? <span className="tk-badge bad">{s.open_critical} critical mở</span> : <span className="tk-chip">0 critical</span>}
-        {s.open_high > 0 && <span className="tk-badge warn">{s.open_high} high mở</span>}
-        {s.pipelines_failed > 0 && <span className="tk-badge bad">{s.pipelines_failed} pipeline lỗi</span>}
-        {s.deployed ? (
-          <Pill tone="good" icon="checkCircle" title={dateTime(s.deployed.at)}>
-            Đã lên {s.deployed.environment}
-          </Pill>
-        ) : (
-          <span className="tk-chip faint">Chưa deploy</span>
-        )}
-      </div>
       {empty ? (
         <p className="small faint">
           Chưa có nhánh, commit hay MR nào. Đặt mã <code>{task.key}</code> trong tên nhánh, commit hoặc tiêu đề MR để nối tự động.
