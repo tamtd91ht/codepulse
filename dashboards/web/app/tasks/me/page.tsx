@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { Suspense } from "react";
 
 import { MyWork } from "@/components/tasks/MyWork";
+import { UrlTaskDrawer } from "@/components/tasks/TaskDrawer";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { can, useApi } from "@/lib/api";
 import type { Me } from "@/lib/types";
@@ -27,6 +29,10 @@ export default function MyWorkPage() {
         subtitle="Việc cần xử lý ngay, task của bạn theo trạng thái và tiến độ sprint; tự làm mới mỗi phút"
       />
       <MyWork />
+      {/* §22.6: a task opened from here (?task=KEY) shows in the right drawer, the list stays. */}
+      <Suspense fallback={null}>
+        <UrlTaskDrawer />
+      </Suspense>
     </>
   );
 }
