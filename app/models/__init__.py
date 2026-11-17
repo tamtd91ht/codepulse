@@ -122,6 +122,7 @@ from app.models.testcases import (
     TestSuiteLink,
 )
 from app.models.tokens import ApiToken
+from app.models.usage import UsageEvent
 
 __all__ = [
     "Account",
@@ -242,6 +243,7 @@ __all__ = [
     "TestStatus",
     "TestSuite",
     "TestSuiteLink",
+    "UsageEvent",
     "User",
     "UserNotification",
     "UserPermissionSet",

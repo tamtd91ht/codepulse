@@ -81,6 +81,7 @@ from app.api.routers import (
     testcase_api_docs,
     testcases,
     tokens,
+    usage,
 )
 from app.collector.gitlab.client import GitLabError
 from app.config import get_settings
@@ -88,6 +89,7 @@ from app.db import get_engine, get_redis, get_sessionmaker
 from app.logging import configure_logging, request_id_var
 from app.mcp.server import mcp_http
 from app.monitoring import CodePulseCollector
+from app.usage import UsageContext
 from app.webhook.router import router as webhook_router
 
 
@@ -187,8 +189,11 @@ for api_router in (
     task_dod_gaps.router,  # docs/specs/31 §21.1 /tasks/spaces/{bp}/dod-gaps, before tasks
     task_planning.router,  # §21.3 /tasks/timeline, sprint plan / capacity / preflight
     tasks.router,  # docs/specs/31; its static paths come before /tasks/{key} inside
+    usage.router,  # docs/specs/31 §21.2: anonymous usage beacon and the admins' summary
 ):
     app.include_router(api_router, prefix="/api/v1")
+# §21.2: the request's path for the usage events the server records (status changes, creation).
+app.add_middleware(UsageContext)
 # docs/specs/11: CORS for the dashboard origin only; cookies need credentials.
 app.add_middleware(
     CORSMiddleware,

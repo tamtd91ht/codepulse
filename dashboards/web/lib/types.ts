@@ -3138,3 +3138,33 @@ export interface SprintPreflight {
     tasks: { key: string; title: string; blocker?: { key: string; title: string }; blocker_sprint?: number | null }[];
   }[];
 }
+/* docs/specs/31 §21.2 "Không bỏ sót": GET/PUT/DELETE /me/task-notify, GET/PUT /task-notify/defaults. */
+export interface TaskNotifyPrefsData {
+  mode: "immediate" | "digest";
+  quiet_hours: [number, number] | null;
+  /** Python weekday(): 5 Saturday, 6 Sunday (quiet all day). */
+  quiet_days: number[];
+  kinds: string[];
+  kind_labels: Record<string, string>;
+  telegram_kinds: string[];
+  send_hour: number;
+  channels: Record<string, TaskNotifyChannel>;
+  urgent_kind: string;
+  summary: TaskNotifySummary;
+  telegram_linked: boolean;
+  /** Personal only: false while following the organisation's defaults. */
+  customised?: boolean;
+  org_defaults?: boolean;
+  /** Defaults only: an admin saved them. */
+  set?: boolean;
+}
+
+/** GET /usage/summary (admins): anonymous usage per ISO week (Monday, UTC). */
+export interface UsageSummary {
+  weeks: string[];
+  events: { event: string; surface: string; counts: number[]; total: number }[];
+  roles: { role: string; counts: number[]; total: number }[];
+  automation: { total: number; automated: number; share: number | null; target: number };
+  keyboard: { total: number; keyboard: number; share: number | null };
+  keep_days: number;
+}

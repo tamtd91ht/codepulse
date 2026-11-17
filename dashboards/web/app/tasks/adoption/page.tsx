@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Card, EmptyState, Loading, PageHeader } from "@/components/ui";
 import { can, useApi } from "@/lib/api";
 import { dateTime } from "@/lib/format";
-import type { Me, TaskAdoption } from "@/lib/types";
+import type { Me, TaskAdoption, UsageSummary } from "@/lib/types";
 
 /*
  * Tình trạng bật Task (docs/specs/31 §20.4): one row per dự án — Task on or not, the template it
@@ -112,6 +112,177 @@ export default function TaskAdoptionPage() {
           </div>
         )}
       </Card>
+      {me?.is_admin && <UsageSection />}
     </>
+  );
+}
+
+/* -- Số liệu sử dụng (docs/specs/31 §21.2): admins only, anonymous (role, event, surface). -------- */
+
+const EVENT_LABEL: Record<string, string> = {
+  page_open: "Mở trang",
+  status_change: "Đổi trạng thái",
+  task_create: "Tạo task",
+  palette: "Ctrl+K",
+  shortcut: "Phím tắt",
+  rule_undone: "Quy tắc bị hoàn tác",
+};
+const SURFACE_LABEL: Record<string, string> = {
+  my_work: "Việc của tôi",
+  board: "Board",
+  backlog: "Backlog",
+  timeline: "Timeline",
+  list: "Danh sách",
+  reports: "Báo cáo",
+  task_detail: "Chi tiết task",
+  health: "Sức khoẻ",
+  versions: "Phiên bản",
+  overview: "Tổng quan",
+  drag: "Kéo thả",
+  palette: "Ctrl+K",
+  detail: "Chi tiết task",
+  bulk: "Sửa hàng loạt",
+  git: "Git",
+  rule: "Quy tắc tự động",
+  mcp: "MCP",
+  ai: "AI",
+  telegram: "Telegram",
+  web: "Web (khác)",
+  button: "Nút Tạo / tạo nhanh",
+  ai_breakdown: "AI tách việc",
+  failed_test: "Từ test Failed",
+  jira_import: "Nhập Jira",
+  open: "Mở bảng lệnh",
+  search_task: "Tìm task",
+  navigate: "Điều hướng",
+  command: "Chạy lệnh",
+  key: "Phím một chữ",
+};
+const ROLE_LABEL: Record<string, string> = {
+  member: "Thành viên",
+  lead: "Lead",
+  manager: "Manager",
+  project_manager: "Quản lý dự án",
+  manage_all: "Quản lý mọi dự án",
+  admin: "Admin",
+  system: "Hệ thống (git, quy tắc)",
+};
+
+const pct = (share: number | null) => (share === null ? "—" : `${Math.round(share * 100)}%`);
+const dayMonth = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+
+function UsageSection() {
+  const got = useApi<UsageSummary>("/usage/summary?weeks=8");
+  const data = got.data;
+  const recent = data ? data.weeks.slice(-4) : [];
+  const offset = data ? data.weeks.length - recent.length : 0;
+  return (
+    <Card
+      flush
+      title="Số liệu sử dụng"
+      subtitle={`Ẩn danh: chỉ vai trò, sự kiện, nơi dùng và thời điểm; không lưu người hay nội dung task. Giữ ${data?.keep_days ?? 180} ngày.`}
+    >
+      {got.error ? (
+        <div className="tp-error">
+          <Loading error={got.error} />
+          <button type="button" className="ghost sm" onClick={() => void got.mutate()}>
+            Thử lại
+          </button>
+        </div>
+      ) : !data ? (
+        <Loading rows={5} />
+      ) : !data.events.length ? (
+        <EmptyState icon="inbox" title="Chưa có số liệu">
+          Số liệu xuất hiện khi mọi người mở Task, đổi trạng thái, tạo task hoặc dùng Ctrl+K.
+        </EmptyState>
+      ) : (
+        <div className="us-body">
+          <div className="us-kpis">
+            <div className={`us-kpi${data.automation.share !== null && data.automation.share >= data.automation.target ? " us-kpi-good" : ""}`}>
+              <span className="us-kpi-label">Đổi trạng thái bởi git + quy tắc</span>
+              <strong className="us-kpi-value">{pct(data.automation.share)}</strong>
+              <span className="small muted">
+                {data.automation.automated} / {data.automation.total} lần · mục tiêu ≥ {pct(data.automation.target)}
+              </span>
+            </div>
+            <div className="us-kpi">
+              <span className="us-kpi-label">Dùng Ctrl+K / phím tắt</span>
+              <strong className="us-kpi-value">{pct(data.keyboard.share)}</strong>
+              <span className="small muted">
+                {data.keyboard.keyboard} / {data.keyboard.total} thao tác (so với số lần mở trang)
+              </span>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table className="tp-table us-table">
+              <caption className="visually-hidden">Số lần theo sự kiện và nơi dùng, 4 tuần gần nhất</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Sự kiện</th>
+                  <th scope="col">Nơi</th>
+                  {recent.map((w) => (
+                    <th key={w} scope="col" className="num" title={`Tuần từ ${w}`}>
+                      {dayMonth(w)}
+                    </th>
+                  ))}
+                  <th scope="col" className="num">
+                    8 tuần
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.events.map((e) => (
+                  <tr key={`${e.event}:${e.surface}`}>
+                    <td>{EVENT_LABEL[e.event] ?? e.event}</td>
+                    <td>{SURFACE_LABEL[e.surface] ?? e.surface}</td>
+                    {e.counts.slice(offset).map((n, i) => (
+                      <td key={i} className="num">
+                        {n || <span className="tp-muted">0</span>}
+                      </td>
+                    ))}
+                    <td className="num">
+                      <strong>{e.total}</strong>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="table-wrap">
+            <table className="tp-table us-table">
+              <caption className="visually-hidden">Số sự kiện theo vai trò, 4 tuần gần nhất</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Vai trò</th>
+                  {recent.map((w) => (
+                    <th key={w} scope="col" className="num" title={`Tuần từ ${w}`}>
+                      {dayMonth(w)}
+                    </th>
+                  ))}
+                  <th scope="col" className="num">
+                    8 tuần
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.roles.map((r) => (
+                  <tr key={r.role}>
+                    <td>{ROLE_LABEL[r.role] ?? r.role}</td>
+                    {r.counts.slice(offset).map((n, i) => (
+                      <td key={i} className="num">
+                        {n || <span className="tp-muted">0</span>}
+                      </td>
+                    ))}
+                    <td className="num">
+                      <strong>{r.total}</strong>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }

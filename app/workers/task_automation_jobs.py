@@ -42,6 +42,16 @@ def task_automation_tick_job() -> dict[str, int]:
             session.commit()
     except Exception:
         log.exception("task summaries failed")
+    try:  # §21.2: MRs asking me to review, testcases Failed on my tasks; usage telemetry upkeep
+        from app import usage
+
+        with get_sessionmaker()() as session:
+            result.update(automation.send_personal(session, now))
+            result["rules_undone"] = usage.detect_undone(session, now)
+            result["usage_deleted"] = usage.cleanup(session, now)
+            session.commit()
+    except Exception:
+        log.exception("task personal notices / usage upkeep failed")
     return result
 
 
@@ -68,7 +78,9 @@ def telegram_note_job(note_ids: list[int]) -> int:
                 continue
             key = automation._task_key(note.link)
             bp_id = session.scalar(select(Task.business_project_id).where(Task.key == key))
-            text, markup = automation.telegram_note(note, settings.dashboard_url)
+            text, markup = automation.telegram_note(
+                note, settings.dashboard_url, automation.can_start(session, note)
+            )
             for chat_id in chats:
                 for bot_id in automation.note_bots(session, bp_id):
                     bot = session.get(TelegramBot, bot_id)
