@@ -9,6 +9,7 @@ import { pageLabel, recentPages, recentTasks, rememberPage } from "@/components/
 import { ShortcutHelpModal } from "@/components/tasks/ShortcutHelp";
 import { TaskCreate } from "@/components/tasks/TaskCreate";
 import { selectedCard } from "@/components/tasks/cardSelection";
+import { listHref } from "@/components/tasks/filterState";
 import { HELP_EVENT, PALETTE_EVENT, type PaletteMode } from "@/components/tasks/shortcutEvents";
 import { PersonAvatar, RESOLUTIONS, RESOLUTION_LABEL, StatusPill, errorText, personName, priorityList, refreshTasks, spaceOf } from "@/components/tasks/taskParts";
 import { branchName } from "@/components/tasks/taskSignal";
@@ -338,7 +339,7 @@ function Palette({ me, mode, onClose, onSubtask }: { me: Me; mode: PaletteMode; 
     if (stage === "person" && person) {
       const out: Option[] = [];
       if (pplSpace)
-        out.push({ id: "pp-list", icon: "filter", label: `Mở Danh sách lọc theo ${personName(person)}`, href: `/tasks?space=${pplSpace}&tab=list&assignee=${person.id}` });
+        out.push({ id: "pp-list", icon: "filter", label: `Mở Danh sách lọc theo ${personName(person)}`, href: listHref(pplSpace, { assignee: String(person.id) }) });
       for (const t of theirs.data?.items ?? []) out.push({ id: `pt-${t.key}`, icon: "board", label: t.title, task: t, href: `/tasks/${encodeURIComponent(t.key)}`, group: out.length === 1 ? "Việc đang mở" : undefined });
       return out.filter((o) => !trimmed || o.task === undefined || matchScore(trimmed, `${o.task.key} ${o.task.title}`) >= 0);
     }
@@ -353,8 +354,9 @@ function Palette({ me, mode, onClose, onSubtask }: { me: Me; mode: PaletteMode; 
           const p = new URLSearchParams();
           if (f.space) p.set("space", String(f.space));
           p.set("tab", "list");
+          // `?filter=ID` applies the saved tree (★ Bộ lọc, docs/specs/31 §22.2); its old GET /tasks
+          // query is already part of that tree, so it is not copied onto the link (§22.9).
           p.set("filter", String(f.id));
-          for (const [k, v] of Object.entries(f.query ?? {})) if (typeof v === "string" && v && k !== "space") p.set(k, v);
           return { id: `fl-${f.id}`, icon: "filter" as IconName, label: f.name, hint: f.shared ? "Chia sẻ" : undefined, href: `/tasks?${p}` };
         }),
       );

@@ -110,6 +110,9 @@ const GROUPS: { value: GroupBy; label: string }[] = [
 type ListView = { density: "dense" | "comfy"; group: GroupBy; hidden: string[] };
 const VIEW_DEFAULTS: ListView = { density: "dense", group: "none", hidden: ["type", "labels"] };
 
+/** Sorts a link may ask for (POST /tasks/search `sort`). */
+const LINK_SORTS = ["updated", "created", "due", "key", "priority", "title"];
+
 /** Rows asked per step while scrolling; the server gives at most 500 per call. */
 const STEP = 100;
 const CALL_MAX = 500;
@@ -148,6 +151,16 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
   const [value, setValue, reset] = useFilterState("list", bp, me?.id);
   const [view, setView] = useViewOptions<ListView>("list", me?.id, VIEW_DEFAULTS);
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" }>({ key: "updated", dir: "desc" });
+  // A link's first sort (`sort` / `order`, e.g. a Báo cáo tile, §22.9), read once after mount.
+  useEffect(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const key = p.get("sort");
+      if (key && LINK_SORTS.includes(key)) setSort({ key, dir: p.get("order") === "asc" ? "asc" : "desc" });
+    } catch {
+      /* no URL: the default sort */
+    }
+  }, []);
   const [limit, setLimit] = useState(STEP);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);

@@ -1604,3 +1604,75 @@ Theo tài liệu UI/UX “Chuẩn hoá UI/UX, ưu tiên diện tích cho view ch
   “Không có task khớp” + “Xoá lọc”; số kết quả đổi màu kèm “đã lọc”.
 - **Chưa làm**: kéo để sắp xếp cột, “Hiện sub-task lồng”, nhóm theo Epic (dòng chưa có epic), bottom sheet
   dưới 768 px, chip ghim chỉ còn icon dưới 1280 px.
+### 22.9 Màn hẹp, liên kết lọc, thanh công cụ Backlog / Việc của tôi
+
+Bước 9 của chuẩn hoá UI/UX (§5 giới hạn khung theo chiều cao, §6 màn hẹp, §7 bàn phím, chuyển động, tiếp
+cận) cho các phần dùng chung, cùng liên kết vào Danh sách và thanh công cụ của Backlog, Việc của tôi. CSS ở
+cuối `app/globals.css`, khối `/* UI/UX narrow + toolbars */` (tiền tố `nw-`, có sửa thêm luật `fb-`).
+
+- **Khung theo chiều cao cửa sổ** (chỉ CSS, đổi biến của §22.1): ≥ 900 px khung 112 px như cũ; 720–899 px
+  `--tk-gap` và `--tk-pad-b` còn 4 px, view chính bắt đầu ở 96 px dưới thanh trên cùng; < 720 px không còn
+  khoảng cách (48 + 40 = 88 px) và thanh lọc thu gọn như màn hẹp. *Quyết định:* "tab gộp vào breadcrumb khi
+  cần" là việc của bề rộng, không phải chiều cao: dưới 1280 px tab dư đã vào "Thêm ▾" (§22.1), nên không
+  thêm luật riêng cho 720–899 px.
+- **FilterBar dưới 1280 px:** chip ghim chỉ còn icon (Loại: file, Ưu tiên: cờ, Trạng thái, Nhãn…) kèm số
+  giá trị đã chọn; tên và giá trị hiện ở tooltip (`data-narrow-tip`, hover hoặc focus). Nhãn cho trình đọc
+  màn hình giữ nguyên (`Lọc theo Loại`, `Sửa lọc Loại: Bug`). Hiển thị và `+ Tạo sprint` cũng chỉ còn icon (tên ở
+  tooltip và nhãn ẩn), ô tìm co tới 120 px, nên hàng không bao giờ rộng hơn cửa sổ.
+- **FilterBar gọn** (< 768 px rộng hoặc < 720 px cao, cùng một media query `(max-width: 767px),
+  (max-height: 719px)`): hàng còn `🔍` và `Lọc (n)` bên trái, bên phải số kết quả, ★, Hiển thị (chỉ icon,
+  tên ở tooltip và nhãn ẩn) và nút riêng của màn. Bấm `🔍` (hoặc `/`, `F`) thì ô tìm mở phủ cả hàng khi đang
+  focus; ô có chữ mà không focus thì icon đổi màu nhấn. `Lọc (n)` (và `Shift+F` khi đang gọn) mở **bottom
+  sheet** (`role="dialog"`, `aria-modal="true"`, nền mờ, giữ focus, Esc / bấm nền / "Xem N task" đóng và trả
+  focus về nút): danh sách điều kiện đang bật (mỗi dòng có ✕), "Của tôi", rồi mọi trường như "+ Lọc" (có
+  Người làm vì không có chồng avatar), chọn trường mở danh sách giá trị ngay trong sheet; dòng cao 44 px, ô
+  tìm chữ 16 px để điện thoại không phóng to. Trượt lên 180 ms, tắt khi `prefers-reduced-motion`.
+- **Khung trang dưới 768 px:** "+ Tạo" thành nút tròn 56 px nổi ở góc dưới phải, ngay trên nút Stetho
+  (`aria-label="Tạo task"`, vẫn phím `C`); vùng cuộn của Danh sách / Backlog và trang Việc của tôi chừa 128 px ở
+  cuối để hai nút nổi không che dòng cuối. Breadcrumb chỉ còn tên dự án (tối đa 112 px, bỏ `Task /`), "Thêm ▾"
+  chỉ còn `⋯` (tên vẫn đọc được) để hàng 48 px không chồng chữ. Ngăn chi tiết task đã toàn màn hình dưới 768 px
+  (§22.6) và nằm trên nút này. Nút `Của tôi` có `aria-label="Việc của tôi"` vì chữ ẩn trên điện thoại.
+- **Danh sách trên điện thoại** (< 768 px): mỗi dòng là một thẻ hai tầng: chọn, mã, nút mở trang riêng; tiêu
+  đề một dòng cắt "…"; dưới là các cột đang hiện (trạng thái, ưu tiên, người làm, SP, hạn…) vẫn sửa tại ô
+  được. Tiêu đề bảng ẩn; cuộn ảo vẫn đo chiều cao dòng từ dòng thật.
+- **Liên kết vào Danh sách:** `filterState.ts` có `listHref(bp, value | {tham số GET /tasks}, sort?)` tạo
+  `/tasks?space=&tab=list&f=…` (chip) `&fq=…` `&sort=&order=`, và `fromQuery()` đổi tên tham số của `GET
+  /tasks` (`q`, `due`, `updated_from`, `status`, `category`, `type`, `priority`, `resolution`, `assignee`,
+  `reporter`, `label`, `sprint`, `version`, `parent`…; danh sách cách nhau bởi dấu phẩy) thành chip giống
+  `search.from_query` phía server (`updated_from=D` → `Cập nhật sau D−1`). Ô chỉ số của Báo cáo và ô Ưu tiên
+  dùng `listHref` (ô "Task tạo" lọc `Ngày tạo sau …`, sắp theo ngày tạo); lệnh Ctrl+K "Mở Danh sách lọc theo
+  <người>" cũng vậy; lệnh mở bộ lọc đã lưu chỉ còn `?filter=ID` (cây đã gồm query cũ). Link cũ còn mang tên
+  `GET /tasks` vẫn mở đúng: FilterBar đọc một lần rồi ghi lại URL thành `f` / `fq`. Danh sách đọc `sort` /
+  `order` của link một lần khi mở (chỉ các cách sắp mà `POST /tasks/search` nhận). FilterBar theo dõi URL
+  nên một link mở khi đang ở đúng màn (không remount) vẫn áp bộ lọc mới.
+- **Backlog** (§4.3): `bl-toolbar` thay bằng FilterBar dùng chung (`screen="backlog"`): tìm, Của tôi, avatar,
+  một chip ghim Loại, "+ Lọc" (trạng thái, ưu tiên, người tạo, nhãn, hạn, SP, bị chặn, task cha), không có
+  số theo giá trị (số của server tính cả task đã xong nên dễ hiểu nhầm). Lọc chạy trong trình duyệt trên các
+  dòng đã tải (`components/tasks/filterMatch.ts`, cùng luật "là" cùng trường OR, còn lại AND; trường không
+  biết thì bỏ qua), không gọi thêm API. Bên phải: số task đang hiện, `N sprint` (ẩn dưới 1280 px), Hiển thị,
+  chip `Epic: … ✕` khi đang chọn epic, `+ Tạo sprint` (chỉ icon ở thanh gọn). Hiển thị: Hiện sprint rỗng (tắt
+  thì sprint không còn dòng khớp bị ẩn, trừ khi đang kéo task), Hiện cột Epic, Mật độ Gọn / Thoáng (dòng 34 /
+  44 px), nhớ theo người (`useViewOptions`). Đang lọc thì SP của sprint tính trên dòng đang hiện; không còn
+  dòng nào thì hiện "Không có task khớp bộ lọc · Xoá lọc".
+- **Việc của tôi** (§4.4, thay TODO của §22.7): FilterBar dùng chung gắn với một dự án (trường, người, số
+  đếm đều theo dự án) nên trang nhiều dự án này dùng **bản rút gọn cùng kiểu**: cùng hàng `fb-bar`, ô tìm
+  `fb-search`, chip `Dự án ▾` (chọn nhiều, popover có ô tìm như danh sách giá trị của FilterBar; chỉ hiện
+  khi task thuộc từ 2 dự án), "Xoá lọc", số task (`· đã lọc`), Hiển thị (Mật độ, Hiện "Xong tuần này", Hiện
+  "Sprint của tôi"; nhớ theo người). Lọc tại chỗ như trước.
+- **Danh sách 768–1439 px:** các cột cố định hẹp lại (Mã 100, Trạng thái 120, Ưu tiên 108, Người làm 144, SP 52,
+  Hạn / Cập nhật 100) để cột Tiêu đề còn chỗ (ở 1280 × 720 trước đây chỉ còn ~40 px).
+- **Trang Task vừa cửa sổ** (đo bằng Chrome headless, 260 task mẫu): nguyên nhân trang Backlog vẫn cuộn là
+  các nhãn ẩn cho trình đọc màn hình (`.visually-hidden`, `position: absolute`) trong dòng task: vùng cuộn không
+  có `position` nên chúng bám vào trang và kéo trang dài bằng cả danh sách (`.fb-scroll` của Danh sách đã có
+  `position: relative` từ §22.2). Nay `.bl-scroll`, cột Epic, `.mw-col` đều `position: relative`; lưới Backlog
+  có hàng `minmax(0, 1fr)`; Backlog cao `--tk-view-h-full` (trước trừ thanh lọc hai lần, hụt 48 px); cột Việc của
+  tôi cao `--tk-view-h` (trước hụt 40 px); khoảng cách thanh lọc → view là `--tk-gap` (đúng con số khung đã
+  tính). Chân trang "Điểm là tín hiệu coaching…" đã ẩn từ §22.1. Kết quả: không cuộn trang ở 1510 × 855
+  (Danh sách, Backlog, Việc của tôi), 1280 × 720, 1200 × 800, 1100 × 800 và 1510 × 700; view chính bắt đầu ở
+  96 px dưới thanh trên cùng khi cửa sổ thấp hơn 900 px, 88 px khi thấp hơn 720 px. Dưới 900 px rộng Backlog
+  vẫn cuộn cả trang như §22.5.
+- **Chưa làm:** Board (đang làm lại song song, `TaskBoard.tsx` không sửa ở đây): ở 1510 × 855 trang Board vẫn
+  cuộn rất dài, rất có thể cùng nguyên nhân nhãn ẩn trong cột không có `position`; Board xem từng cột một và
+  vuốt ngang dưới 768 px (§6) thuộc phần Board. Báo cáo vẫn cuộn trang (lưới biểu đồ, ngoài phạm vi). ★ Bộ lọc
+  (bộ lọc đã lưu) chưa có trên Backlog vì bộ lọc lưu là cây của `POST /tasks/search` còn Backlog lọc tại chỗ.
+  Trong bottom sheet chưa ghim / bỏ ghim trường (nút ghim chỉ có ở "+ Lọc" màn rộng).

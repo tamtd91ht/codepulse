@@ -11,6 +11,7 @@ import { qs, useApi } from "@/lib/api";
 import { dayLabel, localDay, shiftDays } from "@/lib/format";
 import type { TaskBurndown, TaskReports as Reports, TaskSpace } from "@/lib/types";
 
+import { dayBefore, listHref } from "./filterState";
 import { PersonAvatar, PriorityIcon, RESOLUTION_LABEL, RESOLUTIONS, fmtMinutes, personName, useSprints } from "./taskParts";
 
 /*
@@ -95,7 +96,9 @@ export function TaskReports({ space }: { space: TaskSpace }) {
   }, [started, today]);
 
   /** The Danh sách tab filtered by GET /tasks parameters (read by the shared FilterBar). */
-  const listHref = (params: Record<string, string>) => `/tasks?${new URLSearchParams({ space: String(bp), tab: "list", ...params })}`;
+  // §22.9: links carry the List's own filter (`f`), built from GET /tasks names; sort / order set its first sort.
+  const toList = (params: Record<string, string>, sort?: { sort: string; order?: "asc" | "desc" }) => listHref(bp, params, sort);
+  const createdSince = { text: "", chips: [{ id: "created", field: "created", op: "after" as const, value: dayBefore(range.from) ?? range.from }] };
   const doneSince = { category: "done", updated_from: range.from };
   const backlogHref = `/tasks?space=${bp}&tab=backlog`;
 
@@ -120,7 +123,7 @@ export function TaskReports({ space }: { space: TaskSpace }) {
               digits={1}
               unit="giờ"
               title="Từ lúc bắt đầu làm đến khi xong, trung vị · bấm để xem task đã xong"
-              href={listHref({ ...doneSince, resolution: "done" })}
+              href={toList({ ...doneSince, resolution: "done" })}
             />
             <StripStat
               label="Cycle time p85"
@@ -128,25 +131,25 @@ export function TaskReports({ space }: { space: TaskSpace }) {
               digits={1}
               unit="giờ"
               title="85% task xong trong khoảng này · bấm để xem task đã xong"
-              href={listHref({ ...doneSince, resolution: "done", sort: "updated", order: "desc" })}
+              href={toList({ ...doneSince, resolution: "done" }, { sort: "updated", order: "desc" })}
             />
             <StripStat
               label="Task xong (có bắt đầu)"
               value={r.cycle_time.count}
               title="Task Đã xong từng qua nhóm Đang làm: tính cycle time"
-              href={listHref({ ...doneSince, resolution: "done" })}
+              href={toList({ ...doneSince, resolution: "done" })}
             />
             <StripStat
               label="Xong không qua Đang làm"
               value={r.cycle_time.skipped ?? 0}
               title="Nhảy thẳng vào Xong: không tính vào cycle time (docs/specs/31 §19.1)"
-              href={listHref(doneSince)}
+              href={toList(doneSince)}
             />
             <StripStat
               label="Task tạo"
               value={r.flow.reduce((n, d) => n + d.created, 0)}
               title="Task tạo trong khoảng · bấm để xem task mới nhất"
-              href={listHref({ updated_from: range.from, sort: "created", order: "desc" })}
+              href={listHref(bp, createdSince, { sort: "created", order: "desc" })}
             />
             <StripStat
               label="Giờ làm"
@@ -154,7 +157,7 @@ export function TaskReports({ space }: { space: TaskSpace }) {
               digits={1}
               unit="giờ"
               title="Giờ ghi trong khoảng · bấm để xem task có thay đổi"
-              href={listHref({ updated_from: range.from, sort: "updated", order: "desc" })}
+              href={toList({ updated_from: range.from }, { sort: "updated", order: "desc" })}
             />
           </StatStrip>
         </div>
@@ -365,7 +368,7 @@ export function TaskReports({ space }: { space: TaskSpace }) {
                     return rows.map((x) => (
                       <tr key={x.priority.key}>
                         <td>
-                          <Link href={listHref({ priority: x.priority.key })} className="rp-cell-link">
+                          <Link href={toList({ priority: x.priority.key })} className="rp-cell-link">
                             <PriorityIcon name={x.priority.name} level={x.priority.level} color={x.priority.color} withLabel />
                           </Link>
                         </td>

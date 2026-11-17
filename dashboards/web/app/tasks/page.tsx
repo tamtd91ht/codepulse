@@ -172,7 +172,7 @@ function Tasks() {
           {tab === "board" ? (
             <TaskBoard key={space.business_project_id} space={space} me={me} onOpen={openTask} />
           ) : tab === "backlog" ? (
-            <TaskBacklog key={space.business_project_id} space={space} onOpen={openTask} />
+            <TaskBacklog key={space.business_project_id} space={space} me={me} onOpen={openTask} />
           ) : tab === "timeline" ? (
             <TaskTimeline key={space.business_project_id} space={space} onOpen={openTask} />
           ) : tab === "list" ? (
