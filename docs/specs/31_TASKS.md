@@ -1024,3 +1024,75 @@ sprint đóng): đợt 3 làm chúng hiện rõ thay vì làm lại. Quyết đ�
 | 3.4b Phân quyền còn lại | R1b, "Quyền của tôi" tự xem được, giải thích vì sao | 21.5 |
 | 3.5 Chuyển đổi | Cảnh báo mã Jira cũ, Ngừng dùng Jira, checklist, dữ liệu demo | 21.6 |
 | 4 Tin cậy | Đồng bộ thời gian thực Board / chi tiết, Hoàn tác 10 giây, di chuyển card bằng bàn phím | 21.7 |
+
+### 21.2 Không bỏ sót (migration `a2b3c4d5e6f7`)
+
+- **Trang Cài đặt thông báo** `/settings/notifications`, mở từ menu tài khoản (avatar → "Cài đặt thông báo"), không
+  còn chỉ nằm cuối trang lịch sử (thẻ cũ ở trang Thông báo vẫn còn, cùng component). Bảng sự kiện × kênh
+  (Hộp thư / Telegram / Tắt, radio), mặc định Hộp thư cho tất cả:
+
+  | Sự kiện | Loại | Telegram |
+  |---|---|---|
+  | Được giao task | `task.assigned` | có |
+  | Được nhắc tên | `task.mentioned` | có |
+  | Task mình theo dõi đổi trạng thái | `task.status` | – |
+  | Bình luận trên task của mình | `task.commented` | – |
+  | Hết bị chặn | `task.unblocked` (**mới**; quy tắc `unblock_notify` trước gửi `task.alert`) | có |
+  | Nhắc quá hạn / sắp tới hạn | `task.remind` | có |
+  | MR chờ mình review | `task.review` (**mới**) | có |
+  | Testcase Failed trên task của mình | `task.test_failed` (**mới**) | có |
+  | Cảnh báo khẩn (Bug Cao nhất, code critical) | `task.alert` | có |
+
+  **Quyết định:** "–" = chọn Telegram cho loại đó trả 422; cài đặt cũ đã lưu Telegram cho `task.status` /
+  `task.commented` được đọc như Hộp thư. `GET /me/task-notify` thêm `quiet_days`, `telegram_kinds`,
+  `customised`, `org_defaults`; `DELETE /me/task-notify` = quay về mặc định của tổ chức.
+- **Phát hiện ở nhịp `task-automation` (15 phút, `automation.send_personal`)**, chỉ sự kiện trong 2 ngày gần
+  nhất (bật tính năng không dội lại việc cũ):
+  - `task.review`: MR `opened` có `reviewer_account_ids` (collector), cập nhật trong 2 ngày; người review là
+    tài khoản `gitlab_user` đã gắn người, không phải tác giả, có `tasks.view` và xem được dự án của repo. Một
+    lần mỗi MR mỗi người (`ref review:<mr id>`). Liên kết: task gắn MR, không có thì `/tasks/me`.
+  - `task.test_failed`: testcase `covers` một task mở có người làm, kết quả mới nhất Failed trong 2 ngày.
+    Một lần mỗi kết quả (`ref testfail:<task>:<test>:<giờ test>`); bỏ qua khi quy tắc `test_failed_back` đã
+    báo task đó hôm nay.
+- **Giờ yên lặng + cuối tuần**: `quiet_days` ⊂ {5 thứ Bảy, 6 Chủ nhật} (yên lặng cả ngày, giờ REPORT_TZ);
+  thông báo bị giữ như giờ yên lặng, bản gộp và tóm tắt cuối ngày không gửi ngày đó. `task.alert` và
+  `task.incident` (dành cho sự cố production) vẫn gửi ngay (vẫn tôn trọng "Tắt").
+- **Tóm tắt cuối ngày** thêm "việc ngày mai": task mở của tôi có hạn = ngày mai; tiêu đề "… N việc ngày mai".
+- **Telegram "Bắt đầu"** (`nt|<id>|b`): chỉ hiện khi task của thông báo đang ở nhóm Cần làm và dự án có trạng
+  thái "start" (luật git); bấm → chuyển sang "start" nếu người đã liên kết Telegram có quyền chuyển trạng
+  thái (`tasks.transition`, theo luồng chuyển; bị chặn thì trả lời lý do), đánh dấu thông báo đã xem, trả lời
+  "OCX-2 → Đang làm." Không có loại `task.review`, tóm tắt, bản gộp.
+- **Mặc định của tổ chức** (`app_settings` khoá `task_notify_defaults`, cùng dạng cài đặt cá nhân):
+  `GET /task-notify/defaults` (`tasks.view`), `PUT` (Admin, audit `task.notify_defaults`). Người chưa có
+  `task_notify:<id>` dùng mặc định này (kênh, giờ yên lặng, cuối tuần, chế độ, tóm tắt); lưu lần đầu = sao
+  chép mặc định rồi sửa. Mặc định chọn Telegram được (người chưa liên kết chỉ có dòng hộp thư). Tóm tắt bật ở
+  mặc định → mọi người dùng đang hoạt động chưa tự chỉnh nhận (ai không có `tasks.view` thì bỏ qua). Trang
+  Cài đặt thông báo có thẻ "Mặc định của tổ chức" cho Admin.
+- **Đo lường ẩn danh** (bảng `usage_events (id, role, event, surface, at)`, `app/usage`): không lưu người, mã
+  hay nội dung task. `role` = vai trò tự động cao nhất (member < lead < manager < project_manager < manage_all
+  < admin), `system` cho git và quy tắc.
+
+  | Sự kiện | Nơi (`surface`) | Ghi ở đâu |
+  |---|---|---|
+  | `page_open` | my_work, board, backlog, timeline, list, reports, task_detail, health, versions, overview | Trình duyệt (`UsageTracker` trong app shell, theo URL) |
+  | `status_change` | drag (`/move`), detail (`/transition`, PATCH), palette, bulk, git, rule, mcp, ai, telegram | Máy chủ, `service.set_status` |
+  | `task_create` | button (`POST /tasks`: nút Tạo và tạo nhanh, chưa tách), ai_breakdown (`/tasks/batch`), failed_test, jira_import, mcp | Máy chủ, `service.create_task` |
+  | `palette` | open, search_task, navigate, command | Trình duyệt |
+  | `shortcut` | key (e . ? / n g) | Trình duyệt |
+  | `rule_undone` | khoá quy tắc | Nhịp `task-automation` |
+
+  - Nơi của sự kiện máy chủ đọc từ đường dẫn request (middleware ASGI `UsageContext`). Lệnh chạy từ Ctrl+K
+    đặt cookie `cp_surface=palette` sống 5 giây → `/transition` khi đó tính là `palette`.
+  - Beacon `POST /api/v1/usage {events:[{event, surface}]}` (đăng nhập, tối đa 50, chỉ `page_open | palette |
+    shortcut`, sai thì bỏ qua, 204), gom 5 giây, `keepalive` khi ẩn trang, lỗi bỏ qua.
+  - `rule_undone`: dòng `task_rule_runs` (move / assign / set_version) đủ 24 giờ; dòng lịch sử không người
+    của quy tắc (±1 phút) bị **một người** đặt lại đúng giá trị cũ trong 24 giờ → một sự kiện (vai trò người
+    đó). Con trỏ `app_settings usage_undo_cursor`; lần chạy đầu chỉ đặt con trỏ.
+  - Giữ 180 ngày (xoá ở nhịp `task-automation`).
+  - `GET /usage/summary?weeks=` (Admin, 1–26, mặc định 8): số theo tuần (thứ Hai, UTC) theo sự kiện × nơi và
+    theo vai trò; tỉ lệ đổi trạng thái bởi git + quy tắc (mục tiêu ≥ 60%); tỉ lệ bàn phím = (lệnh Ctrl+K trừ
+    "open" + phím tắt) / (đó + số lần mở trang). Bảng "Số liệu sử dụng" ở cuối trang Tình trạng bật Task, chỉ
+    Admin.
+- Chưa làm: nhãn / biểu tượng chuông cho ba loại mới (`KIND_LABEL` trong `Inbox.tsx`, ngoài phạm vi file; hiện
+  không nhãn); tách "nút Tạo" và "tạo nhanh"; nhận diện kéo thả vs. Ctrl+K chỉ theo đường dẫn / cookie (đổi
+  trạng thái qua Ctrl+K dùng `/transition` nên phụ thuộc cookie); `task.incident` chưa có nguồn phát (dành sẵn).

@@ -156,7 +156,7 @@ def test_start_assigns_and_unblock_notifies(
     started = move(client, admin, blocker["key"], status_id(space, "Đang làm"))
     assert started["assignee"]["id"] == world.admin.id
     move(client, admin, blocker["key"], status_id(space, "Xong"))
-    alerts = notes(db_session, world.binh.id, "task.alert")
+    alerts = notes(db_session, world.binh.id, "task.unblocked")
     assert [n.title for n in alerts] == [f"{blocked['key']} không còn bị chặn: CRM-1 đã xong"]
 
 

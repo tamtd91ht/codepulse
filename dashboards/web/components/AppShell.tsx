@@ -16,6 +16,7 @@ import { UserMenu } from "@/components/UserMenu";
 import { openPalette, toggleShortcutHelp } from "@/components/tasks/shortcutEvents";
 import { can, managesAnyProject, setupProjects, useApi } from "@/lib/api";
 import type { Me } from "@/lib/types";
+import { UsageTracker } from "@/lib/usage";
 
 const NARROW = "(max-width: 1023px)";
 
@@ -280,6 +281,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         </main>
       </div>
       {me && <CommandPalette me={me} />}
+      {/* docs/specs/31 §21.2: anonymous usage (role, event, surface only). */}
+      {me && <UsageTracker />}
       {me && <ReviewActivity />}
       {assistant && <Stetho />}
     </div>

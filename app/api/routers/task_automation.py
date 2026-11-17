@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.api.audit import audit
 from app.api.deps import get_session
-from app.api.security import CurrentPrincipal, Principal
+from app.api.security import AdminPrincipal, CurrentPrincipal, Principal
 from app.models import TaskSpace, TaskStatus
 from app.tasks import automation
 from app.tasks import service as ts
@@ -161,14 +161,28 @@ class SummaryIn(BaseModel):
 class NotifyPrefsIn(BaseModel):
     mode: Literal["immediate", "digest"] | None = None
     quiet_hours: list[int] | None = Field(default=None, min_length=2, max_length=2)
+    # §21.2: quiet all day on Saturday (5) and / or Sunday (6).
+    quiet_days: list[int] | None = Field(default=None, max_length=2)
     kinds: list[str] | None = None
     # §20.5: a channel per kind, and the daily summary.
     channels: dict[str, Literal["inbox", "telegram", "off"]] | None = None
     summary: SummaryIn | None = None
 
 
+def _sent(body: NotifyPrefsIn) -> dict[str, Any]:
+    sent = body.model_dump(include=body.model_fields_set)
+    if body.summary is not None:
+        sent["summary"] = body.summary.model_dump(exclude_none=True)
+    return sent
+
+
 def _prefs(session: Session, user_id: int, prefs: dict[str, Any]) -> dict[str, Any]:
-    return automation.prefs_out(prefs, automation.telegram_linked(session, user_id))
+    return {
+        **automation.prefs_out(prefs, automation.telegram_linked(session, user_id)),
+        # §21.2: False while the person follows the organisation's defaults.
+        "customised": automation.customised(session, user_id),
+        "org_defaults": automation.org_defaults(session) is not None,
+    }
 
 
 @router.get("/me/task-notify")
@@ -180,9 +194,42 @@ def get_task_notify(principal: CurrentPrincipal, session: SessionDep) -> dict[st
 def put_task_notify(
     body: NotifyPrefsIn, principal: CurrentPrincipal, session: SessionDep
 ) -> dict[str, Any]:
-    sent = body.model_dump(include=body.model_fields_set)
-    if body.summary is not None:
-        sent["summary"] = body.summary.model_dump(exclude_none=True)
-    prefs = automation.set_prefs(session, principal.user_id, sent)
+    prefs = automation.set_prefs(session, principal.user_id, _sent(body))
     session.commit()
     return _prefs(session, principal.user_id, prefs)
+
+
+@router.delete("/me/task-notify")
+def reset_task_notify(principal: CurrentPrincipal, session: SessionDep) -> dict[str, Any]:
+    """Back to the organisation's defaults (§21.2)."""
+    prefs = automation.reset_prefs(session, principal.user_id)
+    session.commit()
+    return _prefs(session, principal.user_id, prefs)
+
+
+# -- the organisation's defaults (§21.2) -----------------------------------------------------------
+
+
+def _defaults_out(session: Session) -> dict[str, Any]:
+    prefs = automation._merge(automation.org_defaults(session))
+    return {
+        **automation.prefs_out(prefs, True),
+        "set": automation.org_defaults(session) is not None,
+    }
+
+
+@router.get("/task-notify/defaults")
+def get_notify_defaults(principal: Viewer, session: SessionDep) -> dict[str, Any]:
+    return _defaults_out(session)
+
+
+@router.put("/task-notify/defaults")
+def put_notify_defaults(
+    body: NotifyPrefsIn, principal: AdminPrincipal, session: SessionDep
+) -> dict[str, Any]:
+    """Admins: what everyone who has not saved their own preferences gets."""
+    sent = _sent(body)
+    automation.set_org_defaults(session, principal.user_id, sent)
+    audit(session, principal.user_id, "task.notify_defaults", "app_settings", keys=sorted(sent))
+    session.commit()
+    return _defaults_out(session)

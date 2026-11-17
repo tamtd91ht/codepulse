@@ -85,6 +85,10 @@ export function UserMenu({ me, role }: { me: Me; role: string }) {
               <Icon name="bell" size={18} />
               Lịch sử thông báo
             </Link>
+            <Link href="/settings/notifications" className="user-menu-item" onClick={() => setOpen(false)}>
+              <Icon name="settings" size={18} />
+              Cài đặt thông báo
+            </Link>
             <button type="button" className="user-menu-item tone-danger" onClick={() => void logout()}>
               <Icon name="logout" size={18} />
               Đăng xuất

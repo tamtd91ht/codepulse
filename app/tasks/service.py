@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select, tuple_, update
 from sqlalchemy.orm import Session, aliased
 
+from app import usage
 from app.api.security import Principal
 from app.avatars import avatar_url
 from app.models import (
@@ -923,6 +924,7 @@ def create_task(
     from app.tasks import automation  # docs/specs/31 §19.7; imported here: no import cycle
 
     automation.on_create(session, task, actor_id)
+    usage.task_created(session, actor_id, via)  # docs/specs/31 §21.2
     return task
 
 
@@ -1032,6 +1034,7 @@ def set_status(
         task.resolution = None
     task.updated_at = now
     log(session, task, actor_id, "status", old_name, status.name, via)
+    usage.status_changed(session, actor_id, via)  # docs/specs/31 §21.2
     recipients = watchers(session, task) | {task.reporter_id or 0}
     if via in ("git", "smart_commit"):
         recipients.add(task.assignee_id or 0)
