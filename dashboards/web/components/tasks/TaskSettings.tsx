@@ -40,6 +40,7 @@ import {
 } from "./TaskTemplates";
 
 import { TaskAutomation } from "./TaskAutomation";
+import { TaskSwitchover, useJiraRetired } from "./TaskSwitchover";
 
 /* Cài đặt (§13, tasks.manage): key, types, statuses and their transitions, priorities (§18), git rules, custom fields. */
 
@@ -276,6 +277,7 @@ export function TaskSettings({ space }: { space: TaskSpace }) {
       <DodCard key={`d${space.business_project_id}`} space={space} />
       <JiraImportCard key={`j${space.business_project_id}`} space={space} />
       <TaskAutomation key={`a${space.business_project_id}`} space={space} />
+      <TaskSwitchover key={`sw${space.business_project_id}`} space={space} />
     </div>
   );
 }
@@ -1012,6 +1014,7 @@ type JiraDone = { project_key: string; created: number; skipped: number; defects
 export function JiraImportCard({ space }: { space: TaskSpace }) {
   const bp = space.business_project_id;
   const got = useApi<{ sources: JiraSource[]; imported: number }>(`/tasks/spaces/${bp}/import/jira`);
+  const retired = useJiraRetired(space); // §21.6 "Ngừng dùng Jira": history only, no import
   const [project, setProject] = useState("");
   const [rewrite, setRewrite] = useState(true);
   const [preview, setPreview] = useState<JiraPreview | null>(null);
@@ -1098,7 +1101,8 @@ export function JiraImportCard({ space }: { space: TaskSpace }) {
               {done.defects_rewritten ? `, đổi mã bug ở ${done.defects_rewritten} kết quả test` : ""}.
             </p>
           )}
-          <div className="adm-form-foot">
+          {retired && <p className="small muted">Dự án đã ngừng dùng Jira: chỉ còn xem số đã nhập (Chuyển đổi khỏi Jira › Dùng lại Jira để nhập tiếp).</p>}
+          <div className="adm-form-foot" style={retired ? { display: "none" } : undefined}>
             <button type="button" className="ghost" disabled={busy || !chosen} onClick={() => void call(true)}>
               Xem trước
             </button>

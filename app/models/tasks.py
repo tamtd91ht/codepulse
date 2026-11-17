@@ -65,6 +65,10 @@ class TaskSpace(TimestampMixin, Base):
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     # The template last applied (a built-in key or a saved template's key, §20.4); NULL: unknown.
     template_key: Mapped[str | None] = mapped_column(String(40))
+    # "Ngừng dùng Jira" (§21.6): when the dự án stopped using Jira (bugs of testcases go to
+    # CodePulse, the Jira import card stops importing). NULL: Jira still in use.
+    jira_retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    jira_retired_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
 
 
 class TaskStatus(TimestampMixin, Base):
@@ -484,4 +488,39 @@ class TaskRuleRun(Base):
     action: Mapped[str] = mapped_column(String(40))
     detail: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}", default=dict)
     dry_run: Mapped[bool] = mapped_column(server_default="false", default=False)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+ALIAS_KINDS = ("commit", "mr", "branch")
+
+
+class TaskKeyAliasSeen(Base):
+    """An old Jira key still used in git (docs/specs/31 §21.6): a commit, MR or branch that
+    reached a task through an imported issue's key (`task_imports`) instead of the task's own
+    key. One row per key and commit / MR / branch (`ref`); `at` is when the commit was made
+    (the MR updated), or when it was seen."""
+
+    __tablename__ = "task_key_aliases_seen"
+    __table_args__ = (
+        UniqueConstraint("business_project_id", "external_key", "ref"),
+        CheckConstraint(_in("kind", ALIAS_KINDS), name="kind"),
+        Index("ix_task_key_aliases_seen_space_at", "business_project_id", "at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    business_project_id: Mapped[int] = mapped_column(
+        ForeignKey("task_spaces.business_project_id", ondelete="CASCADE")
+    )
+    external_key: Mapped[str] = mapped_column(String(30))
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))
+    # commit:<sha> | mr:<project id>:<iid> | branch:<project id>:<name>
+    ref: Mapped[str] = mapped_column(String(300))
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"))
+    sha: Mapped[str | None] = mapped_column(String(64))
+    mr_iid: Mapped[int | None]
+    branch: Mapped[str | None] = mapped_column(String(255))
+    author_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # The git author's email or GitLab username, kept when no person is linked to it.
+    author: Mapped[str | None] = mapped_column(String(255))
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

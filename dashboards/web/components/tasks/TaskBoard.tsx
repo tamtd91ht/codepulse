@@ -9,6 +9,7 @@ import { date } from "@/lib/format";
 import type { Me, TaskPage, TaskPerson, TaskResolution, TaskRow, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
 
 import { DensityToggle } from "./DensityToggle";
+import { SwitchoverBoardNote } from "./TaskSwitchover";
 import { type QuickPicks, QuickChips } from "./QuickChips";
 import { SubtaskGroup, readGroupSubs, writeGroupSubs } from "./SubtaskGroup";
 import {
@@ -432,6 +433,7 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
   return (
     <div className="tk-board-wrap">
       {confirmEl}
+      <SwitchoverBoardNote space={space} />
       <div className="rq-grid tk-filters">
         <label className="rq-field">
           <span className="rq-label">Người làm</span>

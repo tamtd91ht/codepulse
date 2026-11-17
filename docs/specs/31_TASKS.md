@@ -1024,3 +1024,46 @@ sprint đóng): đợt 3 làm chúng hiện rõ thay vì làm lại. Quyết đ�
 | 3.4b Phân quyền còn lại | R1b, "Quyền của tôi" tự xem được, giải thích vì sao | 21.5 |
 | 3.5 Chuyển đổi | Cảnh báo mã Jira cũ, Ngừng dùng Jira, checklist, dữ liệu demo | 21.6 |
 | 4 Tin cậy | Đồng bộ thời gian thực Board / chi tiết, Hoàn tác 10 giây, di chuyển card bằng bàn phím | 21.7 |
+
+### 21.6 Chuyển đổi (migration `d5e6f7a8b9c0`)
+
+CodePulse không khoá được Jira (việc của admin Jira); phía CodePulse làm bốn việc, đều cần `tasks.manage` của dự án
+(`app/tasks/switchover.py`, `app/api/routers/task_switchover.py`, thẻ ở cuối Task › Cài đặt):
+
+- **Mã Jira cũ vẫn được dùng.** Khi commit / MR / nhánh nối vào task qua mã của issue Jira đã nhập (`task_imports`,
+  nhánh TaskImport của `git._tasks`), ghi một dòng `task_key_aliases_seen` (dự án, mã cũ, task, loại `commit | mr |
+  branch`, repo, sha / MR iid / nhánh, người viết (tài khoản liên kết, kèm email git hoặc username GitLab), lúc).
+  Mỗi mã cũ một dòng cho mỗi commit / MR / nhánh (`ref` duy nhất), webhook gửi lại hay sync lại không thêm dòng.
+  `at` = lúc viết commit / MR cập nhật (không có thì lúc thấy). Quyết định: git.py chỉ thêm **một dòng** gọi
+  `switchover.alias_used`; hàm này đọc commit / MR / nhánh từ khung gọi `_tasks` (`_commit`, `on_sync`, `on_push`),
+  chạy trong SAVEPOINT và không bao giờ làm hỏng sync. Mã của chính task không tính.
+  - Người viết (có tài khoản liên kết) nhận **một** thông báo mỗi ngày (`task.remind`, ref `jira-alias:<user>:<ngày>`):
+    "Dùng OCX-12 thay cho OMX-5". Lần dùng cũ hơn 1 ngày (sync lần đầu cả lịch sử) không báo ai.
+  - Thẻ "Chuyển đổi khỏi Jira" có bảng **Mã Jira cũ vẫn được dùng (7 ngày qua)**: mã cũ → mã mới, ở đâu (repo ·
+    commit / MR / nhánh), ai, lúc (tối đa 100 dòng mới nhất, kèm tổng số lần và số người).
+- **Ngừng dùng Jira** (`task_spaces.jira_retired_at`, `jira_retired_by`): `POST /tasks/spaces/{bp}/switchover/retire-jira
+  {reason?}`, `DELETE` để dùng lại. Kiểm tra sẵn sàng: mọi issue Jira đã đồng bộ của dự án đã nhập (`importer.sources`)
+  và không dùng mã cũ trong **14 ngày** (khoảng một sprint chạy song song). Chưa đạt → 409 kèm lý do; vẫn ngừng được
+  khi ghi lý do ≥ 10 ký tự (quyết định: cả hai điều kiện đều là cảnh báo cho vượt, vì Jira vẫn còn dữ liệu để đọc).
+  Audit `task.jira.retire` (`override`, `reason`, `not_imported`, `alias_uses`), `task.jira.restore`.
+  - Sau khi ngừng: Testcase › Cài đặt dự án trả `jira_retired`, `bug_target` / `bug_target_effective` = `codepulse`
+    (giá trị đã lưu giữ nguyên, dùng lại Jira thì hiện lại); `PUT bug_target: jira` → 422; "Tạo bug" luôn thành task
+    CodePulse; radio "Issue Jira" bị khoá kèm giải thích. Thẻ Nhập từ Jira ẩn nút xem trước / nhập, vẫn hiện số đã
+    nhập (API nhập không chặn: nhập thêm từ dữ liệu đã đồng bộ không hại gì).
+  - Banner nhắc: CodePulse không khoá được Jira, nhờ admin Jira đặt project (các mã Jira đã đồng bộ) ở chế độ chỉ đọc.
+- **Checklist bật Task cho Lead** (`GET /tasks/spaces/{bp}/switchover` → `checklist`), mỗi mục tích từ dữ liệu thật,
+  có nút sửa (cuộn tới thẻ cài đặt, mở Backlog, hộp cấp quyền thành viên):
+  WIP + cảnh báo tuổi trên ít nhất một trạng thái nhóm Đang làm; DoD có ít nhất một mục; ≥ 5 quy tắc tự động bật
+  hoặc đủ 5 quy tắc gợi ý (`parent_done_ask`, `assign_on_start`, `bug_highest_notify`, `unblock_notify`,
+  `overdue_remind`; nút "Bật 5 quy tắc gợi ý" = `POST .../switchover/recommended-rules`); sprint đầu tiên (không tính
+  sprint demo; không áp dụng cho Kanban); nhập Jira xong (chỉ khi dự án có issue Jira đồng bộ); thành viên: ≥ 2 người
+  có quyền và không còn ai commit vào repo của dự án 90 ngày qua mà chưa có quyền. Trên Board, người quản lý thấy một
+  dòng "Checklist bật Task: x/y bước" khi chưa xong, ẩn được (nhớ theo trình duyệt).
+- **Dữ liệu demo** (`POST /tasks/spaces/{bp}/demo`, `DELETE` cùng đường dẫn; audit `task.demo.create` / `.delete`):
+  tạo bằng `service.create_task` một epic, hai story (một đang làm), một task đã xong, một bug, một task ở backlog, một
+  sub-task, sprint "[Mẫu] Sprint demo" (chưa bắt đầu), phiên bản "[Mẫu] v1.0", ba bình luận; nhãn `mau-demo`, tiêu đề
+  "[Mẫu] …", giao cho người tạo (không ai khác nhận thông báo). Loại dự án không dùng thì thành Task. Đã có task demo
+  → 409. Xoá: chỉ task có nhãn `mau-demo` **và** tiêu đề "[Mẫu] " của dự án (gắn nhãn tay cho việc thật không bị xoá), xoá qua ORM để bản chiếu DPI theo kịp, kèm file đính kèm; sub-task thật nằm dưới task demo được tách ra
+  (không bị cascade); sprint / phiên bản demo chỉ xoá khi không còn task nào (tạo lại thì dùng lại sprint demo còn sót). Có hộp xác nhận.
+- Chưa làm: tuỳ chọn tắt thông báo "Dùng mã mới" theo dự án; số ngày sẵn sàng (14) và cửa sổ danh sách (7) chưa chỉnh
+  được trên màn hình.

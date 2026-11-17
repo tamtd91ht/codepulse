@@ -462,6 +462,8 @@ export interface TestProjectSettings {
   bug_target_effective?: "codepulse" | "jira";
   /** The dự án's Task key when Task is on. */
   task_space_key?: string | null;
+  /** docs/specs/31 §21.6: the dự án stopped using Jira; Jira cannot be chosen. */
+  jira_retired?: boolean;
 }
 
 /** The value of the run view's status filter that keeps only tests to run again. */

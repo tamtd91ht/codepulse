@@ -617,10 +617,11 @@ export function ProjectSettingsCard({ projectId }: { projectId: number }) {
               Task CodePulse{s.task_space_key ? ` (${s.task_space_key})` : " (dự án chưa bật Task)"}
             </label>
             <label className="inline-check">
-              <input type="radio" name={`bug-target-${projectId}`} checked={s.bug_target === "jira"} disabled={!s.can_edit || busy} onChange={() => void save({ bug_target: "jira" })} />
+              <input type="radio" name={`bug-target-${projectId}`} checked={s.bug_target === "jira"} disabled={!s.can_edit || busy || !!s.jira_retired} onChange={() => void save({ bug_target: "jira" })} />
               Issue Jira
             </label>
           </div>
+          {s.jira_retired && <p className="small muted">Dự án đã ngừng dùng Jira (Task › Cài đặt › Chuyển đổi khỏi Jira): bug luôn tạo thành task CodePulse.</p>}
           {s.bug_target_effective && s.bug_target_effective !== (s.bug_target ?? "codepulse") && (
             <p className="small muted">Dự án chưa bật Task nên bug vẫn tạo trên Jira (project đã chọn bên dưới).</p>
           )}

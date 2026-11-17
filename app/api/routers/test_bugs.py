@@ -45,6 +45,7 @@ from app.models import (
     TestRunTest,
 )
 from app.tasks import service as ts
+from app.tasks import switchover as sw
 from app.testcases import bugs, content
 from app.testcases import runs as rs
 from app.testcases import service as tc
@@ -157,6 +158,8 @@ class ProjectSettingsOut(BaseModel):
     bug_target: str = "codepulse"
     bug_target_effective: str = "codepulse"
     task_space_key: str | None = None
+    # docs/specs/31 §21.6 "Ngừng dùng Jira": bugs always go to CodePulse, Jira cannot be chosen.
+    jira_retired: bool = False
 
 
 class ProjectSettingsIn(BaseModel):
@@ -204,9 +207,17 @@ def _settings_out(
     session: Session | None = None,
 ) -> ProjectSettingsOut:
     space = session.get(TaskSpace, row.business_project_id) if session is not None else None
+    retired = space is not None and space.jira_retired_at is not None
     return ProjectSettingsOut(
-        bug_target=row.bug_target or "codepulse",
-        bug_target_effective=bugs.effective_target(session, row) if session is not None else "jira",
+        jira_retired=retired,
+        bug_target="codepulse" if retired else row.bug_target or "codepulse",
+        bug_target_effective=(
+            "codepulse"
+            if retired
+            else bugs.effective_target(session, row)
+            if session is not None
+            else "jira"
+        ),
         task_space_key=space.key if space is not None else None,
         business_project_id=row.business_project_id,
         assigned_only=bool(row.assigned_only),
@@ -239,7 +250,9 @@ def create_bug(
     test, run = _test_for(session, principal, test_id)
     _recorder(session, principal, test, run)
     prefs_now = bugs.project_settings(session, run.business_project_id)
-    if bugs.effective_target(session, prefs_now) == "codepulse":
+    if bugs.effective_target(session, prefs_now) == "codepulse" or sw.is_retired(
+        session, run.business_project_id
+    ):
         return _create_task_bug(test_id, body, principal, session, settings)
     conn = connection(session, settings, box)
     if not conn.write_enabled:
@@ -704,6 +717,8 @@ def put_project_settings(
     if body.jira_labels is not None:
         row.jira_labels = bugs.clean_list(body.jira_labels, labels=True)
     if body.bug_target is not None:
+        if body.bug_target == "jira" and sw.is_retired(session, bp.id):
+            raise HTTPException(422, "dự án đã ngừng dùng Jira: bug luôn tạo thành task CodePulse")
         row.bug_target = body.bug_target
     row.updated_by = principal.user_id
     session.flush()
