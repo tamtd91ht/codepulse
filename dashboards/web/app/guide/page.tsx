@@ -10,6 +10,7 @@ const SECTIONS = [
   { id: "access", label: "Ai xem được gì" },
   { id: "developer", label: "Developer" },
   { id: "lead", label: "Lead" },
+  { id: "tasks", label: "Quản lý Task" },
   { id: "admin", label: "Admin" },
   { id: "telegram", label: "Bot Telegram" },
   { id: "mcp", label: "Tích hợp MCP" },
@@ -208,8 +209,45 @@ export default function GuidePage() {
         </ul>
       </section>
 
+      <section id="tasks" className="card">
+        <h2>5. Quản lý Task</h2>
+        <p>
+          Menu <Link href="/tasks">Task</Link> quản lý việc của dự án như Jira (Board, Backlog, sprint, phiên bản, báo cáo), độc lập với Jira, và
+          mỗi task biết code của nó. Ghi mã task (ví dụ <code>OCX-12</code>) vào tên nhánh, commit, MR: CodePulse tự nối và tự chuyển trạng thái.
+        </p>
+        <ul>
+          <li>
+            Người quản lý dự án bật Task ở trang Task: chọn mã dự án, mẫu (Scrum, Kanban, QA / xử lý lỗi, Mobile), thành viên, và nhập issue từ
+            Jira nếu có.
+          </li>
+          <li>
+            Tạo task bằng <strong>+ Tạo</strong> (phím <code>C</code> hoặc <code>N</code>), hoặc <strong>+ Tạo nhanh</strong> trên Board với cú pháp{" "}
+            <code>Sửa lỗi OTP @an #bug !cao 3sp ^OCX-12</code>; toast <em>Đã tạo · Mở · Hoàn tác</em>.
+          </li>
+          <li>
+            Nhánh <code>feature/OCX-12-…</code> → Đang làm; MR có mã → Đang review; MR merge vào nhánh mặc định hoặc commit{" "}
+            <code>Fixes: OCX-12</code> → Xong. Smart commit: <code>#time 1h30m</code>, <code>#comment …</code>, <code>#done</code>.
+          </li>
+          <li>
+            Thanh lọc chung (gõ câu như <em>bug cao chưa giao</em> rồi Enter), bộ lọc đã lưu, sửa hàng loạt, Hoàn tác 10 giây, Ctrl+K và phím tắt
+            (<code>?</code> xem danh sách), Việc của tôi, thông báo theo kênh, quy tắc tự động, DoD, testcase và sẵn sàng phát hành.
+          </li>
+          <li>
+            DPI đọc task khi admin chọn <em>DPI hàng tháng › Cấu hình › Nguồn task</em> là <strong>Task CodePulse</strong>.
+          </li>
+        </ul>
+        <p>
+          Hướng dẫn đầy đủ (bật Task, Board, thanh lọc, Backlog và sprint, chi tiết task, gắn code, chất lượng, thông báo, phím tắt, phân quyền, câu
+          hỏi thường gặp):{" "}
+          <Link href="/guide/tasks">
+            <strong>Hướng dẫn › Quản lý Task</strong>
+          </Link>
+          .
+        </p>
+      </section>
+
       <section id="admin" className="card">
-        <h2>5. Admin</h2>
+        <h2>6. Admin</h2>
         <p className="muted">
           Tài khoản admin là các email trong <code>ADMIN_EMAILS</code>. Mọi thay đổi ở trang Admin đều được ghi audit
           log.
@@ -457,7 +495,7 @@ export default function GuidePage() {
       </section>
 
       <section id="telegram" className="card">
-        <h2>6. Bot Telegram</h2>
+        <h2>7. Bot Telegram</h2>
         <p>
           Mỗi dự án có thể có một bot Telegram (admin cấu hình ở <strong>Admin → Telegram</strong>). Bạn gửi lệnh cho bot
           trong chat riêng hoặc nhóm của team; review chạy như bình thường và kết quả (điểm, số finding, link) được trả
@@ -555,7 +593,7 @@ export default function GuidePage() {
       </section>
 
       <section id="mcp" className="card">
-        <h2>7. Tích hợp MCP</h2>
+        <h2>8. Tích hợp MCP</h2>
         <p>
           CodePulse có một máy chủ MCP để <strong>Claude Code</strong> trên máy bạn đọc các finding{" "}
           <span className="sev critical">critical</span> <span className="sev high">high</span> còn mở của bạn (top, theo
@@ -585,7 +623,7 @@ export default function GuidePage() {
       </section>
 
       <section id="metrics" className="card">
-        <h2>8. Đọc các chỉ số</h2>
+        <h2>9. Đọc các chỉ số</h2>
         <div className="table-wrap">
           <table>
             <thead>
@@ -625,7 +663,7 @@ export default function GuidePage() {
       </section>
 
       <section id="insights" className="card">
-        <h2>9. Luồng làm việc: đo gì và không đo gì</h2>
+        <h2>10. Luồng làm việc: đo gì và không đo gì</h2>
         <p>
           Menu <strong>Luồng làm việc</strong> cho thấy công việc chảy qua team thế nào. Đây là chỉ số <strong>của dự án/repo</strong>{" "}
           để cải thiện quy trình (đặt SLA review, tách MR nhỏ, giảm phụ thuộc một người), <strong>không</strong> dùng để chấm
@@ -679,7 +717,7 @@ export default function GuidePage() {
       </section>
 
       <section id="dpi" className="card">
-        <h2>10. DPI: đánh giá hiệu suất hàng tháng</h2>
+        <h2>11. DPI: đánh giá hiệu suất hàng tháng</h2>
         <p>
           Mỗi người một scorecard mỗi tháng: <strong>70 điểm chỉ số kỹ thuật tự động</strong> (giao việc, chất lượng code, quy trình,
           review cho người khác) và <strong>30 điểm lead chấm</strong> (tác động, thiết kế, làm việc nhóm, ownership), trọng số theo
@@ -727,7 +765,7 @@ export default function GuidePage() {
       </section>
 
       <section id="testcase" className="card">
-        <h2>11. Testcase: vai trò, duyệt, trường tuỳ biến, sửa hàng loạt</h2>
+        <h2>12. Testcase: vai trò, duyệt, trường tuỳ biến, sửa hàng loạt</h2>
         <h3>Vai trò</h3>
         <p>
           Admin gán bộ quyền ở Admin › Phân quyền. Có sẵn năm bộ quyền mẫu cho Testcase (sửa và gán như bộ thường; vai trò khác nhau giữa các dự án
@@ -823,7 +861,7 @@ export default function GuidePage() {
       </section>
 
       <section id="testcase-more" className="card">
-        <h2>12. Testcase: BDD, phiên khám phá, baseline, nhật ký thay đổi, tham số</h2>
+        <h2>13. Testcase: BDD, phiên khám phá, baseline, nhật ký thay đổi, tham số</h2>
         <h3>BDD (Gherkin) và file .feature</h3>
         <ul>
           <li>
