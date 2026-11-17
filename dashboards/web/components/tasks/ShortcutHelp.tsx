@@ -2,7 +2,7 @@
 
 import { Modal } from "@/components/CriteriaParts";
 
-import { FRAME_SHORTCUTS, GLOBAL_SHORTCUTS, TASK_SHORTCUTS, type TaskShortcut, useTaskShortcuts } from "./useTaskShortcuts";
+import { FRAME_SHORTCUTS, GLOBAL_SHORTCUTS, TASK_SHORTCUTS, type TaskShortcut, useTaskShortcuts, VIEW_SHORTCUTS } from "./useTaskShortcuts";
 
 /**
  * Mounted by the task detail: runs the task shortcuts (E, A, S, C, .). The "?" overlay itself is
@@ -23,7 +23,7 @@ function Keys({ title, list }: { title: string; list: TaskShortcut[] }) {
             <dt>
               {s.keys.map((k, i) => (
                 <span key={k}>
-                  {i > 0 && <span className="small faint"> {s.keys[0] === "Ctrl" ? "+" : "rồi"} </span>}
+                  {i > 0 && <span className="small faint"> {s.keys[0] === "Ctrl" || s.keys[0] === "Shift" ? "+" : "rồi"} </span>}
                   <kbd className="nl-kbd">{k}</kbd>
                 </span>
               ))}
@@ -43,6 +43,7 @@ export function ShortcutHelpModal({ onClose }: { onClose: () => void }) {
       <p className="small muted nl-help-note">Không chạy khi đang gõ trong ô nhập, giữ Ctrl / Alt, hoặc đang mở hộp thoại. Trên Mac dùng ⌘ thay Ctrl.</p>
       <Keys title="Mọi trang" list={GLOBAL_SHORTCUTS} />
       <Keys title="Trang Task" list={FRAME_SHORTCUTS} />
+      <Keys title="Thanh lọc, Board, ngăn chi tiết" list={VIEW_SHORTCUTS} />
       <Keys title="Khi đang mở một task" list={TASK_SHORTCUTS} />
     </Modal>
   );

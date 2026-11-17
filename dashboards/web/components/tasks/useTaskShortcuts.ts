@@ -44,6 +44,18 @@ export const FRAME_SHORTCUTS: TaskShortcut[] = [
   { keys: ["C"], label: "Tạo task (khi không mở task nào)" },
 ];
 
+/** Keys of the filter bar, the Board and the task drawer (docs/specs/31 §22.2, §21.7, §22.6). */
+export const VIEW_SHORTCUTS: TaskShortcut[] = [
+  { keys: ["/"], label: "Vào ô tìm của thanh lọc (cũng: F)" },
+  { keys: ["Shift", "F"], label: "Mở “+ Lọc”" },
+  { keys: ["Shift", "X"], label: "Xoá mọi bộ lọc" },
+  { keys: ["V"], label: "Mở “Hiển thị”" },
+  { keys: ["Ctrl", "Z"], label: "Hoàn tác thao tác vừa làm (trong 10 giây)" },
+  { keys: ["J"], label: "Task kế tiếp trong ngăn chi tiết (K: task trước)" },
+  { keys: ["Esc"], label: "Đóng popover hoặc ngăn chi tiết" },
+  { keys: ["Space"], label: "Board: nhấc / thả card đang chọn, mũi tên để chuyển cột hoặc vị trí" },
+];
+
 function find(name: string): HTMLElement | null {
   const el = document.querySelector<HTMLElement>(`[data-shortcut="${name}"]`);
   if (!el || (el as HTMLButtonElement | HTMLSelectElement).disabled) return null;

@@ -70,25 +70,28 @@ tính vào điểm và mọi chỉ số liên quan được tính lại ngay.
 
 ## 3a. Task: quản lý việc gắn với git
 
-Menu **Task** (docs/specs/31). Người quản lý dự án bật Task ở tab *Cài đặt* với một **mã** (ví dụ `CRM`); task được đánh số `CRM-1`, `CRM-2`…
+Menu **Task** (docs/specs/31) quản lý việc của dự án như Jira, độc lập với Jira, và mỗi task biết code của nó (nhánh, commit, MR, điểm review, critical, pipeline, deploy). Hướng dẫn đầy đủ ở trong ứng dụng: **Hướng dẫn › Quản lý Task** (`/guide/tasks`). Tóm tắt:
 
-- **Board** kéo thả giữa các trạng thái; **Backlog** xếp task vào sprint, bắt đầu / kết thúc sprint; **Danh sách** lọc, lưu bộ lọc, sửa hàng loạt; **Báo cáo** burndown, velocity, tạo / xong, cycle time, giờ làm; **Phiên bản** sinh release notes.
-- Thành viên tạo task, sửa task mình tạo hoặc được giao, bình luận mọi task (`@tamtd` để nhắc người có email `tamtd@…`).
-- **Phân quyền như Jira** (Quản trị › Phân quyền, nhóm *Task*): Xem, Tạo, Sửa, Giao việc, Chuyển trạng thái, Xoá, Bình luận, Đính kèm, Ghi giờ, Liên kết, Kiểm duyệt (sửa / xoá nội dung người khác), Sprint, Quản trị. Phạm vi *own* = task mình tạo hoặc được giao, *project* = dự án mình quản lý, *all* = mọi dự án mình xem được. Mặc định thành viên không xoá task và không lập sprint; quản lý dự án có đủ quyền ở dự án mình.
-- **Mức ưu tiên riêng của dự án** (như Jira): *Cài đặt › Mức ưu tiên* đặt tên, màu, mũi tên, thứ tự và mức mặc định; xoá một mức thì chọn mức nhận task của nó. Board lọc được theo ưu tiên; tab *Báo cáo* có bảng *Theo ưu tiên* (đang mở, quá hạn, point, tạo / xong).
-- **Đính kèm file, ảnh:** bấm *Tải file lên*, kéo thả file vào khung *Đính kèm*, hoặc chụp màn hình rồi **Ctrl+V** khi đang xem task. Khi viết mô tả / bình luận, dán ảnh (Ctrl+V) hoặc kéo thả file vào ô soạn: ảnh hiện ngay trong nội dung. Bấm ảnh thu nhỏ để xem cỡ lớn.
-- **Gắn code với task:** ghi mã vào nhánh, commit, MR — CodePulse tự nối và tự chuyển trạng thái:
+- **Bật Task:** người quản lý dự án mở trang Task, chọn dự án "chưa bật" và đi 5 bước: mã dự án (ví dụ `OCX`; task đánh số `OCX-1`, `OCX-2`…) và loại, mẫu (Scrum, Kanban, QA / xử lý lỗi, Mobile, hoặc mẫu đã lưu), thành viên, xác nhận, nhập từ Jira (nếu dự án có issue Jira đồng bộ). Sửa sau ở ⚙ › *Cài đặt Task của dự án*; ⚙ › *Tình trạng bật Task* cho admin. Thẻ *Chuyển khỏi Jira*: mã Jira cũ vẫn nối được, checklist cho Lead, *Ngừng dùng Jira*, dữ liệu demo.
+- **Khung trang:** `Task / <Dự án> ▾` đổi dự án, tab Board · Backlog · Danh sách · Báo cáo · Sức khoẻ · Phiên bản · Timeline (phím `1`…`7`), **Của tôi** (Việc của tôi), **+ Tạo** (phím `C`, mọi trang `N`).
+- **Tạo task:** form có đính kèm và dán ảnh (Ctrl+V); **+ Tạo nhanh** cuối cột Board với cú pháp `Sửa lỗi OTP @an #bug !cao 3sp ^OCX-12` (chip xem trước, chọn khi mơ hồ). Toast *Đã tạo OCX-12 · Mở · Hoàn tác* (hoàn tác trong 2 phút khi task chưa có gì thêm và chưa ai khác sửa).
+- **Board:** kéo thả hoặc dùng bàn phím (Space nhấc / thả), WIP theo cột, một tín hiệu mỗi card (⛔ bị chặn, critical, quá hạn…), *⧉ Hiển thị* (swimlane, gom sub-task, Gọn / Thoáng, thu gọn cột), Hoàn tác 10 giây (Ctrl+Z), cập nhật thời gian thực.
+- **Thanh lọc chung** (Board, Danh sách, Backlog): ô tìm hiểu câu lọc (*bug cao chưa giao* → Enter), *Của tôi*, chọn nhiều người làm, chip ghim, *+ Lọc*, *Xoá lọc*; *★ Bộ lọc* lưu, chia sẻ (mình tôi / team / dự án), ghim lên Board, nhận tóm tắt; link trang giữ bộ lọc.
+- **Danh sách:** sửa tại ô, chọn nhiều để sửa hàng loạt (có Hoàn tác), xuất CSV. **Backlog:** cột Epic, sprint với sức chứa và tải theo người, *Kiểm tra trước khi bắt đầu*, *Hoàn tất* kèm Đánh giá sprint và *Tạo trang retro*. **Timeline:** kéo đổi hạn / sprint; `/tasks/overview` cho nhiều dự án.
+- **Chi tiết task** (ngăn bên phải, `J` / `K` chuyển task): khối Sức khoẻ, dòng thời gian, bình luận `@` nhắc tên / `#` chèn mã, giờ làm, Code, tiêu chí chấp nhận, testcase, Definition of Done. Lý do đóng: chỉ *Đã xong* tính là hoàn thành.
+- **Gắn code với task:** ghi mã vào nhánh, commit, MR — CodePulse tự nối và tự chuyển trạng thái theo *Luật git* của dự án:
 
   | Bạn làm | Task |
   |---|---|
-  | tạo nhánh `feature/CRM-12-dang-nhap` (hoặc bấm *Tạo nhánh* trên task) | sang In Progress |
-  | commit `feat(auth): gửi OTP [CRM-12]` | nối commit, kèm điểm review |
-  | mở MR có `CRM-12` ở tiêu đề / nhánh | sang In Review |
-  | MR merge vào nhánh chính, hoặc commit `Fixes: CRM-12` vào nhánh chính | sang Done |
+  | tạo nhánh `feature/OCX-12-dang-nhap` (hoặc bấm *Tạo nhánh* trên task) | sang Đang làm |
+  | commit `feat(auth): gửi OTP [OCX-12]` | nối commit, kèm điểm review |
+  | mở MR có `OCX-12` ở tiêu đề / nhánh | sang Đang review |
+  | MR merge vào nhánh mặc định, hoặc commit `Fixes: OCX-12` vào nhánh mặc định | sang Xong |
 
-- **Smart commit** (bạn tự push): `#time 1h30m` ghi giờ, `#comment …` thêm bình luận, `#done` / `#in-review` chuyển trạng thái.
-- Phần **Code** của task: commit, MR, điểm review, finding critical/high còn mở, pipeline, đã lên production chưa. Dự án có thể bật *chặn Done khi còn critical*.
-- **DPI tính theo task CodePulse:** admin vào *DPI hàng tháng › Cấu hình › Nguồn task* chọn **Task CodePulse**. Task xong (nhóm Done) là đầu ra của người được giao; story point quyết định độ phức tạp; Bug có nhãn `production` là lỗi production; Epic và task Won't Do không tính.
+- **Smart commit** (bạn tự push): `#time 1h30m` ghi giờ, `#comment …` thêm bình luận, `#done` / `#in-review` / `#dang-lam` chuyển trạng thái.
+- **Việc của tôi**, **thông báo** (avatar › *Cài đặt thông báo*: kênh Hộp thư / Telegram / Tắt theo sự kiện, giờ yên lặng, tóm tắt cuối ngày), **quy tắc tự động** (Cài đặt, có *Chạy thử* và *Nhật ký*), **Ctrl+K** và phím tắt (`?` để xem).
+- **Phân quyền như Jira** (Admin › Phân quyền, nhóm *Task*): Xem, Tạo, Sửa, Giao, Chuyển trạng thái, Xoá, Bình luận, Đính kèm, Ghi giờ, Liên kết, Kiểm duyệt, Sprint, Quản trị. Phạm vi *của mình* / *team* / *dự án* / *tất cả*. Tester / team QA tự có bộ *Tester*. Mỗi người xem quyền mình ở avatar › *Quyền của tôi*.
+- **DPI tính theo task CodePulse:** admin vào *DPI hàng tháng › Cấu hình › Nguồn task* chọn **Task CodePulse**. Task xong với lý do *Đã xong* là đầu ra của người được giao; story point quyết định độ phức tạp; Bug có nhãn `production` là lỗi production; Epic và task đóng với lý do khác không tính.
 - Trong Claude Code (MCP): `list_my_tasks`, `get_task`, và với token có ô *Cập nhật task*: `move_task`, `comment_task`, `log_work`.
 
 ## 3b. Yêu cầu review và kết luận merge
