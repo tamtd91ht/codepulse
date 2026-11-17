@@ -1024,3 +1024,63 @@ sprint đóng): đợt 3 làm chúng hiện rõ thay vì làm lại. Quyết đ�
 | 3.4b Phân quyền còn lại | R1b, "Quyền của tôi" tự xem được, giải thích vì sao | 21.5 |
 | 3.5 Chuyển đổi | Cảnh báo mã Jira cũ, Ngừng dùng Jira, checklist, dữ liệu demo | 21.6 |
 | 4 Tin cậy | Đồng bộ thời gian thực Board / chi tiết, Hoàn tác 10 giây, di chuyển card bằng bàn phím | 21.7 |
+
+### 21.1 Một cái nhìn
+
+Roadmap đợt 3 §3.1 (R5) và §3.2 (R7b). Không migration; một API đọc mới.
+
+- **Khối Sức khoẻ** (`components/tasks/TaskHealthBlock.tsx`) luôn ngay dưới tiêu đề task, có **một màu tổng** (viền
+  trái + chấm + chữ "Ổn / Cần chú ý / Có vấn đề"):
+  - Đỏ: bị chặn (task chưa Xong chặn nó; cả khi người xem không thấy task chặn: `blocked` của TaskRow) hoặc còn finding
+    critical mở.
+  - Vàng: thiếu mục DoD (bắt buộc hay không), testcase Failed, pipeline lỗi, mọi MR đóng không merge, quá hạn.
+  - Xanh: còn lại (đủ DoD, hoặc không có DoD và không có gì sai).
+  - Ba dòng, mục không áp dụng thì ẩn: (1) ⛔ Bị chặn bởi KEY (trạng thái), bấm mở task chặn; (2) code: tối đa 3 MR
+    `MR !42 ✓ đã merge` mở GitLab ở tab mới (+n MR cuộn tới Code; không có MR thì "n commit"), `Review 7.8`, `n critical`,
+    `n high` mở review đáng xem nhất (`/reviews/{id}`: nhiều critical nhất, rồi nhiều high nhất), Pipeline ✓ / n
+    pipeline lỗi mở pipeline trên GitLab (pipeline lỗi trước), Đã lên / Chưa deploy, MR bị đóng không merge;
+    (3) Quá hạn, `AC x/y có testcase` (tiêu chí có ít nhất một testcase gắn vào, từ `criteria` của
+    `GET /tasks/{key}/tests`; cuộn tới Tiêu chí), `Testcase p/t Passed` mở test run của testcase Failed đầu tiên (không
+    có thì testcase có run đầu tiên): `/testcases?project=<dự án của task>&tab=runs&run=&test=`, `DoD x/y · Xem thiếu gì`
+    mở danh sách mục thiếu ngay trong khối (kèm chi tiết, và dòng "bắt buộc trước khi Xong" khi dự án bắt buộc).
+  - Không mục nào áp dụng: một dòng mờ "Chưa có code, DoD hay testcase cho task này".
+  - Phần **Code** (`TaskCode`) chỉ còn danh sách nhánh / MR / commit (dải tổng hợp chuyển lên khối Sức khoẻ).
+  - Quyết định: test run mở theo dự án của task (coverage không trả dự án của run; testcase của dự án khác hiếm).
+- **Card Board** hiện **một** huy hiệu theo cùng logic (`components/tasks/taskSignal.ts`, dùng chung thứ tự):
+  ⛔ bị chặn > critical > quá hạn > quá tuổi cột > 🔁 MR bị đóng > `DoD thiếu n` (chỉ khi dự án bắt buộc DoD). Task đã
+  Xong không hiện gì.
+  - `GET /api/v1/tasks/spaces/{bp}/dod-gaps` (`app/api/routers/task_dod_gaps.py`, `tasks.view` + xem được dự án) →
+    `{enforced, gaps: {KEY: [nhãn mục thiếu]}}`: chỉ khi dự án bật bắt buộc DoD, chỉ task ở trạng thái nhóm "doing"
+    (task chưa bắt đầu thiếu DoD là đương nhiên), tối đa 300 task cập nhật gần nhất; task đủ DoD không có trong `gaps`.
+    Board chỉ gọi khi `rules.dod.enforce` và có mục DoD (một request cho cả Board, SWR dùng chung).
+- **Chọn card:** bấm (hoặc focus) một card thì card được chọn (viền accent), `Esc` bỏ chọn (không khi đang gõ hay có
+  hộp thoại). Kho nhỏ cấp module `components/tasks/cardSelection.ts` (+ sự kiện `cp:card-select`); bảng lệnh đọc nó khi
+  mở, chỉ khi card còn trên màn hình.
+- **Ctrl+K thành bảng lệnh** (`components/CommandPalette.tsx`):
+  - Ngữ cảnh = task đang mở (URL), không có thì card đang chọn. Lệnh của ngữ cảnh lên đầu (nhóm "Lệnh trên KEY"), theo
+    quyền của task: *Giao cho tôi* (`can.assign`, ẩn khi đã là của tôi), *Giao cho…* (người của dự án, + "Bỏ giao"),
+    *Chuyển sang…* (chỉ `transitions` hợp lệ; trạng thái nhóm "done" mở danh sách lý do đóng, "Đã xong" đứng đầu và
+    được chọn sẵn; còn critical thì phải Enter lần hai), *Thêm vào sprint…* (như §20.2), *Gắn phiên bản…* (phiên bản
+    chưa phát hành, + "Bỏ phiên bản"; `PATCH version_id`), *Đổi mức ưu tiên…* (mức của dự án), *Thêm nhãn…* (nhãn đã
+    dùng trong 200 task cập nhật gần nhất của dự án, hoặc gõ nhãn mới; khoảng trắng → `-`), *Sao chép link*, *Sao chép
+    tên nhánh* (tính ở trình duyệt đúng như `app/tasks/keys.py branch_name`: `feature/KEY-tieu-de` / `bugfix/`, ≤ 60
+    ký tự; tên hiện ngay ở cột gợi ý), *Tạo sub-task* (mở form tạo với task cha; cần `can_create`, cha không là
+    sub-task, dự án có loại sub-task hoặc cha là epic). Khi đã gõ chữ, mỗi trạng thái hợp lệ còn là một lệnh riêng
+    "Chuyển sang <trạng thái>".
+  - **Tìm mờ không dấu** (`components/paletteMatch.ts`): mọi từ gõ phải khớp, bỏ dấu tiếng Việt, đ → d; khớp đầu từ
+    > giữa từ > chữ cái đầu ("gct" → "Giao cho tôi") / chữ rải rác từ đầu từ; nhãn nặng hơn từ khoá ẩn; nhãn bắt đầu
+    bằng cả chuỗi gõ được cộng thêm. "giao" ↔ "Giao cho tôi", "chuyen review" ↔ "Chuyển sang Đang review".
+  - **Tìm task theo tiêu đề** (`GET /tasks?q=&limit=8&sort=updated`): mỗi dòng có mã, tiêu đề, trạng thái, người làm.
+    Chờ 120 ms sau phím cuối, request cũ bị huỷ (`AbortController`), kết quả nhớ theo chuỗi trong lượt mở; kết quả cũ
+    giữ trên màn hình trong lúc chờ (không nháy).
+  - **Gần đây** khi ô trống: 5 task vừa mở (ghi mỗi khi chi tiết task hiện, ở bất cứ đâu) và 3 trang vừa mở (theo
+    đường dẫn, nhãn theo menu), trong `localStorage` (`cp:palette:recent-tasks`, `cp:palette:recent-pages`; đọc / ghi
+    lỗi thì bỏ qua).
+  - **Tiền tố:** `>` chỉ lệnh, `#` chỉ task (từ 1 ký tự), `@` người của dự án (dự án của ngữ cảnh, không có thì `space`
+    trên URL / dự án Task mở lần cuối / dự án bật Task đầu tiên). Chọn một người → danh sách việc đang mở của họ (nhóm
+    todo + doing, 20 việc cập nhật gần nhất) và lệnh "Mở Danh sách lọc theo <người>" (`/tasks?space=&tab=list&assignee=ID`).
+    Có lệnh "Tìm người…" chèn `@`.
+  - Danh sách được chia nhóm có tiêu đề (Lệnh trên KEY, Task gần đây, Trang gần đây, Lệnh, Người, Task).
+- Chưa làm: tab Danh sách chưa đọc tham số `assignee` trên URL (lệnh "Mở Danh sách lọc theo …" mở đúng dự án và tab,
+  cần một sửa nhỏ trong `TaskList` để tự áp; danh sách việc của người đó đã có ngay trong bảng lệnh); hoàn tác sau
+  lệnh của bảng lệnh (để mục Hoàn tác chung §21.7).

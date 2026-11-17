@@ -6,8 +6,9 @@ import { type MultiOption, MultiSelect } from "@/components/MultiSelect";
 import { Alert, Avatar, EmptyState, Loading } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
-import type { Me, TaskPage, TaskPerson, TaskResolution, TaskRow, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
+import type { Me, TaskDodGaps, TaskPage, TaskPerson, TaskResolution, TaskRow, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
 
+import { selectCard, useCardSelected } from "./cardSelection";
 import { DensityToggle } from "./DensityToggle";
 import { type QuickPicks, QuickChips } from "./QuickChips";
 import { SubtaskGroup, readGroupSubs, writeGroupSubs } from "./SubtaskGroup";
@@ -30,11 +31,14 @@ import {
   priorityList,
   refreshTasks,
   sortedStatuses,
+  spaceOf,
   today,
   useConfirm,
   useSprints,
   useTaskPeople,
+  useTaskSpaces,
 } from "./taskParts";
+import { cardSignal } from "./taskSignal";
 
 /** Order inside one column / list: rank, then key number. */
 export function byRank(a: TaskRow, b: TaskRow): number {
@@ -75,11 +79,6 @@ function readLane(): LaneMode {
 }
 
 /** Hours since the task entered its status. */
-function hoursIn(t: TaskRow): number | null {
-  if (!t.status_changed_at) return null;
-  return (Date.now() - new Date(t.status_changed_at).getTime()) / 3_600_000;
-}
-
 /** One way to read an ambiguous quick-create token (§20.2): the chips under the input. */
 export type QuickChoice = { value: number | string; label: string; hint?: string };
 export type QuickAmbiguity = { token: string; field: "assignee_id" | "priority"; options: QuickChoice[] };
@@ -657,20 +656,15 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
   );
 }
 
-/** The one signal a card shows (§19.3, §20.1), most important first: blocked, critical findings,
- * overdue, too long in its column, MR closed without merge. */
-function cardSignal(task: TaskRow, ageWarnHours: number | null): { tone: "bad" | "warn"; text: string; title: string } | null {
-  if (task.blocked && task.status.category !== "done") return { tone: "bad", text: "⛔ Bị chặn", title: "Một task chưa xong đang chặn task này" };
-  const crit = task.git?.open_critical ?? 0;
-  if (crit > 0 && task.status.category !== "done") return { tone: "bad", text: `${crit} critical`, title: "Code của task còn finding critical mở" };
-  if (task.due_date && task.status.category !== "done" && task.due_date < today()) return { tone: "bad", text: "Quá hạn", title: `Hạn ${task.due_date}` };
-  const h = hoursIn(task);
-  if (ageWarnHours && h !== null && task.status.category !== "done" && h > ageWarnHours) {
-    const days = Math.floor(h / 24);
-    return { tone: "warn", text: days >= 1 ? `${days} ngày ở đây` : `${Math.floor(h)} giờ ở đây`, title: `Ở “${task.status.name}” quá ngưỡng ${ageWarnHours} giờ của dự án` };
-  }
-  if (task.mr_closed && task.status.category !== "done") return { tone: "warn", text: "🔁 MR bị đóng", title: "MR của task đã đóng mà không merge" };
-  return null;
+/** What the enforced DoD still misses on this card's task (§21.1): one request per dự án (SWR
+ * shares it between the cards), only when the dự án enforces a DoD. */
+function useDodMissing(task: TaskRow): string[] | null {
+  const bp = spaceOf(task);
+  const spaces = useTaskSpaces();
+  const dod = spaces.data?.find((s) => s.business_project_id === bp)?.rules?.dod;
+  const on = !!bp && !!dod?.enforce && (dod.checks ?? []).length > 0 && task.status.category === "doing";
+  const gaps = useApi<TaskDodGaps>(on ? `/tasks/spaces/${bp}/dod-gaps` : null);
+  return gaps.data?.gaps[task.key] ?? null;
 }
 
 export function TaskCard({
@@ -690,9 +684,16 @@ export function TaskCard({
   onDragEnd?: () => void;
   onDragOver?: (e: DragEvent<HTMLElement>) => void;
 }) {
+  const dodMissing = useDodMissing(task);
+  const selected = useCardSelected(task.key);
   return (
     <article
-      className={`tk-card${dragging ? " dragging" : ""}`}
+      className={`tk-card${dragging ? " dragging" : ""}${selected ? " cp-card-selected" : ""}`}
+      data-card-key={task.key}
+      tabIndex={-1}
+      aria-current={selected ? "true" : undefined}
+      onMouseDown={() => selectCard(task.key)}
+      onFocus={() => selectCard(task.key)}
       draggable={!!onDragStart}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
@@ -702,7 +703,7 @@ export function TaskCard({
         {task.title}
       </button>
       {(() => {
-        const signal = cardSignal(task, ageWarnHours);
+        const signal = cardSignal(task, ageWarnHours, dodMissing);
         return signal ? (
           <span className={`tk-signal tk-signal-${signal.tone}`} title={signal.title}>
             {signal.text}
