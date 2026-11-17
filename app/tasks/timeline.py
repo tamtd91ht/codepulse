@@ -24,6 +24,7 @@ from app.models import (
     TestRun,
     TestRunTest,
 )
+from app.tasks import history_text
 from app.tasks import service as ts
 
 TYPES = ("comment", "history", "worklog", "git", "review", "test", "deploy")
@@ -122,10 +123,8 @@ def _history(
         q = q.where(TaskHistory.at <= before)
     out = []
     for h in session.scalars(q.order_by(TaskHistory.at.desc(), TaskHistory.id.desc()).limit(limit)):
-        text = f"đổi {h.field}"
-        if h.old:
-            text += f" từ {h.old}"
-        text += f" thành {h.new or '—'}"
+        # A sentence, never the raw field name (§21.0, F1).
+        event, text = history_text.describe_row(h)
         out.append(
             _item(
                 "history",
@@ -133,7 +132,7 @@ def _history(
                 h.at,
                 h.user_id,
                 text,
-                {"field": h.field, "old": h.old, "new": h.new, "via": h.via},
+                {"field": h.field, "event": event, "old": h.old, "new": h.new, "via": h.via},
             )
         )
     return out

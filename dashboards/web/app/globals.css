@@ -15796,8 +15796,7 @@ a.icon-btn {
 }
 .tk-health-muted {
   color: var(--muted);
-
-/* Sức khoẻ sprint và tổng quan Task (docs/specs/31 §19.5) */
+}
 .th-health {
   display: grid;
   gap: 12px;
@@ -15971,8 +15970,8 @@ a.icon-btn {
   .th-load-bars {
     grid-column: 1 / -1;
     grid-row: 2;
-
-/* Task templates and board mode (docs/specs/31 §19.6). */
+  }
+}
 .tt-steps {
   display: flex;
   flex-wrap: wrap;
@@ -16603,8 +16602,12 @@ a.icon-btn {
   border-color: var(--border-strong);
 }
 .qk-sub-title {
-
-/* -- Nhân rộng Task (docs/specs/31 §20.4): templates, members step, adoption table ------------ */
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .tp-group {
   margin: 12px 0 8px;
   font-size: 13px;
@@ -16612,8 +16615,11 @@ a.icon-btn {
   color: var(--text);
 }
 .tp-group-head {
-
-/* -- Thông báo & quy tắc (docs/specs/31 §20.5): channels, summary, snooze, rule log, dry run -- */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 .nr-note {
   margin: 4px 0 0;
 }
@@ -16740,8 +16746,7 @@ a.icon-btn {
 }
 .qk-sub-more {
   padding: 2px 6px;
-
-/* Task: một màn hình (docs/specs/31 §20.1) – health block, one timeline, the fixed comment box. */
+}
 .tl-health {
   padding: 8px 10px;
   border: 1px solid var(--border);
@@ -16929,8 +16934,7 @@ a.icon-btn {
   margin: 6px 0 0;
   padding: 0;
   list-style: none;
-
-/* docs/specs/31 §20.3 QA: acceptance criteria on a task, "Tạo bug" next to a failed step. */
+}
 .qa-crit-list {
   display: grid;
   margin: 0;
@@ -17008,8 +17012,7 @@ a.icon-btn {
   }
   .qa-crit-actions {
     opacity: 1;
-
-  color: var(--text);
+  }
 }
 .tp-error {
   display: grid;
@@ -17095,8 +17098,8 @@ a.icon-btn {
   width: 100%;
 }
 .nr-log-table tr.nr-dry td {
-
-/* Sprint review (docs/specs/31 §20.6): review strip, scope change, retro, 4-sprint trends. */
+  color: var(--muted);
+}
 .sr-review {
   display: grid;
   gap: 10px;
