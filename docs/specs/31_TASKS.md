@@ -999,3 +999,28 @@ trang `/tasks/overview`.
   `per_week`, `created`, `cycle_time_h`). Tab Sức khoẻ không có sprint đang chạy hiện khối này kèm link "Bắt
   đầu sprint" tới Backlog (Scrum) và nút "Tạo trang retro" cho sprint gần nhất. `GET .../health` vẫn trả
   `{"sprint": null}` như §19.5.
+
+## 21. Lộ trình đợt 3 (người dùng 2026-11-17: "codepulse-task-roadmap-v3 tiếp tục với file này")
+
+Nguồn: "CodePulse Task: Định hướng nâng cấp, đợt 3". Nhiều mục "còn tồn" đã có nhưng khó thấy (tuỳ chọn thông báo ở
+cuối trang Thông báo; khối Sức khoẻ ẩn hết khi task chưa có code; lệnh Ctrl+K chỉ khi đang mở task; sức chứa cần 3
+sprint đóng): đợt 3 làm chúng hiện rõ thay vì làm lại. Quyết định đã chốt:
+
+- **R2 vai trò tester:** cờ `users.is_tester` (hồ sơ, Người & Team) và cờ `teams.is_qa`; ai có cờ hoặc ở team QA
+  thì có `auto_role = tester`; bộ "Tester" chuyển thành bộ tự gán.
+- **R1b phạm vi Team cho quyền cấp dự án** (`tests.edit/approve/manage/delete`, `tasks.sprint/manage`): dự án mà
+  ít nhất một người trong team mình lead / manage đang được cấp quyền (project grant), trong dự án mình xem được.
+- **Thoát Jira:** CodePulse không khoá được Jira; làm phía CodePulse: cảnh báo commit / MR còn dùng mã Jira cũ,
+  công tắc "Ngừng dùng Jira" theo dự án, checklist bật Task cho Lead, nút tạo / xoá dữ liệu demo.
+- **Đo lường** ẩn danh: chỉ (vai trò, sự kiện, nơi, thời điểm), không lưu người và nội dung task.
+
+| Giai đoạn | Nội dung | Mục |
+|---|---|---|
+| 3.0 Đánh bóng | F1–F6, R2 | 21.0 |
+| 3.1 Một cái nhìn | Khối Sức khoẻ có màu tổng, Ctrl+K lệnh đầy đủ theo ngữ cảnh, tìm mờ không dấu, gần đây, `>` `#` `@` | 21.1 |
+| 3.2 Không bỏ sót | Trang Cài đặt thông báo, mặc định của tổ chức, cuối tuần yên lặng, nút "Bắt đầu" trên Telegram; đo lường sử dụng + bảng cho Admin | 21.2 |
+| 3.3 Kế hoạch | Tab Timeline theo Epic (+ nhiều dự án); lập sprint: sức chứa tay, tải theo người, kiểm tra trước khi bắt đầu | 21.3 |
+| 3.4 Tìm gì cũng thấy | Bộ lọc dạng chip có toán tử / nhóm HOẶC, trường mở rộng, chia sẻ / ghim / đăng ký, CSV, tìm toàn văn | 21.4 |
+| 3.4b Phân quyền còn lại | R1b, "Quyền của tôi" tự xem được, giải thích vì sao | 21.5 |
+| 3.5 Chuyển đổi | Cảnh báo mã Jira cũ, Ngừng dùng Jira, checklist, dữ liệu demo | 21.6 |
+| 4 Tin cậy | Đồng bộ thời gian thực Board / chi tiết, Hoàn tác 10 giây, di chuyển card bằng bàn phím | 21.7 |
