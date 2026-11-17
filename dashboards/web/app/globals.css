@@ -17145,3 +17145,106 @@ a.icon-btn {
 .sr-trend-flat {
   color: var(--muted);
 }
+
+/* Nine rules above were left unclosed by earlier merges (from .tk-health-muted, .th-load-bars,
+   .qk-sub-title, .tp-group-head, .qk-sub-more, a §20.1 list, .qa-crit-actions, .nr-log-table
+   tr.nr-dry td on): everything after them parses as nested CSS. Closed here so the section
+   below is top level again; the truncated bodies above still need restoring. */
+}
+}
+}
+}
+}
+}
+}
+}
+}
+
+/* ---- Tin cậy (docs/specs/31 §21.7): undo toast, keyboard card moves, contrast ---- */
+/* Small grey text reaches AA: dark --faint was 3.7:1 on a card (--surface) and --muted 4.1:1 on
+   chips (--primary-soft); light --faint was 2.9:1 on white. Raised to at least 4.5:1 on the
+   surfaces they sit on (light --faint 4.9 on white, dark --faint 5.9 / --muted 6.9 on a card). */
+:root {
+  --faint: #647288;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --muted: #a3aec0;
+    --faint: #94a1b5;
+  }
+}
+:root[data-theme="dark"] {
+  --muted: #a3aec0;
+  --faint: #94a1b5;
+}
+.lv-undo-wrap {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 85;
+  width: min(440px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.lv-undo {
+  position: relative;
+  overflow: hidden;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--info);
+  border-radius: var(--radius-field);
+  box-shadow: var(--shadow-lg);
+  font-size: 13px;
+  animation: lv-undo-in var(--duration-fast) var(--ease-standard);
+}
+.lv-undo-error {
+  border-left-color: var(--danger);
+}
+.lv-undo-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.lv-undo-btn {
+  flex: none;
+  font-weight: 600;
+}
+.lv-undo-timer {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 100%;
+  background: var(--info);
+  transform-origin: left;
+  animation: lv-undo-timer 10s linear forwards;
+}
+@keyframes lv-undo-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes lv-undo-timer {
+  to {
+    transform: scaleX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lv-undo,
+  .lv-undo-timer {
+    animation: none;
+  }
+}
+/* A card picked up with Space: lifted, with the focus ring kept visible. */
+.lv-kb-picked > .tk-card {
+  border-color: var(--ring);
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  box-shadow: var(--shadow-md);
+}

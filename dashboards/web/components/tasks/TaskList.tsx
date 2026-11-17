@@ -6,9 +6,11 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
 import { EmptyState, Loading, Message, Pagination, SortTh } from "@/components/ui";
+import { useUndo } from "@/components/UndoToast";
 import { api, qs, useApi } from "@/lib/api";
 import { date, relative } from "@/lib/format";
-import type { Me, TaskFilter, TaskPage, TaskSpace } from "@/lib/types";
+import type { Me, TaskFilter, TaskPage, TaskRow, TaskSpace } from "@/lib/types";
+import { useTaskLive } from "@/lib/useTaskLive";
 
 import {
   GitBadge,
@@ -35,6 +37,47 @@ import { SmartFilter } from "./SmartFilter";
 
 /* Danh sách (§13): every field as a filter, saved filters, sortable columns, bulk changes, paging. */
 
+type InverseCall = [url: string, body: Record<string, unknown>, method: "post" | "patch"];
+
+/**
+ * §21.7 undo of a bulk edit: per task, its previous value, grouped so that tasks sharing one go back
+ * in one /tasks/bulk call. A status goes back with the resolution it had (a done status closed for
+ * another reason than "Đã xong" gets that reason again).
+ */
+function bulkInverse(before: TaskRow[], set: Record<string, unknown>): InverseCall[] {
+  const calls: InverseCall[] = [];
+  const group = (value: (r: TaskRow) => unknown, changed: (r: TaskRow) => boolean, field: string) => {
+    const by = new Map<string, { value: unknown; keys: string[] }>();
+    for (const r of before.filter(changed)) {
+      const v = value(r);
+      const id = JSON.stringify(v ?? null);
+      const g = by.get(id) ?? { value: v ?? null, keys: [] };
+      g.keys.push(r.key);
+      by.set(id, g);
+    }
+    for (const g of by.values()) calls.push(["/tasks/bulk", { keys: g.keys, set: { [field]: g.value } }, "post"]);
+  };
+  if ("status_id" in set) {
+    group((r) => r.status.id, (r) => r.status.id !== set.status_id, "status_id");
+    for (const r of before)
+      if (r.status.id !== set.status_id && r.status.category === "done" && r.resolution && r.resolution !== "done")
+        calls.push([`/tasks/${encodeURIComponent(r.key)}`, { resolution: r.resolution }, "patch"]);
+  }
+  if ("assignee_id" in set) group((r) => r.assignee?.id ?? null, (r) => (r.assignee?.id ?? null) !== set.assignee_id, "assignee_id");
+  if ("priority" in set) group((r) => r.priority, (r) => r.priority !== set.priority, "priority");
+  if ("sprint_id" in set) group((r) => r.sprint_id, (r) => r.sprint_id !== set.sprint_id, "sprint_id");
+  if ("version_id" in set) group((r) => r.version_id, (r) => r.version_id !== set.version_id, "version_id");
+  for (const label of (set.labels_add as string[] | undefined) ?? []) {
+    const keys = before.filter((r) => !(r.labels ?? []).includes(label)).map((r) => r.key);
+    if (keys.length) calls.push(["/tasks/bulk", { keys, set: { labels_remove: [label] } }, "post"]);
+  }
+  for (const label of (set.labels_remove as string[] | undefined) ?? []) {
+    const keys = before.filter((r) => (r.labels ?? []).includes(label)).map((r) => r.key);
+    if (keys.length) calls.push(["/tasks/bulk", { keys, set: { labels_add: [label] } }, "post"]);
+  }
+  return calls;
+}
+
 // category and updated_from have no control of their own: only "Lọc nhanh" (§19.8) sets them.
 const FILTER_KEYS = ["q", "status", "type", "assignee", "priority", "sprint", "version", "label", "due", "category", "updated_from", "resolution"] as const;
 type FilterKey = (typeof FILTER_KEYS)[number];
@@ -60,6 +103,8 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
   const [message, setMessage] = useState<string | null>(null);
   const [labelText, setLabelText] = useState("");
   const [confirmEl, ask] = useConfirm();
+  const [undoEl, offerUndo] = useUndo();
+  useTaskLive(bp); // §21.7: the list follows others' changes without a reload
 
   // The search box waits for a pause in typing.
   useEffect(() => {
@@ -126,9 +171,26 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
     setBusy(true);
     setMessage(null);
     try {
-      await api.post("/tasks/bulk", { keys: [...selected], ...body });
+      const before = rows.filter((r) => selected.has(r.key));
+      const res = await api.post<{ skipped?: { key: string }[] }>("/tasks/bulk", { keys: [...selected], ...body });
       setMessage(`Đã ${what} ${selected.size} task.`);
       setSelected(new Set());
+      const set = (body as { set?: Record<string, unknown> }).set;
+      if (set && !body.delete) {
+        const skipped = new Set((res?.skipped ?? []).map((s) => s.key));
+        const calls = bulkInverse(before.filter((r) => !skipped.has(r.key)), set);
+        if (calls.length)
+          offerUndo({
+            text: `Đã ${what} ${before.length} task`,
+            undo: async () => {
+              try {
+                for (const [url, payload, method] of calls) await (method === "patch" ? api.patch(url, payload) : api.post(url, payload));
+              } finally {
+                await refreshTasks();
+              }
+            },
+          });
+      }
     } catch (e) {
       setMessage(`Lỗi: ${errorText(e)}`);
     }
@@ -148,6 +210,7 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
   return (
     <div className="tk-list">
       {confirmEl}
+      {undoEl}
       <section className="card">
         <SmartFilter
           bp={bp}

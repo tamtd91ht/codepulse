@@ -6,7 +6,9 @@ import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
 import { Markdown } from "@/components/Markdown";
 import { EmptyState, Loading, Message, Segmented } from "@/components/ui";
+import { useUndo } from "@/components/UndoToast";
 import { ApiError, api, useApi } from "@/lib/api";
+import { useTaskLive } from "@/lib/useTaskLive";
 import { dateTimeMin, relative } from "@/lib/format";
 import type { TaskDetail as Detail, TaskLinkKind, TaskPriority, TaskResolution, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
 
@@ -91,11 +93,29 @@ function Body({
   const path = `/tasks/${encodeURIComponent(task.key)}`;
   const canEdit = task.can.edit;
 
+  // §21.7: others' changes (and git rules) refresh this task live; a field change can be undone.
+  useTaskLive(bp);
+  const [undoEl, offerUndo] = useUndo();
+
   async function patch(body: Record<string, unknown>): Promise<boolean> {
     setMessage(null);
+    const back = previousOf(task, body);
     try {
       await api.patch(path, body);
       await refreshTasks();
+      if (JSON.stringify(back) !== JSON.stringify(body)) {
+        const names = Object.keys(body).map((k) => FIELD_NAME[k] ?? k);
+        offerUndo({
+          text: `Đã đổi ${names.join(", ")} của ${task.key}`,
+          undo: async () => {
+            try {
+              await api.patch(path, back);
+            } finally {
+              await refreshTasks();
+            }
+          },
+        });
+      }
       return true;
     } catch (e) {
       setMessage(`Lỗi: ${errorText(e)}`);
@@ -115,9 +135,20 @@ function Body({
     }
     if (!(await confirmDone(ask, task.git?.summary.open_critical ?? 0, target))) return;
     setMessage(null);
+    const back = { status_id: task.status.id, resolution: task.status.category === "done" ? (task.resolution ?? undefined) : undefined };
     try {
       await api.post(`${path}/transition`, { status_id: target.id, resolution, comment: comment || undefined });
       await refreshTasks();
+      offerUndo({
+        text: `Đã chuyển ${task.key} sang ${target.name}`,
+        undo: async () => {
+          try {
+            await api.post(`${path}/transition`, back);
+          } finally {
+            await refreshTasks();
+          }
+        },
+      });
       if (target.category === "done" && task.subtasks.some((s) => s.status.category !== "done")) {
         const open = await api.get<OpenSubtasks>(`${path}/open-subtasks`).catch(() => null);
         if (open?.ask && open.items.length) setClosingSubs({ items: open.items, resolution: resolution ?? "done" });
@@ -148,6 +179,7 @@ function Body({
   return (
     <div className="tk-detail">
       {confirmEl}
+      {undoEl}
       <ShortcutHelp />
       <div className="tk-detail-main">
         <div className="tk-detail-crumbs small muted">
@@ -222,6 +254,43 @@ function Body({
       </aside>
     </div>
   );
+}
+
+/** §21.7 undo: the names a field change is announced with. */
+const FIELD_NAME: Record<string, string> = {
+  title: "tiêu đề",
+  description: "mô tả",
+  type: "loại",
+  priority: "ưu tiên",
+  assignee_id: "người làm",
+  parent_key: "task cha",
+  resolution: "lý do đóng",
+  labels: "nhãn",
+  components: "thành phần",
+  story_points: "story point",
+  estimate_min: "ước lượng",
+  spent_min: "thời gian đã làm",
+  due_date: "hạn",
+  sprint_id: "sprint",
+  version_id: "phiên bản",
+  status_id: "trạng thái",
+  custom: "trường tuỳ chỉnh",
+};
+
+/** The values `body` replaces, as a PATCH body that puts them back. */
+function previousOf(task: Detail, body: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const row = task as unknown as Record<string, unknown>;
+  for (const k of Object.keys(body)) {
+    if (k === "assignee_id") out[k] = task.assignee?.id ?? null;
+    else if (k === "status_id") out[k] = task.status.id;
+    else if (k === "custom") {
+      const now = (body.custom ?? {}) as Record<string, unknown>;
+      const was = task.custom ?? {};
+      out[k] = { ...Object.fromEntries(Object.keys(now).map((id) => [id, null])), ...was };
+    } else out[k] = row[k] ?? null;
+  }
+  return out;
 }
 
 /* ---------- Left column ---------- */
