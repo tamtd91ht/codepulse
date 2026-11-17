@@ -39,6 +39,9 @@ RELATIONS = ("fixes", "refs")
 VIA = ("web", "git", "smart_commit", "mcp", "ai")
 FIELD_KINDS = ("text", "number", "date", "select", "user")
 BOARD_MODES = ("scrum", "kanban")
+# Where a sprint's capacity comes from (docs/specs/31 §21.3): the mean of the last 3 closed
+# sprints, or a number typed in by whoever plans it.
+CAPACITY_SOURCES = ("auto", "manual")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -122,6 +125,7 @@ class Sprint(TimestampMixin, Base):
             unique=True,
             postgresql_where="state = 'active'",
         ),
+        CheckConstraint(_in("capacity_source", CAPACITY_SOURCES), name="capacity_source"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -136,6 +140,9 @@ class Sprint(TimestampMixin, Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Story points in the sprint when it started (the burndown's top).
     committed_points: Mapped[Decimal | None] = mapped_column(Numeric(8, 1))
+    # Planning capacity (§21.3): "manual" uses capacity_points, "auto" the 3-sprint mean.
+    capacity_points: Mapped[Decimal | None] = mapped_column(Numeric(8, 1))
+    capacity_source: Mapped[str] = mapped_column(String(10), server_default="auto", default="auto")
 
 
 class TaskVersion(TimestampMixin, Base):

@@ -59,6 +59,7 @@ from app.api.routers import (
     task_dod_gaps,
     task_health,
     task_nlfilter,
+    task_planning,
     task_templates,
     task_timeline,
     tasks,
@@ -184,6 +185,7 @@ for api_router in (
     task_timeline.router,  # docs/specs/31 §20.1 /tasks/{key}/timeline
     task_criteria.router,  # docs/specs/31 §20.3 /tasks/{key}/criteria, before tasks
     task_dod_gaps.router,  # docs/specs/31 §21.1 /tasks/spaces/{bp}/dod-gaps, before tasks
+    task_planning.router,  # §21.3 /tasks/timeline, sprint plan / capacity / preflight
     tasks.router,  # docs/specs/31; its static paths come before /tasks/{key} inside
 ):
     app.include_router(api_router, prefix="/api/v1")
