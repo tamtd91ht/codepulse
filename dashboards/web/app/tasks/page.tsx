@@ -14,7 +14,7 @@ import { TaskList } from "@/components/tasks/TaskList";
 import { TaskReports } from "@/components/tasks/TaskReports";
 import { TaskTimeline } from "@/components/tasks/TaskTimeline";
 import { EnableSpace, TaskSettings } from "@/components/tasks/TaskSettings";
-import { AdoptionLink } from "@/components/tasks/TaskTemplates";
+import { type FrameMenuItem, type FrameTab, ProjectSwitcher, TaskFrame } from "@/components/tasks/TaskFrame";
 import { TaskVersions } from "@/components/tasks/TaskVersions";
 import { useTaskSpaces } from "@/components/tasks/taskParts";
 import { Drawer, EmptyState, Loading, PageHeader } from "@/components/ui";
@@ -28,16 +28,19 @@ import type { Me } from "@/lib/types";
  */
 
 type Tab = "board" | "backlog" | "timeline" | "list" | "reports" | "health" | "versions" | "settings";
-const TABS: { key: Tab; label: string; icon: "board" | "inbox" | "calendar" | "file" | "pulse" | "stethoscope" | "flag" | "settings" }[] = [
-  { key: "board", label: "Board", icon: "board" },
-  { key: "backlog", label: "Backlog", icon: "inbox" },
-  { key: "timeline", label: "Timeline", icon: "calendar" },
-  { key: "list", label: "Danh sách", icon: "file" },
-  { key: "reports", label: "Báo cáo", icon: "pulse" },
-  { key: "health", label: "Sức khoẻ sprint", icon: "stethoscope" },
-  { key: "versions", label: "Phiên bản", icon: "flag" },
-  { key: "settings", label: "Cài đặt", icon: "settings" },
+// The frame's order and digits (UI/UX §3.1, §7: 1…6); Timeline, not in that list, comes last on 7.
+// Cài đặt is the ⚙ menu at the end of the row, not a tab (§3.2).
+const TABS: (FrameTab & { key: Tab })[] = [
+  { key: "board", label: "Board", icon: "board", digit: 1 },
+  { key: "backlog", label: "Backlog", icon: "inbox", digit: 2 },
+  { key: "list", label: "Danh sách", icon: "file", digit: 3 },
+  { key: "reports", label: "Báo cáo", icon: "pulse", digit: 4 },
+  { key: "health", label: "Sức khoẻ", icon: "stethoscope", digit: 5 },
+  { key: "versions", label: "Phiên bản", icon: "flag", digit: 6 },
+  { key: "timeline", label: "Timeline", icon: "calendar", digit: 7 },
 ];
+const TAB_KEYS: Tab[] = [...TABS.map((t) => t.key), "settings"];
+const HELP = "Việc của dự án gắn với nhánh, commit, MR và điểm review: trạng thái chạy theo git";
 const LAST_SPACE = "cp:tasks:space";
 
 type Where = { space: number | null; tab: Tab; task: string | null };
@@ -63,7 +66,7 @@ function Tasks() {
   const params = useSearchParams();
   const where: Where = useMemo(() => {
     const s = params.get("space");
-    const tab = TABS.find((t) => t.key === params.get("tab"))?.key ?? "board";
+    const tab = TAB_KEYS.find((t) => t === params.get("tab")) ?? "board";
     const task = params.get("task");
     return { space: s && /^\d+$/.test(s) ? Number(s) : null, tab, task: task && /^[A-Za-z][A-Za-z0-9]*-\d+$/.test(task) ? task.toUpperCase() : null };
   }, [params]);
@@ -121,42 +124,29 @@ function Tasks() {
     );
 
   // Kanban (§19.6) has no Backlog tab: the Board already shows every open task.
-  const tabs = TABS.filter(
-    (t) => (t.key !== "settings" || !!space?.can_manage) && (t.key !== "backlog" || space?.board_mode !== "kanban"),
-  );
-  const tab = tabs.some((t) => t.key === where.tab) ? where.tab : "board";
+  const tabs = TABS.filter((t) => t.key !== "backlog" || space?.board_mode !== "kanban");
+  const tab: Tab = (where.tab === "settings" ? !!space?.can_manage : tabs.some((t) => t.key === where.tab)) ? where.tab : "board";
   const openTask = (key: string) => go({ task: key });
+  // ⚙ (§3.2, §4.10): the dự án's settings and Tình trạng bật Task, both rarely used.
+  const gear: FrameMenuItem[] = [
+    ...(space?.enabled && space.can_manage
+      ? [{ key: "settings", label: "Cài đặt Task của dự án", icon: "settings" as const, active: tab === "settings", run: () => go({ tab: "settings" }) }]
+      : []),
+    ...(can(me, "tasks.manage") || can(me, "admin.projects") ? [{ key: "adoption", label: "Tình trạng bật Task", icon: "pulse" as const, href: "/tasks/adoption" }] : []),
+  ];
 
   return (
     <>
-      <PageHeader
-        title="Task"
-        subtitle="Việc của dự án gắn với nhánh, commit, MR và điểm review: trạng thái chạy theo git"
-        actions={
-          <>
-            <Link href="/tasks/me" className="button">
-              <Icon name="user" size={16} /> Việc của tôi
-            </Link>
-            <AdoptionLink me={me} />
-            <label className="adm-field tc-project">
-              <span className="small muted">Dự án</span>
-              <select value={spaceId ?? ""} onChange={(e) => go({ space: Number(e.target.value), task: null })} disabled={!spaces.data}>
-                {(spaces.data ?? []).map((s) => (
-                  <option key={s.business_project_id} value={s.business_project_id}>
-                    {s.name}
-                    {s.key ? ` (${s.key})` : " · chưa bật"}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {space?.enabled && space.can_create && (
-              <button type="button" className="primary tk-create-btn" onClick={() => setCreating(true)}>
-                <Icon name="plus" size={16} /> Tạo task
-              </button>
-            )}
-          </>
-        }
-      />
+    <TaskFrame
+      crumb={<ProjectSwitcher spaces={spaces.data} value={space} onChange={(id) => go({ space: id, task: null })} />}
+      help={HELP}
+      tabs={space?.enabled ? tabs : undefined}
+      tab={tab}
+      onTab={(key) => go({ tab: key as Tab })}
+      menu={gear}
+      settingsActive={tab === "settings"}
+      create={space?.enabled && space.can_create ? { run: () => setCreating(true) } : null}
+    >
       {!spaces.data ? (
         <Loading error={spaces.error} rows={6} />
       ) : !space ? (
@@ -171,14 +161,6 @@ function Tasks() {
         )
       ) : (
         <>
-          <nav className="tabs page-tabs" aria-label="Task">
-            {tabs.map((t) => (
-              <button key={t.key} type="button" className={tab === t.key ? "active" : undefined} aria-current={tab === t.key ? "page" : undefined} onClick={() => go({ tab: t.key })}>
-                <Icon name={t.icon} size={16} />
-                {t.label}
-              </button>
-            ))}
-          </nav>
           {tab === "board" ? (
             <TaskBoard key={space.business_project_id} space={space} me={me} onOpen={openTask} />
           ) : tab === "backlog" ? (
@@ -198,6 +180,7 @@ function Tasks() {
           )}
         </>
       )}
+    </TaskFrame>
       {creating && space && (
         <TaskCreate
           space={space}

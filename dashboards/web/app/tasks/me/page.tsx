@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
-
 import { MyWork } from "@/components/tasks/MyWork";
+import { TaskFrame } from "@/components/tasks/TaskFrame";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { can, useApi } from "@/lib/api";
 import type { Me } from "@/lib/types";
@@ -20,13 +19,14 @@ export default function MyWorkPage() {
       </>
     );
   return (
-    <>
-      <PageHeader
-        eyebrow={<Link href="/tasks">Task</Link>}
-        title="Việc của tôi"
-        subtitle="Việc cần xử lý ngay, task của bạn theo trạng thái và tiến độ sprint; tự làm mới mỗi phút"
-      />
+    <TaskFrame
+      crumb="Việc của tôi"
+      help="Việc cần xử lý ngay, task của bạn theo trạng thái và tiến độ sprint; tự làm mới mỗi phút"
+      menu={can(me, "tasks.manage") || can(me, "admin.projects") ? [{ key: "adoption", label: "Tình trạng bật Task", icon: "pulse", href: "/tasks/adoption" }] : undefined}
+      mine="current"
+      create={can(me, "tasks.create") ? { href: "/tasks?create=1" } : null}
+    >
       <MyWork />
-    </>
+    </TaskFrame>
   );
 }

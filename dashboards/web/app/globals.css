@@ -18506,3 +18506,395 @@ button.hb-item:hover {
     display: none;
   }
 }
+/* UI/UX frame (docs/specs/31 §22.1): one 48 px row pinned under the top bar on every Task screen
+   (TaskFrame). The variables size the screens below it:
+     --tk-head-h       the frame row (48 px)
+     --tk-bar-h        the filter toolbar a screen puts first (40 px, UI/UX §3.3)
+     --tk-gap          space between the frame, the toolbar and the main view
+     --tk-pad-x        side padding of a Task page: 16 px, 24 px from 1440 px
+     --tk-pad-b        bottom padding of a Task page
+     --tk-bar-top      sticky `top` for the toolbar row (just under the frame)
+     --tk-frame-h      all chrome around a main view that sits under a toolbar
+     --tk-view-h       = 100dvh - --tk-frame-h: the height a Board / List table / Backlog takes
+     --tk-view-h-full  the same for a screen with no toolbar row */
+:root {
+  --tk-head-h: 48px;
+  --tk-bar-h: 40px;
+  --tk-gap: 8px;
+  --tk-pad-x: 16px;
+  --tk-pad-b: 12px;
+  --tk-bar-top: calc(var(--topbar-h) + var(--tk-head-h));
+  --tk-frame-h: calc(var(--topbar-h) + var(--tk-head-h) + var(--tk-gap) + var(--tk-bar-h) + var(--tk-gap) + var(--tk-pad-b));
+  --tk-view-h: calc(100dvh - var(--tk-frame-h));
+  --tk-view-h-full: calc(100dvh - var(--topbar-h) - var(--tk-head-h) - var(--tk-gap) - var(--tk-pad-b));
+}
+@media (min-width: 1440px) {
+  :root {
+    --tk-pad-x: 24px;
+  }
+}
+
+/* A Task page uses the whole width (no 1480 px cap, UI/UX §5) and no footer under its view. */
+main:has(.tf-page) {
+  padding: 0 var(--tk-pad-x) var(--tk-pad-b);
+}
+main:has(.tf-page) > .page {
+  max-width: none;
+}
+main:has(.tf-page) > footer.notice {
+  display: none;
+}
+
+.tf-frame {
+  position: sticky;
+  top: var(--topbar-h);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: var(--tk-head-h);
+  margin: 0 calc(-1 * var(--tk-pad-x));
+  padding: 0 var(--tk-pad-x);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.tf-body {
+  padding-top: var(--tk-gap);
+  min-width: 0;
+}
+
+/* Breadcrumb: Task / <Dự án> ▾  ? */
+.tf-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 1 auto;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tf-crumb-root {
+  color: var(--muted);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+.tf-crumb-root:hover {
+  color: var(--text);
+}
+.tf-crumb-sep {
+  color: var(--faint);
+  font-weight: 400;
+}
+.tf-crumb-here {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tf-switch {
+  position: relative;
+  min-width: 0;
+}
+button.tf-crumb-btn {
+  height: 32px;
+  max-width: 280px;
+  gap: 6px;
+  padding: 0 8px;
+  border-color: transparent;
+  background: none;
+  box-shadow: none;
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text);
+}
+button.tf-crumb-btn:hover:not(:disabled),
+button.tf-crumb-btn[aria-expanded="true"] {
+  background: var(--surface-hover);
+  border-color: transparent;
+}
+.tf-crumb-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tf-crumb-key {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.tf-crumb-off {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+.tf-crumb-root:focus-visible,
+button.tf-crumb-btn:focus-visible,
+.tf-tab:focus-visible,
+.tf-menu-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+/* `?`: the page's description as a wrapping tooltip. */
+.tf-help {
+  position: relative;
+  display: inline-flex;
+}
+.tf-help-btn.icon-btn {
+  width: 24px;
+  height: 24px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 50%;
+}
+.tf-help-tip {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 35;
+  width: max-content;
+  max-width: 320px;
+  padding: 8px 10px;
+  border-radius: var(--radius-small);
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  white-space: normal;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+}
+.tf-help:hover .tf-help-tip,
+.tf-help:focus-within .tf-help-tip {
+  display: block;
+}
+
+/* Underline tabs, 14 px, on the same row. */
+.tf-tabs {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+button.tf-tab {
+  height: 100%;
+  padding: 0 10px;
+  gap: 6px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  margin-bottom: -1px;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+button.tf-tab:hover:not(:disabled) {
+  color: var(--text);
+  background: none;
+}
+button.tf-tab:active:not(:disabled) {
+  transform: none;
+}
+button.tf-tab.active {
+  color: var(--primary-text);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+button.tf-icon-tab {
+  padding: 0 8px;
+}
+.tf-menu {
+  position: relative;
+  display: flex;
+}
+.tf-gear {
+  margin-left: 4px;
+}
+/* "Thêm ▾" only when tabs overflow (under 1280 px). */
+.tf-more {
+  display: none;
+}
+
+/* Popovers: project switcher, ⚙, Thêm. */
+.tf-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 35;
+  min-width: 220px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  animation: tf-pop-in var(--duration-fast) ease-out;
+}
+.tf-gear .tf-pop,
+.tf-more .tf-pop {
+  left: auto;
+  right: 0;
+}
+@keyframes tf-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tf-pop {
+    animation: none;
+  }
+}
+.tf-pop-menu {
+  display: flex;
+  flex-direction: column;
+}
+a.tf-menu-item,
+button.tf-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: none;
+  box-shadow: none;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+a.tf-menu-item:hover,
+button.tf-menu-item:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+button.tf-menu-item.active {
+  font-weight: 600;
+}
+.tf-menu-check {
+  margin-left: auto;
+  color: var(--primary-text);
+}
+.tf-pop-switch {
+  width: 300px;
+  max-height: 420px;
+  display: flex;
+  flex-direction: column;
+}
+.tf-pop-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 6px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.tf-pop-search input:not([type="checkbox"]) {
+  flex: 1;
+  height: 32px;
+  min-width: 0;
+}
+.tf-pop-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0 0;
+  overflow-y: auto;
+}
+.tf-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: var(--radius-small);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 400;
+}
+.tf-option.hi {
+  background: var(--surface-hover);
+}
+.tf-option[aria-selected="true"] {
+  font-weight: 600;
+}
+.tf-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tf-option-key {
+  color: var(--muted);
+  font-size: 12px;
+}
+.tf-option-empty {
+  padding: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Right side: Của tôi, + Tạo. */
+.tf-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: none;
+}
+a.button.tf-mine.active {
+  background: var(--primary-soft);
+  border-color: var(--primary-soft);
+  color: var(--primary-text);
+}
+
+/* Narrow (UI/UX §6): under 1280 px the 4th tab on goes to "Thêm ▾" (the active one stays). */
+@media (max-width: 1279px) {
+  .tf-tab[data-over]:not(.active) {
+    display: none;
+  }
+  .tf-more {
+    display: flex;
+  }
+  .tf-more .tf-narrow-only {
+    display: none;
+  }
+}
+/* Under 768 px only the active tab stays in the row; the button labels hide. */
+@media (max-width: 767px) {
+  .tf-frame {
+    gap: 8px;
+  }
+  .tf-tab:not(.tf-menu-btn):not(.active) {
+    display: none;
+  }
+  .tf-more .tf-narrow-only {
+    display: flex;
+  }
+  button.tf-crumb-btn {
+    max-width: 160px;
+  }
+  .tf-crumb-key,
+  .tf-help,
+  .tf-btn-text {
+    display: none;
+  }
+}
+
+@media print {
+  .tf-frame {
+    position: static;
+  }
+  body:has(.tc-reports) .tf-frame {
+    display: none;
+  }
+}
