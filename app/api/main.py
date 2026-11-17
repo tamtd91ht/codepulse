@@ -58,6 +58,7 @@ from app.api.routers import (
     task_criteria,
     task_dod_gaps,
     task_health,
+    task_live,
     task_nlfilter,
     task_planning,
     task_search,
@@ -192,6 +193,7 @@ for api_router in (
     task_dod_gaps.router,  # docs/specs/31 §21.1 /tasks/spaces/{bp}/dod-gaps, before tasks
     task_planning.router,  # §21.3 /tasks/timeline, sprint plan / capacity / preflight
     task_switchover.router,  # docs/specs/31 §21.6 /tasks/spaces/{id}/switchover, demo
+    task_live.router,  # docs/specs/31 §21.7 /tasks/spaces/{bp}/live (SSE), before tasks
     tasks.router,  # docs/specs/31; its static paths come before /tasks/{key} inside
     usage.router,  # docs/specs/31 §21.2: anonymous usage beacon and the admins' summary
 ):

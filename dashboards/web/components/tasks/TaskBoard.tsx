@@ -1,11 +1,13 @@
 "use client";
 
-import { type DragEvent, useEffect, useMemo, useState } from "react";
+import { type DragEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { type MultiOption, MultiSelect } from "@/components/MultiSelect";
 import { Alert, Avatar, EmptyState, Loading } from "@/components/ui";
+import { useUndo } from "@/components/UndoToast";
 import { api, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
+import { useTaskLive } from "@/lib/useTaskLive";
 import type { Me, TaskDodGaps, TaskPage, TaskPerson, TaskResolution, TaskRow, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
 
 import { selectCard, useCardSelected } from "./cardSelection";
@@ -207,6 +209,29 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
   const [local, setLocal] = useState<TaskRow[] | null>(null);
   useEffect(() => setLocal(null), [loaded]);
   const rows = local ?? loaded;
+  // §21.7: changes by others, git rules and automation reach the board without a reload.
+  useTaskLive(bp);
+  const [undoEl, offerUndo] = useUndo();
+  // §21.7 dev-only: how long the first load of the board takes (target < 1.5 s for 500 tasks).
+  const firstLoad = useRef(false);
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production" || typeof performance === "undefined") return;
+    if (!firstLoad.current) performance.mark("tk-board-start");
+  }, []);
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production" || !loaded || firstLoad.current || typeof performance === "undefined") return;
+    firstLoad.current = true;
+    const n = loaded.length;
+    requestAnimationFrame(() => {
+      performance.mark("tk-board-ready");
+      try {
+        const m = performance.measure("tk-board-first-load", "tk-board-start", "tk-board-ready");
+        console.info(`[tk-board] first load: ${n} task, ${Math.round(m.duration)} ms`);
+      } catch {
+        /* the start mark was cleared */
+      }
+    });
+  }, [loaded]);
 
   const [filters, setFilters] = useState<BoardFilters>({ assignees: [], priorities: [], type: "", label: "", mine: false });
   const [pinnedKeys, setPinnedKeys] = useState<Set<string> | null>(null);
@@ -403,6 +428,15 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
       return;
     }
     if (!(await confirmDone(ask, task.git?.open_critical ?? 0, target))) return;
+    // §21.7 undo: where it was (status with its resolution, the cards around it).
+    const from = all.filter((t) => t.status.id === task.status.id).sort(byRank);
+    const at = from.findIndex((t) => t.key === key);
+    const back = {
+      status_id: task.status.id,
+      resolution: task.status.category === "done" ? (task.resolution ?? undefined) : undefined,
+      before_key: from[at + 1]?.key ?? null,
+      after_key: from[at - 1]?.key ?? null,
+    };
     const moved: TaskRow = { ...task, status: { id: target.id, name: target.name, category: target.category } };
     const ordered = [...rest.slice(0, index), moved, ...rest.slice(index)].map((t, i) => ({ ...t, rank: i }));
     const byKey = new Map(ordered.map((t) => [t.key, t]));
@@ -411,11 +445,139 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
     try {
       await api.post(`/tasks/${encodeURIComponent(key)}/move`, { status_id: statusId, before_key, after_key });
       if (target.category === "done" && task.status.category !== "done") setClosed(key);
+      offerUndo({
+        text: task.status.id === statusId ? `Đã đổi thứ tự ${key} trong “${target.name}”` : `Đã chuyển ${key} sang ${target.name}`,
+        undo: async () => {
+          setClosed((c) => (c === key ? null : c));
+          try {
+            await api.post(`/tasks/${encodeURIComponent(key)}/move`, back);
+          } finally {
+            await refreshTasks();
+          }
+        },
+      });
     } catch (e) {
       setError(`Lỗi: ${errorText(e)}`);
       setLocal(null);
     }
     await refreshTasks();
+  }
+
+  // -- keyboard moves (§21.7): Space picks a card up, arrows move it, Space drops, Esc cancels ----
+  const [announce, setAnnounce] = useState("");
+  const [kb, setKbState] = useState<{ key: string; lane: string } | null>(null);
+  // Read by blur handlers, which may run before the state update renders.
+  const kbRef = useRef(kb);
+  const setKb = (v: { key: string; lane: string } | null) => {
+    kbRef.current = v;
+    setKbState(v);
+  };
+  const refocus = useRef<string | null>(null);
+  useEffect(() => {
+    const key = refocus.current;
+    if (!key) return;
+    const el = document.querySelector<HTMLElement>(`[data-kb-card="${CSS.escape(key)}"] .tk-card-title`);
+    if (el) {
+      el.focus();
+      refocus.current = null;
+    }
+  }, [rows]);
+
+  /** Cards of one lane in one column, by rank, without `skip`. */
+  const laneColumn = (laneId: string, statusId: number, skip: string) =>
+    (lanes.find((l) => l.id === laneId)?.rows ?? []).filter((t) => t.status.id === statusId && t.key !== skip).sort(byRank);
+
+  function place(key: string, laneId: string, statusId: number, index: number) {
+    const list = laneColumn(laneId, statusId, key);
+    const i = Math.max(0, Math.min(index, list.length));
+    // At a lane's end: the column's end (a lane is a rank-ordered part of the column).
+    setOver({ status: statusId, before: list[i]?.key ?? null, lane: laneId });
+    const name = statuses.find((s) => s.id === statusId)?.name ?? "";
+    setAnnounce(`${key}: cột ${name}, vị trí ${i + 1} trên ${list.length + 1}.`);
+  }
+
+  function cancelKb(say = true) {
+    const was = kbRef.current;
+    if (say && was) setAnnounce(`Đã huỷ di chuyển ${was.key}.`);
+    setKb(null);
+    setDrag(null);
+    setOver(null);
+  }
+
+  function focusCard(el: Element | null | undefined) {
+    el?.querySelector<HTMLElement>(".tk-card-title")?.focus();
+  }
+
+  function onCardKey(e: KeyboardEvent<HTMLElement>, t: TaskRow, laneId: string) {
+    const card = (e.target as HTMLElement).closest(".tk-card");
+    if (!card || !e.currentTarget.contains(card) || e.altKey || e.ctrlKey || e.metaKey) return;
+    const picked = kb?.key === t.key;
+    if (e.key === " " || e.key === "Spacebar") {
+      e.preventDefault();
+      if (e.repeat) return;
+      if (!picked) {
+        if (kb) cancelKb(false);
+        setKb({ key: t.key, lane: laneId });
+        setDrag({ key: t.key, from: t.status.id });
+        const list = laneColumn(laneId, t.status.id, "");
+        const i = list.findIndex((x) => x.key === t.key);
+        setOver({ status: t.status.id, before: list[i + 1]?.key ?? null, lane: laneId });
+        setAnnounce(`Đã nhấc ${t.key} ở cột ${t.status.name}, vị trí ${i + 1} trên ${list.length}. Mũi tên để di chuyển, Space để thả, Esc để huỷ.`);
+        return;
+      }
+      const target = over ?? { status: t.status.id, before: null };
+      cancelKb(false);
+      const name = statuses.find((s) => s.id === target.status)?.name ?? "";
+      setAnnounce(`Đã thả ${t.key} vào cột ${name}.`);
+      refocus.current = t.key;
+      void move(t.key, target.status, target.before);
+      return;
+    }
+    if (e.key === "Escape" && picked) {
+      e.preventDefault();
+      cancelKb();
+      return;
+    }
+    if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    e.preventDefault();
+    if (picked) {
+      const statusId = over?.status ?? t.status.id;
+      const list = laneColumn(laneId, statusId, t.key);
+      const index = over?.before ? Math.max(0, list.findIndex((x) => x.key === over.before)) : list.length;
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        place(t.key, laneId, statusId, index + (e.key === "ArrowUp" ? -1 : 1));
+        return;
+      }
+      const step = e.key === "ArrowLeft" ? -1 : 1;
+      const at = statuses.findIndex((s) => s.id === statusId);
+      for (let i = at + step; i >= 0 && i < statuses.length; i += step) {
+        if (canMoveTo(statuses, t.status.id, statuses[i].id)) {
+          place(t.key, laneId, statuses[i].id, index);
+          return;
+        }
+      }
+      setAnnounce(`Không có cột nào ${step < 0 ? "bên trái" : "bên phải"} mà ${t.key} chuyển tới được.`);
+      return;
+    }
+    // Not picked up: arrows walk between cards (up / down in a column, left / right across).
+    const wrap = e.currentTarget;
+    const col = wrap.closest(".tk-col");
+    const cardsIn = (c: Element | null | undefined) => [...(c?.querySelectorAll("[data-kb-card]") ?? [])];
+    const mine = cardsIn(col);
+    const i = mine.indexOf(wrap);
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      focusCard(mine[i + (e.key === "ArrowUp" ? -1 : 1)]);
+      return;
+    }
+    const cols = [...(wrap.closest(".tk-board")?.querySelectorAll(":scope > .tk-col") ?? [])];
+    const step = e.key === "ArrowLeft" ? -1 : 1;
+    for (let c = cols.indexOf(col as Element) + step; c >= 0 && c < cols.length; c += step) {
+      const there = cardsIn(cols[c]);
+      if (there.length) {
+        focusCard(there[Math.min(i, there.length - 1)]);
+        return;
+      }
+    }
   }
 
   const onCardDragOver = (e: DragEvent<HTMLElement>, statusId: number, list: TaskRow[], i: number, laneId: string) => {
@@ -439,6 +601,13 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
     <div className="tk-board-wrap">
       {confirmEl}
       <SwitchoverBoardNote space={space} />
+      {undoEl}
+      <p className="sr-only" id="lv-kb-help">
+        Board: Tab tới một card, mũi tên để đi giữa các card. Space nhấc card lên, mũi tên chuyển cột hoặc vị trí, Space thả, Esc huỷ.
+      </p>
+      <div className="sr-only" role="status" aria-live="assertive" aria-atomic="true">
+        {announce}
+      </div>
       <div className="rq-grid tk-filters">
         <label className="rq-field">
           <span className="rq-label">Người làm</span>
@@ -588,7 +757,19 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
                       </header>
                       <div className="tk-col-body">
                         {tasks.map((t, i) => (
-                          <div key={t.key}>
+                          <div
+                            key={t.key}
+                            data-kb-card={t.key}
+                            className={kb?.key === t.key ? "lv-kb-picked" : undefined}
+                            onKeyDown={(e) => onCardKey(e, t, ln.id)}
+                            onKeyUp={(e) => {
+                              // Space picks up / drops: it must not also press the card's title button.
+                              if (e.key === " " && (e.target as HTMLElement).closest(".tk-card")) e.preventDefault();
+                            }}
+                            onBlur={(e) => {
+                              if (kbRef.current?.key === t.key && !e.currentTarget.contains(e.relatedTarget as Node)) cancelKb();
+                            }}
+                          >
                             {here && over?.before === t.key && drag?.key !== t.key && <div className="tk-drop-line" />}
                             <TaskCard
                               task={t}

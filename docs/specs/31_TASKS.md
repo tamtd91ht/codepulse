@@ -1344,3 +1344,63 @@ CodePulse không khoá được Jira (việc của admin Jira); phía CodePulse 
   (không bị cascade); sprint / phiên bản demo chỉ xoá khi không còn task nào (tạo lại thì dùng lại sprint demo còn sót). Có hộp xác nhận.
 - Chưa làm: tuỳ chọn tắt thông báo "Dùng mã mới" theo dự án; số ngày sẵn sàng (14) và cửa sổ danh sách (7) chưa chỉnh
   được trên màn hình.
+### 21.7 Tin cậy
+
+Không migration. Mã: `app/tasks/live.py` (mới), `app/tasks/__init__.py`, `app/api/routers/task_live.py` (mới),
+`dashboards/web/lib/useTaskLive.ts` (mới), `dashboards/web/components/UndoToast.tsx` (mới), `TaskBoard.tsx`,
+`TaskDetail.tsx`, `TaskList.tsx`, cuối `globals.css` (tiền tố `lv-`). Test: `tests/api/test_task_live.py`.
+
+- **Đồng bộ thời gian thực** `GET /tasks/spaces/{bp}/live` (Server-Sent Events; 404 khi không có `tasks.view`
+  trên dự án hoặc dự án chưa bật Task, 401 khi chưa đăng nhập). Sự kiện `ready` lúc mở, rồi mỗi thay đổi một
+  sự kiện `task`: `{type: "task", key, changed: [...]}`; `changed` là tên cột của task đã đổi (`status_id`,
+  `rank`, `sprint_id`, `title`…, bỏ `updated_at`), hoặc `created` / `deleted`, hoặc `comment`, `git`,
+  `worklog`, `attachment`, `links`, `watchers` cho dòng con thêm / sửa / xoá. Không cần gọi ở từng chỗ sửa:
+  `live.py` nghe `after_flush` của mọi Session (đăng ký khi import `app.tasks`, như `app/tasks/dpi.py`), gom
+  theo (dự án, mã task) trong `session.info`, và **sau khi transaction ngoài cùng commit** đẩy lên Redis kênh
+  `codepulse:tasks` (pipeline, client riêng timeout 2 giây); rollback thì bỏ. SAVEPOINT được release không
+  đẩy (chờ commit ngoài cùng); SAVEPOINT rollback trả về những gì đã ghi nhận lúc nó bắt đầu (như
+  `app/audit_trail.py`), nên task bị bỏ qua trong thao tác hàng loạt không được báo. Hơn 50 task của một dự án
+  trong một commit (sửa hàng loạt, import, rải lại rank khi kéo) gộp thành một sự kiện
+  `{type: "space", key: "*", changed}`: trình duyệt tải lại task của dự án một lần. **Giới hạn đã chấp nhận:**
+  câu `UPDATE` hàng loạt kiểu Core (đổi / xoá trạng thái, ánh xạ lại ưu tiên, xoá sprint) không qua flush nên
+  không phát sự kiện; đó là thay đổi cấu hình, Board cập nhật ở lần tải sau. Nhờ vậy quy tắc git, tự động
+  hoá, import, thao tác hàng loạt đều phát sự kiện như người sửa trên web. Redis lỗi: ghi cảnh báo và **nghỉ
+  30 giây** không thử lại (không để mỗi request chờ timeout); chỉ mất đẩy trực tiếp, dữ liệu không ảnh hưởng.
+  Mỗi tiến trình API một subscription, chia theo dự án (`live.Hub`, như hộp thư spec 24). Luồng tự đóng sau
+  10 phút (ping mỗi 15 giây), trình duyệt nối lại và **kiểm quyền lại**, nên người mất quyền thôi nhận trong
+  vài phút; không replay: nối lại sau khi rớt thì tải lại mọi thứ của dự án một lần.
+  - Giao diện: `useTaskLive(bp)` dùng chung **một** EventSource cho mỗi dự án trong trang (Board, Danh sách,
+    chi tiết task đang mở). Sự kiện gom 400 ms rồi `mutate` SWR các khoá: danh sách `/tasks?…space=BP…`,
+    `/tasks/my-work`, task `/tasks/KEY` và các khoá con `/tasks/KEY/…`, `/tasks/spaces/BP/sprints|epics`.
+    Rớt kết nối: thử lại sau 1 s, 2 s, 4 s … tối đa 60 s; nhận `ready` thì về lại 1 s.
+- **Hoàn tác 10 giây** (`useUndo()` trong `UndoToast.tsx`): toast góc dưới trái "Đã chuyển OCX-2 sang Đang
+  làm · Hoàn tác", thanh thời gian 10 giây, Ctrl+Z (ngoài ô nhập) cũng hoàn tác; một thay đổi mới thay toast cũ
+  (chỉ hoàn tác được thay đổi gần nhất). Hoàn tác bằng lệnh ngược, không có API riêng:
+  - kéo thả / di chuyển bằng phím trên Board: `POST /tasks/{key}/move` với trạng thái cũ (kèm **lý do đóng**
+    cũ khi trạng thái cũ là "xong") và hai card kề cũ (`before_key` / `after_key`); đổi sprint không có trên
+    Board (Backlog không thuộc đợt này);
+  - đổi trường ở chi tiết task: `PATCH` các trường đó về giá trị cũ (trường tuỳ chỉnh mới thêm về `null`);
+    đổi trạng thái ở chi tiết: `POST /transition` về trạng thái cũ kèm lý do cũ. Không đổi gì thì không hiện
+    toast;
+  - thao tác hàng loạt ở Danh sách: theo từng task, giá trị cũ gom theo giá trị để mỗi nhóm một lần
+    `POST /tasks/bulk`; trạng thái cũ là "xong" với lý do khác "Đã xong" thì `PATCH resolution` thêm; nhãn thêm
+    thì bỏ ở task trước đó chưa có, nhãn bỏ thì thêm lại ở task trước đó có; task bị bỏ qua (luồng chuyển,
+    critical, DoD) không hoàn tác. Chỉ task trên trang đang xem mới biết giá trị cũ.
+  - Hoàn tác vẫn qua luồng chuyển trạng thái và cổng critical / DoD; bị chặn thì toast ghi "Không hoàn tác
+    được: …". **Xoá giữ hộp xác nhận**, không hoàn tác (không xoá mềm, §20).
+- **Bàn phím trên Board**: Tab tới card (nút tiêu đề), mũi tên lên / xuống đi giữa card trong cột, trái / phải
+  sang cột bên cạnh có card. `Space` nhấc card (viền và vòng focus), mũi tên trái / phải chuyển tới cột kế tiếp
+  **mà luồng chuyển cho phép** (cột không cho phép bị bỏ qua và mờ đi như khi kéo), lên / xuống đổi vị trí
+  (vạch thả hiện như khi kéo), `Space` thả (cùng hàm và API với kéo thả, có Hoàn tác), `Esc` hoặc rời focus
+  huỷ. Vùng `aria-live` đọc tiếng Việt: "Đã nhấc OCX-2 ở cột Cần làm, vị trí 1 trên 4…", "OCX-2: cột Đang làm,
+  vị trí 2 trên 3.", "Đã thả OCX-2 vào cột Đang làm.", "Đã huỷ di chuyển OCX-2."; đoạn hướng dẫn ẩn cho trình
+  đọc màn hình. Có swimlane thì di chuyển trong lane của card; cuối lane là cuối cột.
+- **Tương phản** (chỉ đổi token, áp cho mọi màn hình): tối `--faint` #6f7d94 → #94a1b5 (3,7 → 5,9 : 1 trên
+  card), `--muted` #8e9aad → #a3aec0 (4,1 → 5,2 : 1 trên chip `--primary-soft`); sáng `--faint` #8e9aad →
+  #647288 (2,9 → 4,9 : 1 trên nền trắng). Chữ xám nhỏ của màn hình Task dùng hai token này.
+- **Đo tải Board**: bản dev ghi `performance.mark` lúc Board mount và khi lần tải đầu có dữ liệu, log
+  `[tk-board] first load: N task, X ms` (bản production không chạy). Đo 2026-11-17 phía máy chủ với 500 task
+  (PostgreSQL 16 trong Docker, máy dev Windows): ba truy vấn cột của Board (`category=todo|doing|done`,
+  `limit=500`) chạy **nối tiếp** hết 325–407 ms, trình duyệt gọi song song nên ít hơn; cộng một lượt
+  `/sprints` trước đó. Còn thời gian vẽ 500 card ở trình duyệt: đọc từ log dev khi chạy trên dữ liệu thật;
+  mục tiêu < 1,5 giây.
