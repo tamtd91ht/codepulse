@@ -21152,7 +21152,7 @@ input.fb-cell-edit {
 /* "Không có task khớp" over the (still droppable) columns; notes float at the bottom. */
 .bd-nomatch {
   position: absolute;
-  top: 56px;
+  top: 96px;
   left: 50%;
   z-index: 3;
   display: flex;
@@ -21239,6 +21239,15 @@ input.fb-cell-edit {
   }
   .bd-pins {
     display: none;
+  }
+  /* Guard: until the bar has its own narrow layout, a too-wide bar scrolls in place rather than
+     widening the page (which would break the column swipe). */
+  .bd-screen {
+    min-width: 0;
+  }
+  .bd-screen > .fb-bar {
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {
