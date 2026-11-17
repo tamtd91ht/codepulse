@@ -1417,3 +1417,36 @@ Không migration. Mã: `app/tasks/live.py` (mới), `app/tasks/__init__.py`, `ap
   có cờ hoặc đang ở team QA → `auto_role = tester`. Migration biến bộ "Tester" tự tạo thành bộ dựng sẵn
   tự gán: team đang được gán bộ đó → `is_qa`, người được gán tay → `is_tester`, các dòng gán cũ bị xoá
   (downgrade trả lại). Không ai tự bật cờ cho mình hoặc cho team mình đang ở/lead/manage (trừ admin).
+
+### 22.1 Khung trang
+
+Bước 1 của chuẩn hoá UI/UX (codepulse-task-uiux §3.1, §3.2, §5, §6, §7, §4.10): mọi màn Task
+(`/tasks`, `/tasks/me`, `/tasks/overview`, `/tasks/adoption`) dùng chung một component
+`components/tasks/TaskFrame.tsx`.
+
+- **Một hàng 48 px, ghim** ngay dưới thanh trên cùng: breadcrumb `Task / <Dự án> ▾` (nút `?` mang
+  phụ đề cũ dạng tooltip), tab gạch chân 14 px, ⚙ ở cuối hàng tab, bên phải `Của tôi` (→ `/tasks/me`)
+  và nút xanh `+ Tạo`. Bỏ `PageHeader`, nhãn "Dự án" và ô `<select>`.
+- **Đổi dự án** bằng popover dưới tên dự án: ô tìm (không dấu, theo tên hoặc mã), ↑↓ / Enter / Esc,
+  dự án chưa bật ghi "chưa bật" xám; breadcrumb ghi "· chưa bật" thay cho hàng thông báo.
+- **Tab** theo thứ tự UI/UX: Board, Backlog, Danh sách, Báo cáo, Sức khoẻ, Phiên bản; Timeline (không có
+  trong danh sách đó) đứng cuối. Cài đặt không còn là tab: ⚙ là menu gồm "Cài đặt Task của dự án"
+  (người quản lý dự án) và "Tình trạng bật Task" (`tasks.manage` hoặc `admin.projects`; §4.10 — nút
+  riêng ở đầu trang bỏ). `?tab=settings` vẫn mở được; ⚙ gạch chân khi đang ở đó. Ở `/tasks/me`,
+  `/tasks/overview` ⚙ chỉ có "Tình trạng bật Task"; `/tasks/adoption` không có ⚙.
+- **Màn hẹp:** dưới 1280 px tab thứ 4 trở đi vào menu "Thêm ▾" (tab đang mở vẫn ở trên hàng);
+  dưới 768 px chỉ còn tab đang mở, chữ "Của tôi" / "Tạo" ẩn còn icon. Không đo bằng JS: chỉ CSS, nên
+  không giật bố cục.
+- **Phím** (thêm vào hộp "?" nhóm "Trang Task"): `1`…`6` chuyển Board, Backlog, Danh sách, Báo cáo,
+  Sức khoẻ, Phiên bản; `7` Timeline; `C` tạo task (ở `/tasks/me`, `/tasks/overview` mở
+  `/tasks?create=1`). `C` nhường cho "Viết bình luận" khi đang mở task (có `[data-shortcut=comment]`);
+  không phím nào chạy khi đang gõ, giữ Ctrl/Alt/Meta/Shift hoặc sau hộp thoại. `N` (toàn cục) giữ nguyên.
+- **Bề rộng:** trang Task bỏ giới hạn 1480 px, lề 16 px (< 1440 px) / 24 px (≥ 1440 px), không có
+  dòng chú thích chân trang (để view chính lấp đầy màn hình).
+- **Biến CSS cho các màn** (globals.css, mục "UI/UX frame"): `--tk-head-h` 48px, `--tk-bar-h` 40px
+  (thanh lọc), `--tk-gap` 8px, `--tk-pad-x`, `--tk-pad-b` 12px, `--tk-bar-top` (sticky `top` của thanh
+  lọc), `--tk-frame-h` (toàn bộ khung quanh view chính có thanh lọc), `--tk-view-h` =
+  `100dvh − --tk-frame-h` (chiều cao Board / bảng Danh sách / Backlog), `--tk-view-h-full` (màn không
+  có thanh lọc). Màn đặt thanh lọc là phần tử đầu tiên, `position: sticky; top: var(--tk-bar-top)`,
+  cao `var(--tk-bar-h)`, rồi view chính `height: var(--tk-view-h)` và tự cuộn bên trong.
+- Khối `?task=KEY` (ngăn chi tiết) nằm ngoài khung, không đổi.

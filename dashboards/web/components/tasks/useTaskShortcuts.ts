@@ -38,6 +38,12 @@ export const TASK_SHORTCUTS: TaskShortcut[] = [
   { keys: ["."], label: "Mở bảng lệnh với lệnh trên task" },
 ];
 
+/** The page frame's keys (TaskFrame, docs/specs/31 §22.1); C yields to "Viết bình luận" while a task is open. */
+export const FRAME_SHORTCUTS: TaskShortcut[] = [
+  { keys: ["1 … 6"], label: "Chuyển tab Board, Backlog, Danh sách, Báo cáo, Sức khoẻ, Phiên bản (7: Timeline)" },
+  { keys: ["C"], label: "Tạo task (khi không mở task nào)" },
+];
+
 function find(name: string): HTMLElement | null {
   const el = document.querySelector<HTMLElement>(`[data-shortcut="${name}"]`);
   if (!el || (el as HTMLButtonElement | HTMLSelectElement).disabled) return null;

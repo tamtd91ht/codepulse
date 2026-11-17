@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 
+import { TaskFrame } from "@/components/tasks/TaskFrame";
 import { Card, EmptyState, Loading, PageHeader } from "@/components/ui";
 import { can, useApi } from "@/lib/api";
 import { dateTime } from "@/lib/format";
@@ -30,12 +31,11 @@ export default function TaskAdoptionPage() {
   const rows = got.data?.rows ?? [];
   const on = rows.filter((r) => r.enabled).length;
   return (
-    <>
-      <PageHeader
-        eyebrow={<Link href="/tasks">Task</Link>}
-        title="Tình trạng bật Task"
-        subtitle="Dự án nào đã dùng Task, theo mẫu nào, có bao nhiêu việc và hoạt động gần nhất khi nào."
-      />
+    <TaskFrame
+      crumb="Tình trạng bật Task"
+      help="Dự án nào đã dùng Task, theo mẫu nào, có bao nhiêu việc và hoạt động gần nhất khi nào."
+      create={can(me, "tasks.create") ? { href: "/tasks?create=1" } : null}
+    >
       <Card
         flush
         title="Dự án"
@@ -113,7 +113,7 @@ export default function TaskAdoptionPage() {
         )}
       </Card>
       {me?.is_admin && <UsageSection />}
-    </>
+    </TaskFrame>
   );
 }
 

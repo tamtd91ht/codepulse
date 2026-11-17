@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { MultiSelect } from "@/components/MultiSelect";
+import { TaskFrame } from "@/components/tasks/TaskFrame";
 import { HealthBadge, type HealthColor } from "@/components/tasks/TaskHealth";
 import { TimelineMany } from "@/components/tasks/TaskTimeline";
 import { Icon, type IconName } from "@/components/icons";
@@ -75,11 +76,11 @@ export default function TaskOverviewPage() {
     );
 
   return (
-    <>
-      <PageHeader
-        eyebrow={<Link href="/tasks">Task</Link>}
-        title="Tổng quan dự án"
-        subtitle="Sprint đang chạy, dự phóng hoàn thành, bug và lỗi nghiêm trọng của mọi dự án bạn xem được. Bấm một dòng để xem sức khoẻ sprint."
+    <TaskFrame
+        crumb="Tổng quan dự án"
+        help="Sprint đang chạy, dự phóng hoàn thành, bug và lỗi nghiêm trọng của mọi dự án bạn xem được. Bấm một dòng để xem sức khoẻ sprint."
+        menu={can(me, "tasks.manage") || can(me, "admin.projects") ? [{ key: "adoption", label: "Tình trạng bật Task", icon: "pulse", href: "/tasks/adoption" }] : undefined}
+        create={can(me, "tasks.create") ? { href: "/tasks?create=1" } : null}
         actions={
           <Segmented
             label="Chế độ xem"
@@ -91,7 +92,7 @@ export default function TaskOverviewPage() {
             ]}
           />
         }
-      />
+      >
       {mode === "timeline" ? (
         <Card title="Timeline theo Epic" subtitle="Epic của các dự án bạn xem được, chỉ đọc. Mở một dự án để kéo đổi hạn hoặc sprint.">
           <div className="rm-many-filter">
@@ -187,6 +188,6 @@ export default function TaskOverviewPage() {
         )}
       </Card>
       )}
-    </>
+    </TaskFrame>
   );
 }
