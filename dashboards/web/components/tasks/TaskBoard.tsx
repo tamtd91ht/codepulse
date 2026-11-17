@@ -1,27 +1,31 @@
 "use client";
 
-import { type DragEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { type DragEvent, type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import useSWR from "swr";
 
-import { type MultiOption, MultiSelect } from "@/components/MultiSelect";
-import { Alert, Avatar, EmptyState, Loading } from "@/components/ui";
+import { Icon, IconButton } from "@/components/icons";
+import { Alert, EmptyState, Loading, Segmented } from "@/components/ui";
 import { useUndo } from "@/components/UndoToast";
 import { api, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
 import { useTaskLive } from "@/lib/useTaskLive";
-import type { Me, TaskDodGaps, TaskPage, TaskPerson, TaskResolution, TaskRow, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
+import type { Me, SavedTaskFilter, TaskDodGaps, TaskPage, TaskPerson, TaskResolution, TaskRow, TaskSearchPage, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
 
+import { clientMatchable, hasText, matchTree } from "./boardFilter";
 import { selectCard, useCardSelected } from "./cardSelection";
-import { DensityToggle } from "./DensityToggle";
 import { useDrawerList } from "./drawerNav";
-import { PinnedFilters } from "./FilterChips";
+import { FilterBar } from "./FilterBar";
+import { fromTree } from "./FilterChips";
+import { type FilterValue, filterCount, filterTree, useFilterState, useViewOptions } from "./filterState";
 import { type QuickPicks, QuickChips, QuickPreview } from "./QuickChips";
+import { SavedFilterMenu } from "./SavedFilterMenu";
 import { SwitchoverBoardNote } from "./TaskSwitchover";
-import { SubtaskGroup, readGroupSubs, writeGroupSubs } from "./SubtaskGroup";
+import { SubtaskGroup } from "./SubtaskGroup";
 import {
   GitBadge,
   PersonAvatar,
   PointsChip,
-  PriorityIcon,
   RowPriority,
   TASK_TYPES,
   TYPE_LABEL,
@@ -61,8 +65,6 @@ export function neighbours(list: TaskRow[], key: string, beforeKey: string | nul
 
 const DRAG_TYPE = "text/x-task-key";
 
-type BoardFilters = { assignees: number[]; priorities: string[]; type: TaskType | ""; label: string; mine: boolean };
-
 /** Swimlanes (docs/specs/31 §19.3): rows of the board grouped by one field. */
 type LaneMode = "none" | "epic" | "parent" | "assignee" | "priority";
 const LANE_LABEL: Record<LaneMode, string> = {
@@ -72,15 +74,77 @@ const LANE_LABEL: Record<LaneMode, string> = {
   assignee: "Theo người làm",
   priority: "Theo ưu tiên",
 };
-const LANE_KEY = "tk-board-lane";
 
-function readLane(): LaneMode {
+/** Fields a card can show (Hiển thị › Trường trên card). */
+const CARD_FIELDS = [
+  { id: "points", label: "Story point" },
+  { id: "assignee", label: "Người làm" },
+  { id: "labels", label: "Nhãn" },
+  { id: "due", label: "Hạn" },
+] as const;
+
+/**
+ * "⧉ Hiển thị" of the Board (UI/UX §3.5, docs/specs/31 §22.4): per person in localStorage, those
+ * differing from the defaults on the link (`v`). Module level: useViewOptions needs a stable object.
+ */
+type BoardView = {
+  lane: string;
+  groupSubs: boolean;
+  density: "dense" | "comfy";
+  hiddenFields: string[];
+  hideEmpty: boolean;
+  foldDone: boolean;
+};
+const VIEW_DEFAULTS: BoardView = { lane: "none", groupSubs: false, density: "dense", hiddenFields: [], hideEmpty: false, foldDone: false };
+
+/** Columns folded / opened by hand, per dự án: status id → folded (wins over "Thu gọn cột Done"). */
+const foldKey = (bp: number) => `cp:tasks:board:folded:${bp}`;
+function readFolds(bp: number): Record<string, boolean> {
   try {
-    const v = localStorage.getItem(LANE_KEY);
-    return v && v in LANE_LABEL ? (v as LaneMode) : "none";
+    const v: unknown = JSON.parse(window.localStorage.getItem(foldKey(bp)) ?? "{}");
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, boolean>) : {};
   } catch {
-    return "none";
+    return {};
   }
+}
+
+/** Under 768 px the Board shows one column at a time (UI/UX §6): no folded strips there. */
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const on = () => setNarrow(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return narrow;
+}
+
+/** `data-fade-l` / `data-fade-r` on a sideways scroller while there is more to see that way. */
+function useEdgeFade(ref: RefObject<HTMLElement | null>, deps: unknown) {
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const sync = () => {
+      el.toggleAttribute("data-fade-l", el.scrollLeft > 1);
+      el.toggleAttribute("data-fade-r", el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    };
+    sync();
+    el.addEventListener("scroll", sync, { passive: true });
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    for (const child of el.children) ro.observe(child);
+    return () => {
+      el.removeEventListener("scroll", sync);
+      ro.disconnect();
+    };
+  }, [ref, deps]);
+}
+
+/** Whole days from today to `day` (negative: past). */
+function daysTo(day: string): number {
+  return Math.round((new Date(`${day.slice(0, 10)}T00:00:00`).getTime() - new Date(`${today()}T00:00:00`).getTime()) / 86_400_000);
 }
 
 /** Hours since the task entered its status. */
@@ -234,31 +298,31 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
     });
   }, [loaded]);
 
-  const [filters, setFilters] = useState<BoardFilters>({ assignees: [], priorities: [], type: "", label: "", mine: false });
-  const [pinnedKeys, setPinnedKeys] = useState<Set<string> | null>(null);
-  const [drag, setDrag] = useState<{ key: string; from: number } | null>(null);
-  const [over, setOver] = useState<{ status: number; before: string | null; lane: string } | null>(null);
-  const [lane, setLaneState] = useState<LaneMode>("none");
-  useEffect(() => setLaneState(readLane()), []);
-  const setLane = (v: LaneMode) => {
-    setLaneState(v);
+  // Filters (UI/UX §4.1, docs/specs/31 §22.4): the shared FilterBar, matched on the loaded rows.
+  const [value, setValue, reset] = useFilterState("board", bp, me?.id);
+  const [view, setView] = useViewOptions<BoardView>("board", me?.id, VIEW_DEFAULTS);
+  const lane: LaneMode = view.lane in LANE_LABEL ? (view.lane as LaneMode) : "none";
+  const dense = view.density === "dense";
+  const groupSubs = view.groupSubs;
+  const narrow = useNarrow();
+  const [folds, setFolds] = useState<Record<string, boolean>>({});
+  useEffect(() => setFolds(readFolds(bp)), [bp]);
+  const saveFolds = (next: Record<string, boolean>) => {
+    setFolds(next);
     try {
-      localStorage.setItem(LANE_KEY, v);
+      window.localStorage.setItem(foldKey(bp), JSON.stringify(next));
     } catch {
-      /* a convenience only */
+      /* remembered for this page only */
     }
   };
+  const isFolded = (s: { id: number; category: string }) => !narrow && (folds[String(s.id)] ?? (view.foldDone && s.category === "done"));
+  const [drag, setDrag] = useState<{ key: string; from: number } | null>(null);
+  const [over, setOver] = useState<{ status: number; before: string | null; lane: string } | null>(null);
   const [quick, setQuick] = useState<Record<number, string>>({});
+  const [quickOpen, setQuickOpen] = useState<number | null>(null);
   const [quickBusy, setQuickBusy] = useState(false);
   // Ambiguous quick-create lines waiting for a pick, per column (§20.2).
   const [quickAsk, setQuickAsk] = useState<Record<number, { text: string; parsed: QuickParsed; picks: QuickPicks }>>({});
-  // "Gom sub-task vào card cha" (§20.2): off by default, remembered per browser.
-  const [groupSubs, setGroupSubsState] = useState(false);
-  useEffect(() => setGroupSubsState(readGroupSubs()), []);
-  const setGroupSubs = (on: boolean) => {
-    setGroupSubsState(on);
-    writeGroupSubs(on);
-  };
   const [error, setError] = useState<string | null>(null);
   // The task just dropped into Done: closed as "Đã xong", another reason one click away.
   const [closed, setClosed] = useState<string | null>(null);
@@ -273,21 +337,39 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
   }
   const [confirmEl, ask] = useConfirm();
 
-  const labels = useMemo(() => [...new Set((rows ?? []).flatMap((r) => r.labels ?? []))].sort(), [rows]);
-  const shown = useMemo(
-    () =>
-      (rows ?? []).filter(
-        (r) =>
-          r.type !== "epic" && // epics live in the Backlog's Epic bar (§19.1)
-          (!filters.mine || r.assignee?.id === me?.id) &&
-          (!filters.assignees.length || filters.assignees.includes(r.assignee?.id ?? 0)) &&
-          (!filters.priorities.length || filters.priorities.includes(r.priority)) &&
-          (!filters.type || r.type === filters.type) &&
-          (!filters.label || (r.labels ?? []).includes(filters.label)) &&
-          (!pinnedKeys || pinnedKeys.has(r.key)), // a pinned saved filter (§21.4)
-      ),
-    [rows, filters, me?.id, pinnedKeys],
+  // The chips are matched here (boardFilter.ts); a condition the rows do not carry (text in the
+  // description, watcher, MR, DoD, custom fields…) asks POST /tasks/search for the matching keys.
+  // Text is matched on key + title meanwhile, so typing never empties the board while it waits.
+  const tree = useMemo(() => filterTree(value), [value]);
+  const filtersOn = filterCount(value) > 0;
+  const needServer = filtersOn && (!clientMatchable(tree, false) || hasText(tree));
+  const serverBody = needServer ? { space: [bp], tree, sort: "rank", limit: 500 } : null;
+  const serverSig = serverBody ? `/tasks/search#board#${JSON.stringify(serverBody)}` : null;
+  const serverKeys = useSWR<{ sig: string; keys: Set<string> }>(
+    serverSig,
+    async () => {
+      const keys = new Set<string>();
+      for (let offset = 0; offset < 5000; offset += 500) {
+        const page = await api.post<TaskSearchPage>("/tasks/search", { ...serverBody, offset });
+        for (const t of page.items) keys.add(t.key);
+        if (offset + 500 >= page.total) break;
+      }
+      return { sig: serverSig ?? "", keys };
+    },
+    // Kept while the next answer loads (no flash); only used while it is this filter's own.
+    { keepPreviousData: true, revalidateOnFocus: false },
   );
+  const allSprints = useSprints(bp);
+  const activeSprints = useMemo(() => (allSprints.data ?? []).filter((s) => s.state === "active").map((s) => s.id), [allSprints.data]);
+  const shown = useMemo(() => {
+    const base = (rows ?? []).filter((r) => r.type !== "epic"); // epics live in the Backlog's Epic bar (§19.1)
+    if (!filtersOn) return base;
+    const got = needServer && serverKeys.data?.sig === serverSig ? serverKeys.data.keys : undefined;
+    if (got) return base.filter((r) => got.has(r.key));
+    // Waiting for the server: the conditions known here (text on key + title) narrow it already.
+    const ctx = { meId: me?.id, activeSprints };
+    return clientMatchable(tree, true) ? base.filter((r) => matchTree(r, tree, ctx)) : base;
+  }, [rows, filtersOn, needServer, serverKeys.data, serverSig, tree, me?.id, activeSprints]);
   // Per column, across lanes: the WIP count (§19.3).
   const colCount = useMemo(() => {
     const n = new Map<number, number>();
@@ -337,8 +419,20 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
     }
     return [...groups.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
   }, [lane, cards, rows, space]);
-  // §22.6: J/K in the task drawer walk the cards in board order (lane, then column).
-  useDrawerList(lanes.flatMap((l) => statuses.flatMap((st) => l.rows.filter((t) => t.status.id === st.id))).map((t) => t.key));
+  // Columns on screen: "Ẩn cột rỗng" drops those with no card, except while a card is moving.
+  const columns = useMemo(
+    () => statuses.filter((st) => !view.hideEmpty || drag || (colCount.get(st.id) ?? 0) > 0),
+    [statuses, view.hideEmpty, drag, colCount],
+  );
+  // §22.6: J/K in the task drawer walk the cards in board order (lane, then column), as filtered
+  // and shown: cards of folded columns are not on screen, so they are skipped.
+  useDrawerList(
+    lanes
+      .flatMap((l) => columns.filter((st) => !isFolded(st)).flatMap((st) => l.rows.filter((t) => t.status.id === st.id).sort(byRank)))
+      .map((t) => t.key),
+  );
+  const scroller = useRef<HTMLDivElement>(null);
+  useEdgeFade(scroller, `${lane}|${columns.length}|${!!rows}|${JSON.stringify(folds)}|${view.foldDone}|${dense}`);
 
   const dropAsk = (statusId: number) =>
     setQuickAsk((a) => {
@@ -402,21 +496,6 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
     }
     setQuickBusy(false);
   }
-
-  const priorityOptions: MultiOption<string>[] = priorityList(space).map((p) => ({
-    value: p.key,
-    label: p.name,
-    lead: <PriorityIcon name={p.name} level={p.level} color={p.color} />,
-  }));
-  const assigneeOptions: MultiOption<number>[] = [
-    { value: 0, label: "Chưa giao" },
-    ...(people.data ?? []).map((p) => ({
-      value: p.id,
-      label: personName(p),
-      hint: p.primary_email ?? undefined,
-      lead: <Avatar name={p.full_name} email={p.primary_email} src={p.avatar_url} size="sm" />,
-    })),
-  ];
 
   async function move(key: string, statusId: number, beforeKey: string | null) {
     const all = rows ?? [];
@@ -600,10 +679,256 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
     if (over?.status !== statusId || over.before !== before || over.lane !== laneId) setOver({ status: statusId, before, lane: laneId });
   };
 
+  const cardFields = new Set<string>(CARD_FIELDS.map((f) => f.id).filter((f) => !view.hiddenFields.includes(f)));
+
+  // The FilterBar's status label (UI/UX §4.1): what the board holds; the sprint opens Sức khoẻ.
+  const scopeTip = active
+    ? `Board hiện task của sprint đang chạy${active.end_date ? `, kết thúc ${date(active.end_date)}` : ""}. Bấm tên sprint để mở Sức khoẻ sprint.`
+    : kanban
+      ? "Kanban: board hiện mọi task chưa xong và task xong trong 14 ngày qua."
+      : "Chưa có sprint đang chạy: board hiện mọi task chưa xong và task xong trong 14 ngày qua.";
+  let left = "";
+  if (active?.end_date) {
+    const n = daysTo(active.end_date);
+    left = n > 0 ? `còn ${n} ngày` : n === 0 ? "kết thúc hôm nay" : `trễ ${-n} ngày`;
+  }
+  const scope = (
+    <span className="bd-scope">
+      {active ? (
+        <Link href={`/tasks?space=${bp}&tab=health`} className="bd-scope-text bd-scope-link">
+          {active.name}
+          {left && ` · ${left}`}
+        </Link>
+      ) : (
+        <span className="bd-scope-text">{kanban ? "Kanban" : "Không có sprint"} · hiện task chưa xong + Done 14 ngày</span>
+      )}
+      <button type="button" className="icon-btn bd-scope-info" aria-label={scopeTip} data-tip={scopeTip}>
+        <Icon name="info" size={14} />
+      </button>
+    </span>
+  );
+
+  const display = (
+    <div className="fb-display-pop">
+      <label className="fb-display-row">
+        <span className="fb-display-label">Swimlane</span>
+        <select value={lane} onChange={(e) => setView({ lane: e.target.value })}>
+          {(Object.keys(LANE_LABEL) as LaneMode[]).map((m) => (
+            <option key={m} value={m}>
+              {LANE_LABEL[m]}
+            </option>
+          ))}
+        </select>
+      </label>
+      {space.types.includes("subtask") && (
+        <label className="inline-check" title={lane === "parent" ? "“Theo task cha” đã gom sub-task theo lane" : "Ẩn card sub-task có task cha trên board; card cha hiện tiến độ"}>
+          <input type="checkbox" checked={groupSubs} disabled={lane === "parent"} onChange={(e) => setView({ groupSubs: e.target.checked })} /> Gom sub-task vào card cha
+        </label>
+      )}
+      <div className="fb-display-row">
+        <span className="fb-display-label">Mật độ</span>
+        <Segmented<BoardView["density"]>
+          label="Mật độ card"
+          value={view.density}
+          onChange={(density) => setView({ density })}
+          options={[
+            { value: "comfy", label: "Thoáng" },
+            { value: "dense", label: "Gọn" },
+          ]}
+        />
+      </div>
+      <fieldset className="fb-display-cols">
+        <legend className="fb-display-label">Trường trên card</legend>
+        {CARD_FIELDS.map((f) => (
+          <label key={f.id} className="inline-check">
+            <input
+              type="checkbox"
+              checked={cardFields.has(f.id)}
+              onChange={(e) => setView({ hiddenFields: e.target.checked ? view.hiddenFields.filter((h) => h !== f.id) : [...view.hiddenFields, f.id] })}
+            />{" "}
+            {f.label}
+          </label>
+        ))}
+      </fieldset>
+      <label className="inline-check">
+        <input type="checkbox" checked={view.hideEmpty} onChange={(e) => setView({ hideEmpty: e.target.checked })} /> Ẩn cột rỗng
+      </label>
+      <label className="inline-check">
+        <input
+          type="checkbox"
+          checked={view.foldDone}
+          onChange={(e) => {
+            // The Done columns follow the switch again (hand folds of other columns stay).
+            const doneIds = new Set(statuses.filter((s) => s.category === "done").map((s) => String(s.id)));
+            saveFolds(Object.fromEntries(Object.entries(folds).filter(([id]) => !doneIds.has(id))));
+            setView({ foldDone: e.target.checked });
+          }}
+        />{" "}
+        Thu gọn cột Done
+      </label>
+      <button type="button" className="link small" onClick={() => setView(VIEW_DEFAULTS)}>
+        Về mặc định
+      </button>
+    </div>
+  );
+
+  const renderColumn = (ln: { id: string; rows: TaskRow[] }, status: (typeof statuses)[number]) => {
+    const tasks = ln.rows.filter((t) => t.status.id === status.id).sort(byRank);
+    const allowed = !drag || canMoveTo(statuses, drag.from, status.id);
+    const points = tasks.reduce((n, t) => n + (t.type === "story" || t.type === "task" || t.type === "bug" ? (t.story_points ?? 0) : 0), 0);
+    const here = over?.status === status.id && over.lane === ln.id;
+    const total = colCount.get(status.id) ?? 0;
+    const overWip = !!status.wip_limit && total > status.wip_limit;
+    const folded = isFolded(status);
+    const toggleFold = () => saveFolds({ ...folds, [String(status.id)]: !folded });
+    const count = status.wip_limit ? `${total}/${status.wip_limit}` : String(tasks.length);
+    const wipTip = status.wip_limit ? `Giới hạn WIP ${status.wip_limit}${overWip ? ": đang vượt" : ""}` : undefined;
+    const className = `tk-col tk-cat-${status.category}${drag && !allowed ? " blocked" : ""}${here ? " over" : ""}${overWip ? " tk-wip-over" : ""}${folded ? " bd-folded" : ""}${tasks.length ? "" : " bd-empty"}`;
+    const dropProps = {
+      onDragOver: (e: DragEvent<HTMLElement>) => {
+        if (!drag || !allowed) return;
+        e.preventDefault();
+        if (!here) setOver({ status: status.id, before: null, lane: ln.id });
+      },
+      onDragLeave: (e: DragEvent<HTMLElement>) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(null);
+      },
+      onDrop: (e: DragEvent<HTMLElement>) => {
+        e.preventDefault();
+        const key = drag?.key ?? e.dataTransfer.getData(DRAG_TYPE);
+        const before = here ? (over?.before ?? null) : null;
+        setDrag(null);
+        setOver(null);
+        if (key && allowed) void move(key, status.id, before);
+      },
+    };
+    if (folded)
+      return (
+        <section key={status.id} role="listitem" className={className} aria-label={`${status.name} (đã thu gọn)`} {...dropProps}>
+          <button type="button" className="bd-strip" aria-expanded={false} aria-label={`Mở cột ${status.name}: ${count} task`} title={`Mở cột ${status.name}`} onClick={toggleFold}>
+            <span className={`tab-count${overWip ? " tk-wip-badge" : ""}`}>{count}</span>
+            <span className="bd-strip-name">{status.name}</span>
+          </button>
+        </section>
+      );
+    const typing = quickOpen === status.id || !!(quick[status.id] ?? "") || !!quickAsk[status.id];
+    return (
+      <section key={status.id} role="listitem" className={className} aria-label={status.name} {...dropProps}>
+        <header className="tk-col-head bd-col-head">
+          <span className="tk-col-name" title={status.name}>
+            {status.name}
+          </span>
+          <span className={`tab-count${overWip ? " tk-wip-badge" : ""}`} title={wipTip}>
+            {count}
+          </span>
+          {points > 0 && (
+            <span className="bd-col-sp" title="Tổng story point (Story / Task / Bug)">
+              {points} SP
+            </span>
+          )}
+          {!narrow && <IconButton icon="minus" size={14} className="bd-fold" label={`Thu gọn cột ${status.name}`} aria-expanded onClick={toggleFold} />}
+        </header>
+        <div className="tk-col-body">
+          {tasks.map((t, i) => (
+            <div
+              key={t.key}
+              data-kb-card={t.key}
+              className={kb?.key === t.key ? "lv-kb-picked" : undefined}
+              onKeyDown={(e) => onCardKey(e, t, ln.id)}
+              onKeyUp={(e) => {
+                // Space picks up / drops: it must not also press the card's title button.
+                if (e.key === " " && (e.target as HTMLElement).closest(".tk-card")) e.preventDefault();
+              }}
+              onBlur={(e) => {
+                if (kbRef.current?.key === t.key && !e.currentTarget.contains(e.relatedTarget as Node)) cancelKb();
+              }}
+            >
+              {here && over?.before === t.key && drag?.key !== t.key && <div className="tk-drop-line" />}
+              <TaskCard
+                task={t}
+                dense={dense}
+                fields={cardFields}
+                ageWarnHours={status.age_warning_hours ?? null}
+                dragging={drag?.key === t.key}
+                onOpen={() => onOpen(t.key)}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData(DRAG_TYPE, t.key);
+                  e.dataTransfer.effectAllowed = "move";
+                  setDrag({ key: t.key, from: t.status.id });
+                }}
+                onDragEnd={() => {
+                  setDrag(null);
+                  setOver(null);
+                }}
+                onDragOver={(e) => {
+                  if (!allowed) return;
+                  onCardDragOver(e, status.id, tasks, i, ln.id);
+                }}
+              />
+              {grouping && t.type !== "subtask" && (t.subtasks?.total ?? 0) > 0 && <SubtaskGroup task={t} items={subsOf.get(t.key) ?? []} onOpen={onOpen} />}
+            </div>
+          ))}
+          {here && over?.before === null && drag && <div className="tk-drop-line" />}
+          {!tasks.length && <p className="bd-drop-hint">Thả task vào đây</p>}
+          {lane === "none" &&
+            space.can_create &&
+            status.category !== "done" &&
+            (typing ? (
+              <div className="bd-quick-box">
+                <input
+                  className="tk-quick"
+                  autoFocus={quickOpen === status.id}
+                  value={quick[status.id] ?? ""}
+                  disabled={quickBusy}
+                  placeholder="Tiêu đề @người #bug !cao 3sp ^OCX-1"
+                  title="@người · #loại · !ưu tiên · 3sp · ^mã task cha (sub-task)"
+                  aria-label={`Tạo nhanh task ở ${status.name}`}
+                  onChange={(e) => {
+                    setQuick((q) => ({ ...q, [status.id]: e.target.value }));
+                    // Another line: the picks for the old one no longer apply.
+                    if (quickAsk[status.id]) dropAsk(status.id);
+                  }}
+                  onBlur={(e) => {
+                    const stay = e.currentTarget.closest(".bd-quick-box")?.contains(e.relatedTarget as Node);
+                    if (!stay && !(quick[status.id] ?? "").trim() && !quickAsk[status.id]) setQuickOpen((o) => (o === status.id ? null : o));
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void quickCreate(status);
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setQuick((q) => ({ ...q, [status.id]: "" }));
+                      dropAsk(status.id);
+                      setQuickOpen(null);
+                    }
+                  }}
+                />
+                {!quickAsk[status.id] && (quick[status.id] ?? "").trim() && (
+                  <QuickPreview parsed={parseQuick(quick[status.id] ?? "", people.data ?? [], space)} people={people.data ?? []} space={space} />
+                )}
+                {quickAsk[status.id] && (
+                  <QuickChips
+                    ambiguous={quickAsk[status.id].parsed.ambiguous}
+                    picks={quickAsk[status.id].picks}
+                    busy={quickBusy}
+                    onPick={(token, value) => setQuickAsk((a) => (a[status.id] ? { ...a, [status.id]: { ...a[status.id], picks: { ...a[status.id].picks, [token]: value } } } : a))}
+                    onSave={() => void quickCreate(status)}
+                    onCancel={() => dropAsk(status.id)}
+                  />
+                )}
+              </div>
+            ) : (
+              <button type="button" className="bd-quick-add" aria-label={`Tạo nhanh task ở ${status.name}`} onClick={() => setQuickOpen(status.id)}>
+                <Icon name="plus" size={14} /> Tạo nhanh
+              </button>
+            ))}
+        </div>
+      </section>
+    );
+  };
+
   return (
-    <div className="tk-board-wrap">
+    <div className={`tk-board-wrap bd-screen${dense ? " tk-dense bd-dense" : " bd-comfy"}`}>
       {confirmEl}
-      <SwitchoverBoardNote space={space} />
       {undoEl}
       <p className="sr-only" id="lv-kb-help">
         Board: Tab tới một card, mũi tên để đi giữa các card. Space nhấc card lên, mũi tên chuyển cột hoặc vị trí, Space thả, Esc huỷ.
@@ -611,243 +936,103 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
       <div className="sr-only" role="status" aria-live="assertive" aria-atomic="true">
         {announce}
       </div>
-      <div className="rq-grid tk-filters">
-        <label className="rq-field">
-          <span className="rq-label">Người làm</span>
-          <MultiSelect label="Người làm" options={assigneeOptions} value={filters.assignees} onChange={(v) => setFilters({ ...filters, assignees: v })} empty="Mọi người" />
-        </label>
-        <label className="rq-field">
-          <span className="rq-label">Ưu tiên</span>
-          <MultiSelect label="Ưu tiên" options={priorityOptions} value={filters.priorities} onChange={(v) => setFilters({ ...filters, priorities: v })} empty="Mọi mức" />
-        </label>
-        <label className="rq-field">
-          <span className="rq-label">Loại</span>
-          <select value={filters.type} onChange={(e) => setFilters({ ...filters, type: e.target.value as TaskType | "" })}>
-            <option value="">Mọi loại</option>
-            {TASK_TYPES.filter((t) => space.types.includes(t)).map((t) => (
-              <option key={t} value={t}>
-                {TYPE_LABEL[t]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="rq-field">
-          <span className="rq-label">Swimlane</span>
-          <select value={lane} onChange={(e) => setLane(e.target.value as LaneMode)}>
-            {(Object.keys(LANE_LABEL) as LaneMode[]).map((m) => (
-              <option key={m} value={m}>
-                {LANE_LABEL[m]}
-              </option>
-            ))}
-          </select>
-        </label>
-        {space.types.includes("subtask") && (
-          <div className="rq-field">
-            <span className="rq-label">Sub-task</span>
-            <label className="rq-check" title={lane === "parent" ? "“Theo task cha” đã gom sub-task theo lane" : "Ẩn card sub-task có task cha trên board; card cha hiện tiến độ"}>
-              <input type="checkbox" checked={groupSubs} disabled={lane === "parent"} onChange={(e) => setGroupSubs(e.target.checked)} />
-              Gom sub-task vào card cha
-            </label>
-          </div>
-        )}
-        <div className="rq-field">
-          <span className="rq-label">Nhãn</span>
-          <div className="tk-inline">
-            <select value={filters.label} onChange={(e) => setFilters({ ...filters, label: e.target.value })} aria-label="Nhãn">
-              <option value="">Mọi nhãn</option>
-              {labels.map((l) => (
-                <option key={l} value={l}>
-                  {l}
-                </option>
-              ))}
-            </select>
-            <label className="rq-check">
-              <input type="checkbox" checked={filters.mine} onChange={(e) => setFilters({ ...filters, mine: e.target.checked })} />
-              Chỉ của tôi
-            </label>
-          </div>
-        </div>
-        <PinnedFilters bp={space.business_project_id} onKeys={setPinnedKeys} />
-        <DensityToggle view="board" />
-      </div>
-      <p className="small muted tk-board-scope">
-        {active ? (
+      <FilterBar
+        space={space}
+        me={me}
+        screen="board"
+        value={value}
+        onChange={setValue}
+        total={rows ? shown.length : null}
+        status={scope}
+        saved={
           <>
-            Sprint đang chạy: <strong>{active.name}</strong>
-            {active.end_date && <> · kết thúc {date(active.end_date)}</>}
+            <BoardPins bp={bp} value={value} onApply={setValue} />
+            <SavedFilterMenu bp={bp} me={me} value={value} onApply={setValue} onReset={reset} />
           </>
-        ) : kanban ? (
-          "Kanban: board hiện mọi task chưa xong và task xong trong 14 ngày qua."
+        }
+        display={display}
+      />
+      <SwitchoverBoardNote space={space} />
+      <div className={`bd-area${lane === "none" ? "" : " bd-lanes"}`} ref={lane === "none" ? undefined : scroller}>
+        {!rows ? (
+          <Loading error={loadError} rows={6} />
+        ) : !statuses.length ? (
+          <EmptyState icon="settings" title="Dự án chưa có trạng thái nào">
+            Thêm trạng thái trong tab Cài đặt.
+          </EmptyState>
+        ) : lane === "none" ? (
+          <div className="tk-board bd-board" role="list" aria-label="Board" ref={scroller}>
+            {columns.map((st) => renderColumn(lanes[0] ?? { id: "all", rows: [] }, st))}
+          </div>
         ) : (
-          "Chưa có sprint đang chạy: board hiện mọi task chưa xong và task xong trong 14 ngày qua."
-        )}
-      </p>
-      {closed && (
-        <Alert tone="success" onClose={() => setClosed(null)}>
-          {closed} đã đóng với lý do “Đã xong”. Lý do khác:{" "}
-          {RESOLUTIONS.filter((r) => r !== "done").map((r) => (
-            <button key={r} type="button" className="link sm" onClick={() => void reclose(closed, r)}>
-              {RESOLUTION_LABEL[r]}
-            </button>
-          ))}
-        </Alert>
-      )}
-      {error && (
-        <Alert tone="error" onClose={() => setError(null)}>
-          {error}
-        </Alert>
-      )}
-      {!rows ? (
-        <Loading error={loadError} rows={6} />
-      ) : !statuses.length ? (
-        <EmptyState icon="settings" title="Dự án chưa có trạng thái nào">
-          Thêm trạng thái trong tab Cài đặt.
-        </EmptyState>
-      ) : (
-        <>
-          {lanes.map((ln) => (
-            <section key={ln.id} className={lane === "none" ? "tk-lane-none" : "tk-lane"} aria-label={ln.label || "Board"}>
-              {lane !== "none" && (
-                <h3 className="tk-lane-head">
-                  {ln.label} <span className="tab-count">{ln.rows.length}</span>
-                </h3>
-              )}
-              <div className="tk-board" role="list" aria-label={ln.label || "Board"}>
-                {statuses.map((status) => {
-                  const tasks = ln.rows.filter((t) => t.status.id === status.id).sort(byRank);
-                  const allowed = !drag || canMoveTo(statuses, drag.from, status.id);
-                  const points = tasks.reduce((n, t) => n + (t.type === "story" || t.type === "task" || t.type === "bug" ? (t.story_points ?? 0) : 0), 0);
-                  const here = over?.status === status.id && over.lane === ln.id;
-                  const total = colCount.get(status.id) ?? 0;
-                  const overWip = !!status.wip_limit && total > status.wip_limit;
-                  return (
-                    <section
-                      key={status.id}
-                      role="listitem"
-                      className={`tk-col tk-cat-${status.category}${drag && !allowed ? " blocked" : ""}${here ? " over" : ""}${overWip ? " tk-wip-over" : ""}`}
-                      aria-label={status.name}
-                      onDragOver={(e) => {
-                        if (!drag || !allowed) return;
-                        e.preventDefault();
-                        if (!here) setOver({ status: status.id, before: null, lane: ln.id });
-                      }}
-                      onDragLeave={(e) => {
-                        if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(null);
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        const key = drag?.key ?? e.dataTransfer.getData(DRAG_TYPE);
-                        const before = here ? (over?.before ?? null) : null;
-                        setDrag(null);
-                        setOver(null);
-                        if (key && allowed) void move(key, status.id, before);
-                      }}
-                    >
-                      <header className="tk-col-head">
-                        <span className="tk-col-name">{status.name}</span>
-                        {status.wip_limit ? (
-                          <span className={`tab-count${overWip ? " tk-wip-badge" : ""}`} title={`Giới hạn WIP ${status.wip_limit}${overWip ? ": đang vượt" : ""}`}>
-                            {total}/{status.wip_limit}
-                          </span>
-                        ) : (
-                          <span className="tab-count">{lane === "none" ? tasks.length : `${tasks.length}`}</span>
-                        )}
-                        {points > 0 && (
-                          <span className="small muted" title="Tổng story point (Story / Task / Bug)">
-                            {points} SP
-                          </span>
-                        )}
-                      </header>
-                      <div className="tk-col-body">
-                        {tasks.map((t, i) => (
-                          <div
-                            key={t.key}
-                            data-kb-card={t.key}
-                            className={kb?.key === t.key ? "lv-kb-picked" : undefined}
-                            onKeyDown={(e) => onCardKey(e, t, ln.id)}
-                            onKeyUp={(e) => {
-                              // Space picks up / drops: it must not also press the card's title button.
-                              if (e.key === " " && (e.target as HTMLElement).closest(".tk-card")) e.preventDefault();
-                            }}
-                            onBlur={(e) => {
-                              if (kbRef.current?.key === t.key && !e.currentTarget.contains(e.relatedTarget as Node)) cancelKb();
-                            }}
-                          >
-                            {here && over?.before === t.key && drag?.key !== t.key && <div className="tk-drop-line" />}
-                            <TaskCard
-                              task={t}
-                              ageWarnHours={status.age_warning_hours ?? null}
-                              dragging={drag?.key === t.key}
-                              onOpen={() => onOpen(t.key)}
-                              onDragStart={(e) => {
-                                e.dataTransfer.setData(DRAG_TYPE, t.key);
-                                e.dataTransfer.effectAllowed = "move";
-                                setDrag({ key: t.key, from: t.status.id });
-                              }}
-                              onDragEnd={() => {
-                                setDrag(null);
-                                setOver(null);
-                              }}
-                              onDragOver={(e) => {
-                                if (!allowed) return;
-                                onCardDragOver(e, status.id, tasks, i, ln.id);
-                              }}
-                            />
-                            {grouping && t.type !== "subtask" && (t.subtasks?.total ?? 0) > 0 && (
-                              <SubtaskGroup task={t} items={subsOf.get(t.key) ?? []} onOpen={onOpen} />
-                            )}
-                          </div>
-                        ))}
-                        {here && over?.before === null && drag && <div className="tk-drop-line" />}
-                        {!tasks.length && !drag && <p className="small faint tk-col-empty">Không có task</p>}
-                        {lane === "none" && space.can_create && status.category !== "done" && (
-                          <>
-                            <input
-                              className="tk-quick"
-                              value={quick[status.id] ?? ""}
-                              disabled={quickBusy}
-                              placeholder="+ Tạo nhanh: tiêu đề @người #bug !cao 3sp ^OCX-1"
-                              title="@người · #loại · !ưu tiên · 3sp · ^mã task cha (sub-task)"
-                              aria-label={`Tạo nhanh task ở ${status.name}`}
-                              onChange={(e) => {
-                                setQuick((q) => ({ ...q, [status.id]: e.target.value }));
-                                // Another line: the picks for the old one no longer apply.
-                                if (quickAsk[status.id]) dropAsk(status.id);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") void quickCreate(status);
-                                if (e.key === "Escape") {
-                                  setQuick((q) => ({ ...q, [status.id]: "" }));
-                                  dropAsk(status.id);
-                                }
-                              }}
-                            />
-                            {!quickAsk[status.id] && (quick[status.id] ?? "").trim() && (
-                              <QuickPreview parsed={parseQuick(quick[status.id] ?? "", people.data ?? [], space)} people={people.data ?? []} space={space} />
-                            )}
-                            {quickAsk[status.id] && (
-                              <QuickChips
-                                ambiguous={quickAsk[status.id].parsed.ambiguous}
-                                picks={quickAsk[status.id].picks}
-                                busy={quickBusy}
-                                onPick={(token, value) =>
-                                  setQuickAsk((a) => (a[status.id] ? { ...a, [status.id]: { ...a[status.id], picks: { ...a[status.id].picks, [token]: value } } } : a))
-                                }
-                                onSave={() => void quickCreate(status)}
-                                onCancel={() => dropAsk(status.id)}
-                              />
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </section>
-                  );
-                })}
+          lanes.map((ln) => (
+            <section key={ln.id} className="tk-lane bd-lane" aria-label={ln.label}>
+              <h3 className="tk-lane-head bd-lane-head">
+                {ln.label} <span className="tab-count">{ln.rows.length}</span>
+              </h3>
+              <div className="tk-board" role="list" aria-label={ln.label}>
+                {columns.map((st) => renderColumn(ln, st))}
               </div>
             </section>
-          ))}
-        </>
-      )}
+          ))
+        )}
+        {rows && filtersOn && !shown.length && (
+          <div className="bd-nomatch" role="status">
+            <span>Không có task khớp</span>
+            <button type="button" className="sm" onClick={() => setValue({ text: "", chips: [] })}>
+              Xoá lọc
+            </button>
+          </div>
+        )}
+        {(closed || error) && (
+          <div className="bd-notes">
+            {closed && (
+              <Alert tone="success" onClose={() => setClosed(null)}>
+                {closed} đã đóng với lý do “Đã xong”. Lý do khác:{" "}
+                {RESOLUTIONS.filter((r) => r !== "done").map((r) => (
+                  <button key={r} type="button" className="link sm" onClick={() => void reclose(closed, r)}>
+                    {RESOLUTION_LABEL[r]}
+                  </button>
+                ))}
+              </Alert>
+            )}
+            {error && (
+              <Alert tone="error" onClose={() => setError(null)}>
+                {error}
+              </Alert>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Pinned saved filters (§21.4) as one-click chips next to "★ Bộ lọc": a pick opens as chips;
+ * the one in use is pressed, a second click clears it. Two at most (all are in ★ Bộ lọc). */
+function BoardPins({ bp, value, onApply }: { bp: number; value: FilterValue; onApply: (v: FilterValue) => void }) {
+  const pinned = useApi<SavedTaskFilter[]>(`/tasks/search/filters?space=${bp}&pinned=true`);
+  const list = (pinned.data ?? []).slice(0, 2);
+  if (!list.length) return null;
+  const now = JSON.stringify(filterTree(value));
+  return (
+    <div className="bd-pins" role="group" aria-label="Bộ lọc đã ghim">
+      {list.map((f) => {
+        const next: FilterValue = { text: "", chips: fromTree(f.tree) };
+        const on = JSON.stringify(filterTree(next)) === now;
+        return (
+          <button
+            key={f.id}
+            type="button"
+            className={`fb-chip fb-toggle bd-pin${on ? " on" : ""}`}
+            aria-pressed={on}
+            title={on ? `Bỏ bộ lọc “${f.name}”` : `Lọc theo “${f.name}”`}
+            onClick={() => onApply(on ? { text: "", chips: [] } : next)}
+          >
+            <Icon name="pin" size={12} /> <span className="bd-pin-name">{f.name}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -863,8 +1048,16 @@ function useDodMissing(task: TaskRow): string[] | null {
   return gaps.data?.gaps[task.key] ?? null;
 }
 
+/**
+ * A Board card (UI/UX §4.1, docs/specs/31 §22.4). Gọn (≈56 px): the title on one line, then type,
+ * key, one badge (the health signal, else the priority), SP and the avatar. Thoáng (≈88 px): the title
+ * on up to two lines, the signal, labels, git badges, sub-task progress, due date. `fields` (Hiển thị ›
+ * Trường trên card) hides SP / người làm / nhãn / hạn; absent, all are shown.
+ */
 export function TaskCard({
   task,
+  dense = false,
+  fields,
   ageWarnHours = null,
   dragging,
   onOpen,
@@ -873,6 +1066,8 @@ export function TaskCard({
   onDragOver,
 }: {
   task: TaskRow;
+  dense?: boolean;
+  fields?: Set<string>;
   ageWarnHours?: number | null;
   dragging?: boolean;
   onOpen: () => void;
@@ -882,9 +1077,17 @@ export function TaskCard({
 }) {
   const dodMissing = useDodMissing(task);
   const selected = useCardSelected(task.key);
+  const has = (f: string) => !fields || fields.has(f);
+  const signal = cardSignal(task, ageWarnHours, dodMissing);
+  const signalEl = signal ? (
+    <span className={`tk-signal tk-signal-${signal.tone}`} title={signal.title}>
+      {signal.text}
+    </span>
+  ) : null;
+  const due = has("due") && task.due_date && task.status.category !== "done" && signal?.kind !== "overdue" ? task.due_date : null;
   return (
     <article
-      className={`tk-card${dragging ? " dragging" : ""}${selected ? " cp-card-selected" : ""}`}
+      className={`tk-card${dense ? " bd-card-dense" : ""}${dragging ? " dragging" : ""}${selected ? " cp-card-selected" : ""}`}
       data-card-key={task.key}
       tabIndex={-1}
       aria-current={selected ? "true" : undefined}
@@ -895,40 +1098,38 @@ export function TaskCard({
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
     >
-      <button type="button" className="tk-card-title" onClick={onOpen}>
+      <button type="button" className="tk-card-title" onClick={onOpen} title={dense ? task.title : undefined}>
         {task.title}
       </button>
-      {(() => {
-        const signal = cardSignal(task, ageWarnHours, dodMissing);
-        return signal ? (
-          <span className={`tk-signal tk-signal-${signal.tone}`} title={signal.title}>
-            {signal.text}
-          </span>
-        ) : null;
-      })()}
-      {(task.labels ?? []).length > 0 && (
-        <div className="tk-card-labels">
-          {task.labels.slice(0, 3).map((l) => (
+      {!dense && (signalEl || (has("labels") && (task.labels ?? []).length > 0)) && (
+        <div className="tk-card-labels bd-card-meta">
+          {signalEl}
+          {(has("labels") ? (task.labels ?? []) : []).slice(0, 3).map((l) => (
             <span key={l} className="tk-label">
               {l}
             </span>
           ))}
-          {task.labels.length > 3 && <span className="small faint">+{task.labels.length - 3}</span>}
+          {has("labels") && (task.labels ?? []).length > 3 && <span className="small faint">+{task.labels.length - 3}</span>}
         </div>
       )}
       <div className="tk-card-foot">
         <TypeIcon type={task.type} />
         <span className={`tk-key${task.status.category === "done" ? " done" : ""}`}>{task.key}</span>
-        <GitBadge row={task} />
+        {dense ? (signalEl ?? <RowPriority row={task} />) : <GitBadge row={task} />}
         <span className="spacer" />
-        {task.subtasks && task.subtasks.total > 0 && (
+        {!dense && task.subtasks && task.subtasks.total > 0 && (
           <span className="small muted" title="Sub-task xong / tổng">
             {task.subtasks.done}/{task.subtasks.total}
           </span>
         )}
-        <PointsChip points={task.story_points} />
-        <RowPriority row={task} />
-        <PersonAvatar person={task.assignee} />
+        {!dense && due && (
+          <span className="bd-due" title={`Hạn ${date(due)}`}>
+            {`${due.slice(8, 10)}/${due.slice(5, 7)}`}
+          </span>
+        )}
+        {has("points") && <PointsChip points={task.story_points} />}
+        {!dense && <RowPriority row={task} />}
+        {has("assignee") && <PersonAvatar person={task.assignee} />}
       </div>
     </article>
   );
