@@ -17158,9 +17158,9 @@ a.icon-btn {
 /* Backlog with the Epic bar (docs/specs/31 §19.1, §21.0 F3). */
 .tk-backlog-wrap {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
 }
 @media (max-width: 900px) {
   .tk-backlog-wrap {
@@ -17168,11 +17168,12 @@ a.icon-btn {
   }
 }
 .tk-epicbar {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  padding: 12px;
-  position: sticky;
-  top: calc(var(--topbar-h, 56px) + 12px);
+  min-height: 0;
+  padding: 10px;
+  overflow: hidden;
 }
 .tk-epicbar-title {
   margin: 0;
@@ -17180,9 +17181,13 @@ a.icon-btn {
 }
 .tk-epicbar-list {
   display: grid;
-  gap: 6px;
+  align-content: start;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
   margin: 0;
   padding: 0;
+  overflow-y: auto;
   list-style: none;
 }
 .tk-epicbar-list li {
@@ -17191,9 +17196,10 @@ a.icon-btn {
 }
 .tk-epic-pick {
   display: grid;
-  gap: 4px;
+  gap: 3px;
   width: 100%;
-  padding: 8px 10px;
+  height: auto;
+  padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
@@ -18215,4 +18221,288 @@ button.hb-item:hover {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
   box-shadow: var(--shadow-md);
+}
+
+/* UI/UX Backlog (docs/specs/31 §22.5): 40 px toolbar, Epic column + sprints scrolling inside the
+   remaining viewport, one 40 px sprint header, compact rows. */
+.bl-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: calc(100dvh - var(--tk-frame-h, 112px));
+  min-height: 360px;
+}
+.bl-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  height: 40px;
+  min-width: 0;
+}
+.bl-toolbar > .spacer {
+  flex: 1;
+}
+.bl-toolbar > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.bl-toolbar-count {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 280px;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--primary);
+  border-radius: 14px;
+  background: var(--primary-soft);
+  color: var(--text);
+  font-size: 13px;
+}
+.bl-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bl-chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+}
+.bl-chip-x:hover:not(:disabled),
+.bl-chip-x:focus-visible {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.bl-chip-x:focus-visible,
+.bl-cap:focus-visible,
+.bl-fold:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.bl-screen > .tk-backlog-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.bl-screen > .tk-backlog-wrap.bl-epic-folded {
+  grid-template-columns: 40px minmax(0, 1fr);
+}
+.bl-scroll {
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 8px;
+}
+.bl-note {
+  margin: 0;
+  padding: 4px;
+}
+
+/* Epic column: footer fold button, 40 px strip when folded. */
+.bl-epic-foot {
+  display: flex;
+  justify-content: flex-end;
+  flex: none;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.bl-epic-strip {
+  align-items: center;
+  padding: 4px 0;
+}
+.bl-epic-strip-label {
+  writing-mode: vertical-rl;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.tk-epicbar-list li {
+  position: relative;
+}
+.tk-epicbar .tk-epic-open {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  height: 20px;
+  font-size: 11px;
+}
+.tk-epicbar .tk-epic-name {
+  padding-right: 48px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tk-epicbar li:first-child .tk-epic-name {
+  padding-right: 0;
+}
+
+/* Sprint / backlog header: one 40 px row, sticky inside the scroll area. */
+.bl-scroll .tk-sprint {
+  overflow: visible;
+}
+.bl-sprint-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 8px 0 4px;
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
+  background: var(--surface);
+  white-space: nowrap;
+}
+.bl-sprint-head:focus-within {
+  z-index: 3;
+}
+.tk-sprint.bl-folded > .bl-sprint-head {
+  border-bottom-color: transparent;
+  border-radius: var(--radius-card);
+}
+.bl-sprint-head > .spacer {
+  flex: 1;
+}
+.bl-sprint-head > button.sm {
+  flex: none;
+}
+.bl-fold {
+  flex: none;
+  width: 28px;
+  height: 28px;
+}
+.bl-sprint-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 14px;
+}
+.bl-sprint-facts {
+  flex: none;
+}
+.bl-cap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: none;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+.bl-cap:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+.bl-cap[aria-expanded="true"] {
+  border-color: var(--ring);
+}
+.bl-cap.over {
+  border-color: var(--bad);
+  color: var(--bad-text);
+}
+.bl-cap-todo {
+  font-weight: 400;
+  color: var(--muted);
+}
+.bl-sprint-head .sr-scope-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bl-sprint-sub {
+  display: grid;
+  gap: 6px;
+  padding: 8px 12px 10px 40px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.bl-sprint-goal {
+  margin: 0;
+}
+
+/* Compact rows (~34 px) and the drag-only drop zone. */
+.bl-scroll .tk-blist {
+  min-height: 0;
+  padding: 2px 0;
+}
+.bl-scroll .tk-brow {
+  min-height: 34px;
+  padding: 2px 12px 2px 14px;
+}
+.bl-scroll .tk-blist-empty {
+  padding: 6px 16px 6px 40px;
+}
+.bl-dropzone {
+  padding: 4px 8px;
+}
+.bl-drop-hint {
+  margin: 2px 8px;
+  padding: 6px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+  list-style: none;
+}
+.tk-blist.over .bl-drop-hint {
+  border-color: var(--ring);
+  color: var(--text);
+}
+
+@media (max-width: 900px) {
+  .bl-screen {
+    height: auto;
+    min-height: 0;
+  }
+  .bl-screen > .tk-backlog-wrap,
+  .bl-screen > .tk-backlog-wrap.bl-epic-folded {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .bl-screen .tk-epicbar {
+    max-height: 240px;
+  }
+  .bl-epic-strip {
+    flex-direction: row;
+    padding: 4px 8px;
+  }
+  .bl-epic-strip-label {
+    writing-mode: horizontal-tb;
+  }
+  .bl-scroll {
+    overflow: visible;
+  }
+}
+@media (max-width: 700px) {
+  .bl-sprint-dates,
+  .bl-sprint-head .sr-scope-note,
+  .bl-toolbar-count {
+    display: none;
+  }
 }
