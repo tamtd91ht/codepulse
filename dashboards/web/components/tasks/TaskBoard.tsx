@@ -9,7 +9,7 @@ import { date } from "@/lib/format";
 import type { Me, TaskPage, TaskPerson, TaskResolution, TaskRow, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
 
 import { DensityToggle } from "./DensityToggle";
-import { type QuickPicks, QuickChips } from "./QuickChips";
+import { type QuickPicks, QuickChips, QuickPreview } from "./QuickChips";
 import { SubtaskGroup, readGroupSubs, writeGroupSubs } from "./SubtaskGroup";
 import {
   GitBadge,
@@ -92,6 +92,8 @@ export type QuickParsed = {
   parent_key?: string;
   /** Tokens matching more than one value: the user picks (nothing is guessed). */
   ambiguous: QuickAmbiguity[];
+  /** @/#/!/^ tokens that matched nothing: they stay in the title, the preview underlines them (§21.0 F6). */
+  unmatched: string[];
 };
 
 /**
@@ -110,7 +112,7 @@ export function parseQuick(text: string, people: TaskPerson[], space: TaskSpace)
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
-  const out: QuickParsed = { title: "", ambiguous: [] };
+  const out: QuickParsed = { title: "", ambiguous: [], unmatched: [] };
   const words: string[] = [];
   for (const word of text.trim().split(/\s+/)) {
     const sp = /^(\d+(?:[.,]\d+)?)sp$/i.exec(word);
@@ -165,6 +167,7 @@ export function parseQuick(text: string, people: TaskPerson[], space: TaskSpace)
         continue;
       }
     }
+    if (/^[@#!^]./.test(word)) out.unmatched.push(word);
     words.push(word);
   }
   out.title = words.join(" ").trim();
@@ -630,6 +633,9 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
                                 }
                               }}
                             />
+                            {!quickAsk[status.id] && (quick[status.id] ?? "").trim() && (
+                              <QuickPreview parsed={parseQuick(quick[status.id] ?? "", people.data ?? [], space)} people={people.data ?? []} space={space} />
+                            )}
                             {quickAsk[status.id] && (
                               <QuickChips
                                 ambiguous={quickAsk[status.id].parsed.ambiguous}

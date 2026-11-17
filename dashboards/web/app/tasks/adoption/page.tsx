@@ -100,7 +100,7 @@ export default function TaskAdoptionPage() {
                         </span>
                       )}
                     </td>
-                    <td>{r.enabled ? (r.template_name ?? <span className="tp-muted">Không rõ</span>) : <span className="tp-muted">—</span>}</td>
+                    <td>{r.enabled ? (r.template_name ?? <span className="tp-muted" title="Cấu hình riêng của dự án (bật trước khi có mẫu hoặc tự chỉnh)">Tuỳ chỉnh</span>) : <span className="tp-muted">—</span>}</td>
                     <td className="num">{r.tasks}</td>
                     <td className="num">{r.open}</td>
                     <td>{r.last_activity ? dateTime(r.last_activity) : <span className="tp-muted">Chưa có</span>}</td>

@@ -331,7 +331,11 @@ function GeneralCard({ space }: { space: TaskSpace }) {
       {dialog === "save" && <SaveTemplateModal space={space} onClose={() => setDialog(null)} />}
       <div className="adm-form tk-form">
         {message && <Message text={message} onClose={() => setMessage(null)} />}
-        <p className="small muted tp-current">Mẫu đang dùng: {templateName ?? "không rõ (bật trước khi có mẫu)"}</p>
+        <p className="small muted tp-current">
+          {/* §21.0 F4: a dự án set up by hand is "Tuỳ chỉnh", with what to do next. */}
+          Mẫu đang dùng: {templateName ?? "Tuỳ chỉnh"}
+          {!templateName && " · cấu hình riêng của dự án: có thể “Lưu cấu hình thành mẫu” để dùng lại, hoặc “Áp mẫu” để theo một mẫu có sẵn."}
+        </p>
         <label className="rq-field tk-key-field">
           <span className="rq-label">Mã dự án</span>
           <input value={key} onChange={(e) => setKey(e.target.value.toUpperCase())} maxLength={10} aria-invalid={!valid} />

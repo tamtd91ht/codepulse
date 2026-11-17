@@ -16790,11 +16790,17 @@ a.icon-btn {
 .tl-chip:hover {
   background: var(--surface-hover);
 }
-.tl-chip.on {
+/* §21.0 F5: the selected chip is solid, so a hovered or focused one never reads as selected. */
+.tl-chip.on,
+.tl-chip.on:hover {
   border-color: var(--primary);
-  background: var(--primary-soft);
-  color: var(--primary-text);
+  background: var(--primary);
+  color: var(--on-primary);
   font-weight: 600;
+}
+.tl-chip.on .tl-chip-count {
+  color: inherit;
+  opacity: 0.8;
 }
 .tl-chip:focus-visible {
   outline: 2px solid var(--ring);
@@ -17147,4 +17153,95 @@ a.icon-btn {
 }
 .sr-trend-flat {
   color: var(--muted);
+}
+
+/* Backlog with the Epic bar (docs/specs/31 §19.1, §21.0 F3). */
+.tk-backlog-wrap {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .tk-backlog-wrap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.tk-epicbar {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  position: sticky;
+  top: calc(var(--topbar-h, 56px) + 12px);
+}
+.tk-epicbar-title {
+  margin: 0;
+  font-size: 14px;
+}
+.tk-epicbar-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tk-epicbar-list li {
+  display: grid;
+  gap: 2px;
+}
+.tk-epic-pick {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.tk-epic-pick:hover {
+  background: var(--surface-hover);
+}
+.tk-epic-pick:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.tk-epic-pick.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+.tk-epic-pick.closed {
+  opacity: 0.7;
+}
+.tk-epic-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.tk-epic-open {
+  justify-self: end;
+}
+
+/* §21.0 F6: quick-create live preview */
+.qk-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.qk-pv {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+}
+.qk-pv-bad {
+  color: var(--muted);
+  text-decoration: underline wavy var(--danger);
+  text-underline-offset: 3px;
 }

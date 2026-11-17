@@ -1,6 +1,9 @@
 "use client";
 
-import type { QuickAmbiguity } from "./TaskBoard";
+import type { TaskPerson, TaskSpace } from "@/lib/types";
+
+import type { QuickAmbiguity, QuickParsed } from "./TaskBoard";
+import { TYPE_LABEL, personName, priorityList } from "./taskParts";
 
 /** A pick per ambiguous token: a value, or null for "leave it out". */
 export type QuickPicks = Record<string, number | string | null>;
@@ -64,6 +67,38 @@ export function QuickChips({
         </button>
         {!ready && <span className="small muted">Chọn một giá trị cho mỗi chỗ trên.</span>}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Live preview of a quick-create line (docs/specs/31 §21.0 F6): while typing, the values read so
+ * far show as chips under the input; a @/#/!/^ token that matched nothing is underlined red (it
+ * would stay in the title).
+ */
+export function QuickPreview({ parsed, people, space }: { parsed: QuickParsed; people: TaskPerson[]; space: TaskSpace }) {
+  const chips: { key: string; label: string; bad?: boolean; title?: string }[] = [];
+  if (parsed.assignee_id != null) {
+    const who = people.find((p) => p.id === parsed.assignee_id);
+    chips.push({ key: "who", label: `@ ${who ? personName(who) : `#${parsed.assignee_id}`}`, title: "Người làm" });
+  }
+  if (parsed.type) chips.push({ key: "type", label: `# ${TYPE_LABEL[parsed.type]}`, title: "Loại" });
+  if (parsed.priority) {
+    const pr = priorityList(space).find((p) => p.key === parsed.priority);
+    chips.push({ key: "prio", label: `! ${pr?.name ?? parsed.priority}`, title: "Ưu tiên" });
+  }
+  if (parsed.story_points != null) chips.push({ key: "sp", label: `${parsed.story_points} SP`, title: "Story point" });
+  if (parsed.parent_key) chips.push({ key: "parent", label: `^ ${parsed.parent_key}`, title: "Task cha" });
+  for (const a of parsed.ambiguous) chips.push({ key: `amb-${a.token}`, label: `${a.token}: ${a.options.length} lựa chọn`, title: "Enter để chọn" });
+  for (const u of parsed.unmatched) chips.push({ key: `bad-${u}`, label: u, bad: true, title: "Không khớp, sẽ nằm trong tiêu đề" });
+  if (!chips.length) return null;
+  return (
+    <div className="qk-preview" aria-live="polite" aria-label="Xem trước dòng tạo nhanh">
+      {chips.map((c) => (
+        <span key={c.key} className={`qk-pv${c.bad ? " qk-pv-bad" : ""}`} title={c.title}>
+          {c.label}
+        </span>
+      ))}
     </div>
   );
 }
