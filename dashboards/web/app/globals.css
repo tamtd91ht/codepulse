@@ -20875,3 +20875,629 @@ input.fb-cell-edit {
     display: none;
   }
 }
+/* UI/UX narrow + toolbars (docs/specs/31 §22.9): frame height by window height (UI/UX §5), the
+   compact FilterBar (🔍 + "Lọc (n)" + bottom sheet) under 768 px wide or 720 px tall, icon-only
+   pinned chips under 1280 px, "+ Tạo" as a floating round button under 768 px, the List as cards on
+   a phone, the Backlog / Việc của tôi toolbars, and Task pages that fit the window (no page scroll). */
+
+/* Frame budget (UI/UX §5): ≥ 900 px tall 112 px; 720–899 px 96 px; < 720 px 88 px (48 + 40, no gaps). */
+@media (max-height: 899px) {
+  :root {
+    --tk-gap: 4px;
+    --tk-pad-b: 4px;
+  }
+}
+@media (max-height: 719px) {
+  :root {
+    --tk-gap: 0px;
+  }
+}
+
+/* Fit: a Task screen with a toolbar is exactly the window (the main view scrolls, never the page).
+   The toolbar → view gap is the frame's --tk-gap (the frame height counts it); the Backlog grid row is
+   bounded (an `auto` row grew to its content and pushed the page into scrolling). */
+.bl-screen {
+  gap: var(--tk-gap);
+}
+@media (min-width: 901px) {
+  .bl-screen {
+    height: var(--tk-view-h-full);
+    min-height: 0;
+  }
+  .bl-screen > .tk-backlog-wrap {
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .bl-screen > .tk-backlog-wrap > .tk-epicbar {
+    min-height: 0;
+  }
+}
+.tk-list.fb-listwrap,
+.mw {
+  gap: var(--tk-gap);
+}
+/* Visually hidden labels (position: absolute) inside a scrolling list are placed against the page
+   unless the scroller is positioned: they made the whole page scroll by the list's length. */
+.bl-scroll,
+.tk-epicbar,
+.mw-col {
+  position: relative;
+}@media (min-width: 1280px) {
+  .mw-cols {
+    height: var(--tk-view-h);
+    min-height: 0;
+  }
+}
+
+/* Pinned chips: name + values on wide windows; icon (+ count) with a tooltip under 1280 px. */
+.fb-pinned {
+  position: relative;
+}
+.fb-pinned .fb-chip-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.fb-pin-icon,
+.fb-pin-n {
+  display: none;
+}
+@media (max-width: 1279px) {
+  .fb-pinned .fb-pin-label {
+    display: none;
+  }
+  .fb-pinned .fb-pin-icon {
+    display: inline-block;
+    flex: none;
+  }
+  .fb-pinned .fb-chip-text,
+  .fb-pinned:not(.fb-active) .fb-chip-text {
+    padding: 0 8px;
+  }
+  .fb-pinned.fb-active .fb-chip-text {
+    padding-right: 2px;
+  }
+  .fb-pin-n {
+    display: inline-grid;
+    place-items: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--link);
+    color: var(--on-primary);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .fb-bar [data-narrow-tip]:hover::after,
+  .fb-bar [data-narrow-tip]:focus-within::after {
+    content: attr(data-narrow-tip);
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 40;
+    max-width: 260px;
+    padding: 4px 8px;
+    border-radius: var(--radius-small);
+    background: var(--primary);
+    color: var(--on-primary);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+  }
+  .fb-right [data-narrow-tip]:hover::after,
+  .fb-right [data-narrow-tip]:focus-within::after {
+    left: auto;
+    right: 0;
+    transform: none;
+  }
+}
+
+/* Under 1280 px the right side keeps icons only for Hiển thị / Tạo sprint (names in tooltips), and
+   the search gives way first, so the row never runs wider than the window. */
+@media (max-width: 1279px) {
+  .fb-search {
+    min-width: 120px;
+  }
+  .fb-display .fb-btn-text,
+  .nw-act .fb-btn-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .fb-display,
+  .nw-act {
+    padding: 0 8px;
+  }
+}
+
+/* "Lọc (n)": only in the compact bar. */
+.fb-sheet-btn {
+  display: none;
+  flex: none;
+}
+.fb-display,
+.nw-act {
+  position: relative;
+}
+.nw-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.fb-right .bl-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 220px;
+}
+
+/* Compact bar (UI/UX §5 < 720 px tall, §6 < 768 px wide): 🔍 and "Lọc (n)" on the left; the search
+   opens over the row while it has focus; chips, people and "+ Lọc" live in the bottom sheet. */
+@media (max-width: 767px), (max-height: 719px) {
+  .fb-bar {
+    position: relative;
+    gap: 6px;
+  }
+  .fb-bar:not(.mw-fb) > .fb-fixed,
+  .fb-bar > .fb-chips,
+  .fb-bar > .fb-more,
+  .fb-bar:not(.mw-fb) > .fb-clear,
+  .fb-status,
+  .fb-count-tag,
+  .mw-refresh {
+    display: none;
+  }
+  .fb-sheet-btn {
+    display: inline-flex;
+  }
+  .fb-search,
+  .fb-search.wide {
+    flex: none;
+    width: 32px;
+    min-width: 32px;
+    padding: 0;
+    justify-content: center;
+  }
+  .fb-search > svg {
+    position: absolute;
+    left: 8px;
+    pointer-events: none;
+  }
+  .fb-search input[type] {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0 30px 0 30px;
+    color: transparent;
+    caret-color: transparent;
+    cursor: pointer;
+  }
+  .fb-search input::placeholder {
+    color: transparent;
+  }
+  .fb-search > .fb-x {
+    display: none;
+  }
+  /* Text in the box while it is closed: the icon box reads as "on". */
+  .fb-search.wide:not(:focus-within) {
+    border-color: var(--link);
+    background: var(--info-soft);
+    color: var(--link);
+  }
+  .fb-search:focus-within {
+    position: absolute;
+    top: 4px;
+    left: 0;
+    right: 0;
+    z-index: 6;
+    width: auto;
+    background: var(--surface);
+  }
+  .fb-search:focus-within input[type] {
+    color: var(--text);
+    caret-color: auto;
+    cursor: text;
+  }
+  .fb-search:focus-within input::placeholder {
+    color: var(--faint);
+  }
+  .fb-search:focus-within > .fb-x {
+    display: inline-grid;
+    position: absolute;
+    right: 6px;
+    top: 5px;
+  }
+  .fb-display .fb-btn-text,
+  .nw-act .fb-btn-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .fb-display,
+  .nw-act {
+    padding: 0 8px;
+  }
+  .fb-right {
+    min-width: 0;
+    gap: 6px;
+  }
+  .fb-right .bl-chip {
+    max-width: 120px;
+  }
+  .fb-display[data-narrow-tip]:hover::after,
+  .nw-act[data-narrow-tip]:hover::after {
+    content: attr(data-narrow-tip);
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 40;
+    padding: 4px 8px;
+    border-radius: var(--radius-small);
+    background: var(--primary);
+    color: var(--on-primary);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+}
+
+/* Bottom sheet (the compact bar's "Lọc"). */
+.fb-sheet-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.fb-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--backdrop);
+  animation: fb-fade 180ms ease-out;
+}
+.fb-sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 640px;
+  max-height: min(85dvh, 640px);
+  margin: 0 auto;
+  border: 1px solid var(--border-strong);
+  border-bottom: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  font-size: 14px;
+  animation: nw-sheet-in 180ms ease-out;
+}
+@keyframes nw-sheet-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
+.fb-sheet-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  min-height: 52px;
+  padding: 10px 12px 6px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.fb-sheet-grip {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 36px;
+  height: 4px;
+  margin-left: -18px;
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+.fb-sheet-clear {
+  margin-left: auto;
+  height: 32px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+}
+.fb-sheet-x {
+  flex: none;
+  margin-left: auto;
+}
+.fb-sheet-clear + .fb-sheet-x {
+  margin-left: 0;
+}
+.fb-sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 12px;
+}
+.fb-sheet-on {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.fb-sheet-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+/* Rows a thumb can hit (44 px); the pin button belongs to the wide bar only. */
+.fb-sheet .fb-opt {
+  min-height: 44px;
+}
+.fb-sheet .fb-pin {
+  display: none;
+}
+.fb-sheet .fb-pop-search {
+  height: 40px;
+}
+.fb-sheet .fb-pop-search input[type] {
+  height: 36px;
+  font-size: 16px; /* no zoom-on-focus on phones */
+}
+.fb-sheet-foot {
+  display: flex;
+  flex: none;
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+}
+.fb-sheet-foot > button {
+  flex: 1;
+  height: 44px;
+}
+.fb-sheet .fb-x:focus-visible,
+.fb-sheet-x:focus-visible,
+.fb-sheet-clear:focus-visible,
+.fb-search > .fb-x:focus-visible,
+.fb-chip-text:focus-visible,
+.fb-sheet-btn:focus-visible,
+.fb-display:focus-visible,
+.nw-act:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* "+ Tạo" as a round button floating bottom right under 768 px (UI/UX §6). The drawer, full screen
+   there, sits above it. */
+@media (max-width: 767px) {
+  .tf-actions .tf-create {
+    position: fixed;
+    right: 16px;
+    bottom: calc(72px + env(safe-area-inset-bottom)); /* above the Stetho button (bottom 16 px) */
+    z-index: 45;
+    width: 56px;
+    height: 56px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 50%;
+    box-shadow: var(--shadow-lg);
+  }
+  .tf-actions .tf-create svg {
+    width: 24px;
+    height: 24px;
+  }
+  /* Room under the last rows so the button never hides them. */
+  .tf-body > .mw {
+    padding-bottom: 128px;
+  }
+  .tf-page .fb-scroll,
+  .tf-page .bl-scroll {
+    scroll-padding-bottom: 128px;
+  }
+  .tf-page .fb-scroll::after,
+  .tf-page .bl-scroll::after {
+    content: "";
+    display: block;
+    height: 128px;
+  }
+  /* The breadcrumb keeps the dự án only ("Task /" is the menu item already), so it never runs into
+     the one tab left on the row. */
+  .tf-crumbs {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+  .tf-crumb-root,
+  .tf-crumb-sep {
+    display: none;
+  }
+  .tf-switch,
+  button.tf-crumb-btn {
+    min-width: 0;
+    max-width: 112px;
+  }
+  .tf-tabs {
+    flex: 0 1 auto;
+  }
+  button.tf-tab {
+    padding: 0 8px;
+  }
+  /* "Thêm ▾" as "⋯" (its name stays for screen readers). */
+  .tf-more .tf-menu-btn > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .tf-more .tf-menu-btn > svg:last-child {
+    display: none;
+  }
+}
+
+/* Danh sách between 768 and 1439 px: narrower fixed columns so the title keeps room. */
+@media (min-width: 768px) and (max-width: 1439px) {
+  .fb-table .fb-w-key {
+    width: 100px;
+  }
+  .fb-table .fb-w-status {
+    width: 120px;
+  }
+  .fb-table .fb-w-priority {
+    width: 108px;
+  }
+  .fb-table .fb-w-assignee {
+    width: 144px;
+  }
+  .fb-table .fb-w-points {
+    width: 52px;
+  }
+  .fb-table .fb-w-due,
+  .fb-table .fb-w-updated {
+    width: 100px;
+  }
+  .fb-table .fb-w-actions {
+    width: 44px;
+  }
+}
+
+/* Danh sách on a phone: each row a two-line card (key, actions / title / the shown fields). */
+@media (max-width: 767px) {
+  .fb-table {
+    display: block;
+    min-width: 0;
+    table-layout: auto;
+  }
+  .fb-table colgroup,
+  .fb-table thead {
+    display: none;
+  }
+  .fb-table tbody {
+    display: block;
+  }
+  .fb-table tr.fb-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .fb-table tr.fb-row > td,
+  .fb-dense .fb-table tr.fb-row > td {
+    display: block;
+    width: auto;
+    height: auto;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    overflow: visible;
+  }
+  .fb-table tr.fb-row > td.fb-c-title {
+    overflow: hidden;
+  }
+  .fb-table tbody td.check-col {
+    position: static;
+    order: 0;
+  }
+  .fb-table td.fb-c-key {
+    order: 1;
+  }
+  .fb-table td.tk-actions-col {
+    order: 2;
+    margin-left: auto;
+  }
+  .fb-table td.fb-c-title {
+    order: 3;
+    flex: 1 0 100%;
+  }
+  .fb-table tr.fb-row > td:not(.check-col):not(.fb-c-key):not(.fb-c-title):not(.tk-actions-col) {
+    order: 4;
+    font-size: 13px;
+  }
+  .fb-table td.fb-c-labels:empty {
+    display: none;
+  }
+  .fb-table td .fb-title {
+    max-width: 100%;
+    font-size: 14px;
+  }
+  .fb-table tr.fb-spacer,
+  .fb-table tr.fb-spacer > td {
+    display: block;
+  }
+  .fb-table tr.fb-group {
+    display: block;
+  }
+  .fb-table tr.fb-group > th {
+    display: block;
+    height: auto;
+    padding: 8px 12px;
+  }
+  .fb-tablebox .fb-cell {
+    margin-left: 0;
+  }
+}
+
+/* Backlog without the Epic column (Hiển thị › Hiện cột Epic off); Thoáng rows. */
+.bl-screen > .tk-backlog-wrap.nw-no-epic {
+  grid-template-columns: minmax(0, 1fr);
+}
+.bl-screen.nw-comfy .bl-scroll .tk-brow {
+  min-height: 44px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+/* The sprint name never shrinks to nothing next to its facts; dates go first on narrower windows. */
+.bl-sprint-head .bl-sprint-name {
+  flex: 0 1 auto;
+  min-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 1279px) {
+  .bl-sprint-head .bl-sprint-dates {
+    display: none;
+  }
+}
+.nw-nomatch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Việc của tôi: the reduced FilterBar row and Thoáng rows. */
+.mw-fb .fb-right .mw-refresh {
+  margin-left: 0;
+}
+.mw .fb-chip.fb-pinned .fb-chip-text {
+  max-width: 240px;
+}
+.nw-mw-comfy .mw-task {
+  height: 44px;
+}
+.nw-mw-comfy .mw-row {
+  min-height: 44px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fb-sheet,
+  .fb-sheet-backdrop {
+    animation: none;
+  }
+}

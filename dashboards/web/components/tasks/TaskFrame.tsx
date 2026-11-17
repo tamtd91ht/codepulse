@@ -371,17 +371,17 @@ export function TaskFrame({ crumb, help, tabs, tab, onTab, menu, settingsActive,
         <div className="tf-actions">
           {actions}
           {mine && (
-            <Link href="/tasks/me" className={`button sm tf-mine${mine === "current" ? " active" : ""}`} aria-current={mine === "current" ? "page" : undefined}>
+            <Link href="/tasks/me" className={`button sm tf-mine${mine === "current" ? " active" : ""}`} aria-label="Việc của tôi" aria-current={mine === "current" ? "page" : undefined}>
               <Icon name="user" size={16} /> <span className="tf-btn-text">Của tôi</span>
             </Link>
           )}
           {create &&
             ("run" in create ? (
-              <button type="button" className="primary sm tf-create" onClick={create.run} aria-keyshortcuts="C" title="Tạo task (C)">
+              <button type="button" className="primary sm tf-create" onClick={create.run} aria-keyshortcuts="C" aria-label="Tạo task" title="Tạo task (C)">
                 <Icon name="plus" size={16} /> <span className="tf-btn-text">Tạo</span>
               </button>
             ) : (
-              <Link href={create.href} className="button primary sm tf-create" aria-keyshortcuts="C" title="Tạo task (C)">
+              <Link href={create.href} className="button primary sm tf-create" aria-keyshortcuts="C" aria-label="Tạo task" title="Tạo task (C)">
                 <Icon name="plus" size={16} /> <span className="tf-btn-text">Tạo</span>
               </Link>
             ))}

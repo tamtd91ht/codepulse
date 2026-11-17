@@ -5,12 +5,15 @@ import { type DragEvent, type ReactNode, useEffect, useMemo, useState } from "re
 import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
 import { MoreMenu } from "@/components/MoreMenu";
-import { Alert, Loading, Message, Pill } from "@/components/ui";
+import { Alert, Loading, Message, Pill, Segmented } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
-import type { Sprint, SprintPlan, SprintPreflight, SprintReview, TaskEpic, TaskPage, TaskRow, TaskSpace } from "@/lib/types";
+import type { Me, Sprint, SprintPlan, SprintPreflight, SprintReview, TaskEpic, TaskPage, TaskRow, TaskSpace } from "@/lib/types";
 
 import { useDrawerList } from "./drawerNav";
+import { FilterBar } from "./FilterBar";
+import { CLIENT_FIELDS, rowMatcher } from "./filterMatch";
+import { filterCount, useFilterState, useViewOptions } from "./filterState";
 import { byRank, neighbours } from "./TaskBoard";
 import { RetroButton, ScopeNote, SprintReviewView } from "./TaskHealth";
 import {
@@ -29,6 +32,13 @@ import {
 } from "./taskParts";
 
 const DRAG_TYPE = "text/x-task-key";
+/** "+ Lọc" on the Backlog: fields matched in the browser (people have the avatar stack). */
+const BACKLOG_FIELDS = CLIENT_FIELDS.filter((f) => f !== "assignee");
+/** One pinned chip, Loại (UI/UX §4.3). */
+const BACKLOG_PINS = ["type"];
+type BacklogView = { emptySprints: boolean; epicBar: boolean; density: "dense" | "comfy" };
+/** Hiển thị of the Backlog (UI/UX §3.5). */
+const BACKLOG_VIEW: BacklogView = { emptySprints: true, epicBar: true, density: "dense" };
 type Box = number | "backlog";
 /** Per-browser memory of the folded Epic column (docs/specs/31 §22.5). */
 const EPIC_FOLD_KEY = "codepulse.tasks.backlog.epicCollapsed";
@@ -52,8 +62,13 @@ function writeEpicFold(v: boolean) {
  * Backlog (§13, layout §22.5): a 40 px toolbar, then the Epic column (foldable) beside the sprints
  * and the backlog; only that area scrolls. Rows drag between sprints and the backlog.
  */
-export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key: string) => void }) {
+export function TaskBacklog({ space, me, onOpen }: { space: TaskSpace; me?: Me; onOpen: (key: string) => void }) {
   const bp = space.business_project_id;
+  // §22.9: the shared FilterBar, applied to the rows already here (no extra request).
+  const [filter, setFilter] = useFilterState("backlog", bp, me?.id);
+  const [view, setView] = useViewOptions<BacklogView>("backlog", me?.id, BACKLOG_VIEW);
+  const matches = useMemo(() => rowMatcher(filter, me?.id), [filter, me?.id]);
+  const filtering = filterCount(filter) > 0;
   const sprints = useSprints(bp);
   const backlog = useApi<TaskPage>(`/tasks?space=${bp}&sprint=backlog&sort=rank&limit=500`);
   const [drag, setDrag] = useState<string | null>(null);
@@ -78,7 +93,7 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
   const isOpen = (box: Box, rows: TaskRow[]) => expanded[String(box)] ?? rows.length > 0;
   const toggle = (box: Box, rows: TaskRow[]) => setExpanded((m) => ({ ...m, [String(box)]: !isOpen(box, rows) }));
   // Epics live in the Epic bar, sub-tasks inside their parent: neither is a Backlog row.
-  const shows = (t: TaskRow) => t.type !== "epic" && t.type !== "subtask" && (!epic || t.parent_key === epic);
+  const shows = (t: TaskRow) => t.type !== "epic" && t.type !== "subtask" && (!epic || t.parent_key === epic) && matches(t);
 
   const open = useMemo(
     () =>
@@ -90,11 +105,12 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
   const backlogRows = useMemo(
     () => (backlog.data?.items ?? []).filter((t) => t.status.category !== "done" && shows(t)).sort(byRank),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [backlog.data, epic],
+    [backlog.data, epic, matches],
   );
   // §22.6: J/K in the task drawer walk the sprints top-down, then the backlog.
   useDrawerList([...open.flatMap((s) => (s.tasks ?? []).filter(shows).sort(byRank)), ...backlogRows].map((t) => t.key));
   const hasActive = open.some((s) => s.state === "active");
+  const shownCount = open.reduce((n, s) => n + (s.tasks ?? []).filter(shows).length, 0) + backlogRows.length;
   const pickedEpic = epic ? epics.data?.find((e) => e.key === epic) : undefined;
 
   function rowsOf(box: Box): TaskRow[] {
@@ -210,38 +226,76 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
   };
 
   return (
-    <div className="bl-screen">
+    <div className={`bl-screen${view.density === "comfy" ? " nw-comfy" : ""}`}>
       {confirmEl}
-      <div className="bl-toolbar" role="toolbar" aria-label="Backlog">
-        {pickedEpic && (
-          <span className="bl-chip" title={pickedEpic.title}>
-            <span className="bl-chip-text">Epic: {pickedEpic.title}</span>
-            <button type="button" className="bl-chip-x" aria-label={`Bỏ lọc Epic: ${pickedEpic.title}`} onClick={() => setEpic(null)}>
-              <Icon name="close" size={12} />
+      <FilterBar
+        space={space}
+        me={me}
+        screen="backlog"
+        value={filter}
+        onChange={setFilter}
+        fields={BACKLOG_FIELDS}
+        pinned={BACKLOG_PINS}
+        counts={false}
+        total={sprints.data && backlog.data ? shownCount : null}
+        status={sprints.data ? `${open.length} sprint` : undefined}
+        display={
+          <div className="fb-display-pop">
+            <label className="fb-display-row">
+              <span className="fb-display-label">Hiện sprint rỗng</span>
+              <input type="checkbox" checked={view.emptySprints} onChange={(e) => setView({ emptySprints: e.target.checked })} />
+            </label>
+            <label className="fb-display-row">
+              <span className="fb-display-label">Hiện cột Epic</span>
+              <input type="checkbox" checked={view.epicBar} onChange={(e) => setView({ epicBar: e.target.checked })} />
+            </label>
+            <div className="fb-display-row">
+              <span className="fb-display-label">Mật độ</span>
+              <Segmented<BacklogView["density"]>
+                label="Mật độ hiển thị"
+                value={view.density}
+                onChange={(density) => setView({ density })}
+                options={[
+                  { value: "dense", label: "Gọn" },
+                  { value: "comfy", label: "Thoáng" },
+                ]}
+              />
+            </div>
+            <button type="button" className="link small" onClick={() => setView(BACKLOG_VIEW)}>
+              Về mặc định
             </button>
-          </span>
+          </div>
+        }
+        actions={
+          <>
+            {pickedEpic && (
+              <span className="bl-chip" title={pickedEpic.title}>
+                <span className="bl-chip-text">Epic: {pickedEpic.title}</span>
+                <button type="button" className="bl-chip-x" aria-label={`Bỏ lọc Epic: ${pickedEpic.title}`} onClick={() => setEpic(null)}>
+                  <Icon name="close" size={12} />
+                </button>
+              </span>
+            )}
+            {canManage && (
+              <button type="button" className="sm nw-act" onClick={() => setDialog({ kind: "edit", sprint: null })} aria-label="Tạo sprint" data-narrow-tip="Tạo sprint">
+                <Icon name="plus" size={14} /> <span className="fb-btn-text">Tạo sprint</span>
+              </button>
+            )}
+          </>
+        }
+      />
+      <div className={`tk-backlog-wrap${epicFolded ? " bl-epic-folded" : ""}${view.epicBar ? "" : " nw-no-epic"}`}>
+        {view.epicBar && (
+          <EpicBar
+            epics={epics.data}
+            error={epics.error}
+            value={epic}
+            onChange={setEpic}
+            onOpen={onOpen}
+            folded={epicFolded}
+            onFold={foldEpics}
+          />
         )}
-        <span className="small muted bl-toolbar-count">
-          {sprints.data ? `${open.length} sprint` : ""}
-          {backlog.data ? ` · ${backlogRows.length} task trong backlog` : ""}
-        </span>
-        <span className="spacer" />
-        {canManage && (
-          <button type="button" className="sm" onClick={() => setDialog({ kind: "edit", sprint: null })}>
-            <Icon name="plus" size={14} /> Tạo sprint
-          </button>
-        )}
-      </div>
-      <div className={`tk-backlog-wrap${epicFolded ? " bl-epic-folded" : ""}`}>
-        <EpicBar
-          epics={epics.data}
-          error={epics.error}
-          value={epic}
-          onChange={setEpic}
-          onOpen={onOpen}
-          folded={epicFolded}
-          onFold={foldEpics}
-        />
         <div className="tk-backlog bl-scroll">
           {message && <Message text={message} onClose={() => setMessage(null)} />}
           {!sprints.data ? (
@@ -249,8 +303,12 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
           ) : (
             open.map((s) => {
               const tasks = rowsOf(s.id);
-              const points = epic ? sumPoints(tasks) : (s.points ?? sumPoints(tasks));
-              const donePoints = epic ? sumPoints(tasks.filter((t) => t.status.category === "done")) : (s.done_points ?? sumPoints(tasks.filter((t) => t.status.category === "done")));
+              // Hiển thị › Hiện sprint rỗng off: a sprint with no (matching) row is left out, except
+              // while a row is dragged (it is a drop target).
+              if (!view.emptySprints && !tasks.length && !drag) return null;
+              const scoped = !!epic || filtering;
+              const points = scoped ? sumPoints(tasks) : (s.points ?? sumPoints(tasks));
+              const donePoints = scoped ? sumPoints(tasks.filter((t) => t.status.category === "done")) : (s.done_points ?? sumPoints(tasks.filter((t) => t.status.category === "done")));
               return (
                 <SprintSection
                   key={s.id}
@@ -271,6 +329,14 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
                 </SprintSection>
               );
             })
+          )}
+          {filtering && sprints.data && backlog.data && shownCount === 0 && (
+            <p className="small muted bl-note nw-nomatch" role="status">
+              Không có task khớp bộ lọc ·{" "}
+              <button type="button" className="link small" onClick={() => setFilter({ text: "", chips: [] })}>
+                Xoá lọc
+              </button>
+            </p>
           )}
           {sprints.data && !open.length && <p className="small muted bl-note">Chưa có sprint nào{canManage ? ". Bấm “Tạo sprint” ở trên để lập sprint." : "."}</p>}
           <section className={`card tk-sprint${isOpen("backlog", backlogRows) ? "" : " bl-folded"}`} aria-label="Backlog">

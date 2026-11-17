@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 
 import { Icon, type IconName } from "@/components/icons";
 import { GitBadge, PointsChip, RowPriority, StatusPill, TypeIcon, spaceOf, useTaskSpaces } from "@/components/tasks/taskParts";
-import { Loading } from "@/components/ui";
+import { Loading, Segmented } from "@/components/ui";
 import { useApi } from "@/lib/api";
-import type { TaskRow } from "@/lib/types";
+import type { Me, TaskRow } from "@/lib/types";
 import { useDrawerList } from "./drawerNav";
+import { Popover, ValueList } from "./FilterBar";
+import { useViewOptions } from "./filterState";
 
 /*
  * "Việc của tôi" (docs/specs/31 §19.3, layout §22.7): one screen answering "what do I do now" —
@@ -79,12 +81,20 @@ function safeLink(url: string | null | undefined): string | null {
   return isHttp(url) ? url : null;
 }
 
+type MyView = { density: "dense" | "comfy"; doneWeek: boolean; sprints: boolean };
+const MY_VIEW: MyView = { density: "dense", doneWeek: true, sprints: true };
+
 export function MyWork() {
   const { data, error, mutate } = useApi<MyWorkData>("/tasks/my-work", { refreshInterval: 60_000 });
+  const { data: me } = useApi<Me>("/auth/me");
   const spaces = useTaskSpaces();
-  // TODO(31 §22.7): swap this local toolbar for the shared FilterBar once it lands.
+  // The reduced FilterBar (UI/UX §4.4, docs/specs/31 §22.9): search, the dự án chip, Hiển thị. The
+  // shared FilterBar is per dự án (its fields, people and counts come from one dự án); this page
+  // spans all of them, so it keeps the same row and pieces (fb- styles, Popover, ValueList) with
+  // a filter applied in the browser.
   const [q, setQ] = useState("");
-  const [project, setProject] = useState<number | "">("");
+  const [picked, setPicked] = useState<number[]>([]);
+  const [view, setView] = useViewOptions<MyView>("me", me?.id, MY_VIEW);
 
   const projects = useMemo(() => {
     if (!data) return [];
@@ -98,11 +108,10 @@ export function MyWork() {
   }, [data, spaces.data]);
 
   const needle = q.trim().toLowerCase();
+  const inProject = (id: number | null) => !picked.length || (id !== null && picked.includes(id));
   const keep = <T extends TaskRow>(rows: T[]) =>
-    rows.filter(
-      (r) => (project === "" || spaceOf(r) === project) && (!needle || r.key.toLowerCase().includes(needle) || r.title.toLowerCase().includes(needle)),
-    );
-  const filtered = needle !== "" || project !== "";
+    rows.filter((r) => inProject(spaceOf(r)) && (!needle || r.key.toLowerCase().includes(needle) || r.title.toLowerCase().includes(needle)));
+  const filtered = needle !== "" || picked.length > 0;
   // §22.6: J/K in the drawer walk the tasks in the order the page lists them.
   useDrawerList(data ? [...data.doing, ...data.waiting, ...data.todo, ...data.done_week].map((r) => r.key) : []);
 
@@ -126,43 +135,45 @@ export function MyWork() {
     );
 
   const attention = data.attention.filter((item) => {
-    if (project !== "" && item.task && spaceOf(item.task) !== project) return false;
+    if (item.task && !inProject(spaceOf(item.task))) return false;
     if (!needle) return true;
     const hay = `${item.task?.key ?? item.task_key ?? ""} ${item.task?.title ?? item.mr?.title ?? ""} ${item.text}`.toLowerCase();
     return hay.includes(needle);
   });
 
+  const shownTasks = [data.doing, data.waiting, data.todo, ...(view.doneWeek ? [data.done_week] : [])].reduce((n, rows) => n + keep(rows).length, 0);
+
   return (
-    <div className="mw">
-      <div className="mw-toolbar" role="search">
-        <label className="mw-search">
+    <div className={`mw${view.density === "comfy" ? " nw-mw-comfy" : ""}`}>
+      <div className="fb-bar mw-fb" role="toolbar" aria-label="Lọc việc của tôi">
+        <div className={`fb-search${q ? " wide" : ""}`} role="search">
           <Icon name="search" size={14} />
-          <span className="visually-hidden">Tìm trong việc của tôi</span>
-          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm mã hoặc tiêu đề…" />
-        </label>
-        {projects.length > 1 && (
-          <select
-            className="mw-chip"
-            value={project}
-            onChange={(e) => setProject(e.target.value ? Number(e.target.value) : "")}
-            aria-label="Lọc theo dự án"
-          >
-            <option value="">Mọi dự án</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        )}
+          <label className="sr-only" htmlFor="mw-q">
+            Tìm trong việc của tôi
+          </label>
+          <input id="mw-q" type="text" value={q} maxLength={200} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Escape" && q && (e.preventDefault(), setQ(""))} placeholder="Tìm mã hoặc tiêu đề…" />
+          {q && (
+            <button type="button" className="fb-x" aria-label="Xoá chữ tìm" onClick={() => setQ("")}>
+              <Icon name="close" size={12} />
+            </button>
+          )}
+        </div>
+        {projects.length > 1 && <ProjectChip projects={projects} picked={picked} onChange={setPicked} />}
         {filtered && (
-          <button type="button" className="ghost sm" onClick={() => (setQ(""), setProject(""))}>
+          <button type="button" className="link small fb-clear" onClick={() => (setQ(""), setPicked([]))}>
             Xoá lọc
           </button>
         )}
-        <span className="mw-refresh small muted" title="Tự làm mới mỗi phút">
-          <Icon name="sync" size={12} /> tự làm mới mỗi phút
-        </span>
+        <div className="fb-right">
+          <span className="mw-refresh small muted" title="Tự làm mới mỗi phút">
+            <Icon name="sync" size={12} /> <span className="fb-btn-text">tự làm mới mỗi phút</span>
+          </span>
+          <span className={`fb-count${filtered ? " filtered" : ""}`} aria-live="polite">
+            {shownTasks} task
+            {filtered && <span className="fb-count-tag"> · đã lọc</span>}
+          </span>
+          <MyDisplay view={view} onChange={setView} />
+        </div>
       </div>
 
       <div className="mw-cols">
@@ -207,9 +218,9 @@ export function MyWork() {
             }}
           />
           <TaskSection title="Cần làm" rows={keep(data.todo)} empty="hết việc · xem Backlog của dự án để nhận thêm" />
-          <TaskSection title="Xong tuần này" rows={keep(data.done_week)} empty="tuần này chưa xong task nào" collapsed />
+          {view.doneWeek && <TaskSection title="Xong tuần này" rows={keep(data.done_week)} empty="tuần này chưa xong task nào" collapsed />}
 
-          {data.sprints.length === 0 ? (
+          {!view.sprints ? null : data.sprints.length === 0 ? (
             <p className="mw-none muted">
               <span className="mw-none-title">Sprint của tôi</span> · không có task trong sprint đang chạy
             </p>
@@ -228,6 +239,111 @@ export function MyWork() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** "Dự án ▾" (several picked: "Dự án: A, B ✕"): a FilterBar-style chip with a searchable list. */
+function ProjectChip({ projects, picked, onChange }: { projects: { id: number; name: string }[]; picked: number[]; onChange: (next: number[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  const names = projects.filter((p) => picked.includes(p.id)).map((p) => p.name);
+  const text = names.join(", ");
+  return (
+    <span className={`fb-chip fb-pinned${picked.length ? " fb-active" : ""}`} ref={ref} data-narrow-tip={picked.length ? `Dự án: ${text}` : "Dự án"}>
+      <button
+        type="button"
+        className="fb-chip-text"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={picked.length ? `Sửa lọc Dự án: ${text}` : "Lọc theo dự án"}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Icon name="folder" size={14} className="fb-pin-icon" />
+        {picked.length ? (
+          <>
+            <span className="fb-pin-label">
+              <span className="fb-chip-field">Dự án:</span> {text}
+            </span>
+            <span className="fb-pin-n" aria-hidden="true">
+              {picked.length}
+            </span>
+          </>
+        ) : (
+          <span className="fb-pin-label">
+            Dự án <Icon name="more" size={12} />
+          </span>
+        )}
+      </button>
+      {picked.length > 0 && (
+        <button type="button" className="fb-x" aria-label={`Bỏ lọc Dự án: ${text}`} onClick={() => onChange([])}>
+          <Icon name="close" size={12} />
+        </button>
+      )}
+      {open && (
+        <Popover anchor={ref} onClose={() => setOpen(false)} label="Lọc dự án">
+          <ValueList
+            title="Dự án"
+            options={projects.map((p) => ({ value: String(p.id), label: p.name }))}
+            picked={picked.map(String)}
+            onToggle={(v) => {
+              const id = Number(v);
+              onChange(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]);
+            }}
+            onClear={() => onChange([])}
+          />
+        </Popover>
+      )}
+    </span>
+  );
+}
+
+/** "⧉ Hiển thị" of Việc của tôi: density and the two optional blocks, per person (useViewOptions). */
+function MyDisplay({ view, onChange }: { view: MyView; onChange: (patch: Partial<MyView>) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <button
+        ref={ref}
+        type="button"
+        className="fb-chip fb-display"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        data-narrow-tip="Hiển thị"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Icon name="settings" size={14} /> <span className="fb-btn-text">Hiển thị</span>
+      </button>
+      {open && (
+        <Popover anchor={ref} onClose={() => setOpen(false)} label="Hiển thị" width={300} align="end">
+          <div className="fb-display-pop">
+            <div className="fb-display-row">
+              <span className="fb-display-label">Mật độ</span>
+              <Segmented<MyView["density"]>
+                label="Mật độ hiển thị"
+                value={view.density}
+                onChange={(density) => onChange({ density })}
+                options={[
+                  { value: "dense", label: "Gọn" },
+                  { value: "comfy", label: "Thoáng" },
+                ]}
+              />
+            </div>
+            <label className="fb-display-row">
+              <span className="fb-display-label">Hiện “Xong tuần này”</span>
+              <input type="checkbox" checked={view.doneWeek} onChange={(e) => onChange({ doneWeek: e.target.checked })} />
+            </label>
+            <label className="fb-display-row">
+              <span className="fb-display-label">Hiện “Sprint của tôi”</span>
+              <input type="checkbox" checked={view.sprints} onChange={(e) => onChange({ sprints: e.target.checked })} />
+            </label>
+            <button type="button" className="link small" onClick={() => onChange(MY_VIEW)}>
+              Về mặc định
+            </button>
+          </div>
+        </Popover>
+      )}
+    </>
   );
 }
 

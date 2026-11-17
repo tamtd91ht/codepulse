@@ -4,7 +4,7 @@ import { type ReactNode, type RefObject, useCallback, useEffect, useId, useLayou
 import { createPortal } from "react-dom";
 import useSWR from "swr";
 
-import { Icon } from "@/components/icons";
+import { Icon, type IconName } from "@/components/icons";
 import { api, useApi } from "@/lib/api";
 import type { Me, SearchCond, SearchFieldInfo, SearchFields, SearchTree, TaskSearchFacets, TaskSpace } from "@/lib/types";
 
@@ -37,6 +37,39 @@ const FLAGS: { label: string; cond: SearchCond }[] = [
   { label: "DoD chưa đạt", cond: { field: "dod_met", op: "is", value: "unmet" } },
 ];
 const HIDDEN_FIELDS = new Set(["text", "space", "category"]);
+/** The icon a pinned chip keeps under 1280 px, when its name hides (UI/UX §6, docs/specs/31 §22.9). */
+const FIELD_ICON: Record<string, IconName> = {
+  type: "file",
+  priority: "flag",
+  status: "pulse",
+  label: "pin",
+  component: "folder",
+  sprint: "activity",
+  version: "clipboardCheck",
+  due: "calendar",
+  created: "calendar",
+  updated: "calendar",
+  resolved: "calendar",
+  resolution: "checkCircle",
+  assignee: "user",
+  reporter: "user",
+  watcher: "user",
+  parent: "board",
+};
+const fieldIcon = (field: string): IconName => FIELD_ICON[field] ?? "filter";
+/**
+ * Compact bar (UI/UX §5, §6): under 768 px wide or 720 px tall the row keeps only `🔍` and
+ * `Lọc (n)`, which opens a bottom sheet. CSS does the layout (globals.css, "UI/UX narrow"); this
+ * media query only routes Shift+F to the sheet.
+ */
+const COMPACT_MQ = "(max-width: 767px), (max-height: 719px)";
+const compactNow = () => {
+  try {
+    return window.matchMedia(COMPACT_MQ).matches;
+  } catch {
+    return false;
+  }
+};
 const PEOPLE_SHOWN = 3;
 const CHIPS_SHOWN = 4;
 
@@ -201,13 +234,172 @@ export function Popover({
   );
 }
 
+/**
+ * A bottom sheet (UI/UX §6, docs/specs/31 §22.9): the compact bar's "Lọc (n)". Modal: a backdrop,
+ * focus kept inside, Escape (handled here, so the task drawer leaves it alone) or the backdrop
+ * closes it and focus returns to the button.
+ */
+function BottomSheet({ anchor, onClose, label, children }: { anchor: RefObject<HTMLElement | null>; onClose: () => void; label: string; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+
+  useEffect(() => {
+    const opener = anchor.current;
+    box.current?.querySelector<HTMLElement>("[data-sheet-focus]")?.focus();
+    return () => {
+      if (opener && (!document.activeElement || document.activeElement === document.body || box.current?.contains(document.activeElement))) opener.focus();
+    };
+  }, [anchor]);
+
+  function onKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      e.preventDefault();
+      close.current();
+      return;
+    }
+    if (e.key !== "Tab" || !box.current) return;
+    const items = [...box.current.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea, [tabindex='0']")].filter((el) => el.offsetParent !== null);
+    if (!items.length) return;
+    const firstEl = items[0];
+    const lastEl = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === firstEl) {
+      e.preventDefault();
+      lastEl.focus();
+    } else if (!e.shiftKey && document.activeElement === lastEl) {
+      e.preventDefault();
+      firstEl.focus();
+    }
+  }
+
+  return createPortal(
+    <div className="fb-sheet-layer" onKeyDown={onKeyDown}>
+      <div className="fb-sheet-backdrop" aria-hidden="true" onClick={() => close.current()} />
+      <div ref={box} className="fb-sheet" role="dialog" aria-modal="true" aria-label={label}>
+        {children}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** The sheet's content: what is on (each removable), "Của tôi", then every field as in "+ Lọc". */
+function FilterSheet({
+  cat,
+  bp,
+  value,
+  meId,
+  people,
+  fields,
+  pins,
+  onPins,
+  counts,
+  onChange,
+  latest,
+  total,
+  unit,
+  onClose,
+}: {
+  cat: FilterCatalogue;
+  bp: number;
+  value: FilterValue;
+  meId?: number;
+  people: boolean;
+  fields?: string[];
+  pins: string[];
+  onPins: (next: string[]) => void;
+  counts: boolean;
+  onChange: (v: FilterValue) => void;
+  latest: RefObject<FilterValue>;
+  total?: number | null;
+  unit: string;
+  onClose: () => void;
+}) {
+  const groups = useMemo(() => {
+    const out: { key: string; field: string; ids: string[]; text: string }[] = [];
+    const byField = new Map<string, (typeof out)[number]>();
+    for (const c of value.chips) {
+      const kind = cat.infos.get(c.field)?.kind ?? "";
+      const label = cat.valueLabel(c);
+      const g = c.op === "is" ? byField.get(c.field) : undefined;
+      if (g) {
+        g.ids.push(c.id);
+        g.text = `${g.text}, ${label}`;
+        continue;
+      }
+      const fresh = { key: c.op === "is" ? `is:${c.field}` : c.id, field: c.field, ids: [c.id], text: c.op === "is" ? label : [opLabel(kind, c.op), label].filter(Boolean).join(" ") };
+      if (c.op === "is") byField.set(c.field, fresh);
+      out.push(fresh);
+    }
+    return out;
+  }, [value.chips, cat]);
+  const mine = isValues(value, "assignee").includes("me");
+  // People pick here too (no avatar stack in the sheet).
+  const sheetFields = people && fields ? ["assignee", ...fields.filter((f) => f !== "assignee")] : fields;
+  return (
+    <>
+      <div className="fb-sheet-head">
+        <span className="fb-sheet-grip" aria-hidden="true" />
+        <strong>Lọc</strong>
+        {value.chips.length > 0 && <span className="muted small">{value.chips.length} điều kiện</span>}
+        {filterCount(value) > 0 && (
+          <button type="button" className="link small fb-sheet-clear" onClick={() => onChange({ text: "", chips: [] })}>
+            Xoá lọc
+          </button>
+        )}
+        <button type="button" className="icon-btn fb-sheet-x" aria-label="Đóng bảng lọc" onClick={onClose} data-sheet-focus>
+          <Icon name="close" size={16} />
+        </button>
+      </div>
+      <div className="fb-sheet-body">
+        {groups.length > 0 && (
+          <ul className="fb-list fb-sheet-on" aria-label="Đang lọc">
+            {groups.map((g) => (
+              <li key={g.key} className="fb-opt fb-more-row">
+                <span className="fb-opt-label">
+                  <strong>{cat.fieldName(g.field)}</strong>: {g.text}
+                </span>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`Bỏ lọc ${cat.fieldName(g.field)}: ${g.text}`}
+                  onClick={() => {
+                    const cur = latest.current ?? value;
+                    onChange({ ...cur, chips: cur.chips.filter((c) => !g.ids.includes(c.id)) });
+                  }}
+                >
+                  <Icon name="close" size={14} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {people && (
+          <div className="fb-sheet-quick">
+            <button type="button" className={`fb-chip fb-toggle${mine ? " on" : ""}`} aria-pressed={mine} onClick={() => onChange(toggleValue(latest.current ?? value, "assignee", "me", "person"))}>
+              <Icon name="user" size={14} /> Của tôi
+            </button>
+          </div>
+        )}
+        <AddFilter cat={cat} bp={bp} value={value} people={false} meId={meId} fields={sheetFields} pins={pins} onPins={onPins} counts={counts} onChange={onChange} latest={latest} />
+      </div>
+      <div className="fb-sheet-foot">
+        <button type="button" className="primary ink" onClick={onClose}>
+          {total === null || total === undefined ? "Xem kết quả" : `Xem ${total} ${unit}`}
+        </button>
+      </div>
+    </>
+  );
+}
+
 /* ------------------------------------------------------------------ value list */
 
 /**
  * The values of one field with a search, several picked, a count each ("Bug · 3"). ↑↓ move, Enter
  * or Space toggles, Backspace in the empty search drops the last pick.
  */
-function ValueList({
+export function ValueList({
   title,
   options,
   picked,
@@ -360,7 +552,7 @@ function readPins(screen: string, fallback: string[]): string[] {
   }
 }
 
-type Open = { kind: "add" } | { kind: "field"; field: string; anchor: RefObject<HTMLElement | null> } | { kind: "edit"; chip: ChipCond; anchor: RefObject<HTMLElement | null> } | { kind: "people" } | { kind: "more" } | { kind: "display" } | null;
+type Open = { kind: "add" } | { kind: "field"; field: string; anchor: RefObject<HTMLElement | null> } | { kind: "edit"; chip: ChipCond; anchor: RefObject<HTMLElement | null> } | { kind: "people" } | { kind: "more" } | { kind: "display" } | { kind: "sheet" } | null;
 
 export function FilterBar(props: FilterBarProps) {
   const { space, me, screen, value, onChange, people = true, counts = true, total, unit = "task", status, saved, display, actions, replaceWith } = props;
@@ -387,20 +579,21 @@ export function FilterBar(props: FilterBarProps) {
   const peopleRef = useRef<HTMLButtonElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
   const displayRef = useRef<HTMLButtonElement>(null);
+  const sheetRef = useRef<HTMLButtonElement>(null);
 
   // Keyboard (UI/UX §7). Capture phase, so `/` beats the global "find a task" palette here.
   useEffect(() => {
     if (replaceWith) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing || typingIn(e.target) || dialogOpen()) return;
-      if (document.querySelector(".fb-pop")) return;
+      if (document.querySelector(".fb-pop, .fb-sheet")) return;
       const k = e.key.toLowerCase();
       if ((k === "/" || k === "f") && !e.shiftKey) {
         e.preventDefault();
         searchRef.current?.focus();
       } else if (k === "f" && e.shiftKey) {
         e.preventDefault();
-        setOpen({ kind: "add" });
+        setOpen({ kind: compactNow() ? "sheet" : "add" });
       } else if (k === "x" && e.shiftKey) {
         e.preventDefault();
         change({ text: "", chips: [] });
@@ -495,6 +688,18 @@ export function FilterBar(props: FilterBarProps) {
   return (
     <div className="fb-bar" role="toolbar" aria-label="Lọc task">
       <SmartSearch ref={searchRef} bp={bp} value={value} onChange={change} placeholder={props.placeholder} />
+      <button
+        ref={sheetRef}
+        type="button"
+        className={`fb-chip fb-sheet-btn${value.chips.length ? " on" : ""}`}
+        aria-haspopup="dialog"
+        aria-expanded={open?.kind === "sheet"}
+        aria-keyshortcuts="Shift+F"
+        aria-label={value.chips.length ? `Lọc, ${value.chips.length} điều kiện đang bật` : "Lọc"}
+        onClick={() => setOpen(open?.kind === "sheet" ? null : { kind: "sheet" })}
+      >
+        <Icon name="filter" size={14} /> Lọc{value.chips.length ? ` (${value.chips.length})` : ""}
+      </button>
       <div className="fb-fixed">
         {people && (
           <>
@@ -599,8 +804,9 @@ export function FilterBar(props: FilterBarProps) {
             aria-expanded={open?.kind === "display"}
             aria-keyshortcuts="V"
             onClick={() => setOpen(open?.kind === "display" ? null : { kind: "display" })}
+            data-narrow-tip="Hiển thị"
           >
-            <Icon name="settings" size={14} /> Hiển thị
+            <Icon name="settings" size={14} /> <span className="fb-btn-text">Hiển thị</span>
           </button>
         )}
         {actions}
@@ -653,6 +859,26 @@ export function FilterBar(props: FilterBarProps) {
           </ul>
         </Popover>
       )}
+      {open?.kind === "sheet" && (
+        <BottomSheet anchor={sheetRef} onClose={close} label="Lọc task">
+          <FilterSheet
+            cat={cat}
+            bp={bp}
+            value={value}
+            meId={me?.id}
+            people={people}
+            fields={props.fields}
+            pins={pins}
+            onPins={setPins}
+            counts={counts}
+            onChange={change}
+            latest={latest}
+            total={total}
+            unit={unit}
+            onClose={close}
+          />
+        </BottomSheet>
+      )}
       {open?.kind === "display" && display && (
         <Popover anchor={displayRef} onClose={close} label="Hiển thị" width={320} align="end">
           {display}
@@ -682,16 +908,23 @@ function PinnedChip({ field, value, cat, onOpen, onClear }: { field: string; val
   const name = cat.fieldName(field);
   const text = picked.map((c) => cat.valueLabel(c)).join(", ");
   return (
-    <span className={`fb-chip fb-pinned${picked.length ? " fb-active" : ""}`} ref={ref}>
+    // Under 1280 px only the icon stays (and a count when picked); the name moves to a tooltip.
+    <span className={`fb-chip fb-pinned${picked.length ? " fb-active" : ""}`} ref={ref} data-narrow-tip={picked.length ? `${name}: ${text}` : name}>
       <button type="button" className="fb-chip-text" aria-haspopup="dialog" onClick={() => onOpen(ref)} aria-label={picked.length ? `Sửa lọc ${name}: ${text}` : `Lọc theo ${name}`}>
+        <Icon name={fieldIcon(field)} size={14} className="fb-pin-icon" />
         {picked.length ? (
           <>
-            <span className="fb-chip-field">{name}:</span> {text}
+            <span className="fb-pin-label">
+              <span className="fb-chip-field">{name}:</span> {text}
+            </span>
+            <span className="fb-pin-n" aria-hidden="true">
+              {picked.length}
+            </span>
           </>
         ) : (
-          <>
+          <span className="fb-pin-label">
             {name} <Icon name="more" size={12} />
-          </>
+          </span>
         )}
       </button>
       {picked.length > 0 && (
