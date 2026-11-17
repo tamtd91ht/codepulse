@@ -624,6 +624,9 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
     );
   };
 
+  // The table never gets narrower than its shown columns plus a 280 px title (widths live in CSS).
+  const minWidth = `calc(${["check", "key", "title-min", ...COLUMNS.filter((c) => shown(c.id)).map((c) => c.id), "actions"].map((id) => `var(--fb-w-${id})`).join(" + ")})`;
+
   let rowIndex = 0;
   return (
     <div className={`tk-list fb-listwrap${view.density === "dense" ? " fb-dense" : ""}`} ref={box}>
@@ -659,12 +662,12 @@ export function TaskList({ space, me, onOpen }: { space: TaskSpace; me: Me | und
           </div>
         ) : (
           <div className="fb-scroll" ref={scroller} onScroll={onScroll} aria-busy={list.isValidating}>
-            <table className="fb-table">
-              {/* Fixed layout: the title takes what the other columns leave. */}
+            <table className="fb-table" style={{ ["--fb-min" as string]: minWidth }}>
+              {/* Fixed layout: the title takes what the other columns leave, never under --fb-w-title-min. */}
               <colgroup>
                 <col className="fb-w-check" />
                 <col className="fb-w-key" />
-                <col />
+                <col className="fb-w-title" />
                 {COLUMNS.filter((c) => shown(c.id)).map((c) => (
                   <col key={c.id} className={`fb-w-${c.id}`} />
                 ))}

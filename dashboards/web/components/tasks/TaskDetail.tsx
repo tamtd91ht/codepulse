@@ -293,8 +293,9 @@ function Body({
         <TaskCode task={task} bp={bp} />
         <TaskDod task={task} />
         <TaskTests task={task} />
-        <TaskActivity task={task} />
         <TaskAttachments task={task} />
+        {/* The comment box sits right under "Dòng thời gian", at the end of the page (not sticky). */}
+        <TaskActivity task={task} />
         <TaskCommentBox key={task.key} task={task} bp={bp} />
       </div>
       {!compact && (

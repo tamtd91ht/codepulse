@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type DragEvent, type PointerEvent, type ReactNode, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
@@ -20,7 +20,89 @@ import { TypeIcon, addDays, errorText, refreshTasks, today, useSprints } from ".
  */
 
 const DAY = 18;
-const ROW = 34;
+/** Row height: room for a title on two lines. */
+const ROW = 40;
+/** The name column: resizable (drag or arrow keys on its edge), remembered in this browser. */
+const NAME_W = 280;
+const NAME_MIN = 200;
+const NAME_MAX = 560;
+const NAME_KEY = "cp:tasks:timeline:name-w";
+
+const clampName = (w: number) => Math.min(NAME_MAX, Math.max(NAME_MIN, Math.round(w)));
+
+/** Width of the name column, from localStorage once mounted (the server render uses the default). */
+function useNameWidth(): [number, (w: number) => void] {
+  const [w, setW] = useState(NAME_W);
+  useEffect(() => {
+    try {
+      const v = Number(window.localStorage.getItem(NAME_KEY));
+      if (v) setW(clampName(v));
+    } catch {
+      /* storage blocked: keep the default */
+    }
+  }, []);
+  const set = (next: number) => {
+    const c = clampName(next);
+    setW(c);
+    try {
+      window.localStorage.setItem(NAME_KEY, String(c));
+    } catch {
+      /* storage blocked: the width lasts for this visit */
+    }
+  };
+  return [w, set];
+}
+
+/** The draggable edge of the name column (also a focusable separator: ←/→, Home resets). */
+function NameResizer({ width, onWidth }: { width: number; onWidth: (w: number) => void }) {
+  const start = useRef<{ x: number; w: number } | null>(null);
+  const [live, setLive] = useState<number | null>(null);
+  const onKey = (e: KeyboardEvent<HTMLSpanElement>) => {
+    const step = e.shiftKey ? 48 : 16;
+    if (e.key === "ArrowLeft") onWidth(width - step);
+    else if (e.key === "ArrowRight") onWidth(width + step);
+    else if (e.key === "Home") onWidth(NAME_W);
+    else return;
+    e.preventDefault();
+  };
+  return (
+    <span
+      className={`rm-name-resize${live !== null ? " active" : ""}`}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Độ rộng cột tên"
+      aria-valuemin={NAME_MIN}
+      aria-valuemax={NAME_MAX}
+      aria-valuenow={width}
+      title="Kéo để đổi độ rộng cột tên (←/→ khi đang chọn, Home về mặc định)"
+      tabIndex={0}
+      onKeyDown={onKey}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        start.current = { x: e.clientX, w: width };
+        setLive(width);
+      }}
+      onPointerMove={(e) => {
+        if (!start.current) return;
+        const w = clampName(start.current.w + e.clientX - start.current.x);
+        if (w !== live) {
+          setLive(w);
+          onWidth(w);
+        }
+      }}
+      onPointerUp={() => {
+        start.current = null;
+        setLive(null);
+      }}
+      onPointerCancel={() => {
+        start.current = null;
+        setLive(null);
+      }}
+      onDoubleClick={() => onWidth(NAME_W)}
+    />
+  );
+}
 const SHIFT_WEEKS = 4;
 const WEEKS = 12;
 const DRAG_TYPE = "text/x-task-key";
@@ -101,6 +183,7 @@ function Chart({
   const [band, setBand] = useState<number | null>(null);
   const [resize, setResize] = useState<{ key: string; startX: number; delta: number } | null>(null);
   const justResized = useRef(false);
+  const [nameW, setNameW] = useNameWidth();
 
   const weeks = useMemo(() => {
     const out: string[] = [];
@@ -244,10 +327,13 @@ function Chart({
   const inWindow = (d: string | null) => d !== null && d >= from && d <= to;
 
   return (
-    <div className="rm-chart" role="region" aria-label={label} tabIndex={0}>
-      <div className="rm-grid" style={{ width: width + 280 }}>
+    <div className="rm-chart" role="region" aria-label={label} tabIndex={0} style={{ "--rm-name-w": `${nameW}px` } as CSSProperties}>
+      <div className="rm-grid" style={{ width: width + nameW }}>
         <div className="rm-row rm-head">
-          <div className="rm-label small muted">{label}</div>
+          <div className="rm-label small muted">
+            {label}
+            <NameResizer width={nameW} onWidth={setNameW} />
+          </div>
           <div className="rm-track" style={{ width }}>
             {weeks.map((w) => (
               <span key={w} className="rm-week" style={{ left: Math.max(0, x(w)), width: 7 * DAY }}>
@@ -309,9 +395,9 @@ function Chart({
               </div>
             </div>
           ))}
-          {todayX >= 0 && todayX < width && <span className="rm-today" style={{ left: 280 + todayX + DAY / 2 }} title={`Hôm nay ${dayLabel(todayDay)}`} aria-hidden="true" />}
+          {todayX >= 0 && todayX < width && <span className="rm-today" style={{ left: nameW + todayX + DAY / 2 }} title={`Hôm nay ${dayLabel(todayDay)}`} aria-hidden="true" />}
           {links && links.length > 0 && (
-            <svg className="rm-links" width={width} height={rows.length * ROW} style={{ left: 280 }} aria-hidden="true">
+            <svg className="rm-links" width={width} height={rows.length * ROW} style={{ left: nameW }} aria-hidden="true">
               <defs>
                 <marker id="rm-arrow" viewBox="0 0 6 6" refX="5" refY="3" markerWidth="6" markerHeight="6" orient="auto">
                   <path d="M0,0 L6,3 L0,6 z" className="rm-arrow-head" />

@@ -122,7 +122,7 @@ export function TaskReports({ space }: { space: TaskSpace }) {
               value={r.cycle_time.median_h === null ? null : String(r.cycle_time.median_h)}
               digits={1}
               unit="giờ"
-              title="Từ lúc bắt đầu làm đến khi xong, trung vị · bấm để xem task đã xong"
+              title="Cycle time trung vị — Từ lúc bắt đầu làm đến khi xong, trung vị · bấm để xem task đã xong"
               href={toList({ ...doneSince, resolution: "done" })}
             />
             <StripStat
@@ -130,25 +130,25 @@ export function TaskReports({ space }: { space: TaskSpace }) {
               value={r.cycle_time.p85_h === null ? null : String(r.cycle_time.p85_h)}
               digits={1}
               unit="giờ"
-              title="85% task xong trong khoảng này · bấm để xem task đã xong"
+              title="Cycle time p85 — 85% task xong trong khoảng này · bấm để xem task đã xong"
               href={toList({ ...doneSince, resolution: "done" }, { sort: "updated", order: "desc" })}
             />
             <StripStat
               label="Task xong (có bắt đầu)"
               value={r.cycle_time.count}
-              title="Task Đã xong từng qua nhóm Đang làm: tính cycle time"
+              title="Task xong (có bắt đầu) — Task Đã xong từng qua nhóm Đang làm: tính cycle time"
               href={toList({ ...doneSince, resolution: "done" })}
             />
             <StripStat
               label="Xong không qua Đang làm"
               value={r.cycle_time.skipped ?? 0}
-              title="Nhảy thẳng vào Xong: không tính vào cycle time (docs/specs/31 §19.1)"
+              title="Xong không qua Đang làm — Nhảy thẳng vào Xong: không tính vào cycle time (docs/specs/31 §19.1)"
               href={toList(doneSince)}
             />
             <StripStat
               label="Task tạo"
               value={r.flow.reduce((n, d) => n + d.created, 0)}
-              title="Task tạo trong khoảng · bấm để xem task mới nhất"
+              title="Task tạo — Task tạo trong khoảng · bấm để xem task mới nhất"
               href={listHref(bp, createdSince, { sort: "created", order: "desc" })}
             />
             <StripStat
@@ -156,7 +156,7 @@ export function TaskReports({ space }: { space: TaskSpace }) {
               value={String(Math.round(r.worklog.reduce((n, w) => n + w.minutes, 0) / 6) / 10)}
               digits={1}
               unit="giờ"
-              title="Giờ ghi trong khoảng · bấm để xem task có thay đổi"
+              title="Giờ làm — Giờ ghi trong khoảng · bấm để xem task có thay đổi"
               href={toList({ updated_from: range.from }, { sort: "updated", order: "desc" })}
             />
           </StatStrip>

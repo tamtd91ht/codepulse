@@ -37,7 +37,7 @@ const TEST_TONE: Record<string, "good" | "bad" | "warn" | undefined> = { passed:
 /**
  * One timeline of the task (docs/specs/31 §20.1): comments, field changes, code, reviews, tests,
  * deploy and worklogs, newest first, with filter chips. "Giờ làm" shows the worklog table and its
- * form instead. The comment box is `TaskCommentBox`, fixed at the bottom of the main column.
+ * form instead. The comment box is `TaskCommentBox`, placed right after this block at the end of the main column.
  */
 export function TaskActivity({ task }: { task: TaskDetail }) {
   const [chip, setChip] = useState<Chip>("all");

@@ -21348,32 +21348,6 @@ input.fb-cell-edit {
   }
 }
 
-/* Danh sách between 768 and 1439 px: narrower fixed columns so the title keeps room. */
-@media (min-width: 768px) and (max-width: 1439px) {
-  .fb-table .fb-w-key {
-    width: 100px;
-  }
-  .fb-table .fb-w-status {
-    width: 120px;
-  }
-  .fb-table .fb-w-priority {
-    width: 108px;
-  }
-  .fb-table .fb-w-assignee {
-    width: 144px;
-  }
-  .fb-table .fb-w-points {
-    width: 52px;
-  }
-  .fb-table .fb-w-due,
-  .fb-table .fb-w-updated {
-    width: 100px;
-  }
-  .fb-table .fb-w-actions {
-    width: 44px;
-  }
-}
-
 /* Danh sách on a phone: each row a two-line card (key, actions / title / the shown fields). */
 @media (max-width: 767px) {
   .fb-table {
@@ -21908,4 +21882,204 @@ input.fb-cell-edit {
   .fb-people-sel {
     width: 140px;
   }
+}
+
+/* UI fix: List, Timeline, Reports, detail */
+/* Danh sách: column widths as tokens so the table can say "shown columns + the minimum title" as its
+   min-width (TaskList sets --fb-min from the shown columns). Mã / SP / Hạn / Cập nhật fit their
+   content; the title takes the rest but never less than 336 px (about 40 characters, item "≥ 40 ký
+   tự"); below that the table scrolls sideways inside .fb-scroll, never the page. */
+.fb-table {
+  --fb-w-check: 40px;
+  --fb-w-key: 96px;
+  --fb-w-title-min: 336px;
+  --fb-w-type: 96px;
+  --fb-w-status: 132px;
+  --fb-w-priority: 116px;
+  --fb-w-assignee: 160px;
+  --fb-w-points: 52px;
+  --fb-w-due: 104px;
+  --fb-w-updated: 96px;
+  --fb-w-labels: 168px;
+  --fb-w-actions: 44px;
+  width: 100%;
+  min-width: var(--fb-min, 860px);
+}
+@media (max-width: 1439px) {
+  .fb-table {
+    --fb-w-status: 112px;
+    --fb-w-priority: 112px;
+    --fb-w-assignee: 140px;
+  }
+}
+.fb-table .fb-w-check {
+  width: var(--fb-w-check);
+}
+.fb-table .fb-w-key {
+  width: var(--fb-w-key);
+}
+.fb-table .fb-w-type {
+  width: var(--fb-w-type);
+}
+.fb-table .fb-w-status {
+  width: var(--fb-w-status);
+}
+.fb-table .fb-w-priority {
+  width: var(--fb-w-priority);
+}
+.fb-table .fb-w-assignee {
+  width: var(--fb-w-assignee);
+}
+.fb-table .fb-w-points {
+  width: var(--fb-w-points);
+}
+.fb-table .fb-w-due {
+  width: var(--fb-w-due);
+}
+.fb-table .fb-w-updated {
+  width: var(--fb-w-updated);
+}
+.fb-table .fb-w-labels {
+  width: var(--fb-w-labels);
+}
+.fb-table .fb-w-actions {
+  width: var(--fb-w-actions);
+}
+/* Title: one line, "…", the full title in the button's title attribute; the git badge keeps its room. */
+.fb-table td.fb-c-title {
+  white-space: nowrap;
+}
+.fb-table td .fb-title {
+  max-width: calc(100% - 4px);
+}
+.fb-table td.fb-c-title:has(> span) .fb-title {
+  max-width: calc(100% - 76px);
+}
+.fb-table td.fb-c-title:has(> span + span) .fb-title {
+  max-width: calc(100% - 140px);
+}
+@media (max-width: 767px) {
+  .fb-table {
+    width: auto;
+    min-width: 0;
+  }
+}
+
+/* Timeline: names on up to two lines in 40 px rows; the name column is resizable. */
+.rm-label {
+  flex: 0 0 var(--rm-name-w, 280px);
+  width: var(--rm-name-w, 280px);
+}
+.rm-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 13px;
+  line-height: 16px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* The key is a compact link-button, so the title keeps most of the column. */
+.rm-label button.rm-key {
+  height: auto;
+  min-width: 0;
+  padding: 0 2px;
+}
+.rm-bar {
+  top: 11px;
+}
+.rm-overdue {
+  top: 15px;
+}
+.rm-resize-tip {
+  top: 11px;
+}
+.rm-name-resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  z-index: 4;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.rm-name-resize::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+.rm-name-resize:hover::after,
+.rm-name-resize.active::after {
+  background: var(--border-strong);
+}
+.rm-name-resize:focus-visible {
+  outline: none;
+}
+.rm-name-resize:focus-visible::after {
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: 4px;
+  background: var(--ring);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rm-name-resize::after {
+    transition: none;
+  }
+}
+
+/* Báo cáo: KPI labels wrap to two lines (no "…"), the tile grows to fit; the full text is in the tooltip. */
+.rp-kpis .kstat {
+  height: auto;
+  min-height: 64px;
+  padding: 8px 12px;
+}
+.rp-kpis .kstat-label {
+  max-height: 28px;
+  overflow: hidden;
+  line-height: 14px;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Chi tiết task: the comment box is a normal block under "Dòng thời gian", not sticky over the page. */
+.tl-composer {
+  position: static;
+  z-index: auto;
+  margin-top: 4px;
+}
+/* When the List scrolls sideways (narrow windows), the checkbox, Mã and Tiêu đề stay pinned left
+   so a row is always readable (update_ui_ux.txt item 1). */
+.fb-table thead tr > th:nth-child(-n + 3),
+.fb-table tbody tr.fb-row > td:nth-child(-n + 3) {
+  position: sticky;
+  z-index: 1;
+  background: var(--surface);
+}
+.fb-table thead tr > th:nth-child(-n + 3) {
+  z-index: 3;
+}
+.fb-table tr > :nth-child(1) {
+  left: 0;
+}
+.fb-table tr > :nth-child(2) {
+  left: var(--fb-w-check);
+}
+.fb-table tr > :nth-child(3) {
+  left: calc(var(--fb-w-check) + var(--fb-w-key));
+  box-shadow: 1px 0 0 var(--border);
+}
+.fb-table tbody tr.fb-row:hover > td:nth-child(-n + 3) {
+  background: var(--surface-hover);
+}
+.fb-table tbody tr.fb-row.selected > td:nth-child(-n + 3) {
+  background: var(--primary-soft);
 }

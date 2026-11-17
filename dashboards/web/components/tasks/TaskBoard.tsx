@@ -1098,7 +1098,7 @@ export function TaskCard({
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
     >
-      <button type="button" className="tk-card-title" onClick={onOpen} title={dense ? task.title : undefined}>
+      <button type="button" className="tk-card-title" onClick={onOpen} title={task.title}>
         {task.title}
       </button>
       {!dense && (signalEl || (has("labels") && (task.labels ?? []).length > 0)) && (
