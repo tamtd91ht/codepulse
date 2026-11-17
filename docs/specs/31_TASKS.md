@@ -1024,3 +1024,54 @@ sprint đóng): đợt 3 làm chúng hiện rõ thay vì làm lại. Quyết đ�
 | 3.4b Phân quyền còn lại | R1b, "Quyền của tôi" tự xem được, giải thích vì sao | 21.5 |
 | 3.5 Chuyển đổi | Cảnh báo mã Jira cũ, Ngừng dùng Jira, checklist, dữ liệu demo | 21.6 |
 | 4 Tin cậy | Đồng bộ thời gian thực Board / chi tiết, Hoàn tác 10 giây, di chuyển card bằng bàn phím | 21.7 |
+
+### 21.4 Tìm gì cũng thấy (migration `c4d5e6f7a8b9`)
+
+- **Cây điều kiện** (`app/tasks/search.py`): `{all: [nút]}` / `{any: [nút]}`, nút là điều kiện `{field, op, value}`
+  hoặc nhóm (lồng tối đa 4 cấp, 60 điều kiện, 100 giá trị mỗi điều kiện; sai → 422). Toán tử `is`, `is_not`,
+  `empty`, `not_empty`, `before`, `after`, `within_days`, thêm `gte` / `lte` cho số (tuổi trong cột, SP, trường số).
+  Trường: mọi thứ `GET /tasks` lọc (`text`, `space`, `status`, `category`, `type`, `priority`, `resolution`,
+  `assignee`, `reporter`, `label`, `component`, `sprint` (`active` / `backlog` / id), `version`, `parent`, `due`
+  (`overdue` / `week` / ngày), `updated`) và thêm `watcher`, `created`, `resolved`, `points`,
+  `age_in_column_hours` (`status_changed_at`), `has_mr`, `blocked` (bị một task chưa xong chặn), `has_critical`
+  (finding critical còn mở trên review mới nhất của commit / MR), `test_failed` (testcase phủ task Failed ở lần
+  chạy mới nhất), `dod_met` (`met` / `unmet` / `blocking` = chưa đạt ở dự án bật bắt buộc DoD; chỉ tính task chưa
+  xong, tối đa 1000 task gần nhất), trường tuỳ biến `custom:<id>` theo kiểu (text: chứa; number: `is` / `gte` /
+  `lte`; date: như ngày; select, user: như danh sách). `is_not` không bỏ sót ô trống ("không là X" gồm cả task
+  chưa có giá trị). `before` / `after` là trước / sau **cả ngày** đó; `within_days N` của hạn và trường ngày là N
+  ngày **tới**, của tạo / cập nhật / đóng là N ngày **qua**.
+- **API** (`app/api/routers/task_search.py`, đăng ký trước `tasks`): `POST /tasks/search {space[], tree,
+  filter_id?, sort, order, limit ≤ 500, offset}` → `{items: TaskRow[], total, tree}`, cùng quyền với Danh sách
+  (`tasks.view`, dự án xem được, Task đã bật; dự án không xem được trong `space` → 404); `filter_id` AND thêm cây
+  của bộ lọc đã lưu (không thấy → 404). `GET /tasks/search?q=&space=&limit=` cho bảng lệnh: theo mã (khớp đúng /
+  đầu mã), tiêu đề, rồi văn bản (mô tả, bình luận), mỗi kết quả có `match` (`key` / `title` / `text`) và `snippet`.
+  `GET /tasks/search/fields?space=` (trường, kiểu, toán tử, trường tuỳ biến). `GET` (`tree` là JSON) / `POST
+  /tasks/search/export.csv`: UTF-8 có BOM, cột key, title, type, status, priority, assignee, sprint, due, points,
+  labels, resolution, tối đa 5000 dòng; ô bắt đầu bằng `= + - @` được thêm `'` (chống công thức).
+- **Tìm toàn văn không dấu:** không dùng extension `unaccent` (cơ sở dữ liệu được quản lý có thể không cho tạo
+  extension); cột `tasks.search_text` = mã + tiêu đề + mô tả + bình luận, đã gấp (chữ thường, bỏ dấu, `đ` → `d`),
+  giữ bằng hook `after_flush` (đăng ký khi import `app.tasks`): task mới, sửa mã / tiêu đề / mô tả, bình luận thêm /
+  sửa / xoá → dựng lại từ DB, **không đổi `updated_at`**. Migration điền cho task đang có. So khớp: mỗi từ đã gấp
+  ILIKE `%từ%` (AND), hoặc đúng mã. Không có index trigram (cần `pg_trgm`); đủ nhanh với vài chục nghìn task.
+- **Bộ lọc đã lưu** (`task_filters` thêm `tree`, `shared_scope`, `pinned`, `subscription`):
+  - `shared_scope`: `me` / `team` (người cùng team với chủ hoặc lead / manager team đó tại thời điểm xem) /
+    `project` (mọi người xem được dự án; không gắn dự án → mọi người có `tasks.view`). `shared` cũ = `project`
+    (migration chuyển), và vẫn được ghi cho danh sách cũ `GET /tasks/filters`.
+  - `GET /tasks/search/filters?space=&pinned=`, `POST` (tạo), `PATCH /{id}` (chỉ chủ: tên, cây, phạm vi, ghim,
+    `subscription {cadence}`, `unsubscribe`); xoá vẫn là `DELETE /tasks/filters/{id}`. Bộ lọc cũ không có cây được
+    đổi từ `query` khi đọc.
+  - **Ghim** cần dự án; Board hiện các bộ lọc đã ghim của dự án (ai thấy bộ lọc thì thấy ghim) ở ô "Lọc nhanh":
+    bấm → `POST /tasks/search {filter_id, limit 500}`, Board chỉ giữ card có mã trong kết quả; bấm lại để bỏ.
+  - **Đăng ký** (`daily` / `weekly`): chỉ cho **chủ** bộ lọc. Job `filter_digest_job` (scheduler, 15 phút): từ 8:00
+    (giờ `REPORT_TZ`), hằng ngày hoặc thứ Hai, một lần (`subscription.last_sent`); không có task khớp thì không gửi.
+    Gửi vào hộp thông báo (kind `filter_digest`, không qua tắt / gom của thông báo task vì người dùng tự đăng ký),
+    và qua Telegram riêng khi chủ đã liên kết; link mở Danh sách với bộ lọc (`?filter=ID`). Quyền tính lại lúc gửi.
+- **Lọc bằng câu** (§19.8): mỗi chip có thêm `op` và `cond` (điều kiện của cây; `q` → `text`, `updated_from` →
+  `updated after` ngày trước đó). Danh sách đưa các chip vào thanh chip thay cho bộ lọc hiện tại.
+- **Giao diện Danh sách** (`FilterChips.tsx`): thanh chip "Trường · toán tử · giá trị", "+ Điều kiện" mở form nhỏ
+  (trường, toán tử, giá trị theo kiểu), bấm chip để sửa, × để bỏ; các chip "là" cùng trường nối bằng "hoặc", còn
+  lại AND. Lưới bộ lọc cũ vẫn còn và AND với thanh chip; Danh sách đọc `POST /tasks/search`. Mở bộ lọc đã lưu →
+  toàn bộ cây thành chip. "Lưu bộ lọc": tên, ai thấy, ghim lên Board, nhận tóm tắt; nút bánh răng đổi các cài đặt
+  đó của bộ lọc của mình; nút "CSV" tải theo bộ lọc đang xem.
+- Chưa làm: chọn nhiều giá trị trong một chip (dùng nhiều chip "là"); nhóm HOẶC giữa các trường khác nhau trên giao
+  diện (API có); bảng lệnh Ctrl+K dùng `GET /tasks/search?q=` (việc của 3.1); đăng ký cho người không phải chủ.

@@ -315,5 +315,27 @@ def vocab(session: Session, space: TaskSpace, today: date | None = None) -> Voca
     )
 
 
+def condition(chip: Chip) -> dict[str, Any]:
+    """The chip as a condition of the search tree (docs/specs/31 §21.4): `{field, op, value}`,
+    so the List shows it as an editable chip "Trường · toán tử · giá trị"."""
+    if chip.field == "q":
+        return {"field": "text", "op": "is", "value": chip.value}
+    if chip.field == "due":
+        return {"field": "due", "op": "is", "value": chip.value}
+    if chip.field == "updated_from":
+        # "từ ngày D" = after the day before D.
+        day = date.fromisoformat(chip.value) - timedelta(days=1)
+        return {"field": "updated", "op": "after", "value": day.isoformat()}
+    return {"field": chip.field, "op": "is", "value": [chip.value]}
+
+
 def chips_out(chips: list[Chip]) -> list[dict[str, Any]]:
-    return [{"field": c.field, "value": c.value, "label": c.label} for c in chips]
+    """Each chip with its GET /tasks param (`field`, `value`) and, since §21.4, its condition
+    (`cond`, `op`) for the chip bar."""
+    out = []
+    for c in chips:
+        cond = condition(c)
+        out.append(
+            {"field": c.field, "value": c.value, "label": c.label, "op": cond["op"], "cond": cond}
+        )
+    return out

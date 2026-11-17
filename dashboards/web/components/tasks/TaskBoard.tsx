@@ -9,6 +9,7 @@ import { date } from "@/lib/format";
 import type { Me, TaskPage, TaskPerson, TaskResolution, TaskRow, TaskSpace, TaskStatusRef, TaskType } from "@/lib/types";
 
 import { DensityToggle } from "./DensityToggle";
+import { PinnedFilters } from "./FilterChips";
 import { type QuickPicks, QuickChips } from "./QuickChips";
 import { SubtaskGroup, readGroupSubs, writeGroupSubs } from "./SubtaskGroup";
 import {
@@ -205,6 +206,7 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
   const rows = local ?? loaded;
 
   const [filters, setFilters] = useState<BoardFilters>({ assignees: [], priorities: [], type: "", label: "", mine: false });
+  const [pinnedKeys, setPinnedKeys] = useState<Set<string> | null>(null);
   const [drag, setDrag] = useState<{ key: string; from: number } | null>(null);
   const [over, setOver] = useState<{ status: number; before: string | null; lane: string } | null>(null);
   const [lane, setLaneState] = useState<LaneMode>("none");
@@ -252,9 +254,10 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
           (!filters.assignees.length || filters.assignees.includes(r.assignee?.id ?? 0)) &&
           (!filters.priorities.length || filters.priorities.includes(r.priority)) &&
           (!filters.type || r.type === filters.type) &&
-          (!filters.label || (r.labels ?? []).includes(filters.label)),
+          (!filters.label || (r.labels ?? []).includes(filters.label)) &&
+          (!pinnedKeys || pinnedKeys.has(r.key)), // a pinned saved filter (§21.4)
       ),
-    [rows, filters, me?.id],
+    [rows, filters, me?.id, pinnedKeys],
   );
   // Per column, across lanes: the WIP count (§19.3).
   const colCount = useMemo(() => {
@@ -488,6 +491,7 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
             </label>
           </div>
         </div>
+        <PinnedFilters bp={space.business_project_id} onKeys={setPinnedKeys} />
         <DensityToggle view="board" />
       </div>
       <p className="small muted tk-board-scope">
