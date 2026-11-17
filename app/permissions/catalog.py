@@ -13,7 +13,9 @@ SCOPES: tuple[Scope, ...] = ("own", "team", "project", "all")
 FLAG = "flag"  # the "scope" of a flag permission when held
 RANK: dict[str, int] = {"own": 1, "team": 2, "project": 3, "all": 4, FLAG: 4}
 
-AutoRole = Literal["member", "lead", "manager", "project_manager", "manage_all", "project_admin"]
+AutoRole = Literal[
+    "member", "lead", "manager", "project_manager", "manage_all", "project_admin", "tester"
+]
 AUTO_ROLES: tuple[AutoRole, ...] = (
     "member",
     "lead",
@@ -21,6 +23,7 @@ AUTO_ROLES: tuple[AutoRole, ...] = (
     "project_manager",
     "manage_all",
     "project_admin",
+    "tester",
 )
 
 
@@ -476,6 +479,28 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
         "Lead / Manager của một dự án: thêm repo, cấu hình repo, repo .claude, file quy tắc và "
         "quy tắc review của dự án đó.",
         {"project.setup": "project"},
+    ),
+    # docs/specs/31 §21.0 (R2): users.is_tester, or a current member of a team with is_qa.
+    BuiltinSet(
+        "tester",
+        "Tester",
+        "Người có cờ tester hoặc ở team QA: viết và chạy testcase, báo bug thành task.",
+        {
+            "overview.view": FLAG,
+            "tests.view": FLAG,
+            "tests.edit": "all",
+            "tests.run": "all",
+            "tasks.view": FLAG,
+            "tasks.create": FLAG,
+            "tasks.edit": "own",
+            "tasks.assign": "own",
+            "tasks.transition": "own",
+            "tasks.comment": FLAG,
+            "tasks.attach": FLAG,
+            "tasks.worklog": "own",
+            "tasks.link": "own",
+            "docs.view": FLAG,
+        },
     ),
 )
 

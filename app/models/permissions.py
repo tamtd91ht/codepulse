@@ -13,7 +13,7 @@ class PermissionSet(TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint(
             "auto_role IS NULL OR auto_role IN "
-            "('member','lead','manager','project_manager','manage_all','project_admin')",
+            "('member','lead','manager','project_manager','manage_all','project_admin','tester')",
             name="auto_role",
         ),
         UniqueConstraint("auto_role"),

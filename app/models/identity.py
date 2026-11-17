@@ -17,6 +17,8 @@ class Team(TimestampMixin, Base):
     gitlab_group_path: Mapped[str | None] = mapped_column(String(255))
     gitlab_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     gitlab_sync_error: Mapped[str | None]
+    # docs/specs/31 §21.0 (R2): a QA team; its current members hold the "tester" built-in set.
+    is_qa: Mapped[bool] = mapped_column(server_default=false(), default=False)
 
 
 class User(TimestampMixin, Base):
@@ -34,6 +36,8 @@ class User(TimestampMixin, Base):
     active: Mapped[bool | None] = mapped_column(server_default="true")
     # Manages every dự án without a grant (below admin, 2026-11-02; app/api/security.py).
     manage_all: Mapped[bool] = mapped_column(server_default=false(), default=False)
+    # docs/specs/31 §21.0 (R2): holds the "tester" built-in set (as do members of a QA team).
+    is_tester: Mapped[bool] = mapped_column(server_default=false(), default=False)
     # Admin > Người & Team (2026-11-03): the one avatar file in AVATAR_DIR ("<id>.<ext>").
     avatar_file: Mapped[str | None]
     # Close requests this person may send in 24 hours (web and MCP); NULL: the default of

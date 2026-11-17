@@ -92,6 +92,9 @@ class Principal:
     # docs/specs/21 §10: dự án id -> "lead" | "manager" (project_grants.admin_role), the dự án
     # this person sets up (repos, .claude repo, rules) without being admin.
     project_admin: dict[int, str] = field(default_factory=dict)
+    # docs/specs/31 §21.0 (R2): users.is_tester, or a current member of a team with is_qa
+    # (the "tester" built-in set).
+    is_tester: bool = False
 
     def _bound_out(self, bp_id: int | None) -> bool:
         """A dự án outside the one the token is bound to."""
@@ -333,6 +336,18 @@ def load_principal(
         auto_roles.append("manage_all")
     if project_admin:
         auto_roles.append("project_admin")
+    # docs/specs/31 §21.0 (R2): flagged a tester, or a current member of a QA team.
+    is_tester = bool(user.is_tester) or (
+        bool(memberships)
+        and session.scalar(
+            select(Team.id)
+            .where(Team.id.in_({m.team_id for m in memberships}), Team.is_qa.is_(True))
+            .limit(1)
+        )
+        is not None
+    )
+    if is_tester:
+        auto_roles.append("tester")
     return Principal(
         user_id=user.id,
         email=user.primary_email,
@@ -348,6 +363,7 @@ def load_principal(
         else _permissions(session, user.id, auto_roles, {m.team_id for m in memberships}),
         managed_members=managed_members,
         project_admin=project_admin,
+        is_tester=is_tester,
     )
 
 

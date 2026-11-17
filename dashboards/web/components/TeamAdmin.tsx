@@ -450,6 +450,32 @@ export function TeamsAdmin() {
                   </div>
                 </div>
                 <div className="actions">
+                  {selectedTeam && (
+                    <label
+                      className="inline-check small"
+                      title="Mọi người đang ở team này giữ bộ quyền Tester có sẵn: viết và chạy testcase, báo bug thành task."
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!!selectedTeam.is_qa}
+                        disabled={busy}
+                        onChange={(e) => {
+                          const on = e.target.checked;
+                          const ok = window.confirm(
+                            on
+                              ? `Đánh dấu ${selectedTeam.name} là Team QA? Mọi người đang ở team sẽ có bộ quyền Tester.`
+                              : `Bỏ Team QA của ${selectedTeam.name}? Thành viên mất bộ quyền Tester (trừ người có cờ Tester).`,
+                          );
+                          if (!ok) return;
+                          void run(async () => {
+                            await api.patch(`/teams/${selectedTeam.id}`, { is_qa: on });
+                            await teams.mutate();
+                          }, on ? `${selectedTeam.name} giờ là Team QA.` : `${selectedTeam.name} không còn là Team QA.`);
+                        }}
+                      />
+                      Team QA
+                    </label>
+                  )}
                   {left > 0 && (
                     <label className="inline-check small">
                       <input type="checkbox" checked={showLeft} onChange={(e) => setShowLeft(e.target.checked)} />

@@ -104,6 +104,8 @@ export interface Team {
   gitlab_group_path?: string | null;
   gitlab_sync_at?: string | null;
   gitlab_sync_error?: string | null;
+  /** docs/specs/31 §21.0: a QA team; its current members hold the built-in Tester set. */
+  is_qa?: boolean;
 }
 
 /** POST /teams/{id}/gitlab/sync (docs/specs/31 §20.7). */
@@ -134,6 +136,8 @@ export interface Person {
   active: boolean | null;
   /** Admin › Người & Team only: manages every dự án without a grant. */
   manage_all?: boolean;
+  /** Admin › Người & Team only: holds the built-in Tester set (docs/specs/31 §21.0). */
+  is_tester?: boolean;
   /** Admin › Người & Team only: in ADMIN_EMAILS (has every right already). */
   is_admin?: boolean;
   /** The uploaded avatar (Admin › Người & Team); null: initials. */
