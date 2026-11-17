@@ -50,15 +50,22 @@ import {
  * One task (§13 "Chi tiết task"), the same in the drawer (`/tasks?task=KEY`) and on `/tasks/KEY`.
  * Left: title, health, description, sub-tasks, links, Code, the timeline, files and the comment box
  * fixed at the bottom (§20.1). Right: the fields that have a value, "+ Thêm trường" for the rest.
+ * `mode` (§22.6): "drawer" (the right drawer) has no right column: a 2-column strip under the title
+ * (Trạng thái, Người làm, Ưu tiên, Sprint, SP, Hạn), everything else under "+ Thêm trường";
+ * "page" (/tasks/KEY) pins the title with the health block and the field column while scrolling.
  */
+export type TaskDetailMode = "drawer" | "page";
+
 export function TaskDetail({
   taskKey,
   onOpenTask,
   onDeleted,
+  mode,
 }: {
   taskKey: string;
   onOpenTask: (key: string) => void;
   onDeleted: () => void;
+  mode?: TaskDetailMode;
 }) {
   const detail = useApi<Detail>(`/tasks/${encodeURIComponent(taskKey)}`);
   const task = detail.data;
@@ -73,22 +80,25 @@ export function TaskDetail({
       return <EmptyState icon="alert" title="Bạn không có quyền xem task này" />;
     return <Loading error={detail.error} rows={8} />;
   }
-  return <Body task={task} bp={bp} space={space} onOpenTask={onOpenTask} onDeleted={onDeleted} />;
+  return <Body task={task} bp={bp} space={space} mode={mode} onOpenTask={onOpenTask} onDeleted={onDeleted} />;
 }
 
 function Body({
   task,
   bp,
   space,
+  mode,
   onOpenTask,
   onDeleted,
 }: {
   task: Detail;
   bp: number | null;
   space: TaskSpace | null;
+  mode?: TaskDetailMode;
   onOpenTask: (key: string) => void;
   onDeleted: () => void;
 }) {
+  const compact = mode === "drawer";
   const [message, setMessage] = useState<string | null>(null);
   const [confirmEl, ask] = useConfirm();
   const path = `/tasks/${encodeURIComponent(task.key)}`;
@@ -177,26 +187,105 @@ function Body({
     }
   }
 
+  const dialogs = (
+    <>
+      {closingSubs && (
+        <ParentDoneAsk
+          taskKey={task.key}
+          items={closingSubs.items}
+          resolution={closingSubs.resolution}
+          onClose={() => {
+            setClosingSubs(null);
+            void refreshTasks();
+          }}
+        />
+      )}
+      {closing && (
+        <ResolutionModal
+          target={closing}
+          onClose={() => setClosing(null)}
+          onPick={(resolution, comment) => {
+            const target = closing;
+            setClosing(null);
+            void transition(target, resolution, comment);
+          }}
+        />
+      )}
+    </>
+  );
+  const extras = (
+    <>
+      {canEdit && <TaskAiButtons task={task} bp={bp} types={space?.types ?? TASK_TYPES} />}
+      <dl className="tk-meta small">
+        <dt>Người tạo</dt>
+        <dd>{personName(task.reporter)}</dd>
+        <dt>Tạo lúc</dt>
+        <dd title={dateTimeMin(task.created_at)}>{relative(task.created_at)}</dd>
+        <dt>Cập nhật</dt>
+        <dd title={dateTimeMin(task.updated_at)}>{relative(task.updated_at)}</dd>
+        {task.resolved_at && (
+          <>
+            <dt>Xong lúc</dt>
+            <dd>{dateTimeMin(task.resolved_at)}</dd>
+          </>
+        )}
+      </dl>
+      {task.can.delete && (
+        <button type="button" className="ghost sm tc-danger tk-delete" onClick={() => void remove()}>
+          <Icon name="remove" size={14} /> Xoá task
+        </button>
+      )}
+    </>
+  );
+  const fields = (
+    <Fields key={task.key} task={task} bp={bp} space={space} compact={compact} extras={compact ? extras : undefined} onPatch={patch} onTransition={(s) => void transition(s)} />
+  );
+  const health = <TaskHealth task={task} onOpenTask={onOpenTask} />;
+
   return (
-    <div className="tk-detail">
+    <div className={`tk-detail${compact ? " td-compact" : mode === "page" ? " td-page" : ""}`}>
       {confirmEl}
       {undoEl}
       <ShortcutHelp />
       <div className="tk-detail-main">
-        <div className="tk-detail-crumbs small muted">
-          <TypeIcon type={task.type} withLabel />
-          <span className="tk-key">{task.key}</span>
-          {task.parent_key && (
-            <>
-              <span>· thuộc</span>
-              <button type="button" className="link" onClick={() => onOpenTask(task.parent_key as string)}>
-                {task.parent_key}
-              </button>
-            </>
-          )}
-        </div>
-        <TitleEdit task={task} canEdit={canEdit} onSave={(title) => patch({ title })} />
-        <TaskHealth task={task} onOpenTask={onOpenTask} />
+        {(!compact || task.parent_key) && (
+          <div className="tk-detail-crumbs small muted">
+            {!compact && (
+              <>
+                <TypeIcon type={task.type} withLabel />
+                <span className="tk-key">{task.key}</span>
+              </>
+            )}
+            {task.parent_key && (
+              <>
+                <span>{compact ? "Thuộc" : "· thuộc"}</span>
+                <button type="button" className="link" onClick={() => onOpenTask(task.parent_key as string)}>
+                  {task.parent_key}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        {compact ? (
+          <>
+            <TitleEdit task={task} canEdit={canEdit} onSave={(title) => patch({ title })} />
+            <section className="td-props" aria-label="Thông tin task">
+              {fields}
+              {dialogs}
+            </section>
+            {health}
+          </>
+        ) : mode === "page" ? (
+          <div className="td-page-head">
+            <TitleEdit task={task} canEdit={canEdit} heading="h1" onSave={(title) => patch({ title })} />
+            {health}
+          </div>
+        ) : (
+          <>
+            <TitleEdit task={task} canEdit={canEdit} onSave={(title) => patch({ title })} />
+            {health}
+          </>
+        )}
         {message && <Message text={message} onClose={() => setMessage(null)} />}
         <DescriptionEdit task={task} canEdit={canEdit} onSave={(description) => patch({ description })} />
         <Subtasks task={task} bp={bp} space={space} onOpenTask={onOpenTask} />
@@ -208,51 +297,13 @@ function Body({
         <TaskAttachments task={task} />
         <TaskCommentBox key={task.key} task={task} bp={bp} />
       </div>
-      <aside className="tk-detail-side" aria-label="Thông tin task">
-        <Fields key={task.key} task={task} bp={bp} space={space} onPatch={patch} onTransition={(s) => void transition(s)} />
-        {closingSubs && (
-          <ParentDoneAsk
-            taskKey={task.key}
-            items={closingSubs.items}
-            resolution={closingSubs.resolution}
-            onClose={() => {
-              setClosingSubs(null);
-              void refreshTasks();
-            }}
-          />
-        )}
-        {closing && (
-          <ResolutionModal
-            target={closing}
-            onClose={() => setClosing(null)}
-            onPick={(resolution, comment) => {
-              const target = closing;
-              setClosing(null);
-              void transition(target, resolution, comment);
-            }}
-          />
-        )}
-        {canEdit && <TaskAiButtons task={task} bp={bp} types={space?.types ?? TASK_TYPES} />}
-        <dl className="tk-meta small">
-          <dt>Người tạo</dt>
-          <dd>{personName(task.reporter)}</dd>
-          <dt>Tạo lúc</dt>
-          <dd title={dateTimeMin(task.created_at)}>{relative(task.created_at)}</dd>
-          <dt>Cập nhật</dt>
-          <dd title={dateTimeMin(task.updated_at)}>{relative(task.updated_at)}</dd>
-          {task.resolved_at && (
-            <>
-              <dt>Xong lúc</dt>
-              <dd>{dateTimeMin(task.resolved_at)}</dd>
-            </>
-          )}
-        </dl>
-        {task.can.delete && (
-          <button type="button" className="ghost sm tc-danger tk-delete" onClick={() => void remove()}>
-            <Icon name="remove" size={14} /> Xoá task
-          </button>
-        )}
-      </aside>
+      {!compact && (
+        <aside className="tk-detail-side" aria-label="Thông tin task">
+          {fields}
+          {dialogs}
+          {extras}
+        </aside>
+      )}
     </div>
   );
 }
@@ -296,11 +347,22 @@ function previousOf(task: Detail, body: Record<string, unknown>): Record<string,
 
 /* ---------- Left column ---------- */
 
-function TitleEdit({ task, canEdit, onSave }: { task: Detail; canEdit: boolean; onSave: (t: string) => Promise<boolean> }) {
+function TitleEdit({
+  task,
+  canEdit,
+  onSave,
+  heading: Heading = "h2",
+}: {
+  task: Detail;
+  canEdit: boolean;
+  onSave: (t: string) => Promise<boolean>;
+  /** h1 on the task's own page (it has no page title), h2 inside the drawer. */
+  heading?: "h1" | "h2";
+}) {
   const [draft, setDraft] = useState<string | null>(null);
   if (draft === null)
     return (
-      <h2 className="tk-title">
+      <Heading className="tk-title">
         {canEdit ? (
           <button type="button" className="tk-title-btn" onClick={() => setDraft(task.title)} title="Bấm để sửa tiêu đề">
             {task.title}
@@ -308,7 +370,7 @@ function TitleEdit({ task, canEdit, onSave }: { task: Detail; canEdit: boolean; 
         ) : (
           task.title
         )}
-      </h2>
+      </Heading>
     );
   const commit = async () => {
     const t = draft.trim();
@@ -594,12 +656,18 @@ function Fields({
   task,
   bp,
   space,
+  compact,
+  extras,
   onPatch,
   onTransition,
 }: {
   task: Detail;
   bp: number | null;
   space: TaskSpace | null;
+  /** The drawer (§22.6): the 2-column strip, the rest folded under "+ Thêm trường". */
+  compact?: boolean;
+  /** Shown at the end of the folded part (AI, who / when, delete). */
+  extras?: ReactNode;
   onPatch: (b: Record<string, unknown>) => Promise<boolean>;
   onTransition: (s: TaskStatusRef) => void;
 }) {
@@ -645,10 +713,13 @@ function Fields({
   const show = (k: string) => has[k] || revealed.has(k);
   const labelOf: Record<string, string> = { labels: "Nhãn", components: "Thành phần", version: "Phiên bản", points: "Story point", estimate: "Ước lượng", due: "Hạn" };
   for (const f of liveFields) labelOf[`custom-${f.id}`] = f.name;
-  const hidden = Object.keys(labelOf).filter((k) => !show(k));
+  // In the drawer SP and Hạn always sit in the strip, so they are never offered.
+  const hidden = Object.keys(labelOf).filter((k) => !show(k) && !(compact && (k === "points" || k === "due")));
+  // The drawer's "+ Thêm trường" says how many of the fields folded into it hold a value.
+  const extraCount = Object.keys(has).filter((k) => has[k] && k !== "points" && k !== "due").length;
 
-  return (
-    <div className="tk-fields">
+  const statusEl = (
+    <>
       <Row label="Trạng thái">
         <select
           value={task.status.id}
@@ -668,6 +739,10 @@ function Fields({
           ))}
         </select>
       </Row>
+    </>
+  );
+  const assigneeEl = (
+    <>
       <Row label="Người làm">
         <select value={task.assignee?.id ?? ""} disabled={!task.can.assign} aria-label="Người làm" data-shortcut="assignee" onChange={(e) => void onPatch({ assignee_id: e.target.value ? Number(e.target.value) : null })}>
           <option value="">Chưa giao</option>
@@ -679,6 +754,10 @@ function Fields({
           ))}
         </select>
       </Row>
+    </>
+  );
+  const priorityEl = (
+    <>
       <Row label="Ưu tiên">
         <select value={task.priority} disabled={off} aria-label="Ưu tiên" onChange={(e) => void onPatch({ priority: e.target.value as TaskPriority })}>
           {priorityList(space).map((p) => (
@@ -689,6 +768,10 @@ function Fields({
           {!priorityList(space).some((p) => p.key === task.priority) && <option value={task.priority}>{task.priority_name ?? task.priority}</option>}
         </select>
       </Row>
+    </>
+  );
+  const typeEl = (
+    <>
       <Row label="Loại">
         <select value={task.type} disabled={off} aria-label="Loại" onChange={(e) => void onPatch({ type: e.target.value })}>
           {types.map((t) => (
@@ -698,6 +781,10 @@ function Fields({
           ))}
         </select>
       </Row>
+    </>
+  );
+  const resolutionEl = (
+    <>
       {task.status.category === "done" && (
         <Row label="Lý do đóng">
           <select
@@ -714,6 +801,10 @@ function Fields({
           </select>
         </Row>
       )}
+    </>
+  );
+  const labelsEl = (
+    <>
       {show("labels") && <Row label="Nhãn">
         <BlurInput
           label="Nhãn (cách nhau bằng dấu phẩy)"
@@ -730,6 +821,10 @@ function Fields({
           }
         />
       </Row>}
+    </>
+  );
+  const componentsEl = (
+    <>
       {show("components") && <Row label="Thành phần">
         <BlurInput
           label="Thành phần (cách nhau bằng dấu phẩy)"
@@ -746,6 +841,10 @@ function Fields({
           }
         />
       </Row>}
+    </>
+  );
+  const sprintEl = (
+    <>
       <Row label="Sprint">
         <select value={task.sprint_id ?? ""} disabled={off} aria-label="Sprint" onChange={(e) => void onPatch({ sprint_id: e.target.value ? Number(e.target.value) : null })}>
           <option value="">Backlog</option>
@@ -759,6 +858,10 @@ function Fields({
             ))}
         </select>
       </Row>
+    </>
+  );
+  const versionEl = (
+    <>
       {show("version") && <Row label="Phiên bản">
         <select value={task.version_id ?? ""} disabled={off} aria-label="Phiên bản" onChange={(e) => void onPatch({ version_id: e.target.value ? Number(e.target.value) : null })}>
           <option value="">Không</option>
@@ -769,7 +872,11 @@ function Fields({
           ))}
         </select>
       </Row>}
-      {show("points") && <Row label="Story point">
+    </>
+  );
+  const pointsEl = (
+    <>
+      {(compact || show("points")) && <Row label={compact ? "SP" : "Story point"}>
         <BlurInput
           type="number"
           label="Story point"
@@ -778,6 +885,10 @@ function Fields({
           onCommit={(v) => void onPatch({ story_points: v.trim() ? Number(v) : null })}
         />
       </Row>}
+    </>
+  );
+  const estimateEl = (
+    <>
       {show("estimate") && <Row label="Ước lượng">
         <BlurInput
           label="Ước lượng (ví dụ 2h30m)"
@@ -788,15 +899,27 @@ function Fields({
           onCommit={(v) => void onPatch({ estimate_min: v.trim() ? parseDuration(v) : null })}
         />
       </Row>}
+    </>
+  );
+  const spentEl = (
+    <>
       {show("spent") && <Row label="Đã làm">
         <span className="tk-field-text">
           {fmtMinutes(task.spent_min)}
           {task.estimate_min ? <span className="muted"> / {fmtMinutes(task.estimate_min)}</span> : null}
         </span>
       </Row>}
-      {show("due") && <Row label="Hạn">
+    </>
+  );
+  const dueEl = (
+    <>
+      {(compact || show("due")) && <Row label="Hạn">
         <input type="date" value={task.due_date ?? ""} disabled={off} aria-label="Hạn" onChange={(e) => void onPatch({ due_date: e.target.value || null })} />
       </Row>}
+    </>
+  );
+  const customEl = (
+    <>
       {liveFields.map((f) => {
         const id = f.id as number;
         const raw = custom[String(id)];
@@ -836,6 +959,10 @@ function Fields({
           </Row>
         );
       })}
+    </>
+  );
+  const addFieldEl = (
+    <>
       {!off && hidden.length > 0 && (
         <details className="tl-add-field">
           <summary className="link small">+ Thêm trường</summary>
@@ -857,6 +984,10 @@ function Fields({
           </ul>
         </details>
       )}
+    </>
+  );
+  const watchEl = (
+    <>
       <Row label="Theo dõi">
         <span className="tk-watch">
           <button type="button" className="sm" aria-pressed={task.watching} disabled={watchBusy} onClick={() => void toggleWatch()}>
@@ -867,6 +998,59 @@ function Fields({
           </span>
         </span>
       </Row>
+    </>
+  );
+
+  if (compact)
+    return (
+      <>
+        <div className="td-strip">
+          {statusEl}
+          {assigneeEl}
+          {priorityEl}
+          {sprintEl}
+          {pointsEl}
+          {dueEl}
+        </div>
+        <details className="td-more">
+          <summary className="link small">
+            + Thêm trường
+            {extraCount > 0 && <span className="muted"> · {extraCount} đã có giá trị</span>}
+          </summary>
+          <div className="tk-fields td-more-body">
+            {typeEl}
+            {resolutionEl}
+            {labelsEl}
+            {componentsEl}
+            {versionEl}
+            {estimateEl}
+            {spentEl}
+            {customEl}
+            {addFieldEl}
+            {watchEl}
+            {extras}
+          </div>
+        </details>
+      </>
+    );
+  return (
+    <div className="tk-fields">
+      {statusEl}
+      {assigneeEl}
+      {priorityEl}
+      {typeEl}
+      {resolutionEl}
+      {labelsEl}
+      {componentsEl}
+      {sprintEl}
+      {versionEl}
+      {pointsEl}
+      {estimateEl}
+      {spentEl}
+      {dueEl}
+      {customEl}
+      {addFieldEl}
+      {watchEl}
     </div>
   );
 }

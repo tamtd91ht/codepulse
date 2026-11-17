@@ -1478,3 +1478,38 @@ Bước 1 của chuẩn hoá UI/UX (codepulse-task-uiux §3.1, §3.2, §5, §6, 
   có thanh lọc). Màn đặt thanh lọc là phần tử đầu tiên, `position: sticky; top: var(--tk-bar-top)`,
   cao `var(--tk-bar-h)`, rồi view chính `height: var(--tk-view-h)` và tự cuộn bên trong.
 - Khối `?task=KEY` (ngăn chi tiết) nằm ngoài khung, không đổi.
+### 22.6 Ngăn chi tiết task
+
+UI/UX §4.8, §6, §7 (bước 6). Bấm task ở Board, Danh sách, Backlog hoặc Việc của tôi mở **ngăn bên phải**
+(`components/tasks/TaskDrawer.tsx`) thay cho drawer phủ cả màn hình; `/tasks/KEY` vẫn là trang riêng.
+
+- **Không chặn view phía sau:** ngăn cố định bên phải dưới thanh trên cùng, không có lớp nền mờ, không khoá
+  cuộn, không bẫy focus (`role="dialog"`, `aria-modal="false"`). Màn ≥ 1280 px: `main` chừa lề phải bằng độ
+  rộng ngăn (biến CSS `--td-w`, lớp `td-open` trên `body`) nên không task nào bị che; màn hẹp hơn ngăn nằm
+  đè; dưới 768 px ngăn chiếm toàn màn hình (§6).
+- **Độ rộng:** mặc định 560 px, kéo mép trái từ 420 px tới 60% chiều rộng cửa sổ; tay nắm là
+  `role="separator"` có focus, mũi tên trái / phải đổi 16 px (giữ Shift: 64 px), Home / End về min / max,
+  bấm đúp về 560 px. Nhớ theo trình duyệt (`localStorage` `cp:tasks:drawer-w`, lỗi bộ nhớ thì bỏ qua).
+- **Đầu ngăn (48 px):** loại, mã (`h2`, nhận focus khi mở), vị trí trong danh sách `3/24`, nút ▲ / ▼ (task
+  trước / kế tiếp), ⤢ mở toàn trang, ↗ sao chép link `/tasks/KEY` (đổi thành ✓ "Đã sao chép link", báo qua
+  `aria-live`), ✕ đóng. Mọi nút chỉ có icon đều có nhãn và tooltip. Đóng ngăn trả focus về chỗ đã mở.
+- **Phím:** `J` / `K` task kế tiếp / trước của danh sách đang hiện; `Esc` đóng ngăn, trừ khi đang gõ trong ô
+  nhập hoặc đang mở popover, menu, listbox, hộp thoại (`[aria-modal=true]`, `[role=menu]`, `[role=listbox]`,
+  nút `[aria-haspopup][aria-expanded=true]`, bảng lệnh, "+ Thêm trường") hoặc phím đã được thành phần khác
+  xử lý (`defaultPrevented`). Không chạy khi giữ Ctrl / Alt / Meta / Shift.
+- **Danh sách cho J/K** (`components/tasks/drawerNav.ts`): store module, mỗi màn gọi
+  `useDrawerList(keys)` với mã task theo đúng thứ tự đang hiện (Board: card sau lọc; Danh sách: các dòng
+  trang hiện tại; Backlog: các sprint mở rồi Backlog; Việc của tôi: các task của trang). Màn đăng ký sau cùng
+  thắng, màn unmount chỉ xoá danh sách của chính nó. Task không có trong danh sách thì J/K không làm gì và
+  đầu ngăn không hiện vị trí.
+- **Trong ngăn** (`TaskDetail mode="drawer"`): một cột; dưới tiêu đề là **dải thuộc tính 2 cột** Trạng thái,
+  Người làm, Ưu tiên, Sprint, SP, Hạn (SP và Hạn luôn hiện kể cả khi trống); mọi thứ khác (Loại, Lý do đóng,
+  Nhãn, Thành phần, Phiên bản, Ước lượng, Đã làm, trường tuỳ biến, chọn thêm trường trống, Theo dõi, nút AI,
+  người tạo / thời gian, Xoá task) gập trong "+ Thêm trường", nhãn kèm số trường đã có giá trị. Khối Sức
+  khoẻ nằm dưới dải thuộc tính. Đổi task bằng J/K cuộn ngăn về đầu.
+- **Toàn trang** (`/tasks/KEY`, `mode="page"`): bỏ tiêu đề lớn `TASK / KEY`; đầu trang là breadcrumb
+  `Task / KEY`, tiêu đề task là `h1`. Tiêu đề cùng khối Sức khoẻ ghim dưới thanh trên cùng khi cuộn; cột
+  thuộc tính ghim (cuộn riêng nếu cao hơn màn hình). Dưới 1100 px giữ bố cục một cột như trước.
+- **Chuyển động:** ngăn trượt vào 180 ms `ease-out`; tắt khi `prefers-reduced-motion: reduce`.
+- **Việc của tôi** (`/tasks/me`) đọc `?task=KEY` và mở cùng ngăn (`UrlTaskDrawer`); các link task trong
+  `MyWork.tsx` trỏ về `/tasks/me?task=KEY` để mở ngăn thay vì rời trang.

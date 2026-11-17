@@ -8,7 +8,7 @@ import { Icon } from "@/components/icons";
 import { TaskBacklog } from "@/components/tasks/TaskBacklog";
 import { TaskBoard } from "@/components/tasks/TaskBoard";
 import { TaskCreate } from "@/components/tasks/TaskCreate";
-import { TaskDetail } from "@/components/tasks/TaskDetail";
+import { TaskDrawer } from "@/components/tasks/TaskDrawer";
 import { TaskHealth } from "@/components/tasks/TaskHealth";
 import { TaskList } from "@/components/tasks/TaskList";
 import { TaskReports } from "@/components/tasks/TaskReports";
@@ -17,7 +17,7 @@ import { EnableSpace, TaskSettings } from "@/components/tasks/TaskSettings";
 import { type FrameMenuItem, type FrameTab, ProjectSwitcher, TaskFrame } from "@/components/tasks/TaskFrame";
 import { TaskVersions } from "@/components/tasks/TaskVersions";
 import { useTaskSpaces } from "@/components/tasks/taskParts";
-import { Drawer, EmptyState, Loading, PageHeader } from "@/components/ui";
+import { EmptyState, Loading, PageHeader } from "@/components/ui";
 import { can, useApi } from "@/lib/api";
 import type { Me } from "@/lib/types";
 
@@ -191,20 +191,7 @@ function Tasks() {
           }}
         />
       )}
-      {where.task && (
-        <Drawer
-          width="wide"
-          title={where.task}
-          onClose={() => go({ task: null })}
-          actions={
-            <Link href={`/tasks/${encodeURIComponent(where.task)}`} className="icon-btn" aria-label="Mở trang riêng" data-tip="Mở trang riêng">
-              <Icon name="external" size={16} />
-            </Link>
-          }
-        >
-          <TaskDetail key={where.task} taskKey={where.task} onOpenTask={openTask} onDeleted={() => go({ task: null })} />
-        </Drawer>
-      )}
+      {where.task && <TaskDrawer taskKey={where.task} onOpenTask={openTask} onClose={() => go({ task: null })} onDeleted={() => go({ task: null })} />}
     </>
   );
 }

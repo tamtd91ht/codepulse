@@ -18898,3 +18898,234 @@ a.button.tf-mine.active {
     display: none;
   }
 }
+/* UI/UX task drawer (docs/specs/31 §22.6): non-modal right drawer, compact detail, full-page pins. */
+.td-drawer {
+  position: fixed;
+  top: var(--topbar-h);
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100vw;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  animation: td-in 180ms ease-out;
+}
+@keyframes td-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.td-resizing,
+.td-resizing * {
+  user-select: none;
+}
+.td-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  z-index: 1;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.td-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: transparent;
+  transition: background var(--duration-fast) ease-out;
+}
+.td-handle:hover::after,
+.td-resizing .td-handle::after {
+  background: var(--ring);
+}
+.td-handle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.td-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 48px;
+  padding: 0 8px 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+.td-head-id {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.td-key {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.td-key:focus {
+  outline: none;
+}
+.td-key:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.td-pos {
+  font-variant-numeric: tabular-nums;
+}
+.td-head-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+.td-sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--border);
+}
+.td-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 20px 24px;
+}
+/* The page makes room for the drawer on wide screens, so nothing behind it is hidden. */
+@media (min-width: 1280px) {
+  body.td-open main {
+    padding-right: calc(var(--td-w, 560px) + 16px);
+  }
+}
+/* Narrow screens (UI/UX §6): the drawer takes the whole screen. */
+@media (max-width: 767px) {
+  .td-drawer {
+    top: 0;
+    z-index: 100;
+    width: 100vw !important;
+  }
+  .td-handle {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .td-drawer {
+    animation: none;
+  }
+  .td-handle::after {
+    transition: none;
+  }
+}
+
+/* Compact detail inside the drawer: one column, the 2-column property strip under the title. */
+.tk-detail.td-compact {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+.td-compact .tk-detail-main {
+  gap: 16px;
+}
+.td-props {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+.td-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+}
+.td-strip .tk-field {
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+.td-strip .tk-field-value select,
+.td-strip .tk-field-value input,
+.td-more-body .tk-field-value select,
+.td-more-body .tk-field-value input {
+  width: 100%;
+  min-width: 0;
+}
+/* No container query here: containment would trap the detail's (unportalled) modals in the drawer. */
+@media (max-width: 479px) {
+  .td-strip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.td-more > summary {
+  width: fit-content;
+  padding: 2px 0;
+  cursor: pointer;
+  list-style: none;
+}
+.td-more > summary::-webkit-details-marker {
+  display: none;
+}
+.td-more-body {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* Full page (/tasks/KEY): breadcrumb instead of a big title; title + health and fields pinned. */
+.td-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+  color: var(--muted);
+}
+.td-crumbs a {
+  color: var(--muted);
+}
+.td-crumbs a:hover {
+  color: var(--text);
+}
+.td-crumbs-key {
+  color: var(--text);
+  font-weight: 600;
+}
+.td-page h1.tk-title {
+  font-size: 22px;
+}
+.td-page .td-page-head {
+  position: sticky;
+  top: var(--topbar-h);
+  z-index: 3;
+  display: grid;
+  gap: 10px;
+  margin: -8px 0 0;
+  padding: 8px 0 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.td-page .tk-detail-side {
+  top: calc(var(--topbar-h) + 12px);
+  max-height: calc(100dvh - var(--topbar-h) - 24px);
+  overflow-y: auto;
+}
+@media (max-width: 1100px) {
+  .td-page .tk-detail-side {
+    max-height: none;
+    overflow: visible;
+  }
+}

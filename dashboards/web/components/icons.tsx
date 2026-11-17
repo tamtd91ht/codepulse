@@ -177,6 +177,13 @@ const PATHS = {
       <path d="M15 3h6v6M10 14L21 3" />
     </>
   ),
+  /* Two corners pulled apart: open in full page (the task drawer's ⤢). */
+  expand: (
+    <>
+      <path d="M15 3h6v6M9 21H3v-6" />
+      <path d="M21 3l-7 7M3 21l7-7" />
+    </>
+  ),
   trendUp: (
     <>
       <path d="M23 6l-9.5 9.5-5-5L1 18" />

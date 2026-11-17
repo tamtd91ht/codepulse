@@ -10,6 +10,7 @@ import { api, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
 import type { Sprint, SprintPlan, SprintPreflight, SprintReview, TaskEpic, TaskPage, TaskRow, TaskSpace } from "@/lib/types";
 
+import { useDrawerList } from "./drawerNav";
 import { byRank, neighbours } from "./TaskBoard";
 import { RetroButton, ScopeNote, SprintReviewView } from "./TaskHealth";
 import {
@@ -91,6 +92,8 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [backlog.data, epic],
   );
+  // §22.6: J/K in the task drawer walk the sprints top-down, then the backlog.
+  useDrawerList([...open.flatMap((s) => (s.tasks ?? []).filter(shows).sort(byRank)), ...backlogRows].map((t) => t.key));
   const hasActive = open.some((s) => s.state === "active");
   const pickedEpic = epic ? epics.data?.find((e) => e.key === epic) : undefined;
 

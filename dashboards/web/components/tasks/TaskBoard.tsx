@@ -12,6 +12,7 @@ import type { Me, TaskDodGaps, TaskPage, TaskPerson, TaskResolution, TaskRow, Ta
 
 import { selectCard, useCardSelected } from "./cardSelection";
 import { DensityToggle } from "./DensityToggle";
+import { useDrawerList } from "./drawerNav";
 import { PinnedFilters } from "./FilterChips";
 import { type QuickPicks, QuickChips, QuickPreview } from "./QuickChips";
 import { SwitchoverBoardNote } from "./TaskSwitchover";
@@ -336,6 +337,8 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
     }
     return [...groups.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
   }, [lane, cards, rows, space]);
+  // §22.6: J/K in the task drawer walk the cards in board order (lane, then column).
+  useDrawerList(lanes.flatMap((l) => statuses.flatMap((st) => l.rows.filter((t) => t.status.id === st.id))).map((t) => t.key));
 
   const dropAsk = (statusId: number) =>
     setQuickAsk((a) => {

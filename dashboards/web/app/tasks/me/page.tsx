@@ -1,6 +1,9 @@
 "use client";
 
+import { Suspense } from "react";
+
 import { MyWork } from "@/components/tasks/MyWork";
+import { UrlTaskDrawer } from "@/components/tasks/TaskDrawer";
 import { TaskFrame } from "@/components/tasks/TaskFrame";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { can, useApi } from "@/lib/api";
@@ -27,6 +30,10 @@ export default function MyWorkPage() {
       create={can(me, "tasks.create") ? { href: "/tasks?create=1" } : null}
     >
       <MyWork />
+      {/* §22.6: a task opened from here (?task=KEY) shows in the right drawer, the list stays. */}
+      <Suspense fallback={null}>
+        <UrlTaskDrawer />
+      </Suspense>
     </TaskFrame>
   );
 }
