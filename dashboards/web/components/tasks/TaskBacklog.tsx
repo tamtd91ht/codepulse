@@ -1,10 +1,11 @@
 "use client";
 
-import { type DragEvent, useMemo, useState } from "react";
+import { type DragEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { Modal } from "@/components/CriteriaParts";
 import { Icon, IconButton } from "@/components/icons";
-import { Alert, EmptyState, Loading, Message, Pill } from "@/components/ui";
+import { MoreMenu } from "@/components/MoreMenu";
+import { Alert, Loading, Message, Pill } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
 import type { Sprint, SprintPlan, SprintPreflight, SprintReview, TaskEpic, TaskPage, TaskRow, TaskSpace } from "@/lib/types";
@@ -28,8 +29,28 @@ import {
 
 const DRAG_TYPE = "text/x-task-key";
 type Box = number | "backlog";
+/** Per-browser memory of the folded Epic column (docs/specs/31 §22.5). */
+const EPIC_FOLD_KEY = "codepulse.tasks.backlog.epicCollapsed";
 
-/** Backlog (§13): planned / active sprints with their tasks, then the backlog; drag between them. */
+function readEpicFold(): boolean {
+  try {
+    return window.localStorage.getItem(EPIC_FOLD_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function writeEpicFold(v: boolean) {
+  try {
+    window.localStorage.setItem(EPIC_FOLD_KEY, v ? "1" : "0");
+  } catch {
+    // Storage blocked (private window): the fold just is not remembered.
+  }
+}
+
+/**
+ * Backlog (§13, layout §22.5): a 40 px toolbar, then the Epic column (foldable) beside the sprints
+ * and the backlog; only that area scrolls. Rows drag between sprints and the backlog.
+ */
 export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key: string) => void }) {
   const bp = space.business_project_id;
   const sprints = useSprints(bp);
@@ -44,6 +65,17 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
   const epics = useApi<TaskEpic[]>(`/tasks/spaces/${bp}/epics`);
   // The Epic bar's pick (§19.1): only that epic's children; null = all.
   const [epic, setEpic] = useState<string | null>(null);
+  // Folded Epic column, read after mount so the server render matches the first client render.
+  const [epicFolded, setEpicFolded] = useState(false);
+  useEffect(() => setEpicFolded(readEpicFold()), []);
+  const foldEpics = (v: boolean) => {
+    setEpicFolded(v);
+    writeEpicFold(v);
+  };
+  // A sprint's (or the backlog's) open/folded choice; unset = open when it has rows, folded when empty.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const isOpen = (box: Box, rows: TaskRow[]) => expanded[String(box)] ?? rows.length > 0;
+  const toggle = (box: Box, rows: TaskRow[]) => setExpanded((m) => ({ ...m, [String(box)]: !isOpen(box, rows) }));
   // Epics live in the Epic bar, sub-tasks inside their parent: neither is a Backlog row.
   const shows = (t: TaskRow) => t.type !== "epic" && t.type !== "subtask" && (!epic || t.parent_key === epic);
 
@@ -60,6 +92,7 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
     [backlog.data, epic],
   );
   const hasActive = open.some((s) => s.state === "active");
+  const pickedEpic = epic ? epics.data?.find((e) => e.key === epic) : undefined;
 
   function rowsOf(box: Box): TaskRow[] {
     return box === "backlog" ? backlogRows : [...(open.find((s) => s.id === box)?.tasks ?? [])].filter(shows).sort(byRank);
@@ -113,125 +146,259 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
     },
   });
 
-  const list = (box: Box, rows: TaskRow[]) => (
-    <ul className={`tk-blist${over?.box === box ? " over" : ""}`} {...dropProps(box)}>
-      {rows.map((t, i) => (
-        <li
-          key={t.key}
-          className={`tk-brow${drag === t.key ? " dragging" : ""}${over?.box === box && over.before === t.key && drag !== t.key ? " drop-before" : ""}`}
-          draggable={!busy}
-          onDragStart={(e) => {
-            e.dataTransfer.setData(DRAG_TYPE, t.key);
-            e.dataTransfer.effectAllowed = "move";
-            setDrag(t.key);
-          }}
-          onDragEnd={() => {
-            setDrag(null);
-            setOver(null);
-          }}
-          onDragOver={(e) => {
-            if (!drag) return;
-            e.preventDefault();
-            e.stopPropagation();
-            const r = e.currentTarget.getBoundingClientRect();
-            const before = e.clientY > r.top + r.height / 2 ? (rows[i + 1]?.key ?? null) : t.key;
-            if (over?.box !== box || over.before !== before) setOver({ box, before });
-          }}
-        >
-          <TypeIcon type={t.type} />
-          <span className={`tk-key${t.status.category === "done" ? " done" : ""}`}>{t.key}</span>
-          <button type="button" className="tk-brow-title" onClick={() => onOpen(t.key)}>
-            {t.title}
-          </button>
-          <span className="tk-brow-meta">
-            <GitBadge row={t} />
-            <StatusPill status={t.status} resolution={t.resolution} />
-            <PointsChip points={t.story_points} />
-            <RowPriority row={t} />
-            <PersonAvatar person={t.assignee} />
-          </span>
-        </li>
-      ))}
-      {over?.box === box && over.before === null && drag && <li className="tk-drop-line" aria-hidden="true" />}
-      {!rows.length && <li className="small faint tk-blist-empty">{box === "backlog" ? "Backlog trống" : "Kéo task vào đây để đưa vào sprint"}</li>}
-    </ul>
-  );
+  /** The rows of a box; a folded box shows only a drop zone, and only while a row is dragged. */
+  const list = (box: Box, rows: TaskRow[]) => {
+    if (!isOpen(box, rows)) {
+      if (!drag) return null;
+      return (
+        <ul className={`tk-blist bl-dropzone${over?.box === box ? " over" : ""}`} {...dropProps(box)}>
+          <li className="small muted bl-drop-hint">Kéo task vào đây</li>
+        </ul>
+      );
+    }
+    return (
+      <ul className={`tk-blist${over?.box === box ? " over" : ""}`} {...dropProps(box)}>
+        {rows.map((t, i) => (
+          <li
+            key={t.key}
+            className={`tk-brow${drag === t.key ? " dragging" : ""}${over?.box === box && over.before === t.key && drag !== t.key ? " drop-before" : ""}`}
+            draggable={!busy}
+            onDragStart={(e) => {
+              e.dataTransfer.setData(DRAG_TYPE, t.key);
+              e.dataTransfer.effectAllowed = "move";
+              setDrag(t.key);
+            }}
+            onDragEnd={() => {
+              setDrag(null);
+              setOver(null);
+            }}
+            onDragOver={(e) => {
+              if (!drag) return;
+              e.preventDefault();
+              e.stopPropagation();
+              const r = e.currentTarget.getBoundingClientRect();
+              const before = e.clientY > r.top + r.height / 2 ? (rows[i + 1]?.key ?? null) : t.key;
+              if (over?.box !== box || over.before !== before) setOver({ box, before });
+            }}
+          >
+            <TypeIcon type={t.type} />
+            <span className={`tk-key${t.status.category === "done" ? " done" : ""}`}>{t.key}</span>
+            <button type="button" className="tk-brow-title" onClick={() => onOpen(t.key)} title={t.title}>
+              {t.title}
+            </button>
+            <span className="tk-brow-meta">
+              <GitBadge row={t} />
+              <StatusPill status={t.status} resolution={t.resolution} />
+              <PointsChip points={t.story_points} />
+              <RowPriority row={t} />
+              <PersonAvatar person={t.assignee} />
+            </span>
+          </li>
+        ))}
+        {over?.box === box && over.before === null && drag && <li className="tk-drop-line" aria-hidden="true" />}
+        {!rows.length &&
+          (drag ? (
+            <li className="small muted bl-drop-hint">Kéo task vào đây</li>
+          ) : (
+            <li className="small faint tk-blist-empty">{box === "backlog" ? "Backlog trống" : epic ? "Không có task của epic này" : "Chưa có task"}</li>
+          ))}
+      </ul>
+    );
+  };
 
   return (
-    <div className="tk-backlog-wrap">
-      <EpicBar epics={epics.data} error={epics.error} value={epic} onChange={setEpic} onOpen={onOpen} />
-    <div className="tk-backlog">
+    <div className="bl-screen">
       {confirmEl}
-      {message && <Message text={message} onClose={() => setMessage(null)} />}
-      {canManage && (
-        <div className="toolbar">
-          <span className="spacer" />
-          <button type="button" onClick={() => setDialog({ kind: "edit", sprint: null })}>
-            Tạo sprint
+      <div className="bl-toolbar" role="toolbar" aria-label="Backlog">
+        {pickedEpic && (
+          <span className="bl-chip" title={pickedEpic.title}>
+            <span className="bl-chip-text">Epic: {pickedEpic.title}</span>
+            <button type="button" className="bl-chip-x" aria-label={`Bỏ lọc Epic: ${pickedEpic.title}`} onClick={() => setEpic(null)}>
+              <Icon name="close" size={12} />
+            </button>
+          </span>
+        )}
+        <span className="small muted bl-toolbar-count">
+          {sprints.data ? `${open.length} sprint` : ""}
+          {backlog.data ? ` · ${backlogRows.length} task trong backlog` : ""}
+        </span>
+        <span className="spacer" />
+        {canManage && (
+          <button type="button" className="sm" onClick={() => setDialog({ kind: "edit", sprint: null })}>
+            <Icon name="plus" size={14} /> Tạo sprint
           </button>
+        )}
+      </div>
+      <div className={`tk-backlog-wrap${epicFolded ? " bl-epic-folded" : ""}`}>
+        <EpicBar
+          epics={epics.data}
+          error={epics.error}
+          value={epic}
+          onChange={setEpic}
+          onOpen={onOpen}
+          folded={epicFolded}
+          onFold={foldEpics}
+        />
+        <div className="tk-backlog bl-scroll">
+          {message && <Message text={message} onClose={() => setMessage(null)} />}
+          {!sprints.data ? (
+            <Loading error={sprints.error} rows={3} />
+          ) : (
+            open.map((s) => {
+              const tasks = rowsOf(s.id);
+              const points = epic ? sumPoints(tasks) : (s.points ?? sumPoints(tasks));
+              const donePoints = epic ? sumPoints(tasks.filter((t) => t.status.category === "done")) : (s.done_points ?? sumPoints(tasks.filter((t) => t.status.category === "done")));
+              return (
+                <SprintSection
+                  key={s.id}
+                  sprint={s}
+                  taskCount={tasks.length}
+                  points={points}
+                  donePoints={donePoints}
+                  expanded={isOpen(s.id, tasks)}
+                  onToggle={() => toggle(s.id, tasks)}
+                  canManage={canManage}
+                  hasActive={hasActive}
+                  onStart={() => setDialog({ kind: "start", sprint: s })}
+                  onComplete={() => setDialog({ kind: "complete", sprint: s })}
+                  onEdit={() => setDialog({ kind: "edit", sprint: s })}
+                  onRemove={() => void remove(s)}
+                >
+                  {list(s.id, tasks)}
+                </SprintSection>
+              );
+            })
+          )}
+          {sprints.data && !open.length && <p className="small muted bl-note">Chưa có sprint nào{canManage ? ". Bấm “Tạo sprint” ở trên để lập sprint." : "."}</p>}
+          <section className={`card tk-sprint${isOpen("backlog", backlogRows) ? "" : " bl-folded"}`} aria-label="Backlog">
+            <header className="bl-sprint-head">
+              <FoldButton open={isOpen("backlog", backlogRows)} name="Backlog" onClick={() => toggle("backlog", backlogRows)} />
+              <strong className="bl-sprint-name">Backlog</strong>
+              <span className="small muted bl-sprint-facts">
+                {backlogRows.length} task · {sumPoints(backlogRows)} SP
+              </span>
+            </header>
+            {!backlog.data ? <Loading error={backlog.error} rows={4} /> : list("backlog", backlogRows)}
+          </section>
         </div>
-      )}
-      {!sprints.data ? (
-        <Loading error={sprints.error} rows={3} />
-      ) : (
-        open.map((s) => {
-          const tasks = rowsOf(s.id);
-          const points = epic ? sumPoints(tasks) : (s.points ?? sumPoints(tasks));
-          const donePoints = epic ? sumPoints(tasks.filter((t) => t.status.category === "done")) : (s.done_points ?? sumPoints(tasks.filter((t) => t.status.category === "done")));
-          return (
-            <section key={s.id} className="card tk-sprint">
-              <header className="tk-sprint-head">
-                <div className="tk-sprint-title">
-                  <strong>{s.name}</strong>
-                  {s.state === "active" ? <Pill tone="info">Đang chạy</Pill> : <Pill>Kế hoạch</Pill>}
-                  <span className="small muted">
-                    {s.start_date ? `${date(s.start_date)} – ${date(s.end_date)}` : "Chưa đặt ngày"} · {tasks.length} task · {donePoints}/{points} SP
-                  </span>
-                  {s.state === "active" && <ScopeNote sprintId={s.id} />}
-                </div>
-                {s.goal && <p className="small muted tk-sprint-goal">{s.goal}</p>}
-                <SprintPlanBar sprintId={s.id} canManage={canManage} />
-                {canManage && (
-                  <div className="actions">
-                    {s.state === "planned" && (
-                      <button type="button" className="sm" disabled={hasActive} title={hasActive ? "Đã có sprint đang chạy" : undefined} onClick={() => setDialog({ kind: "start", sprint: s })}>
-                        Bắt đầu sprint
-                      </button>
-                    )}
-                    {s.state === "active" && (
-                      <button type="button" className="sm" onClick={() => setDialog({ kind: "complete", sprint: s })}>
-                        Hoàn tất sprint
-                      </button>
-                    )}
-                    <IconButton icon="edit" label="Sửa sprint" onClick={() => setDialog({ kind: "edit", sprint: s })} />
-                    {s.state === "planned" && <IconButton icon="remove" tone="danger" label="Xoá sprint" onClick={() => void remove(s)} />}
-                  </div>
-                )}
-              </header>
-              {list(s.id, tasks)}
-            </section>
-          );
-        })
-      )}
-      <section className="card tk-sprint">
-        <header className="tk-sprint-head">
-          <div className="tk-sprint-title">
-            <strong>Backlog</strong>
-            <span className="small muted">
-              {backlogRows.length} task · {sumPoints(backlogRows)} SP
-            </span>
-          </div>
-        </header>
-        {!backlog.data ? <Loading error={backlog.error} rows={4} /> : list("backlog", backlogRows)}
-      </section>
-      {sprints.data && !open.length && !canManage && <EmptyState icon="calendar" title="Chưa có sprint nào" />}
+      </div>
       {dialog?.kind === "edit" && <SprintModal bp={bp} sprint={dialog.sprint} onClose={() => setDialog(null)} />}
       {dialog?.kind === "start" && dialog.sprint && <StartModal sprint={dialog.sprint} onClose={() => setDialog(null)} />}
       {dialog?.kind === "complete" && dialog.sprint && (
         <CompleteModal sprint={dialog.sprint} others={open.filter((s) => s.id !== dialog.sprint?.id)} onClose={() => setDialog(null)} />
       )}
     </div>
-    </div>
+  );
+}
+
+function FoldButton({ open, name, onClick }: { open: boolean; name: string; onClick: () => void }) {
+  return (
+    <button type="button" className="icon-btn bl-fold" aria-expanded={open} aria-label={open ? `Thu gọn ${name}` : `Mở ${name}`} data-tip={open ? "Thu gọn" : "Mở"} onClick={onClick}>
+      <Icon name={open ? "chevronDown" : "chevronRight"} size={16} />
+    </button>
+  );
+}
+
+/**
+ * One sprint (§22.5): a single 40 px header row (name, dates, task count, SP against capacity,
+ * Bắt đầu / Hoàn tất, ⋯ for Sửa / Xoá). The goal and the planning line (§21.3: capacity, load per
+ * person) sit on a sub-line opened from the SP chip.
+ */
+function SprintSection({
+  sprint: s,
+  taskCount,
+  points,
+  donePoints,
+  expanded,
+  onToggle,
+  canManage,
+  hasActive,
+  onStart,
+  onComplete,
+  onEdit,
+  onRemove,
+  children,
+}: {
+  sprint: Sprint;
+  taskCount: number;
+  points: number;
+  donePoints: number;
+  expanded: boolean;
+  onToggle: () => void;
+  canManage: boolean;
+  hasActive: boolean;
+  onStart: () => void;
+  onComplete: () => void;
+  onEdit: () => void;
+  onRemove: () => void;
+  children: ReactNode;
+}) {
+  const plan = useApi<SprintPlan>(`/tasks/sprints/${s.id}/plan`);
+  const [details, setDetails] = useState(false);
+  const p = plan.data;
+  // No capacity yet and the viewer can set one: the sub-line holds the input, so say so on the chip.
+  const needsCapacity = canManage && p != null && p.capacity === null;
+  const capText = p ? (p.capacity !== null ? `${p.points}/${p.capacity} SP` : `${p.points} SP`) : `${donePoints}/${points} SP`;
+  const capTip = p
+    ? `${p.capacity !== null ? `${p.points} SP kéo vào / sức chứa ${p.capacity} SP (${p.source === "manual" ? "đặt tay" : "TB 3 sprint gần nhất"})` : `${p.points} SP, chưa có sức chứa`} · xong ${donePoints}/${points} SP. Bấm để xem tải theo người${canManage ? " và đặt sức chứa" : ""}.`
+    : `Xong ${donePoints}/${points} SP`;
+  const dates = s.start_date ? `${date(s.start_date)} – ${date(s.end_date)}` : "Chưa đặt ngày";
+  const menu = canManage
+    ? [
+        { icon: "edit" as const, label: "Sửa sprint", run: onEdit },
+        ...(s.state === "planned" ? [{ icon: "remove" as const, label: "Xoá sprint", danger: true, run: onRemove }] : []),
+      ]
+    : [];
+  return (
+    <section className={`card tk-sprint${expanded ? "" : " bl-folded"}`} aria-label={s.name}>
+      <header className="bl-sprint-head">
+        <FoldButton open={expanded} name={s.name} onClick={onToggle} />
+        <strong className="bl-sprint-name" title={s.goal ? `Mục tiêu: ${s.goal}` : s.name}>
+          {s.name}
+        </strong>
+        {s.state === "active" && <Pill tone="info">Đang chạy</Pill>}
+        <span className="small muted bl-sprint-facts">
+          <span className="bl-sprint-dates">{dates} · </span>
+          {taskCount} task
+        </span>
+        <button
+          type="button"
+          className={`bl-cap${p?.over_capacity ? " over" : ""}${needsCapacity ? " todo" : ""}`}
+          aria-expanded={details}
+          aria-label={`${capText}. ${details ? "Ẩn" : "Hiện"} mục tiêu, sức chứa và tải theo người`}
+          title={capTip}
+          onClick={() => setDetails((v) => !v)}
+        >
+          {capText}
+          {p?.over_capacity && <Icon name="alert" size={12} />}
+          {needsCapacity && <span className="bl-cap-todo">· đặt sức chứa</span>}
+        </button>
+        {s.state === "active" && <ScopeNote sprintId={s.id} />}
+        <span className="spacer" />
+        {canManage && s.state === "planned" && (
+          <button type="button" className="sm" disabled={hasActive} title={hasActive ? "Đã có sprint đang chạy" : undefined} onClick={onStart}>
+            Bắt đầu
+          </button>
+        )}
+        {canManage && s.state === "active" && (
+          <button type="button" className="sm" onClick={onComplete}>
+            Hoàn tất
+          </button>
+        )}
+        <MoreMenu items={menu} />
+      </header>
+      {details && (
+        <div className="bl-sprint-sub">
+          {s.goal && (
+            <p className="small bl-sprint-goal">
+              <span className="muted">Mục tiêu:</span> {s.goal}
+            </p>
+          )}
+          <SprintPlanBar sprintId={s.id} plan={plan} canManage={canManage} />
+        </div>
+      )}
+      {children}
+    </section>
   );
 }
 
@@ -239,8 +406,7 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
  * Planning line of a sprint (docs/specs/31 §21.3): "10 / 18 SP · sức chứa = TB 3 sprint gần nhất",
  * a capacity typed in when there is no history (or to override it), and the load per person.
  */
-function SprintPlanBar({ sprintId, canManage }: { sprintId: number; canManage: boolean }) {
-  const plan = useApi<SprintPlan>(`/tasks/sprints/${sprintId}/plan`);
+function SprintPlanBar({ sprintId, plan, canManage }: { sprintId: number; plan: ReturnType<typeof useApi<SprintPlan>>; canManage: boolean }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -354,20 +520,36 @@ function sumPoints(rows: TaskRow[]): number {
   return Math.round(rows.filter((t) => t.type === "story" || t.type === "task" || t.type === "bug").reduce((n, t) => n + (t.story_points ?? 0), 0) * 10) / 10;
 }
 
-/** The Epic bar beside the Backlog (§19.1): each epic's progress; picking one filters the lists. */
+/**
+ * The Epic column beside the Backlog (§19.1, §22.5): 220 px, each epic's progress; picking one
+ * filters the lists. Folds (⟨⟨) to a 40 px strip, remembered per browser.
+ */
 function EpicBar({
   epics,
   error,
   value,
   onChange,
   onOpen,
+  folded,
+  onFold,
 }: {
   epics: TaskEpic[] | undefined;
   error: unknown;
   value: string | null;
   onChange: (key: string | null) => void;
   onOpen: (key: string) => void;
+  folded: boolean;
+  onFold: (folded: boolean) => void;
 }) {
+  if (folded)
+    return (
+      <aside className="card tk-epicbar bl-epic-strip" aria-label="Epic (đã thu gọn)">
+        <IconButton icon="chevronsRight" label="Mở cột Epic" onClick={() => onFold(false)} />
+        <span className="bl-epic-strip-label" aria-hidden="true">
+          Epic{value ? ` · ${value}` : ""}
+        </span>
+      </aside>
+    );
   return (
     <aside className="card tk-epicbar" aria-label="Epic">
       <h3 className="tk-epicbar-title">Epic</h3>
@@ -377,7 +559,7 @@ function EpicBar({
         <ul className="tk-epicbar-list">
           <li>
             <button type="button" className={`tk-epic-pick${value === null ? " active" : ""}`} aria-pressed={value === null} onClick={() => onChange(null)}>
-              Mọi task
+              <span className="tk-epic-name">Mọi task</span>
             </button>
           </li>
           {epics.map((e) => {
@@ -389,7 +571,7 @@ function EpicBar({
                   className={`tk-epic-pick${value === e.key ? " active" : ""}${e.closed ? " closed" : ""}`}
                   aria-pressed={value === e.key}
                   onClick={() => onChange(value === e.key ? null : e.key)}
-                  title={`${e.done}/${e.total} task xong · còn ${e.points_open} SP`}
+                  title={`${e.title}: ${e.done}/${e.total} task xong · còn ${e.points_open} SP`}
                 >
                   <span className="tk-epic-name">{e.title}</span>
                   <span className="tk-progress" aria-hidden="true">
@@ -399,7 +581,7 @@ function EpicBar({
                     {pct}% · còn {e.points_open} SP
                   </span>
                 </button>
-                <button type="button" className="link sm tk-epic-open" onClick={() => onOpen(e.key)}>
+                <button type="button" className="link sm tk-epic-open" aria-label={`Mở epic ${e.key}`} onClick={() => onOpen(e.key)}>
                   {e.key}
                 </button>
               </li>
@@ -408,6 +590,9 @@ function EpicBar({
           {!epics.length && <li className="small faint">Chưa có epic. Tạo task loại Epic rồi đặt nó làm task cha.</li>}
         </ul>
       )}
+      <div className="bl-epic-foot">
+        <IconButton icon="chevronsLeft" label="Thu gọn cột Epic" onClick={() => onFold(true)} />
+      </div>
     </aside>
   );
 }

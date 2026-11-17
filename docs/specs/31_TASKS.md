@@ -1417,3 +1417,32 @@ Không migration. Mã: `app/tasks/live.py` (mới), `app/tasks/__init__.py`, `ap
   có cờ hoặc đang ở team QA → `auto_role = tester`. Migration biến bộ "Tester" tự tạo thành bộ dựng sẵn
   tự gán: team đang được gán bộ đó → `is_qa`, người được gán tay → `is_tester`, các dòng gán cũ bị xoá
   (downgrade trả lại). Không ai tự bật cờ cho mình hoặc cho team mình đang ở/lead/manage (trừ admin).
+
+### 22.5 Backlog
+
+Bước 5 của bản chuẩn hoá UI/UX (§4.3, §5 "Đầu sprint 40 px", tiêu chí A5: ≥ 12 dòng task ở 1510 × 855).
+Code: `components/tasks/TaskBacklog.tsx`, CSS cuối `app/globals.css` khối `/* UI/UX Backlog */` (tiền tố `bl-`).
+
+- **Bố cục:** `bl-screen` cao `calc(100dvh - var(--tk-frame-h, 112px))` (biến do khung trang đặt), gồm hàng
+  công cụ 40 px (`bl-toolbar`) và vùng Backlog chiếm phần còn lại. Chỉ danh sách sprint (`bl-scroll`) và danh
+  sách epic cuộn bên trong; trang không cuộn. Dưới 900 px trở lại cuộn cả trang, cột Epic nằm trên.
+- **Hàng công cụ:** trái là chip `Epic: <tên> ✕` khi đang lọc theo epic (vẫn thấy khi cột Epic thu gọn) và số
+  `N sprint · M task trong backlog`; phải là `+ Tạo sprint` (nút viền, vì nút đặc duy nhất của màn là "Tạo task").
+  FilterBar dùng chung (bước 2) sẽ thay phần trái sau; nút giữ chỗ bên phải.
+- **Cột Epic** bên trái rộng 220 px, nút `⟨⟨` ở chân cột thu thành dải 40 px (chữ "Epic · mã epic đang chọn"
+  xoay dọc, nút `⟩⟩` để mở lại). Trạng thái thu gọn nhớ theo trình duyệt (`localStorage`
+  `codepulse.tasks.backlog.epicCollapsed`, đọc/ghi trong try/catch, đọc sau khi mount để không lệch SSR).
+  Thẻ epic gọn hơn (tên một dòng, mã epic ở góc phải, thanh tiến độ, `% · còn SP`); không dấu chấm đầu dòng.
+- **Đầu sprint một dòng 40 px**, ghim trong vùng cuộn: nút thu/mở, tên (mục tiêu ở tooltip), nhãn "Đang chạy",
+  ngày, số task, chip **SP so với sức chứa** (`10/18 SP`; đỏ kèm ⚠ khi vượt; `· đặt sức chứa` khi chưa có và
+  người xem được quản lý sprint), ghi chú phạm vi đổi sau khi bắt đầu, nút `Bắt đầu` / `Hoàn tất`, menu ⋯
+  (`Sửa sprint`, `Xoá sprint` khi còn kế hoạch). Bấm chip SP mở **dòng phụ**: mục tiêu sprint và dòng kế hoạch
+  §21.3 (sức chứa, đặt tay / dùng TB 3 sprint, tải theo người). Hộp thoại Bắt đầu kèm Preflight giữ nguyên.
+- **Sprint rỗng tự thu gọn** còn một dòng (mặc định: mở khi có task, gọn khi rỗng; người dùng bấm thì theo lựa
+  chọn đó, không lưu). Ô "Kéo task vào đây" chỉ hiện khi đang kéo: sprint đang gọn hiện một ô thả (thả vào cuối
+  sprint), sprint đang mở và rỗng hiện ô thả trong danh sách. Backlog cũng thu/mở được như sprint.
+- **Dòng task gọn** cao khoảng 34 px (trước ~44 px). Kéo thả, chèn trước/sau dòng, thả vào cuối danh sách giữ
+  nguyên cách cũ (`/tasks/{key}/move` với `before_key`/`after_key`).
+- Ước tính ở 1510 × 855 (khung 112 px): vùng cuộn ~690 px, trừ 3 đầu sprint (120 px) còn ~16 dòng task.
+- **Chưa làm:** nút `+ Epic` trong cột Epic (tạo epic vẫn qua "Tạo task" loại Epic); popover Hiển thị của
+  Backlog (§3.5: hiện sprint rỗng, hiện thanh Epic, mật độ) chờ FilterBar dùng chung.
