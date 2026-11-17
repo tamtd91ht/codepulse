@@ -17145,3 +17145,400 @@ a.icon-btn {
 .sr-trend-flat {
   color: var(--muted);
 }
+
+/* ---------- Timeline by epic, sprint planning (docs/specs/31 §21.3) ---------- */
+.rm-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.rm-toolbar {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.rm-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.rm-legend {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rm-sw {
+  display: inline-block;
+  width: 14px;
+  height: 8px;
+  border-radius: var(--radius-sm);
+}
+.rm-sw-done {
+  background: var(--primary);
+}
+.rm-sw-left {
+  background: var(--primary-soft);
+  border: 1px solid var(--border-strong);
+}
+.rm-sw-late {
+  background: var(--bad);
+}
+.rm-sw-ms {
+  color: var(--indigo);
+}
+.rm-warnings,
+.rm-preflight {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+.rm-chart {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.rm-chart:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.rm-grid {
+  position: relative;
+  min-width: 100%;
+}
+.rm-row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+}
+.rm-label {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 280px;
+  width: 280px;
+  min-width: 0;
+  padding: 0 8px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+.rm-head {
+  height: 34px;
+  background: var(--surface-2);
+}
+.rm-head .rm-label {
+  background: var(--surface-2);
+}
+.rm-head-thin {
+  height: 28px;
+}
+.rm-track {
+  position: relative;
+  flex: 0 0 auto;
+}
+.rm-week {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.rm-none {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+}
+.rm-milestone {
+  position: absolute;
+  top: 50%;
+  transform: translate(-6px, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  z-index: 1;
+}
+.rm-milestone > span:first-child {
+  color: var(--indigo);
+}
+.rm-milestone.released > span:first-child {
+  color: var(--good);
+}
+.rm-band {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.rm-band-active {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--info-soft);
+  color: var(--info);
+}
+.rm-band.over {
+  border: 2px solid var(--accent);
+  background: var(--info-soft);
+}
+.rm-body {
+  position: relative;
+}
+.rm-row-epic .rm-label {
+  font-weight: 600;
+}
+.rm-row-group,
+.rm-row-group .rm-label {
+  background: var(--surface-2);
+}
+.rm-indent {
+  display: inline-block;
+  width: 22px;
+  flex: 0 0 22px;
+}
+.rm-indent-text {
+  padding-left: 28px;
+}
+.rm-key {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.rm-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rm-space {
+  font-weight: 600;
+  color: var(--text);
+}
+.rm-warn {
+  display: inline-flex;
+  color: var(--bad-text);
+}
+.rm-menu {
+  margin-left: auto;
+}
+.rm-bar {
+  position: absolute;
+  top: 8px;
+  height: 18px;
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--primary-soft);
+  text-align: left;
+  cursor: pointer;
+  z-index: 1;
+}
+.rm-bar-epic {
+  top: 7px;
+  height: 20px;
+  border-color: var(--indigo);
+}
+.rm-bar[draggable="true"] {
+  cursor: grab;
+}
+.rm-bar:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.rm-bar.open-end {
+  border-style: dashed;
+}
+.rm-bar.cut-l {
+  border-left-style: dotted;
+}
+.rm-bar.cut-r {
+  border-right-style: dotted;
+}
+.rm-bar.dragging {
+  opacity: 0.5;
+}
+.rm-bar-done {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--primary);
+}
+.rm-bar-epic .rm-bar-done {
+  background: var(--indigo);
+}
+.rm-bar.done .rm-bar-done {
+  background: var(--good);
+}
+.rm-bar-text {
+  position: relative;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text);
+}
+.rm-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  background: transparent;
+  touch-action: none;
+}
+.rm-bar:hover .rm-handle,
+.rm-bar:focus-visible .rm-handle {
+  background: var(--border-strong);
+}
+.rm-overdue {
+  position: absolute;
+  top: 12px;
+  height: 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bad);
+}
+.rm-resize-tip {
+  position: absolute;
+  top: 8px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  z-index: 3;
+}
+.rm-today {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid var(--accent);
+  pointer-events: none;
+  z-index: 1;
+}
+.rm-links {
+  position: absolute;
+  top: 0;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 2;
+}
+.rm-link {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.25;
+}
+.rm-link.late {
+  stroke: var(--bad);
+}
+.rm-arrow-head {
+  fill: var(--muted);
+}
+.rm-arrow-head.late {
+  fill: var(--bad);
+}
+.rm-many-filter {
+  max-width: 360px;
+  margin-bottom: 12px;
+}
+
+/* Sprint planning line of the Backlog (§21.3). */
+.rm-plan {
+  flex-basis: 100%;
+  order: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.rm-plan-skeleton {
+  height: 18px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.rm-plan-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.rm-cap-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.rm-cap-form input {
+  width: 120px;
+}
+.rm-load {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 4px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rm-load li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 80px auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.rm-load-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rm-load-bar {
+  height: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.rm-load-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.rm-load li.over {
+  color: var(--bad-text);
+}
+.rm-load li.over .rm-load-bar > span {
+  background: var(--bad);
+}
+.rm-load-num {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}

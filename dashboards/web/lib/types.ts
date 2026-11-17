@@ -2999,3 +2999,107 @@ export interface OverviewTrends {
   highest_bugs: { values: number[]; direction: TrendDirection };
   critical_findings: { values: number[]; direction: TrendDirection };
 }
+
+/* ---------- Task planning: timeline by epic, sprint capacity (docs/specs/31 §21.3) ---------- */
+
+/** One bar of the timeline: an epic, its Story / Task / Bug child, or a task outside every epic. */
+export interface TimelineBar {
+  id: number;
+  key: string;
+  title: string;
+  type: TaskType;
+  status: string | null;
+  category: TaskCategory | null;
+  done: boolean;
+  assignee: string | null;
+  points: number | null;
+  sprint_id: number | null;
+  due_date: string | null;
+  /** Day the bar starts: started_at, the sprint's start or the creation day. */
+  start: string;
+  /** Due date, the sprint's end, or (epic) the latest child end; null when none is known. */
+  end: string | null;
+  end_source: "due" | "sprint" | "children" | null;
+  /** 0..1: done (child), done points over points (epic). */
+  progress: number;
+  overdue: boolean;
+  overdue_from: string | null;
+  /** A blocker of this task ends after this task's end. */
+  blocked_late: boolean;
+  blockers: string[];
+  can_edit: boolean;
+  /** Epics only. */
+  children?: TimelineBar[];
+  children_count?: number;
+  done_count?: number;
+}
+
+export interface TimelineSprint {
+  id: number;
+  name: string;
+  state: SprintState;
+  start: string;
+  end: string;
+}
+
+export interface TimelineVersion {
+  id: number;
+  name: string;
+  date: string | null;
+  released: boolean;
+}
+
+export interface TaskTimelineData {
+  business_project_id: number;
+  from: string;
+  to: string;
+  today: string;
+  epics: TimelineBar[];
+  loose: TimelineBar[];
+  sprints: TimelineSprint[];
+  versions: TimelineVersion[];
+  links: { from: string; to: string; late: boolean }[];
+  warnings: { kind: "blocked_late"; key: string; blocker: string; text: string }[];
+  can_sprint: boolean;
+}
+
+export interface TaskTimelineMany {
+  from: string;
+  to: string;
+  today: string;
+  spaces: { business_project_id: number; name: string; key: string; epics: TimelineBar[]; versions: TimelineVersion[] }[];
+}
+
+export interface SprintPlanLoad {
+  user: { id: number } | null;
+  name: string;
+  tasks: number;
+  points: number;
+  pct: number;
+  over: boolean;
+}
+
+export interface SprintPlan {
+  sprint_id: number;
+  points: number;
+  capacity: number | null;
+  source: "auto" | "manual";
+  /** The mean of the last 3 closed sprints; null without that history. */
+  auto: number | null;
+  over_capacity: boolean;
+  load: SprintPlanLoad[];
+  overload_pct: number;
+  overloaded: string[];
+  can_sprint: boolean;
+}
+
+export interface SprintPreflight {
+  sprint_id: number;
+  ok: boolean;
+  warnings: {
+    kind: "unestimated" | "unassigned" | "blocked_outside" | "over_capacity" | "overloaded";
+    text: string;
+    count: number;
+    tasks: { key: string; title: string; blocker?: { key: string; title: string }; blocker_sprint?: number | null }[];
+  }[];
+}

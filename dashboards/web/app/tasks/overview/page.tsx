@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 
+import { MultiSelect } from "@/components/MultiSelect";
 import { HealthBadge, type HealthColor } from "@/components/tasks/TaskHealth";
+import { TimelineMany } from "@/components/tasks/TaskTimeline";
 import { Icon, type IconName } from "@/components/icons";
-import { Card, EmptyState, Loading, PageHeader } from "@/components/ui";
+import { Card, EmptyState, Loading, PageHeader, Segmented } from "@/components/ui";
 import { can, useApi } from "@/lib/api";
 import { dayLabel } from "@/lib/format";
 import type { Me, OverviewTrends, TrendDirection } from "@/lib/types";
@@ -59,6 +62,9 @@ export default function TaskOverviewPage() {
   const { data: me } = useApi<Me>("/auth/me");
   const allowed = !me || can(me, "tasks.view");
   const rows = useApi<OverviewRow[]>(allowed ? "/tasks/overview" : null);
+  // §21.3: a Timeline mode with the epics of several dự án (read-only), narrowed by a pick.
+  const [mode, setMode] = useState<"table" | "timeline">("table");
+  const [picked, setPicked] = useState<number[]>([]);
 
   if (!allowed)
     return (
@@ -74,7 +80,33 @@ export default function TaskOverviewPage() {
         eyebrow={<Link href="/tasks">Task</Link>}
         title="Tổng quan dự án"
         subtitle="Sprint đang chạy, dự phóng hoàn thành, bug và lỗi nghiêm trọng của mọi dự án bạn xem được. Bấm một dòng để xem sức khoẻ sprint."
+        actions={
+          <Segmented
+            label="Chế độ xem"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: "table", label: "Bảng" },
+              { value: "timeline", label: "Timeline" },
+            ]}
+          />
+        }
       />
+      {mode === "timeline" ? (
+        <Card title="Timeline theo Epic" subtitle="Epic của các dự án bạn xem được, chỉ đọc. Mở một dự án để kéo đổi hạn hoặc sprint.">
+          <div className="rm-many-filter">
+            <MultiSelect
+              label="Dự án"
+              options={(rows.data ?? []).map((r) => ({ value: r.business_project_id, label: r.name, hint: r.key }))}
+              value={picked}
+              onChange={setPicked}
+              empty="Mọi dự án"
+              disabled={!rows.data}
+            />
+          </div>
+          <TimelineMany spaces={picked} />
+        </Card>
+      ) : (
       <Card flush title="Dự án" subtitle="Rủi ro: dự phóng dưới 70%, hoặc có bug mức cao nhất / lỗi critical đang mở. Cần chú ý: dự phóng dưới 90%.">
         {rows.error ? (
           <div className="th-error">
@@ -154,6 +186,7 @@ export default function TaskOverviewPage() {
           </div>
         )}
       </Card>
+      )}
     </>
   );
 }

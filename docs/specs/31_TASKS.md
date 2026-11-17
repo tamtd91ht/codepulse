@@ -1024,3 +1024,65 @@ sprint đóng): đợt 3 làm chúng hiện rõ thay vì làm lại. Quyết đ�
 | 3.4b Phân quyền còn lại | R1b, "Quyền của tôi" tự xem được, giải thích vì sao | 21.5 |
 | 3.5 Chuyển đổi | Cảnh báo mã Jira cũ, Ngừng dùng Jira, checklist, dữ liệu demo | 21.6 |
 | 4 Tin cậy | Đồng bộ thời gian thực Board / chi tiết, Hoàn tác 10 giây, di chuyển card bằng bàn phím | 21.7 |
+
+
+### 21.3 Kế hoạch
+
+Migration `b3c4d5e6f7a8` (`sprints.capacity_points`, `sprints.capacity_source` `auto` | `manual`). Mã:
+`app/tasks/roadmap.py`, `app/tasks/planning.py`, `app/api/routers/task_planning.py` (trước router tasks:
+`/tasks/timeline` không phải mã task); giao diện `components/tasks/TaskTimeline.tsx`, tab **Timeline** cạnh Backlog,
+dòng lập sprint và hộp "Bắt đầu sprint" của Backlog, chế độ Timeline ở `/tasks/overview`. Không sửa
+`routers/tasks.py`: kéo thả gọi `PATCH /tasks/{key}` (ngày hạn, cần `tasks.edit`) và `POST /tasks/{key}/move`
+(sprint) có sẵn.
+
+- **`GET /tasks/spaces/{bp}/timeline?from=&to=`** (`tasks.view`, 404 khi không xem được dự án). Không gửi khoảng thì
+  từ thứ Hai của 2 tuần trước, 12 tuần; chỉ gửi một đầu thì 12 tuần tính từ đầu đó; ngược hoặc dài hơn 366 ngày
+  → 422. Trả:
+  - `epics`: mọi epic chưa xong và epic đã xong có thanh (của nó hoặc của con) chạm khoảng; tối đa 100, theo thứ
+    tự backlog. Mỗi epic có `children` (Story / Task / Bug con trực tiếp, sub-task không vẽ), `children_count`,
+    `done_count`.
+  - **Thanh**: `start` = ngày của `started_at` (múi giờ báo cáo), không có thì ngày bắt đầu của sprint, không có thì
+    ngày tạo; `end` = `due_date` (`end_source: "due"`), không có thì ngày kết thúc của sprint (`"sprint"`), không có
+    thì null (giao diện vẽ tới hôm nay, viền đứt). Epic không có ngày riêng thì trải theo con: bắt đầu sớm nhất,
+    kết thúc muộn nhất (`"children"`).
+  - `progress` (0..1): task con là 1 khi ở trạng thái nhóm "done"; epic là SP xong (lý do `done`) / tổng SP của
+    con, con chưa ai ước lượng thì đếm số con xong / số con. `overdue` khi chưa xong và `end` < hôm nay;
+    `overdue_from` là `end` (giao diện tô đỏ từ sau `end` tới hôm nay).
+  - `loose`: Story / Task / Bug không có task cha, đã có sprint hoặc ngày hạn, chạm khoảng (tối đa 200), nhóm
+    "Không thuộc epic".
+  - `sprints`: sprint có đủ hai ngày chạm khoảng (dải); `versions`: phiên bản có `release_date` trong khoảng (◆).
+  - `links`: liên kết "blocks" mà cả hai đầu đều có trong timeline, `late` khi task chặn chưa xong, task bị chặn
+    chưa xong và `end` của task chặn **sau** `end` (ngày hạn, hoặc cuối sprint) của task bị chặn. Khi đó task bị
+    chặn có `blocked_late`, và `warnings` có một dòng "OCX-2 bị chặn quá hạn: OCX-5 xong 20/11, sau hạn 18/11 của
+    OCX-2". `blockers` của thanh là các task chặn còn mở.
+  - `can_edit` theo `tasks.edit` trên từng task; `can_sprint` của dự án.
+- **Tab Timeline** (không phải Gantt): cột trái 280 px dính khi cuộn ngang (mã, tiêu đề, cảnh báo, nút "Đổi lịch"),
+  phải là các ngày (18 px / ngày) với hàng **tuần** (số tuần ISO + ngày thứ Hai), hàng **phiên bản** (◆, xanh khi
+  đã phát hành), hàng **sprint** (dải; sprint đang chạy viền xanh), vạch **hôm nay**. Hàng epic mở ra con; lần đầu
+  tự mở epic có con bị chặn quá hạn. Thanh: phần đậm là đã xong, nhạt là còn lại, đoạn **đỏ** là phần quá hạn;
+  mũi tên mảnh cho "chặn" (đỏ khi `late`). Lùi / tới 4 tuần, "Hôm nay".
+  - **Kéo mép phải** của thanh (người có `tasks.edit`, cả epic) → `PATCH /tasks/{key} {due_date}`; không cho hạn
+    trước ngày bắt đầu của thanh. **Kéo thanh con lên một dải sprint** → `POST /tasks/{key}/move {sprint_id}`.
+  - Bàn phím: mỗi thanh sửa được có nút "Đổi lịch {mã}" mở hộp nhỏ: ngày hạn, và (trừ epic) sprint (sprint chưa
+    đóng hoặc Backlog). Thanh là nút: Enter mở task.
+- **Nhiều dự án** `GET /tasks/timeline?space=..&space=..&from=&to=` (`tasks.view`): chỉ dự án bật Task mà người
+  xem được (mã khác bị bỏ qua, không lỗi); không gửi `space` là mọi dự án xem được (tối đa 30). Mỗi dự án: tên,
+  mã, epic (không kèm con, `can_edit` luôn false), phiên bản. `/tasks/overview` có nút chọn **Bảng / Timeline**;
+  Timeline có ô chọn nhiều dự án (mặc định mọi dự án), chỉ đọc, bấm tên dự án / epic mở tab Timeline của dự án đó.
+- **Sức chứa sprint**: `capacity_source = "auto"` (mặc định) dùng trung bình SP hoàn thành của 3 sprint đóng gần nhất
+  (§19.3, null khi chưa đủ); `"manual"` dùng `capacity_points`. `PATCH /tasks/sprints/{id}/capacity
+  {capacity_points}` (`tasks.sprint`, 409 với sprint đã đóng, ghi audit `task.sprint.capacity`): số ≥ 0 → tay;
+  null → về tự động. Đặt tay được cả khi đã có lịch sử (ghi đè), có nút "Dùng TB 3 sprint".
+- **`GET /tasks/sprints/{id}/plan`** (`tasks.view`): `points` (Story / Task / Bug của sprint, mọi trạng thái),
+  `capacity`, `source`, `auto`, `over_capacity`, `load` theo người (`points`, `tasks`, `pct` trên tổng SP của sprint,
+  `over` khi một người **> 40 %**; dòng "Chưa giao" không cảnh báo), `overloaded`, `can_sprint`. Đầu khối sprint ở
+  Backlog: "10 / 18 SP · sức chứa = TB 3 sprint gần nhất" (hoặc "· sức chứa đặt tay"; đỏ khi vượt); chưa có sức chứa
+  thì người có `tasks.sprint` thấy ô nhập; dưới là thanh tải theo người (đỏ khi vượt 40 %). Thay cho dòng
+  "sức chứa ~X SP" của §19.3 (`Sprint.capacity` trong API sprints vẫn là giá trị tự động).
+- **`GET /tasks/sprints/{id}/preflight`** (`tasks.view`): `{ok, warnings}`; mỗi cảnh báo `{kind, text, count,
+  tasks}` (tối đa 50 task): `unestimated` (Story / Task / Bug chưa xong chưa có SP), `unassigned` (chưa có người
+  làm), `blocked_outside` (bị chặn bởi task còn mở không thuộc sprint này, kèm `blocker`), `over_capacity`,
+  `overloaded`. Hộp "Bắt đầu sprint" hiện các cảnh báo trước nút xác nhận; có cảnh báo thì nút đổi thành
+  "Vẫn bắt đầu" (không chặn). Không có cảnh báo thì một dòng xanh.
+- Chưa làm: kéo cả thanh để dời ngày bắt đầu (không có trường ngày bắt đầu riêng, `started_at` là lúc bắt đầu làm
+  thật); mũi tên tới task bị ẩn trong epic đang thu gọn; chọn nơi nhận task dở khi đóng sprint đã có từ trước.

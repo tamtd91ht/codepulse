@@ -3,11 +3,11 @@
 import { type DragEvent, useMemo, useState } from "react";
 
 import { Modal } from "@/components/CriteriaParts";
-import { IconButton } from "@/components/icons";
+import { Icon, IconButton } from "@/components/icons";
 import { Alert, EmptyState, Loading, Message, Pill } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 import { date } from "@/lib/format";
-import type { Sprint, SprintReview, TaskEpic, TaskPage, TaskRow, TaskSpace } from "@/lib/types";
+import type { Sprint, SprintPlan, SprintPreflight, SprintReview, TaskEpic, TaskPage, TaskRow, TaskSpace } from "@/lib/types";
 
 import { byRank, neighbours } from "./TaskBoard";
 import { RetroButton, ScopeNote, SprintReviewView } from "./TaskHealth";
@@ -187,17 +187,10 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
                   <span className="small muted">
                     {s.start_date ? `${date(s.start_date)} – ${date(s.end_date)}` : "Chưa đặt ngày"} · {tasks.length} task · {donePoints}/{points} SP
                   </span>
-                  {typeof s.capacity === "number" && (
-                    <span
-                      className={`small ${points > s.capacity ? "tk-over-capacity" : "muted"}`}
-                      title="Trung bình SP hoàn thành của 3 sprint gần nhất (docs/specs/31 §19.3)"
-                    >
-                      · sức chứa ~{s.capacity} SP{points > s.capacity ? ": đang kéo vào nhiều hơn" : ""}
-                    </span>
-                  )}
                   {s.state === "active" && <ScopeNote sprintId={s.id} />}
                 </div>
                 {s.goal && <p className="small muted tk-sprint-goal">{s.goal}</p>}
+                <SprintPlanBar sprintId={s.id} canManage={canManage} />
                 {canManage && (
                   <div className="actions">
                     {s.state === "planned" && (
@@ -238,6 +231,120 @@ export function TaskBacklog({ space, onOpen }: { space: TaskSpace; onOpen: (key:
         <CompleteModal sprint={dialog.sprint} others={open.filter((s) => s.id !== dialog.sprint?.id)} onClose={() => setDialog(null)} />
       )}
     </div>
+    </div>
+  );
+}
+
+/**
+ * Planning line of a sprint (docs/specs/31 §21.3): "10 / 18 SP · sức chứa = TB 3 sprint gần nhất",
+ * a capacity typed in when there is no history (or to override it), and the load per person.
+ */
+function SprintPlanBar({ sprintId, canManage }: { sprintId: number; canManage: boolean }) {
+  const plan = useApi<SprintPlan>(`/tasks/sprints/${sprintId}/plan`);
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const p = plan.data;
+  async function save(points: number | null) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.patch(`/tasks/sprints/${sprintId}/capacity`, { capacity_points: points });
+      setEditing(false);
+      await plan.mutate();
+    } catch (e) {
+      setError(errorText(e));
+    }
+    setBusy(false);
+  }
+  if (plan.error && !p)
+    return (
+      <div className="rm-plan small">
+        <span className="tk-over-capacity">Không tải được sức chứa</span>
+        <button type="button" className="ghost sm" onClick={() => void plan.mutate()}>
+          Thử lại
+        </button>
+      </div>
+    );
+  if (!p) return <div className="rm-plan rm-plan-skeleton" aria-hidden="true" />;
+  const inputOpen = canManage && (editing || p.capacity === null);
+  const assigned = p.load.filter((r) => r.points > 0);
+  return (
+    <div className="rm-plan">
+      <div className="rm-plan-line small">
+        {p.capacity !== null ? (
+          <span className={p.over_capacity ? "tk-over-capacity" : undefined}>
+            <strong>
+              {p.points} / {p.capacity} SP
+            </strong>{" "}
+            · sức chứa {p.source === "manual" ? "đặt tay" : "= TB 3 sprint gần nhất"}
+            {p.over_capacity ? ": đang kéo vào nhiều hơn" : ""}
+          </span>
+        ) : (
+          <span className="muted">
+            <strong>{p.points} SP</strong> · chưa có sức chứa (cần 3 sprint đã đóng{canManage ? ", hoặc nhập tay" : ""})
+          </span>
+        )}
+        {inputOpen ? (
+          <form
+            className="rm-cap-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const n = Number(value);
+              if (value.trim() && Number.isFinite(n) && n >= 0) void save(n);
+            }}
+          >
+            <label className="visually-hidden" htmlFor={`cap-${sprintId}`}>
+              Sức chứa (SP)
+            </label>
+            <input id={`cap-${sprintId}`} type="number" min={0} step={0.5} inputMode="decimal" placeholder="Sức chứa SP" value={value} onChange={(e) => setValue(e.target.value)} disabled={busy} />
+            <button type="submit" className="sm" disabled={busy || !value.trim()}>
+              Lưu
+            </button>
+            {editing && (
+              <button type="button" className="ghost sm" onClick={() => setEditing(false)} disabled={busy}>
+                Huỷ
+              </button>
+            )}
+          </form>
+        ) : (
+          canManage && (
+            <>
+              <IconButton
+                icon="edit"
+                label="Đặt sức chứa tay"
+                size={14}
+                onClick={() => {
+                  setValue(p.capacity !== null ? String(p.capacity) : "");
+                  setEditing(true);
+                }}
+              />
+              {p.source === "manual" && p.auto !== null && (
+                <button type="button" className="link sm" onClick={() => void save(null)} disabled={busy}>
+                  Dùng TB 3 sprint ({p.auto} SP)
+                </button>
+              )}
+            </>
+          )
+        )}
+        {error && <span className="tk-over-capacity">Lỗi: {error}</span>}
+      </div>
+      {assigned.length > 0 && (
+        <ul className="rm-load" aria-label="Tải theo người">
+          {p.load.map((r) => (
+            <li key={r.user?.id ?? "none"} className={r.over ? "over" : undefined} title={`${r.name}: ${r.points} SP, ${r.tasks} task, ${r.pct}% SP của sprint${r.over ? ` (hơn ${p.overload_pct}%)` : ""}`}>
+              <span className="rm-load-name">{r.name}</span>
+              <span className="rm-load-bar" aria-hidden="true">
+                <span style={{ width: `${Math.min(100, r.pct)}%` }} />
+              </span>
+              <span className="rm-load-num">
+                {r.points} SP · {r.pct}%{r.over && <Icon name="alert" size={12} />}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -369,6 +476,8 @@ function SprintModal({ bp, sprint, onClose }: { bp: number; sprint: Sprint | nul
 }
 
 function StartModal({ sprint, onClose }: { sprint: Sprint; onClose: () => void }) {
+  // docs/specs/31 §21.3: warnings before confirming; starting anyway stays allowed.
+  const pre = useApi<SprintPreflight>(`/tasks/sprints/${sprint.id}/preflight`);
   const [start, setStart] = useState(sprint.start_date ?? today());
   const [end, setEnd] = useState(sprint.end_date ?? addDays(sprint.start_date ?? today(), 13));
   const [busy, setBusy] = useState(false);
@@ -390,14 +499,14 @@ function StartModal({ sprint, onClose }: { sprint: Sprint; onClose: () => void }
       title={`Bắt đầu “${sprint.name}”`}
       onClose={onClose}
       busy={busy}
-      width={460}
+      width={560}
       footer={
         <>
           <button type="button" className="ghost" onClick={onClose} disabled={busy}>
             Huỷ
           </button>
           <button type="button" className="primary" onClick={() => void go()} disabled={busy || !start || !end || end < start}>
-            Bắt đầu
+            {pre.data && !pre.data.ok ? "Vẫn bắt đầu" : "Bắt đầu"}
           </button>
         </>
       }
@@ -415,8 +524,47 @@ function StartModal({ sprint, onClose }: { sprint: Sprint; onClose: () => void }
             <input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} />
           </label>
         </div>
+        <Preflight pre={pre} />
       </div>
     </Modal>
+  );
+}
+
+/** The preflight of a sprint about to start: tasks without estimate / assignee, blocked from outside. */
+function Preflight({ pre }: { pre: { data?: SprintPreflight; error?: Error; mutate: () => Promise<unknown> } }) {
+  if (pre.error && !pre.data)
+    return (
+      <div className="th-error">
+        <Loading error={pre.error} />
+        <button type="button" className="ghost sm" onClick={() => void pre.mutate()}>
+          Thử lại
+        </button>
+      </div>
+    );
+  if (!pre.data) return <Loading rows={2} />;
+  if (pre.data.ok) return <Alert tone="success">Không có cảnh báo: mọi task đã ước lượng, có người làm và không bị chặn từ ngoài sprint.</Alert>;
+  return (
+    <Alert tone="warning">
+      <strong>Kiểm tra trước khi bắt đầu</strong>
+      <ul className="rm-preflight">
+        {pre.data.warnings.map((w) => (
+          <li key={w.kind}>
+            {w.text}
+            {w.tasks.length > 0 && (
+              <span className="small muted">
+                {": "}
+                {w.tasks
+                  .slice(0, 8)
+                  .map((t) => (t.blocker ? `${t.key} ← ${t.blocker.key}` : t.key))
+                  .join(", ")}
+                {w.count > 8 ? ` +${w.count - 8}` : ""}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+      <span className="small muted">Vẫn bắt đầu được; có thể sửa sau trong sprint.</span>
+    </Alert>
   );
 }
 

@@ -12,6 +12,7 @@ import { TaskDetail } from "@/components/tasks/TaskDetail";
 import { TaskHealth } from "@/components/tasks/TaskHealth";
 import { TaskList } from "@/components/tasks/TaskList";
 import { TaskReports } from "@/components/tasks/TaskReports";
+import { TaskTimeline } from "@/components/tasks/TaskTimeline";
 import { EnableSpace, TaskSettings } from "@/components/tasks/TaskSettings";
 import { AdoptionLink } from "@/components/tasks/TaskTemplates";
 import { TaskVersions } from "@/components/tasks/TaskVersions";
@@ -26,10 +27,11 @@ import type { Me } from "@/lib/types";
  * (?space=&tab=&task=KEY), so every view can be linked; the last dự án is remembered per browser.
  */
 
-type Tab = "board" | "backlog" | "list" | "reports" | "health" | "versions" | "settings";
-const TABS: { key: Tab; label: string; icon: "board" | "inbox" | "file" | "pulse" | "stethoscope" | "flag" | "settings" }[] = [
+type Tab = "board" | "backlog" | "timeline" | "list" | "reports" | "health" | "versions" | "settings";
+const TABS: { key: Tab; label: string; icon: "board" | "inbox" | "calendar" | "file" | "pulse" | "stethoscope" | "flag" | "settings" }[] = [
   { key: "board", label: "Board", icon: "board" },
   { key: "backlog", label: "Backlog", icon: "inbox" },
+  { key: "timeline", label: "Timeline", icon: "calendar" },
   { key: "list", label: "Danh sách", icon: "file" },
   { key: "reports", label: "Báo cáo", icon: "pulse" },
   { key: "health", label: "Sức khoẻ sprint", icon: "stethoscope" },
@@ -181,6 +183,8 @@ function Tasks() {
             <TaskBoard key={space.business_project_id} space={space} me={me} onOpen={openTask} />
           ) : tab === "backlog" ? (
             <TaskBacklog key={space.business_project_id} space={space} onOpen={openTask} />
+          ) : tab === "timeline" ? (
+            <TaskTimeline key={space.business_project_id} space={space} onOpen={openTask} />
           ) : tab === "list" ? (
             <TaskList key={space.business_project_id} space={space} me={me} onOpen={openTask} />
           ) : tab === "reports" ? (
