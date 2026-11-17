@@ -35,6 +35,7 @@ def test_scheduler_enqueues_syncs_on_the_configured_interval() -> None:
         "testcase-reports",
         "review-orphans",
         "task-automation",
+        "task-filter-digests",
         "team-gitlab-sync",
     }
     assert str(jobs["evidence-drafts"].trigger.timezone) == "Asia/Ho_Chi_Minh"
