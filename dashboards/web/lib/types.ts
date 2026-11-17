@@ -3291,3 +3291,10 @@ export interface TaskDemoDeleted {
   sprints: number;
   versions: number;
 }
+
+/* ---- FilterBar (docs/specs/31 §22.2) ---- */
+
+/** POST /tasks/search/facets: per field, tasks per value ("none" / "backlog" for no value). */
+export interface TaskSearchFacets {
+  counts: Record<string, Record<string, number>>;
+}

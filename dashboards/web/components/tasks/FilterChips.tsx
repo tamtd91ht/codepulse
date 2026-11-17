@@ -59,11 +59,11 @@ const OP_LABEL: Record<SearchOp, string> = {
   gte: "≥",
   lte: "≤",
 };
-const DOD_LABEL: Record<string, string> = { met: "đạt", unmet: "chưa đạt", blocking: "chưa đạt, đang bắt buộc" };
+export const DOD_LABEL: Record<string, string> = { met: "đạt", unmet: "chưa đạt", blocking: "chưa đạt, đang bắt buộc" };
 /** Kinds whose value is a list (one picked per chip; OR by adding chips). */
-const LIST_KINDS = new Set(["ref", "enum", "person", "sprint", "array", "parent"]);
+export const LIST_KINDS = new Set(["ref", "enum", "person", "sprint", "array", "parent"]);
 
-function opLabel(kind: string, op: SearchOp): string {
+export function opLabel(kind: string, op: SearchOp): string {
   if (kind === "text") return op === "is" ? "chứa" : op === "is_not" ? "không chứa" : OP_LABEL[op];
   if (op === "within_days") return "trong";
   return OP_LABEL[op];
@@ -104,7 +104,48 @@ export function fromTree(tree: SearchTree | null | undefined): ChipCond[] {
   return out;
 }
 
-const first = (v: SearchCond["value"]) => (Array.isArray(v) ? (v[0] ?? "") : v === undefined ? "" : String(v));
+export const first = (v: SearchCond["value"]) => (Array.isArray(v) ? (v[0] ?? "") : v === undefined ? "" : String(v));
+
+/** The value part of a chip ("Bug", "quá hạn", "An"); "" for empty / has a value. */
+export function chipValueLabel(c: SearchCond, ctx: { space: TaskSpace; infos: Map<string, SearchFieldInfo> } & Lookups): string {
+  const { space, infos } = ctx;
+  const sprints = { data: ctx.sprints };
+  const versions = { data: ctx.versions };
+  const people = { data: ctx.people };
+  const info = infos.get(c.field);
+  const v = first(c.value);
+  if (c.op === "empty" || c.op === "not_empty") return "";
+  if (c.op === "within_days") return `${v} ngày${c.field === "due" ? " tới" : " qua"}`;
+  if (c.op === "before" || c.op === "after") return date(v);
+  if (info?.kind === "bool") return v === "true" || c.value === true ? "có" : "không";
+  switch (c.field) {
+    case "status":
+      return space.statuses.find((s) => String(s.id) === v)?.name ?? `#${v}`;
+    case "category":
+      return CATEGORY_LABEL[v as keyof typeof CATEGORY_LABEL] ?? v;
+    case "type":
+      return TYPE_LABEL[v as keyof typeof TYPE_LABEL] ?? v;
+    case "priority":
+      return priorityList(space).find((p) => p.key === v)?.name ?? v;
+    case "resolution":
+      return RESOLUTION_LABEL[v as keyof typeof RESOLUTION_LABEL] ?? v;
+    case "sprint":
+      return v === "active" ? "đang chạy" : v === "backlog" ? "backlog" : ((sprints.data ?? []).find((s) => String(s.id) === v)?.name ?? `#${v}`);
+    case "version":
+      return (versions.data ?? []).find((x) => String(x.id) === v)?.name ?? `#${v}`;
+    case "due":
+      if (v === "overdue") return "quá hạn";
+      if (v === "week") return "7 ngày tới";
+      return date(v);
+    case "dod_met":
+      return DOD_LABEL[v] ?? v;
+    case "age_in_column_hours":
+      return `${v} giờ`;
+  }
+  if (info?.kind === "person") return v === "me" ? "tôi" : v === "none" ? "chưa có" : personName((people.data ?? []).find((p) => String(p.id) === v) ?? null);
+  if (info?.kind === "date") return date(v);
+  return v;
+}
 
 export function FilterChips({ space, chips, onChange }: { space: TaskSpace; chips: ChipCond[]; onChange: (next: ChipCond[]) => void }) {
   const bp = space.business_project_id;
@@ -122,41 +163,7 @@ export function FilterChips({ space, chips, onChange }: { space: TaskSpace; chip
   }, [fields.data]);
   const fieldName = (f: string) => FIELD_LABEL[f] ?? infos.get(f)?.name ?? f;
 
-  function valueLabel(c: SearchCond): string {
-    const info = infos.get(c.field);
-    const v = first(c.value);
-    if (c.op === "empty" || c.op === "not_empty") return "";
-    if (c.op === "within_days") return `${v} ngày${c.field === "due" ? " tới" : " qua"}`;
-    if (c.op === "before" || c.op === "after") return date(v);
-    if (info?.kind === "bool") return v === "true" || c.value === true ? "có" : "không";
-    switch (c.field) {
-      case "status":
-        return space.statuses.find((s) => String(s.id) === v)?.name ?? `#${v}`;
-      case "category":
-        return CATEGORY_LABEL[v as keyof typeof CATEGORY_LABEL] ?? v;
-      case "type":
-        return TYPE_LABEL[v as keyof typeof TYPE_LABEL] ?? v;
-      case "priority":
-        return priorityList(space).find((p) => p.key === v)?.name ?? v;
-      case "resolution":
-        return RESOLUTION_LABEL[v as keyof typeof RESOLUTION_LABEL] ?? v;
-      case "sprint":
-        return v === "active" ? "đang chạy" : v === "backlog" ? "backlog" : ((sprints.data ?? []).find((s) => String(s.id) === v)?.name ?? `#${v}`);
-      case "version":
-        return (versions.data ?? []).find((x) => String(x.id) === v)?.name ?? `#${v}`;
-      case "due":
-        if (v === "overdue") return "quá hạn";
-        if (v === "week") return "7 ngày tới";
-        return date(v);
-      case "dod_met":
-        return DOD_LABEL[v] ?? v;
-      case "age_in_column_hours":
-        return `${v} giờ`;
-    }
-    if (info?.kind === "person") return v === "me" ? "tôi" : v === "none" ? "chưa có" : personName((people.data ?? []).find((p) => String(p.id) === v) ?? null);
-    if (info?.kind === "date") return date(v);
-    return v;
-  }
+  const valueLabel = (c: SearchCond) => chipValueLabel(c, { space, infos, people: people.data ?? [], sprints: sprints.data ?? [], versions: versions.data ?? [] });
 
   // Which chips sit in an OR group with the one before them.
   const orBefore = (i: number) => chips[i].op === "is" && chips.slice(0, i).some((c) => c.field === chips[i].field && c.op === "is");
@@ -212,13 +219,13 @@ export function FilterChips({ space, chips, onChange }: { space: TaskSpace; chip
   );
 }
 
-interface Lookups {
+export interface Lookups {
   people: { id: number; full_name: string | null; primary_email: string | null }[];
   sprints: { id: number; name: string; state: string }[];
   versions: { id: number; name: string }[];
 }
 
-function ChipEditor({
+export function ChipEditor({
   space,
   initial,
   infos,
@@ -337,7 +344,7 @@ function ChipEditor({
 }
 
 /** Picks for a value, or null for a free input. */
-function valueOptions(field: string, kind: string, op: SearchOp, space: TaskSpace, info: SearchFieldInfo | undefined, l: Lookups): [string, string][] | null {
+export function valueOptions(field: string, kind: string, op: SearchOp, space: TaskSpace, info: SearchFieldInfo | undefined, l: Lookups): [string, string][] | null {
   if (op === "before" || op === "after" || op === "within_days" || op === "gte" || op === "lte") return null;
   if (kind === "bool")
     return [

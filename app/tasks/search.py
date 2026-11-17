@@ -747,6 +747,57 @@ def search(
     return tasks, int(total)
 
 
+# The fields the FilterBar (docs/specs/31 §22.2) counts per value: "Bug · 3". A task without a
+# value counts under the chip value that finds it ("none", or "backlog" for the sprint).
+FACET_COLUMNS: dict[str, tuple[Any, str]] = {
+    "status": (Task.status_id, ""),
+    "type": (Task.type, ""),
+    "priority": (Task.priority, ""),
+    "resolution": (Task.resolution, ""),
+    "assignee": (Task.assignee_id, "none"),
+    "reporter": (Task.reporter_id, "none"),
+    "sprint": (Task.sprint_id, "backlog"),
+    "version": (Task.version_id, "none"),
+}
+FACETS = (*FACET_COLUMNS, "label", "component")
+
+
+def facets(
+    session: Session,
+    principal: "Principal",
+    tree: dict[str, Any],
+    *,
+    spaces: list[int],
+    fields: list[str],
+    now: datetime | None = None,
+) -> dict[str, dict[str, int]]:
+    """Per field, how many tasks matching the tree have each value (one GROUP BY per field)."""
+    base = scope(principal, spaces)
+    where = Builder(session, principal, base, now).where(tree)
+    ids = select(Task.id).where(Task.id.in_(base), where)
+    out: dict[str, dict[str, int]] = {}
+    for field in dict.fromkeys(fields):
+        counts: dict[str, int] = {}
+        if field in ("label", "component"):
+            column = Task.labels if field == "label" else Task.components
+            values = (
+                select(func.jsonb_array_elements_text(column).label("v"))
+                .where(Task.id.in_(ids))
+                .subquery()
+            )
+            rows = session.execute(select(values.c.v, func.count()).group_by(values.c.v))
+        else:
+            col, _none = FACET_COLUMNS[field]
+            rows = session.execute(select(col, func.count()).where(Task.id.in_(ids)).group_by(col))
+        for value, n in rows:
+            key = FACET_COLUMNS[field][1] if value is None and field in FACET_COLUMNS else value
+            if key is None or key == "":
+                continue
+            counts[str(key)] = int(n)
+        out[field] = counts
+    return out
+
+
 def quick(
     session: Session, principal: "Principal", q: str, spaces: list[int], limit: int = 20
 ) -> list[dict[str, Any]]:
