@@ -31,7 +31,7 @@ from app.models import (
     User,
 )
 from app.tasks import keys as tk
-from app.tasks import service
+from app.tasks import service, switchover
 
 log = logging.getLogger(__name__)
 
@@ -75,6 +75,7 @@ def _tasks(session: Session, space: TaskSpace, keys: Iterable[str]) -> dict[str,
             )
         ).tuples():
             out.setdefault(str(ext), task)
+            switchover.alias_used(session, space, str(ext), task)  # §21.6 old key still used
     return out
 
 

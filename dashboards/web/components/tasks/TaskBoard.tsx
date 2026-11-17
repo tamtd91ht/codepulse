@@ -12,6 +12,7 @@ import { selectCard, useCardSelected } from "./cardSelection";
 import { DensityToggle } from "./DensityToggle";
 import { PinnedFilters } from "./FilterChips";
 import { type QuickPicks, QuickChips, QuickPreview } from "./QuickChips";
+import { SwitchoverBoardNote } from "./TaskSwitchover";
 import { SubtaskGroup, readGroupSubs, writeGroupSubs } from "./SubtaskGroup";
 import {
   GitBadge,
@@ -437,6 +438,7 @@ export function TaskBoard({ space, me, onOpen }: { space: TaskSpace; me: Me | un
   return (
     <div className="tk-board-wrap">
       {confirmEl}
+      <SwitchoverBoardNote space={space} />
       <div className="rq-grid tk-filters">
         <label className="rq-field">
           <span className="rq-label">Người làm</span>

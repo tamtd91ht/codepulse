@@ -18038,3 +18038,92 @@ button.hb-item:hover {
     grid-template-columns: 1fr;
   }
 }
+/* Chuyển đổi (docs/specs/31 §21.6): Lead checklist, old Jira keys, "Ngừng dùng Jira", demo data. */
+.sw-check {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+.sw-check li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.sw-check li:last-child {
+  border-bottom: none;
+}
+.sw-check-icon {
+  display: inline-flex;
+  margin-top: 2px;
+  color: var(--warn);
+}
+.sw-check li.sw-done .sw-check-icon {
+  color: var(--good);
+}
+.sw-check-text {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.sw-check-label {
+  font-weight: 600;
+  color: var(--text);
+}
+.sw-check li.sw-done .sw-check-label {
+  font-weight: 500;
+  color: var(--text-2);
+}
+.sw-check-fix {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.sw-ready {
+  margin-bottom: 4px;
+}
+.sw-h {
+  margin: 16px 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.sw-h:first-of-type {
+  margin-top: 4px;
+}
+.sw-uses {
+  overflow-x: auto;
+}
+.sw-table th,
+.sw-table td {
+  padding: 8px 10px;
+}
+.sw-table .sw-old {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.sw-where {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.sw-note {
+  margin: 8px 0 0;
+}
+.sw-board-note {
+  margin-bottom: 10px;
+}
+@media (max-width: 640px) {
+  .sw-check li {
+    flex-wrap: wrap;
+  }
+  .sw-check-fix {
+    width: 100%;
+    padding-left: 26px;
+  }
+}

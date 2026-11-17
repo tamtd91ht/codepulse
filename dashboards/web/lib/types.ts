@@ -3226,3 +3226,64 @@ export interface QuickSearchHit {
   match: "key" | "title" | "text";
   snippet: string | null;
 }
+/* ---------- Task: Chuyển đổi (docs/specs/31 §21.6) ---------- */
+
+/** One commit / MR / branch that reached a task through an old Jira key. */
+export interface TaskAliasUse {
+  external_key: string;
+  task_key: string;
+  kind: "commit" | "mr" | "branch";
+  sha: string | null;
+  mr_iid: number | null;
+  branch: string | null;
+  repo: string | null;
+  author: { id: number; full_name: string | null; email: string | null } | null;
+  /** Git email or GitLab username when no person is linked. */
+  author_text: string | null;
+  at: string;
+}
+
+export interface TaskJiraReadiness {
+  sources: { project_key: string; issues: number; imported: number }[];
+  not_imported: number;
+  days: number;
+  alias_uses: number;
+  ready: boolean;
+  problems: string[];
+}
+
+export type TaskChecklistFix = "statuses" | "dod" | "automation" | "backlog" | "jira" | "members";
+
+export interface TaskChecklistItem {
+  key: "wip" | "dod" | "automation" | "sprint" | "jira_import" | "members";
+  label: string;
+  done: boolean;
+  /** False: not counted (Kanban has no sprint; no Jira synced). */
+  applies: boolean;
+  detail: string;
+  fix: TaskChecklistFix;
+}
+
+/** GET /tasks/spaces/{bp}/switchover (tasks.manage). */
+export interface TaskSwitchoverState {
+  space: number;
+  jira_retired_at: string | null;
+  jira_retired_by: { id: number; full_name: string | null; primary_email: string | null } | null;
+  readiness: TaskJiraReadiness;
+  uses: { days: number; total: number; authors: number; items: TaskAliasUse[] };
+  checklist: { items: TaskChecklistItem[]; done: number; total: number; complete: boolean; recommended_rules: string[] };
+  demo_tasks: number;
+}
+
+export interface TaskDemoCreated {
+  created: number;
+  keys: string[];
+  sprint_id: number;
+  version_id: number;
+}
+
+export interface TaskDemoDeleted {
+  deleted: number;
+  sprints: number;
+  versions: number;
+}

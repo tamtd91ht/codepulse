@@ -61,6 +61,7 @@ from app.api.routers import (
     task_nlfilter,
     task_planning,
     task_search,
+    task_switchover,
     task_templates,
     task_timeline,
     tasks,
@@ -190,6 +191,7 @@ for api_router in (
     task_criteria.router,  # docs/specs/31 §20.3 /tasks/{key}/criteria, before tasks
     task_dod_gaps.router,  # docs/specs/31 §21.1 /tasks/spaces/{bp}/dod-gaps, before tasks
     task_planning.router,  # §21.3 /tasks/timeline, sprint plan / capacity / preflight
+    task_switchover.router,  # docs/specs/31 §21.6 /tasks/spaces/{id}/switchover, demo
     tasks.router,  # docs/specs/31; its static paths come before /tasks/{key} inside
     usage.router,  # docs/specs/31 §21.2: anonymous usage beacon and the admins' summary
 ):
