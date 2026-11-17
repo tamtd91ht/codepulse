@@ -376,12 +376,14 @@ class UserPatch(BaseModel):
     primary_email: str | None = Field(default=None, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     active: bool | None = None
     manage_all: bool | None = None  # manages every dự án without a grant (below admin)
+    is_tester: bool | None = None  # holds the "tester" built-in set (docs/specs/31 §21.0)
 
 
 class AdminUserOut(UserOut):
     """A person as Admin > Người & Team lists them."""
 
     manage_all: bool = False
+    is_tester: bool = False
     is_admin: bool = False  # ADMIN_EMAILS: has every right already, manage_all does nothing
 
 
@@ -393,11 +395,17 @@ class TeamOut(ORM):
     gitlab_group_path: str | None = None
     gitlab_sync_at: datetime | None = None
     gitlab_sync_error: str | None = None
+    # docs/specs/31 §21.0 (R2): a QA team; its current members hold the "tester" set.
+    is_qa: bool = False
 
 
 class TeamIn(BaseModel):
     name: str = Field(min_length=1)
     parent_id: int | None = None
+
+
+class TeamPatch(BaseModel):
+    is_qa: bool | None = None
 
 
 class MemberOut(BaseModel):

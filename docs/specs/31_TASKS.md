@@ -1404,3 +1404,16 @@ Không migration. Mã: `app/tasks/live.py` (mới), `app/tasks/__init__.py`, `ap
   `limit=500`) chạy **nối tiếp** hết 325–407 ms, trình duyệt gọi song song nên ít hơn; cộng một lượt
   `/sprints` trước đó. Còn thời gian vẽ 500 card ở trình duyệt: đọc từ log dev khi chạy trên dữ liệu thật;
   mục tiêu < 1,5 giây.
+
+### 21.0 Đánh bóng (F1–F6, R2; migration `f1a2b3c4d5e6`)
+
+- **F1** dòng thời gian: mỗi dòng lịch sử là một câu tiếng Việt (`app/tasks/history_text.py`), không còn tên trường thô.
+- **F2/F3** CSS bị cắt do merge được khôi phục; thanh Epic ở Backlog có style riêng (`tk-epicbar`).
+- **F4** dự án cấu hình tay hiện "Tuỳ chỉnh" (Cài đặt, Mức áp dụng) kèm gợi ý "Lưu cấu hình thành mẫu" / "Áp mẫu".
+- **F5** chip lọc dòng thời gian mặc định "Tất cả"; chip đang chọn nền đặc (không nhầm với hover).
+- **F6** tạo nhanh: khi gõ, các giá trị nhận ra (@người, #loại, !ưu tiên, SP, ^cha) hiện thành chip dưới ô;
+  ký hiệu không khớp gạch chân đỏ (vẫn nằm trong tiêu đề).
+- **R2 vai trò tester:** `users.is_tester` (hồ sơ người) và `teams.is_qa` (Người & Team, `PATCH /teams/{id}`);
+  có cờ hoặc đang ở team QA → `auto_role = tester`. Migration biến bộ "Tester" tự tạo thành bộ dựng sẵn
+  tự gán: team đang được gán bộ đó → `is_qa`, người được gán tay → `is_tester`, các dòng gán cũ bị xoá
+  (downgrade trả lại). Không ai tự bật cờ cho mình hoặc cho team mình đang ở/lead/manage (trừ admin).

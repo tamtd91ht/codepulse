@@ -53,6 +53,7 @@ from app.api.schemas import (
     TeamGitlabSyncOut,
     TeamIn,
     TeamOut,
+    TeamPatch,
     TeamSyncPerson,
     TeamSyncUnmapped,
     UserIn,
@@ -1352,6 +1353,9 @@ def update_user(
     moves_manage_all = "manage_all" in changes and changes["manage_all"] != bool(user.manage_all)
     if moves_manage_all and not principal.is_admin:
         raise HTTPException(403, "chỉ admin cấp hoặc thu Quản lý tổng")
+    # The tester flag grants the "tester" built-in set (docs/specs/31 §21.0): never one's own.
+    if "is_tester" in changes and changes["is_tester"] != bool(user.is_tester):
+        _guard_self(principal, user.id, "tester flag")
     if "full_name" in changes:
         changes["full_name"] = changes["full_name"].strip()
     if "primary_email" in changes:
@@ -1606,6 +1610,23 @@ def create_team(body: TeamIn, principal: PeopleAdmin, session: SessionDep) -> Te
         session.rollback()
         raise HTTPException(409, "team name already used") from None
     audit(session, principal.user_id, "team.create", f"team:{team.id}")
+    session.commit()
+    return team
+
+
+@router.patch("/teams/{team_id}", response_model=TeamOut)
+def update_team(team_id: int, body: TeamPatch, principal: PeopleAdmin, session: SessionDep) -> Team:
+    """docs/specs/31 §21.0 (R2): mark a team as QA (its current members hold the "tester"
+    built-in set). A delegated admin.people may not do it to a team they are in: their own
+    rights would grow by their own hand (docs/specs/21 §3)."""
+    team = _get(session, Team, team_id, "team")
+    if body.is_qa is not None and body.is_qa != bool(team.is_qa):
+        if not principal.is_admin and team_id in (
+            principal.lead_teams | principal.managed_teams | principal.own_teams
+        ):
+            raise HTTPException(403, "không đổi Team QA của team chính mình")
+        team.is_qa = body.is_qa
+        audit(session, principal.user_id, "team.update", f"team:{team_id}", is_qa=body.is_qa)
     session.commit()
     return team
 

@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import PermissionSet, Task, TaskStatus
+from app.models import PermissionSet, PermissionSetItem, Task, TaskStatus
 from tests.api.conftest import World
 from tests.api.test_tasks import API, bp_of, create, enable
 
@@ -227,7 +227,17 @@ def test_a_set_given_to_a_team(
     client: TestClient, world: World, as_user: Any, db_session: Session
 ) -> None:
     admin = as_user(world.admin)
-    tester = db_session.scalars(select(PermissionSet).where(PermissionSet.name == "Tester")).one()
+    # A custom set ("Tester" itself became the built-in tester role, docs/specs/31 §21.0).
+    tester = PermissionSet(name="Bộ QA", builtin=False)
+    db_session.add(tester)
+    db_session.flush()
+    db_session.add_all(
+        [
+            PermissionSetItem(set_id=tester.id, permission="tests.edit", scope="all"),
+            PermissionSetItem(set_id=tester.id, permission="tests.run", scope="all"),
+        ]
+    )
+    db_session.flush()
 
     def held(user: Any) -> dict[str, str]:
         res = client.get(f"{API}/admin/users/{user.id}/permissions", headers=admin).json()
@@ -246,7 +256,7 @@ def test_a_set_given_to_a_team(
     assert held(world.binh)["tests.run"] == "all"
     assert "tests.edit" not in held(world.outsider)
     sets = client.get(f"{API}/admin/users/{world.an.id}/permissions", headers=admin).json()["sets"]
-    assert any(s["name"] == "Tester" and s["via"] == "team" for s in sets)
+    assert any(s["name"] == "Bộ QA" and s["via"] == "team" for s in sets)
     # Only admins hand it out here; a member cannot.
     res = client.put(
         f"{API}/admin/permission-sets/{tester.id}/teams",

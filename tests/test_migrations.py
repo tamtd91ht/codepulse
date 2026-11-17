@@ -113,3 +113,68 @@ def test_downgrade_then_upgrade(postgres_url: str, migrated_engine: Engine) -> N
     assert not SPEC_TABLES & set(inspect(migrated_engine).get_table_names())
     command.upgrade(config, "head")
     assert set(inspect(migrated_engine).get_table_names()) >= SPEC_TABLES
+
+
+def test_tester_role_migration_round_trip(postgres_url: str, migrated_engine: Engine) -> None:
+    """f1a2b3c4d5e6 (docs/specs/31 §21.0): the custom "Tester" set becomes the built-in tester
+    role; the teams and people it was given to become QA teams and testers, and back."""
+    config = alembic_config(postgres_url)
+    command.downgrade(config, "d5e6f7a8b9c0")
+    try:
+        with migrated_engine.begin() as conn:
+            set_id = conn.execute(
+                text("SELECT id FROM permission_sets WHERE name = 'Tester' AND NOT builtin")
+            ).scalar_one()
+            team = conn.execute(
+                text("INSERT INTO teams (name) VALUES ('MIG QA') RETURNING id")
+            ).scalar_one()
+            user = conn.execute(
+                text("INSERT INTO users (primary_email) VALUES ('mig-qa@x.vn') RETURNING id")
+            ).scalar_one()
+            conn.execute(
+                text("INSERT INTO team_permission_sets (team_id, set_id) VALUES (:t, :s)"),
+                {"t": team, "s": set_id},
+            )
+            conn.execute(
+                text("INSERT INTO user_permission_sets (user_id, set_id) VALUES (:u, :s)"),
+                {"u": user, "s": set_id},
+            )
+        command.upgrade(config, "f1a2b3c4d5e6")
+        with migrated_engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT builtin, auto_role FROM permission_sets WHERE id = :s"),
+                {"s": set_id},
+            ).one()
+            assert tuple(row) == (True, "tester")
+            assert conn.execute(text("SELECT is_qa FROM teams WHERE id = :t"), {"t": team}).scalar()
+            assert conn.execute(
+                text("SELECT is_tester FROM users WHERE id = :u"), {"u": user}
+            ).scalar()
+            given = conn.execute(
+                text(
+                    "SELECT (SELECT count(*) FROM team_permission_sets WHERE set_id = :s)"
+                    " + (SELECT count(*) FROM user_permission_sets WHERE set_id = :s)"
+                ),
+                {"s": set_id},
+            ).scalar_one()
+            assert given == 0
+        command.downgrade(config, "d5e6f7a8b9c0")
+        with migrated_engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT builtin, auto_role FROM permission_sets WHERE id = :s"),
+                {"s": set_id},
+            ).one()
+            assert tuple(row) == (False, None)
+            teams = conn.execute(
+                text("SELECT team_id FROM team_permission_sets WHERE set_id = :s"), {"s": set_id}
+            ).scalars()
+            assert list(teams) == [team]
+            users = conn.execute(
+                text("SELECT user_id FROM user_permission_sets WHERE set_id = :s"), {"s": set_id}
+            ).scalars()
+            assert list(users) == [user]
+    finally:
+        command.upgrade(config, "head")
+        with migrated_engine.begin() as conn:
+            conn.execute(text("DELETE FROM teams WHERE name = 'MIG QA'"))
+            conn.execute(text("DELETE FROM users WHERE primary_email = 'mig-qa@x.vn'"))

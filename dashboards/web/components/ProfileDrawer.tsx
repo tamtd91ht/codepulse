@@ -26,6 +26,7 @@ export function ProfileDrawer({ userId, onClose, onChanged }: { userId: number; 
   const { mutate: mutateKey } = useSWRConfig();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [tester, setTester] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -37,6 +38,7 @@ export function ProfileDrawer({ userId, onClose, onChanged }: { userId: number; 
       seededFor.current = person.id;
       setName(person.full_name ?? "");
       setEmail(person.primary_email ?? "");
+      setTester(!!person.is_tester);
     }
   }, [person]);
 
@@ -50,7 +52,8 @@ export function ProfileDrawer({ userId, onClose, onChanged }: { userId: number; 
   };
 
   const emailChanged = !!person && email.trim().toLowerCase() !== (person.primary_email ?? "").toLowerCase();
-  const dirty = !!person && (name.trim() !== (person.full_name ?? "") || emailChanged);
+  const testerChanged = !!person && tester !== !!person.is_tester;
+  const dirty = !!person && (name.trim() !== (person.full_name ?? "") || emailChanged || testerChanged);
 
   async function save(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -64,12 +67,14 @@ export function ProfileDrawer({ userId, onClose, onChanged }: { userId: number; 
       return;
     setBusy(true);
     try {
-      const body: Record<string, string> = {};
+      const body: Record<string, string | boolean> = {};
       if (name.trim() !== (person.full_name ?? "")) body.full_name = name.trim();
       if (emailChanged) body.primary_email = email.trim();
+      if (testerChanged) body.is_tester = tester;
       const saved = await api.patch<Person>(`/users/${person.id}`, body);
       setName(saved.full_name ?? "");
       setEmail(saved.primary_email ?? "");
+      setTester(!!saved.is_tester);
       await done("Đã lưu hồ sơ.", saved);
     } catch (err) {
       fail(err);
@@ -132,6 +137,7 @@ export function ProfileDrawer({ userId, onClose, onChanged }: { userId: number; 
                 ID {person.id} · {person.active === false ? "đã tắt" : "đang hoạt động"}
                 {person.is_admin && <> · Admin</>}
                 {person.manage_all && <> · Quản lý tổng</>}
+                {person.is_tester && <> · Tester</>}
               </div>
               <div className="toolbar" style={{ marginTop: 8 }}>
                 <input
@@ -178,6 +184,15 @@ export function ProfileDrawer({ userId, onClose, onChanged }: { userId: number; 
                 autoComplete="off"
               />
             </label>
+            {!person.is_admin && (
+              <label
+                className="inline-check"
+                title="Giữ bộ quyền Tester có sẵn: viết và chạy testcase, báo bug thành task. Người ở team QA cũng có bộ này."
+              >
+                <input type="checkbox" checked={tester} onChange={(e) => setTester(e.target.checked)} />
+                Tester
+              </label>
+            )}
             {emailChanged && (
               <p className="small muted" style={{ margin: 0 }}>
                 <Pill tone="warn">Lưu ý</Pill> Email dùng để đăng nhập khi chưa gắn tài khoản GitLab và để gắn commit theo email. Email đã có

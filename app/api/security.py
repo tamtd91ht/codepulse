@@ -99,6 +99,9 @@ class Principal:
     # The dự án-wide permissions some set of this person gives at "team": merged with a wider
     # scope (say "project" from the built-in Quản lý dự án set) they keep the team's dự án.
     team_granted: set[str] = field(default_factory=set)
+    # docs/specs/31 §21.0 (R2): users.is_tester, or a current member of a team with is_qa
+    # (the "tester" built-in set).
+    is_tester: bool = False
 
     def _bound_out(self, bp_id: int | None) -> bool:
         """A dự án outside the one the token is bound to."""
@@ -381,6 +384,18 @@ def load_principal(
         auto_roles.append("manage_all")
     if project_admin:
         auto_roles.append("project_admin")
+    # docs/specs/31 §21.0 (R2): flagged a tester, or a current member of a QA team.
+    is_tester = bool(user.is_tester) or (
+        bool(memberships)
+        and session.scalar(
+            select(Team.id)
+            .where(Team.id.in_({m.team_id for m in memberships}), Team.is_qa.is_(True))
+            .limit(1)
+        )
+        is not None
+    )
+    if is_tester:
+        auto_roles.append("tester")
     items = (
         []
         if is_admin
@@ -402,6 +417,7 @@ def load_principal(
         lead_member_projects=lead_projects,
         managed_member_projects=managed_projects,
         team_granted={k for k, v in items if v == "team"} & PROJECT_TEAM_KEYS,
+        is_tester=is_tester,
     )
 
 

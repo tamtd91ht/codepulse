@@ -65,6 +65,7 @@ ROLE_LABELS: dict[str, str] = {
     "project_manager": "Quản lý dự án",
     "manage_all": "Quản lý tổng",
     "project_admin": "Lead / Manager dự án",
+    "tester": "Tester",
 }
 META = "admin.permissions"  # who may hand out permissions: only admins grant it
 
@@ -246,20 +247,28 @@ def _role_holders(session: Session, settings: Settings, today: date) -> dict[str
     """Who holds each built-in set through their role (as load_principal decides it), admins
     left out: they hold everything without any set."""
     admins = _admin_emails(settings)
-    users = session.execute(select(User.id, User.primary_email, User.active, User.manage_all))
+    users = session.execute(
+        select(User.id, User.primary_email, User.active, User.manage_all, User.is_tester)
+    )
     active: set[int] = set()
     manage_all: set[int] = set()
-    for uid, email, is_active, all_projects in users:
+    tester: set[int] = set()
+    for uid, email, is_active, all_projects, flagged_tester in users:
         if is_active is False or (email and email.lower() in admins):
             continue
         active.add(uid)
         if all_projects:
             manage_all.add(uid)
+        if flagged_tester:
+            tester.add(uid)
+    qa_teams = set(session.scalars(select(Team.id).where(Team.is_qa.is_(True))))
     lead: set[int] = set()
     manager: set[int] = set()
     for m in session.scalars(select(TeamMember).where(TeamMember.joined_at <= today)):
         if m.left_at is not None and m.left_at <= today:
             continue
+        if m.team_id in qa_teams:
+            tester.add(m.user_id)
         role = (m.role or "").lower()
         if role == "lead":
             lead.add(m.user_id)
@@ -276,6 +285,7 @@ def _role_holders(session: Session, settings: Settings, today: date) -> dict[str
         "project_manager": (pm & active) - manage_all,
         "manage_all": manage_all,
         "project_admin": project_admin & active,
+        "tester": tester & active,
     }
 
 
@@ -292,6 +302,8 @@ def _auto_roles(principal: Principal) -> list[str]:
         roles.append("manage_all")
     if principal.project_admin:
         roles.append("project_admin")
+    if principal.is_tester:
+        roles.append("tester")
     return roles
 
 

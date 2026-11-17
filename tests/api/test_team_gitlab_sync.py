@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.collector.gitlab.client import GitLabClient
-from app.models import Account, AuditLog, Connection, PermissionSet, Team, TeamMember
+from app.models import Account, AuditLog, Connection, Team, TeamMember
 from app.teams.gitlab_sync import normalize_group_path, sync_team
 from tests.api.conftest import BOX, World
 
@@ -197,13 +197,11 @@ def test_a_gitlab_failure_changes_no_member(
 def test_the_teams_permission_sets_follow_the_group(
     client: TestClient, world: World, qa: Team, as_user: Any, db_session: Session
 ) -> None:
-    """The point of R2: the Tester set given to QA reaches whoever is in the GitLab group."""
+    """The point of R2: the tester role of a QA team reaches whoever is in the GitLab group."""
     admin = as_user(world.admin)
-    tester = db_session.scalars(select(PermissionSet).where(PermissionSet.name == "Tester")).one()
-    res = client.put(
-        f"{API}/admin/permission-sets/{tester.id}/teams", headers=admin, json={"team_ids": [qa.id]}
-    )
+    res = client.patch(f"{API}/teams/{qa.id}", headers=admin, json={"is_qa": True})
     assert res.status_code == 200, res.text
+    assert res.json()["is_qa"] is True
 
     def held(user: Any) -> dict[str, str]:
         res = client.get(f"{API}/admin/users/{user.id}/permissions", headers=admin).json()
