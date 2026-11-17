@@ -7,6 +7,7 @@ import { api, useApi } from "@/lib/api";
 import { relative } from "@/lib/format";
 import type { TaskRuleDryRun, TaskRuleRunRow, TaskSpace } from "@/lib/types";
 
+import { useSettingsDraft } from "./settingsDraft";
 import { errorText } from "./taskParts";
 
 /* Quy tắc tự động (docs/specs/31 §19.7, §20.5): a fixed library of rules, each on/off per dự án, some with one
@@ -156,7 +157,6 @@ export function TaskAutomation({ space }: { space: TaskSpace }) {
   const { data, error, mutate } = useApi<AutomationOut>(path);
   const initial = useMemo(() => (data ? draftOf(data.rules) : {}), [data]);
   const [draft, setDraft] = useState<Draft>({});
-  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   useEffect(() => setDraft(initial), [initial]);
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial);
@@ -178,38 +178,40 @@ export function TaskAutomation({ space }: { space: TaskSpace }) {
     setTrying(null);
   }
 
-  async function save() {
-    if (!data) return;
-    const invalid = data.rules.flatMap((r) =>
-      r.params.filter((p) => {
+  const invalid = (data?.rules ?? []).flatMap((r) =>
+    r.params
+      .filter((p) => {
         const v = Number(draft[r.key]?.[p.key]);
         return !Number.isInteger(v) || v < p.min || v > p.max;
-      }).map((p) => `${r.title}: ${p.label} từ ${p.min} đến ${p.max}`),
-    );
+      })
+      .map((p) => `${r.title}: ${p.label} từ ${p.min} đến ${p.max}`),
+  );
+
+  async function save(): Promise<boolean> {
+    if (!data) return false;
     if (invalid.length) {
       setMessage(`Lỗi: ${invalid.join("; ")}`);
-      return;
+      return false;
     }
-    setBusy(true);
     setMessage(null);
     try {
       const fresh = await api.put<AutomationOut>(path, draft);
       await mutate(fresh, { revalidate: false });
-      setMessage("Đã lưu quy tắc tự động.");
+      return true;
     } catch (e) {
       setMessage(`Lỗi: ${errorText(e)}`);
+      return false;
     }
-    setBusy(false);
   }
+  // Saved through Cài đặt's bottom bar (§22.7); only managers can change rules.
+  useSettingsDraft("st-automation", "Quy tắc tự động", 7, { dirty: canManage && dirty, valid: !invalid.length, save, reset: () => setDraft(initial) });
 
   return (
     <Card
       title="Quy tắc tự động"
       id="tk-set-automation"
-      subtitle="Bật các quy tắc có sẵn cho dự án. Tự động chạy dưới tên hệ thống, theo luồng trạng thái của dự án; nhắc việc mỗi task tối đa một lần mỗi ngày."
-    >
-      {message && <Message text={message} onClose={() => setMessage(null)} />}
-      <div className="nr-view">
+      subtitle="Quy tắc có sẵn, bật theo dự án; chạy dưới tên hệ thống, theo luồng trạng thái, nhắc việc mỗi task tối đa một lần mỗi ngày."
+      actions={
         <Segmented
           label="Xem"
           value={view}
@@ -219,63 +221,70 @@ export function TaskAutomation({ space }: { space: TaskSpace }) {
             { value: "log", label: "Nhật ký" },
           ]}
         />
-      </div>
+      }
+    >
+      {message && <Message text={message} onClose={() => setMessage(null)} />}
       {!data ? (
         <Loading error={error} rows={4} />
       ) : view === "log" ? (
         <RuleLog path={path} rules={data.rules} />
       ) : (
         <>
-          <ul className="ta-list">
+          <ul className="st-auto-list">
             {data.rules.map((r) => {
               const row = draft[r.key] ?? { on: r.on };
               return (
-                <li key={r.key} className={`ta-rule${row.on ? " on" : ""}`}>
-                  <label className="ta-head">
+                <li key={r.key} className={`st-auto${row.on ? " on" : ""}`}>
+                  <div className="st-auto-row">
                     <input
                       type="checkbox"
                       role="switch"
                       checked={!!row.on}
-                      disabled={!canManage || busy}
+                      disabled={!canManage}
                       onChange={(e) => patch(r.key, { on: e.target.checked })}
+                      aria-labelledby={`ta-name-${r.key}`}
                       aria-describedby={`ta-hint-${r.key}`}
                     />
-                    <strong>{r.title}</strong>
-                    <Pill tone={TRIGGER[r.trigger].tone}>{TRIGGER[r.trigger].label}</Pill>
-                  </label>
-                  {canManage && r.can_dry_run && (
-                    <button
-                      type="button"
-                      className="ghost sm nr-try"
-                      disabled={trying !== null}
-                      onClick={() => void tryRule(r.key)}
-                      title="Xem quy tắc sẽ tác động tới những task nào nếu chạy bây giờ (không đổi gì)"
-                    >
-                      {trying === r.key ? "Đang chạy thử…" : "Chạy thử"}
-                    </button>
-                  )}
-                  <p id={`ta-hint-${r.key}`} className="ta-hint small muted">
-                    {r.hint}
-                  </p>
-                  {r.params.length > 0 && (
-                    <div className="ta-params">
+                    <span className="st-auto-name">
+                      <strong id={`ta-name-${r.key}`}>{r.title}</strong>
+                      <span id={`ta-hint-${r.key}`} className="small muted st-sub" title={r.hint}>
+                        {r.hint}
+                      </span>
+                    </span>
+                    <span className="st-auto-when">
+                      <Pill tone={TRIGGER[r.trigger].tone}>{TRIGGER[r.trigger].label}</Pill>
+                    </span>
+                    <span className="st-auto-params">
                       {r.params.map((p) => (
-                        <label key={p.key} className="ta-param">
-                          <span className="small">{p.label}</span>
+                        <label key={p.key} className="ta-param" title={`${p.label} (${p.min}–${p.max} ${p.unit})`}>
+                          <span className="small muted">{p.label}</span>
                           <input
                             type="number"
                             min={p.min}
                             max={p.max}
                             step={1}
                             value={String(row[p.key] ?? p.value)}
-                            disabled={!canManage || busy || !row.on}
+                            disabled={!canManage || !row.on}
                             onChange={(e) => patch(r.key, { [p.key]: e.target.value === "" ? Number.NaN : Number(e.target.value) })}
                           />
                           <span className="small muted">{p.unit}</span>
                         </label>
                       ))}
-                    </div>
-                  )}
+                    </span>
+                    <span className="st-auto-try">
+                      {canManage && r.can_dry_run && (
+                        <button
+                          type="button"
+                          className="ghost sm"
+                          disabled={trying !== null}
+                          onClick={() => void tryRule(r.key)}
+                          title="Xem quy tắc sẽ tác động tới những task nào nếu chạy bây giờ (không đổi gì)"
+                        >
+                          {trying === r.key ? "Đang chạy thử…" : "Chạy thử"}
+                        </button>
+                      )}
+                    </span>
+                  </div>
                   {dry[r.key] && (
                     <DryRunResult
                       result={dry[r.key]}
@@ -291,15 +300,7 @@ export function TaskAutomation({ space }: { space: TaskSpace }) {
               );
             })}
           </ul>
-          {canManage ? (
-            <div className="adm-form-foot">
-              <button type="button" disabled={!dirty || busy} onClick={() => void save()}>
-                Lưu quy tắc
-              </button>
-            </div>
-          ) : (
-            <p className="small muted">Chỉ người quản lý Task của dự án đổi được quy tắc.</p>
-          )}
+          {!canManage && <p className="small muted">Chỉ người quản lý Task của dự án đổi được quy tắc.</p>}
         </>
       )}
     </Card>

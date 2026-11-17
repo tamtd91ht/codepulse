@@ -9,7 +9,9 @@ import { EmptyState, PageHeader } from "@/components/ui";
 import { can, useApi } from "@/lib/api";
 import type { Me } from "@/lib/types";
 
-/** "Việc của tôi" (docs/specs/31 §19.3): what needs me now, my tasks by state, my sprints. */
+const ABOUT = "Việc cần xử lý ngay, task của bạn theo trạng thái và tiến độ sprint; tự làm mới mỗi phút";
+
+/** "Việc của tôi" (docs/specs/31 §19.3, §22.7): a 48px breadcrumb header, no subtitle. */
 export default function MyWorkPage() {
   const { data: me } = useApi<Me>("/auth/me");
   if (me && !can(me, "tasks.view"))
@@ -24,7 +26,7 @@ export default function MyWorkPage() {
   return (
     <TaskFrame
       crumb="Việc của tôi"
-      help="Việc cần xử lý ngay, task của bạn theo trạng thái và tiến độ sprint; tự làm mới mỗi phút"
+      help={ABOUT}
       menu={can(me, "tasks.manage") || can(me, "admin.projects") ? [{ key: "adoption", label: "Tình trạng bật Task", icon: "pulse", href: "/tasks/adoption" }] : undefined}
       mine="current"
       create={can(me, "tasks.create") ? { href: "/tasks?create=1" } : null}

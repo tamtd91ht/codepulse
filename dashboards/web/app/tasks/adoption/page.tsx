@@ -15,6 +15,8 @@ import type { Me, TaskAdoption, UsageSummary } from "@/lib/types";
  * on; those who manage Task see the dự án they can view that have it on. Read-only.
  */
 
+const ABOUT = "Dự án nào đã dùng Task, theo mẫu nào, có bao nhiêu việc và hoạt động gần nhất khi nào.";
+
 export default function TaskAdoptionPage() {
   const { data: me } = useApi<Me>("/auth/me");
   const allowed = !me || can(me, "tasks.manage") || can(me, "admin.projects");
@@ -33,7 +35,7 @@ export default function TaskAdoptionPage() {
   return (
     <TaskFrame
       crumb="Tình trạng bật Task"
-      help="Dự án nào đã dùng Task, theo mẫu nào, có bao nhiêu việc và hoạt động gần nhất khi nào."
+      help={ABOUT}
       create={can(me, "tasks.create") ? { href: "/tasks?create=1" } : null}
     >
       <Card
@@ -62,7 +64,7 @@ export default function TaskAdoptionPage() {
           </EmptyState>
         ) : (
           <div className="table-wrap">
-            <table className="tp-table">
+            <table className="tp-table st-compact">
               <thead>
                 <tr>
                   <th>Dự án</th>
@@ -214,7 +216,7 @@ function UsageSection() {
             </div>
           </div>
           <div className="table-wrap">
-            <table className="tp-table us-table">
+            <table className="tp-table us-table st-compact">
               <caption className="visually-hidden">Số lần theo sự kiện và nơi dùng, 4 tuần gần nhất</caption>
               <thead>
                 <tr>
@@ -249,7 +251,7 @@ function UsageSection() {
             </table>
           </div>
           <div className="table-wrap">
-            <table className="tp-table us-table">
+            <table className="tp-table us-table st-compact">
               <caption className="visually-hidden">Số sự kiện theo vai trò, 4 tuần gần nhất</caption>
               <thead>
                 <tr>

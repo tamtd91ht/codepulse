@@ -105,15 +105,29 @@ export function TemplatePicker({
 }
 
 /** Steps of the enable wizard; the current one is marked for screen readers. */
+/**
+ * A one-line horizontal stepper (§22.7): ① Mã → ② Mẫu → ③ Thành viên → ④ Xác nhận → ⑤ Jira.
+ * The number lives only in the badge (the list's own numbering is off, so it never shows twice);
+ * a finished step shows a tick, and screen readers hear "Bước n/N".
+ */
 export function WizardSteps({ step, labels }: { step: number; labels: string[] }) {
   return (
-    <ol className="tt-steps" aria-label="Các bước">
+    <ol className="tt-steps st-stepper" aria-label="Các bước">
       {labels.map((label, i) => (
         <li key={label} className={i === step ? "current" : i < step ? "done" : undefined} aria-current={i === step ? "step" : undefined}>
+          {i > 0 && (
+            <span className="st-step-sep" aria-hidden="true">
+              →
+            </span>
+          )}
           <span className="tt-step-no" aria-hidden="true">
-            {i + 1}
+            {i < step ? <Icon name="check" size={12} /> : i + 1}
           </span>
-          {label}
+          <span className="visually-hidden">
+            Bước {i + 1}/{labels.length}
+            {i < step ? ", đã xong" : ""}:{" "}
+          </span>
+          <span className="st-step-label">{label}</span>
         </li>
       ))}
     </ol>

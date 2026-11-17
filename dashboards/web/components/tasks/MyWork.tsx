@@ -1,17 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 
 import { Icon, type IconName } from "@/components/icons";
-import { GitBadge, PointsChip, RowPriority, StatusPill, TypeIcon } from "@/components/tasks/taskParts";
-import { EmptyState, Loading } from "@/components/ui";
+import { GitBadge, PointsChip, RowPriority, StatusPill, TypeIcon, spaceOf, useTaskSpaces } from "@/components/tasks/taskParts";
+import { Loading } from "@/components/ui";
 import { useApi } from "@/lib/api";
 import type { TaskRow } from "@/lib/types";
+import { useDrawerList } from "./drawerNav";
 
 /*
- * "Việc của tôi" (docs/specs/31 §19.3): one screen answering "what do I do now" — what needs me
- * right away, then my tasks by state, then how my sprints stand. Data: GET /tasks/my-work.
+ * "Việc của tôi" (docs/specs/31 §19.3, layout §22.7): one screen answering "what do I do now" —
+ * what needs me right away, then my tasks by state, then how my sprints stand. Two columns from
+ * 1280px (left: now + doing; right: waiting, to do, done this week, my sprints); an empty group is
+ * one 32px line, a task one 36px row. Data: GET /tasks/my-work.
  */
 
 type AttentionKind = "overdue" | "critical" | "review" | "mention" | "test_failed";
@@ -66,7 +69,8 @@ const KIND: Record<AttentionKind, { icon: IconName; label: string }> = {
   test_failed: { icon: "clipboardCheck", label: "Test thất bại" },
 };
 
-const taskHref = (key: string) => `/tasks/${encodeURIComponent(key)}`;
+// §22.6: opens in the right drawer on this page (?task=KEY); the list stays.
+const taskHref = (key: string) => `/tasks/me?task=${encodeURIComponent(key)}`;
 const isHttp = (url: string | null | undefined): url is string => !!url && /^https?:\/\//i.test(url);
 /** An in-app path ("/tasks/X") or an http(s) URL; anything else is dropped. */
 function safeLink(url: string | null | undefined): string | null {
@@ -77,6 +81,30 @@ function safeLink(url: string | null | undefined): string | null {
 
 export function MyWork() {
   const { data, error, mutate } = useApi<MyWorkData>("/tasks/my-work", { refreshInterval: 60_000 });
+  const spaces = useTaskSpaces();
+  // TODO(31 §22.7): swap this local toolbar for the shared FilterBar once it lands.
+  const [q, setQ] = useState("");
+  const [project, setProject] = useState<number | "">("");
+
+  const projects = useMemo(() => {
+    if (!data) return [];
+    const ids = new Set<number>();
+    for (const row of [...data.doing, ...data.waiting, ...data.todo, ...data.done_week]) {
+      const id = spaceOf(row);
+      if (id !== null) ids.add(id);
+    }
+    const name = (id: number) => spaces.data?.find((s) => s.business_project_id === id)?.name ?? `Dự án ${id}`;
+    return [...ids].map((id) => ({ id, name: name(id) })).sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }, [data, spaces.data]);
+
+  const needle = q.trim().toLowerCase();
+  const keep = <T extends TaskRow>(rows: T[]) =>
+    rows.filter(
+      (r) => (project === "" || spaceOf(r) === project) && (!needle || r.key.toLowerCase().includes(needle) || r.title.toLowerCase().includes(needle)),
+    );
+  const filtered = needle !== "" || project !== "";
+  // §22.6: J/K in the drawer walk the tasks in the order the page lists them.
+  useDrawerList(data ? [...data.doing, ...data.waiting, ...data.todo, ...data.done_week].map((r) => r.key) : []);
 
   if (!data)
     return error ? (
@@ -87,7 +115,7 @@ export function MyWork() {
         </button>
       </div>
     ) : (
-      <div className="mw">
+      <div className="mw-cols" aria-busy="true">
         <section className="mw-block" aria-label="Đang tải">
           <Loading rows={4} />
         </section>
@@ -97,62 +125,108 @@ export function MyWork() {
       </div>
     );
 
+  const attention = data.attention.filter((item) => {
+    if (project !== "" && item.task && spaceOf(item.task) !== project) return false;
+    if (!needle) return true;
+    const hay = `${item.task?.key ?? item.task_key ?? ""} ${item.task?.title ?? item.mr?.title ?? ""} ${item.text}`.toLowerCase();
+    return hay.includes(needle);
+  });
+
   return (
     <div className="mw">
-      <section className="mw-block mw-attention" aria-labelledby="mw-attention-h">
-        <h2 id="mw-attention-h" className="mw-h">
-          Cần xử lý ngay <span className="mw-count">{data.attention.length}</span>
-        </h2>
-        {data.attention.length === 0 ? (
-          <EmptyState icon="checkCircle" tone="good" title="Không có gì cần xử lý ngay">
-            Không có task quá hạn, finding critical, MR chờ bạn review hay lời nhắc nào.
-          </EmptyState>
-        ) : (
-          <ul className="mw-list">
-            {data.attention.map((item, i) => (
-              <AttentionRow key={`${item.kind}-${item.task?.key ?? item.task_key ?? item.mr?.iid ?? item.notification_id ?? i}-${i}`} item={item} />
+      <div className="mw-toolbar" role="search">
+        <label className="mw-search">
+          <Icon name="search" size={14} />
+          <span className="visually-hidden">Tìm trong việc của tôi</span>
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm mã hoặc tiêu đề…" />
+        </label>
+        {projects.length > 1 && (
+          <select
+            className="mw-chip"
+            value={project}
+            onChange={(e) => setProject(e.target.value ? Number(e.target.value) : "")}
+            aria-label="Lọc theo dự án"
+          >
+            <option value="">Mọi dự án</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
             ))}
-          </ul>
+          </select>
         )}
-      </section>
+        {filtered && (
+          <button type="button" className="ghost sm" onClick={() => (setQ(""), setProject(""))}>
+            Xoá lọc
+          </button>
+        )}
+        <span className="mw-refresh small muted" title="Tự làm mới mỗi phút">
+          <Icon name="sync" size={12} /> tự làm mới mỗi phút
+        </span>
+      </div>
 
-      <TaskSection title="Đang làm" rows={data.doing} empty="Bạn chưa có task nào đang làm. Chọn một task ở “Cần làm” và chuyển sang trạng thái đang làm." />
-      <TaskSection
-        title="Chờ người khác"
-        rows={data.waiting}
-        empty="Không có task nào của bạn đang bị chặn."
-        extra={(row) => {
-          const by = (row as TaskRow & { blocked_by?: string[] }).blocked_by ?? [];
-          return by.length ? (
-            <span className="mw-blocked small">
-              bị chặn bởi{" "}
-              {by.map((k, i) => (
-                <span key={k}>
-                  {i > 0 && ", "}
-                  <Link href={taskHref(k)}>{k}</Link>
+      <div className="mw-cols">
+        <div className="mw-col">
+          {attention.length === 0 ? (
+            <p className="mw-none mw-none-good" role="status">
+              <Icon name="checkCircle" size={14} /> Không có gì cần xử lý ngay
+            </p>
+          ) : (
+            <section className="mw-block mw-attention" aria-labelledby="mw-attention-h">
+              <h2 id="mw-attention-h" className="mw-h">
+                Cần xử lý ngay <span className="mw-count">{attention.length}</span>
+              </h2>
+              <ul className="mw-list">
+                {attention.map((item, i) => (
+                  <AttentionRow key={`${item.kind}-${item.task?.key ?? item.task_key ?? item.mr?.iid ?? item.notification_id ?? i}-${i}`} item={item} />
+                ))}
+              </ul>
+            </section>
+          )}
+          <TaskSection title="Đang làm" rows={keep(data.doing)} empty="chưa có task nào đang làm" />
+        </div>
+
+        <div className="mw-col">
+          <TaskSection
+            title="Chờ người khác"
+            rows={keep(data.waiting)}
+            empty="không có task nào đang bị chặn"
+            extra={(row) => {
+              const by = (row as TaskRow & { blocked_by?: string[] }).blocked_by ?? [];
+              return by.length ? (
+                <span className="mw-blocked small">
+                  chặn bởi{" "}
+                  {by.map((k, i) => (
+                    <span key={k}>
+                      {i > 0 && ", "}
+                      <Link href={taskHref(k)}>{k}</Link>
+                    </span>
+                  ))}
                 </span>
-              ))}
-            </span>
-          ) : null;
-        }}
-      />
-      <TaskSection title="Cần làm" rows={data.todo} empty="Hết việc cần làm. Xem Backlog của dự án để nhận thêm task." />
-      <TaskSection title="Xong tuần này" rows={data.done_week} empty="Tuần này bạn chưa hoàn thành task nào." collapsed />
+              ) : null;
+            }}
+          />
+          <TaskSection title="Cần làm" rows={keep(data.todo)} empty="hết việc · xem Backlog của dự án để nhận thêm" />
+          <TaskSection title="Xong tuần này" rows={keep(data.done_week)} empty="tuần này chưa xong task nào" collapsed />
 
-      <section className="mw-block" aria-labelledby="mw-sprint-h">
-        <h2 id="mw-sprint-h" className="mw-h">
-          Sprint của tôi <span className="mw-count">{data.sprints.length}</span>
-        </h2>
-        {data.sprints.length === 0 ? (
-          <p className="muted small mw-empty">Bạn không có task trong sprint đang chạy nào.</p>
-        ) : (
-          <ul className="mw-sprints">
-            {data.sprints.map((s) => (
-              <SprintStrip key={s.id} sprint={s} />
-            ))}
-          </ul>
-        )}
-      </section>
+          {data.sprints.length === 0 ? (
+            <p className="mw-none muted">
+              <span className="mw-none-title">Sprint của tôi</span> · không có task trong sprint đang chạy
+            </p>
+          ) : (
+            <section className="mw-block" aria-labelledby="mw-sprint-h">
+              <h2 id="mw-sprint-h" className="mw-h">
+                Sprint của tôi <span className="mw-count">{data.sprints.length}</span>
+              </h2>
+              <ul className="mw-sprints">
+                {data.sprints.map((s) => (
+                  <SprintStrip key={s.id} sprint={s} />
+                ))}
+              </ul>
+            </section>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -167,7 +241,7 @@ function AttentionRow({ item }: { item: AttentionItem }) {
   if (item.task) {
     subject = (
       <Link href={taskHref(item.task.key)} className="mw-subject">
-        <span className="mw-key">{item.task.key}</span> {item.task.title}
+        <span className="mw-key">{item.task.key}</span> <span className="mw-title">{item.task.title}</span>
       </Link>
     );
   } else if (item.mr) {
@@ -177,7 +251,7 @@ function AttentionRow({ item }: { item: AttentionItem }) {
         <span className="mw-key">
           {item.mr.project} !{item.mr.iid}
         </span>{" "}
-        {title}
+        <span className="mw-title">{title}</span>
         <Icon name="external" size={12} />
       </a>
     ) : (
@@ -185,7 +259,7 @@ function AttentionRow({ item }: { item: AttentionItem }) {
         <span className="mw-key">
           {item.mr.project} !{item.mr.iid}
         </span>{" "}
-        {title}
+        <span className="mw-title">{title}</span>
       </span>
     );
   } else if (key) {
@@ -222,12 +296,14 @@ function AttentionRow({ item }: { item: AttentionItem }) {
   return (
     <li className={`mw-row mw-kind-${item.kind}`}>
       <span className="mw-kind" title={kind.label}>
-        <Icon name={kind.icon} size={16} />
+        <Icon name={kind.icon} size={14} />
         <span className="visually-hidden">{kind.label}</span>
       </span>
       <div className="mw-main">
         {subject}
-        <span className="mw-text small muted">{item.text}</span>
+        <span className="mw-text small muted" title={item.text}>
+          {item.text}
+        </span>
       </div>
       {action && <div className="mw-action">{action}</div>}
     </li>
@@ -249,39 +325,43 @@ function TaskSection({
 }) {
   const [open, setOpen] = useState(!collapsed);
   const id = `mw-sec-${title.replace(/\s+/g, "-")}`;
+  // An empty group is one 32px line, not a block (§22.7).
+  if (rows.length === 0)
+    return (
+      <p className="mw-none muted">
+        <span className="mw-none-title">{title}</span> · {empty}
+      </p>
+    );
   return (
     <section className="mw-block" aria-labelledby={`${id}-h`}>
       <h2 id={`${id}-h`} className="mw-h">
         <button type="button" className="section-toggle mw-toggle" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
-          <Icon name={open ? "chevronDown" : "chevronRight"} size={16} />
+          <Icon name={open ? "chevronDown" : "chevronRight"} size={14} />
           {title} <span className="mw-count">{rows.length}</span>
         </button>
       </h2>
       <div id={id} hidden={!open}>
-        {rows.length === 0 ? (
-          <p className="muted small mw-empty">{empty}</p>
-        ) : (
-          <ul className="mw-list">
-            {rows.map((row) => (
-              <li key={row.key} className="mw-row mw-task">
-                <TypeIcon type={row.type} />
-                <div className="mw-main">
-                  <Link href={taskHref(row.key)} className="mw-subject">
-                    <span className="mw-key">{row.key}</span> {row.title}
-                  </Link>
-                  <span className="mw-meta">
-                    <StatusPill status={row.status} resolution={row.resolution} />
-                    <RowPriority row={row} />
-                    <PointsChip points={row.story_points} />
-                    {row.due_date && <span className="small muted">hạn {fmtDay(row.due_date)}</span>}
-                    <GitBadge row={row} />
-                    {extra?.(row)}
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+        <ul className="mw-list">
+          {rows.map((row) => (
+            <li key={row.key} className="mw-row mw-task">
+              <TypeIcon type={row.type} />
+              <Link href={taskHref(row.key)} className="mw-subject">
+                <span className="mw-key">{row.key}</span> <span className="mw-title">{row.title}</span>
+              </Link>
+              <span className="mw-meta">
+                {extra?.(row)}
+                {row.due_date && <span className="small muted">hạn {fmtDay(row.due_date)}</span>}
+                <GitBadge row={row} />
+                <StatusPill status={row.status} resolution={row.resolution} />
+                <RowPriority row={row} />
+                <PointsChip points={row.story_points} />
+              </span>
+              <Link href={taskHref(row.key)} className="button sm mw-hover-act" aria-label={`Mở ${row.key}`}>
+                Mở
+              </Link>
+            </li>
+          ))}
+        </ul>
       </div>
     </section>
   );

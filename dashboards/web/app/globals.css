@@ -19129,3 +19129,985 @@ a.button.tf-mine.active {
     overflow: visible;
   }
 }
+/* UI/UX other screens (docs/specs/31 §22.7): Việc của tôi (mw-), Báo cáo (rp-), Sức khoẻ sprint
+   (sh-), Phiên bản (vs-), Cài đặt + adoption + wizard stepper (st-). A main view takes the height
+   left under the shared frame: calc(100dvh - var(--tk-frame-h, 112px)). Empty states inside a
+   block stay at most 80px (§5). */
+
+/* -- shared bits: 40px toolbar, 28px chips, 32px search -- */
+.mw-toolbar,
+.rp-toolbar,
+.sh-toolbar,
+.vs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: visible;
+  scrollbar-width: none;
+}
+.rp-toolbar {
+  overflow: visible; /* the date popover and "Hiển thị" drop below */
+}
+.mw-search,
+.vs-search {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  width: 280px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+  transition: width var(--duration-fast) var(--ease-standard);
+}
+.mw-search:focus-within,
+.vs-search:focus-within {
+  width: 420px;
+  max-width: 100%;
+  border-color: var(--ring);
+  outline: 2px solid var(--ring);
+  outline-offset: 0;
+}
+.mw-search input,
+.vs-search input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--text);
+  font-size: 13px;
+}
+.mw-search input:focus,
+.vs-search input:focus {
+  outline: none;
+  box-shadow: none;
+}
+.mw-chip,
+.sh-chip select {
+  height: 28px;
+  padding: 0 28px 0 12px;
+  border-radius: 14px;
+  font-size: 13px;
+}
+.rp-spacer,
+.sh-spacer,
+.vs-spacer {
+  flex: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mw-search,
+  .vs-search {
+    transition: none;
+  }
+}
+
+/* -- Việc của tôi -- */
+.mw-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+}
+.mw-crumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+.mw-crumb a {
+  color: var(--muted);
+}
+.mw-crumb a:hover {
+  color: var(--text);
+}
+.mw-crumb h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+.mw-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: help;
+}
+.mw-help:focus-visible,
+.mw-hover-act:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.mw {
+  display: grid;
+  gap: 8px;
+}
+.mw-refresh {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.mw-cols {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+}
+.mw-col {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+}
+@media (min-width: 1280px) {
+  .mw-cols {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    height: calc(100dvh - var(--tk-frame-h, 112px) - 40px);
+    min-height: 320px;
+  }
+  .mw-col {
+    max-height: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 2px;
+  }
+}
+.mw .mw-block {
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+}
+.mw .mw-h {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+.mw .mw-toggle {
+  font-size: 14px;
+}
+/* An empty group: one 32px line instead of a block (§22.7). */
+.mw-none {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  margin: 0;
+  padding: 0 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mw-none-good {
+  color: var(--good);
+}
+.mw-none-title {
+  font-weight: 600;
+  color: var(--text-2);
+}
+.mw .mw-row {
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 4px 0;
+}
+.mw .mw-task {
+  height: 36px;
+  padding: 0;
+}
+.mw .mw-kind {
+  width: 24px;
+  height: 24px;
+}
+.mw .mw-main {
+  gap: 0;
+}
+.mw .mw-subject {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.mw-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mw .mw-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mw .mw-meta {
+  flex: none;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+.mw-hover-act {
+  flex: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+.mw-task:hover .mw-hover-act,
+.mw-task:focus-within .mw-hover-act {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .mw-hover-act {
+    display: none;
+  }
+}
+@media (max-width: 720px) {
+  .mw-search,
+  .mw-search:focus-within {
+    width: 100%;
+  }
+  .mw .mw-meta > :not(.tk-status):not(.pill) {
+    display: none;
+  }
+}
+
+/* -- Báo cáo -- */
+.rp {
+  display: grid;
+  gap: 8px;
+}
+.rp-toolbar .drp-trigger {
+  height: 28px;
+  border-radius: 14px;
+  font-size: 13px;
+}
+.rp-view {
+  position: relative;
+  flex: none;
+}
+.rp-view > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+}
+.rp-view > summary::-webkit-details-marker {
+  display: none;
+}
+.rp-view > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.rp-view-count {
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+}
+.rp-view-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  gap: 6px;
+  width: 240px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+.rp-view-title {
+  font-weight: 600;
+}
+/* 64px strip, 6 tiles on one row. */
+.rp-kpis .stat-strip {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+.rp-kpis .kstat {
+  justify-content: center;
+  gap: 2px;
+  height: 64px;
+  padding: 8px 14px;
+}
+.rp-kpis .kstat-value {
+  font-size: 20px;
+}
+.rp-kpis .kstat.link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.rp-kpis-skel {
+  height: 64px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.rp-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-items: start;
+}
+.rp-wide {
+  grid-column: 1 / -1;
+}
+.rp-card {
+  padding: 12px 16px;
+}
+.rp-card.flush {
+  padding: 0;
+}
+.rp-card > .card-head {
+  margin-bottom: 8px;
+}
+.rp-card.flush > .card-head {
+  padding: 12px 16px 0;
+}
+.rp-card .chart-box {
+  height: 220px;
+}
+.rp-table th,
+.rp-table td {
+  padding: 8px 12px;
+}
+.rp-cell-link {
+  color: inherit;
+}
+/* A chart with nothing to draw: an 80px card with the next step. */
+.rp-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 80px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  overflow: hidden;
+}
+.rp-empty-icon,
+.sh-empty-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.rp-empty-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.rp-empty-body > .small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rp-empty-actions {
+  margin-left: auto;
+}
+.rp-none {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 12px 0;
+}
+@media (max-width: 1100px) {
+  .rp-kpis .stat-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 900px) {
+  .rp-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* -- Sức khoẻ sprint -- */
+.sh {
+  display: grid;
+  gap: 8px;
+}
+.sh-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+.sh-chip-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+.sh-goal {
+  min-width: 0;
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 2×2: Dự báo, Kẹt, Tải, Chất lượng in one screen; each cell scrolls on its own. */
+.sh-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  height: calc(100dvh - var(--tk-frame-h, 112px) - 48px);
+  min-height: 480px;
+}
+.sh-cell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 16px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.sh-cell > .card-head {
+  margin-bottom: 8px;
+}
+.sh-forecast .stat-strip.inline .kstat {
+  padding: 6px 10px;
+}
+.sh-forecast .stat-strip.inline .kstat-value {
+  font-size: 18px;
+}
+.sh-chart.chart-box {
+  flex: 1;
+  height: auto;
+  min-height: 140px;
+}
+.sh-count {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 12px;
+}
+.sh-none {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  max-height: 80px;
+  margin: 0;
+  font-size: 13px;
+}
+.sh-good {
+  color: var(--good);
+}
+.sh-scope-h {
+  margin-top: 12px;
+}
+/* No sprint running: one compact card (≤ 80px). */
+.sh-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  max-height: 80px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.sh-empty-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.sh-empty-text strong {
+  color: var(--text);
+}
+.sh-empty-actions,
+.sh-latest-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+@media (max-width: 900px) {
+  .sh-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    height: auto;
+  }
+  .sh-cell {
+    overflow: visible;
+  }
+  .sh-empty {
+    flex-wrap: wrap;
+    max-height: none;
+    padding: 12px 16px;
+  }
+}
+
+/* -- Phiên bản -- */
+.vs {
+  display: grid;
+  gap: 8px;
+}
+.vs-toolbar .segmented button {
+  height: 26px;
+}
+.vs-card {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - var(--tk-frame-h, 112px) - 48px);
+}
+.vs-scroll {
+  overflow: auto;
+}
+.vs-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 36px;
+  padding: 0 12px;
+  background: var(--surface);
+}
+.vs-table td {
+  height: 36px;
+  padding: 4px 12px;
+}
+.vs-desc {
+  max-width: 48ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vs-ready-col {
+  min-width: 220px;
+}
+.vs-ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.vs-bar {
+  display: inline-block;
+  width: 72px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.vs-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--warning);
+}
+.vs-bar.ok > span {
+  background: var(--success);
+}
+.vs-bar-loading {
+  animation: vs-pulse 1.2s ease-in-out infinite;
+}
+@keyframes vs-pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vs-bar-loading {
+    animation: none;
+  }
+}
+.vs-gap-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--warn-soft);
+  box-shadow: none;
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.vs-gap-chip:hover:not(:disabled) {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+.vs-gap-chip:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.vs-none {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 48px;
+  max-height: 80px;
+  margin: 0;
+  padding: 0 16px;
+  font-size: 13px;
+}
+.vs-gaps {
+  display: grid;
+  gap: 12px;
+}
+.vs-gap-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.vs-gap-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.vs-gap-list li > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.vs-gap-list li.ok > svg {
+  color: var(--good);
+}
+.vs-gap-list li.miss > svg {
+  color: var(--bad-text);
+}
+.vs-gap-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .vs-search,
+  .vs-search:focus-within {
+    width: 200px;
+  }
+}
+
+/* -- Cài đặt: sticky 200px table of contents, sections scroll, one sticky save bar -- */
+.st {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 16px;
+  height: calc(100dvh - var(--tk-frame-h, 112px));
+  min-height: 420px;
+}
+.st-toc {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100%;
+  overflow-y: auto;
+}
+.st-toc ol {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.st-toc a {
+  display: block;
+  padding: 6px 12px;
+  border-left: 2px solid transparent;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: none;
+}
+.st-toc a:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.st-toc a.active {
+  border-left-color: var(--accent);
+  background: var(--primary-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+.st-toc a:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.st-body {
+  position: relative;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding-top: 8px;
+}
+.st-sections {
+  padding-bottom: 16px;
+}
+.st-sec {
+  scroll-margin-top: 8px;
+}
+.st-sec:focus {
+  outline: none;
+}
+.st-sec:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-card);
+}
+.st-savebar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-field);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  color: var(--warn);
+}
+.st-savebar-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-saved {
+  position: sticky;
+  bottom: 0;
+  margin: 0;
+  padding: 6px 0;
+  background: var(--bg);
+  color: var(--good);
+}
+.st-autosave {
+  min-width: 64px;
+  text-align: right;
+}
+.st-note {
+  margin: 8px 0 0;
+}
+/* Muted second line for long explanations, one line with the full text on hover. */
+.st-sub {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Priorities: a row shows the current value; a click opens its editor. */
+.st-prio-list,
+.st-rule-list,
+.st-auto-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.st-prio {
+  border-bottom: 1px solid var(--border);
+}
+.st-prio:last-child {
+  border-bottom: 0;
+}
+.st-prio-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+}
+.st-prio-sum {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--text);
+  font-weight: 400;
+  text-align: left;
+}
+.st-prio-sum:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+.st-prio-sum:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.st-prio-default {
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  background: var(--info-soft);
+  color: var(--info);
+  font-weight: 600;
+}
+.st-prio-edit {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px 12px;
+  align-items: end;
+  padding: 8px 8px 12px;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+}
+.st-prio-default-pick {
+  height: 36px;
+}
+/* Git rules and automation: compact one-line rows. */
+.st-rule-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0 16px;
+  margin-bottom: 12px;
+}
+.st-rule {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.st-rule-text,
+.st-auto-name {
+  display: grid;
+  min-width: 0;
+}
+.st-auto {
+  border-bottom: 1px solid var(--border);
+}
+.st-auto:last-child {
+  border-bottom: 0;
+}
+.st-auto-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 4px 0;
+}
+.st-auto:not(.on) .st-auto-name strong {
+  color: var(--muted);
+}
+.st-auto-params {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.st-auto-params .ta-param input {
+  width: 64px;
+  height: 28px;
+}
+.st-auto .nr-dry-result {
+  margin: 0 0 8px 32px;
+}
+@media (max-width: 900px) {
+  .st {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+  .st-toc {
+    position: static;
+    overflow-x: auto;
+  }
+  .st-toc ol {
+    display: flex;
+    gap: 4px;
+  }
+  .st-toc a {
+    border-left: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    white-space: nowrap;
+  }
+  .st-toc a.active {
+    border-bottom-color: var(--accent);
+  }
+  .st-body {
+    overflow: visible;
+  }
+  .st-auto-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .st-auto-when,
+  .st-auto-params,
+  .st-auto-try {
+    grid-column: 2;
+  }
+}
+
+/* -- Adoption page and wizard -- */
+.st-compact th,
+.st-compact td {
+  height: 36px;
+  padding: 4px 12px;
+}
+.st-compact thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+/* One-line horizontal stepper: ① Mã → ② Mẫu → …; the list's own numbers are off. */
+ol.st-stepper,
+ol.st-stepper > li {
+  list-style: none;
+}
+ol.st-stepper {
+  flex-wrap: nowrap;
+  gap: 8px;
+  padding-left: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
+ol.st-stepper > li {
+  flex: none;
+  gap: 6px;
+}
+.st-step-sep {
+  color: var(--faint);
+}
+@media (max-width: 720px) {
+  ol.st-stepper > li:not(.current) .st-step-label {
+    display: none;
+  }
+}
