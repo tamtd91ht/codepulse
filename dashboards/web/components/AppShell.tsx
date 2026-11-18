@@ -124,7 +124,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     ...(isAdmin ? [{ href: "/admin", label: "Admin", icon: "settings" } as Item]
       : []),
     // docs/specs/21 §10: the Lead / Manager of a dự án sets it up here (admins use Admin).
-    ...(me && !isAdmin && (setup === null || setup.length > 0)
+    // Holding project.setup is enough to see the menu: with no dự án covered yet, the page
+    // says which grant is missing instead of the menu silently not being there.
+    ...(me && !isAdmin && (setup === null || setup.length > 0 || can(me, "project.setup"))
       ? [{ href: "/project-admin", label: "Quản trị dự án", icon: "folder" } as Item]
       : []),
     // Stetho (docs/specs/28): one menu, tabs Tri thức | Lịch sử inside (components/StethoTabs);

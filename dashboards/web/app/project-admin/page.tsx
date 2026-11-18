@@ -90,7 +90,13 @@ export default function ProjectAdminPage() {
         <Loading rows={3} />
       ) : !allowed ? (
         <EmptyState icon="folder" title="Bạn chưa quản trị dự án nào">
-          Admin giao dự án cho bạn bằng vai trò Lead dự án hoặc Manager dự án ở Admin › Dự án &amp; Repo › Quyền truy cập.
+          {me.permissions?.["project.setup"] === "all"
+            ? "Bạn có quyền Quản trị dự án trên mọi dự án mình được xem, nhưng chưa được cấp quyền vào dự án nào."
+            : me.permissions?.["project.setup"]
+              ? "Bạn có quyền Quản trị dự án trên các dự án mình quản lý (quyền Quản lý), nhưng chưa quản lý dự án nào."
+              : null}{" "}
+          Admin giao dự án cho bạn ở Admin › Dự án &amp; Repo › Quyền truy cập: chọn vai trò Lead dự án / Manager dự án
+          (hoặc quyền Quản lý).
         </EmptyState>
       ) : !projects.data || !repos.data ? (
         <Loading error={projects.error ?? repos.error} rows={3} />
