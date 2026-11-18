@@ -224,7 +224,12 @@ Gán bộ quyền trước đây chỉ làm được bên trong một bộ tự 
   (CHECK). Lead/Manager dự án vì vậy có luôn bộ **Quản lý dự án** của dự án đó.
 - Quyền mới `project.setup` (phạm vi `project`/`all`). Bộ có sẵn mới **Quản trị dự án**
   (`auto_role = project_admin`) giữ `project.setup` ở `project`, tự gán cho người có `admin_role`.
-  - `project` = các dự án mình là Lead/Manager; `all` = mọi dự án mình có quyền `manage`.
+  - `project` = các dự án mình có quyền `manage` (Lead/Manager dự án luôn có `manage`);
+    `all` = mọi dự án mình được xem — cùng nghĩa với mọi quyền khác.
+  - Sửa 2026-11-18: trước đây `project` chỉ tính dự án có `admin_role`, nên `project.setup` cấp
+    tay (bộ tự tạo, quyền riêng) cho người quản lý dự án thường không phủ dự án nào và menu
+    **Quản trị dự án** không hiện. Menu cũng hiện cho người giữ `admin.projects` được uỷ quyền
+    (`setup_projects = null`), trước đây bị ẩn nhầm.
   - Admin có thể sửa bộ này hoặc cấp `project.setup` qua bộ tự tạo như mọi quyền khác.
 - `Principal.project_admin`, `can_setup_project`, `setup_projects`, `can_staff_project`;
   `/auth/me` trả `project_admin` và `setup_projects` (null = mọi dự án, tức `admin.projects`).

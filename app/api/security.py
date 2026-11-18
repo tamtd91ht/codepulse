@@ -245,15 +245,18 @@ class Principal:
     def can_setup_project(self, bp_id: int | None) -> bool:
         """Add repos to dự án `bp_id`, configure them, its .claude repo, rule files and review
         rules: `admin.projects` (every dự án), else `project.setup` at "project" on the dự án
-        one is Lead / Manager of, or at "all" on every dự án one manages."""
+        one manages (Lead / Manager dự án always hold a manage grant), or at "all" on every
+        dự án one sees, the meaning "project" / "all" have for every other permission
+        (2026-11-18: a project.setup granted by hand at "project" to a plain manager used to
+        cover nothing, so the menu never showed)."""
         if bp_id is None or self._bound_out(bp_id):
             return False
         if self.can("admin.projects"):
             return True
         held = self.perms.get("project.setup")
         if held == "all":
-            return self.can_manage_project(bp_id)
-        return held == "project" and bp_id in self.project_admin
+            return self.can_view_project(bp_id)
+        return held == "project" and self.can_manage_project(bp_id)
 
     def setup_projects(self) -> set[int] | None:
         """The dự án this person sets up; None: every one (admin.projects)."""

@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AuditLog, BusinessProject, Project, ProjectGrant
+from app.models import AuditLog, BusinessProject, PermissionSetItem, Project, ProjectGrant
 from tests.api.conftest import World
 
 pytestmark = pytest.mark.integration
@@ -18,9 +18,9 @@ pytestmark = pytest.mark.integration
 API = "https://gitlab.example.com/api/v4"
 
 
-def empty_project(client: TestClient, world: World, as_user: Any) -> int:
+def empty_project(client: TestClient, world: World, as_user: Any, name: str = "OmiCRM") -> int:
     res = client.post(
-        "/api/v1/business-projects", headers=as_user(world.admin), json={"name": "OmiCRM"}
+        "/api/v1/business-projects", headers=as_user(world.admin), json={"name": name}
     )
     assert res.status_code == 201, res.text
     return int(res.json()["id"])
@@ -343,3 +343,45 @@ def test_a_repo_outside_every_du_an_is_not_taken_by_link(
     assert res.status_code == 409, res.text
     db_session.refresh(loose)
     assert loose.business_project_id is None
+
+
+def test_a_hand_granted_project_setup_covers_the_du_an_one_manages(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    """2026-11-18: project.setup ticked by an admin for a plain manager of a dự án (no Lead /
+    Manager dự án role) used to cover nothing, so "Quản trị dự án" never showed."""
+    from tests.api.test_permissions_escalation import give
+
+    bp_id = empty_project(client, world, as_user)
+    other = empty_project(client, world, as_user, "OmiCall")
+    res = client.put(
+        f"/api/v1/business-projects/{bp_id}/grants",
+        headers=as_user(world.admin),
+        json={"grants": [{"user_id": world.an.id, "role": "manage"}]},
+    )
+    assert res.status_code == 200
+    res = client.put(
+        f"/api/v1/business-projects/{other}/grants",
+        headers=as_user(world.admin),
+        json={"grants": [{"user_id": world.an.id, "role": "view"}]},
+    )
+    assert res.status_code == 200
+    an = as_user(world.an)
+
+    custom = give(db_session, world.an, {"project.setup": "project"})
+    me = client.get("/api/v1/auth/me", headers=an).json()
+    assert me["permissions"]["project.setup"] == "project"
+    assert me["setup_projects"] == [bp_id]
+    assert [b["id"] for b in client.get("/api/v1/business-projects", headers=an).json()] == [bp_id]
+    assert add_repo(client, an, bp_id, 4301).status_code == 201
+    # Only managing gives "project": not the dự án one merely sees.
+    assert add_repo(client, an, other, 4302).status_code == 403
+
+    # "all": every dự án one sees.
+    item = db_session.scalars(
+        select(PermissionSetItem).where(PermissionSetItem.set_id == custom.id)
+    ).one()
+    item.scope = "all"
+    db_session.flush()
+    me = client.get("/api/v1/auth/me", headers=an).json()
+    assert {bp_id, other} <= set(me["setup_projects"])

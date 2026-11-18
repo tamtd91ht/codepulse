@@ -118,11 +118,13 @@ export function AppShell({ children }: { children: ReactNode }) {
           : []),
       ]
     : [];
+  // docs/specs/21 §10: null = every dự án (a delegated admin.projects), else the ones set up.
+  const setup = setupProjects(me);
   const secondary: Item[] = [
     ...(isAdmin ? [{ href: "/admin", label: "Admin", icon: "settings" } as Item]
       : []),
     // docs/specs/21 §10: the Lead / Manager of a dự án sets it up here (admins use Admin).
-    ...(me && !isAdmin && (setupProjects(me)?.length ?? 0) > 0
+    ...(me && !isAdmin && (setup === null || setup.length > 0)
       ? [{ href: "/project-admin", label: "Quản trị dự án", icon: "folder" } as Item]
       : []),
     // Stetho (docs/specs/28): one menu, tabs Tri thức | Lịch sử inside (components/StethoTabs);

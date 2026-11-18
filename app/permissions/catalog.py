@@ -279,8 +279,8 @@ CATALOG: tuple[Permission, ...] = (
         "Trợ lý",
         "Dạy Stetho: nhập tài liệu (file, link), lưu câu trả lời làm tri thức, bật tra web",
     ),
-    # docs/specs/21 §10: setting a dự án up without being admin. "project" = the dự án one is
-    # Lead / Manager of (project_grants.admin_role); "all" = every dự án one manages.
+    # docs/specs/21 §10: setting a dự án up without being admin. "project" = every dự án one
+    # manages (a Lead / Manager dự án always holds a manage grant); "all" = every dự án one sees.
     _p(
         "project.setup",
         "Quản trị dự án",
