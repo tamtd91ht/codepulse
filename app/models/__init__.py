@@ -42,6 +42,7 @@ from app.models.dpi import (
     ReviewComment,
 )
 from app.models.evidence import EvidenceItem, EvidencePack
+from app.models.feedback import FeedbackExport, FeedbackItem
 from app.models.identity import Account, Team, TeamMember, User
 from app.models.jira import JiraProject, JiraProjectScope
 from app.models.knowledge import ReviewKnowledge, ReviewKnowledgeEdit
@@ -153,6 +154,8 @@ __all__ = [
     "DpiUserProfile",
     "EvidenceItem",
     "EvidencePack",
+    "FeedbackExport",
+    "FeedbackItem",
     "FindingClosure",
     "FindingDispute",
     "Incident",

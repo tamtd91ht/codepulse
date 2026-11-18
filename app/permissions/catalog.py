@@ -287,6 +287,14 @@ CATALOG: tuple[Permission, ...] = (
         "Thêm repo, cấu hình repo, repo .claude, file quy tắc, quy tắc review của dự án",
         "project all",
     ),
+    # docs/specs/32: Phản ánh & Đề xuất. Everyone sends; only admins (or a set an admin grants
+    # it in) read every report, triage and export them.
+    _p("feedback.submit", "Phản ánh & Đề xuất", "Gửi phản ánh, đề xuất; xem phản ánh của mình"),
+    _p(
+        "feedback.manage",
+        "Phản ánh & Đề xuất",
+        "Xem mọi phản ánh, phân loại, đổi trạng thái, export cho agent code",
+    ),
     _p("admin.connections", "Quản trị", "Kết nối GitLab"),
     _p(
         "admin.projects",
@@ -365,6 +373,7 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "tasks.attach": FLAG,
             "tasks.worklog": "own",
             "tasks.link": "own",
+            "feedback.submit": FLAG,
         },
     ),
     BuiltinSet(

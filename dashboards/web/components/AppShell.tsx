@@ -132,6 +132,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     // Stetho (docs/specs/28): one menu, tabs Tri thức | Lịch sử inside (components/StethoTabs);
     // the link opens the first tab one may see.
     ...(me && stethoHome(me) ? [{ href: stethoHome(me) as string, label: "Stetho", icon: "stethoscope" } as Item] : []),
+    // Phản ánh & Đề xuất (docs/specs/32): everyone sends (feedback.submit); managers triage.
+    ...(can(me, "feedback.submit") || can(me, "feedback.manage")
+      ? [{ href: "/feedback", label: "Phản ánh & Đề xuất", icon: "message" } as Item]
+      : []),
     { href: "/guide", label: "Hướng dẫn", icon: "book" },
   ];
 
@@ -170,10 +174,13 @@ export function AppShell({ children }: { children: ReactNode }) {
       (item.href !== "/members" &&
         under(item.href) &&
         !primary.some((other) => other.href.length > item.href.length && under(other.href)));
+    // Phản ánh opens with the page one was on, which suggests the area (docs/specs/32 §4).
+    const target =
+      item.href === "/feedback" && !under("/feedback") && pathname !== "/" ? `/feedback?from=${encodeURIComponent(pathname)}` : item.href;
     return (
       <Link
         key={item.href}
-        href={item.href}
+        href={target}
         className={`nav-link${active ? " active" : ""}`}
         aria-current={active ? "page" : undefined}
         title={rail ? item.label : undefined}

@@ -25,3 +25,4 @@
 - (2026-11-16, spec 21 §10) Giới hạn repo Lead/Manager dự án được thêm theo group GitLab cho từng dự án (allow-list), hoặc kiểm tra người đó là thành viên repo trên GitLab; hiện token bot thấy repo nào thì họ đăng ký được repo đó.
 - (2026-11-16, spec 31) (đã làm DPI đọc task: spec 31 §15) Công cụ nhập một dự án từ Jira sang Task một lần trước khi bỏ Jira.
 - (2026-11-16, spec 31) Thông báo task qua Telegram / webhook thông báo; kéo thả bằng bàn phím trên Board; gợi ý @tên khi gõ bình luận.
+- (2026-11-18, spec 32) Phản ánh: dán ảnh chụp màn hình như Task; +1 / bình chọn công khai cho phản ánh của người khác; gửi nhanh từ nút nổi ở mọi trang; thông báo cho tác giả khi trạng thái đổi (inbox / Telegram).

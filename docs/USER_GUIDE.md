@@ -102,6 +102,21 @@ Menu **Task** (docs/specs/31) quản lý việc của dự án như Jira, độc
 - Finding có nhãn quy tắc (ví dụ *Tenant isolation*) nghĩa là vi phạm quy tắc do admin/lead của dự án đặt.
 - Review có nhãn **Review sâu** nghĩa là reviewer đã mở mã nguồn để đối chứng: thẻ *Đối chứng trong mã nguồn* cho biết finding nào được giữ, hạ mức hay loại bỏ và vì sao (kèm file bằng chứng). Finding ghi *[ngoài phần thay đổi]* là vấn đề có sẵn trong code cũ, báo để bạn biết, không tính vào điểm của bạn.
 
+## 3c. Phản ánh & Đề xuất
+
+Menu **Phản ánh & Đề xuất** (ai cũng có): báo lỗi, đề xuất tính năng, góp ý cải tiến hoặc hỏi
+cách dùng CodePulse. Mở menu từ trang đang gặp vấn đề thì lĩnh vực và trang được điền sẵn. Chọn
+loại, viết tiêu đề và mô tả (khung gợi ý "Hiện tại / Mong muốn / Vì sao"), bấm **Gửi phản ánh**.
+Tên bạn đi kèm phản ánh. AI đọc trong vài giây: phân loại Lĩnh vực ▸ Chức năng, ưu tiên, tóm tắt,
+tiêu chí chấp nhận và các phản ánh trùng. Danh sách bên phải cho biết trạng thái (Mới, Đã nhận,
+Đã lên kế hoạch, Đã xong, Từ chối) và phản hồi của người duyệt; còn **Mới** thì bạn sửa / xoá được.
+
+Người có quyền **feedback.manage** (admin; cấp thêm ở Admin › Phân quyền) thấy tab **Tổng hợp**:
+cây Lĩnh vực ▸ Chức năng bên trái, danh sách có ô chọn ở giữa, chi tiết + phân loại bên phải.
+Tick các phản ánh (hoặc cả nhánh cây), bấm **Export .md** ở thanh dưới: ra một file Markdown cho
+agent code (hướng dẫn, bảng tóm tắt, từng mục với tác giả, tiêu chí chấp nhận, nội dung gốc). Gói
+được lưu ở **Lịch sử export** để tải lại.
+
 ## 4. Bot Telegram (nếu dự án của bạn có)
 
 - Liên kết một lần: **Của tôi → Telegram → Tạo mã liên kết**, gửi `/link MÃ` cho bot. Gõ `/whoami` để kiểm tra.

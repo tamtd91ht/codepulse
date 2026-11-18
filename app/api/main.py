@@ -33,6 +33,7 @@ from app.api.routers import (
     dpi,
     evaluation,
     evidence,
+    feedback,
     inbox,
     insights,
     jira,
@@ -195,6 +196,7 @@ for api_router in (
     task_switchover.router,  # docs/specs/31 §21.6 /tasks/spaces/{id}/switchover, demo
     task_live.router,  # docs/specs/31 §21.7 /tasks/spaces/{bp}/live (SSE), before tasks
     tasks.router,  # docs/specs/31; its static paths come before /tasks/{key} inside
+    feedback.router,  # docs/specs/32 Phản ánh & Đề xuất (static paths before /{item_id} inside)
     usage.router,  # docs/specs/31 §21.2: anonymous usage beacon and the admins' summary
 ):
     app.include_router(api_router, prefix="/api/v1")

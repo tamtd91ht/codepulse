@@ -35,6 +35,7 @@ Tự động thu thập commit/MR từ GitLab, cho AI review từng thay đổi,
 | 29 | `29_PROJECT_DOCS.md` | **Tài liệu dự án**: tải nhiều file (Word/PDF/Markdown/Excel), hiển thị thống nhất có mục lục, tìm không dấu, phiên bản + so sánh + khôi phục, mẫu tài liệu, độ đầy đủ | [ ] |
 | 30 | `30_TESTCASES.md` | **Testcase**: kho testcase có cấu trúc + lịch sử, nhập/xuất Google Sheet / Excel, AI sinh và rà soát testcase, testcase cần test lại theo MR / đợt release, review nhắc thiếu test; **mô hình TestRail** (§13–§14): cây thư mục, dạng bước, bước dùng chung, milestone, cấu hình, test plan / run / kết quả, mã tự sinh | [ ] |
 | 27 | `27_JIRA.md` | **Jira Data Center làm nguồn task cho DPI**: chỉ đọc, sync JQL, Story Points → độ phức tạp, nối issue ↔ MR theo key, chọn nguồn task gitlab/jira | [ ] |
+| 32 | `32_FEEDBACK.md` | **Phản ánh & Đề xuất**: mọi người gửi lỗi / đề xuất; LLM phân loại thành bản .md trên cây Lĩnh vực ▸ Chức năng; người quản lý duyệt, tick chọn, export một file .md cho agent code | [x] |
 
 ## Cách dùng với AI agent
 1. Copy toàn bộ thư mục này vào `docs/specs/` của repo mới.
