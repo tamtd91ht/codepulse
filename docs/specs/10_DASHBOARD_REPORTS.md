@@ -44,6 +44,12 @@
   `shown_closed_as`.
 - [x] Bước kiểm gặp finding đã đóng cách khác trước khi chạy: yêu cầu thành `cancelled` với lý do "Finding đã được
   đóng trước khi kiểm …: không cần nữa" (trước là `rejected`, dễ đọc thành bị từ chối); UI ghi "Không cần nữa".
+- [x] **Chạy AI review nhiều yêu cầu một lần** (user 2026-11-19): tab **Chờ duyệt** có cột checkbox cho các yêu cầu
+  người xem được duyệt và chạy được (`pending`, `failed`, `unmet`), hàng chọn ở đầu danh sách ("Đã chọn N / M" ·
+  Bỏ chọn · **Chạy AI review N**, hỏi xác nhận vì tốn ngân sách LLM). `POST /close-requests/run {ids (1–100)}`
+  (`finding.close_decide`) → 202 `{started, failed: [{id, error}]}`: mỗi yêu cầu theo đúng luật của
+  `/close-requests/{id}/run`; yêu cầu không chạy được (không có quyền, đã được người khác duyệt, finding đã đóng,
+  hàng đợi lỗi) báo kèm lý do, không chặn các yêu cầu khác.
 
 ### 4. Review Detail
 - [ ] Summary, điểm, findings với code excerpt, nút Dispute

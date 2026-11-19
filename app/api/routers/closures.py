@@ -601,6 +601,45 @@ def run_request(
     return closure
 
 
+class RunManyIn(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=100)
+
+
+class RunFailure(BaseModel):
+    id: int
+    error: str
+
+
+class RunManyOut(BaseModel):
+    started: list[int]
+    failed: list[RunFailure]
+
+
+@router.post("/close-requests/run", response_model=RunManyOut, status_code=202)
+def run_requests(
+    body: RunManyIn,
+    principal: DeciderPrincipal,
+    session: SessionDep,
+    queue: Annotated[Any, Depends(get_queue)],
+) -> dict[str, Any]:
+    """ "Chạy review" for several requests at once (the checkboxes of "Chờ duyệt", user
+    2026-11-19): each under the rules of the single run; one that cannot start is reported with
+    its reason and does not stop the others."""
+    started: list[int] = []
+    failed: list[dict[str, Any]] = []
+    for closure_id in dict.fromkeys(body.ids):
+        try:
+            closure = _request(session, closure_id)
+            _decider(session, principal, closure)
+            start_check(session, closure, queue, principal.user_id)
+        except HTTPException as exc:
+            session.rollback()  # each started one is committed already
+            failed.append({"id": closure_id, "error": str(exc.detail)})
+        else:
+            started.append(closure_id)
+    return {"started": started, "failed": failed}
+
+
 def start_check(
     session: Session, closure: FindingClosure, queue: Any, actor_id: int | None
 ) -> None:

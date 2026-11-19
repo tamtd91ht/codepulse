@@ -90,6 +90,16 @@ const KIND: Record<string, string> = {
   reopen: "Admin mở lại",
 };
 
+/** A request the decider may send to the check ("Chạy review", or again after a miss). */
+function runnable(c: ClosureListItem): boolean {
+  return !!c.can_decide && (c.status === "pending" || c.status === "failed" || c.status === "unmet");
+}
+
+interface RunManyOut {
+  started: number[];
+  failed: { id: number; error: string }[];
+}
+
 const EMPTY = { status: "", kind: "", severity: "", bp: "", repo: "", author: "", from: "", to: "", q: "" };
 type Filters = typeof EMPTY;
 
@@ -100,6 +110,8 @@ export default function ClosuresPage() {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [sending, setSending] = useState(false);
 
   // Start where there is something to do: a decider with requests waiting lands on them.
   useEffect(() => {
@@ -150,6 +162,49 @@ export default function ClosuresPage() {
     await Promise.all([pages.mutate(), facets.mutate()]);
   };
 
+  // Several requests checked at once (user 2026-11-19), only on "Chờ duyệt".
+  const selectable = view === "todo" ? items.filter(runnable) : [];
+  const selected = selectable.filter((c) => picked.has(c.id));
+  const allPicked = selectable.length > 0 && selected.length === selectable.length;
+  const togglePick = (id: number) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const runMany = async () => {
+    const ids = selected.map((c) => c.id);
+    const findingOf = new Map(selected.map((c) => [c.id, c.finding.id]));
+    if (!ids.length || !window.confirm(`Chạy AI review ${ids.length} yêu cầu? Mỗi yêu cầu là một lần gọi model (tốn ngân sách LLM).`)) return;
+    setSending(true);
+    const out: RunManyOut = { started: [], failed: [] };
+    try {
+      for (let i = 0; i < ids.length; i += 100) {
+        const part = await api.post<RunManyOut>("/close-requests/run", { ids: ids.slice(i, i + 100) });
+        out.started.push(...part.started);
+        out.failed.push(...part.failed);
+      }
+      const why =
+        out.failed
+          .slice(0, 5)
+          .map((x) => `finding #${findingOf.get(x.id) ?? x.id}: ${x.error}`)
+          .join("; ") + (out.failed.length > 5 ? `; và ${out.failed.length - 5} yêu cầu khác` : "");
+      setMessage(
+        out.failed.length === 0
+          ? `Đã gửi ${out.started.length} yêu cầu đi review; kết quả hiện ở đây sau ít phút.`
+          : `Đã gửi ${out.started.length} yêu cầu đi review, ${out.failed.length} không chạy được (${why}).`,
+      );
+    } catch (e) {
+      const done = out.started.length ? `Đã gửi ${out.started.length} yêu cầu; phần còn lại ` : "";
+      setMessage(`${done}Không gửi được: ${e instanceof ApiError ? e.message : String(e)}`);
+    } finally {
+      setPicked(new Set());
+      setSending(false);
+      await refresh();
+    }
+  };
+
   const f = facets.data;
   const repos = f ? (filters.bp ? f.repos.filter((r) => String(r.business_project_id) === filters.bp) : f.repos) : [];
 
@@ -167,6 +222,7 @@ export default function ClosuresPage() {
               onChange={(v) => {
                 setTab(v);
                 setOpen(null);
+                setPicked(new Set());
               }}
               options={[
                 { value: "todo", label: `Chờ duyệt${f.todo ? ` · ${f.todo}` : ""}` },
@@ -314,10 +370,47 @@ export default function ClosuresPage() {
         </Card>
       ) : (
         <Card flush>
+          {selectable.length > 0 && (
+            <div className={`closure-selbar${selected.length ? " selecting" : ""}`}>
+              <label className="closure-selbar-check">
+                <input
+                  type="checkbox"
+                  checked={allPicked}
+                  ref={(el) => {
+                    if (el) el.indeterminate = selected.length > 0 && !allPicked;
+                  }}
+                  onChange={() => setPicked(allPicked ? new Set() : new Set(selectable.map((c) => c.id)))}
+                  aria-label="Chọn mọi yêu cầu chạy review được"
+                />
+                {selected.length ? (
+                  <span>
+                    Đã chọn <strong>{selected.length}</strong> / {selectable.length}
+                  </span>
+                ) : (
+                  <span className="muted small">Chọn nhiều yêu cầu để chạy AI review một lần</span>
+                )}
+              </label>
+              {selected.length > 0 && (
+                <div className="closure-selbar-actions">
+                  <button type="button" className="sm ghost" onClick={() => setPicked(new Set())} disabled={sending}>
+                    Bỏ chọn
+                  </button>
+                  <button type="button" className="sm primary" onClick={() => void runMany()} disabled={sending}>
+                    {sending ? "Đang gửi…" : `Chạy AI review ${selected.length}`}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           <div className="table-wrap">
             <table className="closures">
               <thead>
                 <tr>
+                  {selectable.length > 0 && (
+                    <th className="check-col">
+                      <span className="visually-hidden">Chọn</span>
+                    </th>
+                  )}
                   <th>Finding</th>
                   <th>Thành viên</th>
                   <th>Cách đóng</th>
@@ -332,6 +425,18 @@ export default function ClosuresPage() {
                   return (
                     <Fragment key={c.id}>
                       <tr className={expanded ? "open" : undefined}>
+                        {selectable.length > 0 && (
+                          <td className="check-col">
+                            {runnable(c) && (
+                              <input
+                                type="checkbox"
+                                checked={picked.has(c.id)}
+                                onChange={() => togglePick(c.id)}
+                                aria-label={`Chọn yêu cầu đóng finding #${c.finding.id} để chạy review`}
+                              />
+                            )}
+                          </td>
+                        )}
                         <td style={{ whiteSpace: "normal", minWidth: 260 }}>
                           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                             <SeverityBadge severity={c.finding.severity} />
@@ -390,7 +495,7 @@ export default function ClosuresPage() {
                       </tr>
                       {expanded && (
                         <tr className="closure-detail">
-                          <td colSpan={5}>
+                          <td colSpan={selectable.length > 0 ? 6 : 5}>
                             <Detail closure={c} onDone={refresh} onMessage={setMessage} />
                           </td>
                         </tr>

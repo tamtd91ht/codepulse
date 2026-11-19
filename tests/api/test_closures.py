@@ -1444,3 +1444,28 @@ def test_the_last_commit_touching_a_file_decides_whether_it_is_deleted(settings:
         [(old, 0, FIRST, "edit", [DIFF]), (new, 1, SECOND, "drop", [DELETED_FILE])], settings
     )
     assert dropped.deleted == ["app/a.py"] and dropped.files == []
+
+
+def test_several_requests_run_at_once(
+    client: TestClient, world: World, as_user: Any, queue: FakeQueue
+) -> None:
+    """The checkboxes of "Chờ duyệt": one call starts each check; one that cannot start is
+    reported with its reason and does not stop the others."""
+    closure_id = ask(client, world, as_user, world.an, [FIX]).json()["id"]
+    url = "/api/v1/close-requests/run"
+    body = {"ids": [closure_id, 999_999, closure_id]}
+    # Not a decider: the whole call is refused.
+    assert client.post(url, json=body, headers=as_user(world.an)).status_code == 403
+    assert client.post(url, json={"ids": []}, headers=as_user(world.manager)).status_code == 422
+
+    out = client.post(url, json=body, headers=as_user(world.manager))
+    assert out.status_code == 202
+    assert out.json()["started"] == [closure_id]
+    assert [f["id"] for f in out.json()["failed"]] == [999_999]
+    assert len(queue.jobs) == 1
+    todo = client.get("/api/v1/close-requests?view=todo", headers=as_user(world.manager)).json()
+    assert [i["status"] for i in todo["items"] if i["id"] == closure_id] in ([], ["checking"])
+
+    again = client.post(url, json={"ids": [closure_id]}, headers=as_user(world.lead)).json()
+    assert again["started"] == [] and again["failed"][0]["id"] == closure_id
+    assert len(queue.jobs) == 1

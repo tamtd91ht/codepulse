@@ -4788,6 +4788,36 @@ td.check-col {
 table.closures tr.open td {
   border-bottom-color: transparent;
 }
+/* Đóng finding › Chờ duyệt: the list's own selection row for "Chạy AI review" on several. */
+.closure-selbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  min-height: 44px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+.closure-selbar.selecting {
+  background: var(--primary-soft);
+  border-bottom-color: var(--border-strong);
+}
+.closure-selbar-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  cursor: pointer;
+}
+.closure-selbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
 tr.closure-detail td {
   background: var(--bg-elevated);
   white-space: normal;
