@@ -149,8 +149,8 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
     <>
       <Message text={note} onClose={() => setNote(null)} />
       {board.truncated && <Alert tone="warning">Chỉ hiện 2.000 phản ánh mới nhất.</Alert>}
-      <div className="fb-board">
-        <aside className="card fb-tree" aria-label="Cây phản ánh">
+      <div className="fbk-board">
+        <aside className="card fbk-tree" aria-label="Cây phản ánh">
           <TreeView
             board={board}
             rows={filtered}
@@ -186,17 +186,17 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
           />
         </aside>
 
-        <section className="card fb-list" aria-labelledby="fb-list-title">
-          <div className="fb-list-head">
+        <section className="card fbk-list" aria-labelledby="fbk-list-title">
+          <div className="fbk-list-head">
             <div>
-              <h2 id="fb-list-title">{nodeLabel}</h2>
+              <h2 id="fbk-list-title">{nodeLabel}</h2>
               <span className="muted small">
                 {shown.length} phản ánh{filtered.length !== items.length ? ` (đã lọc từ ${items.length})` : ""}
               </span>
             </div>
           </div>
-          <div className="fb-filters">
-            <label className="fb-search">
+          <div className="fbk-filters">
+            <label className="fbk-search">
               <Icon name="search" size={14} />
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tìm tiêu đề, tác giả, #id" aria-label="Tìm phản ánh" />
             </label>
@@ -219,8 +219,8 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
               <option value="new">Mới nhất trước</option>
             </select>
           </div>
-          <div className={`fb-rows-head${picked.size ? " selecting" : ""}`} role={picked.size ? "region" : undefined} aria-label={picked.size ? "Phản ánh đã chọn" : undefined}>
-            <label className="fb-rows-check">
+          <div className={`fbk-rows-head${picked.size ? " selecting" : ""}`} role={picked.size ? "region" : undefined} aria-label={picked.size ? "Phản ánh đã chọn" : undefined}>
+            <label className="fbk-rows-check">
               <input
                 type="checkbox"
                 checked={allShown}
@@ -232,7 +232,7 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
                 aria-label={`Chọn ${shown.length} phản ánh đang hiện`}
               />
               {picked.size ? (
-                <span className="fb-sel-count">
+                <span className="fbk-sel-count">
                   Đã chọn <strong>{picked.size}</strong>
                   <span className="muted">
                     {" "}
@@ -244,7 +244,7 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
               )}
             </label>
             {picked.size > 0 && (
-              <div className="fb-sel-actions">
+              <div className="fbk-sel-actions">
                 <button type="button" className="ghost sm" onClick={() => setPicked(new Set())}>
                   Bỏ chọn
                 </button>
@@ -273,30 +273,30 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
               Thử bỏ bớt trạng thái hoặc chọn nhánh khác trên cây.
             </EmptyState>
           ) : (
-            <ul className="fb-rows">
+            <ul className="fbk-rows">
               {shown.map((r) => (
-                <li key={r.id} className={`fb-row${current === r.id ? " active" : ""}${picked.has(r.id) ? " picked" : ""}`}>
+                <li key={r.id} className={`fbk-row${current === r.id ? " active" : ""}${picked.has(r.id) ? " picked" : ""}`}>
                   <input
                     type="checkbox"
                     checked={picked.has(r.id)}
                     onChange={(e) => toggle([r.id], e.target.checked)}
                     aria-label={`Chọn #${r.id} ${r.title}`}
                   />
-                  <button type="button" className="fb-row-main" onClick={() => open(r.id)} aria-current={current === r.id ? "true" : undefined}>
-                    <span className="fb-row-top">
-                      <span className="fb-id">#{r.id}</span>
-                      <span className="fb-row-title">{r.title}</span>
+                  <button type="button" className="fbk-row-main" onClick={() => open(r.id)} aria-current={current === r.id ? "true" : undefined}>
+                    <span className="fbk-row-top">
+                      <span className="fbk-id">#{r.id}</span>
+                      <span className="fbk-row-title">{r.title}</span>
                       {r.priority && <Pill tone={PRIORITY_TONE[r.priority]}>{r.priority.toUpperCase()}</Pill>}
                       <StatusPill status={r.status} />
                     </span>
-                    {r.summary && <span className="fb-row-summary small">{r.summary}</span>}
-                    <span className="fb-row-meta small muted">
+                    {r.summary && <span className="fbk-row-summary small">{r.summary}</span>}
+                    <span className="fbk-row-meta small muted">
                       <Avatar name={r.author?.name ?? "?"} src={r.author?.avatar_url} size="sm" />
                       <span>{r.author?.name ?? "(không rõ)"}</span>
                       <span>·</span>
                       <KindPill kind={r.kind} />
                       {!node?.feature && (
-                        <span className="fb-row-feature">
+                        <span className="fbk-row-feature">
                           {node ? r.feature : `${areaLabel(r.area)} ▸ ${r.feature}`}
                         </span>
                       )}
@@ -318,7 +318,7 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
           )}
         </section>
 
-        <section className="card fb-detail" ref={detailRef} aria-label="Chi tiết phản ánh">
+        <section className="card fbk-detail" ref={detailRef} aria-label="Chi tiết phản ánh">
           {current && byId.has(current) ? (
             <FeedbackView
               id={current}
@@ -407,7 +407,7 @@ function TreeView({
     return (
       <input
         type="checkbox"
-        className="fb-tree-check"
+        className="fbk-tree-check"
         checked={all}
         disabled={mine.length === 0}
         ref={(el) => {
@@ -421,12 +421,12 @@ function TreeView({
   };
   const same = (a: TreeNode, b: TreeNode) => a?.area === b?.area && a?.feature === b?.feature;
   return (
-    <nav className="fb-tree-nav" aria-label="Lĩnh vực và chức năng">
+    <nav className="fbk-tree-nav" aria-label="Lĩnh vực và chức năng">
       <div className="eyebrow">Lĩnh vực ▸ Chức năng</div>
-      <button type="button" className={`fb-node root${node === null ? " active" : ""}`} onClick={() => onNode(null)}>
+      <button type="button" className={`fbk-node root${node === null ? " active" : ""}`} onClick={() => onNode(null)}>
         <Icon name="folder" size={14} />
-        <span className="fb-node-name">Tất cả</span>
-        <span className="fb-count">{rows.length}</span>
+        <span className="fbk-node-name">Tất cả</span>
+        <span className="fbk-count">{rows.length}</span>
       </button>
       <ul>
         {board.tree.map((area) => {
@@ -435,30 +435,30 @@ function TreeView({
           const visible = ids(n).length;
           return (
             <li key={area.key}>
-              <div className={`fb-node-row${same(node, n) ? " active" : ""}`}>
-                <button type="button" className="fb-caret" onClick={() => onExpand(area.key)} aria-expanded={open} aria-label={`${open ? "Thu" : "Mở"} ${area.label}`}>
+              <div className={`fbk-node-row${same(node, n) ? " active" : ""}`}>
+                <button type="button" className="fbk-caret" onClick={() => onExpand(area.key)} aria-expanded={open} aria-label={`${open ? "Thu" : "Mở"} ${area.label}`}>
                   <Icon name={open ? "chevronDown" : "chevronRight"} size={14} />
                 </button>
                 <Check n={n} label={area.label} />
-                <button type="button" className="fb-node" onClick={() => onNode(n)}>
-                  <span className="fb-node-name">{area.label}</span>
-                  <span className="fb-count" title={`${visible} khớp bộ lọc / ${area.count} tất cả`}>
+                <button type="button" className="fbk-node" onClick={() => onNode(n)}>
+                  <span className="fbk-node-name">{area.label}</span>
+                  <span className="fbk-count" title={`${visible} khớp bộ lọc / ${area.count} tất cả`}>
                     {visible}
                   </span>
                 </button>
               </div>
               {open && (
-                <ul className="fb-features">
+                <ul className="fbk-features">
                   {area.features.map((f) => {
                     const fn = { area: area.key, feature: f.name };
                     const count = ids(fn).length;
                     return (
-                      <li key={f.name} className={`fb-node-row leaf${same(node, fn) ? " active" : ""}`}>
+                      <li key={f.name} className={`fbk-node-row leaf${same(node, fn) ? " active" : ""}`}>
                         <Check n={fn} label={f.name} />
-                        <button type="button" className="fb-node" onClick={() => onNode(fn)}>
+                        <button type="button" className="fbk-node" onClick={() => onNode(fn)}>
                           <Icon name="file" size={12} />
-                          <span className="fb-node-name">{f.name}</span>
-                          <span className="fb-count">{count}</span>
+                          <span className="fbk-node-name">{f.name}</span>
+                          <span className="fbk-count">{count}</span>
                         </button>
                       </li>
                     );
@@ -484,7 +484,7 @@ function ExportHistory({
   onPick: (row: FeedbackExportRow) => void;
 }) {
   return (
-    <details className="fb-history">
+    <details className="fbk-history">
       <summary className="small">
         <Icon name="history" size={12} /> Lịch sử export {rows ? `(${rows.length})` : ""}
       </summary>
@@ -498,8 +498,8 @@ function ExportHistory({
         <ul>
           {rows.map((r) => (
             <li key={r.id}>
-              <span className="fb-history-top">
-                <a href={exportUrl(r.id)} download className="fb-history-link">
+              <span className="fbk-history-top">
+                <a href={exportUrl(r.id)} download className="fbk-history-link">
                   <Icon name="download" size={12} /> {r.title}
                 </a>
                 <IconButton icon="check" label="Chọn các phản ánh của gói này" className="tip-right" onClick={() => onPick(r)} />
@@ -559,7 +559,7 @@ function StatusDialog({
         </>
       }
     >
-      <p className="muted small fb-status-lead">
+      <p className="muted small fbk-status-lead">
         Tác giả thấy trạng thái mới ở tab “Của tôi”.{already ? ` ${already} phản ánh đã ở trạng thái này, giữ nguyên.` : ""}
       </p>
       <label className="adm-field">
@@ -573,12 +573,12 @@ function StatusDialog({
           autoFocus
         />
       </label>
-      <ul className="fb-status-preview" aria-label="Các phản ánh sẽ chuyển">
+      <ul className="fbk-status-preview" aria-label="Các phản ánh sẽ chuyển">
         {rows.map((r) => (
           <li key={r.id} className={r.status === status ? "same" : undefined}>
-            <span className="fb-id">#{r.id}</span>
-            <span className="fb-status-preview-title">{r.title}</span>
-            <span className="fb-status-preview-move">
+            <span className="fbk-id">#{r.id}</span>
+            <span className="fbk-status-preview-title">{r.title}</span>
+            <span className="fbk-status-preview-move">
               <StatusDot status={r.status} /> {STATUS_LABEL[r.status]}
               {r.status !== status && (
                 <>
@@ -664,14 +664,14 @@ function ExportDialog({
         Đánh dấu các phản ánh Mới / Đã nhận là “{STATUS_LABEL.planned}” (tác giả thấy)
       </label>
       {unanalysed > 0 && <Alert tone="warning">{unanalysed} phản ánh chưa có phân tích AI: sẽ export bằng nội dung gốc.</Alert>}
-      <div className="fb-export-preview">
+      <div className="fbk-export-preview">
         {[...groups.entries()].map(([area, rs]) => (
           <div key={area}>
             <strong className="small">{areaLabel(area)}</strong>
             <ul>
               {rs.map((r) => (
                 <li key={r.id} className="small">
-                  <span className="fb-id">#{r.id}</span> {r.title} <span className="muted">· {r.author?.name ?? "?"}</span>
+                  <span className="fbk-id">#{r.id}</span> {r.title} <span className="muted">· {r.author?.name ?? "?"}</span>
                 </li>
               ))}
             </ul>

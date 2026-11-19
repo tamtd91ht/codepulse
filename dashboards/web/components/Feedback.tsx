@@ -52,7 +52,7 @@ const BODY_HINT: Record<FeedbackKind, string> = {
 
 export function KindPill({ kind }: { kind: FeedbackKind }) {
   return (
-    <span className={`fb-kind-tag ${kind}`}>
+    <span className={`fbk-kind-tag ${kind}`}>
       <Icon name={KIND_ICON[kind]} size={12} />
       {KIND_LABEL[kind]}
     </span>
@@ -66,13 +66,13 @@ export function StatusPill({ status }: { status: FeedbackStatus }) {
 export function AnalysisBadge({ row }: { row: Pick<FeedbackRow, "analysis_status" | "analysing"> }) {
   if (isAnalysing(row))
     return (
-      <span className="fb-analysing small" title="AI đang phân tích">
+      <span className="fbk-analysing small" title="AI đang phân tích">
         <span className="spinner" aria-hidden="true" /> AI đang đọc
       </span>
     );
   if (row.analysis_status === "failed")
     return (
-      <span className="fb-failed small" title="Chưa phân tích được">
+      <span className="fbk-failed small" title="Chưa phân tích được">
         <Icon name="alert" size={12} /> chưa phân tích
       </span>
     );
@@ -81,9 +81,9 @@ export function AnalysisBadge({ row }: { row: Pick<FeedbackRow, "analysis_status
 
 function AuthorLine({ person, at, page }: { person: FeedbackPerson | null; at: string; page?: string | null }) {
   return (
-    <div className="fb-author">
+    <div className="fbk-author">
       <Avatar name={person?.name ?? "?"} src={person?.avatar_url} />
-      <div className="fb-author-text">
+      <div className="fbk-author-text">
         <strong>{person?.name ?? "(không rõ)"}</strong>
         <span className="muted small">
           {person?.teams.length ? `${person.teams.join(", ")} · ` : ""}
@@ -147,29 +147,29 @@ export function FeedbackForm({
   };
 
   return (
-    <form className="card fb-form" onSubmit={submit} aria-labelledby="fb-form-title">
+    <form className="card fbk-form" onSubmit={submit} aria-labelledby="fbk-form-title">
       <div>
-        <h2 id="fb-form-title">Gửi phản ánh</h2>
+        <h2 id="fbk-form-title">Gửi phản ánh</h2>
         <p className="muted small">
           Viết như đang nói với người làm ra CodePulse. AI sẽ phân loại, tóm tắt và gom các ý giống nhau; bạn theo dõi kết quả ở bên cạnh.
         </p>
       </div>
-      <fieldset className="fb-kinds">
+      <fieldset className="fbk-kinds">
         <legend className="small muted">Loại</legend>
         {(Object.keys(KIND_LABEL) as FeedbackKind[]).map((k) => (
-          <label key={k} className={`fb-kind${kind === k ? " active" : ""}`}>
-            <input type="radio" name="fb-kind" value={k} checked={kind === k} onChange={() => setKind(k)} />
-            <span className={`fb-kind-icon ${k}`}>
+          <label key={k} className={`fbk-kind${kind === k ? " active" : ""}`}>
+            <input type="radio" name="fbk-kind" value={k} checked={kind === k} onChange={() => setKind(k)} />
+            <span className={`fbk-kind-icon ${k}`}>
               <Icon name={KIND_ICON[k]} size={16} />
             </span>
-            <span className="fb-kind-text">
+            <span className="fbk-kind-text">
               <strong>{KIND_LABEL[k]}</strong>
               <span className="muted small">{KIND_HINT[k]}</span>
             </span>
           </label>
         ))}
       </fieldset>
-      <div className="fb-form-grid">
+      <div className="fbk-form-grid">
         <label className="adm-field">
           <span className="small muted">Lĩnh vực</span>
           <select value={area} onChange={(e) => setArea(e.target.value)}>
@@ -196,7 +196,7 @@ export function FeedbackForm({
         />
       </label>
       <label className="adm-field">
-        <span className="fb-label-row small muted">
+        <span className="fbk-label-row small muted">
           <span>Mô tả</span>
           <span>
             {body.length.toLocaleString("vi-VN")}/{meta.body_max.toLocaleString("vi-VN")}
@@ -212,7 +212,7 @@ export function FeedbackForm({
         />
       </label>
       {error && <Alert tone="error">{error}</Alert>}
-      <div className="fb-form-foot">
+      <div className="fbk-form-foot">
         <span className="muted small">Tên bạn được ghi kèm phản ánh. Tối đa {meta.per_day} phản ánh mỗi ngày.</span>
         <button type="submit" className="primary" disabled={!ready || busy}>
           <Icon name="arrowUp" size={14} /> {busy ? "Đang gửi…" : "Gửi phản ánh"}
@@ -299,9 +299,9 @@ export function FeedbackView({
       : undefined;
 
   return (
-    <article className="fb-view" aria-labelledby={`fb-title-${item.id}`}>
-      <div className="fb-view-tags">
-        <span className="fb-id">#{item.id}</span>
+    <article className="fbk-view" aria-labelledby={`fbk-title-${item.id}`}>
+      <div className="fbk-view-tags">
+        <span className="fbk-id">#{item.id}</span>
         <KindPill kind={item.kind} />
         {item.can_manage ? (
           <StatusMenu
@@ -319,7 +319,7 @@ export function FeedbackView({
             Đã export {exported > 1 ? `${exported} lần` : ""}
           </Pill>
         )}
-        <span className="fb-view-actions">
+        <span className="fbk-view-actions">
           <IconButton icon="download" label="Tải .md của phản ánh này" onClick={() => download(itemMdUrl(item.id))} />
           {canReanalyse && (
             <IconButton
@@ -335,10 +335,10 @@ export function FeedbackView({
           )}
         </span>
       </div>
-      <h2 id={`fb-title-${item.id}`} className="fb-view-title">
+      <h2 id={`fbk-title-${item.id}`} className="fbk-view-title">
         {item.title}
       </h2>
-      <div className="fb-crumb small muted">
+      <div className="fbk-crumb small muted">
         {areaLabel} <Icon name="chevronRight" size={12} /> {item.feature}
       </div>
       <AuthorLine person={item.author} at={item.created_at} page={item.page_url} />
@@ -357,7 +357,7 @@ export function FeedbackView({
       <Message text={note} onClose={() => setNote(null)} />
 
       {item.triage_note && (
-        <div className="fb-reply">
+        <div className="fbk-reply">
           <div className="small muted">
             <Icon name="checkCircle" size={12} /> Phản hồi của người duyệt
             {item.triaged_by ? ` · ${item.triaged_by.name}` : ""}
@@ -374,12 +374,12 @@ export function FeedbackView({
         }, "Đã lưu; AI đang đọc lại.")} />
       ) : (
         <>
-          <section className="fb-analysis" aria-label="Phân tích của AI">
-            <div className="fb-section-head">
+          <section className="fbk-analysis" aria-label="Phân tích của AI">
+            <div className="fbk-section-head">
               <span className="eyebrow">
                 <Icon name="sparkle" size={12} /> Phân tích của AI
               </span>
-              <code className="fb-path" title="Đường dẫn trong cây phản ánh">
+              <code className="fbk-path" title="Đường dẫn trong cây phản ánh">
                 {item.path}
               </code>
             </div>
@@ -389,23 +389,23 @@ export function FeedbackView({
               <Alert tone="warning">{item.error || "Chưa phân tích được."} Nội dung gốc vẫn được giữ và export được.</Alert>
             ) : (
               <>
-                {item.summary && <p className="fb-summary">{item.summary}</p>}
-                {item.analysis_md ? <DocMarkdown text={item.analysis_md} className="fb-md" /> : null}
+                {item.summary && <p className="fbk-summary">{item.summary}</p>}
+                {item.analysis_md ? <DocMarkdown text={item.analysis_md} className="fbk-md" /> : null}
                 {item.result?.duplicates?.length ? (
                   <p className="small muted">Có thể trùng: {item.result.duplicates.map((d) => `#${d}`).join(", ")}</p>
                 ) : null}
               </>
             )}
           </section>
-          <details className="fb-raw" open={item.analysis_status !== "ready"}>
+          <details className="fbk-raw" open={item.analysis_status !== "ready"}>
             <summary className="small">Nội dung gốc của tác giả</summary>
-            <p className="fb-raw-title">
+            <p className="fbk-raw-title">
               <strong>{item.raw_title}</strong>{" "}
               <span className="muted small">
                 ({KIND_LABEL[item.author_kind]} · {meta.areas.find((a) => a.key === item.author_area)?.label})
               </span>
             </p>
-            <div className="fb-raw-body">{item.body}</div>
+            <div className="fbk-raw-body">{item.body}</div>
           </details>
         </>
       )}
@@ -433,8 +433,8 @@ function EditForm({
   const [kind, setKind] = useState<FeedbackKind>(item.author_kind);
   const [area, setArea] = useState(item.author_area);
   return (
-    <div className="fb-edit">
-      <div className="fb-form-grid">
+    <div className="fbk-edit">
+      <div className="fbk-form-grid">
         <label className="adm-field">
           <span className="small muted">Loại</span>
           <select value={kind} onChange={(e) => setKind(e.target.value as FeedbackKind)}>
@@ -464,7 +464,7 @@ function EditForm({
         <span className="small muted">Mô tả</span>
         <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={8} maxLength={meta.body_max} />
       </label>
-      <div className="fb-form-foot">
+      <div className="fbk-form-foot">
         <button type="button" className="ghost" onClick={onCancel} disabled={busy}>
           Huỷ
         </button>
@@ -499,7 +499,7 @@ function Triage({
   const [priority, setPriority] = useState(item.priority ?? "");
   const [status, setStatus] = useState<FeedbackStatus>(item.status);
   const [note, setNote] = useState(item.triage_note ?? "");
-  const listId = `fb-features-${item.id}`;
+  const listId = `fbk-features-${item.id}`;
   const changed =
     area !== item.area ||
     feature !== (item.feature === "Chưa phân loại" ? "" : item.feature) ||
@@ -507,9 +507,9 @@ function Triage({
     status !== item.status ||
     note !== (item.triage_note ?? "");
   return (
-    <section className="fb-triage" aria-label="Phân loại và xử lý">
+    <section className="fbk-triage" aria-label="Phân loại và xử lý">
       <div className="eyebrow">Phân loại & xử lý</div>
-      <div className="fb-triage-grid">
+      <div className="fbk-triage-grid">
         <label className="adm-field">
           <span className="small muted">Lĩnh vực</span>
           <select value={area} onChange={(e) => setArea(e.target.value)}>
@@ -555,7 +555,7 @@ function Triage({
         <span className="small muted">Ghi chú (tác giả thấy, đi kèm file export)</span>
         <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={4000} placeholder="Ví dụ: Sẽ làm trong sprint 12, gộp với #31." />
       </label>
-      <div className="fb-form-foot">
+      <div className="fbk-form-foot">
         <span className="muted small">{item.triaged_by ? `Lần cuối: ${item.triaged_by.name}, ${relative(item.triaged_at ?? item.created_at)}` : ""}</span>
         <button
           type="button"
@@ -591,7 +591,7 @@ export function MyFeedback({ meta, from, item }: { meta: FeedbackMeta; from: str
     if (item && /^\d+$/.test(item)) setOpen(Number(item));
   }, [item]);
   return (
-    <div className="fb-mine">
+    <div className="fbk-mine">
       <FeedbackForm
         meta={meta}
         from={from}
@@ -600,9 +600,9 @@ export function MyFeedback({ meta, from, item }: { meta: FeedbackMeta; from: str
           void mutate();
         }}
       />
-      <section className="card fb-mine-list" aria-labelledby="fb-mine-title">
-        <div className="fb-section-head">
-          <h2 id="fb-mine-title">Phản ánh của tôi</h2>
+      <section className="card fbk-mine-list" aria-labelledby="fbk-mine-title">
+        <div className="fbk-section-head">
+          <h2 id="fbk-mine-title">Phản ánh của tôi</h2>
           {rows && <span className="muted small">{rows.length}</span>}
         </div>
         <Message text={sent} onClose={() => setSent(null)} />
@@ -615,17 +615,17 @@ export function MyFeedback({ meta, from, item }: { meta: FeedbackMeta; from: str
             Gặp chỗ khó dùng hay có ý tưởng? Gửi ở form bên cạnh, mất chưa tới một phút.
           </EmptyState>
         ) : (
-          <ul className="fb-mine-rows">
+          <ul className="fbk-mine-rows">
             {rows.map((r) => (
               <li key={r.id}>
-                <button type="button" className="fb-mine-row" onClick={() => setOpen(r.id)}>
-                  <span className="fb-mine-top">
+                <button type="button" className="fbk-mine-row" onClick={() => setOpen(r.id)}>
+                  <span className="fbk-mine-top">
                     <KindPill kind={r.kind} />
                     <StatusPill status={r.status} />
                     <AnalysisBadge row={r} />
-                    <span className="muted small fb-push">{relative(r.created_at)}</span>
+                    <span className="muted small fbk-push">{relative(r.created_at)}</span>
                   </span>
-                  <span className="fb-mine-title">{r.title}</span>
+                  <span className="fbk-mine-title">{r.title}</span>
                   <span className="muted small">
                     {meta.areas.find((a) => a.key === r.area)?.label} ▸ {r.feature}
                     {r.priority ? ` · ${r.priority.toUpperCase()}` : ""}

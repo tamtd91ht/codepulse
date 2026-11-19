@@ -17,7 +17,7 @@ import { type FeedbackStatus, STATUS_LABEL } from "@/lib/feedback";
 export const STATUS_ORDER: FeedbackStatus[] = ["new", "accepted", "planned", "done", "rejected"];
 
 export function StatusDot({ status }: { status: FeedbackStatus }) {
-  return <span className={`fb-dot is-${status}`} aria-hidden="true" />;
+  return <span className={`fbk-dot is-${status}`} aria-hidden="true" />;
 }
 
 export function StatusMenu({
@@ -75,11 +75,11 @@ export function StatusMenu({
   };
 
   return (
-    <div className={`fb-status-menu${open ? " open" : ""}`} ref={box}>
+    <div className={`fbk-status-menu${open ? " open" : ""}`} ref={box}>
       <button
         type="button"
         ref={trigger}
-        className={variant === "chip" ? "fb-stage-chip" : "sm fb-status-trigger"}
+        className={variant === "chip" ? "fbk-stage-chip" : "sm fbk-status-trigger"}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
@@ -106,8 +106,8 @@ export function StatusMenu({
         <Icon name="chevronDown" size={14} />
       </button>
       {open && (
-        <div id={menuId} className={`fb-status-pop align-${align}`} role="menu" aria-label="Chuyển sang trạng thái" onKeyDown={onMenuKey}>
-          <div className="fb-status-pop-head">{variant === "chip" ? "Chuyển sang" : `Chuyển ${total ?? ""} phản ánh sang`}</div>
+        <div id={menuId} className={`fbk-status-pop align-${align}`} role="menu" aria-label="Chuyển sang trạng thái" onKeyDown={onMenuKey}>
+          <div className="fbk-status-pop-head">{variant === "chip" ? "Chuyển sang" : `Chuyển ${total ?? ""} phản ánh sang`}</div>
           {STATUS_ORDER.map((s, i) => {
             const isCurrent = s === current;
             const already = counts?.[s] ?? 0;
@@ -128,9 +128,9 @@ export function StatusMenu({
                 }}
               >
                 <StatusDot status={s} />
-                <span className="fb-status-pop-label">{STATUS_LABEL[s]}</span>
+                <span className="fbk-status-pop-label">{STATUS_LABEL[s]}</span>
                 {isCurrent && <Icon name="check" size={14} />}
-                {!isCurrent && already > 0 && <span className="fb-status-pop-hint">{all ? "tất cả đã ở đây" : `${already} đã ở đây`}</span>}
+                {!isCurrent && already > 0 && <span className="fbk-status-pop-hint">{all ? "tất cả đã ở đây" : `${already} đã ở đây`}</span>}
               </button>
             );
           })}
