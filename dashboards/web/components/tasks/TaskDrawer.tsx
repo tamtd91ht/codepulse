@@ -15,7 +15,8 @@ import { TypeIcon } from "./taskParts";
 
 /*
  * Ngăn chi tiết task (docs/specs/31 §22.6, UI/UX §4.8): a non-modal drawer on the right. The view
- * behind stays visible and usable (no backdrop; on wide screens the page makes room for it), the
+ * behind stays visible and usable (no backdrop; on wide screens the page makes room for it, except
+ * with `overlay`: the Danh sách view, whose table keeps its width under the drawer), the
  * width is dragged from the left edge between 420 px and 60% of the screen and remembered per
  * browser. Header: key, type, position in the list, ⤢ full page, ↗ copy link, ✕. Keys: J / K next /
  * previous task of the list the screen registered (drawerNav.ts), Esc closes (not while typing or
@@ -55,12 +56,15 @@ export function TaskDrawer({
   onOpenTask,
   onClose,
   onDeleted,
+  overlay = false,
 }: {
   taskKey: string;
   /** Show another task in the drawer (J/K, sub-task, link, parent). */
   onOpenTask: (key: string) => void;
   onClose: () => void;
   onDeleted: () => void;
+  /** Float over the view instead of making room for it (Danh sách: the table keeps its width, feedback #2). */
+  overlay?: boolean;
 }) {
   const detail = useApi<Detail>(`/tasks/${encodeURIComponent(taskKey)}`);
   const keys = useDrawerKeys();
@@ -100,12 +104,16 @@ export function TaskDrawer({
     document.documentElement.style.setProperty("--td-w", `${width}px`);
   }, [width]);
   useEffect(() => {
+    if (overlay) return;
     document.body.classList.add("td-open");
-    return () => {
-      document.body.classList.remove("td-open");
+    return () => document.body.classList.remove("td-open");
+  }, [overlay]);
+  useEffect(
+    () => () => {
       document.documentElement.style.removeProperty("--td-w");
-    };
-  }, []);
+    },
+    [],
+  );
 
   // Focus moves into the drawer when it opens and goes back to the opener when it closes.
   useEffect(() => {

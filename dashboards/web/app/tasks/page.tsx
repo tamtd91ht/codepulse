@@ -197,7 +197,16 @@ function Tasks() {
           onCreated={() => setCreating(false)}
         />
       )}
-      {where.task && <TaskDrawer taskKey={where.task} onOpenTask={openTask} onClose={() => go({ task: null })} onDeleted={() => go({ task: null })} />}
+      {where.task && (
+        <TaskDrawer
+          taskKey={where.task}
+          // Danh sách: the drawer floats over the table, which keeps its width (docs/specs/31 §22.6).
+          overlay={tab === "list"}
+          onOpenTask={openTask}
+          onClose={() => go({ task: null })}
+          onDeleted={() => go({ task: null })}
+        />
+      )}
     </>
   );
 }
