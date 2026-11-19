@@ -779,7 +779,8 @@ def issue_detail(session: Session, principal: Principal, key: str) -> dict[str, 
         # §20: link reviewed commits by hand (who may move it, or a commit's author: then
         # only their own commits), move the issue on Jira.
         "can_link": may_link(principal, issue_projects(session, issue))
-        or principal.can("review.view"),
+        or principal.scope("review.view") is not None
+        or any(principal.holds_in("review.view", bp) for bp in issue_projects(session, issue)),
         "can_move": may_move(principal, issue_projects(session, issue)),
     }
 

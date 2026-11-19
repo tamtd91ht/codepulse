@@ -2,7 +2,7 @@
 catalog.py), each at a scope, given to people. Built-in sets follow a role (`auto_role`)
 instead of being given by hand."""
 
-from sqlalchemy import CheckConstraint, ForeignKey, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Index, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -17,18 +17,40 @@ class PermissionSet(TimestampMixin, Base):
             name="auto_role",
         ),
         UniqueConstraint("auto_role"),
+        # docs/specs/21 §13: a dự án's set is never a built-in one.
+        CheckConstraint(
+            "business_project_id IS NULL OR (NOT builtin AND auto_role IS NULL)",
+            name="project_not_builtin",
+        ),
+        # Names unique per owner (the system, or one dự án); a person's own set, one per owner.
+        Index(
+            "uq_permission_sets_owner_name",
+            func.coalesce(text("business_project_id"), 0),
+            func.lower(text("name")),
+            unique=True,
+        ),
+        Index(
+            "uq_permission_sets_personal_owner",
+            "personal_user_id",
+            func.coalesce(text("business_project_id"), 0),
+            unique=True,
+            postgresql_where=text("personal_user_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(unique=True)
+    name: Mapped[str]
     description: Mapped[str | None]
     builtin: Mapped[bool] = mapped_column(default=False)
     # Who holds it without being given it: everyone of that role (built-in sets only).
     auto_role: Mapped[str | None]
     # A person's own set (the permissions ticked on their profile, docs/specs/21 §9): hidden
     # from the list of sets, given to that person only.
-    personal_user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), unique=True
+    personal_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    # docs/specs/21 §13: None = holds across the system; else a set of that dự án only, whose
+    # items count over that dự án while its holder still has a grant there.
+    business_project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
     )
 
 

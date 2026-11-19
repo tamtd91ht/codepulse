@@ -444,14 +444,19 @@ def delete_business_project(bp_id: int, principal: ProjectsAdmin, session: Sessi
     session.execute(delete(JiraProjectScope).where(JiraProjectScope.business_project_id == bp.id))
     for jira_id in jira_ids:
         recompute(session, jira_id)
-    # docs/specs/22 §11: the dự án's own criteria sets go with it. Its links first: they hold
-    # the sets with ON DELETE RESTRICT, which the cascades of one DELETE may meet in any order.
+    # docs/specs/22 §11: the dự án's own criteria sets outlive it, archived and shared (their
+    # scores are review history, which is never deleted: AGENTS.md); the name says whose they
+    # were. Its links go first: they hold the sets with ON DELETE RESTRICT.
     from app.models import CriteriaSet, ProjectCriteriaSet
 
     session.execute(
         delete(ProjectCriteriaSet).where(ProjectCriteriaSet.business_project_id == bp.id)
     )
-    session.execute(delete(CriteriaSet).where(CriteriaSet.business_project_id == bp.id))
+    for own in session.scalars(select(CriteriaSet).where(CriteriaSet.business_project_id == bp.id)):
+        own.name = f"{own.name[:60]} ({bp.name[:24]}, đã xoá #{own.id})"
+        own.archived = True
+        own.business_project_id = None
+    session.flush()
     session.delete(bp)
     audit(session, principal.user_id, "business_project.delete", f"business_project:{bp_id}")
     session.commit()

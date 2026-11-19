@@ -65,6 +65,8 @@ tính vào điểm và mọi chỉ số liên quan được tính lại ngay.
   - tab **Quy tắc review**: quy tắc của dự án, file quy tắc, quy tắc riêng từng repo;
   - tab **Repo .claude**: repo `.claude` dùng chung (skills, agents, rules, CLAUDE.md) cho command và deep review;
   - tab **Quyền truy cập**: Manager dự án thêm người xem và giao Lead dự án; Lead dự án chỉ xem danh sách.
+  - tab **Tiêu chí chấm**: gán bộ tiêu chí cho dự án; *Tạo bộ riêng* hoặc *Nhân bản thành bộ riêng* từ một bộ dùng chung. Bộ riêng chỉ dự án này thấy và dùng; bộ dùng chung chỉ đọc.
+  - tab **Phân quyền** (chỉ Manager dự án): *Quyền từng người* — bấm chìa khoá ở một người để tick quyền trong dự án (review, khiếu nại, task, testcase, tài liệu, tiêu chí…) hoặc chọn bộ quyền của dự án; *Bộ quyền của dự án* — tạo bộ, gán cho nhiều người. Quyền chỉ có hiệu lực trong dự án này, chỉ cho người đã có quyền vào dự án, và bạn chỉ cấp được quyền mình đang có ở dự án (quyền khác hiện mờ kèm lý do). Không tự cấp cho mình, không đổi quyền của admin, Quản lý tổng hay Manager dự án khác. Không tạo người mới ở đây.
   - Chỉ admin: đổi tên/xoá dự án, nhập cả group, gỡ hẳn repo, review MR theo khoảng ngày, cho phép gửi code ra LLM bên ngoài, giao Manager dự án. Repo đang thuộc dự án khác thì nhờ admin chuyển.
 - Báo cáo tuần (thứ Hai 08:00) và tháng (ngày 1) qua email; kênh chat của team nhận bản không có điểm từng người.
 

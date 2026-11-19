@@ -295,6 +295,16 @@ CATALOG: tuple[Permission, ...] = (
         "Thêm repo, cấu hình repo, repo .claude, file quy tắc, quy tắc review của dự án",
         "project all",
     ),
+    # docs/specs/21 §13: the dự án's own permission sets, and ticking rights for its people,
+    # within what one holds there. "project" = the dự án one is Manager dự án of; "all" = every
+    # dự án one sees.
+    _p(
+        "project.permissions",
+        "Quản trị dự án",
+        "Phân quyền trong dự án: bộ quyền riêng của dự án, đặt quyền cho người trong dự án",
+        "project all",
+        True,
+    ),
     # docs/specs/32: Phản ánh & Đề xuất. Everyone sends; only admins (or a set an admin grants
     # it in) read every report, triage and export them.
     _p("feedback.submit", "Phản ánh & Đề xuất", "Gửi phản ánh, đề xuất; xem phản ánh của mình"),
@@ -335,6 +345,51 @@ PROJECT_TEAM_KEYS: frozenset[str] = frozenset(
         "tasks.manage",
     }
 )
+
+
+# docs/specs/21 §13: what a dự án's own set may hold. Rights over the work done in one dự án
+# (its reviews, findings, disputes, tasks, tests, documents, criteria, and the people working in
+# it), each held over the whole dự án; checked in one place (`Principal.holds_in` and the helpers
+# built on it). Never the system-wide rights (admin.*, criteria.manage, the shared .claude repo,
+# Stetho, Telegram, feedback), never a flag (it would hold in every dự án), never the right to
+# set the dự án up or to hand out rights in it (those stay the admin's to give).
+PROJECT_ASSIGNABLE: frozenset[str] = frozenset(
+    {
+        "evaluation.view",
+        "report.member",
+        "review.view",
+        "review.request",
+        "review.rerun",
+        "review.author",
+        "finding.close_decide",
+        "finding.lower_far",
+        "dispute.decide",
+        "dispute.ai_check",
+        "dpi.view",
+        "dpi.assess",
+        "dpi.defects",
+        "docs.edit",
+        "tests.edit",
+        "tests.delete",
+        "tests.approve",
+        "tests.run",
+        "tests.manage",
+        "tasks.edit",
+        "tasks.assign",
+        "tasks.transition",
+        "tasks.delete",
+        "tasks.worklog",
+        "tasks.link",
+        "tasks.moderate",
+        "tasks.sprint",
+        "tasks.manage",
+        "knowledge.edit",
+        "criteria.assign",
+        "project.criteria",
+    }
+)
+# The one scope a dự án's set holds a right at: the whole of that dự án.
+PROJECT_SCOPE = "project"
 
 
 @dataclass(frozen=True)
@@ -522,7 +577,11 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
         "Quản trị dự án",
         "Lead / Manager của một dự án: thêm repo, cấu hình repo, repo .claude, file quy tắc và "
         "quy tắc review của dự án đó.",
-        {"project.setup": "project", "project.criteria": "project"},
+        {
+            "project.setup": "project",
+            "project.criteria": "project",
+            "project.permissions": "project",
+        },
     ),
     # docs/specs/31 §21.0 (R2): users.is_tester, or a current member of a team with is_qa.
     BuiltinSet(

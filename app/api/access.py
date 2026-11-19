@@ -40,7 +40,8 @@ def review_scope(principal: Principal) -> ColumnElement[bool] | None:
     if principal.is_admin:
         return None
     allowed: list[ColumnElement[bool]] = [Review.author_user_id == principal.user_id]
-    managed = principal.managed_projects() or set()
+    # docs/specs/21 §13: and the dự án whose own sets let one see everyone's work there.
+    managed = (principal.managed_projects() or set()) | principal.local_projects("evaluation.view")
     if managed:
         allowed.append(reviews_in_projects(managed))
     viewed = (principal.visible_projects() or set()) - managed
@@ -80,7 +81,10 @@ def may_request_review(principal: Principal, author_user_id: int | None, bp_id: 
     if not principal.can_view_project(bp_id):
         return False
     if author_user_id is not None and author_user_id == principal.user_id:
-        return principal.can("review.request")
+        # One's own work: a right held across the system, or one of this dự án (§13).
+        return principal.scope("review.request") is not None or principal.holds_in(
+            "review.request", bp_id
+        )
     return principal.covers("review.request", None, bp_id)
 
 
@@ -105,11 +109,13 @@ def whole_projects(principal: Principal, key: str) -> set[int] | None:
     if principal.is_admin:
         return None
     held = principal.scope(key)
+    # docs/specs/21 §13: and the dự án whose own sets give `key` over all of them.
+    local = principal.local_projects(key)
     if held == "project":
-        return principal.managed_projects() or set()
+        return (principal.managed_projects() or set()) | local
     if held in ("all", FLAG):
-        return principal.visible_projects() or set()
-    return set()
+        return (principal.visible_projects() or set()) | local
+    return local
 
 
 def work_scope(principal: Principal, key: str = "review.view") -> ColumnElement[bool] | None:
@@ -117,7 +123,9 @@ def work_scope(principal: Principal, key: str = "review.view") -> ColumnElement[
     if principal.is_admin:
         return None
     if principal.scope(key) is None:
-        return false()
+        # Only through dự án's own sets (§13): everyone's work there, nothing elsewhere.
+        local = principal.local_projects(key)
+        return reviews_in_projects(local) if local else false()
     allowed: list[ColumnElement[bool]] = [Review.author_user_id == principal.user_id]
     whole = whole_projects(principal, key) or set()
     if whole:
@@ -194,14 +202,16 @@ def seen_people(session: Session, principal: Principal) -> set[int] | None:
     visible = principal.visible_users()
     if visible is None or principal.manages_all:
         return None  # admin, or "Quản lý tổng": everyone (numbers still by `review_scope`)
-    managed = principal.managed_projects() or set()
+    managed = (principal.managed_projects() or set()) | principal.local_projects("evaluation.view")
     return visible | project_people(session, managed) if managed else visible
 
 
 def may_see_person(session: Session, principal: Principal, user_id: int) -> bool:
     if principal.can_see_user(user_id) or principal.manages_all:
         return True
-    managed = list(principal.managed_projects() or set())
+    managed = list(
+        (principal.managed_projects() or set()) | principal.local_projects("evaluation.view")
+    )
     if not managed:
         return False
     granted, committed, opened = _people_of(managed)

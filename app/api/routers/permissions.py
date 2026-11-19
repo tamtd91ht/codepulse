@@ -196,6 +196,15 @@ class HeldSetOut(BaseModel):
     via: str  # "role" | "given" | "personal" | "team"
 
 
+class ProjectPermsOut(BaseModel):
+    """docs/specs/21 §13: what the sets of one dự án give, over that dự án only."""
+
+    business_project_id: int
+    name: str
+    permissions: list[str]
+    sets: list[HeldSetOut]
+
+
 class UserPermissionsOut(BaseModel):
     user: PersonOut
     is_admin: bool
@@ -203,6 +212,7 @@ class UserPermissionsOut(BaseModel):
     roles: list[str]
     sets: list[HeldSetOut]
     permissions: list[EffectiveOut]
+    project_permissions: list[ProjectPermsOut] = []
 
 
 class CheckOut(BaseModel):
@@ -338,8 +348,9 @@ def _teams_of(session: Session, set_id: int) -> list[TeamRefOut]:
 
 def _get_set(session: Session, set_id: int) -> PermissionSet:
     row = session.get(PermissionSet, set_id)
-    # A person's own set is edited on their profile only (§9): not a set for these endpoints.
-    if row is None or row.personal_user_id is not None:
+    # A person's own set is edited on their profile only (§9), a dự án's set in that dự án
+    # (§13): neither is a set for these endpoints.
+    if row is None or row.personal_user_id is not None or row.business_project_id is not None:
         raise HTTPException(404, "permission set not found")
     return row
 
@@ -445,7 +456,10 @@ def _write_items(session: Session, set_id: int, items: dict[str, str]) -> None:
 
 
 def _name_free(session: Session, name: str, except_id: int | None = None) -> None:
-    query = select(PermissionSet.id).where(func.lower(PermissionSet.name) == name.lower())
+    query = select(PermissionSet.id).where(
+        func.lower(PermissionSet.name) == name.lower(),
+        PermissionSet.business_project_id.is_(None),
+    )
     if except_id is not None:
         query = query.where(PermissionSet.id != except_id)
     if session.scalar(query) is not None:
@@ -486,7 +500,12 @@ def list_permission_sets(
     order: dict[str, int] = {r: i for i, r in enumerate(AUTO_ROLES)}
     rows = sorted(
         # A person's own set is edited on their profile, not listed here (§9).
-        session.scalars(select(PermissionSet).where(PermissionSet.personal_user_id.is_(None))),
+        session.scalars(
+            select(PermissionSet).where(
+                PermissionSet.personal_user_id.is_(None),
+                PermissionSet.business_project_id.is_(None),  # a dự án's sets: in it (§13)
+            )
+        ),
         key=lambda s: (not s.builtin, order.get(s.auto_role or "", 99), s.name.lower()),
     )
     return [_set_out(session, row, holders, people) for row in rows]
@@ -814,9 +833,10 @@ def _effective(session: Session, settings: Settings, user: User) -> UserPermissi
     sets = sorted(
         session.scalars(
             select(PermissionSet).where(
+                PermissionSet.business_project_id.is_(None),
                 PermissionSet.auto_role.in_(roles)
                 | PermissionSet.id.in_(given)
-                | PermissionSet.id.in_(sorted(via_team))
+                | PermissionSet.id.in_(sorted(via_team)),
             )
         ),
         key=lambda s: (s.auto_role is None, by_role.get(s.auto_role or "", 99), s.name.lower()),
@@ -855,7 +875,51 @@ def _effective(session: Session, settings: Settings, user: User) -> UserPermissi
             )
             for k, v in sorted(held.perms.items(), key=lambda kv: order.get(kv[0], 999))
         ],
+        project_permissions=_project_permissions(session, held, given_ids, order),
     )
+
+
+def _project_permissions(
+    session: Session, held: Principal, given_ids: set[int], order: dict[str, int]
+) -> list[ProjectPermsOut]:
+    """The rights the sets of each dự án give (§13), with those sets."""
+    if not held.project_perms:
+        return []
+    names = dict(
+        session.execute(
+            select(BusinessProject.id, BusinessProject.name).where(
+                BusinessProject.id.in_(sorted(held.project_perms))
+            )
+        ).tuples()
+    )
+    rows = session.scalars(
+        select(PermissionSet)
+        .where(
+            PermissionSet.id.in_(sorted(given_ids)),
+            PermissionSet.business_project_id.in_(sorted(held.project_perms)),
+        )
+        .order_by(PermissionSet.name)
+    ).all()
+    out: list[ProjectPermsOut] = []
+    for bp, keys in sorted(held.project_perms.items(), key=lambda kv: names.get(kv[0], "")):
+        out.append(
+            ProjectPermsOut(
+                business_project_id=bp,
+                name=names.get(bp, f"#{bp}"),
+                permissions=sorted(keys, key=lambda k: order.get(k, 999)),
+                sets=[
+                    HeldSetOut(
+                        id=s.id,
+                        name="Quyền riêng" if s.personal_user_id is not None else s.name,
+                        auto_role=None,
+                        via="project",
+                    )
+                    for s in rows
+                    if s.business_project_id == bp
+                ],
+            )
+        )
+    return out
 
 
 @router.put("/admin/users/{user_id}/permission-sets")
@@ -884,11 +948,17 @@ def set_user_permission_sets(
         raise HTTPException(422, f"không có bộ quyền: {', '.join(map(str, missing))}")
     if auto := sorted(r.name for r in rows.values() if r.builtin or r.auto_role is not None):
         raise HTTPException(409, f"bộ có sẵn tự gán theo vai trò, không gán tay: {', '.join(auto)}")
+    if local := sorted(r.name for r in rows.values() if r.business_project_id is not None):
+        raise HTTPException(409, f"bộ quyền của dự án gán trong dự án đó: {', '.join(local)}")
     current = set(
         session.scalars(
             select(UserPermissionSet.set_id)
             .join(PermissionSet, PermissionSet.id == UserPermissionSet.set_id)
-            .where(UserPermissionSet.user_id == user.id, PermissionSet.personal_user_id.is_(None))
+            .where(
+                UserPermissionSet.user_id == user.id,
+                PermissionSet.personal_user_id.is_(None),
+                PermissionSet.business_project_id.is_(None),
+            )
         )
     )
     if personal := sorted(r.name for r in rows.values() if r.personal_user_id is not None):
@@ -943,7 +1013,9 @@ def get_own_permissions(
     if session.get(User, user_id) is None:
         raise HTTPException(404, "user not found")
     row = session.scalars(
-        select(PermissionSet).where(PermissionSet.personal_user_id == user_id)
+        select(PermissionSet).where(
+            PermissionSet.personal_user_id == user_id, PermissionSet.business_project_id.is_(None)
+        )
     ).first()
     return _items(session, row.id) if row is not None else {}
 
@@ -970,7 +1042,11 @@ def set_own_permissions(
     if bad := sorted(k for k, v in wanted.items() if not valid_item(k, v)):
         raise HTTPException(422, f"quyền hoặc phạm vi không hợp lệ: {', '.join(bad)}")
     row = session.scalars(
-        select(PermissionSet).where(PermissionSet.personal_user_id == user.id).with_for_update()
+        select(PermissionSet)
+        .where(
+            PermissionSet.personal_user_id == user.id, PermissionSet.business_project_id.is_(None)
+        )
+        .with_for_update()
     ).first()
     before = _items(session, row.id) if row is not None else {}
     widened = {k: v for k, v in wanted.items() if k not in before or RANK[v] > RANK[before[k]]}

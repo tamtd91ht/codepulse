@@ -134,6 +134,8 @@ def _project_reason(session: Session, p: Principal, key: str, bp_id: int, allowe
         return f"Bạn giữ tasks.manage ở dự án {name}: gồm mọi quyền Task ở đó."
     if key.startswith("tests.") and not p.can("tests.view"):
         return "Bạn thiếu tests.view nên không vào được Testcase của dự án nào."
+    if p.holds_in(key, bp_id):
+        return f"Một bộ quyền riêng của dự án {name} cho bạn {key} ở cả dự án đó."
     if scope == "all":
         return f"Mức all áp cho mọi dự án bạn xem được, có {name}."
     manages = p.can_manage_project(bp_id)
@@ -174,6 +176,8 @@ def _task_reason(session: Session, p: Principal, right: str, task: Task, allowed
     scope = p.scope(key)
     if tasks.can_manage_space(p, bp_id):
         return f"{who} Bạn giữ tasks.manage ở dự án {name}: gồm mọi quyền Task ở đó."
+    if p.holds_in(key, bp_id):
+        return f"{who} Một bộ quyền riêng của dự án {name} cho bạn {key} ở cả dự án đó."
     if scope is None:
         return who
     if scope in ("all", FLAG):
@@ -223,7 +227,11 @@ def _project_allowed(p: Principal, key: str, bp_id: int) -> bool:
         return approval.may_delete(p, bp_id)
     if key == "tests.approve":
         return approval.may_approve(p, bp_id)
-    return p.covers_project(key, bp_id) if key in PROJECT_TEAM_KEYS else p.can(key)
+    if p.holds_in(key, bp_id):
+        return True
+    if key in PROJECT_TEAM_KEYS:
+        return p.covers_project(key, bp_id)
+    return p.is_admin or key in p.perms
 
 
 def explain(
@@ -260,7 +268,9 @@ def explain(
             raise HTTPException(404, "không thấy dự án")
         target = f"dự án {_project_name(session, project_id)}"
         if key in TASK_RIGHT_KEYS:
-            if not tasks.can_view_space(p, project_id) or scope is None:
+            if p.holds_in(key, project_id) and tasks.can_view_space(p, project_id):
+                allowed, why = True, _project_reason(session, p, key, project_id, True)
+            elif not tasks.can_view_space(p, project_id) or scope is None:
                 allowed, why = False, ""
             elif tasks.can_manage_space(p, project_id) or scope in ("all", FLAG):
                 allowed, why = True, _project_reason(session, p, key, project_id, True)
@@ -274,8 +284,11 @@ def explain(
             why = _project_reason(session, p, key, project_id, allowed)
     else:
         target = None
-        if p.is_admin or scope in ("all", FLAG) or scope is None:
-            allowed = p.can(key)
+        if scope is None and not p.is_admin and p.local_projects(key):
+            allowed = None
+            why = "Chỉ ở dự án có bộ quyền riêng cho bạn quyền này: chọn một dự án để biết chắc."
+        elif p.is_admin or scope in ("all", FLAG) or scope is None:
+            allowed = p.is_admin or key in p.perms
             why = ""
         else:
             # A narrower scope depends on the task / dự án: never "được" where every one is refused.

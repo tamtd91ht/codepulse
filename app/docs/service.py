@@ -67,6 +67,8 @@ def may_view(principal: Principal, bp_id: int | None) -> bool:
 
 
 def may_edit(principal: Principal, bp_id: int | None) -> bool:
+    if principal.holds_in("docs.edit", bp_id):  # a dự án's own set (docs/specs/21 §13)
+        return True
     scope = principal.scope("docs.edit")
     if scope is None or not principal.can_view_project(bp_id):
         return False

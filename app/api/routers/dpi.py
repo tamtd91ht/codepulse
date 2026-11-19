@@ -1173,6 +1173,7 @@ def _report_repos(
     if not (
         principal.can("dpi.distribution")
         or principal.scope("dpi.view") in ("team", "project", "all")
+        or bool(principal.local_projects("dpi.view"))  # docs/specs/21 §13
         or principal.can("dpi.final_view")
     ):
         raise HTTPException(403, "cần quyền xem báo cáo DPI cấp team")
@@ -1380,8 +1381,11 @@ def _defect_projects(principal: Principal) -> set[int] | None:
     if principal.is_admin:
         return None
     held = principal.scope("dpi.defects")
+    local = principal.local_projects("dpi.defects")  # docs/specs/21 §13
+    if held is None:
+        return local
     if held == "project":
-        return principal.managed_projects() or set()
+        return (principal.managed_projects() or set()) | local
     return principal.visible_projects() or set()
 
 

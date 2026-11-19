@@ -31,7 +31,15 @@ from app.models import (
     User,
     UserPermissionSet,
 )
-from app.permissions.catalog import BY_KEY, FLAG, PROJECT_TEAM_KEYS, everything, merge
+from app.permissions.catalog import (
+    BY_KEY,
+    FLAG,
+    PROJECT_ASSIGNABLE,
+    PROJECT_TEAM_KEYS,
+    everything,
+    merge,
+    valid_item,
+)
 from app.ratelimit import WindowCounter
 
 SESSION_COOKIE = "codepulse_session"
@@ -102,6 +110,9 @@ class Principal:
     # docs/specs/31 §21.0 (R2): users.is_tester, or a current member of a team with is_qa
     # (the "tester" built-in set).
     is_tester: bool = False
+    # docs/specs/21 §13: dự án id -> the rights the sets of that dự án give this person, each
+    # over the whole of that dự án only (and only while they still have a grant there).
+    project_perms: dict[int, frozenset[str]] = field(default_factory=dict)
 
     def _bound_out(self, bp_id: int | None) -> bool:
         """A dự án outside the one the token is bound to."""
@@ -110,8 +121,29 @@ class Principal:
     # -- docs/specs/21 ---------------------------------------------------------------------
 
     def can(self, key: str) -> bool:
-        """Holds permission `key` at any scope."""
-        return self.is_admin or key in self.perms
+        """Holds permission `key` at any scope, across the system or in some dự án (§13):
+        enough to reach an endpoint, which then checks the object (`covers*`)."""
+        return (
+            self.is_admin
+            or key in self.perms
+            or any(key in held for held in self.project_perms.values())
+        )
+
+    def holds_in(self, key: str, bp_id: int | None) -> bool:
+        """docs/specs/21 §13: a set of dự án `bp_id` gives `key` over the whole of it."""
+        return (
+            bp_id is not None
+            and key in self.project_perms.get(bp_id, frozenset())
+            and self.can_view_project(bp_id)
+        )
+
+    def local_projects(self, key: str) -> set[int]:
+        """The dự án whose own sets give `key` (§13), among those one still sees."""
+        return {
+            bp
+            for bp, held in self.project_perms.items()
+            if key in held and self.can_view_project(bp)
+        }
 
     def scope(self, key: str) -> str | None:
         """The scope `key` is held at ("flag" for a flag); None: not held."""
@@ -148,6 +180,8 @@ class Principal:
         permission outside `PROJECT_TEAM_KEYS` (tests.run: per test) reaches no dự án."""
         if bp_id is None or not self.can_view_project(bp_id):
             return False
+        if self.holds_in(key, bp_id):
+            return True
         held = self.scope(key)
         if held in ("all", FLAG):
             return True
@@ -172,6 +206,8 @@ class Principal:
         if self._bound_out(bp_id):
             return False
         if self.is_admin:
+            return True
+        if self.holds_in(key, bp_id):
             return True
         held = self.perms.get(key)
         if held is None:
@@ -279,6 +315,38 @@ class Principal:
             and self.project_admin.get(bp_id) == "manager"
             and self.can_setup_project(bp_id)
         )
+
+    # -- a dự án's own rights (docs/specs/21 §13) ----------------------------------------------
+
+    def whole_project(self, key: str, bp_id: int | None) -> bool:
+        """Holds `key` over everyone's work in dự án `bp_id`: "all" (or a flag) on a dự án one
+        sees, "project" on one one manages, or a set of that dự án. What one may hand out there."""
+        if bp_id is None or not self.can_view_project(bp_id):
+            return False
+        if self.is_admin or self.holds_in(key, bp_id):
+            return True
+        held = self.perms.get(key)
+        return held in ("all", FLAG) or (held == "project" and self.can_manage_project(bp_id))
+
+    def can_permit_project(self, bp_id: int | None) -> bool:
+        """Make the dự án's own permission sets and tick rights for its people: admin, a holder
+        of admin.permissions, or `project.permissions` ("project": the dự án one is Manager dự án
+        of; "all": every dự án one sees)."""
+        if bp_id is None or not self.can_view_project(bp_id):
+            return False
+        if self.is_admin or "admin.permissions" in self.perms:
+            return True
+        held = self.perms.get("project.permissions")
+        return held == "all" or (held == "project" and self.project_admin.get(bp_id) == "manager")
+
+    def permit_projects(self) -> set[int] | None:
+        """The dự án `can_permit_project` holds for; None: every one."""
+        if self.token_project is None and (self.is_admin or "admin.permissions" in self.perms):
+            return None
+        ids = set(self.project_roles) | set(self.project_admin)
+        if self.token_project is not None:
+            ids = {self.token_project}
+        return {bp for bp in ids if self.can_permit_project(bp)}
 
     def can_see_work(self, author_user_id: int | None, bp_id: int | None) -> bool:
         """A review, its findings or a commit, in a repo of dự án `bp_id`."""
@@ -404,6 +472,7 @@ def load_principal(
         if is_admin
         else _permission_items(session, user.id, auto_roles, {m.team_id for m in memberships})
     )
+    project_perms = {} if is_admin else project_items(session, user.id, set(roles))
     return Principal(
         user_id=user.id,
         email=user.primary_email,
@@ -421,6 +490,7 @@ def load_principal(
         managed_member_projects=managed_projects,
         team_granted={k for k, v in items if v == "team"} & PROJECT_TEAM_KEYS,
         is_tester=is_tester,
+        project_perms=project_perms,
     )
 
 
@@ -460,14 +530,42 @@ def _permission_items(
         select(PermissionSetItem.permission, PermissionSetItem.scope)
         .join(PermissionSet, PermissionSet.id == PermissionSetItem.set_id)
         .where(
+            PermissionSet.business_project_id.is_(None),
             or_(
                 PermissionSet.auto_role.in_(auto_roles),
                 PermissionSet.id.in_(given),
                 PermissionSet.id.in_(by_team),
-            )
+            ),
         )
     ).tuples()
     return [(str(k), str(v)) for k, v in rows]
+
+
+def project_items(session: Session, user_id: int, granted: set[int]) -> dict[int, frozenset[str]]:
+    """docs/specs/21 §13: the rights the sets of each dự án give `user_id` there, for the dự án
+    they still have a grant on (`granted`). Only rights a dự án's set may hold count (a row the
+    catalog no longer allows there is dropped, never widened)."""
+    if not granted:
+        return {}
+    rows = session.execute(
+        select(
+            PermissionSet.business_project_id,
+            PermissionSetItem.permission,
+            PermissionSetItem.scope,
+        )
+        .join(PermissionSetItem, PermissionSetItem.set_id == PermissionSet.id)
+        .join(UserPermissionSet, UserPermissionSet.set_id == PermissionSet.id)
+        .where(
+            UserPermissionSet.user_id == user_id,
+            PermissionSet.business_project_id.in_(sorted(granted)),
+        )
+    ).tuples()
+    out: dict[int, set[str]] = {}
+    for bp, key, scope in rows:
+        if bp is None or key not in PROJECT_ASSIGNABLE or not valid_item(str(key), str(scope)):
+            continue
+        out.setdefault(int(bp), set()).add(str(key))
+    return {bp: frozenset(keys) for bp, keys in out.items()}
 
 
 def require(key: str) -> Any:

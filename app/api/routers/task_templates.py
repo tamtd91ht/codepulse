@@ -212,7 +212,10 @@ def adoption(
         for s in session.scalars(select(TaskSpace).where(TaskSpace.business_project_id.in_(ids)))
     }
     if not full:
-        projects = [b for b in projects if b.id in spaces]
+        from app.tasks.service import can_manage_space
+
+        # tasks.manage over the dự án itself (a dự án's own set reaches only that one, §13).
+        projects = [b for b in projects if b.id in spaces and can_manage_space(principal, b.id)]
         ids = [b.id for b in projects]
     counts: dict[int, tuple[int, int, datetime | None]] = {}
     for bp_id, total, open_, last in session.execute(

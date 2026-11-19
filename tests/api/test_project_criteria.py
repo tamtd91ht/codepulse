@@ -6,7 +6,6 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
@@ -144,7 +143,10 @@ def test_trigger_blocks_another_du_an_set_and_delete_takes_own_sets(
         db_session.flush()
     assert client.delete(f"{API}/business-projects/{mine}", headers=admin).status_code == 204
     db_session.expire_all()
-    assert db_session.scalar(select(CriteriaSet).where(CriteriaSet.id == own["id"])) is None
+    # Its scores are review history: the set stays, archived and shared, named after the dự án.
+    kept = db_session.get(CriteriaSet, own["id"])
+    assert kept is not None and kept.archived and kept.business_project_id is None
+    assert "Mine, đã xoá" in kept.name
 
 
 def test_plain_viewer_and_preview_need_project_criteria(

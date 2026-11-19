@@ -335,6 +335,8 @@ def rerunnable_reviews(
         audit(session, principal.user_id, "reviews.read", f"user:{user_id}")
         session.commit()
     managed = principal.managed_projects()  # `may_rerun`: within the dự án one manages
+    if managed is not None:  # and those whose own sets give review.rerun (docs/specs/21 §13)
+        managed = managed | principal.local_projects("review.rerun")
     if managed is not None and not managed:
         return {"ids": [], "done": 0, "truncated": False}
     # _can_rerun and the manage check in SQL, so the scan stops after RERUNNABLE_MAX + 1 rows.

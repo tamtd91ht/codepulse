@@ -316,57 +316,75 @@ trước và sau đều là **Xem** hoặc **Lead dự án**. Người chọn l�
 toàn hệ thống vẫn chỉ `admin.people`. Quản trị dự án chỉ chọn người đang hoạt động
 (`grant-candidates`) để cho vào dự án (tab Quyền truy cập, §10) và đặt quyền cho họ trong dự án.
 
-**Bộ quyền riêng của dự án** (migration mới):
+**Bộ quyền riêng của dự án** (migration `d8f3b1a5c7e2`):
 - `permission_sets.business_project_id` (NULL = toàn hệ thống như cũ; có giá trị = riêng dự án đó,
-  `ON DELETE CASCADE`). Tên unique theo `(business_project_id, name)`.
-- Chỉ chứa quyền có cờ `project_assignable` trong danh mục (quyền gắn với dự án: review, finding,
-  khiếu nại, đánh giá, báo cáo, chỉ số, knowledge, tests, tasks, `criteria.assign`, `project.criteria`…).
-  Không bao giờ chứa `admin.*`, `criteria.manage`, `knowledge.shared`, `gitlab_members.import`,
-  `assistant.*`, `telegram.*`, `feedback.manage`, `project.permissions`.
+  `ON DELETE CASCADE`; CHECK không phải bộ có sẵn). Tên unique theo `(dự án, lower(name))`; bộ cá nhân
+  unique theo `(personal_user_id, dự án)`.
+- Chỉ chứa quyền trong `PROJECT_ASSIGNABLE` (catalog): quyền có phạm vi `project` trên việc làm trong dự
+  án — review (`view/request/rerun/author`), `finding.close_decide|lower_far`, `dispute.decide|ai_check`,
+  `evaluation.view`, `report.member`, `dpi.view|assess|defects`, `docs.edit`, `tests.*` có phạm vi,
+  `tasks.*` có phạm vi, `knowledge.edit`, `criteria.assign`, `project.criteria`. Không bao giờ chứa
+  quyền flag (sẽ có hiệu lực mọi dự án), `admin.*`, `criteria.manage`, `knowledge.shared`, quyền team /
+  cá nhân (`metrics.*`, `evidence.*`, `dpi.calibrate|distribution`), `project.setup`,
+  `project.permissions`. Dòng lạ trong DB bị bỏ khi tính quyền.
+- Mỗi quyền trong bộ riêng có **một mức duy nhất: cả dự án đó** (scope lưu `project`). Dự án coi như một
+  team, nên không có mức team / own trong bộ riêng (người dùng 2026-11-19).
 - Chỉ gán cho **người** (`user_permission_sets`) đang có quyền vào dự án; không gán cho team. Mất quyền
   vào dự án thì bộ riêng thôi có hiệu lực (gán vẫn giữ, có lại quyền thì có lại).
-- Quyền riêng của một người trong dự án (tick theo chức năng như §9) lưu ở bộ cá nhân theo dự án:
-  `personal_user_id` + `business_project_id`.
-- Phạm vi trong bộ riêng không ra khỏi dự án: `all`/`project` = mọi người trong dự án đó; `team` =
-  người mình lead trong dự án đó; `own` như cũ.
+- Quyền tick riêng cho một người trong dự án lưu ở bộ cá nhân của dự án (`personal_user_id` +
+  `business_project_id`), tạo ở lần tick đầu, xoá khi bỏ hết.
 
-**Tính quyền.** `Principal.project_perms: dict[bp_id, dict[key, scope]]` tính một lần mỗi request.
-`covers(key, user, bp)` và `covers_project(key, bp)` hợp `perms` với `project_perms[bp]`, lấy phạm vi
-rộng nhất. `can(key)` giữ nghĩa toàn hệ thống; `can_somewhere(key)` cho menu / nút. Endpoint thao tác
-trên một dự án dùng `require_in_project(key)` (lấy `bp_id` từ path / đối tượng rồi `covers_project`);
-endpoint danh sách lọc theo dự án. Test ma trận: hành vi khi không có bộ riêng nào phải không đổi.
+**Tính quyền** (`app/api/security.py`). `Principal.project_perms: dict[bp_id, frozenset[key]]` tính một
+lần mỗi request, chỉ cho dự án còn grant. `perms` (toàn hệ thống) bỏ qua mọi bộ của dự án.
+- `holds_in(key, bp)`, `local_projects(key)`; `covers` / `covers_project` trả true khi `holds_in`.
+- `can(key)` = có ở toàn hệ thống **hoặc** ở một dự án nào đó: đủ để qua `require()`, rồi endpoint kiểm
+  tra đối tượng. Các chỗ đọc thẳng phạm vi `project` (`whole_projects`/`work_scope`, `covers_person`/
+  `person_scope`, task `may`/`can_assign_new`, `docs.may_edit`, DPI defects, danh sách chạy lại review,
+  "Quyền của tôi") cộng thêm `local_projects(key)` — không nơi nào nới phạm vi toàn hệ thống.
+- `/auth/me` trả `project_permissions` (dự án → quyền) và `permit_projects`; frontend `can()` /
+  `canIn()` đọc cả hai.
 
-**Quyền mới** (scoped `project`/`all`, vào bộ có sẵn **Quản trị dự án** ở `project` theo vai trò):
+- Quyền theo người (`evaluation.view`, `report.member`, `dpi.view|assess`) từ bộ của dự án X phủ
+  **người** làm trong X (như mức `project` toàn hệ thống); số liệu của họ vẫn lọc theo việc người xem được
+  thấy (`review_scope` tính thêm X). Chấp nhận có chủ đích: đánh giá một người là đánh giá cả người đó.
+- Sửa / xoá một bộ của dự án làm đổi quyền của mọi người giữ nó: người không phải admin chỉ làm được khi
+  mọi người giữ bộ đều là người mình được đổi quyền (lượt soát 2026-11-19).
+- Xoá dự án: bộ tiêu chí riêng của nó **không bị xoá** (điểm đã chấm là lịch sử review), chỉ lưu trữ,
+  chuyển thành dùng chung và đổi tên kèm tên dự án; bộ quyền của dự án thì xoá theo dự án.
+
+**Quyền mới** (scoped `project`/`all`, trong bộ có sẵn **Quản trị dự án** ở `project`):
 
 | key | Việc | Lead dự án | Manager dự án |
 |---|---|---|---|
 | `project.criteria` | Tạo, sửa, nhân bản, lưu trữ bộ tiêu chí riêng của dự án (spec 22 §11) | có | có |
-| `project.permissions` | Tạo / sửa / xoá bộ quyền riêng của dự án, gán bộ và tick quyền cho người trong dự án | không | có |
+| `project.permissions` (nhạy cảm) | Bộ quyền của dự án, tick quyền cho người trong dự án | không | có |
 
-Bộ Quản trị dự án hiện chung cho Lead và Manager; tách thành hai bộ có sẵn `project_lead`,
-`project_manager` (auto_role theo `project_grants.admin_role`), cùng giữ nội dung cũ, thêm khác biệt ở
-bảng trên.
+Không tách bộ có sẵn: `Principal.can_permit_project(bp)` = admin, người giữ `admin.permissions`, hoặc
+`project.permissions` ở `all` (dự án mình xem được) / ở `project` **và** là Manager dự án của bp. Lead dự
+án cũng giữ bộ Quản trị dự án nhưng không có vai trò Manager nên không phân quyền được; admin bỏ quyền
+này khỏi bộ có sẵn thì tắt cho mọi Manager dự án (migration `e4a6c8b0d2f9`).
 
-**Không vượt quá quyền người đặt** (áp dụng cả khi cấp, nới, thu, xoá bộ):
-1. Mỗi quyền đặt cho người khác trong dự án X phải là quyền mình đang có **trên X**, phạm vi không rộng
-   hơn phạm vi của mình trên X (tính cả `perms` lẫn `project_perms[X]`).
-2. Không tự gán, không sửa quyền của chính mình.
-3. Không đặt quyền cho admin, Quản lý tổng, người giữ `admin.*`, Manager dự án khác của X (luật §8.8).
-4. Không cấp `project.permissions`; vai trò Manager dự án vẫn chỉ admin giao (§10).
+**Không vượt quá quyền người đặt** (`app/api/routers/project_permissions.py`; cả khi cấp, nới, thu, xoá):
+1. Mỗi quyền cấp / thu trong dự án X phải là quyền mình có **trên cả X** (`Principal.whole_project`:
+   `all`, `project` + quản lý X, hoặc bộ riêng của X). Danh mục trả `grantable` cho từng quyền.
+2. Không tự gán, không sửa quyền của chính mình; không thêm quyền vào bộ mình đang giữ.
+3. Không đặt quyền cho admin (409), Quản lý tổng, người giữ `admin.*`, Manager dự án (chỉ admin), người
+   chưa có quyền vào dự án.
+4. Không cấp `project.permissions`, `project.setup`; vai trò Manager dự án vẫn chỉ admin giao (§10).
 5. Quyền nhạy cảm cần `confirm_sensitive`; mọi thay đổi ghi audit `permission_set.*` kèm
    `business_project_id`.
-6. Bộ riêng của dự án khác: 404 (không lộ tồn tại).
+6. Bộ của dự án khác: 404. API bộ quyền toàn hệ thống (§7, §9) không thấy và không gán bộ của dự án.
 
-**API** (cùng hình dạng §7, §9, dưới dự án):
-`GET /business-projects/{bp}/permissions/catalog` (chỉ quyền `project_assignable`, đánh dấu quyền mình
-được đặt), `GET|POST /business-projects/{bp}/permission-sets`, `PATCH|DELETE …/permission-sets/{id}`,
-`PUT …/permission-sets/{id}/users`, `GET|PUT /business-projects/{bp}/users/{uid}/permissions`.
-Admin và người giữ `admin.permissions` dùng được mọi dự án; màn Admin › Phân quyền thêm bộ lọc
-"Toàn hệ thống / Dự án".
+**API:** `GET /business-projects/{bp}/permissions/catalog`, `GET …/permissions/people` (người có grant,
+vai trò, bộ, quyền tick, quyền hiệu lực, `locked` = lý do không sửa được), `GET|POST
+…/permission-sets`, `PATCH|DELETE …/permission-sets/{id}`, `PUT …/permission-sets/{id}/users`,
+`PUT /business-projects/{bp}/users/{uid}/permissions {set_ids, permissions, confirm_sensitive}` (một lần
+lưu cho một người). "Quyền của tôi" / Xem trước quyền có `project_permissions` theo dự án.
 
-**UI.** Drawer Quản trị dự án: tab "Quyền truy cập" đổi thành **Người & quyền** (danh sách người trong
-dự án, vai trò, nút "Đặt quyền" mở màn tick §9 giới hạn trong dự án); tab mới **Bộ quyền** (trình soạn
-§9, chỉ quyền mình được đặt). "Quyền của tôi" ghi nguồn "từ bộ … (riêng dự án X)".
+**UI.** Drawer dự án (Admin › Dự án & Repo và Quản trị dự án) có tab **Phân quyền** khi
+`permit_projects` gồm dự án: "Quyền từng người" (bảng người, nút chìa khoá mở bố cục §9: nhóm bên trái,
+tick bên phải; quyền không cấp được bị khoá kèm lý do; chọn bộ của dự án) và "Bộ quyền của dự án" (tạo,
+sửa, xoá, gán người). Tab Quyền truy cập giữ nguyên để thêm người vào dự án (không tạo người mới).
 
-**Giai đoạn:** P1 bộ tiêu chí riêng (spec 22 §11) → P2 hạ tầng `project_perms` / `require_in_project`
-+ test ma trận → P3 bộ quyền riêng, đặt quyền theo người, UI. Mỗi giai đoạn commit riêng.
+**Giai đoạn (đã làm 2026-11-19):** P1 bộ tiêu chí riêng (spec 22 §11, `c7e2a9d4b6f1`) → P2 lớp quyền
+theo dự án (`d8f3b1a5c7e2`) → P3 quyền `project.permissions`, API, UI (`e4a6c8b0d2f9`).

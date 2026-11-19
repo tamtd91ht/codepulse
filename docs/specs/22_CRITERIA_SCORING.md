@@ -207,5 +207,7 @@ Mỗi giai đoạn: lint, mypy, toàn bộ test, build frontend; commit và push
   không thì 422; DB chặn thêm bằng trigger trên `project_criteria_sets`.
 - Danh sách (`GET /criteria-sets?business_project_id=`): bộ toàn hệ thống (chỉ đọc với Quản trị dự án)
   + bộ riêng của dự án đó; bộ riêng của dự án khác không hiện, đọc trực tiếp trả 404.
+- Xoá dự án: bộ riêng được lưu trữ, chuyển thành dùng chung, đổi tên "… (<dự án>, đã xoá #id)"; điểm
+  đã chấm giữ nguyên (không xoá lịch sử review).
 - UI: tab Tiêu chí chấm của drawer dự án thêm "Tạo bộ riêng" và "Nhân bản thành bộ riêng"; bộ riêng gắn
   nhãn "Riêng dự án". Admin › Tiêu chí lọc theo "Toàn hệ thống / Dự án".

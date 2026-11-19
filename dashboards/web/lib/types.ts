@@ -26,10 +26,14 @@ export interface Me {
   jira_tasks?: boolean;
   /** docs/specs/21: permission key -> scope ("own" | "team" | "project" | "all") or "flag"; read with can(). */
   permissions?: Record<string, string>;
+  /** docs/specs/21 §13: dự án id -> the rights its own sets give there. */
+  project_permissions?: Record<string, string[]>;
   /** docs/specs/21 §10: dự án id -> this person's Lead / Manager role there. */
   project_admin?: Record<string, ProjectAdminRole>;
   /** docs/specs/21 §10: the dự án this person sets up (repos, .claude, rules); null = every one. */
   setup_projects?: number[] | null;
+  /** docs/specs/21 §13: the dự án whose rights this person hands out (null: every one). */
+  permit_projects?: number[] | null;
 }
 
 /** docs/specs/21 §10: the Lead or Manager of a dự án sets it up; the Manager also staffs it. */
@@ -3302,4 +3306,33 @@ export interface TaskDemoDeleted {
 /** POST /tasks/search/facets: per field, tasks per value ("none" / "backlog" for no value). */
 export interface TaskSearchFacets {
   counts: Record<string, Record<string, number>>;
+}
+
+/** docs/specs/21 §13: GET /business-projects/{id}/permissions/catalog. */
+export interface ProjectPermCatalog {
+  groups: {
+    name: string;
+    permissions: { key: string; label: string; sensitive: boolean; grantable: boolean }[];
+  }[];
+}
+
+/** A permission set of one dự án (docs/specs/21 §13). */
+export interface ProjectPermSet {
+  id: number;
+  name: string;
+  description: string | null;
+  permissions: string[];
+  members: { id: number; full_name: string | null; email: string | null }[];
+}
+
+/** One person of a dự án and the rights its sets give them there (docs/specs/21 §13). */
+export interface ProjectPersonRights {
+  user: { id: number; full_name: string | null; email: string | null };
+  role: string;
+  admin_role: "lead" | "manager" | null;
+  set_ids: number[];
+  permissions: string[];
+  effective: string[];
+  /** Why the caller may not change this person's rights here; null: they may. */
+  locked: string | null;
 }

@@ -59,6 +59,10 @@ def covers_person(
     direct lead, docs/specs/20 D4)."""
     if principal.is_admin:
         return True
+    # docs/specs/21 §13: a dự án's own set gives `key` over everyone working in that dự án.
+    local = principal.local_projects(key)
+    if local and (user_id == principal.user_id or _person_in(session, local, user_id)):
+        return True
     held = principal.scope(key)
     if held is None:
         return False
@@ -79,6 +83,15 @@ def person_scope(session: Session, principal: Principal, key: str) -> set[int] |
     """Everyone `covers_person` lets `principal` see for `key`; None: everyone."""
     if principal.is_admin:
         return None
+    found = _held_person_scope(session, principal, key)
+    # docs/specs/21 §13: and everyone working in the dự án whose own sets give `key`.
+    local = principal.local_projects(key)
+    if found is None or not local:
+        return found
+    return found | {principal.user_id} | project_people(session, local)
+
+
+def _held_person_scope(session: Session, principal: Principal, key: str) -> set[int] | None:
     held = principal.scope(key)
     if held is None:
         return set()

@@ -218,6 +218,11 @@ def upgrade() -> None:
         op.f("ix_criteria_sets_business_project_id"), "criteria_sets", ["business_project_id"]
     )
     op.drop_constraint(op.f("uq_criteria_sets_name"), "criteria_sets", type_="unique")
+    # Names differing only by case were allowed before: keep them apart now.
+    op.execute(
+        "UPDATE criteria_sets c SET name = c.name || ' #' || c.id WHERE EXISTS ("
+        "SELECT 1 FROM criteria_sets o WHERE lower(o.name) = lower(c.name) AND o.id < c.id)"
+    )
     op.execute(
         "CREATE UNIQUE INDEX uq_criteria_sets_owner_name "
         "ON criteria_sets (COALESCE(business_project_id, 0), lower(name))"

@@ -124,7 +124,17 @@ export function canManageProject(me: Me | undefined, bpId: number | null | undef
  * specific person's work still need the server's answer: the scope decides there. */
 export function can(me: Me | undefined, key: string): boolean {
   if (!me) return false;
-  return me.is_admin || Boolean(me.permissions && key in me.permissions);
+  if (me.is_admin || Boolean(me.permissions && key in me.permissions)) return true;
+  // docs/specs/21 §13: held in some dự án through its own sets (the server checks the dự án).
+  return Object.values(me.project_permissions ?? {}).some((keys) => keys.includes(key));
+}
+
+/** Holds `key` over dự án `bpId`: across the system (any scope; the server decides the rest) or
+ * through that dự án's own sets (docs/specs/21 §13). */
+export function canIn(me: Me | undefined, key: string, bpId: number): boolean {
+  if (!me) return false;
+  if (me.is_admin || Boolean(me.permissions && key in me.permissions)) return true;
+  return Boolean(me.project_permissions?.[String(bpId)]?.includes(key));
 }
 
 /** docs/specs/21 §10: the dự án `me` sets up (null: every one, admin.projects). */

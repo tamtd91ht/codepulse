@@ -121,6 +121,8 @@ def may(p: Principal, right: str, task: Task) -> bool:
         return False
     if can_manage_space(p, bp_id):
         return True
+    if p.holds_in(f"tasks.{right}", bp_id):  # a dự án's own set: every task there (§13)
+        return True
     scope = p.scope(f"tasks.{right}")
     if scope is None:
         return False
@@ -182,7 +184,11 @@ def can_create(p: Principal, bp_id: int) -> bool:
 def can_assign_new(p: Principal, bp_id: int) -> bool:
     """May name someone else as the assignee of a task one creates (one is its reporter, so
     any scope of tasks.assign reaches it)."""
-    return p.can("tasks.assign") or can_manage_space(p, bp_id)
+    return (
+        p.scope("tasks.assign") is not None
+        or p.holds_in("tasks.assign", bp_id)
+        or can_manage_space(p, bp_id)
+    )
 
 
 def can_sprint(p: Principal, bp_id: int) -> bool:

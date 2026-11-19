@@ -249,6 +249,10 @@ def me(
         # person sets up (null: every one, admin.projects).
         "project_admin": {str(bp): r for bp, r in sorted(principal.project_admin.items())},
         "setup_projects": None if (mine := principal.setup_projects()) is None else sorted(mine),
+        # docs/specs/21 §13: the dự án whose rights this person hands out (null: every one).
+        "permit_projects": None
+        if (permit := principal.permit_projects()) is None
+        else sorted(permit),
         # Admin > Chạy command (COMMAND_RUNS_ENABLED); always false for everyone else.
         "command_runs": principal.is_admin and settings.command_runs_enabled,
         # Luồng làm việc: lead and above (app/api/security.require_insights).
@@ -259,4 +263,8 @@ def me(
         "jira_tasks": _jira_connected(session, settings),
         # docs/specs/21: what this person may do (catalog key -> scope, or "flag").
         "permissions": principal.perms,
+        # docs/specs/21 §13: dự án id -> the rights that dự án's own sets give there.
+        "project_permissions": {
+            str(bp): sorted(keys) for bp, keys in sorted(principal.project_perms.items())
+        },
     }

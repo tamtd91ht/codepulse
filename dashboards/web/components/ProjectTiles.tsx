@@ -9,12 +9,13 @@ import { ClaudeRepoEditor } from "@/components/ClaudeRepoEditor";
 import { Icon, IconButton } from "@/components/icons";
 import { ProjectCriteria } from "@/components/ProjectCriteria";
 import { ProjectGrants } from "@/components/ProjectGrants";
+import { ProjectPermissions } from "@/components/ProjectPermissions";
 import { BulkBranch, type RepoActions, repoName, RepoTable, UNASSIGNED } from "@/components/RepoTable";
 import { RuleFilesPanel } from "@/components/RuleFiles";
 import { Drawer, EmptyState, Pill, Segmented } from "@/components/ui";
 import { useApi } from "@/lib/api";
 import { date } from "@/lib/format";
-import type { BusinessProject, Connection, NotificationWebhook, Project, TelegramBot } from "@/lib/types";
+import type { BusinessProject, Connection, Me, NotificationWebhook, Project, TelegramBot } from "@/lib/types";
 
 /** The tile key: a dự án id, or "none" for repos without one. */
 export type TileKey = number | typeof UNASSIGNED;
@@ -123,9 +124,9 @@ function Tile({
 type Status = "tracked" | "untracked" | "all";
 
 /** The parts of a dự án, one tab each, instead of one long page to scroll. */
-type ProjectTab = "repos" | "access" | "criteria" | "rules" | "claude";
+type ProjectTab = "repos" | "access" | "permissions" | "criteria" | "rules" | "claude";
 const PROJECT_TAB_KEY = "codepulse.admin.project.tab";
-const PROJECT_TABS: ProjectTab[] = ["repos", "access", "criteria", "rules", "claude"];
+const PROJECT_TABS: ProjectTab[] = ["repos", "access", "permissions", "criteria", "rules", "claude"];
 
 /** Per-viewer convenience: the tab last used comes back for the next dự án opened. */
 function loadProjectTab(): ProjectTab {
@@ -210,6 +211,10 @@ export function ProjectDrawer({
     const t = setTimeout(() => nameInput.current?.focus(), 0);
     return () => clearTimeout(t);
   }, [editing]);
+  const { data: me } = useApi<Me>("/auth/me");
+  // docs/specs/21 §13: whoever hands out rights in this dự án (its Manager dự án, admin).
+  const permits =
+    !!project && !!me && (me.is_admin || me.permit_projects === null || (me.permit_projects ?? []).includes(project.id));
   const bots = useApi<TelegramBot[]>(project && !limited ? "/telegram/bots" : null);
   const hooks = useApi<NotificationWebhook[]>(project && !limited ? "/webhooks" : null);
   const bot = (bots.data ?? []).find((b) => b.business_project_id === project?.id && b.project_id === null);
@@ -226,6 +231,9 @@ export function ProjectDrawer({
     ? [
         { key: "repos", label: "Repo", count: stats.repos, hint: "Repo của dự án: nhánh review, sync, webhook, theo dõi" },
         { key: "access", label: "Quyền truy cập", hint: "Ai được xem / quản lý dự án này" },
+        ...(permits
+          ? [{ key: "permissions" as const, label: "Phân quyền", hint: "Quyền của từng người và bộ quyền, chỉ trong dự án này" }]
+          : []),
         { key: "criteria", label: "Tiêu chí chấm", hint: "Bộ tiêu chí chấm điểm review của dự án" },
         {
           key: "rules",
@@ -237,7 +245,7 @@ export function ProjectDrawer({
       ]
     : [];
   // The unassigned tile has repos only: no tab row.
-  const current: ProjectTab = project ? tab : "repos";
+  const current: ProjectTab = project ? (tab === "permissions" && !permits ? "repos" : tab) : "repos";
   const chosen = shown.filter((p) => picked.has(p.id));
   const pick = (ids: number[], on: boolean) =>
     setPicked((prev) => {
@@ -482,6 +490,11 @@ export function ProjectDrawer({
             busy={busy}
             mode={!limited ? "admin" : staff ? "staff" : "readonly"}
           />
+        </SubPanel>
+      )}
+      {project && current === "permissions" && (
+        <SubPanel id="bp-tabs" tab="permissions">
+          <ProjectPermissions key={project.id} projectId={project.id} projectName={project.name} />
         </SubPanel>
       )}
       {project && current === "criteria" && (
