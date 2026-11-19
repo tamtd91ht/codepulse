@@ -1,6 +1,7 @@
-"""Weighted criteria sets (docs/specs/22 §6): the sets and their versions (`criteria.manage`),
-the sets of a dự án (`criteria.assign`), a preview that writes nothing, and the summary of the
-stored scores, which follows `review.view` like the reviews themselves."""
+"""Weighted criteria sets (docs/specs/22 §6): the sets and their versions (`criteria.manage`;
+a dự án's own sets, §11: `project.criteria` over that dự án), the sets of a dự án
+(`criteria.assign`), a preview that writes nothing, and the summary of the stored scores, which
+follows `review.view` like the reviews themselves."""
 
 import logging
 from collections import defaultdict
@@ -11,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -51,7 +52,6 @@ router = APIRouter(tags=["criteria"])
 SessionDep = Annotated[Session, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 QueueDep = Annotated[Enqueuer, Depends(get_queue)]
-ManagePrincipal = Annotated[Principal, require("criteria.manage")]
 AssignPrincipal = Annotated[Principal, require("criteria.assign")]
 ViewPrincipal = Annotated[Principal, require("review.view")]
 
@@ -71,6 +71,8 @@ class SetCreate(BaseModel):
     components: list[dict[str, Any]] | None = None
     apply_caps: bool = True
     from_template: str | None = None
+    # docs/specs/22 §11: the dự án this set belongs to (None: every dự án, criteria.manage).
+    business_project_id: int | None = None
 
 
 class SetUpdate(BaseModel):
@@ -87,6 +89,8 @@ class CloneIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(max_length=NAME_MAX)
+    # The copy's dự án (None: shared); a dự án's own set copies into that dự án only.
+    business_project_id: int | None = None
 
 
 class PreviewIn(BaseModel):
@@ -144,11 +148,17 @@ def _dump(components: Components) -> list[dict[str, Any]]:
     return [c.model_dump() for c in components.components]
 
 
-def _name(session: Session, name: str, exclude: int | None = None) -> str:
+def _name(session: Session, name: str, owner: int | None, exclude: int | None = None) -> str:
+    """Unique among the sets of the same owner: the shared ones, or one dự án's (§11)."""
     cleaned = name.strip()
     if not cleaned:
         raise _unprocessable(["name"], "tên không được trống")
-    query = select(CriteriaSet.id).where(func.lower(CriteriaSet.name) == cleaned.lower())
+    query = select(CriteriaSet.id).where(
+        func.lower(CriteriaSet.name) == cleaned.lower(),
+        CriteriaSet.business_project_id.is_(None)
+        if owner is None
+        else CriteriaSet.business_project_id == owner,
+    )
     if exclude is not None:
         query = query.where(CriteriaSet.id != exclude)
     if session.scalar(query) is not None:
@@ -156,17 +166,58 @@ def _name(session: Session, name: str, exclude: int | None = None) -> str:
     return cleaned
 
 
-def _get_set(session: Session, set_id: int) -> CriteriaSet:
+def _get_set(session: Session, principal: Principal, set_id: int) -> CriteriaSet:
+    """A set the caller may see: another dự án's own set does not exist for them (§11)."""
     found = session.get(CriteriaSet, set_id)
-    if found is None:
+    if found is None or not _sees(principal, found):
         raise HTTPException(404, "không có bộ tiêu chí này")
     return found
 
 
 def _may_read(principal: Principal) -> None:
     """The sets themselves: whoever makes them or gives them to a dự án."""
-    if not (principal.can("criteria.manage") or principal.can("criteria.assign")):
+    if not (
+        principal.can("criteria.manage")
+        or principal.can("criteria.assign")
+        or principal.can("project.criteria")
+    ):
         raise HTTPException(403, "thiếu quyền xem bộ tiêu chí")
+
+
+def _sees(principal: Principal, criteria_set: CriteriaSet) -> bool:
+    """Shared sets: everyone who reads sets; a dự án's own set: those who see that dự án."""
+    bp_id = criteria_set.business_project_id
+    return bp_id is None or principal.can_view_project(bp_id)
+
+
+def may_edit_in(principal: Principal, bp_id: int | None) -> bool:
+    """Make or change the sets of owner `bp_id` (None: the shared sets): criteria.manage for
+    the shared ones and for every dự án one sees; project.criteria over that dự án for its own."""
+    if bp_id is None:
+        return principal.can("criteria.manage")
+    if not principal.can_view_project(bp_id):
+        return False
+    return principal.can("criteria.manage") or principal.covers_project("project.criteria", bp_id)
+
+
+def _may_edit(principal: Principal, bp_id: int | None) -> None:
+    if not may_edit_in(principal, bp_id):
+        raise HTTPException(
+            403,
+            "thiếu quyền sửa bộ tiêu chí dùng chung"
+            if bp_id is None
+            else "thiếu quyền sửa bộ tiêu chí riêng của dự án này",
+        )
+
+
+def _owner(session: Session, principal: Principal, bp_id: int | None) -> int | None:
+    """The owner a new set is made for: 404 for a dự án one cannot see."""
+    if bp_id is not None and (
+        session.get(BusinessProject, bp_id) is None or not principal.can_view_project(bp_id)
+    ):
+        raise HTTPException(404, "không có dự án này")
+    _may_edit(principal, bp_id)
+    return bp_id
 
 
 def _may_assign(principal: Principal, bp_id: int) -> None:
@@ -263,9 +314,18 @@ def _set_out(session: Session, principal: Principal, criteria_set: CriteriaSet) 
         .order_by(BusinessProject.name)
     ).tuples()
     projects = [(link, bp) for link, bp in links]
+    owner = (
+        session.get(BusinessProject, criteria_set.business_project_id)
+        if criteria_set.business_project_id
+        else None
+    )
     return {
         "id": criteria_set.id,
         "name": criteria_set.name,
+        # docs/specs/22 §11: None = shared by every dự án; else that dự án's own set.
+        "business_project_id": criteria_set.business_project_id,
+        "business_project_name": owner.name if owner else None,
+        "can_edit": may_edit_in(principal, criteria_set.business_project_id),
         "description": criteria_set.description,
         "archived": criteria_set.archived,
         "version": current.version if current else None,
@@ -348,19 +408,31 @@ def criteria_meta(principal: CurrentPrincipal) -> dict[str, Any]:
 
 @router.get("/criteria-sets")
 def list_sets(
-    principal: CurrentPrincipal, session: SessionDep, archived: bool | None = None
+    principal: CurrentPrincipal,
+    session: SessionDep,
+    archived: bool | None = None,
+    business_project_id: int | None = None,
+    shared: bool = True,
 ) -> list[dict[str, Any]]:
+    """The shared sets (unless `shared=false`) and the dự án's own sets: of
+    `business_project_id` only when given, else of every dự án one sees (§11)."""
     _may_read(principal)
     query = select(CriteriaSet).order_by(CriteriaSet.name)
     if archived is not None:
         query = query.where(CriteriaSet.archived.is_(archived))
-    return [_set_out(session, principal, s) for s in session.scalars(query)]
+    owned = (
+        CriteriaSet.business_project_id == business_project_id
+        if business_project_id is not None
+        else CriteriaSet.business_project_id.is_not(None)
+    )
+    query = query.where(or_(CriteriaSet.business_project_id.is_(None), owned) if shared else owned)
+    return [_set_out(session, principal, s) for s in session.scalars(query) if _sees(principal, s)]
 
 
 @router.get("/criteria-sets/{set_id}")
 def get_set(set_id: int, principal: CurrentPrincipal, session: SessionDep) -> dict[str, Any]:
     _may_read(principal)
-    return _detail(session, principal, _get_set(session, set_id))
+    return _detail(session, principal, _get_set(session, principal, set_id))
 
 
 @router.get("/criteria-sets/{set_id}/versions/{version}")
@@ -368,6 +440,7 @@ def get_version(
     set_id: int, version: int, principal: CurrentPrincipal, session: SessionDep
 ) -> dict[str, Any]:
     _may_read(principal)
+    _get_set(session, principal, set_id)
     row = session.scalars(
         select(CriteriaSetVersion).where(
             CriteriaSetVersion.set_id == set_id, CriteriaSetVersion.version == version
@@ -379,7 +452,8 @@ def get_version(
 
 
 @router.post("/criteria-sets", status_code=201)
-def create_set(body: SetCreate, principal: ManagePrincipal, session: SessionDep) -> dict[str, Any]:
+def create_set(body: SetCreate, principal: CurrentPrincipal, session: SessionDep) -> dict[str, Any]:
+    owner = _owner(session, principal, body.business_project_id)
     components_raw, description = body.components, body.description
     if body.from_template is not None:
         template = TEMPLATES.get(body.from_template)
@@ -391,8 +465,9 @@ def create_set(body: SetCreate, principal: ManagePrincipal, session: SessionDep)
             description = template["description"]
     components = _components(components_raw, body.apply_caps)
     criteria_set = CriteriaSet(
-        name=_name(session, body.name),
+        name=_name(session, body.name, owner),
         description=(description or "").strip() or None,
+        business_project_id=owner,
         created_by=principal.user_id,
     )
     session.add(criteria_set)
@@ -407,6 +482,7 @@ def create_set(body: SetCreate, principal: ManagePrincipal, session: SessionDep)
         name=criteria_set.name,
         version=version.version,
         from_template=body.from_template,
+        business_project_id=owner,
     )
     _commit(session)
     return _detail(session, principal, criteria_set)
@@ -414,13 +490,16 @@ def create_set(body: SetCreate, principal: ManagePrincipal, session: SessionDep)
 
 @router.put("/criteria-sets/{set_id}")
 def update_set(
-    set_id: int, body: SetUpdate, principal: ManagePrincipal, session: SessionDep
+    set_id: int, body: SetUpdate, principal: CurrentPrincipal, session: SessionDep
 ) -> dict[str, Any]:
     """Name and description in place; components or caps that change make a new version
     (docs/specs/22 §1), the old ones stay as they were."""
-    criteria_set = _get_set(session, set_id)
+    criteria_set = _get_set(session, principal, set_id)
+    _may_edit(principal, criteria_set.business_project_id)
     components = _components(body.components, body.apply_caps)
-    criteria_set.name = _name(session, body.name, exclude=criteria_set.id)
+    criteria_set.name = _name(
+        session, body.name, criteria_set.business_project_id, exclude=criteria_set.id
+    )
     criteria_set.description = (body.description or "").strip() or None
     current = (
         session.get(CriteriaSetVersion, criteria_set.current_version_id)
@@ -452,9 +531,19 @@ def update_set(
 
 @router.post("/criteria-sets/{set_id}/clone", status_code=201)
 def clone_set(
-    set_id: int, body: CloneIn, principal: ManagePrincipal, session: SessionDep
+    set_id: int, body: CloneIn, principal: CurrentPrincipal, session: SessionDep
 ) -> dict[str, Any]:
-    source = _get_set(session, set_id)
+    """A copy of the current version. A shared set copies into a dự án (its own set to tune,
+    §11); a dự án's own set copies only within that dự án, never out to the others."""
+    _may_read(principal)
+    source = _get_set(session, principal, set_id)
+    if source.business_project_id is not None and (
+        body.business_project_id != source.business_project_id
+    ):
+        raise _unprocessable(
+            ["business_project_id"], "bộ riêng của dự án chỉ nhân bản trong chính dự án đó"
+        )
+    owner = _owner(session, principal, body.business_project_id)
     current = (
         session.get(CriteriaSetVersion, source.current_version_id)
         if source.current_version_id
@@ -464,8 +553,9 @@ def clone_set(
         raise HTTPException(409, "bộ nguồn chưa có phiên bản nào")
     components = _components(current.components, current.apply_caps)
     copy = CriteriaSet(
-        name=_name(session, body.name),
+        name=_name(session, body.name, owner),
         description=source.description,
+        business_project_id=owner,
         created_by=principal.user_id,
     )
     session.add(copy)
@@ -480,14 +570,16 @@ def clone_set(
         source=source.id,
         source_version=current.version,
         name=copy.name,
+        business_project_id=owner,
     )
     _commit(session)
     return _detail(session, principal, copy)
 
 
 @router.post("/criteria-sets/{set_id}/archive")
-def archive_set(set_id: int, principal: ManagePrincipal, session: SessionDep) -> dict[str, Any]:
-    criteria_set = _get_set(session, set_id)
+def archive_set(set_id: int, principal: CurrentPrincipal, session: SessionDep) -> dict[str, Any]:
+    criteria_set = _get_set(session, principal, set_id)
+    _may_edit(principal, criteria_set.business_project_id)
     primary = session.scalar(
         select(func.count())
         .select_from(ProjectCriteriaSet)
@@ -502,8 +594,9 @@ def archive_set(set_id: int, principal: ManagePrincipal, session: SessionDep) ->
 
 
 @router.post("/criteria-sets/{set_id}/unarchive")
-def unarchive_set(set_id: int, principal: ManagePrincipal, session: SessionDep) -> dict[str, Any]:
-    criteria_set = _get_set(session, set_id)
+def unarchive_set(set_id: int, principal: CurrentPrincipal, session: SessionDep) -> dict[str, Any]:
+    criteria_set = _get_set(session, principal, set_id)
+    _may_edit(principal, criteria_set.business_project_id)
     criteria_set.archived = False
     audit(session, principal.user_id, "criteria_set.unarchive", f"criteria_set:{set_id}")
     session.commit()
@@ -511,9 +604,10 @@ def unarchive_set(set_id: int, principal: ManagePrincipal, session: SessionDep) 
 
 
 @router.delete("/criteria-sets/{set_id}", status_code=204)
-def delete_set(set_id: int, principal: ManagePrincipal, session: SessionDep) -> Response:
+def delete_set(set_id: int, principal: CurrentPrincipal, session: SessionDep) -> Response:
     """Only a set never used (no score, no dự án): a used one is archived instead."""
-    criteria_set = _get_set(session, set_id)
+    criteria_set = _get_set(session, principal, set_id)
+    _may_edit(principal, criteria_set.business_project_id)
     if _used(session, set_id):
         raise HTTPException(409, "bộ đã được dùng (có điểm hoặc đang gán dự án): hãy lưu trữ")
     name = criteria_set.name
@@ -543,13 +637,21 @@ def _label(session: Session, review: Review) -> tuple[str, str]:
 @router.post("/criteria/preview")
 def preview(
     body: PreviewIn,
-    principal: ManagePrincipal,
+    principal: CurrentPrincipal,
     session: SessionDep,
     settings: SettingsDep,
 ) -> dict[str, Any]:
     """The set being edited, on the latest finished reviews of a dự án. Writes nothing."""
     components = _components(body.components, body.apply_caps)
     _business(session, principal, body.business_project_id)
+    # Whoever edits sets for this dự án: the shared ones (criteria.manage) or its own (§11).
+    if not (
+        principal.can("criteria.manage")
+        or principal.covers_project("project.criteria", body.business_project_id)
+    ):
+        raise HTTPException(403, "thiếu quyền soạn bộ tiêu chí")
+    if body.set_id is not None:
+        _get_set(session, principal, body.set_id)
     draft = SetVersion(
         set_id=body.set_id or 0,
         name="preview",
@@ -632,6 +734,7 @@ def _project_sets(session: Session, bp_id: int) -> list[dict[str, Any]]:
             {
                 "set_id": criteria_set.id,
                 "name": criteria_set.name,
+                "business_project_id": criteria_set.business_project_id,
                 "description": criteria_set.description,
                 "archived": criteria_set.archived,
                 "is_primary": link.is_primary,
@@ -685,7 +788,10 @@ def assign_sets(
     found = {
         s.id: s for s in session.scalars(select(CriteriaSet).where(CriteriaSet.id.in_(wanted)))
     }
-    missing = [i for i in wanted if i not in found]
+    # Another dự án's own set does not exist here (§11; a trigger backs this up).
+    missing = [
+        i for i in wanted if i not in found or found[i].business_project_id not in (None, bp_id)
+    ]
     if missing:
         raise _unprocessable(["sets"], f"không có bộ tiêu chí: {', '.join(map(str, missing))}")
     before = {

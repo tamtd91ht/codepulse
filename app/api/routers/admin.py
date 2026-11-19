@@ -444,6 +444,14 @@ def delete_business_project(bp_id: int, principal: ProjectsAdmin, session: Sessi
     session.execute(delete(JiraProjectScope).where(JiraProjectScope.business_project_id == bp.id))
     for jira_id in jira_ids:
         recompute(session, jira_id)
+    # docs/specs/22 §11: the dự án's own criteria sets go with it. Its links first: they hold
+    # the sets with ON DELETE RESTRICT, which the cascades of one DELETE may meet in any order.
+    from app.models import CriteriaSet, ProjectCriteriaSet
+
+    session.execute(
+        delete(ProjectCriteriaSet).where(ProjectCriteriaSet.business_project_id == bp.id)
+    )
+    session.execute(delete(CriteriaSet).where(CriteriaSet.business_project_id == bp.id))
     session.delete(bp)
     audit(session, principal.user_id, "business_project.delete", f"business_project:{bp_id}")
     session.commit()

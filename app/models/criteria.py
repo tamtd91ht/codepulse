@@ -23,9 +23,23 @@ from app.models.base import Base, TimestampMixin
 
 class CriteriaSet(TimestampMixin, Base):
     __tablename__ = "criteria_sets"
+    __table_args__ = (
+        # The name is unique per owner: the shared sets, or one dự án's (docs/specs/22 §11).
+        Index(
+            "uq_criteria_sets_owner_name",
+            func.coalesce(text("business_project_id"), 0),
+            func.lower(text("name")),
+            unique=True,
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(unique=True)
+    name: Mapped[str]
+    # docs/specs/22 §11: None = a set for every dự án; else that dự án's own set, which no
+    # other dự án sees or uses (a trigger on project_criteria_sets enforces it), gone with it.
+    business_project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
+    )
     description: Mapped[str | None]
     archived: Mapped[bool] = mapped_column(default=False)
     # The version new scores use; None only between creating the set and its first version.

@@ -269,6 +269,14 @@ CATALOG: tuple[Permission, ...] = (
     # docs/specs/22 §5: making the sets is an admin's; giving them to a dự án is its manager's.
     _p("criteria.manage", "Bộ tiêu chí", "Tạo, sửa, nhân bản, lưu trữ bộ tiêu chí"),
     _p("criteria.assign", "Bộ tiêu chí", "Gán bộ tiêu chí cho dự án, tính lại điểm", "project all"),
+    # docs/specs/22 §11: the sets of one dự án, made by its Lead / Manager dự án; no other dự án
+    # sees or uses them. The shared sets stay criteria.manage's.
+    _p(
+        "project.criteria",
+        "Bộ tiêu chí",
+        "Tạo, sửa, nhân bản, lưu trữ bộ tiêu chí riêng của dự án",
+        "project all",
+    ),
     _p("gitlab_members.import", "Người & Team", "Tra cứu, nhập người từ GitLab"),
     _p("telegram.self", "Telegram", "Liên kết Telegram của mình"),
     _p("assistant.use", "Trợ lý", "Dùng trợ lý Stetho"),
@@ -514,7 +522,7 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
         "Quản trị dự án",
         "Lead / Manager của một dự án: thêm repo, cấu hình repo, repo .claude, file quy tắc và "
         "quy tắc review của dự án đó.",
-        {"project.setup": "project"},
+        {"project.setup": "project", "project.criteria": "project"},
     ),
     # docs/specs/31 §21.0 (R2): users.is_tester, or a current member of a team with is_qa.
     BuiltinSet(

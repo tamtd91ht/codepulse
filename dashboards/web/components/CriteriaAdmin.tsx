@@ -242,6 +242,7 @@ function SetCard({
           {set.name}
         </button>
         {set.current_version && <span className="crit-ver">v{set.current_version.version}</span>}
+        {set.business_project_name && <Pill title="Bộ riêng: chỉ dự án này thấy và dùng">Riêng · {set.business_project_name}</Pill>}
         {set.archived && <Pill>Lưu trữ</Pill>}
       </div>
       <p className="crit-card-desc muted small" title={set.description ?? undefined}>

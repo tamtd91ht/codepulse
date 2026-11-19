@@ -634,6 +634,11 @@ export interface CriteriaSet {
   versions?: CriteriaVersionRow[];
   /** Has scores already: only an unused set can be deleted (the server has the last word). */
   used?: boolean;
+  /** docs/specs/22 §11: null = shared by every dự án; else that dự án's own set. */
+  business_project_id?: number | null;
+  business_project_name?: string | null;
+  /** The caller may change this set (its own dự án's set, or criteria.manage). */
+  can_edit?: boolean;
 }
 
 export interface CriteriaTemplate {

@@ -102,6 +102,7 @@ export function CriteriaEditor({
   canAssign,
   onBack,
   onCreated,
+  projectId = null,
 }: {
   setId: number | null;
   seed: CriteriaSeed | null;
@@ -110,6 +111,8 @@ export function CriteriaEditor({
   canAssign: boolean;
   onBack: () => void;
   onCreated: (id: number) => void;
+  /** docs/specs/22 §11: a new set is made as this dự án's own set (null: a shared set). */
+  projectId?: number | null;
 }) {
   const detail = useApi<CriteriaSet>(setId === null ? null : `/criteria-sets/${setId}`);
   if (setId !== null && !detail.data)
@@ -132,6 +135,7 @@ export function CriteriaEditor({
       canAssign={canAssign}
       onBack={onBack}
       onCreated={onCreated}
+      projectId={projectId}
       reload={async () => (await detail.mutate()) ?? null}
     />
   );
@@ -141,10 +145,11 @@ function EditorBody({
   set,
   seed,
   meta,
-  canManage,
+  canManage: canManageAny,
   canAssign,
   onBack,
   onCreated,
+  projectId,
   reload,
 }: {
   set: CriteriaSet | null;
@@ -154,9 +159,15 @@ function EditorBody({
   canAssign: boolean;
   onBack: () => void;
   onCreated: (id: number) => void;
+  projectId: number | null;
   reload: () => Promise<CriteriaSet | null>;
 }) {
   const refreshSets = useRefreshSets();
+  // An existing set says whether the caller may change it (a dự án's own set: its Lead /
+  // Manager dự án; a shared one: criteria.manage); a new one is the caller's to write.
+  const canManage = set ? (set.can_edit ?? canManageAny) : canManageAny;
+  // The dự án a dự án's own set belongs to: its preview runs on that dự án only.
+  const owner = set ? (set.business_project_id ?? null) : projectId;
   const initial: Snapshot = set
     ? {
         name: set.name,
@@ -327,6 +338,7 @@ function EditorBody({
           components: current.components,
           apply_caps: current.apply_caps,
           ...(seed?.from_template ? { from_template: seed.from_template } : {}),
+          ...(projectId !== null ? { business_project_id: projectId } : {}),
         });
         release();
         await refreshSets();
@@ -481,7 +493,8 @@ function EditorBody({
                 components={initial.components}
                 applyCaps={initial.apply_caps}
                 valid
-                defaultProject={set.projects.find((p) => p.is_primary)?.id ?? set.projects[0]?.id ?? null}
+                defaultProject={owner ?? set.projects.find((p) => p.is_primary)?.id ?? set.projects[0]?.id ?? null}
+                onlyProject={owner !== null}
               />
             </aside>
           </div>
@@ -801,7 +814,8 @@ function EditorBody({
                 components={current.components}
                 applyCaps={applyCaps}
                 valid={valid}
-                defaultProject={set?.projects.find((p) => p.is_primary)?.id ?? set?.projects[0]?.id ?? null}
+                defaultProject={owner ?? set?.projects.find((p) => p.is_primary)?.id ?? set?.projects[0]?.id ?? null}
+                onlyProject={owner !== null}
               />
             </aside>
           </div>
@@ -1026,11 +1040,14 @@ function CriteriaPreview({
   applyCaps,
   valid,
   defaultProject,
+  onlyProject = false,
 }: {
   components: CriteriaComponent[];
   applyCaps: boolean;
   valid: boolean;
   defaultProject: number | null;
+  /** A dự án's own set: previewed on that dự án only (no picker). */
+  onlyProject?: boolean;
 }) {
   const projects = useApi<BusinessProject[]>("/business-projects");
   const [bp, setBp] = useState<number | null>(defaultProject);
@@ -1085,7 +1102,7 @@ function CriteriaPreview({
       </div>
       <label className="adm-field">
         <span className="small muted">Dự án</span>
-        <select value={bp ?? ""} onChange={(e) => { setBp(e.target.value ? Number(e.target.value) : null); setOpen(null); }} disabled={!projects.data}>
+        <select value={bp ?? ""} onChange={(e) => { setBp(e.target.value ? Number(e.target.value) : null); setOpen(null); }} disabled={!projects.data || onlyProject}>
           {!projects.data && <option value="">Đang tải…</option>}
           {projects.data?.length === 0 && <option value="">Chưa có dự án</option>}
           {projects.data?.map((p) => (

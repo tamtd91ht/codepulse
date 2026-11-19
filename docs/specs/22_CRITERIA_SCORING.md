@@ -194,3 +194,18 @@ Mỗi giai đoạn: lint, mypy, toàn bộ test, build frontend; commit và push
   - `GET /business-projects/{bp}/criteria-rescore` (trạng thái lượt gần nhất).
   - Code: `app/scoring/criteria_rescore.py`, `app/workers/criteria_jobs.py`, `app/api/routers/criteria_rescore.py`, `dashboards/web/components/CriteriaRescore.tsx`.
 
+
+## 11. Bộ tiêu chí riêng của dự án (người dùng 2026-11-19, spec 21 §13)
+
+- `criteria_sets.business_project_id` (NULL = toàn hệ thống, chỉ `criteria.manage`; có giá trị = riêng
+  dự án đó, `ON DELETE CASCADE`). Tên unique theo `(business_project_id, name)`.
+- Quyền `project.criteria` (project/all; Lead và Manager dự án): tạo, sửa, nhân bản, lưu trữ, xoá bộ
+  riêng của dự án mình. Không sửa bộ toàn hệ thống, không đổi `business_project_id` của bộ.
+- **Nhân bản từ bộ toàn hệ thống thành bộ riêng**: `POST /criteria-sets/{id}/clone` nhận
+  `business_project_id`.
+- Gán (`PUT /business-projects/{bp}/criteria-sets`): mỗi bộ phải là toàn hệ thống hoặc riêng của `bp`,
+  không thì 422; DB chặn thêm bằng trigger trên `project_criteria_sets`.
+- Danh sách (`GET /criteria-sets?business_project_id=`): bộ toàn hệ thống (chỉ đọc với Quản trị dự án)
+  + bộ riêng của dự án đó; bộ riêng của dự án khác không hiện, đọc trực tiếp trả 404.
+- UI: tab Tiêu chí chấm của drawer dự án thêm "Tạo bộ riêng" và "Nhân bản thành bộ riêng"; bộ riêng gắn
+  nhãn "Riêng dự án". Admin › Tiêu chí lọc theo "Toàn hệ thống / Dự án".

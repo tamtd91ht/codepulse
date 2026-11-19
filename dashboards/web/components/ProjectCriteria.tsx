@@ -2,13 +2,14 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
+import { CriteriaEditor, type CriteriaSeed } from "@/components/CriteriaEditor";
 import { ReorderControls, WeightBar, useDragList, useRefreshSets } from "@/components/CriteriaParts";
 import { CriteriaRescore } from "@/components/CriteriaRescore";
 import { Icon, IconButton } from "@/components/icons";
 import { Alert, Loading, Pill } from "@/components/ui";
 import { ApiError, api, can, useApi } from "@/lib/api";
-import { moveItem } from "@/lib/criteria";
-import type { CriteriaSet, Me, ProjectCriteriaSet } from "@/lib/types";
+import { DEFAULT_META, moveItem } from "@/lib/criteria";
+import type { CriteriaMeta, CriteriaSet, Me, ProjectCriteriaSet } from "@/lib/types";
 
 interface Row {
   set_id: number;
@@ -24,11 +25,43 @@ interface Row {
  * sets are recomputed in the background by the server.
  */
 export function ProjectCriteria({ projectId, projectName }: { projectId: number; projectName: string }) {
+  const { data: me } = useApi<Me>("/auth/me");
+  // docs/specs/22 §11: the dự án's own set open in the editor (null id: a new one).
+  const [editing, setEditing] = useState<{ id: number | null; seed: CriteriaSeed | null } | null>(null);
+  const meta = useApi<CriteriaMeta>(editing ? "/criteria/meta" : null);
+  if (editing)
+    return (
+      <CriteriaEditor
+        key={editing.id ?? "new"}
+        setId={editing.id}
+        seed={editing.seed}
+        meta={meta.data ?? DEFAULT_META}
+        canManage={can(me, "project.criteria") || can(me, "criteria.manage")}
+        canAssign={can(me, "criteria.assign")}
+        projectId={projectId}
+        onBack={() => setEditing(null)}
+        onCreated={(id) => setEditing({ id, seed: null })}
+      />
+    );
+  return <ProjectCriteriaList projectId={projectId} projectName={projectName} me={me} onEdit={(id, seed) => setEditing({ id, seed })} />;
+}
+
+function ProjectCriteriaList({
+  projectId,
+  projectName,
+  me,
+  onEdit,
+}: {
+  projectId: number;
+  projectName: string;
+  me: Me | undefined;
+  onEdit: (id: number | null, seed: CriteriaSeed | null) => void;
+}) {
   const path = `/business-projects/${projectId}/criteria-sets`;
   const saved = useApi<ProjectCriteriaSet[]>(path);
-  const { data: me } = useApi<Me>("/auth/me");
   const editable = can(me, "criteria.assign");
-  const all = useApi<CriteriaSet[]>(editable ? "/criteria-sets?archived=false" : null);
+  // The sets this dự án may use: the shared ones and its own (never another dự án's).
+  const all = useApi<CriteriaSet[]>(editable ? `/criteria-sets?archived=false&business_project_id=${projectId}` : null);
   const refreshSets = useRefreshSets();
   const [draft, setDraft] = useState<Row[] | null>(null);
   const [working, setWorking] = useState(false);
@@ -108,7 +141,7 @@ export function ProjectCriteria({ projectId, projectName }: { projectId: number;
           </h3>
           <p className="muted small" style={{ margin: "4px 0 0" }}>
             Mỗi review của dự án được chấm thêm theo các bộ này. <b>Bộ chính</b> dùng cho chỉ số và báo cáo; thứ tự là thứ
-            tự hiển thị. Tạo và sửa bộ ở tab <a href="#criteria">Bộ tiêu chí</a>.
+            tự hiển thị. Bộ dùng chung chỉ đọc ở đây; muốn chỉnh thì nhân bản thành <b>bộ riêng</b> của dự án.
           </p>
         </div>
         {editable && saved.data && (
@@ -139,6 +172,7 @@ export function ProjectCriteria({ projectId, projectName }: { projectId: number;
                 <span className="crit-assign-name">
                   <strong>{r.name}</strong>
                   {r.version ? <span className="crit-ver">v{r.version}</span> : null}
+                  {full?.business_project_id != null && <Pill tone="info">Riêng</Pill>}
                   {r.archived && <Pill>Lưu trữ</Pill>}
                   {full?.current_version && <WeightBar parts={full.current_version.components} label={`Trọng số ${r.name}`} size="sm" />}
                 </span>
@@ -172,7 +206,113 @@ export function ProjectCriteria({ projectId, projectName }: { projectId: number;
           </button>
         </div>
       )}
+      {(can(me, "project.criteria") || can(me, "criteria.manage")) && (
+        <OwnSets projectId={projectId} projectName={projectName} onEdit={onEdit} />
+      )}
     </>
+  );
+}
+
+/**
+ * The dự án's own criteria sets (docs/specs/22 §11): made here by its Lead / Manager dự án,
+ * seen and used by this dự án only. A shared set is copied in to be tuned ("Nhân bản").
+ */
+function OwnSets({
+  projectId,
+  projectName,
+  onEdit,
+}: {
+  projectId: number;
+  projectName: string;
+  onEdit: (id: number | null, seed: CriteriaSeed | null) => void;
+}) {
+  const own = useApi<CriteriaSet[]>(`/criteria-sets?business_project_id=${projectId}&shared=false`);
+  const shared = useApi<CriteriaSet[]>("/criteria-sets?archived=false&shared=true&business_project_id=0");
+  const refreshSets = useRefreshSets();
+  const [source, setSource] = useState<number | "">("");
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const sharedSets = (shared.data ?? []).filter((s) => s.business_project_id == null);
+  const mine = own.data ?? [];
+
+  async function cloneIn() {
+    const from = sharedSets.find((s) => s.id === source);
+    if (!from) return;
+    setWorking(true);
+    setError(null);
+    try {
+      const taken = new Set(mine.map((s) => s.name.toLowerCase()));
+      let name = `${from.name} (${projectName})`.slice(0, 100);
+      for (let i = 2; taken.has(name.toLowerCase()); i++) name = `${from.name} (${projectName} ${i})`.slice(0, 100);
+      const copy = await api.post<CriteriaSet>(`/criteria-sets/${from.id}/clone`, { name, business_project_id: projectId });
+      await refreshSets();
+      setSource("");
+      onEdit(copy.id, null);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  return (
+    <section className="crit-own" aria-label={`Bộ tiêu chí riêng của ${projectName}`} style={{ marginTop: 20 }}>
+      <div className="drawer-title-row" style={{ marginBottom: 8 }}>
+        <div>
+          <h3 style={{ margin: 0 }}>
+            Bộ riêng của dự án <span className="muted small">{own.data && `(${mine.length})`}</span>
+          </h3>
+          <p className="muted small" style={{ margin: "4px 0 0" }}>
+            Chỉ {projectName} thấy và dùng được các bộ này. Tạo xong, thêm bộ vào danh sách phía trên để chấm điểm.
+          </p>
+        </div>
+        <button type="button" onClick={() => onEdit(null, null)}>
+          <Icon name="plus" size={14} /> Tạo bộ riêng
+        </button>
+      </div>
+      {error && (
+        <Alert tone="error" onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+      {!own.data ? (
+        <Loading error={own.error} rows={2} />
+      ) : mine.length === 0 ? (
+        <p className="muted small">Chưa có bộ riêng nào.</p>
+      ) : (
+        <ul className="crit-assign">
+          {mine.map((s) => (
+            <li key={s.id} className="crit-assign-row">
+              <span className="crit-assign-name">
+                <strong>{s.name}</strong>
+                {s.current_version && <span className="crit-ver">v{s.current_version.version}</span>}
+                {s.archived && <Pill>Lưu trữ</Pill>}
+                {s.current_version && <WeightBar parts={s.current_version.components} label={`Trọng số ${s.name}`} size="sm" />}
+              </span>
+              <IconButton icon="edit" size={14} label={`Mở ${s.name}`} onClick={() => onEdit(s.id, null)} />
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="toolbar" style={{ margin: "8px 0 0" }}>
+        <select
+          value={source}
+          onChange={(e) => setSource(e.target.value ? Number(e.target.value) : "")}
+          aria-label="Bộ dùng chung để nhân bản"
+          disabled={!shared.data || sharedSets.length === 0 || working}
+        >
+          <option value="">{shared.data ? (sharedSets.length ? "Chọn bộ dùng chung…" : "Không có bộ dùng chung") : "Đang tải…"}</option>
+          {sharedSets.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+        <button type="button" disabled={source === "" || working} onClick={() => void cloneIn()}>
+          <Icon name="copy" size={14} /> {working ? "Đang nhân bản…" : "Nhân bản thành bộ riêng"}
+        </button>
+      </div>
+    </section>
   );
 }
 
