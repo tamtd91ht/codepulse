@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Modal } from "@/components/CriteriaParts";
 import { Icon } from "@/components/icons";
@@ -34,6 +34,7 @@ import {
   type DraftFile,
 } from "./taskFiles";
 import { announceTaskCreated } from "./createdToast";
+import { typingIn } from "./shortcutEvents";
 
 const NL = String.fromCharCode(10);
 
@@ -102,6 +103,7 @@ export function TaskCreate({
   const drafts = useDraftFiles();
   const canAttach = !!space.can_attach;
   const area = useRef<HTMLTextAreaElement>(null);
+  const form = useRef<HTMLFormElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
@@ -121,6 +123,50 @@ export function TaskCreate({
       return `${before}${lead}${shots.map(draftMark).join(NL)}${NL}${text.slice(pos)}`;
     });
   }
+
+  /**
+   * Ctrl+V anywhere in the form (feedback #1, docs/specs/31 §17.1): with no field focused, text goes
+   * to the end of the description and files (screenshots included) to the attachments; in a field,
+   * text pastes there as usual and files the field cannot take go to the attachments. The
+   * description keeps its own handler (images also land where the caret is).
+   */
+  const pasteRef = useRef<(e: ClipboardEvent) => void>(() => undefined);
+  pasteRef.current = (e: ClipboardEvent) => {
+    if (e.defaultPrevented || busy || createdKey) return;
+    const target = e.target instanceof Node ? e.target : null;
+    if (target === area.current) return;
+    const dialog = form.current?.closest("[role='dialog']");
+    const inForm = !!target && !!dialog?.contains(target);
+    const nowhere = target === document.body || target === document.documentElement;
+    if (!inForm && !nowhere) return;
+    const files = canAttach ? clipboardFiles(e) : [];
+    const text = e.clipboardData?.getData("text/plain") ?? "";
+    if (typingIn(e.target)) {
+      if (files.length && !text) {
+        e.preventDefault();
+        take(files, false);
+      }
+      return;
+    }
+    if (!files.length && !text) return;
+    e.preventDefault();
+    if (files.length) take(files, false);
+    if (text) {
+      const end = description.length + (description && !description.endsWith(NL) ? NL.length : 0) + text.length;
+      setDescription((d) => `${d}${d && !d.endsWith(NL) ? NL : ""}${text}`);
+      window.requestAnimationFrame(() => {
+        const el = area.current;
+        if (!el) return;
+        el.focus({ preventScroll: false });
+        el.setSelectionRange(end, end);
+      });
+    }
+  };
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => pasteRef.current(e);
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, []);
 
   function removeDraft(f: DraftFile) {
     drafts.drop(f.tmp);
@@ -227,6 +273,7 @@ export function TaskCreate({
       }
     >
       <form
+        ref={form}
         className={`adm-form tk-form${over ? " tk-form-over" : ""}`}
         onDragOver={(e) => {
           if (!canAttach || ![...e.dataTransfer.types].includes("Files"))
@@ -332,8 +379,8 @@ export function TaskCreate({
                 <Icon name="upload" size={13} /> Chọn file, ảnh
               </button>
               <span>
-                hoặc kéo thả vào khung này, dán ảnh (Ctrl+V) vào ô mô tả. Mỗi
-                file tối đa {MAX_FILE_MB} MB.
+                hoặc kéo thả vào khung này, dán (Ctrl+V) ở bất kỳ đâu trong form: ảnh,
+                file thành đính kèm, chữ vào mô tả. Mỗi file tối đa {MAX_FILE_MB} MB.
               </span>
               <input
                 ref={picker}

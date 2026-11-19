@@ -26,3 +26,5 @@
 - (2026-11-16, spec 31) (đã làm DPI đọc task: spec 31 §15) Công cụ nhập một dự án từ Jira sang Task một lần trước khi bỏ Jira.
 - (2026-11-16, spec 31) Thông báo task qua Telegram / webhook thông báo; kéo thả bằng bàn phím trên Board; gợi ý @tên khi gõ bình luận.
 - (2026-11-18, spec 32) Phản ánh: dán ảnh chụp màn hình như Task; +1 / bình chọn công khai cho phản ánh của người khác; gửi nhanh từ nút nổi ở mọi trang; thông báo cho tác giả khi trạng thái đổi (inbox / Telegram).
+- (feedback #1, 2026-11-19) Dán Ctrl+V không cần focus ở ngăn / trang chi tiết task (hiện chỉ form tạo task); cân nhắc vì ở chi tiết, mô tả là chế độ xem chứ không phải ô nhập.
+- (feedback #2, 2026-11-19) Có đổi ngăn chi tiết sang dạng đè ở Board / Backlog như Danh sách không: chờ người dùng phản hồi.

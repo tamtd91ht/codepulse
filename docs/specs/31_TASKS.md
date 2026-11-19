@@ -348,6 +348,13 @@ Người làm không tự nhận thông báo.
   thay chỗ chèn tạm bằng ảnh thật. Lỗi một phần (file quá lớn, thiếu quyền sửa mô tả): task vẫn được
   tạo, form báo phần lỗi và nút chính thành *Mở {KEY}*.
 - Mục chỉ hiện khi có `tasks.attach` (`GET /tasks/spaces` trả `can_attach`).
+- **Dán ở bất kỳ đâu trong form** (feedback #1, 2026-11-19): Ctrl+V khi không ô nhập nào có focus (bấm
+  vào chỗ trống, đang ở một nút hay ô chọn): chữ nối vào **cuối** mô tả (xuống dòng nếu cần, con trỏ về
+  cuối mô tả); ảnh và file khác vào **danh sách đính kèm** (người duyệt: ảnh dán vào danh sách đính kèm,
+  không chèn vào mô tả). Đang ở ô tiêu đề / ô nhập khác: chữ dán vào đúng ô đó như thường; clipboard chỉ
+  có file (ô nhập không nhận được) thì file vào đính kèm. Ô mô tả giữ cách cũ (ảnh vừa vào đính kèm vừa
+  chèn tại con trỏ). Không có `tasks.attach` thì file bị bỏ qua, chữ vẫn vào mô tả. Chỉ áp dụng form tạo
+  task; ngăn / trang chi tiết giữ nguyên.
 - Sửa kèm: CSS chung `[hidden] { display: none !important }` — nút submit ẩn của form (Enter để tạo)
   bị quy tắc `button` hiện thành một nút trống không tên ngay trên Huỷ / Tạo task.
 
@@ -1486,7 +1493,10 @@ UI/UX §4.8, §6, §7 (bước 6). Bấm task ở Board, Danh sách, Backlog ho�
 - **Không chặn view phía sau:** ngăn cố định bên phải dưới thanh trên cùng, không có lớp nền mờ, không khoá
   cuộn, không bẫy focus (`role="dialog"`, `aria-modal="false"`). Màn ≥ 1280 px: `main` chừa lề phải bằng độ
   rộng ngăn (biến CSS `--td-w`, lớp `td-open` trên `body`) nên không task nào bị che; màn hẹp hơn ngăn nằm
-  đè; dưới 768 px ngăn chiếm toàn màn hình (§6).
+  đè; dưới 768 px ngăn chiếm toàn màn hình (§6). **Riêng Danh sách** (feedback #2, 2026-11-19): ngăn luôn
+  nằm đè lên bảng (`TaskDrawer overlay`, không thêm `td-open`), bảng giữ nguyên độ rộng, không sinh thanh
+  cuộn ngang và giữ vị trí cuộn khi đóng ngăn; vẫn không có nền mờ, bảng phía sau vẫn bấm được (mở task
+  khác thay nội dung ngăn). Board, Backlog, Việc của tôi giữ cách chừa lề.
 - **Độ rộng:** mặc định 560 px, kéo mép trái từ 420 px tới 60% chiều rộng cửa sổ; tay nắm là
   `role="separator"` có focus, mũi tên trái / phải đổi 16 px (giữ Shift: 64 px), Home / End về min / max,
   bấm đúp về 560 px. Nhớ theo trình duyệt (`localStorage` `cp:tasks:drawer-w`, lỗi bộ nhớ thì bỏ qua).
