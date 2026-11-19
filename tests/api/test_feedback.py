@@ -319,3 +319,61 @@ def test_tree_helpers() -> None:
     assert (
         tree_path("tasks", None, 5, "Lọc board") == "feedback/tasks/chua-phan-loai/5-loc-board.md"
     )
+
+
+def test_status_one_or_many_for_managers_only(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    """Spec 32 §7.3: after the coding agent shipped a batch, the manager moves the picked
+    reports (or one) to Xong in one call; the author sees it; members cannot."""
+    an, admin = as_user(world.an), as_user(world.admin)
+    a, b, c = (_send(client, an, title=t) for t in ("Một một", "Hai hai", "Ba ba"))
+    client.patch(f"/api/v1/feedback/{c['id']}", json={"triage_note": "Gộp #1"}, headers=admin)
+    url = "/api/v1/feedback/status"
+    body = {"item_ids": [a["id"], b["id"]], "status": "done"}
+    assert client.post(url, json=body, headers=an).status_code == 403
+    # An unknown id refuses the whole call: nothing half-applied.
+    bad = client.post(url, json={**body, "item_ids": [a["id"], 999999]}, headers=admin)
+    assert bad.status_code == 404
+    db_session.expire_all()
+    assert db_session.get(FeedbackItem, a["id"]).status == "new"  # type: ignore[union-attr]
+    got = client.post(url, json={**body, "item_ids": [b["id"], a["id"], b["id"]]}, headers=admin)
+    assert got.status_code == 200, got.text
+    assert got.json() == {"changed": [a["id"], b["id"]], "unchanged": []}
+    # Again with c and a note: a already done stays unchanged, the note goes under c's own.
+    again = client.post(
+        url,
+        json={"item_ids": [a["id"], c["id"]], "status": "done", "note": "Đã lên bản 1.4"},
+        headers=admin,
+    ).json()
+    assert again == {"changed": [c["id"]], "unchanged": [a["id"]]}
+    mine = {r["id"]: r for r in client.get("/api/v1/feedback/mine", headers=an).json()}
+    assert {mine[i]["status"] for i in (a["id"], b["id"], c["id"])} == {"done"}
+    seen = client.get(f"/api/v1/feedback/{c['id']}", headers=an).json()
+    assert seen["triage_note"] == "Gộp #1\nĐã lên bản 1.4"
+    assert seen["triaged_by"]["id"] == world.admin.id and seen["can_edit"] is False
+    statuses = select(AuditLog).where(AuditLog.action == "feedback.status")
+    logged = db_session.scalars(statuses).all()
+    # One row per report touched (a, b, then a with the note, c), on the report's own target.
+    assert sorted(r.target or "" for r in logged) == sorted(
+        f"feedback:{i}" for i in (a["id"], b["id"], a["id"], c["id"])
+    )
+    # A note that would push a report's note past the cap is refused whole, nothing cut.
+    for _ in range(3):
+        ok = client.post(
+            url, json={"item_ids": [c["id"]], "status": "done", "note": "y" * 1000}, headers=admin
+        )
+        assert ok.status_code == 200, ok.text
+    over = client.post(
+        url,
+        json={"item_ids": [a["id"], c["id"]], "status": "done", "note": "z" * 1000},
+        headers=admin,
+    )
+    assert over.status_code == 422 and f"#{c['id']}" in over.json()["detail"]
+    db_session.expire_all()
+    kept = db_session.get(FeedbackItem, c["id"]).triage_note  # type: ignore[union-attr]
+    assert kept is not None and kept.startswith("Gộp #1\n") and "z" not in kept
+    seen_rows = len(db_session.scalars(statuses).all())
+    # Nothing to do: no audit row.
+    client.post(url, json={"item_ids": [b["id"]], "status": "done"}, headers=admin)
+    assert len(db_session.scalars(statuses).all()) == seen_rows

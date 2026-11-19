@@ -22778,3 +22778,70 @@ input.fb-cell-edit {
     flex-wrap: wrap;
   }
 }
+
+/* Phản ánh: chuyển trạng thái một / nhiều mục (docs/specs/32 §7.3) */
+.fb-pickbar-status select {
+  min-width: 170px;
+}
+.fb-history-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+.fb-history-top .fb-history-link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-status-select select {
+  height: 24px;
+  padding: 0 22px 0 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background-color: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.fb-status-select.is-good select {
+  background-color: var(--good-soft);
+  color: var(--good);
+}
+.fb-status-select.is-bad select {
+  background-color: var(--bad-soft);
+  color: var(--bad-text);
+}
+.fb-status-select.is-info select {
+  background-color: var(--info-soft, var(--surface-2));
+  color: var(--info, var(--text-2));
+}
+.fb-status-select.is-primary select {
+  background-color: var(--primary-soft, var(--surface-2));
+  color: var(--primary, var(--text-2));
+}
+.fb-status-preview {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 260px;
+  overflow: auto;
+}
+.fb-status-preview li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.fb-status-preview-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

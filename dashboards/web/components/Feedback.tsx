@@ -8,6 +8,7 @@ import { Alert, Avatar, Drawer, EmptyState, Loading, Message, Pill } from "@/com
 import { ApiError, api, useApi } from "@/lib/api";
 import {
   type FeedbackDetail,
+  type FeedbackExportRow,
   type FeedbackKind,
   type FeedbackMeta,
   type FeedbackPerson,
@@ -18,9 +19,11 @@ import {
   PRIORITY_TONE,
   STATUS_LABEL,
   STATUS_TONE,
+  EXPORTS_KEY,
   download,
   isAnalysing,
   itemMdUrl,
+  setFeedbackStatus,
 } from "@/lib/feedback";
 import { dateTimeMin, relative } from "@/lib/format";
 
@@ -237,6 +240,9 @@ export function FeedbackView({
   const { data: item, error, mutate } = useApi<FeedbackDetail>(`/feedback/${id}`, {
     refreshInterval: (latest) => (latest?.analysing ? 3000 : 0),
   });
+  // Managers: the export history (same SWR key as the board's), so "đã export N lần" here and
+  // "Lịch sử export (N)" there read one list and cannot disagree.
+  const history = useApi<FeedbackExportRow[]>(item?.can_manage ? EXPORTS_KEY : null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -283,17 +289,44 @@ export function FeedbackView({
   };
   const areaLabel = meta.areas.find((a) => a.key === item.area)?.label ?? item.area;
   const canReanalyse = item.can_manage || item.can_edit;
+  const batches = history.data?.filter((r) => r.item_ids.includes(item.id));
+  const exported = batches ? batches.length : item.exported;
+  const exportTip = batches?.length
+    ? `Nằm trong ${batches.length} gói: ${batches.map((b) => `“${b.title}”`).join(", ")}`
+    : item.exported_at
+      ? `Lần cuối ${dateTimeMin(item.exported_at)}`
+      : undefined;
 
   return (
     <article className="fb-view" aria-labelledby={`fb-title-${item.id}`}>
       <div className="fb-view-tags">
         <span className="fb-id">#{item.id}</span>
         <KindPill kind={item.kind} />
-        <StatusPill status={item.status} />
+        {item.can_manage ? (
+          <label className={`fb-status-select is-${STATUS_TONE[item.status] ?? "neutral"}`} title="Chuyển trạng thái">
+            <span className="sr-only">Trạng thái</span>
+            <select
+              value={item.status}
+              disabled={busy}
+              onChange={(e) => {
+                const to = e.target.value as FeedbackStatus;
+                void act(() => setFeedbackStatus([item.id], to), `Đã chuyển sang “${STATUS_LABEL[to]}”.`);
+              }}
+            >
+              {meta.statuses.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <StatusPill status={item.status} />
+        )}
         {item.priority && <Pill tone={PRIORITY_TONE[item.priority]}>{item.priority.toUpperCase()}</Pill>}
-        {item.exported > 0 && (
-          <Pill icon="download" title={item.exported_at ? `Lần cuối ${dateTimeMin(item.exported_at)}` : undefined}>
-            Đã export {item.exported > 1 ? `${item.exported} lần` : ""}
+        {exported > 0 && (
+          <Pill icon="download" title={exportTip}>
+            Đã export {exported > 1 ? `${exported} lần` : ""}
           </Pill>
         )}
         <span className="fb-view-actions">

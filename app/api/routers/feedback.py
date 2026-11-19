@@ -69,6 +69,8 @@ Status = Literal["new", "accepted", "planned", "done", "rejected"]
 Priority = Literal["p1", "p2", "p3"]
 LIST_MAX = 2_000
 EXPORT_MAX = 200
+STATUS_MAX = 500
+TRIAGE_NOTE_MAX = 4_000
 
 
 # -- shapes ----------------------------------------------------------------------------------------
@@ -173,7 +175,7 @@ class EditIn(BaseModel):
     feature: str | None = Field(default=None, max_length=60)
     priority: Priority | None = None
     status: Status | None = None
-    triage_note: str | None = Field(default=None, max_length=4_000)
+    triage_note: str | None = Field(default=None, max_length=TRIAGE_NOTE_MAX)
     ai_title: str | None = Field(default=None, min_length=3, max_length=analysis.TITLE_MAX)
 
 
@@ -182,6 +184,20 @@ class ExportIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     note: str | None = Field(default=None, max_length=4_000)
     mark_planned: bool = True
+
+
+class StatusIn(BaseModel):
+    """Move several reports to one status (spec 32 §7.3): e.g. the batch handed to the coding
+    agent is done. The note, when given, is added under each report's existing triage note."""
+
+    item_ids: list[int] = Field(min_length=1, max_length=STATUS_MAX)
+    status: Status
+    note: str | None = Field(default=None, max_length=1_000)
+
+
+class StatusOut(BaseModel):
+    changed: list[int]  # moved to the status
+    unchanged: list[int]  # already in it (a note, if any, was still added)
 
 
 class ExportRow(BaseModel):
@@ -532,6 +548,55 @@ def create_export(body: ExportIn, principal: Manager, session: SessionDep) -> Ex
     )
 
 
+@router.post("/feedback/status", response_model=StatusOut)
+def set_status(body: StatusIn, principal: Manager, session: SessionDep) -> StatusOut:
+    """One or many reports to one status at once (all or nothing: an unknown id refuses the
+    whole call, so a stale list never half-applies)."""
+    ids = list(dict.fromkeys(body.item_ids))
+    # Rows locked in id order: an author's edit (which checks `new`) or another triage of the
+    # same report waits instead of racing this move or losing the appended note.
+    items = session.scalars(
+        select(FeedbackItem)
+        .where(FeedbackItem.id.in_(ids))
+        .order_by(FeedbackItem.id)
+        .with_for_update()
+    ).all()
+    if len(items) != len(ids):
+        raise HTTPException(404, "có phản ánh không còn; tải lại danh sách")
+    note = (body.note or "").strip()
+    if note:
+        full = [i.id for i in items if len(i.triage_note or "") + len(note) + 1 > TRIAGE_NOTE_MAX]
+        if full:
+            listed = ", ".join(f"#{i}" for i in full[:10])
+            raise HTTPException(422, f"ghi chú của {listed} sẽ quá {TRIAGE_NOTE_MAX} ký tự")
+    now = datetime.now(UTC)
+    changed: list[int] = []
+    unchanged: list[int] = []
+    for item in items:
+        if item.status == body.status and not note:
+            unchanged.append(item.id)
+            continue
+        before = item.status
+        (changed if before != body.status else unchanged).append(item.id)
+        item.status = body.status
+        if note:
+            item.triage_note = f"{item.triage_note}\n{note}" if item.triage_note else note
+        item.triaged_by, item.triaged_at = principal.user_id, now
+        # One row per report, on the target its other triage rows use: its history shows it.
+        audit(
+            session,
+            principal.user_id,
+            "feedback.status",
+            f"feedback:{item.id}",
+            status=body.status,
+            before=before,
+            batch=len(ids),
+            note=note[:200] or None,
+        )
+    session.commit()
+    return StatusOut(changed=changed, unchanged=unchanged)
+
+
 @router.get("/feedback/exports/{export_id}/download")
 def download_export(export_id: int, principal: Manager, session: SessionDep) -> Response:
     row = session.get(FeedbackExport, export_id, options=[undefer(FeedbackExport.body)])
@@ -566,6 +631,7 @@ def edit_feedback(
     queue: QueueDep,
 ) -> ItemOut:
     item = _get(session, item_id, principal)
+    session.refresh(item, with_for_update=True)
     given = body.model_dump(exclude_unset=True)
     authored: dict[str, Any] = {
         k: given[k] for k in ("kind", "area", "title", "body") if k in given

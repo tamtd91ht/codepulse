@@ -1,3 +1,5 @@
+import { api } from "./api";
+
 /* Phản ánh & Đề xuất (docs/specs/32): shapes of app/api/routers/feedback.py and small helpers. */
 
 export type FeedbackKind = "bug" | "feature" | "improvement" | "question";
@@ -104,6 +106,22 @@ export interface FeedbackExportRow {
   created_by: FeedbackPerson | null;
   created_at: string;
 }
+
+export interface FeedbackStatusResult {
+  changed: number[];
+  unchanged: number[];
+}
+
+/** Key of the export history: the board's list and a report's "đã export" pill share it. */
+export const EXPORTS_KEY = "/feedback/exports";
+export const STATUS_MAX = 500; // app/api/routers/feedback.py STATUS_MAX
+
+/** Move one or many reports to a status (feedback.manage). */
+export const setFeedbackStatus = (ids: number[], status: FeedbackStatus, note?: string) =>
+  api.post<FeedbackStatusResult>("/feedback/status", { item_ids: ids, status, note: note?.trim() || null });
+
+/** Revalidate the open report views (keys `/feedback/<id>`), e.g. after an export or a bulk move. */
+export const isItemKey = (key: unknown) => typeof key === "string" && /^\/feedback\/\d+$/.test(key);
 
 export const KIND_LABEL: Record<FeedbackKind, string> = {
   bug: "Lỗi",

@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSWRConfig } from "swr";
 
 import { Modal } from "@/components/CriteriaParts";
 import { AnalysisBadge, FeedbackView, KindPill, StatusPill } from "@/components/Feedback";
-import { Icon } from "@/components/icons";
+import { Icon, IconButton } from "@/components/icons";
 import { MultiSelect } from "@/components/MultiSelect";
 import { Alert, Avatar, EmptyState, Loading, Message, Pill } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
@@ -15,15 +16,19 @@ import {
   type FeedbackMeta,
   type FeedbackRow,
   type FeedbackStatus,
+  EXPORTS_KEY,
   KIND_LABEL,
   OPEN_STATUSES,
   PRIORITY_TONE,
   STATUS_LABEL,
+  STATUS_MAX,
   type TreeNode,
   download,
   exportUrl,
   inNode,
   isAnalysing,
+  isItemKey,
+  setFeedbackStatus,
 } from "@/lib/feedback";
 import { dateTimeMin, relative } from "@/lib/format";
 
@@ -56,7 +61,8 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
     keepPreviousData: true,
     refreshInterval: (latest) => (latest?.items.some(isAnalysing) ? 4000 : 0),
   });
-  const exports = useApi<FeedbackExportRow[]>("/feedback/exports");
+  const exports = useApi<FeedbackExportRow[]>(EXPORTS_KEY);
+  const { mutate: mutateKey } = useSWRConfig();
   const [node, setNode] = useState<TreeNode>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [statuses, setStatuses] = useState<FeedbackStatus[]>(OPEN_STATUSES);
@@ -66,6 +72,7 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [current, setCurrent] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [moving, setMoving] = useState<FeedbackStatus | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const detailRef = useRef<HTMLDivElement>(null);
 
@@ -160,7 +167,19 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
             }
             onPick={toggle}
           />
-          <ExportHistory rows={exports.data} error={exports.error} />
+          <ExportHistory
+            rows={exports.data}
+            error={exports.error}
+            onPick={(r) => {
+              const live = r.item_ids.filter((id) => byId.has(id));
+              setPicked(new Set(live));
+              setStatuses([]); // done / rejected ones of the batch show too
+              setNode(null);
+              setNote(
+                `Đã chọn ${live.length} phản ánh của gói "${r.title}"${live.length < r.items ? ` (${r.items - live.length} đã bị xoá)` : ""}. Chuyển trạng thái ở thanh dưới.`,
+              );
+            }}
+          />
         </aside>
 
         <section className="card fb-list" aria-labelledby="fb-list-title">
@@ -290,6 +309,22 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
           <button type="button" className="ghost sm" onClick={() => setPicked(new Set())}>
             Bỏ chọn
           </button>
+          <label className="fb-pickbar-status">
+            <span className="sr-only">Chuyển trạng thái các phản ánh đã chọn</span>
+            <select
+              value=""
+              onChange={(e) => e.target.value && setMoving(e.target.value as FeedbackStatus)}
+              disabled={picked.size > STATUS_MAX}
+              title={picked.size > STATUS_MAX ? `Tối đa ${STATUS_MAX} phản ánh mỗi lần` : "Chuyển trạng thái các phản ánh đã chọn"}
+            >
+              <option value="">Chuyển trạng thái…</option>
+              {meta.statuses.map((s) => (
+                <option key={s.key} value={s.key}>
+                  → {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
           {picked.size > EXPORT_MAX && <span className="small error">Tối đa {EXPORT_MAX} phản ánh mỗi gói</span>}
           <button type="button" className="primary" onClick={() => setExporting(true)} disabled={picked.size > EXPORT_MAX}>
             <Icon name="download" size={14} /> Export .md
@@ -302,13 +337,35 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
           rows={pickedRows}
           areaLabel={areaLabel}
           onClose={() => setExporting(false)}
-          onDone={(row) => {
+          onDone={async (row) => {
             setExporting(false);
             setPicked(new Set());
             setNote(`Đã export "${row.title}" (${row.items} phản ánh). File đang tải về; tải lại ở Lịch sử export.`);
+            // The new batch goes into the history at once (the shared key also feeds the report's
+            // "đã export N lần" pill), and the lists are refreshed before the download starts: a
+            // download fired first could leave those refreshes behind and the counts stale.
+            await Promise.allSettled([
+              exports.mutate((old) => [row, ...(old ?? []).filter((r) => r.id !== row.id)], { revalidate: true }),
+              mutate(),
+              mutateKey(isItemKey),
+            ]);
             download(exportUrl(row.id));
-            void mutate();
-            void exports.mutate();
+          }}
+        />
+      )}
+
+      {moving && (
+        <StatusDialog
+          rows={pickedRows}
+          status={moving}
+          onClose={() => setMoving(null)}
+          onDone={async (changed, unchanged) => {
+            setMoving(null);
+            setPicked(new Set());
+            setNote(
+              `Đã chuyển ${changed} phản ánh sang “${STATUS_LABEL[moving]}”${unchanged ? ` (${unchanged} đã ở trạng thái này)` : ""}.`,
+            );
+            await Promise.allSettled([mutate(), mutateKey(isItemKey)]);
           }}
         />
       )}
@@ -409,7 +466,16 @@ function TreeView({
   );
 }
 
-function ExportHistory({ rows, error }: { rows?: FeedbackExportRow[]; error?: Error }) {
+function ExportHistory({
+  rows,
+  error,
+  onPick,
+}: {
+  rows?: FeedbackExportRow[];
+  error?: Error;
+  /** Pick every report of the batch (e.g. to mark them done once the agent shipped it). */
+  onPick: (row: FeedbackExportRow) => void;
+}) {
   return (
     <details className="fb-history">
       <summary className="small">
@@ -425,9 +491,12 @@ function ExportHistory({ rows, error }: { rows?: FeedbackExportRow[]; error?: Er
         <ul>
           {rows.map((r) => (
             <li key={r.id}>
-              <a href={exportUrl(r.id)} download className="fb-history-link">
-                <Icon name="download" size={12} /> {r.title}
-              </a>
+              <span className="fb-history-top">
+                <a href={exportUrl(r.id)} download className="fb-history-link">
+                  <Icon name="download" size={12} /> {r.title}
+                </a>
+                <IconButton icon="check" label="Chọn các phản ánh của gói này" className="tip-right" onClick={() => onPick(r)} />
+              </span>
               <span className="muted small">
                 {r.items} phản ánh · {r.created_by?.name ?? "?"} · {relative(r.created_at)}
               </span>
@@ -436,6 +505,82 @@ function ExportHistory({ rows, error }: { rows?: FeedbackExportRow[]; error?: Er
         </ul>
       )}
     </details>
+  );
+}
+
+function StatusDialog({
+  rows,
+  status,
+  onClose,
+  onDone,
+}: {
+  rows: FeedbackRow[];
+  status: FeedbackStatus;
+  onClose: () => void;
+  onDone: (changed: number, unchanged: number) => void;
+}) {
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const already = rows.filter((r) => r.status === status).length;
+  const go = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const got = await setFeedbackStatus(rows.map((r) => r.id), status, note);
+      onDone(got.changed.length, got.unchanged.length);
+    } catch (err) {
+      setError(errorText(err));
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      title={`Chuyển ${rows.length} phản ánh sang “${STATUS_LABEL[status]}”`}
+      onClose={onClose}
+      busy={busy}
+      width={560}
+      footer={
+        <>
+          <button type="button" className="ghost" onClick={onClose} disabled={busy}>
+            Huỷ
+          </button>
+          <button type="button" className="primary" onClick={() => void go()} disabled={busy}>
+            {busy ? "Đang chuyển…" : `Chuyển ${rows.length} phản ánh`}
+          </button>
+        </>
+      }
+    >
+      <p className="muted small" style={{ marginTop: 0 }}>
+        Tác giả thấy trạng thái mới ở tab “Của tôi”.{already ? ` ${already} phản ánh đã ở trạng thái này, giữ nguyên.` : ""}
+      </p>
+      <label className="adm-field">
+        <span className="small muted">Ghi chú cho tác giả (tuỳ chọn, thêm dưới ghi chú đang có)</span>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          maxLength={1000}
+          placeholder={status === "done" ? "Ví dụ: Đã lên bản 19/11." : status === "rejected" ? "Lý do từ chối…" : ""}
+          autoFocus
+        />
+      </label>
+      <ul className="fb-status-preview">
+        {rows.map((r) => (
+          <li key={r.id} className="small">
+            <span className="fb-id">#{r.id}</span> <span className="fb-status-preview-title">{r.title}</span>
+            <StatusPill status={r.status} />
+            {r.status !== status && (
+              <>
+                <Icon name="chevronRight" size={12} />
+                <StatusPill status={status} />
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+      {error && <Alert tone="error">{error}</Alert>}
+    </Modal>
   );
 }
 
@@ -448,7 +593,7 @@ function ExportDialog({
   rows: FeedbackRow[];
   areaLabel: (key: string) => string;
   onClose: () => void;
-  onDone: (row: FeedbackExportRow) => void;
+  onDone: (row: FeedbackExportRow) => void | Promise<void>;
 }) {
   const today = new Date().toLocaleDateString("vi-VN");
   const [title, setTitle] = useState(`Đợt nâng cấp ${today}`);
@@ -469,7 +614,7 @@ function ExportDialog({
         note: note.trim() || null,
         mark_planned: plan,
       });
-      onDone(row);
+      void onDone(row);
     } catch (err) {
       setError(errorText(err));
       setBusy(false);

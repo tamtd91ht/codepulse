@@ -85,7 +85,7 @@ Trang đang mở (`page_url`) gợi ý sẵn lĩnh vực trong form (ví dụ đ
 | quyền | ai có mặc định | cho phép |
 |---|---|---|
 | `feedback.submit` | mọi thành viên (bộ "Thành viên") | gửi, xem & sửa phản ánh của mình (khi còn `new`) |
-| `feedback.manage` | admin (cấp thêm được qua bộ quyền) | xem mọi phản ánh, phân loại, đổi trạng thái, phân tích lại, export, xoá |
+| `feedback.manage` | admin (cấp thêm được qua bộ quyền) | xem mọi phản ánh, phân loại, đổi trạng thái (một hoặc nhiều mục, §7.3), phân tích lại, export, xoá |
 
 Hai quyền nằm trong catalog (`app/permissions/catalog.py`, nhóm **"Phản ánh & Đề xuất"**) nên
 hiện ngay ở **Admin › Phân quyền**: admin tick `feedback.manage` vào một bộ quyền (ví dụ bộ của
@@ -156,6 +156,39 @@ Menu **"Phản ánh & Đề xuất"** (icon tin nhắn) trong sidebar, với ai 
 - Màn vừa (< 1280 px): cây + danh sách hai cột, chi tiết xuống dưới (bấm một dòng thì cuộn tới);
   màn hẹp (< 1024 px): xếp chồng cây (cao tối đa 320 px), danh sách, chi tiết.
 
+### 7.3 Chuyển trạng thái một / nhiều phản ánh (user 2026-11-19)
+
+> "cho phép chuyển riêng từng nội dung hoặc chọn nhiều nội dung để chuyển trạng thái, chỉ admin mới
+> được thao tác. Ví dụ … chọn 4 xuất .md, tiến hành nâng cấp xong thì … chọn cả 4 or 5 mục để
+> chuyển trạng thái đã xong."
+
+- **Từng mục**: trong khung chi tiết, nhãn trạng thái ở đầu (cạnh `#id`) là một select dạng pill
+  với người có `feedback.manage`; đổi là lưu ngay (không cần "Lưu phân loại"). Người chỉ có
+  `feedback.submit` vẫn thấy pill tĩnh.
+- **Nhiều mục**: thanh nổi khi đã chọn có thêm select **"Chuyển trạng thái…"** cạnh Export. Chọn
+  một trạng thái → hộp xác nhận: danh sách mục (trạng thái cũ → mới, mục đã ở trạng thái đó giữ
+  nguyên), ô ghi chú cho tác giả (tuỳ chọn, **nối thêm** dưới ghi chú đang có, không ghi đè).
+  Xong → bỏ chọn, thông báo "Đã chuyển N phản ánh sang …".
+- **Chọn lại đúng gói đã export**: mỗi gói trong **Lịch sử export** có nút icon "Chọn các phản
+  ánh của gói này" — chọn đúng các mục của gói (bỏ lọc trạng thái để thấy cả mục đã xong), rồi
+  chuyển trạng thái ở thanh dưới. Đây là luồng "export → agent nâng cấp → đánh dấu Đã xong".
+- API: `POST /feedback/status` `{item_ids[1..500], status, note?}` (quyền `feedback.manage`) →
+  `{changed[], unchanged[]}`; tất cả hoặc không (một id không còn → 404, không áp nửa chừng); ghi
+  `triaged_by/at`, audit `feedback.status` (không ghi khi không có gì thay đổi). Một mục cũng dùng
+  endpoint này.
+- Trạng thái chuyển tự do giữa 5 giá trị (mở lại một mục `done` về `accepted` được) — vòng đời do
+  người duyệt quyết, không ép thứ tự.
+  Chuyển về `new` thì tác giả lại sửa / xoá được (đúng nghĩa "trả lại cho tác giả").
+- Đồng thời: khoá dòng (`SELECT … FOR UPDATE`, theo id) ở cả chuyển trạng thái và lúc tác giả sửa;
+  ghi chú nối thêm mà vượt 4 000 ký tự → 422 cả lệnh, không cắt ghi chú cũ; audit mỗi mục một dòng
+  `feedback:<id>` để lịch sử từng phản ánh thấy được.
+
+**Sửa lỗi (user 2026-11-19)**: chi tiết báo "Đã export 3 lần" trong khi "Lịch sử export (1)". Backend
+đếm đúng (mỗi gói +1); danh sách Lịch sử ở trình duyệt bị cũ vì lệnh làm mới chạy sau khi tải file.
+Giờ gói mới được chèn ngay vào lịch sử, danh sách được làm mới **trước** khi tải file, và pill
+"Đã export N lần" trong chi tiết đếm từ **cùng** danh sách lịch sử (cùng khoá SWR, tooltip ghi tên
+các gói) nên hai chỗ không thể lệch nhau.
+
 ## 8. File export (đầu vào của agent code)
 
 ```markdown
@@ -196,11 +229,18 @@ Mục chưa phân tích được vẫn export bằng nội dung gốc (ghi "chư
   trình/người); admin cấp thêm cho PM qua bộ quyền.
 - [x] **Không đính kèm ảnh ở v1** — ghi IDEAS.md (dán ảnh chụp màn hình như Task).
 - [x] **Không vote/+1 công khai ở v1** — AI đánh dấu trùng thay thế; vote ghi IDEAS.md.
+- [x] **"Chỉ admin chuyển trạng thái" = quyền `feedback.manage`** (2026-11-19) — quyền này mặc định
+  chỉ admin có; admin tự quyết cấp thêm cho ai qua bộ quyền, nên không tách thêm quyền riêng.
+- [x] **Ghi chú khi chuyển hàng loạt được nối thêm, không ghi đè** — không làm mất ghi chú riêng
+  từng mục đã viết trước.
+- [x] **Không ép thứ tự trạng thái** — mở lại mục đã xong / từ chối nhầm phải làm được ngay.
 
 ## 10. Kiểm thử
 
 - API: gửi (quyền, giới hạn/ngày, xếp job), của tôi chỉ thấy của mình, quản lý thấy hết, sửa/xoá
-  khi `new`, phân loại, export (đúng thứ tự, có tác giả, đánh dấu planned, lưu gói, tải lại).
+  khi `new`, phân loại, export (đúng thứ tự, có tác giả, đánh dấu planned, lưu gói, tải lại),
+  chuyển trạng thái nhiều mục (chỉ quản lý, tất cả hoặc không, mục đã ở trạng thái giữ nguyên,
+  ghi chú nối thêm, audit).
 - Phân tích: kết quả hợp lệ dựng đúng `.md`; lĩnh vực lạ → `general`; trùng id lạ bị bỏ; nội dung
   người gửi nằm trong `<feedback>`; JSON hỏng → `failed`; hết ngân sách → `failed` có lý do.
 - Migration: bảng mới, quyền `feedback.submit` vào bộ "Thành viên".
