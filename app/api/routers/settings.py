@@ -2,9 +2,9 @@
 PROGRESS.md): MAX_REVIEW_LOC, the review model and the base of the links sent out. The next
 review uses the new value, no restart."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.admin_settings import (
@@ -19,7 +19,7 @@ from app.api.audit import audit
 from app.api.deps import get_session
 from app.api.routers.closures import requests_last_day
 from app.api.schemas import CloseQuotaIn, CloseQuotaOut, ReviewSettingOut, ReviewSettingsIn
-from app.api.security import Principal, require
+from app.api.security import Principal, require, require_admin
 from app.config import Settings, get_settings
 from app.models import User
 
@@ -163,3 +163,22 @@ def set_close_quota(
     )
     session.commit()
     return _quota(session, settings, user)
+
+
+@router.get("/admin/db/transactions")
+def db_transactions(
+    principal: Annotated[Principal, Depends(require_admin)],
+    session: SessionDep,
+    settings: SettingsDep,
+    min_s: Annotated[float, Query(ge=0, le=86_400)] = 1.0,
+) -> dict[str, Any]:
+    """Admin > Hệ thống (app/dbwatch.py): the transactions of this database open longer than
+    `min_s` seconds right now, oldest first, with the flow that holds each, and the threshold
+    that rings the admins' bell."""
+    from app.dbwatch import long_transactions, threshold_s
+
+    items = long_transactions(session, min_s)
+    return {
+        "threshold_s": threshold_s(session, settings),
+        "items": [tx.as_dict() for tx in items],
+    }

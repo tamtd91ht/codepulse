@@ -6,6 +6,7 @@ import { type SubNav, SubPanel, type SubTab, SubTabs, pickSub } from "@/componen
 import { ClaudeLogin } from "@/components/ClaudeLogin";
 import { CommandRunner } from "@/components/CommandRunner";
 import { CriteriaAdmin } from "@/components/CriteriaAdmin";
+import { DbWatch } from "@/components/DbWatch";
 import { GitLabMembers } from "@/components/GitLabMembers";
 import { Icon, type IconName, IconButton } from "@/components/icons";
 import { JiraAdmin } from "@/components/JiraAdmin";
@@ -23,7 +24,19 @@ import { confirmLeave } from "@/lib/criteria";
 import { attributedText } from "@/lib/format";
 import type { Account, AccountLinked, Connection, LlmCosts, Me, Person, Team } from "@/lib/types";
 
-type Tab = "gitlab" | "repos" | "criteria" | "people" | "permissions" | "jira" | "telegram" | "webhooks" | "llm" | "commands" | "data";
+type Tab =
+  | "gitlab"
+  | "repos"
+  | "criteria"
+  | "people"
+  | "permissions"
+  | "jira"
+  | "telegram"
+  | "webhooks"
+  | "llm"
+  | "commands"
+  | "system"
+  | "data";
 const TABS: { key: Tab; label: string; icon: IconName; hint: string }[] = [
   { key: "gitlab", label: "Kết nối GitLab", icon: "gitlab", hint: "Token bot và máy chủ GitLab" },
   { key: "repos", label: "Dự án & Repo", icon: "folder", hint: "Dự án, group, repo, review theo repo" },
@@ -35,6 +48,7 @@ const TABS: { key: Tab; label: string; icon: IconName; hint: string }[] = [
   { key: "webhooks", label: "Webhook thông báo", icon: "webhook", hint: "POST kết quả review tới endpoint của bạn" },
   { key: "llm", label: "LLM & Chi phí", icon: "activity", hint: "Kết nối LLM, chi phí theo tháng" },
   { key: "commands", label: "Chạy command", icon: "code", hint: "Chạy command trong .claude của repo, tải file kết quả" },
+  { key: "system", label: "Hệ thống", icon: "stethoscope", hint: "Transaction DB đang mở, ngưỡng báo chuông khi chạy lâu" },
   { key: "data", label: "Xoá dữ liệu", icon: "remove", hint: "Làm sạch dữ liệu trên server này" },
 ];
 const isTab = (v: string): v is Tab => TABS.some((t) => t.key === v);
@@ -63,7 +77,11 @@ export default function AdminPage() {
   const criteria = can(me, "criteria.manage") || can(me, "criteria.assign");
   // Jira (docs/specs/27 §12): the same screen as DPI › Jira, for admins and DPI admins.
   const jira = can(me, "jira.admin");
-  const tabs = TABS.filter((t) => (t.key !== "commands" || commands) && (t.key !== "criteria" || criteria) && (t.key !== "jira" || jira));
+  // Hệ thống (app/dbwatch.py): admins only, as the bell it rings.
+  const system = !!me?.is_admin;
+  const tabs = TABS.filter(
+    (t) => (t.key !== "commands" || commands) && (t.key !== "criteria" || criteria) && (t.key !== "jira" || jira) && (t.key !== "system" || system),
+  );
   // The hash last shown, to put back when the user keeps unsaved criteria changes (Back button).
   const shownHash = useRef("");
   const asked = useRef(false);
@@ -79,7 +97,10 @@ export default function AdminPage() {
       asked.current = false;
       shownHash.current = window.location.hash;
       const [key, part] = readHash();
-      const next = isTab(key) && (key !== "commands" || commands) && (key !== "criteria" || criteria) && (key !== "jira" || jira) ? key : "gitlab";
+      const next =
+        isTab(key) && (key !== "commands" || commands) && (key !== "criteria" || criteria) && (key !== "jira" || jira) && (key !== "system" || system)
+          ? key
+          : "gitlab";
       setTab(next);
       // Dự án & Repo links here with ?members=bp:3: that list lives under Người & Team › Từ GitLab.
       const members = next === "people" && !part && new URLSearchParams(window.location.search).has("members");
@@ -88,7 +109,7 @@ export default function AdminPage() {
     fromHash();
     window.addEventListener("hashchange", fromHash);
     return () => window.removeEventListener("hashchange", fromHash);
-  }, [ready, commands, criteria, jira]);
+  }, [ready, commands, criteria, jira, system]);
 
   // The hash is the source of truth: setting it fires hashchange and keeps Back/Forward working.
   const go = (key: Tab, part?: string) => {
@@ -148,6 +169,7 @@ export default function AdminPage() {
         {tab === "webhooks" && <WebhookAdmin />}
         {tab === "llm" && <LlmTab nav={nav} />}
         {tab === "commands" && <CommandRunner nav={nav} />}
+        {tab === "system" && <DbWatch />}
         {tab === "data" && <PurgeData />}
       </div>
     </>

@@ -1325,7 +1325,8 @@ export interface ReviewSetting {
     | "llm_probe_interval_min"
     | "llm_account_retry_min"
     | "close_requests_per_day"
-    | "mcp_reviews_per_day";
+    | "mcp_reviews_per_day"
+    | "long_tx_alert_s";
   env: string;
   kind: "int" | "model" | "url" | "bool";
   value: number | string | boolean;
@@ -2279,7 +2280,9 @@ export type NotificationKind =
   | "task.remind"
   | "task.alert"
   | "task.digest"
-  | "task.summary";
+  | "task.summary"
+  // A database transaction open too long (app/dbwatch.py): admins only.
+  | "system.long_transaction";
 export interface InboxNote {
   id: number;
   user_id: number;
@@ -3335,4 +3338,21 @@ export interface ProjectPersonRights {
   effective: string[];
   /** Why the caller may not change this person's rights here; null: they may. */
   locked: string | null;
+}
+
+/** GET /admin/db/transactions (app/dbwatch.py): transactions open right now, oldest first. */
+export interface DbTransactions {
+  threshold_s: number;
+  items: {
+    pid: number;
+    xact_start: string;
+    seconds: number;
+    state: string | null;
+    state_text: string;
+    waiting: string | null;
+    flow: string;
+    application_name: string | null;
+    client: string | null;
+    query: string | null;
+  }[];
 }

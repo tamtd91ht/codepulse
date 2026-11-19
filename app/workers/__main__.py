@@ -8,6 +8,7 @@ from typing import Any
 from rq import Queue, Worker
 from rq.job import Job
 
+from app import dblabel
 from app.db import get_redis
 from app.logging import configure_logging, job_id_var
 from app.workers.queues import rotate, worker_queues
@@ -18,14 +19,25 @@ from app.workers.queues import rotate, worker_queues
 QUEUES = ["default", "reviews"]
 
 
+def _job_label(job: Job) -> str:
+    """The job as app/dblabel.py names it; a job RQ cannot describe is just "job"."""
+    try:
+        return dblabel.job_label(getattr(job, "func_name", None), tuple(getattr(job, "args", ())))
+    except Exception:  # a payload that does not deserialize: the job itself will say so
+        return "job"
+
+
 class JobContextWorker(Worker):
     # Pass through whatever RQ hands the work horse: RQ 3 added an `execution` argument, and a
     # mismatch here is a TypeError that RQ turns into a silent os._exit(1) for every job.
     def perform_job(self, job: Job, queue: Queue, *args: Any, **kwargs: Any) -> Any:
         token = job_id_var.set(job.id)
+        # pg_stat_activity.application_name of the job's connections (app/dblabel.py).
+        db_token = dblabel.set_label(_job_label(job))
         try:
             return super().perform_job(job, queue, *args, **kwargs)
         finally:
+            dblabel.reset_label(db_token)
             job_id_var.reset(token)
 
     def reorder_queues(self, reference_queue: Queue) -> None:
@@ -36,6 +48,7 @@ class JobContextWorker(Worker):
 
 def main(argv: list[str] | None = None) -> None:
     configure_logging()
+    dblabel.set_process("worker")
     redis = get_redis()
     names = worker_queues((sys.argv[1:] if argv is None else argv) or QUEUES, connection=redis)
     worker = JobContextWorker([Queue(name, connection=redis) for name in names], connection=redis)

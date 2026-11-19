@@ -56,6 +56,9 @@ class Settings(BaseSettings):
 
     backfill_days: int = Field(default=90, ge=0)
     sync_interval_min: int = Field(default=30, gt=0)
+    # app/dbwatch.py: a database transaction open longer than this many seconds rings the
+    # admins' bell (0 = off); editable on Admin > Hệ thống.
+    long_tx_alert_s: int = Field(default=120, ge=0, le=86_400)
     ignore_paths: CommaList = [
         "*.lock",
         "dist/**",

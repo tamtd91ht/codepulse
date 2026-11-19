@@ -111,8 +111,14 @@ def review_settings(settings: Settings, session: Session | None = None) -> Revie
 
 
 def _ensure_synced(
-    session: Session, project: Project, make_client: ClientFactory, settings: Settings
+    session: Session,
+    project: Project,
+    make_client: ClientFactory,
+    settings: Settings,
+    staged: bool = False,
 ) -> None:
+    """`staged`: the sync commits short transactions of its own and holds none open through the
+    GitLab calls (the review's short-transaction mode, docs/specs/19 §4.6)."""
     result = sync_project(
         session,
         project,
@@ -120,6 +126,7 @@ def _ensure_synced(
         backfill_days=settings.backfill_days,
         ignore_paths=settings.ignore_paths,
         allowed_email_domains=settings.allowed_email_domains,
+        staged=staged,
     )
     if result.skipped:
         raise NotSyncedYet(f"project {project.id} is being synced")
@@ -165,7 +172,7 @@ def run_mr_review(
 
     mr = load()
     if mr is None or mr.head_sha != head_sha:
-        _ensure_synced(session, project, make_client, settings)
+        _ensure_synced(session, project, make_client, settings, staged=short)
         if short:
             session.commit()  # the sync's rows (and its advisory lock) do not wait for the review
         mr = load()

@@ -8,6 +8,7 @@ from app.assistant.history import enqueue_tag_job
 from app.collector.sync import enqueue_syncs_job
 from app.commands.store import enqueue_cleanup_job
 from app.config import get_settings
+from app.dbwatch import watch_job as dbwatch_job
 from app.dpi.jobs import dpi_lock_job
 from app.evidence.jobs import create_drafts_job
 from app.insights.backfill import backfill_once_job
@@ -178,6 +179,16 @@ def build_scheduler(
         max_instances=1,
         coalesce=True,
     )
+    # Long database transactions ring the admins' bell (app/dbwatch.py, user 2026-11-19); in
+    # this process, so a pile-up on the workers does not silence it.
+    scheduler.add_job(
+        dbwatch_job,
+        "interval",
+        minutes=1,
+        id="db-long-transactions",
+        max_instances=1,
+        coalesce=True,
+    )
     # docs/specs/11: data retention, daily at night.
     scheduler.add_job(purge_job, "cron", hour=3, minute=0, id="retention-purge", **common)
     # Command runs (app/commands): files nobody downloaded, runs whose worker died. Runs on the
@@ -267,6 +278,9 @@ def build_scheduler(
 
 def main() -> None:
     configure_logging()
+    from app import dblabel
+
+    dblabel.set_process("scheduler")
     settings = get_settings()
     build_scheduler(
         settings.sync_interval_min,

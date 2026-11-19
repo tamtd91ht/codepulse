@@ -77,6 +77,9 @@ EDITABLE: dict[str, Editable] = {
     "llm_probe_interval_min": Editable("LLM_PROBE_INTERVAL_MIN", "int", 5, 240),
     # Several Claude accounts: when a failed account is tried again (base minutes).
     "llm_account_retry_min": Editable("LLM_ACCOUNT_RETRY_MIN", "int", 5, 240),
+    # app/dbwatch.py: a transaction open longer than this (seconds) rings the admins' bell;
+    # 0 turns the watch off.
+    "long_tx_alert_s": Editable("LONG_TX_ALERT_S", "int", 0, 86_400),
 }
 
 
@@ -105,6 +108,7 @@ def defaults(settings: Settings) -> dict[str, Value]:
         "llm_auto_resume": settings.llm_auto_resume,
         "llm_probe_interval_min": settings.llm_probe_interval_min,
         "llm_account_retry_min": settings.llm_account_retry_min,
+        "long_tx_alert_s": settings.long_tx_alert_s,
     }
 
 

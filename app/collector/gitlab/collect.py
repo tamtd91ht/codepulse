@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any
@@ -61,14 +62,36 @@ def window_start(project: Project, now: datetime, backfill_days: int) -> datetim
     return project.last_synced_at - SYNC_OVERLAP
 
 
-def _stored_mr(session: Session, project_id: int, iid: int) -> bool:
-    return (
-        session.scalar(
-            select(MergeRequest.id).where(
-                MergeRequest.project_id == project_id, MergeRequest.iid == iid
+@dataclass
+class Known:
+    """What the collect step reads from the domain layer, read once before GitLab is asked, so
+    the GitLab calls need no database (and no open transaction): the sync holds the repo's lock
+    throughout, so nothing else changes these rows meanwhile."""
+
+    mr_iids: set[int] = field(default_factory=set)
+    # Stored pipelines of the repo: id -> tests_total (None: no test summary yet).
+    pipelines: dict[int, int | None] = field(default_factory=dict)
+    open_incident_iids: list[int] = field(default_factory=list)
+
+
+def read_known(session: Session, project: Project) -> Known:
+    return Known(
+        mr_iids=set(
+            session.scalars(select(MergeRequest.iid).where(MergeRequest.project_id == project.id))
+        ),
+        pipelines={
+            int(pid): total
+            for pid, total in session.execute(
+                select(Pipeline.id, Pipeline.tests_total).where(Pipeline.project_id == project.id)
+            ).tuples()
+        },
+        open_incident_iids=list(
+            session.scalars(
+                select(Incident.iid).where(
+                    Incident.project_id == project.id, Incident.state == "opened"
+                )
             )
-        )
-        is not None
+        ),
     )
 
 
@@ -92,12 +115,43 @@ class GitLabCollector:
         """`deployments_since`: the deployments window when it differs from `since` (a repo
         whose deployment history was never collected backfills it, docs/specs/20 §5.2).
         `issues`: False while Jira is the DPI task source (docs/specs/27 §9): GitLab issues
-        (and their closed_by) are not fetched; incidents are, they are not DPI tasks."""
+        (and their closed_by) are not fetched; incidents are, they are not DPI tasks.
+
+        In the caller's transaction: reads what it needs, asks GitLab, adds the raw rows."""
+        rows: list[RawGitlab] = []
+        result = self.fetch(
+            project,
+            since,
+            read_known(session, project),
+            rows,
+            deployments_since=deployments_since,
+            incidents_since=incidents_since,
+            incident_labels=incident_labels,
+            issues=issues,
+        )
+        session.add_all(rows)
+        session.flush()
+        return result
+
+    def fetch(
+        self,
+        project: Project,
+        since: datetime | None,
+        known: Known,
+        rows: list[RawGitlab],
+        deployments_since: datetime | None = None,
+        incidents_since: datetime | None = None,
+        incident_labels: Sequence[str] = ("incident",),
+        issues: bool = True,
+    ) -> CollectResult:
+        """The GitLab part of `collect`, with no database: the raw rows are appended to `rows`
+        in the order they are to be inserted (a later row of an entity wins in extract), for
+        the caller to add in one short transaction (app/collector/sync.py, staged sync)."""
         result = CollectResult(window_start=since, started_at=self._clock())
         pid = project.external_id
 
         def store(endpoint: str, payload: Any, **params: Any) -> None:
-            session.add(
+            rows.append(
                 RawGitlab(
                     project_id=project.id,
                     endpoint=endpoint,
@@ -139,7 +193,6 @@ class GitLabCollector:
                 diff = detail(EP_COMMIT_DIFF, partial(self._client.commit_diff, pid, sha), sha=sha)
                 if diff is not None:
                     store(EP_COMMIT_DIFF, [file_stat(e) for e in diff], sha=sha)
-            session.flush()
 
         for mr in self._client.merge_requests(pid, since):
             iid = mr["iid"]
@@ -155,7 +208,7 @@ class GitLabCollector:
                 payload = detail(endpoint, fetch, iid=iid)
                 if payload is not None:
                     parts[endpoint] = payload
-            if len(parts) < 3 and _stored_mr(session, project.id, iid):
+            if len(parts) < 3 and iid in known.mr_iids:
                 # A partial MR would overwrite stored notes/LOC with empty values: keep the
                 # stored row as it is until GitLab serves every part again.
                 result.counts["skipped.merge_request"] = (
@@ -165,7 +218,6 @@ class GitLabCollector:
             store(EP_MR, mr, iid=iid)
             for endpoint, payload in parts.items():
                 store(endpoint, payload, iid=iid)
-            session.flush()
 
         for pipeline in self._client.pipelines(pid, since):
             # The list omits duration/finished_at; the detail endpoint has them.
@@ -173,12 +225,12 @@ class GitLabCollector:
             extra = detail(
                 EP_PIPELINE, partial(self._client.pipeline, pid, pipeline_id), id=pipeline_id
             )
-            if extra is None and session.get(Pipeline, pipeline_id) is not None:
+            stored = pipeline_id in known.pipelines
+            if extra is None and stored:
                 continue  # keep the stored duration / finished_at
             store(EP_PIPELINE, {**pipeline, **(extra or {})}, id=pipeline_id)
-            stored = session.get(Pipeline, pipeline_id)
             if pipeline.get("status") in FINISHED_PIPELINE and (
-                stored is None or stored.tests_total is None
+                not stored or known.pipelines[pipeline_id] is None
             ):
                 try:
                     tests = detail(
@@ -195,22 +247,18 @@ class GitLabCollector:
                 total = (tests or {}).get("total") if isinstance(tests, dict) else None
                 if total and total.get("count"):
                     store(EP_PIPELINE_TESTS, total, id=pipeline_id)
-        session.flush()
 
         self._collect_deployments(project, deployments_since or since, store, detail)
-        open_iids = list(
-            session.scalars(
-                select(Incident.iid).where(
-                    Incident.project_id == project.id, Incident.state == "opened"
-                )
-            )
-        )
         self._collect_incidents(
-            project, incidents_since or since, incident_labels, store, detail, open_iids
+            project,
+            incidents_since or since,
+            incident_labels,
+            store,
+            detail,
+            known.open_incident_iids,
         )
         if issues:
             self._collect_issues(project, since, store, detail)
-        session.flush()
 
         log.info(
             "collected gitlab project",

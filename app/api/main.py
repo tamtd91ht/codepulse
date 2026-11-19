@@ -14,7 +14,7 @@ from redis import Redis
 from sqlalchemy import Engine
 from starlette.routing import Route
 
-from app import health
+from app import dblabel, health
 from app.admin_settings import monthly_budget_usd
 from app.api import auth
 from app.api.routers import (
@@ -121,6 +121,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
 
 
+dblabel.set_process("api")
 app = FastAPI(title="CodePulse", version="0.1.0", lifespan=lifespan)
 # docs/specs/26: MCP for Claude Code (Streamable HTTP, personal access tokens only).
 app.router.routes.append(Route("/mcp", endpoint=mcp_http, include_in_schema=False))
@@ -225,6 +226,8 @@ async def request_id_middleware(
 ) -> Response:
     request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
     token = request_id_var.set(request_id)
+    # pg_stat_activity.application_name of this request's connections (app/dblabel.py).
+    db_token = dblabel.set_label(dblabel.route_label(request.method, request.url.path))
     started = time.perf_counter()
     try:
         response = await call_next(request)
@@ -240,6 +243,7 @@ async def request_id_middleware(
         )
     finally:
         request_id_var.reset(token)
+        dblabel.reset_label(db_token)
     response.headers["X-Request-ID"] = request_id
     # docs/specs/11: HTTPS only (TLS ends at the reverse proxy) and basic browser hardening.
     response.headers["X-Content-Type-Options"] = "nosniff"

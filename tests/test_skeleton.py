@@ -37,7 +37,9 @@ def test_scheduler_enqueues_syncs_on_the_configured_interval() -> None:
         "task-automation",
         "task-filter-digests",
         "team-gitlab-sync",
+        "db-long-transactions",
     }
+    assert jobs["db-long-transactions"].trigger.interval.total_seconds() == 60
     assert str(jobs["evidence-drafts"].trigger.timezone) == "Asia/Ho_Chi_Minh"
     assert jobs["command-cleanup"].trigger.interval.total_seconds() == 3600
     assert jobs["enqueue-syncs"].trigger.interval.total_seconds() == 30 * 60

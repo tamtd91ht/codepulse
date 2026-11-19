@@ -87,6 +87,19 @@ Lệnh này chấm lại điểm review từ finding hiện tại rồi tổng h
 | `CodePulseLlmErrors` | log `claude call failed` / review `failed` với lỗi `llm: …` | Kiểm tra `CLAUDE_CODE_OAUTH_TOKEN` / `LLM_API_KEY`, hạn mức gói Claude / tài khoản Anthropic, phiên bản CLI. Chạy lại review lỗi sau khi sửa. |
 | `CodePulseBudget80` | Admin → Chi phí LLM | Báo người phụ trách; đến 100% review tạm dừng (`failed: monthly LLM budget reached`) và có thể chạy lại khi tăng ngân sách. |
 
+### Transaction DB chạy lâu (2026-11-19)
+- Mỗi kết nối DB của ứng dụng ghi luồng của nó vào `application_name` (`app/dblabel.py`):
+  `cp-api GET /api/v1/...`, `cp-worker sync.sync_project_job #12`, `cp-scheduler dbwatch`. Xem tay:
+  `SELECT pid, application_name, state, wait_event_type, wait_event, now() - xact_start AS tx_age,
+  left(query, 200) FROM pg_stat_activity WHERE xact_start IS NOT NULL ORDER BY xact_start;`
+- Scheduler chạy `db-long-transactions` mỗi phút (`app/dbwatch.py`): transaction mở lâu hơn
+  `LONG_TX_ALERT_S` giây (mặc định 120; sửa ở **Admin › Hệ thống**, 0 = tắt) thì chuông của mọi admin
+  (`ADMIN_EMAILS`) báo một lần, kèm luồng, trạng thái, chờ gì, câu lệnh; quá 10 lần ngưỡng báo thêm một
+  lần; một luồng (bỏ id) báo tối đa 30 phút một lần. Log `long database transaction` cùng nội dung.
+- Admin › Hệ thống cũng liệt kê transaction đang mở (tự làm mới 10 giây).
+- Đồng bộ GitLab không còn giữ transaction trong lúc gọi GitLab (spec 04 "Giao dịch khi đồng bộ"):
+  nếu vẫn thấy `worker · sync.sync_project_job` lâu, đó là bước ghi (repo rất lớn / backfill đầy đủ).
+
 ### Hàng đợi review và chạy song song (2026-11-04)
 - Mỗi worker RQ chạy **một job một lúc**. Trước đây mọi job (review, sync, tri thức, thông báo…) chung một hàng `default` với **một** worker, nên 5 người gửi review cùng lúc thì chạy lần lượt (mỗi review vài phút, review sâu tới ~8 phút/chunk), và vì `at_front` người gửi **sau cùng lại chạy trước**.
 - Nay review có hàng riêng `reviews`, chạy **theo thứ tự gửi** (FIFO) bởi `review-worker` × `REVIEW_WORKERS` (mặc định 2), mỗi worker một review; worker `default` cũng nhận review khi rảnh. Ví dụ 5 yêu cầu, 2 review-worker + worker default rảnh → 3 review chạy cùng lúc, 2 cái sau bắt đầu ngay khi có chỗ.

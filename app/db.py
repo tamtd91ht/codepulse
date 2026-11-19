@@ -13,7 +13,11 @@ install_audit_trail()
 
 @lru_cache
 def get_engine() -> Engine:
-    return create_engine(str(get_settings().database_url), pool_pre_ping=True)
+    from app import dblabel
+
+    engine = create_engine(str(get_settings().database_url), pool_pre_ping=True)
+    dblabel.install(engine)  # pg_stat_activity.application_name says which flow (app/dblabel.py)
+    return engine
 
 
 @lru_cache
