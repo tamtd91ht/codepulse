@@ -130,7 +130,8 @@ def repo_lock(session: Session, project_id: int) -> Iterator[bool]:
         # connection, so the lock goes whatever happened (an unlock interrupted, a signal).
         with suppress(BaseException):
             conn.invalidate()
-        conn.close()
+        with suppress(BaseException):
+            conn.close()
 
 
 def _gitlab_users(payload: Any, out: set[int]) -> None:

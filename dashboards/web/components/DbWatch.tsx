@@ -4,7 +4,7 @@ import { type FormEvent, useState } from "react";
 
 import { Alert, Card, Loading, Pill } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
-import type { DbTransactions, ReviewSetting } from "@/lib/types";
+import type { DbSlowEntry, DbTransactions, ReviewSetting } from "@/lib/types";
 
 const fmt = (seconds: number) => {
   const s = Math.round(seconds);
@@ -22,6 +22,7 @@ export function DbWatch() {
   const [minS, setMinS] = useState(1);
   const list = useApi<DbTransactions>(`/admin/db/transactions?min_s=${minS}`, { refreshInterval: 10_000 });
   const settings = useApi<ReviewSetting[]>("/admin/review-settings");
+  const history = useApi<DbSlowEntry[]>("/admin/db/slow", { refreshInterval: 30_000 });
   const setting = settings.data?.find((s) => s.key === "long_tx_alert_s");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ tone: "success" | "error"; text: string } | null>(null);
@@ -53,9 +54,11 @@ export function DbWatch() {
     <div style={{ display: "grid", gap: 16 }}>
       <Card title="Cảnh báo transaction DB chạy lâu" collapsible={false}>
         <p className="muted small" style={{ marginTop: 0 }}>
-          Mỗi phút hệ thống xem các transaction đang mở trên PostgreSQL. Transaction nào mở lâu hơn ngưỡng thì chuông của mọi
-          admin báo một lần, kèm luồng đang giữ nó (job worker, request API, scheduler), trạng thái và câu lệnh. Còn chạy quá 10 lần
-          ngưỡng thì báo thêm một lần nữa.
+          Mọi transaction của ứng dụng được đo thời gian ngay khi chạy: transaction nào lâu hơn ngưỡng thì khi kết thúc, chuông của
+          mọi admin báo kèm luồng (job worker, request API, scheduler), dòng code đã kết thúc nó và câu lệnh chậm nhất. Thêm vào đó,
+          mỗi phút hệ thống xem các transaction <b>vẫn đang mở</b> trên PostgreSQL (bị treo, worker chết giữa chừng, kết nối ngoài ứng
+          dụng) và báo ngay khi chúng vượt ngưỡng; khi transaction đó kết thúc, chuông báo bổ sung "đã xong sau…, tại…". Cùng một
+          luồng ở cùng một chỗ báo tối đa 30 phút một lần.
         </p>
         {result && (
           <Alert tone={result.tone} onClose={() => setResult(null)}>
@@ -92,6 +95,59 @@ export function DbWatch() {
               )}
             </div>
           </form>
+        )}
+      </Card>
+
+      <Card title="Đã báo trong 24 giờ qua" collapsible={false}>
+        {!history.data ? (
+          <Loading error={history.error} rows={2} />
+        ) : history.data.length === 0 ? (
+          <p className="muted small" style={{ marginTop: 0 }}>
+            Không có transaction nào vượt ngưỡng trong 24 giờ qua.
+          </p>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Lúc</th>
+                  <th>Thời gian</th>
+                  <th>Luồng · vị trí code</th>
+                  <th>Câu lệnh chậm nhất / cuối</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.data.map((h, i) => (
+                  <tr key={`${h.at}-${i}`}>
+                    <td className="small" style={{ whiteSpace: "nowrap" }}>
+                      {new Date(h.at * 1000).toLocaleTimeString("vi-VN")}
+                      <div className="muted">{h.source === "open" ? "đang mở" : "đã kết thúc"}</div>
+                    </td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      <Pill tone={h.source === "open" ? "bad" : "warn"}>{fmt(Number(h.seconds ?? 0))}</Pill>
+                    </td>
+                    <td className="small">
+                      <strong>{h.flow}</strong>
+                      {h.where && (
+                        <div>
+                          <code>{h.where}</code>
+                        </div>
+                      )}
+                      <div className="muted">
+                        {h.state}
+                        {h.waiting ? ` · chờ ${h.waiting}` : ""}
+                        {h.statements ? ` · ${h.statements} câu lệnh` : ""}
+                      </div>
+                    </td>
+                    <td className="small">
+                      {h.slowest_s ? <span className="muted">{fmt(Number(h.slowest_s))} · </span> : null}
+                      <code style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{h.sql ?? ""}</code>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 

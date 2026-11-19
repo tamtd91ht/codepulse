@@ -13,10 +13,13 @@ install_audit_trail()
 
 @lru_cache
 def get_engine() -> Engine:
-    from app import dblabel
+    from app import dblabel, dbtiming
 
     engine = create_engine(str(get_settings().database_url), pool_pre_ping=True)
     dblabel.install(engine)  # pg_stat_activity.application_name says which flow (app/dblabel.py)
+    dbtiming.install(
+        engine
+    )  # every transaction timed; a slow one rings the admins (app/dbtiming.py)
     return engine
 
 

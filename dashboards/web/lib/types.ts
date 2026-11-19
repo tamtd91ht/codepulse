@@ -3356,3 +3356,19 @@ export interface DbTransactions {
     query: string | null;
   }[];
 }
+
+/** GET /admin/db/slow (app/dbwatch.py): long transactions rung for in the last 24 hours. */
+export interface DbSlowEntry {
+  at: number;
+  source: "open" | "ended";
+  seconds: number | null;
+  flow: string;
+  where: string | null;
+  state: string | null;
+  waiting: string | null;
+  sql: string | null;
+  slowest_s?: number | null;
+  statements?: number | null;
+  pid: number | null;
+  title: string;
+}

@@ -182,3 +182,15 @@ def db_transactions(
         "threshold_s": threshold_s(session, settings),
         "items": [tx.as_dict() for tx in items],
     }
+
+
+@router.get("/admin/db/slow")
+def db_slow(principal: Annotated[Principal, Depends(require_admin)]) -> list[dict[str, Any]]:
+    """Admin > Hệ thống: the long transactions rung for in the last 24 hours, newest first: still
+    open when the minute watch saw them ("open"), or timed when they ended ("ended", with the
+    line of app code and the slowest statement), app/dbwatch.py."""
+    import time
+
+    from app.dbwatch import shared_seen
+
+    return shared_seen().history(time.time())

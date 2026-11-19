@@ -141,3 +141,39 @@ def test_staged_is_skipped_while_another_sync_holds_the_repo(
             text("SELECT pg_advisory_unlock(:ns, :pid)"),
             {"ns": ADVISORY_LOCK_NAMESPACE, "pid": project.id},
         )
+
+
+def test_staged_sync_with_the_timing_hooks_installed(
+    db_session: Session, migrated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review finding: on the production engine the timing hooks (app/dbtiming.py) see the repo
+    lock's invalidate-then-close; the sync must still finish."""
+    from sqlalchemy import event
+
+    from app import dbtiming
+
+    monkeypatch.setattr(dbtiming, "reporter", lambda payload: None)
+    dbtiming.install(migrated_engine)
+    try:
+        project = make_project(db_session)
+        with respx.mock(assert_all_called=False) as router:
+            mount(router)
+            result = sync_project(
+                db_session,
+                project,
+                lambda c: GitLabClient(c.base_url, "t", max_per_second=1000),
+                backfill_days=90,
+                ignore_paths=IGNORE,
+                now=NOW,
+                staged=True,
+            )
+        assert result.skipped is False and project.last_synced_at == NOW
+    finally:
+        for name, fn in (
+            ("begin", dbtiming._on_begin),
+            ("commit", dbtiming._on_commit),
+            ("rollback", dbtiming._on_rollback),
+            ("before_cursor_execute", dbtiming._before),
+            ("after_cursor_execute", dbtiming._after),
+        ):
+            event.remove(migrated_engine, name, fn)

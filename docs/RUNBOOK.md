@@ -96,7 +96,14 @@ Lệnh này chấm lại điểm review từ finding hiện tại rồi tổng h
   `LONG_TX_ALERT_S` giây (mặc định 120; sửa ở **Admin › Hệ thống**, 0 = tắt) thì chuông của mọi admin
   (`ADMIN_EMAILS`) báo một lần, kèm luồng, trạng thái, chờ gì, câu lệnh; quá 10 lần ngưỡng báo thêm một
   lần; một luồng (bỏ id) báo tối đa 30 phút một lần. Log `long database transaction` cùng nội dung.
-- Admin › Hệ thống cũng liệt kê transaction đang mở (tự làm mới 10 giây).
+- **Đo tại ứng dụng** (`app/dbtiming.py`): mọi transaction của API / worker / scheduler được đo khi chạy
+  (hook SQLAlchemy, vài µs mỗi câu lệnh). Transaction kết thúc mà lâu hơn ngưỡng thì log
+  `slow database transaction` và xếp job `report_slow_job` báo chuông: luồng, **dòng code** đã commit /
+  rollback, số câu lệnh, câu chậm nhất. Transaction mà lần quét mỗi phút đã báo "đang chạy" thì khi kết
+  thúc chỉ báo bổ sung "đã xong sau …, tại …". Kết nối AUTOCOMMIT không được đo (không giữ transaction).
+- Admin › Hệ thống: các lần đã báo trong 24 giờ (Redis `codepulse:dbwatch:history`) và transaction đang
+  mở (tự làm mới 10 giây). Ngưỡng do scheduler đẩy vào Redis mỗi phút, các tiến trình đọc lại tối đa
+  1 phút một lần.
 - Đồng bộ GitLab không còn giữ transaction trong lúc gọi GitLab (spec 04 "Giao dịch khi đồng bộ"):
   nếu vẫn thấy `worker · sync.sync_project_job` lâu, đó là bước ghi (repo rất lớn / backfill đầy đủ).
 
