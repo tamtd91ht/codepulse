@@ -1768,7 +1768,8 @@ khối `/* UI fix: List, Timeline, Reports, detail */` (sửa thêm luật `fb-`
   theo độ rộng này.
 - **Chi tiết task** (`TaskDetail.tsx`, toàn trang và ngăn bên phải): ô bình luận không còn `position: sticky`
   (trước đây dính đáy vùng cuộn nên hiện đè giữa khối Code và Tiêu chí chấp nhận). Thứ tự cuối trang: …
-  Testcase, Đính kèm, **Dòng thời gian, ô bình luận**. Giữ `@` / `#`, `data-shortcut="comment"` (phím C), đính
+  Testcase, **Dòng thời gian, ô bình luận**. *Đính kèm* nằm ngay dưới *Mô tả* (user 2026-11-19): Mô tả →
+  Đính kèm → Task con → Liên kết → Code → Tiêu chí chấp nhận → Testcase. Giữ `@` / `#`, `data-shortcut="comment"` (phím C), đính
   kèm và dán ảnh.
 - **Báo cáo** (`TaskReports.tsx`): nhãn trong dải chỉ số xuống tối đa 2 dòng (`white-space: normal`,
   `max-height` 2 dòng, `text-overflow: clip`, không "…"); ô cao tối thiểu 64 px, tự cao thêm khi nhãn 2 dòng.

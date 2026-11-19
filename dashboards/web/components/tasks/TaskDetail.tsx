@@ -289,12 +289,13 @@ function Body({
         )}
         {message && <Message text={message} onClose={() => setMessage(null)} />}
         <DescriptionEdit task={task} canEdit={canEdit} onSave={(description) => patch({ description })} />
+        {/* Attachments right under the description (user 2026-11-19): screenshots and files read with it. */}
+        <TaskAttachments task={task} />
         <Subtasks task={task} bp={bp} space={space} onOpenTask={onOpenTask} />
         <Links task={task} onOpenTask={onOpenTask} />
         <TaskCode task={task} bp={bp} />
         <TaskDod task={task} />
         <TaskTests task={task} />
-        <TaskAttachments task={task} />
         {/* The comment box sits right under "Dòng thời gian", at the end of the page (not sticky). */}
         <TaskActivity task={task} />
         <TaskCommentBox key={task.key} task={task} bp={bp} />
