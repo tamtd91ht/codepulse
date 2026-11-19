@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { DocMarkdown } from "@/components/DocMarkdown";
+import { StatusMenu } from "@/components/FeedbackStatusMenu";
 import { Icon, IconButton } from "@/components/icons";
 import { Alert, Avatar, Drawer, EmptyState, Loading, Message, Pill } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
@@ -303,23 +304,12 @@ export function FeedbackView({
         <span className="fb-id">#{item.id}</span>
         <KindPill kind={item.kind} />
         {item.can_manage ? (
-          <label className={`fb-status-select is-${STATUS_TONE[item.status] ?? "neutral"}`} title="Chuyển trạng thái">
-            <span className="sr-only">Trạng thái</span>
-            <select
-              value={item.status}
-              disabled={busy}
-              onChange={(e) => {
-                const to = e.target.value as FeedbackStatus;
-                void act(() => setFeedbackStatus([item.id], to), `Đã chuyển sang “${STATUS_LABEL[to]}”.`);
-              }}
-            >
-              {meta.statuses.map((s) => (
-                <option key={s.key} value={s.key}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <StatusMenu
+            variant="chip"
+            current={item.status}
+            disabled={busy}
+            onPick={(to) => void act(() => setFeedbackStatus([item.id], to), `Đã chuyển sang “${STATUS_LABEL[to]}”.`)}
+          />
         ) : (
           <StatusPill status={item.status} />
         )}
@@ -590,12 +580,16 @@ function Triage({
 
 /* ---------- "Của tôi" ---------- */
 
-export function MyFeedback({ meta, from }: { meta: FeedbackMeta; from: string | null }) {
+export function MyFeedback({ meta, from, item }: { meta: FeedbackMeta; from: string | null; item?: string | null }) {
   const { data: rows, error, mutate } = useApi<FeedbackRow[]>("/feedback/mine", {
     refreshInterval: (latest) => (latest?.some(isAnalysing) ? 3000 : 0),
   });
   const [open, setOpen] = useState<number | null>(null);
   const [sent, setSent] = useState<string | null>(null);
+  // ?item=12 (the bell's link when a manager moved the report) opens that report.
+  useEffect(() => {
+    if (item && /^\d+$/.test(item)) setOpen(Number(item));
+  }, [item]);
   return (
     <div className="fb-mine">
       <FeedbackForm

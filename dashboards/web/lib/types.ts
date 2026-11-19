@@ -2282,7 +2282,9 @@ export type NotificationKind =
   | "task.digest"
   | "task.summary"
   // A database transaction open too long (app/dbwatch.py): admins only.
-  | "system.long_transaction";
+  | "system.long_transaction"
+  // A manager moved one of the person's Phản ánh to a new status (docs/specs/32 §7.3).
+  | "feedback.status";
 export interface InboxNote {
   id: number;
   user_id: number;

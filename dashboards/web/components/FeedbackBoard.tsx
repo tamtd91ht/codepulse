@@ -5,6 +5,7 @@ import { useSWRConfig } from "swr";
 
 import { Modal } from "@/components/CriteriaParts";
 import { AnalysisBadge, FeedbackView, KindPill, StatusPill } from "@/components/Feedback";
+import { StatusDot, StatusMenu } from "@/components/FeedbackStatusMenu";
 import { Icon, IconButton } from "@/components/icons";
 import { MultiSelect } from "@/components/MultiSelect";
 import { Alert, Avatar, EmptyState, Loading, Message, Pill } from "@/components/ui";
@@ -126,6 +127,9 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
   const someShown = shown.some((r) => picked.has(r.id));
   const pickedRows = [...picked].map((id) => byId.get(id)).filter((r): r is FeedbackRow => !!r);
   const pickedAreas = new Set(pickedRows.map((r) => r.area));
+  const pickedShown = shown.filter((r) => picked.has(r.id)).length;
+  const pickedCounts: Partial<Record<FeedbackStatus, number>> = {};
+  for (const r of pickedRows) pickedCounts[r.status] = (pickedCounts[r.status] ?? 0) + 1;
 
   const areaLabel = (key: string) => meta.areas.find((a) => a.key === key)?.label ?? key;
   const nodeLabel = node ? (node.feature ? `${areaLabel(node.area)} ▸ ${node.feature}` : areaLabel(node.area)) : "Tất cả phản ánh";
@@ -145,7 +149,7 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
     <>
       <Message text={note} onClose={() => setNote(null)} />
       {board.truncated && <Alert tone="warning">Chỉ hiện 2.000 phản ánh mới nhất.</Alert>}
-      <div className={`fb-board${picked.size ? " has-picks" : ""}`}>
+      <div className="fb-board">
         <aside className="card fb-tree" aria-label="Cây phản ánh">
           <TreeView
             board={board}
@@ -176,7 +180,7 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
               setStatuses([]); // done / rejected ones of the batch show too
               setNode(null);
               setNote(
-                `Đã chọn ${live.length} phản ánh của gói "${r.title}"${live.length < r.items ? ` (${r.items - live.length} đã bị xoá)` : ""}. Chuyển trạng thái ở thanh dưới.`,
+                `Đã chọn ${live.length} phản ánh của gói "${r.title}"${live.length < r.items ? ` (${r.items - live.length} đã bị xoá)` : ""}. Chuyển trạng thái ở đầu danh sách.`,
               );
             }}
           />
@@ -215,8 +219,8 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
               <option value="new">Mới nhất trước</option>
             </select>
           </div>
-          <div className="fb-rows-head">
-            <label className="inline-check small">
+          <div className={`fb-rows-head${picked.size ? " selecting" : ""}`} role={picked.size ? "region" : undefined} aria-label={picked.size ? "Phản ánh đã chọn" : undefined}>
+            <label className="fb-rows-check">
               <input
                 type="checkbox"
                 checked={allShown}
@@ -225,9 +229,44 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
                 }}
                 onChange={(e) => toggle(shown.map((r) => r.id), e.target.checked)}
                 disabled={shown.length === 0}
+                aria-label={`Chọn ${shown.length} phản ánh đang hiện`}
               />
-              Chọn {shown.length} phản ánh đang hiện
+              {picked.size ? (
+                <span className="fb-sel-count">
+                  Đã chọn <strong>{picked.size}</strong>
+                  <span className="muted">
+                    {" "}
+                    · {pickedAreas.size} lĩnh vực{picked.size > pickedShown ? ` · ${picked.size - pickedShown} ngoài bộ lọc` : ""}
+                  </span>
+                </span>
+              ) : (
+                <span className="muted small">Chọn {shown.length} phản ánh đang hiện</span>
+              )}
             </label>
+            {picked.size > 0 && (
+              <div className="fb-sel-actions">
+                <button type="button" className="ghost sm" onClick={() => setPicked(new Set())}>
+                  Bỏ chọn
+                </button>
+                <StatusMenu
+                  variant="button"
+                  align="end"
+                  total={pickedRows.length}
+                  counts={pickedCounts}
+                  disabled={picked.size > STATUS_MAX}
+                  onPick={setMoving}
+                />
+                <button
+                  type="button"
+                  className="primary ink sm"
+                  onClick={() => setExporting(true)}
+                  disabled={picked.size > EXPORT_MAX}
+                  title={picked.size > EXPORT_MAX ? `Tối đa ${EXPORT_MAX} phản ánh mỗi gói` : undefined}
+                >
+                  <Icon name="download" size={14} /> Export .md
+                </button>
+              </div>
+            )}
           </div>
           {shown.length === 0 ? (
             <EmptyState icon="filter" title="Không có phản ánh khớp bộ lọc">
@@ -299,38 +338,6 @@ export function FeedbackBoard({ meta }: { meta: FeedbackMeta }) {
           )}
         </section>
       </div>
-
-      {picked.size > 0 && (
-        <div className="fb-pickbar" role="region" aria-label="Phản ánh đã chọn">
-          <span>
-            <strong>Đã chọn {picked.size} phản ánh</strong>
-            <span className="muted small"> · {pickedAreas.size} lĩnh vực</span>
-          </span>
-          <button type="button" className="ghost sm" onClick={() => setPicked(new Set())}>
-            Bỏ chọn
-          </button>
-          <label className="fb-pickbar-status">
-            <span className="sr-only">Chuyển trạng thái các phản ánh đã chọn</span>
-            <select
-              value=""
-              onChange={(e) => e.target.value && setMoving(e.target.value as FeedbackStatus)}
-              disabled={picked.size > STATUS_MAX}
-              title={picked.size > STATUS_MAX ? `Tối đa ${STATUS_MAX} phản ánh mỗi lần` : "Chuyển trạng thái các phản ánh đã chọn"}
-            >
-              <option value="">Chuyển trạng thái…</option>
-              {meta.statuses.map((s) => (
-                <option key={s.key} value={s.key}>
-                  → {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {picked.size > EXPORT_MAX && <span className="small error">Tối đa {EXPORT_MAX} phản ánh mỗi gói</span>}
-          <button type="button" className="primary" onClick={() => setExporting(true)} disabled={picked.size > EXPORT_MAX}>
-            <Icon name="download" size={14} /> Export .md
-          </button>
-        </div>
-      )}
 
       {exporting && (
         <ExportDialog
@@ -523,6 +530,7 @@ function StatusDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const already = rows.filter((r) => r.status === status).length;
+  const moved = rows.length - already;
   const go = async () => {
     setBusy(true);
     setError(null);
@@ -539,19 +547,19 @@ function StatusDialog({
       title={`Chuyển ${rows.length} phản ánh sang “${STATUS_LABEL[status]}”`}
       onClose={onClose}
       busy={busy}
-      width={560}
+      width={468}
       footer={
         <>
           <button type="button" className="ghost" onClick={onClose} disabled={busy}>
-            Huỷ
+            Đóng
           </button>
-          <button type="button" className="primary" onClick={() => void go()} disabled={busy}>
-            {busy ? "Đang chuyển…" : `Chuyển ${rows.length} phản ánh`}
+          <button type="button" className="primary ink" onClick={() => void go()} disabled={busy || moved === 0}>
+            {busy ? "Đang chuyển…" : `Chuyển ${moved} phản ánh`}
           </button>
         </>
       }
     >
-      <p className="muted small" style={{ marginTop: 0 }}>
+      <p className="muted small fb-status-lead">
         Tác giả thấy trạng thái mới ở tab “Của tôi”.{already ? ` ${already} phản ánh đã ở trạng thái này, giữ nguyên.` : ""}
       </p>
       <label className="adm-field">
@@ -565,17 +573,20 @@ function StatusDialog({
           autoFocus
         />
       </label>
-      <ul className="fb-status-preview">
+      <ul className="fb-status-preview" aria-label="Các phản ánh sẽ chuyển">
         {rows.map((r) => (
-          <li key={r.id} className="small">
-            <span className="fb-id">#{r.id}</span> <span className="fb-status-preview-title">{r.title}</span>
-            <StatusPill status={r.status} />
-            {r.status !== status && (
-              <>
-                <Icon name="chevronRight" size={12} />
-                <StatusPill status={status} />
-              </>
-            )}
+          <li key={r.id} className={r.status === status ? "same" : undefined}>
+            <span className="fb-id">#{r.id}</span>
+            <span className="fb-status-preview-title">{r.title}</span>
+            <span className="fb-status-preview-move">
+              <StatusDot status={r.status} /> {STATUS_LABEL[r.status]}
+              {r.status !== status && (
+                <>
+                  <Icon name="chevronRight" size={12} />
+                  <StatusDot status={status} /> {STATUS_LABEL[status]}
+                </>
+              )}
+            </span>
           </li>
         ))}
       </ul>

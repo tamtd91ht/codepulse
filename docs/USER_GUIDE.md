@@ -119,8 +119,9 @@ Tick các phản ánh (hoặc cả nhánh cây), bấm **Export .md** ở thanh 
 agent code (hướng dẫn, bảng tóm tắt, từng mục với tác giả, tiêu chí chấp nhận, nội dung gốc). Gói
 được lưu ở **Lịch sử export** để tải lại.
 
-Đổi trạng thái: một mục thì bấm nhãn trạng thái ở đầu khung chi tiết và chọn; nhiều mục thì tick
-chọn rồi dùng **Chuyển trạng thái…** ở thanh dưới (có ô ghi chú cho tác giả). Sau khi agent nâng
+Đổi trạng thái: một mục thì bấm chip trạng thái ở đầu khung chi tiết và chọn; nhiều mục thì tick
+chọn rồi dùng **Chuyển trạng thái ⌄** ở thanh chọn đầu danh sách (có ô ghi chú cho tác giả).
+Người gửi nhận thông báo trên chuông mỗi khi phản ánh của họ đổi trạng thái. Sau khi agent nâng
 cấp xong một gói, bấm icon ✓ cạnh gói đó trong **Lịch sử export** để chọn lại đúng các mục của gói,
 rồi chuyển sang **Đã xong**.
 

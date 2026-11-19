@@ -50,6 +50,7 @@ export const KIND_LABEL: Record<NotificationKind, string> = {
   "task.digest": "Tóm tắt task",
   "task.summary": "Tóm tắt cuối ngày",
   "system.long_transaction": "Transaction DB chạy lâu",
+  "feedback.status": "Phản ánh",
 };
 
 const KIND_ICON: Record<NotificationKind, IconName> = {
@@ -68,6 +69,7 @@ const KIND_ICON: Record<NotificationKind, IconName> = {
   "task.digest": "inbox",
   "task.summary": "calendar",
   "system.long_transaction": "alert",
+  "feedback.status": "message",
 };
 
 /** Lists that change with an event, re-read when it arrives (SWR keys are API paths). */
@@ -87,6 +89,7 @@ const REFRESH: Record<NotificationKind, string[]> = {
   "task.digest": ["/tasks"],
   "task.summary": ["/tasks"],
   "system.long_transaction": ["/admin/db/transactions"],
+  "feedback.status": ["/feedback"],
 };
 
 type Toast = InboxNote & { key: number };

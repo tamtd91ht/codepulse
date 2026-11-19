@@ -30,7 +30,11 @@ function FeedbackScreen() {
   const params = useSearchParams();
   const from = params.get("from");
   const { data: meta, error } = useApi<FeedbackMeta>(`/feedback/meta${qs({ page: from })}`);
-  const [tab, setTab] = useState<Tab>(params.get("tab") === "board" ? "board" : "mine");
+  const wanted: Tab = params.get("tab") === "board" ? "board" : "mine";
+  const [tab, setTab] = useState<Tab>(wanted);
+  // A link into the page while it is open (the bell: /feedback?item=12) switches the tab too.
+  useEffect(() => setTab(wanted), [wanted]);
+  const item = wanted === "mine" ? params.get("item") : null;
   useEffect(() => {
     if (meta && !meta.can_manage && tab === "board") setTab("mine");
   }, [meta, tab]);
@@ -64,7 +68,7 @@ function FeedbackScreen() {
               </button>
             </div>
           )}
-          {tab === "board" && meta.can_manage ? <FeedbackBoard meta={meta} /> : <MyFeedback meta={meta} from={from} />}
+          {tab === "board" && meta.can_manage ? <FeedbackBoard meta={meta} /> : <MyFeedback meta={meta} from={from} item={item} />}
         </>
       )}
     </>

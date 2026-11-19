@@ -162,16 +162,26 @@ Menu **"Phản ánh & Đề xuất"** (icon tin nhắn) trong sidebar, với ai 
 > được thao tác. Ví dụ … chọn 4 xuất .md, tiến hành nâng cấp xong thì … chọn cả 4 or 5 mục để
 > chuyển trạng thái đã xong."
 
-- **Từng mục**: trong khung chi tiết, nhãn trạng thái ở đầu (cạnh `#id`) là một select dạng pill
-  với người có `feedback.manage`; đổi là lưu ngay (không cần "Lưu phân loại"). Người chỉ có
-  `feedback.submit` vẫn thấy pill tĩnh.
-- **Nhiều mục**: thanh nổi khi đã chọn có thêm select **"Chuyển trạng thái…"** cạnh Export. Chọn
-  một trạng thái → hộp xác nhận: danh sách mục (trạng thái cũ → mới, mục đã ở trạng thái đó giữ
-  nguyên), ô ghi chú cho tác giả (tuỳ chọn, **nối thêm** dưới ghi chú đang có, không ghi đè).
-  Xong → bỏ chọn, thông báo "Đã chuyển N phản ánh sang …".
+- **Từng mục**: trong khung chi tiết, trạng thái cạnh `#id` là **stage chip** kiểu OMICX (viền,
+  chấm màu, tên, `⌄`) với người có `feedback.manage`; bấm mở menu 5 trạng thái (chấm màu, dấu ✓ ở
+  trạng thái hiện tại), chọn là lưu ngay. Người chỉ có `feedback.submit` thấy pill tĩnh.
+- **Nhiều mục**: khi có mục được chọn, hàng đầu danh sách (dính khi cuộn, nền `primary-soft`)
+  thành **thanh chọn**: `☑ Đã chọn N · M lĩnh vực [· K ngoài bộ lọc]` … `Bỏ chọn` (ghost) ·
+  `Chuyển trạng thái ⌄` (outline, menu như trên, ghi "N đã ở đây" từng trạng thái) · `Export .md`
+  (nút đặc duy nhất, màu ink). Thanh nằm **trong cột danh sách**, không còn thanh nổi giữa màn
+  hình đè lên khung chi tiết (user 2026-11-19: "thanh menu mới tràn sang cả bên view chi tiết").
+  Chọn trạng thái → hộp xác nhận 468 px: danh sách mục (chấm trạng thái cũ → mới, mục đã ở trạng
+  thái đó mờ đi), ô ghi chú cho tác giả (tuỳ chọn, **nối thêm** dưới ghi chú đang có, không ghi
+  đè), chân hộp `Đóng` + `Chuyển N phản ánh`. Xong → bỏ chọn, thông báo "Đã chuyển N phản ánh sang …".
+- **Chuông cho tác giả** (user 2026-11-19): mỗi lần trạng thái phản ánh đổi (chuyển một / nhiều
+  mục, form phân loại, export đánh dấu "Đã lên kế hoạch"), tác giả nhận một thông báo
+  `feedback.status`: "Phản ánh #12 chuyển sang “Đã xong”" (nhiều mục của cùng người trong một lần →
+  một thông báo "3 phản ánh của bạn …" liệt kê ≤ 5 mục), kèm ghi chú nếu có; màu xanh khi Xong, đỏ
+  khi Từ chối. Link `/feedback?item=<id>` mở thẳng phản ánh ở tab "Của tôi". Người chuyển không tự
+  nhận; mục không đổi trạng thái không báo.
 - **Chọn lại đúng gói đã export**: mỗi gói trong **Lịch sử export** có nút icon "Chọn các phản
   ánh của gói này" — chọn đúng các mục của gói (bỏ lọc trạng thái để thấy cả mục đã xong), rồi
-  chuyển trạng thái ở thanh dưới. Đây là luồng "export → agent nâng cấp → đánh dấu Đã xong".
+  chuyển trạng thái ở thanh chọn đầu danh sách. Đây là luồng "export → agent nâng cấp → đánh dấu Đã xong".
 - API: `POST /feedback/status` `{item_ids[1..500], status, note?}` (quyền `feedback.manage`) →
   `{changed[], unchanged[]}`; tất cả hoặc không (một id không còn → 404, không áp nửa chừng); ghi
   `triaged_by/at`, audit `feedback.status` (không ghi khi không có gì thay đổi). Một mục cũng dùng

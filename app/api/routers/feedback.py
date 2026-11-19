@@ -42,6 +42,7 @@ from app.feedback.export import (
     title_of,
 )
 from app.models import AuditLog, FeedbackExport, FeedbackItem, Team, TeamMember, User
+from app.notifications.inbox import notify
 from app.workers.queues import review_queue
 
 router = APIRouter(tags=["feedback"])
@@ -359,6 +360,49 @@ def _ask_analysis(session: Session, queue: Queue, item: FeedbackItem, principal:
     _enqueue(session, queue, item)
 
 
+STATUS_TONE = {"done": "good", "rejected": "bad", "planned": "info", "accepted": "info"}
+
+
+def _tell_authors(
+    session: Session,
+    moved: list[FeedbackItem],
+    status: str,
+    actor_id: int,
+    note: str | None = None,
+) -> None:
+    """The bell of each author whose reports changed status (spec 32 §7.3, user 2026-11-19):
+    one notification per author per change, naming the report (or how many, when a bulk move
+    took several of theirs). The manager does not notify themselves (`notify` skips the actor)."""
+    label = STATUS_LABEL.get(status, status)
+    mine: dict[int, list[FeedbackItem]] = {}
+    for item in moved:
+        if item.author_id is not None:
+            mine.setdefault(item.author_id, []).append(item)
+    for author_id, items in mine.items():
+        items.sort(key=lambda i: i.id)
+        if len(items) == 1:
+            title = f"Phản ánh #{items[0].id} chuyển sang “{label}”"
+            lines = [title_of(items[0])]
+        else:
+            title = f"{len(items)} phản ánh của bạn chuyển sang “{label}”"
+            lines = [f"#{i.id} {title_of(i)}" for i in items[:5]]
+            if len(items) > 5:
+                lines.append(f"… và {len(items) - 5} phản ánh khác")
+        if note:
+            lines.append(f"Ghi chú: {note}")
+        notify(
+            session,
+            [author_id],
+            kind="feedback.status",
+            title=title,
+            body="\n".join(lines),
+            link=f"/feedback?item={items[0].id}",
+            tone=STATUS_TONE.get(status, "info"),
+            actor_id=actor_id,
+            ref=f"feedback:{items[0].id}",
+        )
+
+
 def _filename(text: str) -> str:
 
     return slug(text, 60)
@@ -528,13 +572,16 @@ def create_export(body: ExportIn, principal: Manager, session: SessionDep) -> Ex
         created_by=principal.user_id,
     )
     session.add(row)
+    planned: list[FeedbackItem] = []
     for item in items:
         item.exported_at = now
         item.export_count = FeedbackItem.export_count + 1
         if body.mark_planned and item.status in ("new", "accepted"):
             item.status = "planned"
             item.triaged_by, item.triaged_at = principal.user_id, now
+            planned.append(item)
     session.flush()
+    _tell_authors(session, planned, "planned", principal.user_id)
     audit(session, principal.user_id, "feedback.export", f"feedback_export:{row.id}", items=ids)
     session.commit()
     return ExportRow(
@@ -593,6 +640,8 @@ def set_status(body: StatusIn, principal: Manager, session: SessionDep) -> Statu
             batch=len(ids),
             note=note[:200] or None,
         )
+    moved = [i for i in items if i.id in set(changed)]
+    _tell_authors(session, moved, body.status, principal.user_id, note or None)
     session.commit()
     return StatusOut(changed=changed, unchanged=unchanged)
 
@@ -654,6 +703,7 @@ def edit_feedback(
     if triage:
         if not principal.can("feedback.manage"):
             raise HTTPException(403, "thiếu quyền phân loại phản ánh")
+        was = item.status
         for name, value in triage.items():
             if name == "feature":
                 value = " ".join(str(value or "").split()) or None
@@ -670,6 +720,8 @@ def edit_feedback(
             f"feedback:{item.id}",
             **{k: str(v)[:200] for k, v in triage.items()},
         )
+        if item.status != was:
+            _tell_authors(session, [item], item.status, principal.user_id, item.triage_note)
     session.commit()
     if authored:
         _ask_analysis(session, queue, item, principal)

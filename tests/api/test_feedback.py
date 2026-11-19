@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.feedback import analysis
 from app.feedback.areas import area_for_page, slug, tree_path
-from app.models import AuditLog, FeedbackExport, FeedbackItem
+from app.models import AuditLog, FeedbackExport, FeedbackItem, UserNotification
 from app.review.providers.fake import FakeLLMProvider
 from tests.api.conftest import FakeQueue, World
 
@@ -377,3 +377,62 @@ def test_status_one_or_many_for_managers_only(
     # Nothing to do: no audit row.
     client.post(url, json={"item_ids": [b["id"]], "status": "done"}, headers=admin)
     assert len(db_session.scalars(statuses).all()) == seen_rows
+
+
+def test_status_change_rings_the_authors_bell(
+    client: TestClient, world: World, as_user: Any, db_session: Session
+) -> None:
+    """Spec 32 §7.3 (user 2026-11-19): whoever sent the report hears about its new status: one
+    note per author per change (a bulk move of several of theirs is one note), never the
+    manager who did it; the export's "planned" and the triage form ring too."""
+    an, binh, admin = as_user(world.an), as_user(world.binh), as_user(world.admin)
+    a1, a2 = _send(client, an, title="Một một"), _send(client, an, title="Hai hai")
+    b1 = _send(client, binh, title="Ba ba")
+    mine = _send(client, admin, title="Của admin")
+
+    def notes(user_id: int) -> list[UserNotification]:
+        db_session.expire_all()
+        return list(
+            db_session.scalars(
+                select(UserNotification)
+                .where(UserNotification.user_id == user_id)
+                .where(UserNotification.kind == "feedback.status")
+                .order_by(UserNotification.id)
+            )
+        )
+
+    client.post(
+        "/api/v1/feedback/status",
+        json={
+            "item_ids": [a1["id"], a2["id"], b1["id"], mine["id"]],
+            "status": "done",
+            "note": "Đã lên bản 1.4",
+        },
+        headers=admin,
+    )
+    (an_note,) = notes(world.an.id)
+    assert an_note.title == "2 phản ánh của bạn chuyển sang “Đã xong”"
+    assert an_note.tone == "good" and an_note.link == f"/feedback?item={a1['id']}"
+    assert an_note.body is not None and "Đã lên bản 1.4" in an_note.body
+    assert an_note.actor_id == world.admin.id
+    (binh_note,) = notes(world.binh.id)
+    assert binh_note.title == f"Phản ánh #{b1['id']} chuyển sang “Đã xong”"
+    assert notes(world.admin.id) == []  # the actor is not told about their own move
+    # Unchanged (already done): no new note.
+    client.post(
+        "/api/v1/feedback/status", json={"item_ids": [b1["id"]], "status": "done"}, headers=admin
+    )
+    assert len(notes(world.binh.id)) == 1
+    # The triage form's status and the export's "planned" ring as well.
+    c = _send(client, binh, title="Bốn bốn")
+    client.patch(f"/api/v1/feedback/{c['id']}", json={"status": "rejected"}, headers=admin)
+    assert notes(world.binh.id)[-1].tone == "bad"
+    d = _send(client, binh, title="Năm năm")
+    client.post(
+        "/api/v1/feedback/exports", json={"item_ids": [d["id"]], "title": "Đợt"}, headers=admin
+    )
+    last = notes(world.binh.id)[-1]
+    assert last.title == f"Phản ánh #{d['id']} chuyển sang “Đã lên kế hoạch”"
+    # A triage edit that keeps the status is quiet.
+    client.patch(f"/api/v1/feedback/{d['id']}", json={"priority": "p1"}, headers=admin)
+    assert len(notes(world.binh.id)) == 3
