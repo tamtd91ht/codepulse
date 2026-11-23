@@ -137,7 +137,9 @@ Mở nhiều tab hay nhiều thiết bị vẫn chỉ tính là một người; 
 
 Ai xem được gì: mỗi người thấy số liệu của **chính mình**; lead và manager thấy người trong team; admin thấy
 tất cả. Bấm biểu tượng lịch sử ở cuối dòng để xem từng ngày: mỗi ngày một thanh 24 giờ, xanh là Online, cam là
-Tạm vắng, trống là Offline.
+Tạm vắng, trống là Offline. Dưới mỗi thanh, mục **Khung giờ** liệt kê cụ thể online, tạm vắng và offline
+từ mấy giờ tới mấy giờ. Ở bảng chính, bấm vào ô **Đang mở** để xem người đó đang mở trên những thiết bị nào
+(trình duyệt và hệ điều hành; trình duyệt không cho biết tên máy).
 
 Cột **Offline** của một ngày là tổng các khoảng không mở ứng dụng *giữa* lần đầu và lần cuối online hôm đó,
 không tính trước giờ bắt đầu và sau giờ nghỉ.

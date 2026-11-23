@@ -138,6 +138,7 @@ async def presence_socket(ws: WebSocket, tab: str = "", device: str = "") -> Non
     _open[user_id] = _open.get(user_id, 0) + 1
     conn_id = f"{tab}.{secrets.token_hex(4)}"
     kind = presence.kind_of(ws.headers.get("user-agent"))
+    label = presence.label_of(ws.headers.get("user-agent"))
     active = True
     wanted: bool | None = None  # a change of `active` waiting for MIN_CHANGE_S to pass
 
@@ -153,6 +154,7 @@ async def presence_socket(ws: WebSocket, tab: str = "", device: str = "") -> Non
                 active=active,
                 device=device,
                 kind=kind,
+                label=label,
                 since=opened,
             )
         except presence.SignedOut:
@@ -240,6 +242,7 @@ def post_beat(body: BeatIn, request: Request, principal: CurrentPrincipal) -> Re
         active=body.active,
         device=body.device,
         kind=presence.kind_of(request.headers.get("user-agent")),
+        label=presence.label_of(request.headers.get("user-agent")),
     )
     return Response(status_code=204)
 
@@ -415,6 +418,11 @@ def get_presence(
                 "tabs": len({c.tab for c in conns}),
                 "devices": len({c.device for c in conns}),
                 "kinds": sorted({c.kind for c in conns}),
+                # What is behind the two counts, for the "Đang mở" cell (§9).
+                "open": [
+                    {**d, "since": _iso(datetime.fromtimestamp(d["since"], UTC))}
+                    for d in presence.devices_of(conns)
+                ],
                 "day": _totals(
                     presence.totals(presence.clip(segments.get(user.id, []), start, end, now))
                 ),

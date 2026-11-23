@@ -1,19 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { DateRangePicker, type DayRange } from "@/components/DateRangePicker";
 import { Icon, IconButton } from "@/components/icons";
 import { MultiSelect } from "@/components/MultiSelect";
-import { Alert, Avatar, Card, Drawer, EmptyState, Loading, SortTh, StatStrip, StripStat, useSort } from "@/components/ui";
+import { Alert, Avatar, Card, Drawer, EmptyState, Expander, Loading, SortTh, StatStrip, StripStat, useSort } from "@/components/ui";
 import { api, qs, useApi } from "@/lib/api";
 import { dayLabel, localDay, shiftDays } from "@/lib/format";
 import {
   clock,
   duration,
+  framesOf,
   PRESENCE_READY,
   type PresenceBoard,
   type PresenceDay,
+  type PresenceDevice,
   type PresenceRow,
   type PresenceState,
   type PresenceUserDays,
@@ -61,9 +63,88 @@ function StateCell({ row, now, tz }: { row: PresenceRow; now: string; tz: string
 }
 
 function devicesText(row: PresenceRow): string {
-  if (!row.tabs) return "–";
-  const where = row.kinds.includes("mobile") ? (row.kinds.length > 1 ? " · máy tính + di động" : " · di động") : "";
-  return `${row.devices} thiết bị · ${row.tabs} tab${where}`;
+  // Which devices: the cell opens the list (`OpenDevices`), so the text stays short.
+  return row.tabs ? `${row.devices} thiết bị · ${row.tabs} tab` : "–";
+}
+
+function deviceLine(d: PresenceDevice, tz: string): string {
+  return `${d.label} · ${d.tabs} tab · ${d.active ? "đang thao tác" : "để yên"} · mở từ ${clock(d.since, tz)}`;
+}
+
+/**
+ * The "Đang mở" cell: the counts, and the devices behind them. Hovering shows them as a tooltip;
+ * a click (or Enter) opens the list, placed with `position: fixed` so the table's scroll box does
+ * not cut it. Escape, a click elsewhere or a scroll closes it.
+ */
+function OpenDevices({ row, tz }: { row: PresenceRow; tz: string }) {
+  const [at, setAt] = useState<{ top: number; right: number } | null>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!at) return;
+    const close = () => setAt(null);
+    const away = (e: PointerEvent) => {
+      const target = e.target as Node;
+      if (!pop.current?.contains(target) && !button.current?.contains(target)) close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      close();
+      button.current?.focus();
+    };
+    document.addEventListener("pointerdown", away);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [at]);
+  if (!row.tabs) return <>–</>;
+  const toggle = () => {
+    if (at) return setAt(null);
+    const box = button.current?.getBoundingClientRect();
+    if (box) setAt({ top: box.bottom + 6, right: Math.max(8, window.innerWidth - box.right) });
+  };
+  return (
+    <>
+      <button
+        type="button"
+        ref={button}
+        className="prs-open"
+        aria-expanded={!!at}
+        aria-haspopup="dialog"
+        title={row.open.map((d) => deviceLine(d, tz)).join("\n")}
+        onClick={toggle}
+      >
+        {devicesText(row)}
+      </button>
+      {at && (
+        <div ref={pop} className="prs-pop" role="dialog" aria-label={`Thiết bị đang mở của ${row.user.full_name ?? row.user.email ?? "người này"}`} style={{ top: at.top, right: at.right }}>
+          <div className="prs-pop-head">
+            {row.devices} thiết bị · {row.tabs} tab
+          </div>
+          <ul>
+            {row.open.map((d, i) => (
+              <li key={`${d.label}-${d.since}-${i}`}>
+                <StateDot state={d.active ? "online" : "away"} />
+                <div>
+                  <div className="prs-pop-name">{d.label}</div>
+                  <div className="muted small">
+                    {d.tabs} tab · {d.active ? "đang thao tác" : "để yên"} · mở từ {clock(d.since, tz)}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <p className="muted small prs-pop-note">Tên là trình duyệt và hệ điều hành; trình duyệt không cho biết tên máy.</p>
+        </div>
+      )}
+    </>
+  );
 }
 
 export function PresenceScreen() {
@@ -246,7 +327,9 @@ export function PresenceScreen() {
                     </td>
                     <td>{clock(row.day.first_seen, data.tz)}</td>
                     <td>{row.day.last_seen && row.state !== "offline" && data.day === data.today ? "đang mở" : clock(row.day.last_seen, data.tz)}</td>
-                    <td className="muted small">{devicesText(row)}</td>
+                    <td className="muted small">
+                      <OpenDevices row={row} tz={data.tz} />
+                    </td>
                     <td className="prs-actions">
                       <IconButton icon="history" label="Xem lịch sử theo ngày" className="tip-left" onClick={() => setOpen(row)} />
                       {data.can_sign_out && (
@@ -412,8 +495,8 @@ function PersonDays({ userId, today, keepDays }: { userId: number; today: string
             </div>
           </div>
           <ul className="prs-daylist">
-            {data.days.map((d) => (
-              <DayRow key={d.day} day={d} tz={data.tz} />
+            {data.days.map((d, i) => (
+              <DayRow key={d.day} day={d} tz={data.tz} open={i === 0} live={d.day === today ? data.now : null} />
             ))}
           </ul>
         </>
@@ -432,7 +515,16 @@ function TimeStat({ label, seconds, title }: { label: string; seconds: number; t
   );
 }
 
-function DayRow({ day, tz }: { day: PresenceDay; tz: string }) {
+/**
+ * One day: the 24-hour bar, the totals, and the frames spelled out ("08:24 – 10:30 Online",
+ * the offline ones between them too). `live`: the server's now when the day is today, so the
+ * frame still going on says so. The newest day opens its frames; the others on a click.
+ */
+function DayRow({ day, tz, open, live }: { day: PresenceDay; tz: string; open: boolean; live: string | null }) {
+  const frames = framesOf(day.stretches);
+  const last = frames[frames.length - 1];
+  // The stretch that runs to the server's "now" is still going on.
+  const ongoing = live && last && Math.abs(new Date(last.end).getTime() - new Date(live).getTime()) < 2_000 ? last : null;
   const start = new Date(day.start).getTime();
   const span = new Date(day.end).getTime() - start;
   const summary = day.sessions
@@ -460,6 +552,22 @@ function DayRow({ day, tz }: { day: PresenceDay; tz: string }) {
           })}
         </div>
         <div className={`small ${day.sessions ? "prs-day-sum" : "muted"}`}>{summary}</div>
+        {frames.length > 0 && (
+          <Expander summary={`Khung giờ (${frames.length})`} open={open}>
+            <ol className="prs-frames">
+              {frames.map((f) => (
+                <li key={f.start} className={f.state}>
+                  <StateDot state={f.state} />
+                  <span className="prs-frame-time">
+                    {clock(f.start, tz)} – {f === ongoing ? "hiện tại" : clock(f.end, tz)}
+                  </span>
+                  <span className="prs-frame-state">{STATE_LABEL[f.state]}</span>
+                  <span className="muted">{duration(f.seconds)}</span>
+                </li>
+              ))}
+            </ol>
+          </Expander>
+        )}
       </div>
     </li>
   );

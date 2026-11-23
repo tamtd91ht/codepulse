@@ -259,6 +259,15 @@ export interface PresencePerson {
   avatar_url: string | null;
 }
 
+export interface PresenceDevice {
+  /** "Chrome · Windows": browser and system, from the User-Agent. */
+  label: string;
+  kind: string;
+  tabs: number;
+  active: boolean;
+  since: string;
+}
+
 export interface PresenceRow {
   user: PresencePerson;
   teams: { id: number; name: string }[];
@@ -267,6 +276,8 @@ export interface PresenceRow {
   tabs: number;
   devices: number;
   kinds: string[];
+  /** The devices behind `devices` / `tabs`, those in use first. */
+  open: PresenceDevice[];
   day: PresenceTotals;
 }
 
@@ -308,6 +319,49 @@ export interface PresenceUserDays {
   now: string;
   totals: { online_s: number; away_s: number; offline_s: number };
   days: PresenceDay[];
+}
+
+export interface PresenceFrame {
+  state: PresenceState;
+  start: string;
+  end: string;
+  seconds: number;
+}
+
+/** Gaps shorter than this are not frames of their own (a page reload leaves a second or two). */
+const FRAME_GAP_MS = 60_000;
+
+/**
+ * A day's stretches as the frames one reads: "08:24 – 10:30 Online", and the offline frames
+ * between them (offline is not stored: it is the gap). Neighbours in the same state with less
+ * than a minute between them are one frame. Nothing before the first frame or after the last:
+ * that is not "offline time" (docs/specs/33 §6).
+ */
+export function framesOf(stretches: PresenceStretch[]): PresenceFrame[] {
+  const merged: { state: PresenceState; from: number; to: number }[] = [];
+  for (const s of stretches) {
+    const from = new Date(s.start).getTime();
+    const to = new Date(s.end).getTime();
+    const last = merged[merged.length - 1];
+    if (last && from - last.to < FRAME_GAP_MS) {
+      if (last.state === s.state) {
+        last.to = Math.max(last.to, to);
+        continue;
+      }
+      merged.push({ state: s.state, from: last.to, to }); // no sliver of a gap between them
+      continue;
+    }
+    if (last) merged.push({ state: "offline", from: last.to, to: from });
+    merged.push({ state: s.state, from, to });
+  }
+  return merged
+    .filter((f) => f.to > f.from)
+    .map((f) => ({
+      state: f.state,
+      start: new Date(f.from).toISOString(),
+      end: new Date(f.to).toISOString(),
+      seconds: Math.round((f.to - f.from) / 1000),
+    }));
 }
 
 export const STATE_LABEL: Record<PresenceState, string> = {

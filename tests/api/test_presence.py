@@ -869,3 +869,55 @@ def test_an_open_socket_closes_at_its_next_refresh_a_later_one_is_fine(
             ws.receive_text()
     assert closed.value.code == presence_api.CLOSE_SIGNED_OUT
     assert wait(lambda: world.an.id not in store.live_users())
+
+
+# -- the devices behind the counts (§9) ------------------------------------------------------------
+
+CHROME_WIN = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/140.0.0.0 Safari/537.36"
+)
+EDGE_WIN = CHROME_WIN + " Edg/140.0.0.0"
+SAFARI_IPHONE = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+)
+
+
+def test_device_labels_from_the_user_agent() -> None:
+    assert presence.label_of(CHROME_WIN) == "Chrome · Windows"
+    assert presence.label_of(EDGE_WIN) == "Edge · Windows"
+    assert presence.label_of(SAFARI_IPHONE) == "Safari · iPhone"
+    firefox_mac = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:130.0) Gecko/20100101 Firefox/130.0"
+    )
+    assert presence.label_of(firefox_mac) == "Firefox · macOS"
+    android = "Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/140.0 Mobile Safari/537.36"
+    assert presence.label_of(android) == "Chrome · Android"
+    assert presence.label_of(None) == "Không rõ thiết bị"
+    assert presence.label_of("curl/8.0") == "Không rõ thiết bị"
+
+
+def test_the_board_lists_the_devices_behind_the_counts(
+    client: TestClient, world: World, as_user: Any, store: presence.MemoryStore
+) -> None:
+    an = as_user(world.an)
+    for tab, device, agent, active in (
+        (TAB_A, DEVICE, CHROME_WIN, False),
+        (TAB_B, DEVICE, CHROME_WIN, False),
+        ("tab-cccccccc", PHONE, SAFARI_IPHONE, True),
+    ):
+        body = {"tab": tab, "device": device, "active": active}
+        res = client.post(f"{API}/presence/beat", headers={**an, "User-Agent": agent}, json=body)
+        assert res.status_code == 204
+    (row,) = client.get(f"{API}/presence", headers=an).json()["rows"]
+    assert (row["devices"], row["tabs"]) == (2, 3)
+    assert [(d["label"], d["kind"], d["tabs"], d["active"]) for d in row["open"]] == [
+        ("Safari · iPhone", "mobile", 1, True),  # the device in use first
+        ("Chrome · Windows", "desktop", 2, False),
+    ]
+    assert all(set(d) == {"label", "kind", "tabs", "active", "since"} for d in row["open"])
+    # A record written before labels existed still reads.
+    old = presence._decode("x.1", '{"t": 5.0, "a": 1, "d": "d", "k": "desktop"}')
+    assert old is not None and old.label == ""
+    assert presence.devices_of([old])[0]["label"] == "Không rõ thiết bị"

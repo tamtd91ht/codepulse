@@ -23169,3 +23169,93 @@ button.fbk-status-trigger svg:last-child {
     margin-left: 0;
   }
 }
+/* The "Đang mở" cell: the counts open the list of devices. */
+.prs-open {
+  padding: 2px 6px;
+  margin: -2px -6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+.prs-open:hover,
+.prs-open[aria-expanded="true"] {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.prs-pop {
+  position: fixed;
+  z-index: 60;
+  width: min(320px, calc(100vw - 16px));
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 12px 32px var(--backdrop);
+  font-size: 13px;
+}
+.prs-pop-head {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.prs-pop ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.prs-pop li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.prs-pop li .prs-dot {
+  margin-top: 5px;
+}
+.prs-pop-name {
+  font-weight: 600;
+}
+.prs-pop-note {
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+/* A day's frames: "08:24 – 10:30  Online  2 giờ 6 phút", the offline ones included. */
+.prs-day details.expander {
+  margin-top: 6px;
+}
+.prs-frames {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.prs-frames li {
+  display: grid;
+  grid-template-columns: 10px 128px 84px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+.prs-frames .prs-dot {
+  box-shadow: none;
+}
+.prs-frame-time {
+  font-variant-numeric: tabular-nums;
+}
+.prs-frame-state {
+  font-weight: 600;
+}
+.prs-frames li.offline .prs-frame-state,
+.prs-frames li.offline .prs-frame-time {
+  color: var(--muted);
+  font-weight: 400;
+}

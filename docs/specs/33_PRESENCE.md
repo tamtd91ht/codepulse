@@ -82,7 +82,9 @@ Rewrite `/api` của dashboard (Next 16) chuyển được WebSocket upgrade (đ
 | `device` | `localStorage` (`cp_device`) | đếm số thiết bị (các tab cùng trình duyệt dùng chung) |
 | mã kết nối | server: `<tab>.<ngẫu nhiên>` (HTTP: `<tab>.http`) | tab kết nối lại không bị socket cũ gỡ nhầm |
 
-Loại thiết bị (`desktop` / `mobile`) suy từ User-Agent, chỉ nằm trong Redis.
+Loại thiết bị (`desktop` / `mobile`) và **nhãn thiết bị** ("Chrome · Windows", "Safari · iPhone":
+trình duyệt và hệ điều hành, `presence.label_of`) suy từ User-Agent, chỉ nằm trong Redis. Trình duyệt
+không cho web biết tên máy, nên đây là "tên" gần nhất có được.
 
 ## 4. Dữ liệu
 
@@ -188,8 +190,18 @@ Người ngoài phạm vi: không có trong danh sách, và `GET /presence/users
 - Bộ lọc: tìm tên, Team (MultiSelect), Trạng thái, ngày tính thời lượng.
 - Bảng: Thành viên · Hiện tại (chấm màu, từ bao lâu) · Online · Tạm vắng · Offline · Bắt đầu ·
   Lần cuối · Đang mở (số thiết bị, số tab) · nút lịch sử (icon, cột cuối).
+- Ô **Đang mở** (người dùng yêu cầu 2026-11-23): di chuột hiện danh sách thiết bị dạng tooltip; bấm
+  (hoặc Enter) mở khung liệt kê từng thiết bị: nhãn, số tab, đang thao tác hay để yên, mở từ lúc nào;
+  thiết bị đang thao tác xếp trước. Escape, bấm ra ngoài hoặc cuộn thì đóng. `GET /presence` trả
+  danh sách này ở `rows[].open`; không trả `device` id thô, không có IP.
 - Lịch sử một người (Drawer; với người chỉ xem của mình thì hiện ngay trên trang): chọn khoảng
   ngày (7 / 14 / 30 ngày), tổng của khoảng, mỗi ngày một thanh 24 giờ tô Online / Tạm vắng.
+- **Khung giờ của từng ngày** (người dùng yêu cầu 2026-11-23): dưới thanh 24 giờ là danh sách
+  "08:24 – 10:30 Online · 2 giờ 6 phút", gồm cả các khung **Offline** nằm giữa (offline không lưu,
+  trình duyệt suy ra từ khoảng trống giữa các đoạn: `framesOf`). Hai đoạn cùng trạng thái cách nhau
+  dưới 1 phút (F5 trang) gộp làm một khung. Không có khung nào trước lần đầu và sau lần cuối online
+  (§6). Khung đang diễn ra của hôm nay ghi "– hiện tại". Ngày mới nhất mở sẵn, các ngày khác bấm
+  để mở.
 - Tự làm mới 10 giây một lần.
 
 ## 10. Quyền riêng tư

@@ -85,6 +85,8 @@ class Conn:
     # first, those of the last FLIPS_KEEP_S): `_replay` dates a silent tab's death with them.
     born: float = 0.0
     flips: tuple[float, ...] = ()
+    # What the device calls itself, for the monitor: "Chrome · Windows" (`label_of`).
+    label: str = ""
 
     @property
     def tab(self) -> str:
@@ -170,6 +172,7 @@ def _encode(conn: Conn) -> str:
             "k": conn.kind,
             "b": conn.born,
             "c": list(conn.flips),
+            "n": conn.label,
         }
     )
 
@@ -191,6 +194,7 @@ def _decode(conn_id: Any, raw: Any) -> Conn | None:
             str(data.get("k", "")),
             born,
             tuple(float(c) for c in changes),
+            str(data.get("n", "")),
         )
     except (ValueError, TypeError, KeyError, AttributeError):
         return None
@@ -531,11 +535,12 @@ def beat(
     kind: str,
     now: float | None = None,
     since: float | None = None,
+    label: str = "",
 ) -> str:
     """`since`: when the caller's connection opened (a socket). Raises `SignedOut` when an
     admin signed the person out after that."""
     ts = time.time() if now is None else now
-    conn = Conn(conn_id, ts, active, device, kind, born=ts)
+    conn = Conn(conn_id, ts, active, device, kind, born=ts, label=label)
     return _settle(sessions, store, user_id, ts, add=conn, since=since)
 
 
@@ -756,6 +761,59 @@ def last_seen(session: Session, user_ids: Sequence[int]) -> dict[int, datetime]:
     )
     rows = session.execute(select(User.id, latest).where(User.id.in_(user_ids)))
     return {int(uid): at for uid, at in rows if at is not None}
+
+
+# (what the User-Agent contains, the name shown), the first match wins: Edge, Opera and Cốc Cốc
+# also say "Chrome", every Chromium also says "Safari", Android also says "Linux".
+BROWSERS = (
+    ("edg", "Edge"),
+    ("opr/", "Opera"),
+    ("coc_coc_browser", "Cốc Cốc"),
+    ("firefox", "Firefox"),
+    ("fxios", "Firefox"),
+    ("crios", "Chrome"),
+    ("chrome", "Chrome"),
+    ("safari", "Safari"),
+)
+SYSTEMS = (
+    ("iphone", "iPhone"),
+    ("ipad", "iPad"),
+    ("android", "Android"),
+    ("windows", "Windows"),
+    ("mac os x", "macOS"),
+    ("macintosh", "macOS"),
+    ("cros", "ChromeOS"),
+    ("linux", "Linux"),
+)
+
+
+def label_of(user_agent: str | None) -> str:
+    """ "Chrome · Windows": the browser and the system a User-Agent names, the nearest thing to
+    a device's name a web page can know (a browser never tells the machine's own name)."""
+    agent = (user_agent or "").lower()
+    browser = next((name for mark, name in BROWSERS if mark in agent), "")
+    system = next((name for mark, name in SYSTEMS if mark in agent), "")
+    return " · ".join(part for part in (browser, system) if part) or "Không rõ thiết bị"
+
+
+def devices_of(conns: Iterable[Conn]) -> list[dict[str, Any]]:
+    """The living connections as the devices behind them (one browser profile = one device):
+    its label, its tabs, whether any is in use, since when it has been open. Devices in use
+    first, then the longest open."""
+    found: dict[str, list[Conn]] = {}
+    for conn in conns:
+        found.setdefault(conn.device, []).append(conn)
+    out = [
+        {
+            "label": next((c.label for c in group if c.label), "Không rõ thiết bị"),
+            "kind": group[0].kind,
+            "tabs": len({c.tab for c in group}),
+            "active": any(c.active for c in group),
+            "since": min(c.born or c.t for c in group),
+        }
+        for group in found.values()
+    ]
+    return sorted(out, key=lambda d: (not d["active"], d["since"]))
 
 
 def kind_of(user_agent: str | None) -> str:
