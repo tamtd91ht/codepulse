@@ -1,9 +1,10 @@
 """The bell (docs/specs/24): one's own in-app notifications, their history and the live stream.
 
 Everyone signed in has an inbox; no permission beyond being signed in (only one's own rows are
-ever read or changed). The live stream is Server-Sent Events: the dashboard proxies /api to
-this service with a plain HTTP rewrite, which carries a long-lived response but not a WebSocket
-upgrade, and the push only ever goes server -> browser.
+ever read or changed). The live stream is Server-Sent Events: the push only ever goes
+server -> browser, and EventSource reconnects with Last-Event-ID on its own. (The dashboard's
+/api rewrite does carry a WebSocket upgrade since Next 16, checked 2026-11-23; presence,
+docs/specs/33, uses one because it also needs the browser to speak.)
 """
 
 import asyncio
