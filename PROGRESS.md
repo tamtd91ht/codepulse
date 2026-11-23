@@ -317,3 +317,4 @@
 - 2026-11-19 · Chi tiết task: khối Đính kèm chuyển lên ngay dưới Mô tả (trước ở cuối, sau Testcase) (spec 31).
 - 2026-11-19 · Task › Danh sách vỡ giao diện: CSS của Phản ánh (spec 32) định nghĩa lại toàn cục .fb-row/.fb-list/.fb-search/.fb-count/.fb-view mà FilterBar và bảng Task dùng. Đổi toàn bộ class/id của Phản ánh sang tiền tố fbk-; fb- để riêng cho Task.
 - 2026-11-19 · Nâng Next.js 16.4.2 → 16.4.6 (bản vá): hết 2 advisory moderate về rò cache 'use cache' (GHSA-mfr8-8qww-v76h, GHSA-vc7v-qv4w-wrv8); npm audit 0 lỗ hổng.
+- 2026-11-23 · Chuông thông báo review (spec 24): review có người yêu cầu chỉ báo cho người yêu cầu (trước báo cả tác giả thay đổi, và tác giả các finding bị review đó tự đóng). Review không ai yêu cầu (webhook) vẫn báo tác giả như cũ.

@@ -285,9 +285,18 @@ def _counts(session: Session, review_id: int) -> dict[str, int]:
 VERDICT = {"approve": "Có thể merge", "fix_required": "Cần sửa", "block": "Chặn merge"}
 
 
+def review_recipient(review: Review) -> int | None:
+    """Who hears about a review: the person who asked for it, and only them (an admin or a
+    member reviewing someone's change, or their own, pings nobody else; user 2026-11-23). A
+    review nobody asked for (a webhook) goes to the author of the change."""
+    if review.requested_by_user_id is not None:
+        return review.requested_by_user_id
+    return review.author_user_id
+
+
 def review_finished(session: Session, review: Review) -> list[UserNotification]:
-    """A review ended: its author hears (unless a backfill or a rescore ran it), and whoever
-    asked for it; a failed one only the person who asked."""
+    """A review ended: who asked for it hears (`review_recipient`; nobody for a backfill or a
+    rescore); a failed one only the person who asked."""
     if review.status not in ("done", "failed", "skipped") or review.trigger in QUIET_TRIGGERS:
         return []
     _, name = _target(session, review)
@@ -314,7 +323,7 @@ def review_finished(session: Session, review: Review) -> list[UserNotification]:
     tone = "bad" if counts.get("critical") else "warn" if counts.get("high") else "good"
     return notify(
         session,
-        [asked, review.author_user_id],
+        [review_recipient(review)],
         kind="review_done",
         title=f"Review xong: {name}",
         body=" · ".join(parts),
@@ -354,8 +363,11 @@ def findings_closed_by_review(
     session: Session, review: Review, finding_ids: list[int]
 ) -> list[UserNotification]:
     """Findings a later change fixed, closed by its review on its own (auto-close, or an MR's
-    new push no longer reporting them): one note per author and per review of theirs, linked
-    to that review (the fixing one may be someone else's, out of their sight)."""
+    new push no longer reporting them): one note per review of theirs, linked to that review
+    (the fixing one may be someone else's, out of their sight). A review someone asked for
+    pings nobody else: only the asker hears, about their own findings; one nobody asked for (a
+    webhook) tells each author whose findings it closed."""
+    asked = review.requested_by_user_id
     if not finding_ids:
         return []
     rows = session.execute(
@@ -367,8 +379,9 @@ def findings_closed_by_review(
     ).all()
     groups: dict[tuple[int, int], list[tuple[int, str]]] = {}
     for author, fid, title, rid in rows:
-        if author is not None and rid is not None:
-            groups.setdefault((int(author), int(rid)), []).append((int(fid), str(title)))
+        if author is None or rid is None or (asked is not None and int(author) != asked):
+            continue
+        groups.setdefault((int(author), int(rid)), []).append((int(fid), str(title)))
     _, name = _target(session, review)
     out: list[UserNotification] = []
     for (author, rid), items in groups.items():

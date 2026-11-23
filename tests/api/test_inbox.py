@@ -103,18 +103,39 @@ def test_admin_close_tells_the_author(
     assert notes(db_session, world.admin.id) == []  # never one's own action
 
 
-def test_review_finished_tells_the_author_and_who_asked(
+def test_review_nobody_asked_for_tells_the_author(
     world: World, db_session: Session, published: list[Any]
 ) -> None:
-    world.an_review.requested_by_user_id = world.lead.id
-    world.an_review.trigger = "dashboard"
+    world.an_review.requested_by_user_id = None
+    world.an_review.trigger = "webhook"
     db_session.flush()
     inbox.review_finished(db_session, world.an_review)
     (mine,) = notes(db_session, world.an.id)
     assert mine.kind == "review_done" and mine.title == "Review xong: p !7"
     assert mine.body is not None and mine.body.startswith("Điểm 50 · 1 critical")
     assert mine.tone == "bad" and mine.link == f"/reviews/{world.an_review.id}"
-    assert len(notes(db_session, world.lead.id)) == 1
+    assert {n.user_id for n in db_session.scalars(select(UserNotification))} == {world.an.id}
+
+
+def test_asked_review_tells_only_who_asked(
+    world: World, db_session: Session, published: list[Any]
+) -> None:
+    # The lead (or an admin) reviews An's change: the lead hears, An and everyone else do not.
+    world.an_review.requested_by_user_id = world.lead.id
+    world.an_review.trigger = "dashboard"
+    db_session.flush()
+    inbox.review_finished(db_session, world.an_review)
+    assert {n.user_id for n in db_session.scalars(select(UserNotification))} == {world.lead.id}
+
+
+def test_own_asked_review_tells_only_oneself(
+    world: World, db_session: Session, published: list[Any]
+) -> None:
+    world.an_review.requested_by_user_id = world.an.id
+    world.an_review.trigger = "dashboard"
+    db_session.flush()
+    inbox.review_finished(db_session, world.an_review)
+    assert {n.user_id for n in db_session.scalars(select(UserNotification))} == {world.an.id}
 
 
 def test_backfill_reviews_ping_nobody_and_failures_go_to_who_asked(
@@ -140,6 +161,18 @@ def test_findings_closed_by_a_later_change_link_to_the_authors_own_review(
     (note,) = notes(db_session, world.an.id)
     assert note.link == f"/reviews/{world.an_review.id}#finding-{world.an_finding.id}"
     assert note.title.startswith("Finding đã tự đóng nhờ p ")
+
+
+def test_asked_review_closing_others_findings_pings_nobody_else(
+    world: World, db_session: Session, published: list[Any]
+) -> None:
+    # Binh asked for a review of his change; it closed An's finding: An's bell stays quiet.
+    world.binh_review.requested_by_user_id = world.binh.id
+    db_session.flush()
+    assert (
+        inbox.findings_closed_by_review(db_session, world.binh_review, [world.an_finding.id]) == []
+    )
+    assert db_session.scalars(select(UserNotification)).all() == []
 
 
 def test_rolled_back_event_publishes_nothing(
