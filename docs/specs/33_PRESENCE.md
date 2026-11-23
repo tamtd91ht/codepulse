@@ -90,7 +90,7 @@ Loại thiết bị (`desktop` / `mobile`) suy từ User-Agent, chỉ nằm tron
 
 | Khoá | Kiểu | Nội dung |
 |---|---|---|
-| `cp:presence:tabs:{user}` | HASH | mã kết nối → `{t, a, d, k}`: lần làm mới cuối, đang thao tác, device, loại |
+| `cp:presence:tabs:{user}` | HASH | mã kết nối → `{t, a, d, k, b, c}`: lần làm mới cuối, đang thao tác, device, loại, lúc xuất hiện, lúc `a` đổi lần cuối |
 | `cp:presence:live` | ZSET | user → lần làm mới cuối; sweeper duyệt ở đây, không quét khoá |
 | `cp:presence:state` | HASH | user → trạng thái đã ghi vào lịch sử, để biết có **đổi** hay không |
 
@@ -121,8 +121,12 @@ socket mới ghi vào, sẽ xoá luôn kết nối mới.
 
 ## 5. Sweeper (`presence-sweep`, scheduler, 15 giây)
 
-1. Với mỗi người trong `cp:presence:live`: gỡ tab hết hạn. Nếu trạng thái đổi vì thế thì ghi với
-   mốc thời gian là **lần làm mới cuối của tab vừa chết**, không phải lúc quét.
+1. Với mỗi người trong `cp:presence:live`: gỡ tab hết hạn và **dựng lại diễn biến** từ lần làm mới
+   cuối của tab chết tới bây giờ, coi như tab đó rời đi đúng lúc nó im lặng (`_replay`). Mỗi kết
+   nối nhớ lúc nó xuất hiện (`b`) và lúc `active` đổi lần cuối (`c`), đủ để biết các tab còn lại đã
+   làm gì trong khoảng đó. Ví dụ: điện thoại im từ 12:00, máy bàn dùng tới 12:01 rồi để yên; khi
+   bản ghi của điện thoại hết hạn lúc 12:01:40, lịch sử ghi Online tới 12:01, Tạm vắng từ 12:01
+   (không phải từ 12:00, cũng không phải từ lúc quét).
 2. Mỗi 60 giây: cập nhật `last_seen_at` cho đoạn đang mở của người còn sống.
 3. Đoạn đang mở mà người đó không còn trong Redis và mốc an toàn cũ hơn 100 giây: đóng tại
    `last_seen_at` (Redis bị xoá, API bị kill).
@@ -215,8 +219,8 @@ Người ngoài phạm vi: không có trong danh sách, và `GET /presence/users
 - Trình duyệt đóng băng hoặc huỷ tab nền để tiết kiệm bộ nhớ thì tab đó được tính là đã đóng.
 - Nhân đôi tab (Duplicate) sao chép `sessionStorage`, nên hai tab đó được đếm là một tab; trạng
   thái vẫn đúng.
-- Một tab chết **không báo** (kênh HTTP, hoặc API bị kill) trong khi tab khác còn sống: thay đổi
-  trạng thái được ghi lùi về lần làm mới cuối của tab chết, có thể sớm hơn thực tế tối đa 100 giây.
+- Một tab chết **không báo** trong khi tab khác còn sống được dựng lại theo §5; nếu trong lúc đó một
+  tab còn sống đổi `active` **hai lần** thì chỉ lần sau được tính (lần trước không lưu).
 - Giới hạn 30 socket mỗi người đếm theo tiến trình API; chạy nhiều tiến trình thì trần thực tế là
   30 × số tiến trình (bản ghi trong Redis vẫn tối đa 30).
 - Khi tiến trình API bị kill, các tab của nó được ghi là rời đi tại lần làm mới cuối (sai số tối

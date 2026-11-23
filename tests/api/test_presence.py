@@ -226,6 +226,50 @@ def test_the_tab_in_use_dies_the_idle_one_makes_it_away_from_then(
     assert rows(db_session, world.an)[-1] == ("online", 200, None)
 
 
+def test_a_silent_tab_does_not_take_the_time_the_other_tab_was_in_use(
+    world: World, db_session: Session, sessions: presence.Sessions, store: presence.MemoryStore
+) -> None:
+    """The phone falls silent at 30; the desktop is used until 120. The phone's record still
+    counted then, so nothing was written; when it expires, "away" dates from 120, not 30."""
+    beat(sessions, store, world.an, "phone.1", 0, device=PHONE)
+    beat(sessions, store, world.an, "phone.1", 30, device=PHONE)
+    for at in (0, 30, 60, 90):
+        beat(sessions, store, world.an, "desk.1", at)
+    beat(sessions, store, world.an, "desk.1", 120, active=False)
+    assert rows(db_session, world.an) == [("online", 0, None)]
+    presence.sweep(sessions, store, T0 + 140)
+    assert rows(db_session, world.an) == [("online", 0, 120), ("away", 120, None)]
+    assert [c.id for c in store.conns(world.an.id)] == ["desk.1"]
+
+
+def test_a_silent_tab_then_nobody_then_an_idle_tab_is_a_gap(
+    world: World, db_session: Session, sessions: presence.Sessions, store: presence.MemoryStore
+) -> None:
+    """The only tab falls silent at 30; an idle tab appears at 80. Offline in between."""
+    beat(sessions, store, world.an, "phone.1", 0, device=PHONE)
+    beat(sessions, store, world.an, "phone.1", 30, device=PHONE)
+    beat(sessions, store, world.an, "desk.http", 80, active=False)
+    beat(sessions, store, world.an, "desk.http", 110, active=False)
+    assert rows(db_session, world.an) == [("online", 0, None)]
+    presence.sweep(sessions, store, T0 + 140)
+    assert rows(db_session, world.an) == [("online", 0, 30), ("away", 80, None)]
+
+
+def test_a_silent_idle_tab_changes_nothing_while_another_is_in_use(
+    world: World, db_session: Session, sessions: presence.Sessions, store: presence.MemoryStore
+) -> None:
+    beat(sessions, store, world.an, "phone.1", 0, active=False, device=PHONE)
+    for at in (0, 60, 120):
+        beat(sessions, store, world.an, "desk.1", at)
+    presence.sweep(sessions, store, T0 + 140)
+    assert rows(db_session, world.an) == [("online", 0, None)]
+    # Old records (written before `born` / `changed` existed) read as born at their refresh.
+    old = presence._decode("x.1", '{"t": 5.0, "a": 1, "d": "d", "k": "desktop"}')
+    assert old is not None and (old.born, old.changed) == (5.0, 5.0)
+    again = presence._decode("x.1", presence._encode(old))
+    assert again == old
+
+
 def test_a_late_refresh_after_the_ttl_is_a_gap(
     world: World, db_session: Session, sessions: presence.Sessions, store: presence.MemoryStore
 ) -> None:

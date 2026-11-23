@@ -139,7 +139,7 @@ Ba khoá, không cần Lua, không cần khoá phân tán:
 
 | Khoá | Kiểu | Nội dung |
 |---|---|---|
-| `presence:tabs:{user}` | HASH | `tab_id` → `{t: lần beat cuối, a: đang thao tác, d: device_id, k: loại thiết bị}`; cả khoá tự hết hạn |
+| `presence:tabs:{user}` | HASH | mã kết nối → `{t: lần beat cuối, a: đang thao tác, d: device_id, k: loại thiết bị, b: lúc xuất hiện, c: lúc a đổi lần cuối}`; cả khoá tự hết hạn |
 | `presence:live` | ZSET | `user` → lần beat cuối bất kỳ; để sweeper liệt kê người còn sống mà không phải quét khoá |
 | `presence:state` | HASH | `user` → trạng thái gộp đã ghi vào lịch sử (`online` / `away`); để biết có **đổi** hay không |
 | `presence:lock:{user}` | khoá có hạn | một lần đọc-sửa-ghi các kết nối của một người tại một thời điểm |
@@ -218,6 +218,15 @@ và lần gọi kế tiếp tự làm lại.
 1. Với mỗi người trong `presence:live`: tính lại trạng thái gộp. Nếu đổi vì tab hết hạn thì gọi
    `transition` với **`lúc` = lần beat cuối của tab vừa chết**, không phải thời điểm quét. Nhờ vậy
    máy sleep lúc 12:00, quét lúc 12:02 vẫn ghi đúng là rời đi lúc 12:00.
+
+   Khi người đó **còn tab khác đang sống**, mốc đó chưa đủ. Trong lúc tab im lặng vẫn còn được tính
+   (tới hết hạn sống), mọi thay đổi của các tab khác được xét cùng với nó: điện thoại im từ 12:00,
+   máy bàn ngừng thao tác lúc 12:01, nhưng hệ thống vẫn coi là Online vì bản ghi của điện thoại
+   còn đó, nên không ghi gì. Khi bản ghi hết hạn, ghi "vắng từ 12:00" là lấy mất một phút online;
+   ghi "vắng từ lúc quét" là cho thừa. Cách đúng: mỗi kết nối nhớ thêm **lúc nó xuất hiện** và
+   **lúc cờ `active` đổi lần cuối**; khi một tab chết, dựng lại trạng thái từ lần cuối nó lên tiếng
+   tới bây giờ như thể nó rời đi đúng lúc đó, rồi ghi các thay đổi theo thứ tự. Nếu trong khoảng đó
+   không còn tab nào thì đó là một khoảng offline thật.
 2. Mỗi phút một lần: cập nhật `last_seen_at = bây giờ` cho đoạn đang mở của những người còn sống.
 3. Đoạn đang mở mà người đó không còn trong kho sống (Redis bị xoá, API sập giữa chừng): đóng
    tại `last_seen_at`. Đây là lý do có cột đó: sai số khi mọi thứ sập tối đa là một phút.
@@ -325,6 +334,9 @@ Dữ liệu này định danh từng người và dễ bị dùng sai, nên ph�
 - [ ] Mọi tab báo `active = false`: chuyển Away; một tab báo lại `true`: về Online.
 - [ ] Không beat quá hạn sống: sweeper đóng đoạn tại **lần beat cuối**, không phải lúc quét.
 - [ ] Tab đang thao tác chết, tab còn lại đang vắng: chuyển Away tại lần beat cuối của tab chết.
+- [ ] Tab A im lặng, tab B dùng thêm một lúc rồi để yên: Away tính từ lúc B để yên, không phải từ
+      lúc A im lặng.
+- [ ] Tab duy nhất im lặng, sau đó một tab khác mới xuất hiện: có khoảng offline ở giữa.
 - [ ] Hai beat đồng thời khi đang offline: chỉ một đoạn được mở.
 - [ ] F5 nhiều lần liên tiếp trên trình duyệt thật: vẫn online, một phiên.
 - [ ] Kho sống không phản hồi: request thường không chậm đi; màn giám sát hiển thị theo lịch sử.

@@ -24,7 +24,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
@@ -74,6 +74,10 @@ class Conn:
     active: bool
     device: str
     kind: str  # "desktop" | "mobile"
+    # When the connection first appeared, and when `active` last changed (its first
+    # appearance, when it never did): `_replay` dates a silent tab's death with them.
+    born: float = 0.0
+    changed: float = 0.0
 
     @property
     def tab(self) -> str:
@@ -142,15 +146,31 @@ class MemoryStore:
 
 
 def _encode(conn: Conn) -> str:
-    return json.dumps({"t": conn.t, "a": int(conn.active), "d": conn.device, "k": conn.kind})
+    return json.dumps(
+        {
+            "t": conn.t,
+            "a": int(conn.active),
+            "d": conn.device,
+            "k": conn.kind,
+            "b": conn.born,
+            "c": conn.changed,
+        }
+    )
 
 
 def _decode(conn_id: Any, raw: Any) -> Conn | None:
     try:
         data = json.loads(raw)
         name = conn_id.decode() if isinstance(conn_id, bytes) else str(conn_id)
+        at = float(data["t"])
         return Conn(
-            name, float(data["t"]), bool(data["a"]), str(data.get("d", "")), str(data.get("k", ""))
+            name,
+            at,
+            bool(data["a"]),
+            str(data.get("d", "")),
+            str(data.get("k", "")),
+            float(data.get("b", at)),
+            float(data.get("c", at)),
         )
     except (ValueError, TypeError, KeyError, AttributeError):
         return None
@@ -335,14 +355,49 @@ def _settle(
     gone: str | None = None,
 ) -> str:
     """Bring the person's history in line with their tabs, in two steps: first the tabs that
-    died of silence (the change dates from their last refresh, not from now: a laptop closed at
-    noon left at noon), then the tab that came (`add`) or went (`gone`), at `now`.
+    died of silence (dated from their last refresh, not from now: a laptop closed at noon left
+    at noon; `_replay` works out what the other tabs made of the time since), then the tab that
+    came (`add`) or went (`gone`), at `now`.
 
     One at a time per person (`Store.lock`): it reads the tabs, writes the history, then writes
     the tabs, and a reloading tab's old socket leaving while its new one arrives would
     otherwise remove the newcomer."""
     with store.lock(user_id):
         return _settle_locked(sessions, store, user_id, now, add, gone)
+
+
+def _replay(dead: Sequence[Conn], living: Sequence[Conn], now: float) -> list[tuple[str, float]]:
+    """What the person's state was from the first of the `dead` tabs' last refreshes until
+    `now`, had each dead tab gone when it last spoke: [(state, since), ...].
+
+    While a silent tab was still counted (up to TAB_TTL_S), the other tabs' comings and changes
+    were judged with it in the room: someone whose phone fell silent at 12:00 and who stopped
+    using their desktop at 12:01 was "online" until the phone's record expired. Dating the
+    change at the phone's last word (12:00) would take a minute of online from them; dating
+    it at the sweep would give them one. Each tab remembers when it appeared and when its
+    `active` last changed, which is enough to tell: online until 12:01, away from then.
+    (A tab that changed twice in the window is read as if it changed once: the earlier change
+    is not kept.)"""
+
+    def flag(conn: Conn, at: float) -> bool | None:
+        if at < conn.born:
+            return None  # not there yet
+        return conn.active if at >= conn.changed else not conn.active
+
+    def state_at(at: float) -> str:
+        there = [flag(c, at) for c in living] + [flag(c, at) for c in dead if at < c.t]
+        flags = [f for f in there if f is not None]
+        return ONLINE if any(flags) else AWAY if flags else OFFLINE
+
+    start = min(c.t for c in dead)
+    moments = {c.t for c in dead}
+    moments |= {m for c in (*living, *dead) for m in (c.born, c.changed) if start < m <= now}
+    out: list[tuple[str, float]] = []
+    for at in sorted(moments):
+        state = state_at(at)
+        if not out or out[-1][0] != state:
+            out.append((state, at))
+    return out
 
 
 def _settle_locked(
@@ -358,12 +413,16 @@ def _settle_locked(
     dead = [c for c in held if c not in living]
     steps: list[tuple[str, float | None]] = []
     if dead:
-        steps.append((state_of(living), max(c.t for c in dead)))
+        steps.extend(_replay(dead, living, now))
     elif not held and add is None:
         # Recorded as present, yet the store holds no tab of theirs (its records were lost):
         # when they left is unknown, the checkpoint is the best guess.
         steps.append((OFFLINE, None))
     if add is not None:
+        before = next((c for c in living if c.id == add.id), None)
+        if before is not None:  # a refresh: it was born then, and changed then unless it does now
+            changed = before.changed if before.active == add.active else now
+            add = replace(add, born=before.born, changed=changed)
         living = [c for c in living if c.id != add.id] + [add]
     if gone is not None:
         living = [c for c in living if c.id != gone]
@@ -411,7 +470,8 @@ def beat(
     now: float | None = None,
 ) -> str:
     ts = time.time() if now is None else now
-    return _settle(sessions, store, user_id, ts, add=Conn(conn_id, ts, active, device, kind))
+    conn = Conn(conn_id, ts, active, device, kind, born=ts, changed=ts)
+    return _settle(sessions, store, user_id, ts, add=conn)
 
 
 def leave(
