@@ -26,13 +26,21 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from redis.exceptions import RedisError
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 from starlette.websockets import WebSocketDisconnect
 
 from app import presence
+from app.api.audit import audit
 from app.api.deps import get_session
-from app.api.security import SESSION_COOKIE, CurrentPrincipal, Principal, read_token, require
+from app.api.security import (
+    SESSION_COOKIE,
+    AdminPrincipal,
+    CurrentPrincipal,
+    Principal,
+    require,
+    session_user,
+)
 from app.avatars import avatar_url
 from app.config import Settings, get_settings
 from app.models import Team, TeamMember, User
@@ -78,6 +86,8 @@ def _quiet(call: Any, *args: Any, **kwargs: Any) -> None:
         return
     try:
         call(sessions, store_of(), *args, **kwargs)
+    except presence.SignedOut:
+        raise
     except RedisError:
         _paused_until = time.monotonic() + PAUSE_S
         log.warning("presence not recorded: Redis does not answer", exc_info=True)
@@ -89,12 +99,8 @@ def _socket_user(token: str | None) -> int:
     """Who the socket is for, in a short session of its own (as the inbox stream)."""
     if not token:
         raise HTTPException(401, "not signed in")
-    user_id = read_token(token, settings_of())
     with sessions() as session:
-        user = session.get(User, user_id)
-        if user is None or user.active is False:
-            raise HTTPException(401, "user is not active")
-    return user_id
+        return session_user(session, token, settings_of()).id
 
 
 def _says_active(text: str, current: bool) -> bool:
@@ -135,11 +141,28 @@ async def presence_socket(ws: WebSocket, tab: str = "", device: str = "") -> Non
     active = True
     wanted: bool | None = None  # a change of `active` waiting for MIN_CHANGE_S to pass
 
-    def refresh() -> None:
-        _quiet(presence.beat, user_id, conn_id, active=active, device=device, kind=kind)
+    opened = time.time()
+
+    def refresh() -> bool:
+        """False: an admin signed the person out since this socket opened (§14)."""
+        try:
+            _quiet(
+                presence.beat,
+                user_id,
+                conn_id,
+                active=active,
+                device=device,
+                kind=kind,
+                since=opened,
+            )
+        except presence.SignedOut:
+            return False
+        return True
 
     try:
-        await run_in_threadpool(refresh)
+        if not await run_in_threadpool(refresh):
+            await ws.close(code=CLOSE_SIGNED_OUT)
+            return
         await ws.send_text('{"ok":true}')  # the browser now knows the socket works end to end
         now = time.monotonic()
         checked = changed = now
@@ -170,11 +193,16 @@ async def presence_socket(ws: WebSocket, tab: str = "", device: str = "") -> Non
             # flipping its flag cannot write a row per message.
             if wanted is not None and now - changed >= MIN_CHANGE_S:
                 active, wanted, changed = wanted, None, now
-                await run_in_threadpool(refresh)
+                alive = await run_in_threadpool(refresh)
                 due = now + presence.BEAT_S
             elif now >= due:
-                await run_in_threadpool(refresh)
+                alive = await run_in_threadpool(refresh)
                 due = now + presence.BEAT_S
+            else:
+                continue
+            if not alive:
+                await ws.close(code=CLOSE_SIGNED_OUT)
+                return
     except WebSocketDisconnect:
         pass
     finally:
@@ -221,6 +249,39 @@ def post_leave(body: LeaveIn, principal: CurrentPrincipal) -> Response:
     _dashboard_only(principal)
     _quiet(presence.leave, principal.user_id, f"{body.tab}.http")
     return Response(status_code=204)
+
+
+# -- forced sign-out (docs/specs/33 §14) -----------------------------------------------------------
+
+
+@router.post("/presence/users/{user_id}/sign-out", status_code=204)
+def sign_out_user(user_id: int, principal: AdminPrincipal, session: SessionDep) -> Response:
+    """Every session of this person ends now, on every tab and device: their tokens stop
+    working (`session_user`), so they sign in again through GitLab. Not a lock-out: they may
+    sign in at once. Personal access tokens (cpat_, MCP) are another credential, untouched."""
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(404, "user not found")
+    user.session_epoch = (user.session_epoch or 0) + 1
+    audit(session, principal.user_id, "auth.force_logout", f"user:{user_id}")
+    session.commit()
+    _quiet(presence.kick, user_id)
+    return Response(status_code=204)
+
+
+@router.post("/presence/sign-out-all")
+def sign_out_all(principal: AdminPrincipal, session: SessionDep) -> dict[str, int]:
+    """Everyone but the admin doing it (who would otherwise be thrown out mid-click)."""
+    result = session.execute(
+        update(User)
+        .where(User.id != principal.user_id)
+        .values(session_epoch=User.session_epoch + 1)
+    )
+    count = int(getattr(result, "rowcount", 0) or 0)
+    audit(session, principal.user_id, "auth.force_logout_all", None, accounts=count)
+    session.commit()
+    _quiet(presence.kick_all, principal.user_id)
+    return {"accounts": count}
 
 
 # -- the monitoring screen -------------------------------------------------------------------------
@@ -375,6 +436,8 @@ def get_presence(
         "rows": rows,
         "idle_minutes": presence.IDLE_S // 60,
         "keep_days": presence.KEEP_DAYS,
+        # §14: an admin may sign anyone out.
+        "can_sign_out": principal.is_admin,
     }
 
 

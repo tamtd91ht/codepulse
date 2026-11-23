@@ -131,5 +131,6 @@
 - [x] 10.19 Task: phân quyền như Jira (13 quyền, 31 §4.1) và đính kèm file, ảnh — dán ảnh chụp, kéo thả, ảnh trong mô tả / bình luận (31 §17)
 - [x] 10.17 Lead / Manager dự án tự quản trị dự án: dự án tạo trước chưa có repo, vai trò Lead/Manager dự án, thêm repo, cấu hình repo, repo .claude, file quy tắc, màn Quản trị dự án (21 §10)
 - [x] 10.28 Trạng thái online (33): socket presence mỗi tab + HTTP dự phòng, gộp nhiều tab / thiết bị, `presence_segments` + sweeper + mốc an toàn, quyền `presence.view` (own / team / all), màn `/presence` với timeline theo ngày, giữ 180 ngày; tài liệu dùng lại `docs/PRESENCE_PATTERN.md`
+- [x] 10.29 Đăng xuất cưỡng bức (33 §14): `users.session_epoch` + claim `sv`, `session_user` cho mọi đường vào, admin đá một tài khoản / tất cả (trừ mình), socket đóng 4401 và tab tự về `/login`, audit
 - [ ] **Demo**: push 2 commit → `/review-push` trong Claude Code → thông báo review xong trên web; nhập 3 file quy tắc vào một dự án → review sau ghi "Tệp quy tắc …" trong Căn cứ review; tải 1 Word + 1 PDF vào Tài liệu dự án, tìm không dấu, sửa và khôi phục phiên bản; dán 1 link wiki + 1 link README GitLab → bản nháp → so sánh → lưu
 

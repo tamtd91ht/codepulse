@@ -233,9 +233,77 @@ nói cuối; tab đang dùng chết còn tab vắng; mốc an toàn và đoạn 
 hạn lưu; thời lượng và vắt qua nửa đêm; phạm vi own / team / all; socket (online, away, đóng,
 từ chối bằng mã đóng khi chưa đăng nhập / sai id / quá số socket); kênh HTTP dự phòng; Redis sập thì
 nghỉ chứ không chờ từng lần; các đoạn không chồng nhau; truy vấn theo cửa sổ ngày; một người lỗi
-không dừng sweeper.
+không dừng sweeper; đăng xuất cưỡng bức một người và mọi người (§14): token cũ bị từ chối, người khác
+không bị ảnh hưởng, token epoch mới dùng được, socket đang mở đóng với 4401, ghi audit.
 
 Đã kiểm tay trên stack thật (Postgres, Redis, uvicorn, bản standalone của dashboard, Chrome headless)
 ngày 2026-11-23: 3 tab trên 2 trình duyệt là một người online; đóng tab giảm số đếm ngay; đóng hết là
 offline ngay; `{active:false}` thành Tạm vắng; F5 năm lần vẫn online, một phiên; socket không cookie
 nhận mã 4401 qua proxy; kill API thì sweeper gỡ kết nối sau khoảng 100 giây.
+
+## 14. Đăng xuất cưỡng bức (người dùng yêu cầu 2026-11-23)
+
+> "Cho phép admin đá đăng xuất bất kỳ tài khoản nào, tài khoản đó bắt buộc phải login lại qua GitLab";
+> sau đó: "cho phép đá toàn bộ luôn".
+
+### 14.1 Cơ chế
+
+Phiên là JWT không trạng thái (sống `SESSION_TTL_HOURS`), nên không có gì để "xoá". Thay vào đó mỗi
+người có một số `users.session_epoch` (mặc định 0):
+
+- Khi đăng nhập qua GitLab, token mang số đó trong claim `sv`.
+- Mọi đường vào bằng token phiên đi qua `session_user` (`app/api/security.py`): request thường, luồng
+  SSE của chuông, socket presence. Token có `sv` khác `session_epoch` hiện tại bị từ chối 401
+  ("phiên đăng nhập đã bị quản trị viên kết thúc, hãy đăng nhập lại"). Không thêm truy vấn nào: dòng
+  `users` vốn đã được đọc ở mỗi request.
+- **Đá** = tăng `session_epoch` lên 1. Mọi token đã cấp trước đó, trên mọi tab và thiết bị, hết hiệu
+  lực ngay ở request kế tiếp. Token cấp trước khi có cột này (không có `sv`) được coi là epoch 0, nên
+  bản nâng cấp không đăng xuất ai.
+- Dùng số đếm chứ không dùng mốc thời gian: `iat` của JWT chỉ chính xác tới giây, so sánh thời gian sẽ
+  để lọt token cấp cùng giây hoặc chặn nhầm lần đăng nhập lại ngay sau đó.
+
+Tài khoản bị đá **không bị khoá**: đăng nhập lại qua GitLab là có phiên mới (epoch mới). Muốn chặn hẳn
+thì dùng "ngừng hoạt động" (`users.active`) đã có.
+
+### 14.2 Phía presence và trình duyệt
+
+- `presence.kick`: người bị đá thành Offline ngay trên màn giám sát (đóng đoạn đang mở, xoá các tab
+  khỏi Redis) và ghi `cp:presence:kicked:{user}` = thời điểm đá (giữ 24 giờ).
+- Socket đang mở biết thời điểm nó được mở; ở lần làm mới kế tiếp (tối đa 30 giây), `beat(since=…)`
+  thấy nó mở trước lúc đá và ném `SignedOut`; socket đóng với mã `4401`.
+- Trình duyệt nhận `4401` (hoặc 401 ở kênh HTTP) thì **chuyển về `/login`**, không chờ người dùng bấm
+  rồi mới báo lỗi. Việc đang nhập dở chưa lưu sẽ mất.
+- Đã đo trên trình duyệt thật: mất quyền gọi API ngay lập tức; tab tự về trang đăng nhập sau 15–27 giây.
+
+### 14.3 API (chỉ admin)
+
+| | |
+|---|---|
+| `POST /presence/users/{id}/sign-out` | đá một tài khoản (204; 404 nếu không có) |
+| `POST /presence/sign-out-all` | đá **mọi tài khoản trừ admin đang gọi**; trả `{accounts}` |
+
+Cả hai ghi `audit_log` (`auth.force_logout` với `user:{id}`; `auth.force_logout_all` với số tài khoản).
+`GET /presence` trả thêm `can_sign_out`.
+
+### 14.4 Màn hình
+
+Chỉ admin thấy: biểu tượng đăng xuất ở cột cuối mỗi dòng, và nút "Đăng xuất tất cả" trên thanh lọc.
+Cả hai mở hộp xác nhận nói rõ hệ quả; xong thì có dòng báo kết quả.
+
+### 14.5 Quyết định
+
+- [x] Chỉ **admin** (`is_admin`), không tạo quyền riêng: đúng lời yêu cầu, và đây là thao tác hiếm.
+- [x] "Đá toàn bộ" **chừa admin đang bấm**: nếu không họ bị văng ra giữa chừng và không thấy kết quả.
+  Muốn tự đăng xuất thì dùng nút Đăng xuất thường, hoặc đá chính mình ở dòng của mình.
+- [x] Token MCP / API cá nhân (`cpat_`) **không bị ảnh hưởng**: là thông tin xác thực khác, thu hồi ở
+  màn quản lý token.
+
+### 14.6 Giới hạn
+
+- CodePulse chỉ kết thúc phiên của **mình**. Nếu người đó vẫn đang đăng nhập GitLab trên trình duyệt,
+  "đăng nhập lại qua GitLab" chỉ là một lần bấm, GitLab không hỏi lại mật khẩu. Muốn buộc nhập lại mật
+  khẩu thì phải thu hồi phiên ở GitLab.
+- Luồng SSE của chuông đang mở không bị cắt ngay: nó tự kết thúc sau tối đa 10 phút và lần kết nối lại
+  bị từ chối. Trong lúc đó tab đã chuyển về trang đăng nhập (nếu trình duyệt còn chạy script).
+- Redis không phản hồi lúc đá: token vẫn hết hiệu lực ngay (đó là việc của DB), chỉ có việc đóng socket
+  sớm và hiện Offline ngay là không xảy ra; socket tự bị từ chối ở lần kiểm phiên 5 phút.

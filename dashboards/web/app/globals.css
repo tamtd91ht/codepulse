@@ -23048,6 +23048,19 @@ button.fbk-status-trigger svg:last-child {
 .prs-table .prs-actions {
   width: 44px;
   text-align: right;
+  white-space: nowrap;
+}
+.prs-kick-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.prs-confirm {
+  width: min(468px, calc(100vw - 32px));
+}
+.prs-confirm-actions {
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 .prs-time {
   font-size: 18px;

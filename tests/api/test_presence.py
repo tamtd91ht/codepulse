@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 from redis.exceptions import RedisError
@@ -18,9 +19,9 @@ from starlette.websockets import WebSocketDisconnect
 
 from app import presence
 from app.api.routers import presence as presence_api
-from app.api.security import SESSION_COOKIE, issue_token
+from app.api.security import ALGORITHM, SESSION_COOKIE, issue_token
 from app.config import Settings
-from app.models import PresenceSegment, TeamMember, User
+from app.models import AuditLog, PresenceSegment, TeamMember, User
 from app.retention import purge
 from tests.api.conftest import World
 
@@ -704,3 +705,167 @@ def test_http_stand_in_beats_and_leaves(
     assert client.post(f"{API}/presence/leave", headers=an, json={"tab": TAB_A}).status_code == 204
     assert store.live_users() == []
     assert [state for state, _, _ in rows(db_session, world.an)] == ["away"]
+
+
+# -- forced sign-out (§14) -------------------------------------------------------------------------
+
+
+def signed_in(client: TestClient, token: str) -> int:
+    return client.get(f"{API}/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code
+
+
+def test_admin_signs_one_person_out_everywhere(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    settings: Settings,
+    db_session: Session,
+    sessions: presence.Sessions,
+    store: presence.MemoryStore,
+) -> None:
+    an_token = issue_token(world.an.id, settings)
+    binh_token = issue_token(world.binh.id, settings)
+    now = datetime.now(UTC).timestamp()
+    presence.beat(
+        sessions,
+        store,
+        world.an.id,
+        f"{TAB_A}.1",
+        active=True,
+        device=DEVICE,
+        kind="desktop",
+        now=now - 60,
+    )
+    url = f"{API}/presence/users/{world.an.id}/sign-out"
+    assert client.post(url, headers=as_user(world.lead)).status_code == 403
+    assert client.post(url).status_code == 401
+    missing = f"{API}/presence/users/999999/sign-out"
+    assert client.post(missing, headers=as_user(world.admin)).status_code == 404
+    assert signed_in(client, an_token) == 200
+
+    assert client.post(url, headers=as_user(world.admin)).status_code == 204
+    refused = client.get(f"{API}/auth/me", headers={"Authorization": f"Bearer {an_token}"})
+    assert refused.status_code == 401 and "đăng nhập lại" in refused.json()["detail"]
+    assert signed_in(client, binh_token) == 200  # nobody else is touched
+    # Signing in again (GitLab) gives a token of the new epoch: not a lock-out.
+    db_session.refresh(world.an)
+    assert world.an.session_epoch == 1
+    assert signed_in(client, issue_token(world.an.id, settings, epoch=1)) == 200
+    # Offline at once on the monitor, the stretch closed, the tab forgotten.
+    assert store.live_users() == [] and store.kicked_at(world.an.id) is not None
+    (stretch,) = rows(db_session, world.an)
+    assert stretch[0] == "online" and stretch[2] is not None
+    logged = db_session.scalars(
+        select(AuditLog).where(AuditLog.action == "auth.force_logout")
+    ).all()
+    assert [(a.actor_user_id, a.target) for a in logged] == [
+        (world.admin.id, f"user:{world.an.id}")
+    ]
+    board = client.get(f"{API}/presence", headers=as_user(world.admin)).json()
+    assert board["can_sign_out"] is True
+    assert (
+        client.get(f"{API}/presence", headers=as_user(world.lead)).json()["can_sign_out"] is False
+    )
+
+
+def test_admin_signs_everyone_out_but_themself(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    settings: Settings,
+    db_session: Session,
+    sessions: presence.Sessions,
+    store: presence.MemoryStore,
+) -> None:
+    tokens = {u.id: issue_token(u.id, settings) for u in (world.admin, world.an, world.lead)}
+    now = datetime.now(UTC).timestamp()
+    for user in (world.admin, world.an, world.lead):
+        presence.beat(
+            sessions,
+            store,
+            user.id,
+            f"{TAB_A}.1",
+            active=True,
+            device=DEVICE,
+            kind="desktop",
+            now=now - 30,
+        )
+    assert client.post(f"{API}/presence/sign-out-all", headers=as_user(world.an)).status_code == 403
+    done = client.post(f"{API}/presence/sign-out-all", headers=as_user(world.admin))
+    assert done.status_code == 200 and done.json() == {"accounts": 5}
+    assert signed_in(client, tokens[world.admin.id]) == 200
+    assert signed_in(client, tokens[world.an.id]) == 401
+    assert signed_in(client, tokens[world.lead.id]) == 401
+    assert store.live_users() == [world.admin.id]
+    assert rows(db_session, world.admin)[-1][2] is None  # still online
+    assert rows(db_session, world.lead)[-1][2] is not None
+
+
+def test_a_token_from_before_the_epoch_counts_as_epoch_zero(
+    client: TestClient, world: World, settings: Settings, db_session: Session
+) -> None:
+    now = datetime.now(UTC)
+    claims = {
+        "sub": str(world.an.id),
+        "iat": now,
+        "exp": now + timedelta(hours=1),
+        "iss": "codepulse",
+    }
+    old = jwt.encode(claims, settings.session_secret.get_secret_value(), algorithm=ALGORITHM)
+    assert signed_in(client, old) == 200  # sessions open at the upgrade go on
+    world.an.session_epoch = 1
+    db_session.flush()
+    assert signed_in(client, old) == 401
+
+
+def test_an_open_socket_closes_at_its_next_refresh_a_later_one_is_fine(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    settings: Settings,
+    sessions: presence.Sessions,
+    store: presence.MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The rule itself: a connection opened before the sign-out is refused, a later one is not.
+    presence.kick(sessions, store, world.binh.id, now=T0 + 50)
+    with pytest.raises(presence.SignedOut):
+        presence.beat(
+            sessions,
+            store,
+            world.binh.id,
+            "b.1",
+            active=True,
+            device=DEVICE,
+            kind="desktop",
+            now=T0 + 60,
+            since=T0 + 40,
+        )
+    assert store.live_users() == []
+    assert (
+        presence.beat(
+            sessions,
+            store,
+            world.binh.id,
+            "b.2",
+            active=True,
+            device=DEVICE,
+            kind="desktop",
+            now=T0 + 60,
+            since=T0 + 55,
+        )
+        == "online"
+    )
+
+    # And through the socket: it is told at its next refresh (BEAT_S, shortened here).
+    monkeypatch.setattr(presence, "BEAT_S", 0.2)
+    client.cookies.set(SESSION_COOKIE, issue_token(world.an.id, settings))
+    with client.websocket_connect(f"{API}/presence/ws?tab={TAB_A}&device={DEVICE}") as ws:
+        assert ws.receive_json() == {"ok": True}
+        client.cookies.delete(SESSION_COOKIE)
+        url = f"{API}/presence/users/{world.an.id}/sign-out"
+        assert client.post(url, headers=as_user(world.admin)).status_code == 204
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_text()
+    assert closed.value.code == presence_api.CLOSE_SIGNED_OUT
+    assert wait(lambda: world.an.id not in store.live_users())

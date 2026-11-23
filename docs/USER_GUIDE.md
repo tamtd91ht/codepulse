@@ -142,6 +142,12 @@ Tạm vắng, trống là Offline.
 Cột **Offline** của một ngày là tổng các khoảng không mở ứng dụng *giữa* lần đầu và lần cuối online hôm đó,
 không tính trước giờ bắt đầu và sau giờ nghỉ.
 
+**Admin đăng xuất tài khoản khác.** Ở cuối mỗi dòng, admin có biểu tượng đăng xuất: bấm và xác nhận thì
+mọi phiên của tài khoản đó kết thúc ngay trên mọi tab và thiết bị; tab đang mở tự về trang đăng nhập trong
+khoảng 30 giây và người đó phải đăng nhập lại qua GitLab. Nút **Đăng xuất tất cả** làm việc đó cho mọi tài
+khoản trừ chính admin đang bấm. Tài khoản không bị khoá (muốn chặn hẳn thì đặt "ngừng hoạt động" ở Admin ›
+Người & Team); token MCP / API cá nhân không bị ảnh hưởng.
+
 Hệ thống chỉ ghi thời gian, không ghi bạn đang xem trang nào hay gõ gì. Số liệu giữ 180 ngày, chỉ để giám sát:
 **không tính vào DPI hay bất kỳ điểm đánh giá nào**. Thời gian online không phải là thời gian làm việc.
 

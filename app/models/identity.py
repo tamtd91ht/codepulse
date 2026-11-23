@@ -38,6 +38,9 @@ class User(TimestampMixin, Base):
     manage_all: Mapped[bool] = mapped_column(server_default=false(), default=False)
     # docs/specs/31 §21.0 (R2): holds the "tester" built-in set (as do members of a QA team).
     is_tester: Mapped[bool] = mapped_column(server_default=false(), default=False)
+    # docs/specs/33 §14: the session tokens that count carry this number; an admin's
+    # "sign out" adds one, and every token issued before it stops working.
+    session_epoch: Mapped[int] = mapped_column(server_default="0", default=0)
     # Admin > Người & Team (2026-11-03): the one avatar file in AVATAR_DIR ("<id>.<ext>").
     avatar_file: Mapped[str | None]
     # Close requests this person may send in 24 hours (web and MCP); NULL: the default of

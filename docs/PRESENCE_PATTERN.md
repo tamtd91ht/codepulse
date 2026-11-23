@@ -328,6 +328,20 @@ Dữ liệu này định danh từng người và dễ bị dùng sai, nên ph�
 - **Trạng thái tự đặt** ("Đừng làm phiền", "Đang họp"): là một lớp riêng do người dùng chọn, hiển
   thị đè lên presence tự động. Đừng trộn vào bảng đoạn.
 
+## 14a. Đăng xuất cưỡng bức đi kèm presence
+
+Màn giám sát thường kéo theo yêu cầu "đá" một tài khoản. Với phiên không trạng thái (JWT):
+
+- Mỗi người một **số phiên** (`session_epoch`); token mang số đó; kiểm ở đúng một hàm mà mọi đường vào
+  đều gọi. Đá = tăng số. Đừng so mốc thời gian với `iat`: `iat` chỉ chính xác tới giây.
+- Socket đang mở không tự biết phiên đã hết. Ghi thời điểm đá vào kho sống; socket nhớ lúc nó mở và
+  bị từ chối ở lần làm mới kế tiếp nếu mở trước lúc đá. Không tốn truy vấn DB nào cho mỗi socket.
+- Đóng socket bằng mã "hết phiên" và cho client **chuyển về trang đăng nhập**; đừng để người dùng
+  ngồi trước một trang chết.
+- "Đá tất cả" nên chừa người đang bấm, và nói rõ điều đó ở hộp xác nhận.
+- Nói rõ giới hạn: đăng nhập qua SSO thì "đăng nhập lại" có thể chỉ là một lần bấm nếu phiên ở nhà
+  cung cấp danh tính còn sống.
+
 ## 15. Danh sách kiểm thử
 
 - [ ] Hai tab beat, một tab `leave`: vẫn online, không sinh đoạn mới.

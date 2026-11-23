@@ -59,6 +59,9 @@ FLIPS_KEEP_S = 600
 FLIPS_MAX = 64
 # More tabs than anyone opens; the oldest go first.
 MAX_TABS = 30
+# An admin's sign-out is remembered this long (docs/specs/33 §14); sockets re-check their
+# session far more often.
+KICK_KEEP_S = 24 * 3600
 # The per-person lock of the live store: its own expiry, and how long a caller waits for it.
 LOCK_S = 15
 LOCK_WAIT_S = 5
@@ -101,6 +104,8 @@ class Store(Protocol):
     def set_state(self, user_id: int, state: str | None) -> None: ...
     def due(self, name: str, every_s: int, now: float) -> bool: ...
     def lock(self, user_id: int) -> AbstractContextManager[Any]: ...
+    def kicked_at(self, user_id: int) -> float | None: ...
+    def set_kicked(self, user_id: int, at: float) -> None: ...
 
 
 class MemoryStore:
@@ -109,9 +114,16 @@ class MemoryStore:
         self.states: dict[int, str] = {}
         self.ran: dict[str, float] = {}
         self._lock = threading.RLock()
+        self.kicked: dict[int, float] = {}
 
     def lock(self, user_id: int) -> AbstractContextManager[Any]:
         return self._lock
+
+    def kicked_at(self, user_id: int) -> float | None:
+        return self.kicked.get(user_id)
+
+    def set_kicked(self, user_id: int, at: float) -> None:
+        self.kicked[user_id] = at
 
     def conns(self, user_id: int) -> list[Conn]:
         return list(self.tabs.get(user_id, {}).values())
@@ -194,6 +206,7 @@ class RedisStore:
     STATE = "cp:presence:state"
     DUE = "cp:presence:due:"
     LOCK = "cp:presence:lock:"
+    KICKED = "cp:presence:kicked:"
 
     def __init__(self, client: Any) -> None:
         self._r = client
@@ -260,6 +273,14 @@ class RedisStore:
             f"{self.LOCK}{user_id}", timeout=LOCK_S, blocking_timeout=LOCK_WAIT_S
         )
         return lock
+
+    def kicked_at(self, user_id: int) -> float | None:
+        raw = self._r.get(f"{self.KICKED}{user_id}")
+        return None if raw is None else float(raw)
+
+    def set_kicked(self, user_id: int, at: float) -> None:
+        # Kept longer than any session lives: a socket opened before `at` is still caught.
+        self._r.set(f"{self.KICKED}{user_id}", repr(at), ex=KICK_KEEP_S)
 
 
 _store: Store | None = None
@@ -361,6 +382,7 @@ def _settle(
     now: float,
     add: Conn | None = None,
     gone: str | None = None,
+    since: float | None = None,
 ) -> str:
     """Bring the person's history in line with their tabs, in two steps: first the tabs that
     died of silence (dated from their last refresh, not from now: a laptop closed at noon left
@@ -371,7 +393,38 @@ def _settle(
     the tabs, and a reloading tab's old socket leaving while its new one arrives would
     otherwise remove the newcomer."""
     with store.lock(user_id):
+        if since is not None:
+            kicked = store.kicked_at(user_id)
+            if kicked is not None and since <= kicked:
+                raise SignedOut
         return _settle_locked(sessions, store, user_id, now, add, gone)
+
+
+class SignedOut(Exception):
+    """The connection was opened before an admin signed the person out: it must close."""
+
+
+def kick(sessions: Sessions, store: Store, user_id: int, now: float | None = None) -> None:
+    """An admin signed the person out (docs/specs/33 §14): they are offline from now, their
+    tabs are forgotten, and a socket opened before now is refused at its next refresh
+    (`beat(since=...)`), within BEAT_S."""
+    ts = time.time() if now is None else now
+    with store.lock(user_id):
+        store.set_kicked(user_id, ts)
+        with sessions() as session:
+            if transition(session, user_id, OFFLINE, _at(ts)):
+                session.commit()
+        store.forget(user_id)
+
+
+def kick_all(
+    sessions: Sessions, store: Store, keep: int | None = None, now: float | None = None
+) -> int:
+    """`kick` everyone with a living tab, but `keep` (the admin doing it)."""
+    found = [user_id for user_id in store.live_users() if user_id != keep]
+    for user_id in found:
+        kick(sessions, store, user_id, now)
+    return len(found)
 
 
 def _replay(dead: Sequence[Conn], living: Sequence[Conn], now: float) -> list[tuple[str, float]]:
@@ -477,10 +530,13 @@ def beat(
     device: str,
     kind: str,
     now: float | None = None,
+    since: float | None = None,
 ) -> str:
+    """`since`: when the caller's connection opened (a socket). Raises `SignedOut` when an
+    admin signed the person out after that."""
     ts = time.time() if now is None else now
     conn = Conn(conn_id, ts, active, device, kind, born=ts)
-    return _settle(sessions, store, user_id, ts, add=conn)
+    return _settle(sessions, store, user_id, ts, add=conn, since=since)
 
 
 def leave(

@@ -81,12 +81,20 @@ function startPresence(): () => void {
     if (retryTimer) clearTimeout(retryTimer);
   };
 
+  /** The session ended (it expired, or an admin signed the person out, §14): this tab can do
+   *  nothing more, so it goes to the sign-in page instead of waiting for a click to fail. */
+  const signedOut = () => {
+    stopForGood();
+    if (window.location.pathname !== "/login") window.location.href = "/login";
+  };
+
   const beat = () => {
     reported = active();
     const first = !posted;
     post("beat", { tab, device, active: reported })
       .then((res) => {
-        if (res.status === 401 || res.status === 403) stopForGood();
+        if (res.status === 401) signedOut();
+        else if (res.status === 403) stopForGood();
         else if (res.ok && first) {
           posted = true;
           window.dispatchEvent(new Event(PRESENCE_READY));
@@ -159,7 +167,11 @@ function startPresence(): () => void {
       if (readyTimer) clearTimeout(readyTimer);
       if (socket === ws) socket = null;
       // The server accepts, then closes with a code: signed out, bad ids, or too many tabs.
-      if (event.code === SIGNED_OUT || event.code === BAD_REQUEST || event.code === TOO_MANY) {
+      if (event.code === SIGNED_OUT) {
+        signedOut();
+        return;
+      }
+      if (event.code === BAD_REQUEST || event.code === TOO_MANY) {
         stopForGood();
         return;
       }
@@ -271,6 +283,8 @@ export interface PresenceBoard {
   rows: PresenceRow[];
   idle_minutes: number;
   keep_days: number;
+  /** docs/specs/33 §14: the viewer (an admin) may sign people out. */
+  can_sign_out: boolean;
 }
 
 export interface PresenceStretch {

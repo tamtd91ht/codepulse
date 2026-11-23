@@ -199,7 +199,7 @@ def callback(
     response = RedirectResponse(landing, status_code=302)
     response.set_cookie(
         SESSION_COOKIE,
-        issue_token(user.id, settings),
+        issue_token(user.id, settings, epoch=user.session_epoch or 0),
         max_age=settings.session_ttl_hours * 3600,
         httponly=True,
         samesite="lax",

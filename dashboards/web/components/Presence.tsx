@@ -3,10 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { DateRangePicker, type DayRange } from "@/components/DateRangePicker";
-import { IconButton } from "@/components/icons";
+import { Icon, IconButton } from "@/components/icons";
 import { MultiSelect } from "@/components/MultiSelect";
 import { Alert, Avatar, Card, Drawer, EmptyState, Loading, SortTh, StatStrip, StripStat, useSort } from "@/components/ui";
-import { qs, useApi } from "@/lib/api";
+import { api, qs, useApi } from "@/lib/api";
 import { dayLabel, localDay, shiftDays } from "@/lib/format";
 import {
   clock,
@@ -44,7 +44,7 @@ function StateCell({ row, now, tz }: { row: PresenceRow; now: string; tz: string
   const sub =
     row.state === "offline"
       ? row.since
-        ? `từ ${elapsed !== null && elapsed < 86_400 ? clock(row.since, tz) : dayLabel(row.since.slice(0, 10))} · ${duration(elapsed)}`
+        ? `từ ${elapsed !== null && elapsed < 86_400 ? clock(row.since, tz) : dayLabel(row.since.slice(0, 10))} · ${elapsed !== null && elapsed < 60 ? "vừa xong" : duration(elapsed)}`
         : "chưa từng online"
       : elapsed !== null && elapsed >= 60
         ? `${duration(elapsed)}`
@@ -73,6 +73,9 @@ export function PresenceScreen() {
   const [teams, setTeams] = useState<number[]>([]);
   const [state, setState] = useState<"" | PresenceState>("");
   const [open, setOpen] = useState<PresenceRow | null>(null);
+  // docs/specs/33 §14: the person to sign out, or "all"; asked before it is done.
+  const [kick, setKick] = useState<PresenceRow | "all" | null>(null);
+  const [kicked, setKicked] = useState<string | null>(null);
   const board = useApi<PresenceBoard>(`/presence${qs({ day: day || null })}`, { keepPreviousData: true, refreshInterval: POLL_MS });
   const data = board.data;
   // This tab's own socket may register after the first read: read again once it has.
@@ -129,6 +132,7 @@ export function PresenceScreen() {
         xem hay nội dung. Số liệu giữ {data.keep_days} ngày, chỉ để giám sát, <b>không tính vào DPI hay điểm đánh giá</b>.
         {own ? " Bạn chỉ thấy số liệu của chính mình; lead và quản lý thấy của team." : ""}
       </p>
+      {kicked && <Alert tone="success">{kicked}</Alert>}
       {!data.live && <Alert tone="warning">Không đọc được trạng thái trực tiếp (Redis không phản hồi): đang hiển thị theo lịch sử đã ghi.</Alert>}
       {board.error && <Alert tone="error">Không làm mới được: {board.error.message}. Đang hiển thị số liệu lần trước.</Alert>}
 
@@ -177,6 +181,11 @@ export function PresenceScreen() {
             <span className="muted small">Thời lượng của ngày</span>
             <input type="date" value={day || data.today} min={shiftDays(today, -data.keep_days)} max={data.today} onChange={(e) => setDay(e.target.value === data.today ? "" : e.target.value)} />
           </label>
+          {data.can_sign_out && (
+            <button type="button" className="ghost danger prs-kick-all" onClick={() => setKick("all")}>
+              <Icon name="logout" size={14} /> Đăng xuất tất cả
+            </button>
+          )}
           <span className="muted small prs-count">
             {filtered ? `${sorted.length} / ${data.rows.length} người` : `${data.rows.length} người`} · cập nhật {clock(data.now, data.tz)}
           </span>
@@ -240,6 +249,9 @@ export function PresenceScreen() {
                     <td className="muted small">{devicesText(row)}</td>
                     <td className="prs-actions">
                       <IconButton icon="history" label="Xem lịch sử theo ngày" className="tip-left" onClick={() => setOpen(row)} />
+                      {data.can_sign_out && (
+                        <IconButton icon="logout" label="Đăng xuất tài khoản này" tone="danger" className="tip-left" onClick={() => setKick(row)} />
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -254,12 +266,98 @@ export function PresenceScreen() {
           <PersonDays userId={data.rows[0].user.id} today={data.today} keepDays={data.keep_days} />
         </Card>
       )}
+      {kick && (
+        <ConfirmSignOut
+          target={kick}
+          others={data.rows.length}
+          onCancel={() => setKick(null)}
+          onDone={(message) => {
+            setKick(null);
+            setKicked(message);
+            void reload();
+          }}
+        />
+      )}
       {open && (
         <Drawer title={`Lịch sử online · ${open.user.full_name ?? open.user.email ?? `#${open.user.id}`}`} width={760} onClose={() => setOpen(null)}>
           <PersonDays userId={open.user.id} today={data.today} keepDays={data.keep_days} />
         </Drawer>
       )}
     </>
+  );
+}
+
+/** docs/specs/33 §14: ask, then end every session of one person, or of everyone else. */
+function ConfirmSignOut({
+  target,
+  others,
+  onCancel,
+  onDone,
+}: {
+  target: PresenceRow | "all";
+  others: number;
+  onCancel: () => void;
+  onDone: (message: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const all = target === "all";
+  const name = all ? "" : (target.user.full_name ?? target.user.email ?? `#${target.user.id}`);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !busy && onCancel();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onCancel]);
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (all) {
+        const done = await api.post<{ accounts: number }>("/presence/sign-out-all");
+        onDone(`Đã đăng xuất ${done.accounts} tài khoản. Họ phải đăng nhập lại qua GitLab.`);
+      } else {
+        await api.post(`/presence/users/${target.user.id}/sign-out`);
+        onDone(`Đã đăng xuất ${name}. Tài khoản này phải đăng nhập lại qua GitLab.`);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không thực hiện được");
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="modal-backdrop" onClick={() => !busy && onCancel()}>
+      <div className="modal card prs-confirm" role="dialog" aria-modal="true" aria-labelledby="prs-confirm-title" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h2 id="prs-confirm-title">{all ? "Đăng xuất tất cả tài khoản?" : `Đăng xuất ${name}?`}</h2>
+          <IconButton icon="close" label="Đóng" onClick={onCancel} disabled={busy} />
+        </div>
+        <p>
+          {all ? (
+            <>
+              Mọi phiên đăng nhập của <b>tất cả tài khoản khác</b> ({Math.max(others - 1, 0)} người trong danh sách, và cả những người
+              không hiển thị) kết thúc ngay, trên mọi tab và thiết bị. <b>Riêng bạn vẫn giữ phiên đang dùng.</b>
+            </>
+          ) : (
+            <>
+              Mọi phiên đăng nhập của <b>{name}</b> kết thúc ngay, trên mọi tab và thiết bị.
+            </>
+          )}
+        </p>
+        <p className="muted small">
+          Người bị đăng xuất phải đăng nhập lại qua GitLab; tài khoản <b>không bị khoá</b>. Tab đang mở tự chuyển về trang đăng nhập trong
+          khoảng 30 giây; việc đang nhập dở chưa lưu sẽ mất. Token MCP / API cá nhân không bị ảnh hưởng. Thao tác được ghi vào nhật ký.
+        </p>
+        {error && <Alert tone="error">{error}</Alert>}
+        <div className="toolbar prs-confirm-actions">
+          <button type="button" className="danger" onClick={run} disabled={busy} autoFocus>
+            {busy ? "Đang đăng xuất…" : all ? "Đăng xuất tất cả" : "Đăng xuất"}
+          </button>
+          <button type="button" onClick={onCancel} disabled={busy}>
+            Huỷ
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

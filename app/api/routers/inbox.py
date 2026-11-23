@@ -21,10 +21,10 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_session
-from app.api.security import SESSION_COOKIE, CurrentPrincipal, read_token
+from app.api.security import SESSION_COOKIE, CurrentPrincipal, session_user
 from app.config import get_settings
 from app.db import get_sessionmaker
-from app.models import User, UserNotification
+from app.models import UserNotification
 from app.notifications.inbox import as_message, snooze, unsnoozed
 from app.notifications.stream import hub, sse
 
@@ -140,12 +140,8 @@ def _stream_user(token: str | None) -> int:
     and must not hold a pooled connection (the request's session would)."""
     if not token:
         raise HTTPException(401, "not signed in")
-    user_id = read_token(token, get_settings())
     with get_sessionmaker()() as session:
-        user = session.get(User, user_id)
-        if user is None or user.active is False:
-            raise HTTPException(401, "user is not active")
-    return user_id
+        return session_user(session, token, get_settings()).id
 
 
 def _missed(user_id: int, after: int | None) -> tuple[list[dict[str, Any]], int]:

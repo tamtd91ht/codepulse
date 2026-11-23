@@ -53,10 +53,15 @@ def _secret(settings: Settings) -> str:
     return secret
 
 
-def issue_token(user_id: int, settings: Settings, now: datetime | None = None) -> str:
+def issue_token(
+    user_id: int, settings: Settings, now: datetime | None = None, epoch: int = 0
+) -> str:
+    """A session token. `epoch` is the person's `session_epoch` when they signed in (`sv`):
+    `session_user` refuses the token once an admin has signed them out since."""
     issued = now or datetime.now(UTC)
     claims = {
         "sub": str(user_id),
+        "sv": epoch,
         "iat": issued,
         "exp": issued + timedelta(hours=settings.session_ttl_hours),
         "iss": "codepulse",
@@ -64,12 +69,31 @@ def issue_token(user_id: int, settings: Settings, now: datetime | None = None) -
     return jwt.encode(claims, _secret(settings), algorithm=ALGORITHM)
 
 
-def read_token(token: str, settings: Settings) -> int:
+def read_session(token: str, settings: Settings) -> tuple[int, int]:
+    """(user id, session epoch) of a signed, unexpired token; a token from before the epoch
+    existed counts as epoch 0."""
     try:
         claims = jwt.decode(token, _secret(settings), algorithms=[ALGORITHM], issuer="codepulse")
-        return int(claims["sub"])
-    except (jwt.PyJWTError, KeyError, ValueError) as exc:
+        return int(claims["sub"]), int(claims.get("sv", 0))
+    except (jwt.PyJWTError, KeyError, ValueError, TypeError) as exc:
         raise HTTPException(401, "invalid or expired session") from exc
+
+
+def read_token(token: str, settings: Settings) -> int:
+    return read_session(token, settings)[0]
+
+
+def session_user(session: Session, token: str, settings: Settings) -> User:
+    """The person a session token signs in: active, and not signed out by an admin since the
+    token was issued (docs/specs/33 §14). Every way in with a session token comes through
+    here: requests, the inbox stream, the presence socket."""
+    user_id, epoch = read_session(token, settings)
+    user = session.get(User, user_id)
+    if user is None or user.active is False:
+        raise HTTPException(401, "user is not active")
+    if (user.session_epoch or 0) != epoch:
+        raise HTTPException(401, "phiên đăng nhập đã bị quản trị viên kết thúc, hãy đăng nhập lại")
+    return user
 
 
 @dataclass
@@ -619,7 +643,7 @@ def current_principal(
     if token.startswith(API_TOKEN_PREFIX):
         principal = token_principal(request, session, settings, token)
     else:
-        principal = load_principal(session, read_token(token, settings), settings)
+        principal = load_principal(session, session_user(session, token, settings).id, settings)
     request.state.principal = principal
     # §15.14 (G12): the audit trail's actor, a token's owner included.
     set_actor(session, principal.user_id)
