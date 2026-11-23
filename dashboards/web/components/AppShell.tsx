@@ -15,6 +15,7 @@ import { RAIL_KEY, ThemeToggle } from "@/components/theme";
 import { UserMenu } from "@/components/UserMenu";
 import { openPalette, toggleShortcutHelp } from "@/components/tasks/shortcutEvents";
 import { can, managesAnyProject, setupProjects, useApi } from "@/lib/api";
+import { PresenceBeacon } from "@/lib/presence";
 import type { Me } from "@/lib/types";
 import { UsageTracker } from "@/lib/usage";
 
@@ -100,6 +101,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         ...(can(me, "report.member") ? [{ href: "/members/report", label: "Báo cáo thành viên", icon: "book" } as Item] : []),
         // Tích hợp MCP (docs/specs/26 §13.2): whoever holds report.mcp (a member: their own).
         ...(can(me, "report.mcp") ? [{ href: "/mcp-report", label: "Tích hợp MCP", icon: "terminal" } as Item] : []),
+        // Trạng thái online (docs/specs/33): whoever holds presence.view (a member: their own times).
+        ...(can(me, "presence.view") ? [{ href: "/presence", label: "Trạng thái online", icon: "signal" } as Item] : []),
         { href: `/members/${me.id}`, label: "Của tôi", icon: "user" },
         // One menu, tabs Kết quả review | Yêu cầu review | Critical Board | Đóng finding | Khiếu nại
         // (components/ReviewTabs); the link opens the first tab.
@@ -294,6 +297,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       {me && <CommandPalette me={me} />}
       {/* docs/specs/31 §21.2: anonymous usage (role, event, surface only). */}
       {me && <UsageTracker />}
+      {/* docs/specs/33: this tab's presence socket (online / away), one per tab. */}
+      {me && <PresenceBeacon />}
       {me && <ReviewActivity />}
       {assistant && <Stetho />}
     </div>

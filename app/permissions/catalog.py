@@ -313,6 +313,17 @@ CATALOG: tuple[Permission, ...] = (
         "Phản ánh & Đề xuất",
         "Xem mọi phản ánh, phân loại, đổi trạng thái, export cho agent code",
     ),
+    # docs/specs/33: who is online, away or offline and for how long. own = one's own times (so
+    # everyone sees what is recorded about them); team = the people one leads or manages; all =
+    # everyone. Monitoring only: never a part of DPI or of any score.
+    _p(
+        "presence.view",
+        "Trạng thái online",
+        "Xem trạng thái online / vắng / offline và thời lượng từng người",
+        "own team all",
+        True,
+        managed_team=True,
+    ),
     _p("admin.connections", "Quản trị", "Kết nối GitLab"),
     _p(
         "admin.projects",
@@ -437,6 +448,7 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "tasks.worklog": "own",
             "tasks.link": "own",
             "feedback.submit": FLAG,
+            "presence.view": "own",
         },
     ),
     BuiltinSet(
@@ -469,6 +481,7 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "tasks.link": "team",
             "tasks.moderate": "team",
             "tests.run": "team",
+            "presence.view": "team",
         },
     ),
     BuiltinSet(
@@ -483,6 +496,7 @@ BUILTIN_SETS: tuple[BuiltinSet, ...] = (
             "finding.lower_far": "team",
             "assistant.use": FLAG,
             "dpi.distribution": "team",
+            "presence.view": "team",
         },
     ),
     BuiltinSet(

@@ -28,3 +28,4 @@
 - (2026-11-18, spec 32) Phản ánh: dán ảnh chụp màn hình như Task; +1 / bình chọn công khai cho phản ánh của người khác; gửi nhanh từ nút nổi ở mọi trang; thông báo cho tác giả khi trạng thái đổi (inbox / Telegram).
 - (feedback #1, 2026-11-19) Dán Ctrl+V không cần focus ở ngăn / trang chi tiết task (hiện chỉ form tạo task); cân nhắc vì ở chi tiết, mô tả là chế độ xem chứ không phải ô nhập.
 - (feedback #2, 2026-11-19) Có đổi ngăn chi tiết sang dạng đè ở Board / Backlog như Danh sách không: chờ người dùng phản hồi.
+- (2026-11-23, spec 33) Trạng thái online: đẩy thay đổi qua SSE thay cho polling 10 giây; chấm online cạnh avatar ở các màn khác; trạng thái tự đặt ("Đang họp", "Đừng làm phiền"); khung giờ làm việc + ngày nghỉ để tính offline trong giờ; bảng tổng hợp theo ngày khi `presence_segments` lớn; xuất Excel.

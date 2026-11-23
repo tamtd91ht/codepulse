@@ -48,6 +48,7 @@ from app.api.routers import (
     notifications,
     overview,
     permissions,
+    presence,
     project_docs,
     project_permissions,
     purge,
@@ -201,6 +202,7 @@ for api_router in (
     tasks.router,  # docs/specs/31; its static paths come before /tasks/{key} inside
     feedback.router,  # docs/specs/32 Phản ánh & Đề xuất (static paths before /{item_id} inside)
     usage.router,  # docs/specs/31 §21.2: anonymous usage beacon and the admins' summary
+    presence.router,  # docs/specs/33: the presence socket, its HTTP stand-in, the monitor's reads
 ):
     app.include_router(api_router, prefix="/api/v1")
 # §21.2: the request's path for the usage events the server records (status changes, creation).

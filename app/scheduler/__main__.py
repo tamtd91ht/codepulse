@@ -13,6 +13,8 @@ from app.dpi.jobs import dpi_lock_job
 from app.evidence.jobs import create_drafts_job
 from app.insights.backfill import backfill_once_job
 from app.logging import configure_logging
+from app.presence import SWEEP_S as PRESENCE_SWEEP_S
+from app.presence import sweep_job as presence_sweep_job
 from app.reporting.jobs import send_reports_job
 from app.retention import purge_job
 from app.review.llm_recovery import TICK_MIN
@@ -254,6 +256,16 @@ def build_scheduler(
         "interval",
         minutes=TEAM_GITLAB_MIN,
         id="team-gitlab-sync",
+        max_instances=1,
+        coalesce=True,
+    )
+    # docs/specs/33: tabs that died without a goodbye (a crashed API process, a tab posting
+    # instead of holding a socket), the checkpoint of the open stretches. A few Redis reads.
+    scheduler.add_job(
+        presence_sweep_job,
+        "interval",
+        seconds=PRESENCE_SWEEP_S,
+        id="presence-sweep",
         max_instances=1,
         coalesce=True,
     )

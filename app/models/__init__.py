@@ -55,6 +55,7 @@ from app.models.permissions import (
     TeamPermissionSet,
     UserPermissionSet,
 )
+from app.models.presence import PresenceSegment
 from app.models.project_docs import (
     ProjectDocument,
     ProjectDocumentAsset,
@@ -177,6 +178,7 @@ __all__ = [
     "PermissionSet",
     "PermissionSetItem",
     "Pipeline",
+    "PresenceSegment",
     "ProdDefect",
     "Project",
     "ProjectCriteriaSet",

@@ -36,6 +36,7 @@ Tự động thu thập commit/MR từ GitLab, cho AI review từng thay đổi,
 | 30 | `30_TESTCASES.md` | **Testcase**: kho testcase có cấu trúc + lịch sử, nhập/xuất Google Sheet / Excel, AI sinh và rà soát testcase, testcase cần test lại theo MR / đợt release, review nhắc thiếu test; **mô hình TestRail** (§13–§14): cây thư mục, dạng bước, bước dùng chung, milestone, cấu hình, test plan / run / kết quả, mã tự sinh | [ ] |
 | 27 | `27_JIRA.md` | **Jira Data Center làm nguồn task cho DPI**: chỉ đọc, sync JQL, Story Points → độ phức tạp, nối issue ↔ MR theo key, chọn nguồn task gitlab/jira | [ ] |
 | 32 | `32_FEEDBACK.md` | **Phản ánh & Đề xuất**: mọi người gửi lỗi / đề xuất; LLM phân loại thành bản .md trên cây Lĩnh vực ▸ Chức năng; người quản lý duyệt, tick chọn, export một file .md cho agent code | [x] |
+| 33 | `33_PRESENCE.md` | **Trạng thái online**: mỗi tab giữ một WebSocket (HTTP dự phòng), gộp nhiều tab / thiết bị thành Online / Tạm vắng / Offline của từng người; lịch sử theo đoạn thời gian, thời lượng theo ngày; màn giám sát theo quyền `presence.view`. Hướng tiếp cận dùng lại được: `docs/PRESENCE_PATTERN.md` | [x] |
 
 ## Cách dùng với AI agent
 1. Copy toàn bộ thư mục này vào `docs/specs/` của repo mới.

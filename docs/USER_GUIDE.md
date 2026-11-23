@@ -125,6 +125,26 @@ Người gửi nhận thông báo trên chuông mỗi khi phản ánh của họ
 cấp xong một gói, bấm icon ✓ cạnh gói đó trong **Lịch sử export** để chọn lại đúng các mục của gói,
 rồi chuyển sang **Đã xong**.
 
+## 3d. Trạng thái online
+
+Menu **Trạng thái online** cho biết ai đang mở CodePulse và trong bao lâu.
+
+- **Online**: có ít nhất một tab đang mở và bạn có thao tác (chuột, phím, cuộn) trong 5 phút gần nhất.
+- **Tạm vắng**: tab còn mở nhưng không thao tác quá 5 phút.
+- **Offline**: không còn tab nào mở. Đóng tab hay mất mạng được ghi nhận ngay.
+
+Mở nhiều tab hay nhiều thiết bị vẫn chỉ tính là một người; cột "Đang mở" cho biết số thiết bị và số tab.
+
+Ai xem được gì: mỗi người thấy số liệu của **chính mình**; lead và manager thấy người trong team; admin thấy
+tất cả. Bấm biểu tượng lịch sử ở cuối dòng để xem từng ngày: mỗi ngày một thanh 24 giờ, xanh là Online, cam là
+Tạm vắng, trống là Offline.
+
+Cột **Offline** của một ngày là tổng các khoảng không mở ứng dụng *giữa* lần đầu và lần cuối online hôm đó,
+không tính trước giờ bắt đầu và sau giờ nghỉ.
+
+Hệ thống chỉ ghi thời gian, không ghi bạn đang xem trang nào hay gõ gì. Số liệu giữ 180 ngày, chỉ để giám sát:
+**không tính vào DPI hay bất kỳ điểm đánh giá nào**. Thời gian online không phải là thời gian làm việc.
+
 ## 4. Bot Telegram (nếu dự án của bạn có)
 
 - Liên kết một lần: **Của tôi → Telegram → Tạo mã liên kết**, gửi `/link MÃ` cho bot. Gõ `/whoami` để kiểm tra.

@@ -22996,3 +22996,163 @@ button.fbk-status-trigger svg:last-child {
 .card.fbk-list {
   padding: 16px 20px 20px;
 }
+
+/* ---------- Trạng thái online (docs/specs/33): prefix prs- ---------- */
+.prs-note {
+  max-width: 980px;
+  margin: 0 0 14px;
+  line-height: 1.55;
+}
+.prs-filters {
+  padding: 14px 20px;
+}
+.prs-count {
+  margin-left: auto;
+  padding-bottom: 6px;
+  white-space: nowrap;
+}
+.prs-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 150px;
+}
+.prs-state-name {
+  font-weight: 600;
+}
+.prs-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+.prs-dot.online {
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--good-soft);
+}
+.prs-dot.away {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px var(--warn-soft);
+}
+.prs-table td {
+  vertical-align: middle;
+}
+.prs-table .cell-main .who {
+  white-space: nowrap;
+}
+.prs-table td.num,
+.prs-table th.num {
+  white-space: nowrap;
+}
+.prs-table .prs-actions {
+  width: 44px;
+  text-align: right;
+}
+.prs-time {
+  font-size: 18px;
+}
+.prs-days {
+  display: grid;
+  gap: 14px;
+}
+.prs-days-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+.prs-legend {
+  display: flex;
+  gap: 14px;
+  padding-bottom: 6px;
+}
+.prs-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.prs-key {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+}
+.prs-key.online,
+.prs-seg.online {
+  background: var(--success);
+  border-color: transparent;
+}
+.prs-key.away,
+.prs-seg.away {
+  background: var(--warning);
+  border-color: transparent;
+}
+.prs-axis,
+.prs-day {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.prs-hours {
+  position: relative;
+  height: 16px;
+}
+.prs-hours span {
+  position: absolute;
+  transform: translateX(-50%);
+}
+.prs-hours span:first-child {
+  transform: none;
+}
+.prs-hours span:last-child {
+  transform: translateX(-100%);
+}
+.prs-daylist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.prs-day-name {
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.prs-bar {
+  position: relative;
+  height: 18px;
+  border-radius: 4px;
+  overflow: hidden;
+  background:
+    linear-gradient(to right, var(--border-strong) 1px, transparent 1px) 0 0 / 25% 100%,
+    var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.prs-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+}
+.prs-day-sum {
+  margin-top: 4px;
+  color: var(--text-2);
+}
+@media (max-width: 700px) {
+  .prs-axis,
+  .prs-day {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .prs-axis > span:first-child {
+    display: none;
+  }
+  .prs-count {
+    margin-left: 0;
+  }
+}

@@ -224,6 +224,16 @@ const PATHS = {
   sparkle: (
     <path d="M12 3l1.9 5.6L19.5 10.5l-5.6 1.9L12 18l-1.9-5.6L4.5 10.5l5.6-1.9z" />
   ),
+  // Trạng thái online (docs/specs/33): a point sending out waves.
+  signal: (
+    <>
+      <circle cx="12" cy="12" r="2" />
+      <path d="M16.2 7.8a6 6 0 0 1 0 8.4" />
+      <path d="M7.8 16.2a6 6 0 0 1 0-8.4" />
+      <path d="M19.1 4.9a10 10 0 0 1 0 14.2" />
+      <path d="M4.9 19.1a10 10 0 0 1 0-14.2" />
+    </>
+  ),
   history: (
     <>
       <path d="M3 3v5h5" />

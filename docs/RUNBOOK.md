@@ -264,3 +264,36 @@ Các tab mới (Rủi ro tri thức, DORA, sự cố, "Commit chưa thuộc MR n
 Tiến trình từng repo (Chờ → Dựng lại dữ liệu → Đồng bộ GitLab → Xong / Lỗi, kèm lý do) hiện ngay dưới nút và tự cập nhật; API `GET /api/v1/admin/insights/backfill`. Bấm lại khi đang chạy không xếp hàng trùng; job dừng giữa chừng quá 3 giờ được coi là lỗi và chạy lại được.
 
 Mỗi repo: dựng lại dữ liệu từ các lần sync đã lưu trong `raw_gitlab` (giữ `RETENTION_DAYS`, mặc định 365 ngày; không gọi GitLab, không tốn LLM), rồi sync đầy đủ cửa sổ `BACKFILL_DAYS` để lấy deployment và sự cố. Chạy lại bao nhiêu lần cũng được. Dữ liệu cũ hơn `raw_gitlab` còn giữ thì không dựng lại được; khi đó trang vẫn báo thiếu cho phần đó.
+
+## 17. Trạng thái online (spec 33)
+
+**Reverse proxy phải cho WebSocket đi qua.** Mỗi tab mở `wss://<dashboard>/api/v1/presence/ws`. Rewrite `/api` của
+dashboard đã chuyển được upgrade; proxy đặt trước dashboard cần, ví dụ với nginx:
+
+```nginx
+location /api/v1/presence/ws {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_read_timeout 120s;   # dài hơn nhịp ping 20 giây của uvicorn
+}
+```
+
+Kiểm tra: mở dashboard, DevTools › Network › WS phải thấy `presence/ws` ở trạng thái 101 và nhận `{"ok":true}`. Nếu
+không, trình duyệt tự chuyển sang `POST /api/v1/presence/beat` mỗi 30 giây: vẫn chạy, nhưng tốn hơn và tab đóng đột
+ngột chỉ được ghi nhận sau tối đa 115 giây.
+
+**Thành phần.** API giữ socket; Redis giữ kết nối sống (`cp:presence:*`); scheduler chạy `presence-sweep` mỗi 15 giây;
+`retention-purge` xoá đoạn cũ hơn 180 ngày.
+
+| Hiện tượng | Nguyên nhân thường gặp | Xử lý |
+|---|---|---|
+| Mọi người đều Offline | Redis không phản hồi (màn hình có cảnh báo), hoặc proxy chặn cả WebSocket lẫn `/presence/beat` | Kiểm Redis; kiểm proxy như trên |
+| Có người Online mãi dù đã nghỉ | Scheduler không chạy nên không ai gỡ kết nối chết | `docker compose ps scheduler`; log có `presence-sweep` |
+| Sau khi deploy API, mọi người chớp Offline vài giây | Socket đứt và kết nối lại | Bình thường; lịch sử có một khoảng trống ngắn |
+| Xoá sạch trạng thái sống | | `redis-cli --scan --pattern 'cp:presence:*' \| xargs redis-cli del`; sweeper đóng các đoạn đang mở tại mốc an toàn, trình duyệt tự ghi lại |
+
+Tham số (`app/presence/__init__.py`): `BEAT_S` 30, `TAB_TTL_S` 100, `IDLE_S` 300 (ngưỡng Tạm vắng, phía trình duyệt là
+`IDLE_MS` trong `dashboards/web/lib/presence.ts`), `SWEEP_S` 15, `KEEP_DAYS` 180.
