@@ -139,7 +139,7 @@ Ba khoá, không cần Lua, không cần khoá phân tán:
 
 | Khoá | Kiểu | Nội dung |
 |---|---|---|
-| `presence:tabs:{user}` | HASH | mã kết nối → `{t: lần beat cuối, a: đang thao tác, d: device_id, k: loại thiết bị, b: lúc xuất hiện, c: lúc a đổi lần cuối}`; cả khoá tự hết hạn |
+| `presence:tabs:{user}` | HASH | mã kết nối → `{t: lần beat cuối, a: đang thao tác, d: device_id, k: loại thiết bị, b: lúc xuất hiện, c: các lần a đổi gần đây}`; cả khoá tự hết hạn |
 | `presence:live` | ZSET | `user` → lần beat cuối bất kỳ; để sweeper liệt kê người còn sống mà không phải quét khoá |
 | `presence:state` | HASH | `user` → trạng thái gộp đã ghi vào lịch sử (`online` / `away`); để biết có **đổi** hay không |
 | `presence:lock:{user}` | khoá có hạn | một lần đọc-sửa-ghi các kết nối của một người tại một thời điểm |
@@ -224,7 +224,8 @@ và lần gọi kế tiếp tự làm lại.
    máy bàn ngừng thao tác lúc 12:01, nhưng hệ thống vẫn coi là Online vì bản ghi của điện thoại
    còn đó, nên không ghi gì. Khi bản ghi hết hạn, ghi "vắng từ 12:00" là lấy mất một phút online;
    ghi "vắng từ lúc quét" là cho thừa. Cách đúng: mỗi kết nối nhớ thêm **lúc nó xuất hiện** và
-   **lúc cờ `active` đổi lần cuối**; khi một tab chết, dựng lại trạng thái từ lần cuối nó lên tiếng
+   **các lần cờ `active` đổi gần đây** (giữ khoảng 10 phút là đủ, vì chỉ cần nhìn lại trong hạn sống);
+   khi một tab chết, dựng lại trạng thái từ lần cuối nó lên tiếng
    tới bây giờ như thể nó rời đi đúng lúc đó, rồi ghi các thay đổi theo thứ tự. Nếu trong khoảng đó
    không còn tab nào thì đó là một khoảng offline thật.
 2. Mỗi phút một lần: cập nhật `last_seen_at = bây giờ` cho đoạn đang mở của những người còn sống.

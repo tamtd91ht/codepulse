@@ -53,6 +53,10 @@ CHECKPOINT_S = 60
 KEEP_DAYS = 180
 # Stretches closer than this count as one session (a page reload leaves a gap of a second).
 SESSION_GAP_S = 10
+# A tab's changes of `active` are kept this long (and no more than FLIPS_MAX): well past the
+# time a silent tab stays counted, which is all `_replay` looks back over.
+FLIPS_KEEP_S = 600
+FLIPS_MAX = 64
 # More tabs than anyone opens; the oldest go first.
 MAX_TABS = 30
 # The per-person lock of the live store: its own expiry, and how long a caller waits for it.
@@ -74,10 +78,10 @@ class Conn:
     active: bool
     device: str
     kind: str  # "desktop" | "mobile"
-    # When the connection first appeared, and when `active` last changed (its first
-    # appearance, when it never did): `_replay` dates a silent tab's death with them.
+    # When the connection first appeared, and when its `active` changed lately (oldest
+    # first, those of the last FLIPS_KEEP_S): `_replay` dates a silent tab's death with them.
     born: float = 0.0
-    changed: float = 0.0
+    flips: tuple[float, ...] = ()
 
     @property
     def tab(self) -> str:
@@ -153,7 +157,7 @@ def _encode(conn: Conn) -> str:
             "d": conn.device,
             "k": conn.kind,
             "b": conn.born,
-            "c": conn.changed,
+            "c": list(conn.flips),
         }
     )
 
@@ -163,14 +167,18 @@ def _decode(conn_id: Any, raw: Any) -> Conn | None:
         data = json.loads(raw)
         name = conn_id.decode() if isinstance(conn_id, bytes) else str(conn_id)
         at = float(data["t"])
+        born = float(data.get("b", at))
+        changes = data.get("c", [])
+        if not isinstance(changes, list):  # a record of the first day: the last change only
+            changes = [changes] if float(changes) > born else []
         return Conn(
             name,
             at,
             bool(data["a"]),
             str(data.get("d", "")),
             str(data.get("k", "")),
-            float(data.get("b", at)),
-            float(data.get("c", at)),
+            born,
+            tuple(float(c) for c in changes),
         )
     except (ValueError, TypeError, KeyError, AttributeError):
         return None
@@ -375,14 +383,14 @@ def _replay(dead: Sequence[Conn], living: Sequence[Conn], now: float) -> list[tu
     using their desktop at 12:01 was "online" until the phone's record expired. Dating the
     change at the phone's last word (12:00) would take a minute of online from them; dating
     it at the sweep would give them one. Each tab remembers when it appeared and when its
-    `active` last changed, which is enough to tell: online until 12:01, away from then.
-    (A tab that changed twice in the window is read as if it changed once: the earlier change
-    is not kept.)"""
+    `active` changed lately, which is enough to tell: online until 12:01, away from then."""
 
     def flag(conn: Conn, at: float) -> bool | None:
         if at < conn.born:
             return None  # not there yet
-        return conn.active if at >= conn.changed else not conn.active
+        # Each change after `at` undoes the flag once.
+        later = sum(1 for flip in conn.flips if flip > at)
+        return conn.active if later % 2 == 0 else not conn.active
 
     def state_at(at: float) -> str:
         there = [flag(c, at) for c in living] + [flag(c, at) for c in dead if at < c.t]
@@ -391,7 +399,7 @@ def _replay(dead: Sequence[Conn], living: Sequence[Conn], now: float) -> list[tu
 
     start = min(c.t for c in dead)
     moments = {c.t for c in dead}
-    moments |= {m for c in (*living, *dead) for m in (c.born, c.changed) if start < m <= now}
+    moments |= {m for c in (*living, *dead) for m in (c.born, *c.flips) if start < m <= now}
     out: list[tuple[str, float]] = []
     for at in sorted(moments):
         state = state_at(at)
@@ -420,9 +428,10 @@ def _settle_locked(
         steps.append((OFFLINE, None))
     if add is not None:
         before = next((c for c in living if c.id == add.id), None)
-        if before is not None:  # a refresh: it was born then, and changed then unless it does now
-            changed = before.changed if before.active == add.active else now
-            add = replace(add, born=before.born, changed=changed)
+        if before is not None:  # a refresh: born then; one more change when the flag differs
+            flips = before.flips if before.active == add.active else (*before.flips, now)
+            kept = tuple(f for f in flips if f > now - FLIPS_KEEP_S)[-FLIPS_MAX:]
+            add = replace(add, born=before.born, flips=kept)
         living = [c for c in living if c.id != add.id] + [add]
     if gone is not None:
         living = [c for c in living if c.id != gone]
@@ -470,7 +479,7 @@ def beat(
     now: float | None = None,
 ) -> str:
     ts = time.time() if now is None else now
-    conn = Conn(conn_id, ts, active, device, kind, born=ts, changed=ts)
+    conn = Conn(conn_id, ts, active, device, kind, born=ts)
     return _settle(sessions, store, user_id, ts, add=conn)
 
 

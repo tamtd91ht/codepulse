@@ -242,6 +242,36 @@ def test_a_silent_tab_does_not_take_the_time_the_other_tab_was_in_use(
     assert [c.id for c in store.conns(world.an.id)] == ["desk.1"]
 
 
+def test_every_change_of_the_other_tab_is_replayed_not_only_the_last(
+    world: World, db_session: Session, sessions: presence.Sessions, store: presence.MemoryStore
+) -> None:
+    """The phone falls silent at 30 and is counted until 130; meanwhile the desktop goes idle
+    at 60, is used again at 100 and left at 120. None of it was written then."""
+    beat(sessions, store, world.an, "phone.1", 0, device=PHONE)
+    beat(sessions, store, world.an, "phone.1", 30, device=PHONE)
+    beat(sessions, store, world.an, "desk.1", 0)
+    beat(sessions, store, world.an, "desk.1", 60, active=False)
+    beat(sessions, store, world.an, "desk.1", 90, active=False)
+    beat(sessions, store, world.an, "desk.1", 100)
+    beat(sessions, store, world.an, "desk.1", 120, active=False)
+    assert rows(db_session, world.an) == [("online", 0, None)]
+    (desk,) = [c for c in store.conns(world.an.id) if c.id == "desk.1"]
+    assert (desk.born, desk.flips) == (T0, (T0 + 60, T0 + 100, T0 + 120))
+    presence.sweep(sessions, store, T0 + 140)
+    assert rows(db_session, world.an) == [
+        ("online", 0, 60),
+        ("away", 60, 100),
+        ("online", 100, 120),
+        ("away", 120, None),
+    ]
+    # Changes older than FLIPS_KEEP_S are dropped at the next one (the tab kept refreshing).
+    for at in range(150, 130 + presence.FLIPS_KEEP_S, 60):
+        beat(sessions, store, world.an, "desk.1", at, active=False)
+    beat(sessions, store, world.an, "desk.1", 130 + presence.FLIPS_KEEP_S)
+    (desk,) = store.conns(world.an.id)
+    assert desk.flips == (T0 + 130 + presence.FLIPS_KEEP_S,)
+
+
 def test_a_silent_tab_then_nobody_then_an_idle_tab_is_a_gap(
     world: World, db_session: Session, sessions: presence.Sessions, store: presence.MemoryStore
 ) -> None:
@@ -263,9 +293,13 @@ def test_a_silent_idle_tab_changes_nothing_while_another_is_in_use(
         beat(sessions, store, world.an, "desk.1", at)
     presence.sweep(sessions, store, T0 + 140)
     assert rows(db_session, world.an) == [("online", 0, None)]
-    # Old records (written before `born` / `changed` existed) read as born at their refresh.
+    # Old records (written before `born` / `flips` existed) read as born at their refresh.
     old = presence._decode("x.1", '{"t": 5.0, "a": 1, "d": "d", "k": "desktop"}')
-    assert old is not None and (old.born, old.changed) == (5.0, 5.0)
+    assert old is not None and (old.born, old.flips) == (5.0, ())
+    one = presence._decode(
+        "x.1", '{"t": 9.0, "a": 0, "d": "d", "k": "desktop", "b": 1.0, "c": 7.0}'
+    )
+    assert one is not None and one.flips == (7.0,)  # the first day's format: one change
     again = presence._decode("x.1", presence._encode(old))
     assert again == old
 

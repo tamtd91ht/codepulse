@@ -90,7 +90,7 @@ Loại thiết bị (`desktop` / `mobile`) suy từ User-Agent, chỉ nằm tron
 
 | Khoá | Kiểu | Nội dung |
 |---|---|---|
-| `cp:presence:tabs:{user}` | HASH | mã kết nối → `{t, a, d, k, b, c}`: lần làm mới cuối, đang thao tác, device, loại, lúc xuất hiện, lúc `a` đổi lần cuối |
+| `cp:presence:tabs:{user}` | HASH | mã kết nối → `{t, a, d, k, b, c}`: lần làm mới cuối, đang thao tác, device, loại, lúc xuất hiện, các lần `a` đổi trong 10 phút gần nhất |
 | `cp:presence:live` | ZSET | user → lần làm mới cuối; sweeper duyệt ở đây, không quét khoá |
 | `cp:presence:state` | HASH | user → trạng thái đã ghi vào lịch sử, để biết có **đổi** hay không |
 
@@ -123,7 +123,7 @@ socket mới ghi vào, sẽ xoá luôn kết nối mới.
 
 1. Với mỗi người trong `cp:presence:live`: gỡ tab hết hạn và **dựng lại diễn biến** từ lần làm mới
    cuối của tab chết tới bây giờ, coi như tab đó rời đi đúng lúc nó im lặng (`_replay`). Mỗi kết
-   nối nhớ lúc nó xuất hiện (`b`) và lúc `active` đổi lần cuối (`c`), đủ để biết các tab còn lại đã
+   nối nhớ lúc nó xuất hiện (`b`) và các lần `active` đổi gần đây (`c`), đủ để biết các tab còn lại đã
    làm gì trong khoảng đó. Ví dụ: điện thoại im từ 12:00, máy bàn dùng tới 12:01 rồi để yên; khi
    bản ghi của điện thoại hết hạn lúc 12:01:40, lịch sử ghi Online tới 12:01, Tạm vắng từ 12:01
    (không phải từ 12:00, cũng không phải từ lúc quét).
@@ -219,8 +219,6 @@ Người ngoài phạm vi: không có trong danh sách, và `GET /presence/users
 - Trình duyệt đóng băng hoặc huỷ tab nền để tiết kiệm bộ nhớ thì tab đó được tính là đã đóng.
 - Nhân đôi tab (Duplicate) sao chép `sessionStorage`, nên hai tab đó được đếm là một tab; trạng
   thái vẫn đúng.
-- Một tab chết **không báo** trong khi tab khác còn sống được dựng lại theo §5; nếu trong lúc đó một
-  tab còn sống đổi `active` **hai lần** thì chỉ lần sau được tính (lần trước không lưu).
 - Giới hạn 30 socket mỗi người đếm theo tiến trình API; chạy nhiều tiến trình thì trần thực tế là
   30 × số tiến trình (bản ghi trong Redis vẫn tối đa 30).
 - Khi tiến trình API bị kill, các tab của nó được ghi là rời đi tại lần làm mới cuối (sai số tối
