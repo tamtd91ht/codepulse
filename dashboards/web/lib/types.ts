@@ -1095,6 +1095,9 @@ export interface CommitList {
   batch_max: number; // how many commits one request may queue
   limit?: number; // commits listed per repo at most (Admin › Cấu hình review)
   reviewed_hidden?: number; // left out by "Bỏ commit đã review"
+  scanned?: number; // commits read from GitLab to build the list
+  /** A filtered read that ran out of budget: the commit date it got back to (older ones unread). */
+  read_until?: string | null;
 }
 
 export interface ReviewCommitsResult {

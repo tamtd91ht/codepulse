@@ -814,6 +814,10 @@ class CommitListOut(BaseModel):
     batch_max: int  # REVIEW_BATCH_MAX: how many may be queued in one request
     limit: int = 200  # commits listed per repo at most (Admin > Cấu hình review)
     reviewed_hidden: int = 0  # left out by `exclude_reviewed` (reviewed or being reviewed)
+    scanned: int = 0  # commits read from GitLab to build the list
+    # Set when a filtered read ran out of budget before the window ended: the commit date it
+    # got back to. Ending the window there reads the rest.
+    read_until: datetime | None = None
 
 
 class ReviewCommitsIn(BaseModel):

@@ -10,8 +10,10 @@ so scores, findings and verdicts land in the same tables as webhook reviews.
 
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from itertools import islice
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -354,11 +356,15 @@ def _row(
     )
 
 
-# "Bỏ commit đã review": a latest review in these states counts as reviewed; GitLab is read up
-# to EXCLUDE_READ_FACTOR times the list size (at most EXCLUDE_READ_MAX) to fill the list.
+# "Ẩn commit đã review": a latest review in these states counts as reviewed.
 REVIEWED_OR_RUNNING = ("done", "queued", "running")
-EXCLUDE_READ_FACTOR = 5
-EXCLUDE_READ_MAX = 5000
+# With a filter on (reviewed left out, or only some people), GitLab is read page by page until
+# the list is full or the window ends: the commits wanted may all lie behind thousands that
+# the filter drops. Two bounds keep one request from pinning a worker; a read they cut short
+# says how far back it got (`read_until`), so the rest is reached by ending the window there.
+SCAN_CHUNK = 100  # one GitLab page; reviews and authors are looked up per chunk
+SCAN_MAX = 20_000
+SCAN_SECONDS = 30.0
 
 
 @router.get("/repos/{project_id}/commits", response_model=CommitListOut)
@@ -379,7 +385,8 @@ def list_commits(
     review exists. People outside your scope are left out (and counted in `hidden`).
     `limit`: at most REVIEW_COMMITS_LIST_MAX (Admin > Cấu hình review), its default.
     `exclude_reviewed`: commits already reviewed or being reviewed are left out (counted in
-    `reviewed_hidden`), and more are read from GitLab to fill the list."""
+    `reviewed_hidden`). With it or `user_id`, GitLab is read on until `limit` commits pass the
+    filter or the window ends (see SCAN_MAX / SCAN_SECONDS and `read_until`)."""
     project = visible_repo(session, principal, project_id)
     connection = _connection(session, project)
     from app.admin_settings import effective
@@ -392,42 +399,58 @@ def list_commits(
         since = datetime.now(UTC) - DEFAULT_WINDOW
     if since and until and until < since:
         raise HTTPException(422, "`until` is before `since`")
-    # Leaving reviewed commits out, read further back so the list still fills (bounded).
-    fetch = min(limit * EXCLUDE_READ_FACTOR, EXCLUDE_READ_MAX) if exclude_reviewed else limit
+    wanted = set(user_id) if user_id else None
+    filtering = exclude_reviewed or wanted is not None
+    rows: list[CommitRowOut] = []
+    hidden = reviewed_hidden = scanned = passed = 0
+    truncated = False
+    read_until: str | None = None
+    started = time.monotonic()
     try:
         with _client(box, connection) as client:
-            raw = client.commits_on_ref(project.external_id, ref, since, until, fetch + 1)
+            stream = client.iter_commits_on_ref(project.external_id, ref, since, until)
+            while not truncated:
+                chunk = list(islice(stream, SCAN_CHUNK))
+                if not chunk:
+                    break
+                reviews = _latest_reviews(session, [str(c["id"]) for c in chunk])
+                authors = _authors(
+                    session, {str(c.get("author_email") or "").lower() for c in chunk}
+                )
+                for c in chunk:
+                    scanned += 1
+                    review = reviews.get(str(c["id"]))
+                    if (
+                        exclude_reviewed
+                        and review is not None
+                        and review.status in REVIEWED_OR_RUNNING
+                    ):
+                        reviewed_hidden += 1
+                        continue
+                    author = authors.get(str(c.get("author_email") or "").lower(), (None, None))
+                    uid = author[0]
+                    if wanted is not None and uid not in wanted:
+                        continue
+                    if passed == limit:  # one more than the list holds: there is more
+                        truncated = True
+                        break
+                    passed += 1
+                    # Other people's commits are not even listed for members; managers/admins
+                    # see all.
+                    if not may_request_review(principal, uid, project.business_project_id):
+                        hidden += 1
+                        continue
+                    rows.append(_row(c, author, review, principal, project))
+                spent = scanned >= SCAN_MAX or time.monotonic() - started > SCAN_SECONDS
+                if filtering and not truncated and spent:
+                    # Out of budget with the list not full: more only if GitLab has another.
+                    if next(stream, None) is not None:
+                        truncated = True
+                        last = chunk[-1]
+                        read_until = last.get("committed_date") or last.get("created_at")
+                    break
     except GitLabError as exc:
         raise _gitlab_error(exc, "branch") from None
-    more_on_gitlab = len(raw) > fetch
-    raw = raw[:fetch]
-    reviews = _latest_reviews(session, [str(c["id"]) for c in raw])
-    reviewed_hidden = 0
-    if exclude_reviewed:
-        kept = []
-        for c in raw:
-            latest = reviews.get(str(c["id"]))
-            if latest is not None and latest.status in REVIEWED_OR_RUNNING:
-                reviewed_hidden += 1
-            else:
-                kept.append(c)
-        raw = kept
-    truncated = more_on_gitlab or len(raw) > limit
-    raw = raw[:limit]
-    authors = _authors(session, {str(c.get("author_email") or "").lower() for c in raw})
-    wanted = set(user_id) if user_id else None
-    rows: list[CommitRowOut] = []
-    hidden = 0
-    for c in raw:
-        author = authors.get(str(c.get("author_email") or "").lower(), (None, None))
-        uid = author[0]
-        if wanted is not None and uid not in wanted:
-            continue
-        # Other people's commits are not even listed for members; managers/admins see all.
-        if not may_request_review(principal, uid, project.business_project_id):
-            hidden += 1
-            continue
-        rows.append(_row(c, author, reviews.get(str(c["id"])), principal, project))
     return CommitListOut(
         ref=ref,
         commits=rows,
@@ -436,6 +459,8 @@ def list_commits(
         batch_max=settings.review_batch_max,
         limit=limit,
         reviewed_hidden=reviewed_hidden,
+        scanned=scanned,
+        read_until=read_until,
     )
 
 

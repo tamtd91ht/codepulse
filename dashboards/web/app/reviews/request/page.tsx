@@ -398,7 +398,10 @@ export default function RequestReviewPage() {
                 />
               </Field>
               <Field label="Lọc thêm">
-                <label className="rq-check" title="Bỏ commit đã có review xong hoặc đang chờ / đang review">
+                <label
+                  className="rq-check"
+                  title="Bỏ commit đã có review xong hoặc đang chờ / đang review; đọc tiếp GitLab cho tới khi đủ commit chưa review hoặc hết khoảng thời gian"
+                >
                   <input type="checkbox" checked={excludeReviewed} onChange={(e) => setExcludeReviewed(e.target.checked)} />
                   Ẩn commit đã review
                 </label>
@@ -433,6 +436,9 @@ export default function RequestReviewPage() {
       {scope && (
         <Card
           title={`Commit trên ${scope.ref}`}
+          // Never folds: a fold remembered in this browser (keyed by the title) would hide the
+          // answer to "Xem commit" and unmount the lists, which reads as the page hanging.
+          collapsible={false}
           subtitle={`${scope.repos.length} repo · đang chọn ${total} commit${reposChosen > 1 ? ` ở ${reposChosen} repo` : ""}${tooMany.length ? ` · ${tooMany.map((c) => `${byId.get(c.id)?.path_with_namespace ?? c.id} quá ${c.max}`).join(", ")}, bỏ bớt để gửi` : ""}`}
           actions={
             <button
@@ -606,7 +612,7 @@ function RepoCommits({
         <>
           <div className="toolbar" style={{ margin: 0, padding: "0 18px 10px" }}>
             <span className="muted small">
-              {`${list.commits.length} commit${list.truncated ? " (còn nữa, thu hẹp khoảng thời gian)" : ""}${list.reviewed_hidden ? ` · bỏ ${list.reviewed_hidden} đã review` : ""} · ${reviewed} đã review · ${reviewable.length} chọn được · tối đa ${batchMax} mỗi lần${list.hidden ? ` · ${list.hidden} của người ngoài phạm vi của bạn` : ""}${chosen.length > batchMax ? ` · đang chọn ${chosen.length}, bỏ bớt để gửi` : ""}`}
+              {`${list.commits.length} commit${list.read_until ? ` (mới đọc ${list.scanned ?? 0} commit, tới ${dateTime(list.read_until)}; đặt ngày kết thúc về mốc đó để đọc tiếp)` : list.truncated ? " (còn nữa, thu hẹp khoảng thời gian)" : ""}${list.reviewed_hidden ? ` · bỏ ${list.reviewed_hidden} đã review` : ""} · ${reviewed} đã review · ${reviewable.length} chọn được · tối đa ${batchMax} mỗi lần${list.hidden ? ` · ${list.hidden} của người ngoài phạm vi của bạn` : ""}${chosen.length > batchMax ? ` · đang chọn ${chosen.length}, bỏ bớt để gửi` : ""}`}
             </span>
             <span className="spacer" />
             {unreviewed.length > 0 && (

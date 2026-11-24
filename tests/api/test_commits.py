@@ -469,3 +469,72 @@ def test_reviewed_commits_can_be_left_out_and_the_list_size_is_an_admin_setting(
     assert A not in [c["sha"] for c in body["commits"]] and B in [c["sha"] for c in body["commits"]]
     assert body["reviewed_hidden"] == 1
     assert saved.status_code == 200 and capped["limit"] == 20  # never above the admin's cap
+
+
+def _paged_commits(router: respx.MockRouter, shas: list[str]) -> None:
+    """GitLab's commit list of `shas` (newest first), 100 a page through X-Next-Page."""
+
+    def page(request: httpx.Request) -> httpx.Response:
+        number = int(request.url.params.get("page", "1"))
+        start = (number - 1) * 100
+        items = [
+            {
+                "id": sha,
+                "short_id": sha[:8],
+                "title": f"commit {start + i}",
+                "author_name": "Someone",
+                "author_email": "someone@company.vn",
+                "committed_date": f"2026-09-{30 - (start + i) // 100:02d}T10:00:00Z",
+                "parent_ids": ["0" * 40],
+            }
+            for i, sha in enumerate(shas[start : start + 100])
+        ]
+        headers = {"X-Next-Page": str(number + 1)} if start + 100 < len(shas) else {}
+        return httpx.Response(200, json=items, headers=headers)
+
+    router.get(f"{API}/projects/1001/repository/commits").mock(side_effect=page)
+
+
+def test_leaving_reviewed_commits_out_reads_on_until_the_unreviewed_ones_are_reached(
+    client: TestClient, world: World, as_user: Any, db_session: Session, monkeypatch: Any
+) -> None:
+    # 650 reviewed commits, then 50 older ones nobody reviewed: far past 5 x the list size.
+    shas = [f"{i:040x}" for i in range(1, 701)]
+    reviewed, unreviewed = shas[:650], shas[650:]
+    db_session.add_all([Commit(sha=sha, project_id=world.project.id) for sha in reviewed])
+    db_session.flush()
+    db_session.add_all(
+        [
+            Review(
+                target_type="commit",
+                commit_sha=sha,
+                reviewed_sha=sha,
+                status="done",
+                rubric_version="v1",
+            )
+            for sha in reviewed
+        ]
+    )
+    db_session.flush()
+    path = f"/api/v1/repos/{world.project.id}/commits"
+    admin = as_user(world.admin)
+    params = {"ref": "main", "exclude_reviewed": "true", "limit": 20}
+    with respx.mock(assert_all_called=False) as router:
+        gitlab(router)
+        _paged_commits(router, shas)  # replaces the shared fake's list
+        first = client.get(path, params=params, headers=admin).json()
+        everything = client.get(path, params={**params, "limit": 200}, headers=admin).json()
+        plain = client.get(path, params={"ref": "main", "limit": 20}, headers=admin).json()
+        # Out of budget before the window ends: says how far back the read got.
+        monkeypatch.setattr("app.api.routers.commits.SCAN_MAX", 200)
+        cut = client.get(path, params=params, headers=admin).json()
+    assert [c["sha"] for c in first["commits"]] == unreviewed[:20]
+    assert first["truncated"] is True and first["reviewed_hidden"] == 650
+    assert first["read_until"] is None
+    assert [c["sha"] for c in everything["commits"]] == unreviewed
+    assert everything["truncated"] is False and everything["scanned"] == 700
+    # No filter: the newest `limit`, one page read.
+    assert [c["sha"] for c in plain["commits"]] == shas[:20]
+    assert plain["truncated"] is True and plain["scanned"] == 21
+    assert cut["commits"] == [] and cut["truncated"] is True and cut["scanned"] == 200
+    assert cut["read_until"] == "2026-09-29T10:00:00Z"

@@ -240,6 +240,18 @@ class GitLabClient:
     ) -> list[Any]:
         """Newest first, at most `limit`, with stats; stops paginating once it has enough.
         `ref` "*" lists every branch (GitLab `all=true`)."""
+        out: list[Any] = []
+        for item in self.iter_commits_on_ref(project_id, ref, since, until):
+            out.append(item)
+            if len(out) >= limit:
+                break
+        return out
+
+    def iter_commits_on_ref(
+        self, project_id: int, ref: str, since: datetime | None, until: datetime | None
+    ) -> Iterator[Any]:
+        """The same list one commit at a time, a page fetched only when it is reached: for a
+        caller that filters and cannot say beforehand how far back it has to read."""
         params: dict[str, Any] = {"with_stats": "true"}
         if ref == ALL_BRANCHES:
             params["all"] = "true"
@@ -249,12 +261,7 @@ class GitLabClient:
             params["since"] = since.isoformat()
         if until:
             params["until"] = until.isoformat()
-        out: list[Any] = []
-        for item in self.paginate(f"/projects/{project_id}/repository/commits", params):
-            out.append(item)
-            if len(out) >= limit:
-                break
-        return out
+        return self.paginate(f"/projects/{project_id}/repository/commits", params)
 
     def merge_requests(self, project_id: int, updated_after: datetime | None) -> Iterator[Any]:
         params: dict[str, Any] = {"state": "all", "order_by": "updated_at", "sort": "asc"}
