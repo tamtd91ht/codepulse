@@ -8,7 +8,20 @@ import { Icon, IconButton } from "@/components/icons";
 import { Markdown } from "@/components/Markdown";
 import { Drawer } from "@/components/ui";
 import { ApiError, api, useApi } from "@/lib/api";
-import { askAssistant, type AssistantScreen, type AssistantStatus, type AssistantTurn } from "@/lib/assistant";
+import { askAssistant, type AssistantScreen, type AssistantStatus, type AssistantStep, type AssistantTurn } from "@/lib/assistant";
+import {
+  SCREEN_LIMITS,
+  type ScreenShot,
+  captureScreen,
+  cutText,
+  describeAction,
+  parseAction,
+  pinPage,
+  releasePage,
+  runAction,
+  snapshot,
+  stripAction,
+} from "@/lib/stethoScreen";
 
 /**
  * Stetho, the AI assistant (app/assistant): a floating "Hỏi Stetho" button on every screen opens a
@@ -18,6 +31,12 @@ import { askAssistant, type AssistantScreen, type AssistantStatus, type Assistan
  * so a reload keeps it (this tab only). Each question carries the screen open when it was sent
  * (path, filters in the URL, title); the server puts that screen's data first in the context.
  * The answer streams in; "Dừng" or closing the tab stops the CLI on the server.
+ *
+ * "Đọc màn hình" (lib/stethoScreen.ts, app/assistant/screen_read.py): with it on, the question also
+ * carries the text, scroll areas and a screenshot of the page; Stetho may ask to scroll, the page
+ * does it and asks again (each round is one audited, budgeted turn). The panel is docked beside the
+ * page (Drawer modal={false}) so the page keeps scrolling while Stetho works, and the question stays
+ * pinned to its page when the asker navigates away.
  */
 
 interface Msg {
@@ -27,6 +46,30 @@ interface Msg {
   streaming?: boolean;
   error?: string;
   meta?: { model: string | null; seconds: number };
+  /** The reads / scrolls done on the screen for this answer. */
+  steps?: { label: string; note?: string; done: boolean }[];
+}
+
+/** "Đọc màn hình" on (this browser); on by default. */
+const READ_KEY = "codepulse-stetho-read-screen";
+/** One read / scroll and the screenshot after it: never wait longer (a stuck page must not hang the chat). */
+const STEP_CAP_MS = 60_000;
+const SHOT_CAP_MS = 20_000;
+const DRAWER_WIDTH = 480;
+
+/** `p`, but `fallback` after `ms` or as soon as `signal` aborts ("Dừng"). */
+function capped<T>(p: Promise<T>, ms: number, signal: AbortSignal, fallback: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const finish = (v: T) => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      resolve(v);
+    };
+    const onAbort = () => finish(fallback);
+    const timer = setTimeout(() => finish(fallback), ms);
+    signal.addEventListener("abort", onAbort);
+    p.then(finish, () => finish(fallback));
+  });
 }
 
 const STORE_KEY = "codepulse-stetho-chat";
@@ -131,8 +174,18 @@ export function Stetho() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [draft, setDraft] = useState("");
   const [model, setModelState] = useState("");
+  const [readScreen, setReadScreenState] = useState(true);
   const [conversation, setConversation] = useState("");
   const abort = useRef<AbortController | null>(null);
+
+  // Docked beside the page on wide screens: the page makes room (globals.css html.stetho-docked).
+  useEffect(() => {
+    if (!open) return;
+    const html = document.documentElement;
+    html.style.setProperty("--stetho-dock", `${DRAWER_WIDTH}px`);
+    html.classList.add("stetho-docked");
+    return () => html.classList.remove("stetho-docked");
+  }, [open]);
 
   // Restored after mount (not in the initial state): the server render has no storage.
   useEffect(() => {
@@ -140,6 +193,7 @@ export function Stetho() {
     // A turn still streaming when the page reloaded lost its connection: say so instead of hanging.
     setMsgs(stored.map((m) => (m.streaming ? { ...m, streaming: false, error: m.error ?? "Đã ngắt khi tải lại trang" } : m)));
     setModelState(load<string>(() => localStorage, MODEL_KEY, ""));
+    setReadScreenState(load<boolean>(() => localStorage, READ_KEY, true));
     const kept = load<string>(() => sessionStorage, CONVERSATION_KEY, "");
     const id = kept || newConversation();
     setConversation(id);
@@ -161,6 +215,10 @@ export function Stetho() {
     setModelState(value);
     save(() => localStorage, MODEL_KEY, value);
   };
+  const setReadScreen = (value: boolean) => {
+    setReadScreenState(value);
+    save(() => localStorage, READ_KEY, value);
+  };
 
   const ask = async (text: string) => {
     const question = text.trim();
@@ -172,23 +230,72 @@ export function Stetho() {
     const controller = new AbortController();
     abort.current = controller;
     const patch = (fn: (m: Msg) => Msg) => setMsgs((list) => list.map((m) => (m.id === answerId ? fn(m) : m)));
+    // The screen the question is about, fixed for every round: the asker may navigate meanwhile.
+    const screen = currentScreen(pathname);
+    const reading = readScreen;
+    let pin: number | null = null;
     try {
-      const done = await askAssistant(
-        {
-          question,
-          history,
-          screen: currentScreen(pathname),
-          ...(activeModel ? { model: activeModel } : {}),
-          ...(conversation ? { conversation_id: conversation } : {}),
-        },
-        { signal: controller.signal, onDelta: (piece) => patch((m) => ({ ...m, content: m.content + piece })) },
-      );
-      patch((m) => ({ ...m, streaming: false, meta: { model: done.model, seconds: done.duration_ms / 1000 } }));
+      // "Đọc màn hình": read right away (most questions are answered in one round); when Stetho
+      // needs the hidden part it asks for a scroll, done here, then the next round carries the log.
+      const steps: AssistantStep[] = [];
+      let shot: ScreenShot | null = null;
+      if (reading) {
+        pin = pinPage();
+        steps.push({ action: "read_screen (tự động lúc gửi câu hỏi)", result: snapshot(screen.title) });
+        shot = await capped(captureScreen(), SHOT_CAP_MS, controller.signal, null);
+        patch((m) => ({ ...m, steps: [{ label: "Đọc màn hình", done: true }] }));
+      }
+      let seconds = 0;
+      for (let round = 0; ; round++) {
+        let raw = "";
+        const done = await askAssistant(
+          {
+            question,
+            history,
+            screen,
+            ...(activeModel ? { model: activeModel } : {}),
+            ...(conversation ? { conversation_id: conversation } : {}),
+            ...(steps.length ? { agent: { steps } } : {}),
+            ...(shot ? { images: [shot] } : {}),
+          },
+          {
+            signal: controller.signal,
+            onDelta: (piece) => {
+              raw += piece;
+              patch((m) => ({ ...m, content: stripAction(raw) }));
+            },
+          },
+        );
+        seconds += done.duration_ms / 1000;
+        const action = reading ? parseAction(raw) : null;
+        if (!action || round >= SCREEN_LIMITS.maxSteps) {
+          // Out of steps: keep what Stetho said and say why it stopped.
+          const notice = action ? `Đã dừng sau ${SCREEN_LIMITS.maxSteps} bước đọc màn hình mà chưa xong — hỏi cụ thể hơn giúp.` : "";
+          const text = [stripAction(raw), notice].filter(Boolean).join("\n\n");
+          patch((m) => ({ ...m, content: text, streaming: false, meta: { model: done.model, seconds } }));
+          break;
+        }
+        // One read / scroll: show it, do it on the page, log the result and Stetho's note.
+        const note = cutText(stripAction(raw), SCREEN_LIMITS.noteChars);
+        patch((m) => ({ ...m, content: "", steps: [...(m.steps ?? []), { label: describeAction(action), note: note || undefined, done: false }] }));
+        const result = await capped(
+          runAction(action, screen.title),
+          STEP_CAP_MS,
+          controller.signal,
+          `Bước này quá ${STEP_CAP_MS / 1000} giây không xong — đã bỏ qua. Trả lời bằng dữ liệu đã có; đừng lặp lại y hệt bước này.`,
+        );
+        if (controller.signal.aborted) throw new DOMException("Đã dừng", "AbortError");
+        steps.push({ action: JSON.stringify(action), result: cutText(result, SCREEN_LIMITS.resultChars), ...(note ? { note } : {}) });
+        shot = await capped(captureScreen(), SHOT_CAP_MS, controller.signal, null);
+        patch((m) => ({ ...m, steps: m.steps?.map((s, i, all) => (i === all.length - 1 ? { ...s, done: true } : s)) }));
+      }
     } catch (e) {
       const stopped = (e as Error).name === "AbortError";
-      patch((m) => ({ ...m, streaming: false, error: stopped ? "Đã dừng" : (e as Error).message }));
+      patch((m) => ({ ...m, streaming: false, error: stopped ? "Đã dừng" : (e as Error).message, steps: m.steps?.map((s) => ({ ...s, done: true })) }));
     } finally {
-      abort.current = null;
+      // Only this question's: "Cuộc trò chuyện mới" may already have started the next one.
+      if (abort.current === controller) abort.current = null;
+      if (pin !== null) releasePage(pin);
     }
   };
 
@@ -211,7 +318,8 @@ export function Stetho() {
       )}
       {open && (
         <Drawer
-          width={480}
+          width={DRAWER_WIDTH}
+          modal={false}
           onClose={() => setOpen(false)}
           title={
             <span className="stetho-title">
@@ -220,6 +328,19 @@ export function Stetho() {
           }
           actions={
             <>
+              <IconButton
+                icon="search"
+                className={readScreen ? "stetho-read on" : "stetho-read"}
+                aria-pressed={readScreen}
+                disabled={busy}
+                label="Đọc màn hình"
+                title={
+                  readScreen
+                    ? `Đang bật: ${name} đọc chữ và ảnh chụp phần bạn đang xem, tự cuộn để xem phần bị khuất.`
+                    : `Đang tắt: ${name} chỉ dùng số liệu theo trang đang mở.`
+                }
+                onClick={() => setReadScreen(!readScreen)}
+              />
               {!!status?.models.length && (
                 <select
                   className="stetho-model"
@@ -407,7 +528,9 @@ function Chat({
             <h3>Hỏi về {screen.title}</h3>
             <p>
               {name} đọc số liệu của màn hình bạn đang mở trước, rồi tới tổng quan các dự án và team bạn được xem để phân
-              tích. {name} chỉ thấy những gì bạn được xem, không đọc mã nguồn và không thay đổi gì.
+              tích. {name} chỉ thấy những gì bạn được xem và không thay đổi gì. Bật “Đọc màn hình” (kính lúp ở đầu khung) thì{" "}
+              {name} đọc cả chữ và ảnh chụp phần bạn đang xem và tự cuộn để xem phần bị khuất — trừ màn hình có dữ liệu của
+              repo không cho gửi ra LLM bên ngoài.
             </p>
             <p className="small muted stetho-privacy">
               Câu hỏi của bạn và vài ý chính của câu trả lời được lưu 30 ngày để admin cải thiện {name}; nội dung đầy đủ không lưu.
@@ -428,6 +551,15 @@ function Chat({
               </div>
             ) : (
               <div key={m.id} className="stetho-msg assistant" aria-busy={m.streaming}>
+                {!!m.steps?.length && (
+                  <ol className="stetho-steps small muted" aria-label="Các bước đọc màn hình">
+                    {m.steps.map((s, k) => (
+                      <li key={k} className={s.done ? "done" : "doing"} title={s.note}>
+                        <span aria-hidden="true">{s.done ? "✓" : "…"}</span> {s.label}
+                      </li>
+                    ))}
+                  </ol>
+                )}
                 {m.content ? <Markdown text={m.content} /> : m.streaming ? <span className="stetho-typing" aria-label="Đang trả lời" /> : null}
                 {m.error && (
                   <div className="error small" role="alert">

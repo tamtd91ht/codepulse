@@ -4668,6 +4668,49 @@ td.check-col {
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
+/* "Đọc màn hình": the reads / scrolls done for an answer, above it (Stetho.tsx). */
+.stetho-steps {
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stetho-steps li.doing {
+  color: var(--text);
+}
+.icon-btn.stetho-read.on {
+  color: var(--link);
+  background: var(--primary-soft);
+}
+/* Drawer modal={false} (components/ui.tsx): no backdrop, the page behind stays usable. */
+.side-drawer-backdrop.docked {
+  background: none;
+  backdrop-filter: none;
+  pointer-events: none;
+}
+.side-drawer-backdrop.docked > .side-drawer {
+  pointer-events: auto;
+}
+/* Stetho open on a wide screen: the page makes room for it instead of sitting under it, so what
+   Stetho reads, scrolls and captures is what the asker sees. The page stays usable, so whatever
+   it opens on the right (a detail drawer, a modal, the review-activity pill) makes room too —
+   otherwise Stetho, later in the DOM, would cover it (and a drawer's close button). Below 1280 px
+   there is not room for both: the panel overlays the page as before. */
+@media (min-width: 1280px) {
+  html.stetho-docked .shell {
+    padding-right: var(--stetho-dock, 480px);
+  }
+  html.stetho-docked .side-drawer-backdrop:not(.docked),
+  html.stetho-docked .modal-backdrop {
+    right: var(--stetho-dock, 480px);
+  }
+  html.stetho-docked .activity {
+    right: calc(var(--stetho-dock, 480px) + 16px);
+    bottom: 16px;
+  }
+}
 .stetho-meta {
   display: flex;
   align-items: center;

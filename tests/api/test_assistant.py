@@ -299,3 +299,150 @@ def test_admin_llm_costs_show_every_budget_source_per_month(
     assert month["total_usd"] == 2.25
     # The same figure the budget compares.
     assert month_spend_breakdown(db_session, datetime.now(UTC))["total_usd"] == 2.25
+
+
+# -- "Đọc màn hình": the asker's own screen (app/assistant/screen_read.py) -------------------------
+
+PNG = (  # a 1x1 png
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9a"
+    "wAAAABJRU5ErkJggg=="
+)
+
+
+def screen_body(text: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "question": "Tóm tắt màn này",
+        "screen": {"path": "/reviews", "title": "Kết quả review"},
+        "agent": {"steps": [{"action": "read_screen", "result": text}]},
+        **extra,
+    }
+
+
+def test_screen_read_reaches_the_prompt_and_is_audited_by_size_only(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    connected: Settings,
+    streamer: FakeStreamer,
+    db_session: Session,
+) -> None:
+    body = screen_body(
+        "Bảng: demo/p có 3 finding high", images=[{"media_type": "image/png", "data": PNG}]
+    )
+    response = client.post("/api/v1/assistant/chat", json=body, headers=as_user(world.admin))
+    assert response.status_code == 200
+    call = streamer.calls[0]
+    cmd = call["cmd"]
+    assert cmd[cmd.index("--input-format") + 1] == "stream-json"
+    assert cmd[cmd.index("--tools") + 1] == ""
+    message = json.loads(call["stdin"])
+    blocks = message["message"]["content"]
+    assert blocks[0]["type"] == "image"
+    assert "Bảng: demo/p có 3 finding high" in blocks[-1]["text"]
+
+    row = db_session.scalars(select(AuditLog).where(AuditLog.action == "assistant.chat")).one()
+    assert row.details is not None
+    assert row.details["screen_read"] == {"steps": 1, "images": 1, "withheld": None}
+    assert "3 finding high" not in json.dumps(row.details, ensure_ascii=False)
+
+
+def test_a_screen_showing_a_repo_closed_to_external_llm_is_withheld(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    connected: Settings,
+    streamer: FakeStreamer,
+    db_session: Session,
+) -> None:
+    world.project.allow_external_llm = False
+    db_session.flush()
+    body = screen_body(
+        "Review #9 — DEMO/P\n+ password = load()", images=[{"media_type": "image/png", "data": PNG}]
+    )
+    response = client.post("/api/v1/assistant/chat", json=body, headers=as_user(world.admin))
+    assert response.status_code == 200
+    call = streamer.calls[0]
+    assert "--input-format" not in call["cmd"]  # the screenshot is dropped too
+    assert "password = load()" not in call["stdin"]
+    assert "không cho gửi ra LLM bên ngoài" in call["stdin"]
+    row = db_session.scalars(select(AuditLog).where(AuditLog.action == "assistant.chat")).one()
+    assert row.details is not None
+    assert row.details["screen_read"] == {"steps": 1, "images": 1, "withheld": ["demo/p"]}
+
+
+@pytest.mark.parametrize("where", ["path", "title", "note"])
+def test_a_closed_repo_is_withheld_by_path_title_or_note(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    connected: Settings,
+    streamer: FakeStreamer,
+    db_session: Session,
+    where: str,
+) -> None:
+    world.project.allow_external_llm = False
+    db_session.flush()
+    step: dict[str, Any] = {"action": "read_screen", "result": "+ secret_code()"}
+    screen = {"path": "/reviews", "title": "Kết quả review"}
+    if where == "path":  # the text never names the repo: the review's own repo decides
+        screen = {"path": f"/reviews/{world.an_review.id}", "title": "Review"}
+    elif where == "title":
+        screen["title"] = "Review demo/p"
+    else:
+        step["note"] = "đang xem demo/p"
+    body = {"question": "x", "screen": screen, "agent": {"steps": [step]}}
+    response = client.post("/api/v1/assistant/chat", json=body, headers=as_user(world.admin))
+    assert response.status_code == 200
+    assert "secret_code()" not in streamer.calls[0]["stdin"]
+    assert "không cho gửi ra LLM bên ngoài" in streamer.calls[0]["stdin"]
+
+
+def test_an_open_repo_review_page_is_read(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    connected: Settings,
+    streamer: FakeStreamer,
+) -> None:
+    body = {
+        "question": "x",
+        "screen": {"path": f"/reviews/{world.an_review.id}", "title": "Review"},
+        "agent": {"steps": [{"action": "read_screen", "result": "+ open_code()"}]},
+    }
+    response = client.post("/api/v1/assistant/chat", json=body, headers=as_user(world.admin))
+    assert response.status_code == 200
+    assert "open_code()" in streamer.calls[0]["stdin"]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"images": [{"media_type": "image/png", "data": PNG}]},  # a screenshot without a read
+        {
+            "agent": {"steps": [{"action": "read_screen", "result": "x"}]},
+            "images": [{"media_type": "image/gif", "data": PNG}],
+        },
+        {
+            "agent": {"steps": [{"action": "read_screen", "result": "x"}]},
+            "images": [{"media_type": "image/png", "data": "not base64!!"}],
+        },
+        {"agent": {"steps": [{"action": "read_screen", "result": "x"}] * 18}},
+        {
+            "agent": {"steps": [{"action": "read_screen", "result": "x"}]},
+            "images": [{"media_type": "image/png", "data": PNG}] * 3,
+        },
+    ],
+)
+def test_screen_read_rejects_bad_input(
+    client: TestClient,
+    world: World,
+    as_user: Any,
+    connected: Settings,
+    streamer: FakeStreamer,
+    extra: dict[str, Any],
+) -> None:
+    response = client.post(
+        "/api/v1/assistant/chat", json={"question": "x", **extra}, headers=as_user(world.admin)
+    )
+    assert response.status_code == 422
+    assert not streamer.calls

@@ -12,8 +12,9 @@ import tempfile
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
+from app.assistant.screen_read import SCREEN_RULES, Image, Step, steps_text
 from app.review.providers.claude_code import cli_env, scrub_secrets, stream_lines
 
 NAME = "Stetho"
@@ -173,19 +174,46 @@ def history_text(history: Sequence[Turn]) -> str:
     return "\n\n".join(kept)
 
 
-def build_prompt(context: str, history: Sequence[Turn], question: str, knowledge: str = "") -> str:
+def build_prompt(
+    context: str,
+    history: Sequence[Turn],
+    question: str,
+    knowledge: str = "",
+    steps: Sequence[Step] = (),
+) -> str:
     parts = [f"<tai_lieu>\n{knowledge}\n</tai_lieu>"] if knowledge else []
     parts.append(f"<ngu_canh>\n{context}\n</ngu_canh>")
     if hist := history_text(history):
         parts.append(f"<hoi_thoai_truoc>\n{hist}\n</hoi_thoai_truoc>")
     parts.append(f"Câu hỏi: {question}")
+    if steps:  # "Đọc màn hình" (app/assistant/screen_read.py)
+        parts.append(
+            f"<man_hinh>\n{steps_text(steps)}\n</man_hinh>\n\n"
+            "Trả lời câu hỏi nếu đã đủ dữ liệu, hoặc làm hành động kế tiếp."
+        )
     return "\n\n".join(parts)
 
 
-def command(binary: str, model: str, web: bool = False) -> list[str]:
+def stdin_for(prompt: str, images: Sequence[Image]) -> str:
+    """The CLI's input: the prompt as is, or with screenshots one `--input-format stream-json`
+    user message (image blocks, then the prompt)."""
+    if not images:
+        return prompt
+    content: list[dict[str, Any]] = [
+        {"type": "image", "source": {"type": "base64", "media_type": i.media_type, "data": i.data}}
+        for i in images
+    ]
+    content.append({"type": "text", "text": prompt})
+    return json.dumps({"type": "user", "message": {"role": "user", "content": content}}) + "\n"
+
+
+def command(
+    binary: str, model: str, web: bool = False, *, screen: bool = False, images: bool = False
+) -> list[str]:
     """No MCP, no settings or CLAUDE.md, no saved session; stream partial messages. No tools,
     or with `web` only WebSearch, approved up front (print mode cannot ask), every other tool
-    disallowed."""
+    disallowed. `screen`: the asker's screen is in the prompt (SCREEN_RULES); `images`: the
+    input is a stream-json message carrying screenshots (stdin_for)."""
     tools = (
         ["--tools", WEB_TOOLS, "--allowedTools", WEB_TOOLS, "--max-turns", str(WEB_MAX_TURNS)]
         if web
@@ -203,8 +231,9 @@ def command(binary: str, model: str, web: bool = False) -> list[str]:
         "--setting-sources",
         "",
         "--no-session-persistence",
+        *(["--input-format", "stream-json"] if images else []),
         "--system-prompt",
-        SYSTEM_PROMPT + (WEB_RULES if web else ""),
+        SYSTEM_PROMPT + (WEB_RULES if web else "") + (SCREEN_RULES if screen else ""),
     ]
     return [*cmd, "--model", model] if model else cmd
 
@@ -277,6 +306,8 @@ def run_chat(
     on_delta: Callable[[str], None],
     knowledge: str = "",
     web: bool = False,
+    steps: Sequence[Step] = (),
+    images: Sequence[Image] = (),
     cancelled: Callable[[], bool] = lambda: False,
     streamer: Streamer = stream_lines,
     timeout_s: float = TIMEOUT_S,
@@ -312,12 +343,12 @@ def run_chat(
         elif event.kind == "result":
             result.append(event)
 
-    prompt = build_prompt(context, history, question, knowledge)
+    prompt = build_prompt(context, history, question, knowledge, steps)
     with tempfile.TemporaryDirectory(prefix="codepulse-assistant-") as cwd:
         try:
             code, stderr = streamer(
-                command(binary, model, web),
-                stdin=prompt,
+                command(binary, model, web, screen=bool(steps), images=bool(images)),
+                stdin=stdin_for(prompt, images),
                 cwd=cwd,
                 env=cli_env(token),
                 timeout_s=timeout_s,

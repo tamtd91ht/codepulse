@@ -27,6 +27,14 @@ export interface AssistantScreen {
   title: string;
 }
 
+/** One read / scroll on the asker's screen (app/assistant/screen_read.py `Step`). */
+export interface AssistantStep {
+  action: string;
+  result: string;
+  /** What Stetho wrote before the action: the data it gathered so far. */
+  note?: string;
+}
+
 export interface AssistantDone {
   model: string | null;
   cost_usd: number | null;
@@ -47,6 +55,10 @@ export async function askAssistant(
     model?: string;
     /** Lịch sử Stetho (docs/specs/28 §9): this conversation's id. */
     conversation_id?: string;
+    /** "Đọc màn hình" (lib/stethoScreen.ts): the reads / scrolls done on the asker's screen. */
+    agent?: { steps: AssistantStep[] };
+    /** Screenshots of the screen; only sent with `agent`. */
+    images?: { media_type: string; data: string }[];
   },
   { onDelta, signal }: { onDelta: (text: string) => void; signal?: AbortSignal },
 ): Promise<AssistantDone> {

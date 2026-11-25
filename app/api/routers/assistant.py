@@ -27,7 +27,7 @@ from app.admin_settings import effective, monthly_budget_usd
 from app.api.audit import audit
 from app.api.deps import get_secret_box, get_session
 from app.api.security import Principal, require
-from app.assistant import history, knowledge
+from app.assistant import history, knowledge, screen_guard, screen_read
 from app.assistant.chat import (
     LOGIN_PLACE,
     MAX_QUESTION,
@@ -78,11 +78,34 @@ class ScreenIn(BaseModel):
     title: str = Field(default="", max_length=80)
 
 
+class StepIn(BaseModel):
+    """One read / scroll the page did on the asker's screen (app/assistant/screen_read.py)."""
+
+    action: str = Field(min_length=1, max_length=screen_read.MAX_ACTION)
+    result: str = Field(max_length=screen_read.MAX_RESULT)
+    note: str = Field(default="", max_length=screen_read.MAX_NOTE)
+
+
+class AgentIn(BaseModel):
+    # +1: the read made when the question was sent, then up to MAX_STEPS scrolls.
+    steps: list[StepIn] = Field(min_length=1, max_length=screen_read.MAX_STEPS + 1)
+
+
+class ImageIn(BaseModel):
+    media_type: str = Field(max_length=40)
+    # base64 of at most MAX_IMAGE_BYTES (~4/3 larger); checked again after decoding.
+    data: str = Field(min_length=1, max_length=screen_read.MAX_IMAGE_B64)
+
+
 class ChatIn(BaseModel):
     question: str = Field(min_length=1, max_length=MAX_QUESTION)
     history: list[TurnIn] = Field(default_factory=list, max_length=200)
     screen: ScreenIn | None = None
     model: str = ""
+    # "Đọc màn hình" (outside the spec, requested by the user 2026-11-25): what the page read on
+    # the asker's own screen, and screenshots of it. Screenshots only come with a read.
+    agent: AgentIn | None = None
+    images: list[ImageIn] = Field(default_factory=list, max_length=screen_read.MAX_IMAGES)
     # Lịch sử Stetho (docs/specs/28 §9): the client's id of this conversation (a UUID; a new
     # one per "Cuộc trò chuyện mới"). Missing: each turn is a conversation of its own.
     conversation_id: str | None = Field(default=None, pattern=r"^[0-9a-fA-F-]{8,64}$")
@@ -167,6 +190,30 @@ def status(
     }
 
 
+def _screen_read(
+    session: Session, body: ChatIn
+) -> tuple[list[screen_read.Step], list[screen_read.Image], list[str]]:
+    """The asker's screen for this turn: (steps, screenshots, forbidden repos it showed).
+
+    A screen of a repo whose code may not go to an external LLM (by its path or its text,
+    app/assistant/screen_guard.py) is withheld whole: its text and its screenshots are replaced
+    by a note saying why."""
+    if not body.agent:
+        return [], [], []
+    steps = [screen_read.Step(s.action, s.result, s.note) for s in body.agent.steps]
+    images = [screen_read.Image(i.media_type, i.data) for i in body.images]
+    for image in images:
+        if (why := screen_read.check_image(image)) is not None:
+            raise HTTPException(422, f"images: {why}")
+    read = [t for s in steps for t in (s.result, s.note)]
+    if body.screen:
+        read.append(body.screen.title)
+    withheld = screen_guard.withheld(session, body.screen.path if body.screen else None, read)
+    if withheld:
+        return [screen_read.withheld_step(withheld)], [], withheld
+    return steps, images, []
+
+
 def _sse(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -187,10 +234,14 @@ def chat(
         raise HTTPException(422, "Thiếu câu hỏi")
     if body.model and body.model not in {m["id"] for m in MODELS}:
         raise HTTPException(422, f"model: {' | '.join(m['id'] for m in MODELS)}")
+    if body.images and not body.agent:
+        raise HTTPException(422, "images: chỉ gửi kèm khi đọc màn hình (agent)")
     if (reason := _unavailable(session, box, settings)) is not None:
         raise HTTPException(503, reason)
     if _over_budget(session, settings):
         raise HTTPException(429, "Đã dùng hết ngân sách LLM tháng này")
+    # After the cheap refusals: decoding screenshots and the repo lookups cost something.
+    steps, images, withheld = _screen_read(session, body)
     screen = (
         Screen(
             path=body.screen.path,
@@ -253,6 +304,8 @@ def chat(
                         question=question,
                         knowledge=reference,
                         web=web,
+                        steps=steps,
+                        images=images,
                         on_delta=lambda text: events.put(("delta", text)),
                         cancelled=stop.is_set,
                         streamer=streamer,
@@ -275,6 +328,15 @@ def chat(
                         "context_chars": len(context),
                         "docs": [h.doc_id for h in hits] or None,
                         "web": web or None,
+                        # "Đọc màn hình": how much was read, never what (the screen is not kept).
+                        # What was received (a withheld screen still counts what it carried).
+                        "screen_read": {
+                            "steps": len(body.agent.steps),
+                            "images": len(body.images),
+                            "withheld": withheld or None,
+                        }
+                        if body.agent
+                        else None,
                         "model": outcome.model or model,
                         "cost_usd": outcome.cost_usd,
                         "cost_estimated": outcome.cost_estimated or None,

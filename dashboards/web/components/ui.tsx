@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Line, LineChart, YAxis } from "recharts";
 
 import { Icon, type IconName, IconButton } from "@/components/icons";
@@ -785,12 +785,17 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), selec
  * A panel sliding in from the right for "details of one thing" (a dự án, a bot). Escape (inside
  * the panel) and a click on the backdrop close it; Tab stays inside; the page behind stops
  * scrolling; focus goes to the close button on open and back to the opener on close.
+ *
+ * `modal={false}` (Stetho): a panel docked beside the page instead — no backdrop, the page keeps
+ * scrolling and stays clickable, Tab may leave the panel; the close button closes it, and Escape
+ * does while focus is inside the panel.
  */
 export function Drawer({
   title,
   onClose,
   width = 720,
   actions,
+  modal = true,
   children,
 }: {
   title: ReactNode;
@@ -799,6 +804,8 @@ export function Drawer({
   width?: number | "wide";
   /** Buttons shown next to the title, always in view (not scrolled away with the body). */
   actions?: ReactNode;
+  /** false: docked beside the page, which stays usable (see above). */
+  modal?: boolean;
   children: ReactNode;
 }) {
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -807,13 +814,17 @@ export function Drawer({
   // The latest onClose without re-running the mount effect (callers pass inline arrows).
   const close = useRef(onClose);
   close.current = onClose;
+  // Fixed for the drawer's life: switching it while open would leave the page locked or not.
+  const isModal = useRef(modal);
+  // Unique: a page drawer can now be open beside the docked Stetho panel.
+  const titleId = useId();
   useEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeButton.current?.focus();
     const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    if (isModal.current) document.body.style.overflow = "hidden";
     return () => {
-      document.body.style.overflow = previous;
+      if (isModal.current) document.body.style.overflow = previous;
       opener?.focus();
     };
   }, []);
@@ -823,7 +834,7 @@ export function Drawer({
       close.current();
       return;
     }
-    if (e.key !== "Tab" || !aside.current) return;
+    if (!isModal.current || e.key !== "Tab" || !aside.current) return;
     const focusable = [...aside.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
     if (!focusable.length) return;
     const first = focusable[0];
@@ -838,9 +849,9 @@ export function Drawer({
   };
   return (
     <div
-      className="side-drawer-backdrop"
+      className={modal ? "side-drawer-backdrop" : "side-drawer-backdrop docked"}
       onMouseDown={(e) => {
-        pressedBackdrop.current = e.target === e.currentTarget;
+        pressedBackdrop.current = isModal.current && e.target === e.currentTarget;
       }}
       onClick={(e) => {
         // Only a press that started on the backdrop closes: a text selection that ends there must not.
@@ -851,14 +862,15 @@ export function Drawer({
       <aside
         ref={aside}
         className="side-drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="side-drawer-title"
+        // A docked panel is a region beside the page, not a dialog over it.
+        role={modal ? "dialog" : "complementary"}
+        aria-modal={modal ? "true" : undefined}
+        aria-labelledby={titleId}
         style={{ width: width === "wide" ? "min(1360px, max(calc(100vw - 64px), min(100vw, 480px)))" : `min(${width}px, 100%)` }}
         onKeyDown={onKeyDown}
       >
         <div className="side-drawer-head">
-          <h2 id="side-drawer-title">{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           <div className="side-drawer-actions">
             {actions}
             <IconButton ref={closeButton} icon="close" label="Đóng" onClick={onClose} />
